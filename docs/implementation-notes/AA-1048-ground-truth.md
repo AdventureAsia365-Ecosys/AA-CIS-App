@@ -78,15 +78,24 @@ it ships.
   run needs `--live --confirm-spend` and a cap <= 2 USD. The cap is hard (review 2, S272): a call starts only when
   spent + its worst case fits (first attempt at the floored ceiling + the gateway's one truncation retry at its
   ceiling, every token billed as output, so reasoning tokens are inside it); a reply is charged `cost_usd` +
-  `truncation_cut_cost_usd` + the worst attempt per earlier attempt its `attempt_no` reports; a missing / 0 cost is
-  charged the worst case; a caller exception is charged the worst case, gives no vote and stops the run with the
-  partial report still written; the ledger (`shared.llm_call_log` on `adhoc_aa1048` since the start) is re-read before
-  every call and the larger spend wins. The plan adds 6,000 expected reasoning tokens per call of a reasoning model
+  `truncation_cut_cost_usd` + one attempt's worst case per earlier attempt its `attempt_no` reports; a missing / 0 /
+  NaN / inf cost is charged the worst case; a caller exception is charged the worst case, gives no vote and stops the
+  run with the partial report still written; the ledger (`shared.llm_call_log` on `adhoc_aa1048` since the start) is
+  re-read before every call, the larger spend wins and a non-finite reading stops the run. Review 3: a `model_tier`
+  request walks every enabled deployment of the pinned model (the pinned connection only goes first), so the gate
+  reserves `route_attempts` (the model's enabled deployments, alias targets summed, at least 1) x one attempt's worst
+  case, a caller error is charged that reservation, and a reply whose `attempt_no` passes it stops the run. The plan adds 6,000 expected reasoning tokens per call of a reasoning model
   (GPT-6 Luna).
-- **R1 precision is the instrument's over every fire** (review 2): an entailment or extraction instrument does not
-  know the class at run time, so the precision bar (0.90, LB 0.80) is checked over all fires before any class can be
-  listed as passing; per class: n_pos >= 20 and tp >= 1. An unverified verdict is a miss on a violation (recall, hard
-  subset) and not cleared on an ok claim, and `unverified / items <= 0.05` is an instrument condition.
+- **R1 precision is the instrument's over every fire on one writer surface** (reviews 2 and 3): an entailment or
+  extraction instrument does not know the class at run time, but it does know the writer (the extraction prompt lists
+  the writer's classes; holds act per writer surface). So the precision bar (0.90, LB 0.80) is checked over all fires
+  on each writer (`writers` in the record; the pooled figure is for reading only), and a class passes for a writer
+  when that writer clears the bar, the class has n_pos >= 20 and at least one caught violation on that writer;
+  passing classes are listed as `<writer>:<class>`. A verdict needs 2 of 3 real votes that agree (`[T, F, None]` is
+  unverified, not cleared); an unverified verdict is a miss on a violation (recall, hard subset) and not cleared on an
+  ok claim, and `unverified / items <= 0.05` is an instrument condition. Test-retest reads every item with >= 2 real
+  votes. The gateway call site is registered in the AA-927 call-site registry (`_log` writes the row) and the AA-642
+  model-tier allowlist (a calibration pins each candidate on purpose, like the R2 eval judge).
 - **Golden-set bump** is a new `revoke` command of `scripts/aa729/labels.py` (the fixture tooling's home): a human
   label cannot be relabelled (`RELABEL_SOURCES`), so a stub leaves the set. Stub = reason with the `ZZ S<nnn>` test
   marker or "test label" (finds t9b-002 on 1.3.0). The report lists every label that flips: the revoked ones, the

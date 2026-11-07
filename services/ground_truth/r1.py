@@ -18,29 +18,35 @@ record says so (split, passing_classes empty, recommended None).
 Cost. DRY RUN is the default: `plan` counts the calls and estimates the cost from the catalog prices below (expected
 reply size plus the expected reasoning tokens of a reasoning model, and the worst case). A live run needs an explicit
 flag and a cap <= HARD_CAP_USD, and the cap is HARD (review S272):
-  - a call starts only when the spend so far plus that call's WORST case fits the cap: the first attempt billed at its
-    floored ceiling (shared/aa_llm/tokens.floored of MAX_TOKENS: reasoning tokens are billed inside it) plus the
-    gateway's one truncation retry at its ceiling (tokens.retry_budget);
+  - a call starts only when the spend so far plus that call's WORST case fits the cap. One attempt's worst case is the
+    first try billed at its floored ceiling (shared/aa_llm/tokens.floored of MAX_TOKENS: reasoning tokens are billed
+    inside it) plus the gateway's one truncation retry at its ceiling (tokens.retry_budget); the call's worst case is
+    that times the attempts the request may make (`route_attempts`: model_tier runs one route model, which walks its
+    enabled deployments, every one a billed attempt; the pinned connection only goes first);
   - a reply is charged cost_usd + truncation_cut_cost_usd (the cut attempt the retry replaced; worst case when the
-    reply says it retried but gives no cut cost) + the worst single attempt for every earlier attempt its attempt_no
-    reports (failed route rungs bill their own rows); a missing or 0 cost_usd is charged the call's worst case;
-  - a caller exception (route exhausted, throttled, deadline) is charged the worst case, gives no vote, and stops the
-    run cleanly: the votes so far are kept and the report is still written (partial);
+    reply says it retried but gives no cut cost) + one attempt's worst case for every earlier attempt its attempt_no
+    reports (failed attempts bill their own rows); a missing, 0 or non-finite (NaN / inf) cost_usd is charged the
+    call's worst case; a reply whose attempt_no passes the reserved attempts stops the run;
+  - a caller exception (route exhausted, throttled, deadline) is charged the call's worst case (every reserved
+    attempt), gives no vote, and stops the run cleanly: the votes so far are kept and the report is still written;
   - an optional ledger probe (the sum of shared.llm_call_log.cost_usd on STAGE since the run started) is read before
-    every call, and the budget's spend is the larger of the two.
+    every call, and the budget's spend is the larger of the two; a non-finite reading stops the run.
 Every reply goes through the Model Gateway (LLMClient.generate) on stage STAGE, role judge, and writes one
 shared.llm_call_log row with **billed_fields(resp) (an unusable reply writes its billed_unusable row before the error
 is raised).
 
-Measurement. Precision is the instrument's over EVERY fire (an entailment or extraction instrument does not know the
-class at run time: a hold acts on any fire), with its Wilson lower bound; a class is listed as passing only when that
-instrument-wide precision clears the bar, the class has n_pos >= the bar and at least one caught violation. An
-unverified verdict (no majority of real votes) is a miss on a violation and not cleared on an ok claim (D7: "a miss is
-unverified"), and the instrument conditions also need unverified / items <= UNVERIFIED_MAX.
+Measurement. Precision is the instrument's over EVERY fire on one writer surface (an entailment or extraction
+instrument does not know the class at run time: a hold acts on any fire; it does know the writer, and holds act per
+writer surface), with its Wilson lower bound. A class passes for a writer only when that writer's precision clears the
+bar, the class has n_pos >= the bar and at least one caught violation on that writer; passing classes are listed as
+"<writer>:<class>". A verdict needs votes // 2 + 1 real votes that agree (2 of 3); otherwise it is unverified, a miss
+on a violation and not cleared on an ok claim (D7: "a miss is unverified"), and the instrument conditions also need
+unverified / items <= UNVERIFIED_MAX.
 """
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
@@ -257,26 +263,46 @@ def worst_attempt_cost(inst: Instrument, user_prompt: str) -> float:
     return call_cost(inst, user_prompt, retry_ceiling(inst.model_key))
 
 
-def worst_call_cost(inst: Instrument, user_prompt: str) -> float:
-    """The most one gateway request of this call can bill: the first attempt cut at its floored ceiling plus the one
-    truncation retry at the retry ceiling."""
-    return (call_cost(inst, user_prompt, ceiling(inst.model_key))
-            + call_cost(inst, user_prompt, retry_ceiling(inst.model_key)))
+def worst_call_cost(inst: Instrument, user_prompt: str, attempts: int = 1) -> float:
+    """The most one gateway request of this call can bill: per attempt, the first try cut at its floored ceiling plus
+    the one truncation retry at the retry ceiling; times the attempts the request may make (route_attempts)."""
+    one = (call_cost(inst, user_prompt, ceiling(inst.model_key))
+           + call_cost(inst, user_prompt, retry_ceiling(inst.model_key)))
+    return max(1, int(attempts)) * one
+
+
+def route_attempts(inst: Instrument) -> int:
+    """The most provider attempts one pinned request of `inst` can make: a model_tier request runs that one model (or
+    its alias's models), and the gateway walks every enabled deployment of it in priority order (the pinned
+    connection first, the others after it). At least 1 (an empty registry: the gateway's single-provider path)."""
+    from shared.llm_client import deployments
+
+    try:
+        models = deployments.alias_targets_sync(inst.model_key) or (inst.model_key,)
+        n = sum(len(deployments.deployments_for_sync(m)) for m in models)
+    except Exception:                                        # noqa: BLE001 — never raises (registry unreadable)
+        n = 0
+    return max(1, n)
 
 
 def _num(v: Any) -> Optional[float]:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    """A finite number, else None (a NaN or inf cost is no cost: it takes the worst-case path)."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v)):
+        return float(v)
+    return None
 
 
 def billed_cost(inst: Instrument, user_prompt: str, resp: Any) -> tuple[float, list[str]]:
     """What one reply is charged against the cap, and the notes of every worst-case stand-in used:
-    cost_usd (worst case of the call when missing or <= 0) + truncation_cut_cost_usd when the reply is the gateway's
-    retry (the first attempt's worst case when it gives none, 0 for a provider's refusal to return a cut reply, which
-    bills nothing) + the worst single attempt per earlier attempt its attempt_no reports."""
+    cost_usd (worst case of the call's attempts when missing, non-finite or <= 0) + truncation_cut_cost_usd when the
+    reply is the gateway's retry (the first try's worst case when it gives none, 0 for a provider's refusal to return
+    a cut reply, which bills nothing) + one attempt's worst case per earlier attempt its attempt_no reports."""
     notes: list[str] = []
     cost = _num(getattr(resp, "cost_usd", None))
+    attempt = getattr(resp, "attempt_no", None)
+    earlier = attempt - 1 if isinstance(attempt, int) and not isinstance(attempt, bool) and attempt > 1 else 0
     if cost is None or cost <= 0:
-        return worst_call_cost(inst, user_prompt), ["no_cost_worst_case"]
+        return worst_call_cost(inst, user_prompt, earlier + 1), ["no_cost_worst_case"]
     total = cost
     cut = _num(getattr(resp, "truncation_cut_cost_usd", None))
     retried = getattr(resp, "truncation_retry_max_tokens", None)
@@ -286,15 +312,17 @@ def billed_cost(inst: Instrument, user_prompt: str, resp: Any) -> tuple[float, l
     elif isinstance(retried, int) and not isinstance(retried, bool) and retried > 0 and reason != "truncated_refusal":
         total += call_cost(inst, user_prompt, ceiling(inst.model_key))
         notes.append("cut_cost_worst_case")
-    attempt = getattr(resp, "attempt_no", None)
-    if isinstance(attempt, int) and not isinstance(attempt, bool) and attempt > 1:
-        total += (attempt - 1) * worst_attempt_cost(inst, user_prompt)
-        notes.append(f"earlier_attempts_worst_case:{attempt - 1}")
+    if earlier:
+        total += worst_call_cost(inst, user_prompt, earlier)
+        notes.append(f"earlier_attempts_worst_case:{earlier}")
     return total, notes
 
 
-def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap: float = HARD_CAP_USD) -> dict:
-    """The DRY RUN plan: calls and estimated cost per instrument, and whether the whole run fits the cap."""
+def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap: float = HARD_CAP_USD,
+         attempts_of: Optional[Callable[[Instrument], int]] = None) -> dict:
+    """The DRY RUN plan: calls and estimated cost per instrument, and whether the whole run fits the cap. The worst
+    case reserves `attempts_of(inst)` attempts per call (default 1: a DRY RUN reads no registry; the live run gates on
+    route_attempts)."""
     if not items:
         raise R1Refused("no labelled violation / ok claims to calibrate on")
     if not 0 < cap <= HARD_CAP_USD:
@@ -302,9 +330,11 @@ def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap:
     rows = []
     for inst in insts:
         cs = calls(items, inst)
+        attempts = attempts_of(inst) if attempts_of else 1
         expected = sum(call_cost(inst, u, expected_out(inst)) for u, _ in cs) * votes
-        worst = sum(worst_call_cost(inst, u) for u, _ in cs) * votes
+        worst = sum(worst_call_cost(inst, u, attempts) for u, _ in cs) * votes
         rows.append({"instrument": inst.id, "calls": len(cs) * votes, "expected_usd": round(expected, 4),
+                     "reserved_attempts": attempts,
                      "expected_out_tokens": expected_out(inst), "ceiling": ceiling(inst.model_key),
                      "retry_ceiling": retry_ceiling(inst.model_key), "worst_case_usd": round(worst, 4)})
     total = round(sum(r["expected_usd"] for r in rows), 4)
@@ -323,28 +353,37 @@ def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap:
 
 class Budget:
     """The hard cap: `charged` = what this run charged itself (billed_cost / worst cases), `ledger` = the last ledger
-    probe reading; the spend is the larger. A call is allowed only when spend + its worst case <= cap."""
+    probe reading; the spend is the larger. A call is allowed only when spend + its worst case <= cap. A non-finite
+    ledger reading (a NaN cost row makes the SUM NaN) closes the budget: no further call."""
 
     def __init__(self, cap: float):
         if not 0 < cap <= HARD_CAP_USD:
             raise R1Refused(f"cap must be in (0, {HARD_CAP_USD}] USD, got {cap}")
         self.cap, self.charged, self.calls = cap, 0.0, 0
         self.ledger: Optional[float] = None
+        self.ledger_unreadable = False
 
     @property
     def spent(self) -> float:
         return max(self.charged, self.ledger or 0.0)
 
     def allows(self, worst: float) -> bool:
-        return self.spent + worst <= self.cap
+        return not self.ledger_unreadable and math.isfinite(worst) and self.spent + worst <= self.cap
 
-    def charge(self, amount: float) -> None:
-        self.charged += max(0.0, float(amount))
+    def charge(self, amount: Any, worst: float) -> None:
+        """Charge one call: `amount`, or the call's `worst` case when the amount is not a finite number."""
+        v = _num(amount)
+        self.charged += max(0.0, v if v is not None else float(worst))
         self.calls += 1
 
     def observe_ledger(self, value: Any) -> None:
+        if value is None:
+            return                                           # the probe could not read the DB: own charges stand
         v = _num(value)
-        if v is not None and v >= 0:
+        if v is None:
+            self.ledger_unreadable = True                    # NaN / inf / not a number: stop, never ignore
+            return
+        if v >= 0:
             self.ledger = max(self.ledger or 0.0, v)
 
 
@@ -420,13 +459,19 @@ SpendProbe = Callable[[], Optional[float]]
 
 def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = VOTES, run_id: str,
         caller: Optional[Caller] = None, log: Callable[[Any, dict, Optional[dict], Optional[Exception]], None] = _log,
-        spend_probe: Optional[SpendProbe] = None) -> dict:
+        spend_probe: Optional[SpendProbe] = None,
+        attempts_of: Optional[Callable[[Instrument], int]] = None) -> dict:
     """The live run: votes per item and instrument (None = no vote: identity mismatch, unusable reply, a caller
     error or the cap). Never raises on a caller error: it is charged the worst case and stops the run (the votes so far
-    stay, `stopped` says why). Returns {"votes": {instrument id: {claim_hash: [True|False|None, ...]}}, "spent_usd",
-    "charged_usd", "ledger_usd", "calls", "stopped", "identity_mismatches", "caller_errors", "worst_case_charges"}."""
+    stay, `stopped` says why). `attempts_of` gives the attempts reserved per call (default: route_attempts on the
+    Model Gateway, 1 for an injected caller). Returns {"votes": {instrument id: {claim_hash: [True|False|None, ...]}},
+    "spent_usd", "charged_usd", "ledger_usd", "calls", "stopped", "identity_mismatches", "caller_errors",
+    "worst_case_charges", "reserved_attempts"}."""
+    if attempts_of is None:
+        attempts_of = route_attempts if caller is None else (lambda _inst: 1)
     caller = caller or gateway_call
     budget = Budget(cap)
+    reserved = {inst.id: max(1, int(attempts_of(inst))) for inst in insts}
     out: dict[str, dict[str, list]] = {i.id: defaultdict(list) for i in insts}
     stopped = None
     mismatches = Counter()
@@ -437,12 +482,14 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
         schema = ENTAILMENT_SCHEMA if inst.mode == "entailment" else EXTRACTION_SCHEMA
         for vote in range(votes):
             for user, group in calls(items, inst):
-                worst = worst_call_cost(inst, user)
+                worst = worst_call_cost(inst, user, reserved[inst.id])
                 if not stopped and spend_probe is not None:
                     try:
                         budget.observe_ledger(spend_probe())
                     except Exception:                       # noqa: BLE001 — the probe only ever raises the spend
                         pass
+                if not stopped and budget.ledger_unreadable:
+                    stopped = f"ledger spend reading is not a finite number, after {budget.calls} calls"
                 if stopped or not budget.allows(worst):
                     stopped = stopped or (f"cap {cap} USD: spent {budget.spent:.4f} + the next call's worst case "
                                           f"{worst:.4f} would pass it, after {budget.calls} calls")
@@ -452,7 +499,7 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
                 try:
                     resp = caller(inst, system, user, schema)
                 except Exception as e:                       # noqa: BLE001 — paid attempts may have run: stop clean
-                    budget.charge(worst)
+                    budget.charge(worst, worst)
                     worst_notes["caller_error_worst_case"] += 1
                     errors.append({"instrument": inst.id, "vote": vote, "error": type(e).__name__,
                                    "detail": str(e)[:200]})
@@ -461,8 +508,13 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
                         out[inst.id][i.claim_hash].append(None)
                     continue
                 amount, notes = billed_cost(inst, user, resp)
-                budget.charge(amount)
+                budget.charge(amount, worst)
                 worst_notes.update(n.split(":", 1)[0] for n in notes)
+                attempt = getattr(resp, "attempt_no", None)
+                if (not stopped and isinstance(attempt, int) and not isinstance(attempt, bool)
+                        and attempt > reserved[inst.id]):
+                    stopped = (f"reply attempt_no {attempt} passed the {reserved[inst.id]} reserved attempt(s) of "
+                               f"{inst.id}, after {budget.calls} calls: stopped, report partial")
                 signal = {"app": "cis", "issue": "AA-1048", "run_id": run_id, "instrument": inst.id, "vote": vote,
                           "claims": [i.claim_hash[:16] for i in group][:20]}
                 try:
@@ -486,18 +538,21 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
             "charged_usd": round(budget.charged, 6),
             "ledger_usd": round(budget.ledger, 6) if budget.ledger is not None else None,
             "calls": budget.calls, "stopped": stopped, "identity_mismatches": dict(mismatches),
-            "caller_errors": errors, "worst_case_charges": dict(worst_notes)}
+            "caller_errors": errors, "worst_case_charges": dict(worst_notes), "reserved_attempts": reserved}
 
 
 # ── measurement ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def majority(votes: list) -> Optional[bool]:
-    real = [v for v in votes if v is not None]
-    if len(real) < (len(votes) // 2 + 1):
-        return None                                          # too few real votes: unverified
-    c = Counter(real)
-    return c[True] > c[False]
+    """The verdict: True / False when at least len(votes) // 2 + 1 real votes agree (2 of 3), else None (unverified:
+    too few real votes, or a tie such as [True, False, None])."""
+    need = len(votes) // 2 + 1
+    c = Counter(v for v in votes if v is not None)
+    for verdict in (True, False):
+        if c[verdict] >= need:
+            return verdict
+    return None
 
 
 def _split_name(items: list[Item]) -> str:
@@ -505,15 +560,27 @@ def _split_name(items: list[Item]) -> str:
     return names.pop() if len(names) == 1 else "mixed"
 
 
+def _precision(tp: int, fired: int, bar: Any) -> dict:
+    lb = ss.wilson_lower(tp, fired) if fired else None
+    return {"fired": fired, "tp": tp, "precision": round(tp / fired, 4) if fired else None,
+            "precision_lb": round(lb, 4) if lb is not None else None,
+            "precision_passes_bar": bool(fired and tp / fired >= bar.precision and lb is not None
+                                         and lb >= bar.lower_bound)}
+
+
 def measure(items: list[Item], votes: dict[str, list]) -> dict:
-    """The measurement record of one instrument: precision and its Wilson lower bound over EVERY fire (tp = fires on
-    violations of any class, fired = every fire), per class n_pos / tp / recall (and the class-local precision, for
-    reading only), test-retest agreement, hard-subset recall, ok-cleared rate and the unverified count. An unverified
-    item (no majority of real votes) is a miss on a violation and not cleared on an ok claim. A class passes the bar
-    only when the instrument-wide precision and lower bound clear it, its n_pos reaches the bar and it has at least
-    one caught violation (tp >= 1). `split` names the items' split; only a held-out record lists passing classes (a
-    train or mixed one is exploration: the bar columns still show, `passing_classes` stays empty)."""
+    """The measurement record of one instrument. Precision and its Wilson lower bound are taken over EVERY fire on one
+    writer surface (tp = fires on violations of any class of that writer, fired = every fire on it): `writers` holds
+    them per writer, the top-level precision pools every writer (reading only). Per class: n_pos / tp / recall (and the
+    class-local precision, reading only), and `passing_writers`: the writers whose precision clears the bar, when the
+    class's n_pos reaches the bar and it has at least one caught violation on that writer. Also test-retest agreement
+    (over items with >= 2 real votes), hard-subset recall, ok-cleared rate and the unverified count. An unverified item
+    (no agreeing majority of real votes) is a miss on a violation and not cleared on an ok claim. `split` names the
+    items' split; only a held-out record lists passing classes ("<writer>:<class>"; a train or mixed one is
+    exploration: the bar columns still show, `passing_classes` stays empty)."""
     per_class: dict[str, Counter] = defaultdict(Counter)
+    per_writer: dict[str, Counter] = defaultdict(Counter)
+    tp_writer_class: Counter = Counter()
     retest_n = retest_same = unverified = 0
     unverified_by_label: Counter = Counter()
     hard_pos = hard_hit = ok_n = ok_cleared = 0
@@ -521,7 +588,7 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
         vs = votes.get(i.claim_hash) or []
         verdict = majority(vs)
         real = [v for v in vs if v is not None]
-        if len(real) == len(vs) and vs:
+        if len(real) >= 2:
             retest_n += 1
             retest_same += len(set(real)) == 1
         if verdict is None:
@@ -529,10 +596,14 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
             unverified_by_label[i.label] += 1
         flagged = verdict is True
         c = per_class[i.claim_class]
+        w = per_writer[i.writer]
         c["n"] += 1
+        w["fired"] += flagged
         if i.label == "violation":
             c["n_pos"] += 1
             c["tp"] += flagged
+            w["tp"] += flagged
+            tp_writer_class[(i.writer, i.claim_class)] += flagged
             if i.stratum == "hard":
                 hard_pos += 1
                 hard_hit += flagged
@@ -543,29 +614,29 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
     bar = ss.BARS[0]
     tp_all = sum(c["tp"] for c in per_class.values())
     fired_all = tp_all + sum(c["fp"] for c in per_class.values())
-    lb_all = ss.wilson_lower(tp_all, fired_all) if fired_all else None
-    precision_ok = bool(fired_all and tp_all / fired_all >= bar.precision and lb_all is not None
-                        and lb_all >= bar.lower_bound)
+    pooled = _precision(tp_all, fired_all, bar)
+    writers = {wr: _precision(w["tp"], w["fired"], bar) for wr, w in sorted(per_writer.items())}
     classes = {}
     for cls, c in sorted(per_class.items()):
         fired = c["tp"] + c["fp"]
         lb = ss.wilson_lower(c["tp"], fired) if fired else None
+        ok_writers = sorted(wr for wr, rec in writers.items()
+                            if rec["precision_passes_bar"] and c["n_pos"] >= bar.n_pos
+                            and tp_writer_class[(wr, cls)] >= 1)
         classes[cls] = {"n": c["n"], "n_pos": c["n_pos"], "tp": c["tp"], "fp": c["fp"],
                         "precision": round(c["tp"] / fired, 4) if fired else None,
                         "precision_lb": round(lb, 4) if lb is not None else None,
                         "recall": round(c["tp"] / c["n_pos"], 4) if c["n_pos"] else None,
-                        "passes_bar": precision_ok and c["n_pos"] >= bar.n_pos and c["tp"] >= 1}
+                        "passing_writers": ok_writers, "passes_bar": bool(ok_writers)}
     retest = round(retest_same / retest_n, 4) if retest_n else None
     ok_rate = round(ok_cleared / ok_n, 4) if ok_n else None
     hard = {"positives": hard_pos, "caught": hard_hit, "passes": hard_pos >= HARD_MIN and hard_hit == hard_pos}
-    passing = sorted(k for k, v in classes.items() if v["passes_bar"])
+    passing = sorted(f"{wr}:{k}" for k, v in classes.items() for wr in v["passing_writers"])
     unverified_rate = round(unverified / len(items), 4) if items else None
     instrument_ok = (retest is not None and retest >= RETEST_BAR and ok_rate is not None and ok_rate >= OK_CLEARED_BAR
                      and hard["passes"] and unverified_rate is not None and unverified_rate <= UNVERIFIED_MAX)
     split = _split_name(items)
-    return {"split": split, "fired": fired_all, "tp": tp_all,
-            "precision": round(tp_all / fired_all, 4) if fired_all else None,
-            "precision_lb": round(lb_all, 4) if lb_all is not None else None, "precision_passes_bar": precision_ok,
+    return {"split": split, **pooled, "writers": writers,
             "classes": classes, "retest": retest, "ok_cleared": ok_rate, "hard_subset": hard,
             "unverified": unverified, "unverified_by_label": dict(unverified_by_label),
             "unverified_rate": unverified_rate,
@@ -585,10 +656,12 @@ def report(items: list[Item], run_result: dict, insts: list[Instrument]) -> dict
             "ledger_usd": run_result.get("ledger_usd"), "partial": bool(run_result.get("stopped")),
             "stopped": run_result.get("stopped"), "identity_mismatches": run_result.get("identity_mismatches"),
             "caller_errors": run_result.get("caller_errors"),
-            "worst_case_charges": run_result.get("worst_case_charges")}
+            "worst_case_charges": run_result.get("worst_case_charges"),
+            "reserved_attempts": run_result.get("reserved_attempts")}
 
 
 __all__ = ["DEFAULT_CANDIDATES", "ENTAILMENT_SYSTEM", "EXTRACTION_SYSTEM", "HARD_CAP_USD", "Instrument", "Item",
            "MAX_TOKENS", "MODES", "PRICES", "R1Refused", "SPLIT_CHOICES", "STAGE", "UNVERIFIED_MAX", "VOTES",
            "billed_cost", "calls", "ceiling", "expected_out", "flags_from_reply", "instruments", "items_from",
-           "majority", "measure", "plan", "report", "retry_ceiling", "run", "split_of_line", "worst_call_cost"]
+           "majority", "measure", "plan", "report", "retry_ceiling", "route_attempts", "run", "split_of_line",
+           "worst_call_cost"]

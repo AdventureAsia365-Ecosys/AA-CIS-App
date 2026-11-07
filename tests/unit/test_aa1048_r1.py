@@ -109,7 +109,7 @@ def test_entailment_votes_identity_and_unusable_replies():
     assert sum(1 for _i, ok, err in logged if err is not None) == 1
     rec = r1.measure(items, votes)
     assert rec["classes"]["fact.number"]["tp"] == 1 and rec["ok_cleared"] == 1.0
-    assert rec["retest"] is None and rec["unverified"] == 0
+    assert rec["retest"] == 1.0 and rec["unverified"] == 0             # 2 agreeing real votes each
 
 
 def test_cap_stops_before_the_call_that_would_pass_it():
@@ -149,11 +149,11 @@ def test_measure_bar_and_recommendation():
     rec = r1.measure(items, votes)
     assert rec["classes"]["fact.number"]["passes_bar"] and rec["instrument_conditions_met"]
     assert rec["split"] == "held_out"
-    assert rec["passing_classes"] == ["fact.number"] and rec["hard_subset"] == {"positives": 12, "caught": 12,
+    assert rec["passing_classes"] == ["t9_blog:fact.number"] and rec["hard_subset"] == {"positives": 12, "caught": 12,
                                                                                 "passes": True}
     noisy = {**votes, items[40].claim_hash: [True, False, True]}
     assert r1.measure(items, noisy)["retest"] < 1.0
-    assert r1.majority([None, None, True]) is None and r1.majority([True, False, None]) is False
+    assert r1.majority([None, None, True]) is None and r1.majority([True, False, None]) is None
     rep = r1.report(items, {"votes": {LUNA.id: votes, LUNA_X.id: {}}}, [LUNA, LUNA_X])
     assert rep["recommended"] == LUNA.id and rep["split"] == "held_out"
     # the same numbers on the train side (or pooled) are exploration: no passing class, no recommendation
@@ -257,9 +257,9 @@ def test_cap_counts_the_cut_attempt_of_a_truncation_retry():
     amount, _ = r1.billed_cost(KIMI, user, _kimi_reply(cost_usd=0.01, truncation_retry_max_tokens=16384,
                                                        truncation_retry_reason="truncated_refusal"))
     assert amount == pytest.approx(0.01)
-    # earlier route attempts the reply reports (attempt_no 3: two before it) are charged at the worst attempt each
+    # earlier attempts the reply reports (attempt_no 3: two before it) are charged one attempt's worst case each
     amount, _ = r1.billed_cost(KIMI, user, _kimi_reply(cost_usd=0.01, attempt_no=3))
-    assert amount == pytest.approx(0.01 + 2 * r1.worst_attempt_cost(KIMI, user))
+    assert amount == pytest.approx(0.01 + 2 * r1.worst_call_cost(KIMI, user))
 
 
 def test_cap_charges_a_missing_cost_at_the_worst_case():
@@ -377,3 +377,102 @@ def test_unverified_votes_count_as_misses():
     rec = r1.measure(items, votes)
     assert rec["ok_cleared"] == round(26 / 30, 4) and rec["unverified_rate"] > r1.UNVERIFIED_MAX
     assert not rec["instrument_conditions_met"] and rec["passing_classes"] == []
+
+
+# ── review S272 round 3: non-finite costs, route attempts, split votes, per-writer precision ────────────────────
+
+
+def test_a_nan_or_inf_cost_is_charged_the_worst_case():
+    """Review S272 repro: cost_usd NaN, 300 items x 3 votes, cap 0.05: 900 calls ran with spent 0.0 and no stop."""
+    items = _many(300)
+    worst = min(r1.worst_call_cost(LUNA, r1.entailment_prompt(i)) for i in items)
+    uns = json.dumps({"verdict": "unsupported", "quote": "", "why": ""})
+    for bad in (float("nan"), float("inf")):
+        result = r1.run(items, [LUNA], cap=0.05, run_id="zz", caller=lambda *a, b=bad: _resp(uns, cost=b),
+                        log=lambda *a: None)
+        assert result["stopped"] and 0 < result["calls"] <= int(0.05 / worst)
+        assert result["spent_usd"] <= 0.05 and result["worst_case_charges"]["no_cost_worst_case"] == result["calls"]
+    # a NaN cut cost takes the worst-case cut path; Budget.charge falls back to the worst case on a NaN amount
+    user = r1.entailment_prompt(items[0])
+    amount, notes = r1.billed_cost(KIMI, user, _kimi_reply(cost_usd=0.01, truncation_cut_cost_usd=float("nan"),
+                                                           truncation_retry_max_tokens=16384))
+    assert amount == pytest.approx(0.01 + r1.call_cost(KIMI, user, r1.ceiling("kimi-k3"))) and notes
+    b = r1.Budget(1.0)
+    b.charge(float("nan"), 0.3)
+    assert b.charged == pytest.approx(0.3)
+    # a NaN ledger reading (a NaN cost row makes the SUM NaN) stops the run before any call
+    result = r1.run(_many(4), [KIMI], cap=2.0, run_id="zz", caller=lambda *a: _kimi_reply(cost_usd=0.001),
+                    log=lambda *a: None, spend_probe=lambda: float("nan"))
+    assert result["calls"] == 0 and "ledger" in result["stopped"]
+
+
+def test_the_gate_reserves_every_route_attempt():
+    """Review S272 repro: cap 1.01 x worst_call_cost, a reply of 0.5 x worst with attempt_no 4: the call ran and the
+    spend ended about 2.5x the cap."""
+    items = _many(1)
+    user = r1.entailment_prompt(items[0])
+    one = r1.worst_call_cost(KIMI, user)
+
+    def reply(*a):
+        return _kimi_reply(cost_usd=0.5 * one, attempt_no=4)
+    # four reserved attempts: the call does not fit, nothing is spent
+    result = r1.run(items, [KIMI], cap=1.01 * one, votes=1, run_id="zz", caller=reply, log=lambda *a: None,
+                    attempts_of=lambda inst: 4)
+    assert result["calls"] == 0 and result["stopped"] and result["spent_usd"] == 0
+    assert r1.worst_call_cost(KIMI, user, 4) == pytest.approx(4 * one)
+    # a reply past the reserved attempts stops the run at once
+    result = r1.run(_many(4), [KIMI], cap=2.0, votes=1, run_id="zz", caller=reply, log=lambda *a: None)
+    assert result["calls"] == 1 and "reserved attempt" in result["stopped"]
+
+    def boom(*a):
+        raise RuntimeError("route exhausted")
+    # a caller error is charged every reserved attempt
+    result = r1.run(items, [KIMI], cap=2.0, votes=1, run_id="zz", caller=boom, log=lambda *a: None,
+                    attempts_of=lambda inst: 3)
+    assert result["charged_usd"] == pytest.approx(3 * one, abs=1e-6) and result["reserved_attempts"] == {KIMI.id: 3}
+
+
+def test_route_attempts_counts_the_models_enabled_deployments(monkeypatch):
+    from shared.llm_client import deployments
+
+    monkeypatch.setattr(deployments, "alias_targets_sync", lambda key: ())
+    monkeypatch.setattr(deployments, "deployments_for_sync", lambda key: ["acc2", "acc3", "openai"])
+    assert r1.route_attempts(KIMI) == 3
+    monkeypatch.setattr(deployments, "alias_targets_sync", lambda key: ("m1", "m2"))
+    assert r1.route_attempts(KIMI) == 6
+    monkeypatch.setattr(deployments, "deployments_for_sync", lambda key: [])
+    assert r1.route_attempts(KIMI) == 1
+
+
+def test_a_split_vote_with_a_missing_vote_is_unverified():
+    """Review S272 repro: 25 hard violations [T, T, T] and 100 ok claims [T, F, None]: the ok claims counted as
+    cleared and the instrument passed while it fires on half of the real votes on ok claims."""
+    assert r1.majority([True, False, None]) is None and r1.majority([True, None, True]) is True
+    assert r1.majority([False, False, None]) is False and r1.majority([True, False]) is None
+    items = [_item(i, "fact.number", "violation", "hard") for i in range(25)]
+    items += [_item(100 + i, "fact.number", "ok") for i in range(100)]
+    votes = {it.claim_hash: [True] * 3 for it in items[:25]}
+    votes.update({it.claim_hash: [True, False, None] for it in items[25:]})
+    rec = r1.measure(items, votes)
+    assert rec["unverified"] == 100 and rec["ok_cleared"] == 0.0 and rec["retest"] == round(25 / 125, 4)
+    assert not rec["instrument_conditions_met"] and rec["passing_classes"] == []
+
+
+def test_precision_bar_is_per_writer_surface():
+    """Review S272 repro: a1 120 hard violations caught + 200 ok cleared, t9_social 20 violations + 12 ok all fired:
+    pooled precision 0.921 passed the class while t9_social fires at 0.625."""
+    def it(i, writer, label, stratum="representative"):
+        return r1.Item(f"{i:064x}", writer, "unsupported_superlative", label, stratum, "a" * 64, "content_text",
+                       f"claim {i}", "", "", (), "held_out")
+    items = [it(i, "a1", "violation", "hard") for i in range(120)]
+    items += [it(1000 + i, "a1", "ok") for i in range(200)]
+    items += [it(2000 + i, "t9_social", "violation") for i in range(20)]
+    items += [it(3000 + i, "t9_social", "ok") for i in range(12)]
+    votes = {x.claim_hash: [x.writer == "t9_social" or x.label == "violation"] * 3 for x in items}
+    rec = r1.measure(items, votes)
+    assert rec["precision"] == round(140 / 152, 4) and rec["precision_passes_bar"]          # pooled: reading only
+    social = rec["writers"]["t9_social"]
+    assert social["precision"] == 0.625 and not social["precision_passes_bar"]
+    assert rec["writers"]["a1"]["precision_passes_bar"]
+    assert rec["classes"]["unsupported_superlative"]["passing_writers"] == ["a1"]
+    assert rec["instrument_conditions_met"] and rec["passing_classes"] == ["a1:unsupported_superlative"]
