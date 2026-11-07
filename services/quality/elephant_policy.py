@@ -95,6 +95,10 @@ _REVIEW_FILLER = frozenset({
     "check", "checked", "checks", "fact", "fact-check", "fact-checked", "flag", "flagged", "flags", "keep", "kept",
     "as-is", "stays", "stay", "content", "fact_check_manual_check", "manual_check", "policy_elephant_riding",
     "before", "publishing", "publication", "here", "triggers", "trigger", "applies", "hold", "held",
+    # relative links and verification verbs ("..., which must be manually verified"): they name no concern
+    "which", "that", "these", "verify", "verified", "verification", "confirmation", "re-check",
+    # a bare locator of the ride ("(Day 3)", "in the highlights"): digits are not words here, so "Day 3" is "day"
+    "day", "in", "on", "at", "of", "highlights", "highlight", "itinerary", "summary", "description", "mentioned",
 })
 # The policy-hold reason a T2 version and its review row carry (D8).
 POLICY_HOLD = "elephant_riding"

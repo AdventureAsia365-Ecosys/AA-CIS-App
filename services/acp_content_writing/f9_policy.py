@@ -79,7 +79,9 @@ SERVICE_RE = re.compile(
     r"(?:entry|entrance) fees?|boat (?:ride|trip)s?|jeeps?|safaris?|(?:cooking|craft) (?:class|lesson)(?:es|s)?|"
     r"workshops?|briefings?)\b", re.I)
 INCLUSION_RE = re.compile(
-    r"\b(?:includ\w*|arranged|provided|organi[sz]ed|laid on|booked|reserved|planned|scheduled|built in|"
+    # "built in" is an inclusion ("time to swim is built in"), not a date ("built in 1200" is place history).
+    r"\b(?:includ\w*|arranged|provided|organi[sz]ed|laid on|booked|reserved|planned|scheduled|"
+    r"built in(?!\s+(?:the\s+)?(?:\d|(?:early|late|mid)\b))|"
     r"on the itinerary|part of (?:the|this|your) (?:trip|tour|day|itinerary))\b", re.I)
 TIME_RE = re.compile(
     r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?!\w)|\b\d{1,2}:\d{2}\b|\bo'clock\b"
@@ -234,7 +236,7 @@ ACTIVITY_NOUN_RE = re.compile(
     r"bik(?:e|es|ing)|"
     r"lessons?|class(?:es)?|workshops?|demonstrations?|performances?|shows?|ceremon(?:y|ies)|sessions?|visits?|"
     r"flights?|safaris?|picnics?|tastings?|cooking|weaving|naturalists?|experts?|hosts?|instructors?|"
-    r"activit(?:y|ies))\b", re.I)
+    r"parades?|festivals?|concerts?|fireworks|processions?|dances?|activit(?:y|ies))\b", re.I)
 # A clause that hands something to the visitor ("awaits", "offers", "is served") is never background.
 _OFFER_RE = re.compile(r"\b(?:await\w*|offer\w*|provid\w*|serv(?:e|es|ed|ing)|host\w*|welcom\w*|invit\w*|"
                        r"gives?|show(?:s|n)?\s+(?:you|guests)|points?\s+out|teach\w*|lead\w*|led)\b", re.I)
@@ -246,8 +248,10 @@ def _is_place_background(clause: Optional[str], prev: Optional[str] = None, lexi
     activity verb or noun, no offer, no clock time; and it describes a place: a relative clause with a background
     marker ("which has guarded the valley for 900 years", "which was built by the salt traders") or right after a
     locative clause (its antecedent is that place: "..., near the Tarvo fort, which looks out over the valley"), or
-    a locative clause ("near the temple famed for its views"). A view or time word is allowed only under a
-    background marker or a locative antecedent; anything less is not proven background."""
+    a locative clause ("near the temple famed for its views"). A view word is allowed only under a background
+    marker or a locative antecedent, a time word only under a background marker ("where monks have chanted at dawn
+    for centuries"); an event noun (parade, festival, show) is never background. Anything less is not proven
+    background."""
     if not clause or not clause.strip():
         return False
     m = _masked(clause, lexicon)
@@ -256,7 +260,10 @@ def _is_place_background(clause: Optional[str], prev: Optional[str] = None, lexi
         return False
     marker = bool(_BACKGROUND_MARKER_RE.search(m))
     if _PLACE_RELATIVE_RE.match(m):
-        return marker or bool(prev and _LOCATIVE_RE.match(_masked(prev, lexicon)))
+        # After a locative antecedent a view word is the place's ("which looks out over the valley"), but a time
+        # word with no background marker reads as an event the visitor attends ("which comes alive with lanterns
+        # each evening"): not proven background.
+        return marker or bool(prev and _LOCATIVE_RE.match(_masked(prev, lexicon)) and not TIME_RE.search(m))
     if _LOCATIVE_RE.match(m):
         return marker or not (TIME_RE.search(m) or VIEW_RE.search(m))
     return False

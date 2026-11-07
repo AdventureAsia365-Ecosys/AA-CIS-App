@@ -66,7 +66,12 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   (which re-audits and emits `POLICY_ELEPHANT_RIDING`) or overrides with a reason. `issues` given as a bare string or
   dict is one issue. The approve gate SQL reads `quality_scores.brand_audit_issues`. Not changed:
   `brand_standards.py` still tells the LLM "Elephant riding: always FACT_CHECK_MANUAL_CHECK" (a prompt change moves
-  every A1 audit and needs its own regression run); once it stops, POLICY + FACT_CHECK can simply hold.
+  every A1 audit and needs its own regression run, and a detector miss would then lose the LLM's fail-safe hold on
+  the ride); once it stops, POLICY + FACT_CHECK can simply hold. Fix pass 3 (probing the usual LLM wordings): the
+  review-boilerplate list also takes relative links ("which", "that"), verification verbs ("must be manually
+  verified") and bare locators ("(Day 3)", "in the highlights"), so "Itinerary includes elephant riding (Day 3), which
+  must be manually verified" is the policy, while "..., which is not in the source" still holds ("not" / "source"
+  are not filler).
 - **F9 claim span (follow-up 3).** `f9_policy.claim_span` picks the clause of the quoted sentence that holds the
   judge's claim (most shared words), with the sentence's trip subject in front when the clause continues its verb
   phrase ("you visit the market and taste the tea") or, fix pass, when it names a service, a time or a view (a
@@ -83,6 +88,10 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   lexicon (place names masked: 'Camp Road'), and a claim-word tie goes to the clause with the claim's verb-like words
   ("Camp Road was paved" -> "which was paved in 1990"). A claim with no word in common with the sentence
   (paraphrase, placeholder) falls back to the whole sentence (fail safe, the pre-W1 behaviour).
+  Fix pass 3: `INCLUSION_RE` "built in" no longer matches a date ("which was built in 1200" is place history; "time
+  to swim is built in" is still an inclusion); a relative after a locative antecedent with a time word and no
+  background marker ("near the old fort, which comes alive with a lantern parade each evening") is not proven
+  background; event nouns (parade, festival, concert, fireworks, procession, dance) count as activity nouns.
 - **/stats (follow-up 1).** The F9_cta_fact gate rows count in `failed` / `blocking_failed` only the entries with a
   content class; `failed_judge_unavailable` / `failed_text_integrity` count the rest; `f9_classes` sums the classes per
   channel (stored `f9_policy.classes`, else parsed).
@@ -114,12 +123,13 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
 - The publish record is written after the publish (last step of `process_export`): a contract read can never delay
   or fail a publish, and it records what was actually published. A refused publish records nothing (the refusal is
   logged by its own path).
-- Elephant issue rule (fix pass): a word list for "product-truth concern" is a heuristic over free LLM text. It is
-  fail safe in the direction that matters (an unknown concern word in a voice issue holds the tour for a human; a
-  riding issue that also names another concern in the SAME issue string counts as riding). The pre-split
-  `FACT_CHECK_MANUAL_CHECK`-alone rows keep the pre-split keep on empty issues on purpose: the detector added that code
-  with no issue text and the judge path's only issue is the judge feedback, so requiring a riding issue there would
-  turn every stored elephant tour into a plain manual check.
+- Elephant issue rule (fix pass 2/3): the voice / SEO / format test and the review-boilerplate list are heuristics
+  over free LLM text, so the rule fails CLOSED: an issue is accounted for only when it is about the ride (mixed issues
+  split, every other clause judged alone) or a narrow voice / SEO / format issue with no product-truth word. The cost
+  is over-holding (a voice issue that happens to name "itinerary" holds; a reviewer clicks or edits), never a false
+  keep. The pre-split `FACT_CHECK_MANUAL_CHECK`-alone rows keep the pre-split keep on empty issues on purpose: the
+  detector added that code with no issue text, so requiring a riding issue there would turn every stored elephant
+  tour into a plain manual check.
 - The day-oracle codes are `block` in the contract while the oracle is still shadow in validate: the report must show
   what enforcing them would move (that is the W1 proof); precision is read on the flip list before any W3 enforce.
 - The sha "assert" is a recorded `sha_match` + an error log, not an exception: report mode never fails a write. The

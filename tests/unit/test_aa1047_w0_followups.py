@@ -119,6 +119,28 @@ def test_place_background_with_a_view_or_time_word_warns(sentence, claim):
     assert out["blocking"] is False and out["f9_policy"]["classes"] == {fp.UNSUPPORTED_OTHER: 1}
 
 
+# W1 fix pass 3: a dated "built in" is place history, not an inclusion; a timed event after a locative antecedent
+# (no background marker) and an event noun are not proven background, so they hold.
+@pytest.mark.parametrize("sentence,claim,holds", [
+    ("You visit the temple, which was built in 1200.", "built in 1200", False),
+    ("You visit the market, then the Ondra temple, which dates back to 1100.", "dates back to 1100", False),
+    ("You stay in Ondra, near the old fort, which comes alive with a lantern parade each evening.",
+     "lantern parade each evening", True),
+    ("You stay in Ondra, near the old fort, which hosts a nightly dance show.", "hosts a nightly dance show", True),
+    ("You stay near the lake, where boat tours have run since 1990.", "boat tours have run since 1990", True),
+    ("You stay near the waterfall, famous for its sunrise boat rides.", "famous for its sunrise boat rides", True),
+    ("You stay near the waterfall, where swimming is possible.", "swimming is possible", True),
+])
+def test_dated_history_warns_and_timed_events_hold(sentence, claim, holds):
+    assert (fp.claim_kinds(sentence, claim) != ()) is holds
+
+
+def test_built_in_is_still_an_inclusion_without_a_date():
+    assert fp.INCLUSION_RE.search("Time to swim is built in.")
+    assert not fp.INCLUSION_RE.search("The bridge was built in 1200.")
+    assert not fp.INCLUSION_RE.search("The bridge was built in the early 1900s.")
+
+
 def test_a_claim_word_tie_goes_to_the_clause_with_the_claims_verb():
     assert fp.claim_span("You stay at the lodge, on Camp Road, which was paved in 1990.", "Camp Road was paved") \
         == "which was paved in 1990."
@@ -294,6 +316,29 @@ def test_an_unaccounted_issue_keeps_the_hold(codes, issues):
 ])
 def test_a_riding_or_voice_only_issue_list_is_the_policy(codes, issues):
     assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=issues) is True
+
+
+# W1 fix pass 3: how the LLM audit usually words the ride (brand_standards: "Elephant riding: always
+# FACT_CHECK_MANUAL_CHECK") is the policy; a relative "which must be verified" or a "(Day 3)" locator names no
+# other concern.
+@pytest.mark.parametrize("issue", [
+    "Highlights mention elephant riding, which requires manual fact check per brand standards.",
+    "Elephant riding mentioned in Day 2 itinerary - requires FACT_CHECK_MANUAL_CHECK per AA brand standards.",
+    "Elephant riding is included on Day 2; this requires a manual fact check.",
+    "Itinerary includes elephant riding (Day 3), which must be manually verified.",
+    "The tour offers an elephant ride at the camp; flagged for human review per brand standards.",
+    "Elephant back safari on Day 2 needs manual verification.",
+])
+def test_usual_riding_issue_wordings_are_the_policy(issue):
+    assert ep.is_policy_only_hold("manual_check", POLICY_FC, RIDE, None, issues=[issue]) is True
+
+
+@pytest.mark.parametrize("issue", [
+    "Itinerary includes elephant riding (Day 3), which is not in the source.",
+    "Elephant riding on day 2, which must be verified, and the Day 4 sunset cruise is not listed.",
+])
+def test_a_riding_issue_with_another_concern_in_a_relative_still_holds(issue):
+    assert ep.is_policy_only_hold("manual_check", POLICY_FC, RIDE, None, issues=[issue]) is False
 
 
 @pytest.mark.parametrize("text,voice", [
