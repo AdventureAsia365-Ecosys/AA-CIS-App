@@ -4,7 +4,7 @@ No LLM, no DB, no network. It runs over stored T9 pieces: the golden fixture (ro
 the T9 samples) and/or a read-only export of acp_shared.content_piece rows with their repair_log. The stored gate
 verdicts are the cassette: the F9 judge is never called; a piece whose F9 verdict is missing or was an outage is a
 cassette MISS and is reported as "needs rejudge", never as a pass. An SEO-fit model call is a cassette miss too
-(`fit_seo_fields` raises): it is counted, never answered.
+(`fit_seo_fields` raises): the piece is counted as a miss (never a hit) and its SEO fields are left out of the diff.
 
 Per piece it records, through the code of the checkout it runs in:
 
@@ -12,9 +12,14 @@ Per piece it records, through the code of the checkout it runs in:
   without the seam) and its sha;
 - route: sentence_repair.plan over the stored ledger (gates + sentences), hold_failure, never_holds, the style-only
   repair choice, the cut gates;
-- seo (blog): the SEO-fit calls _fit_seo_meta would make and the fields it would keep;
-- guard (pieces with a repair_log): the AA-528 decision for each consecutive pair of attempt ledgers;
-- contract: the REPORT-mode final contract over the stored text and the dry store's stamp (stored sha == gated sha).
+- seo (blog): the SEO-fit calls _fit_seo_meta would make and the fields it would keep (a call = an SEO miss);
+- guard (pieces with a repair_log): the AA-528 decision for each consecutive pair of attempt ledgers, with the
+  stable-key evidence (keys added / removed, key counts, gate sets) when the checkout has stable_keys;
+- contract: the REPORT-mode final contract over the stored text; for a content_piece export with a stored contract
+  (writer_input.final_contract), the gated sha vs the sha _finalize_piece stored (a mismatch = a post-gate edit in
+  production) and vs the row's text now (a later tenant edit, reported only). Golden samples carry no stored
+  contract: sha "n/a". The replay never re-runs the post-gate tail of run_write_background; the post-gate-edit
+  guard of the code itself is tests/unit/quality/test_chain_order.py (+ the dry-store seam unit test).
 
 Two runs make the diff: one on a main checkout (`--out base.json`), one on the branch (`--base base.json`). The
 script itself only needs the modules of the checkout it runs in, so the branch copy of this file runs against main:
@@ -24,7 +29,8 @@ script itself only needs the modules of the checkout it runs in, so the branch c
         --base base.json --out branch.json --report report.md
 
 The report classifies every difference as a DECLARED diff (DECLARED below: one id per change this train makes on
-purpose) or UNDECLARED. Exit code 1 when any difference is undeclared or a dry-store sha mismatches.
+purpose, checked against the declared SHAPE, not just the direction) or UNDECLARED. Exit code 1 when any difference
+is undeclared, a piece is missing, or a stored contract shows a post-gate edit.
 """
 from __future__ import annotations
 
@@ -41,9 +47,14 @@ from unittest.mock import patch
 SCHEMA = "aa1049-t9-replay/1"
 DECLARED = {
     "D-seo-1": "a title/meta fixed by a whole-sentence / separator prefix of the writer's value: 0 SEO-fit calls",
-    "D-seo-2": "at most one SEO-fit call per attempt (the retry call is gone)",
+    "D-seo-2": "at most one SEO-fit call per attempt (the retry call is gone); unit tests only: a replayed fit call is "
+               "a cassette miss that aborts before main's retry, so the replay can never show it",
     "D-guard-1": "regression guard on stable keys: a same-gate swap of flagged sentences is reverted",
     "D-guard-2": "regression guard on stable keys: clearing more findings than it adds is kept",
+}
+SEO_FIELDS = ("seo_title", "meta_description", "slug")
+NOT_DECLARED = {
+    "MISS": "a section with no recorded answer on either side (an SEO-fit cassette miss): not compared",
 }
 
 
@@ -146,79 +157,126 @@ def _seo(p: dict) -> Optional[dict]:
     with patch.object(service, "fit_seo_fields", side_effect=miss):
         out, _ = asyncio.run(service._fit_seo_meta(seo, ctx.get("keyword"), body=p["content_text"], context=ctx,
                                                    request_id="replay", hyg=None, taken_titles=[]))
-    return {"fit_calls": len(calls), "seo_title": out.get("seo_title"), "meta_description": out.get("meta_description"),
-            "slug": out.get("slug")}
+    return {"fit_calls": len(calls), "miss": bool(calls), **{k: out.get(k) for k in SEO_FIELDS},
+            "writer": {k: p[k] for k in SEO_FIELDS}}
 
 
 def _guard(p: dict) -> Optional[list]:
+    """One entry per consecutive pair of attempt ledgers: {"revert": the guard's decision in this checkout, "keys": the
+    stable-key evidence (None on a checkout without stable_keys or in gate_names mode)}."""
     if not p.get("repair_log"):
         return None
     from services.acp_content_writing import service
     ledgers = [e.get("gate_ledger") for e in p["repair_log"] if isinstance(e, dict) and e.get("gate_ledger")]
     ledgers.append(p["gate_ledger"])
+    try:
+        from services.acp_content_writing import stable_keys
+        keys_mode = service.regression_guard_mode() == service.GUARD_STABLE_KEYS
+    except (ImportError, AttributeError):
+        stable_keys, keys_mode = None, False
     out = []
     for prev, cur in zip(ledgers, ledgers[1:]):
-        pb, cb = service._regression_failures(prev), service._regression_failures(cur)
-        by_names = bool(cb - pb) and len(cb) >= len(pb)
-        try:
-            from services.acp_content_writing import stable_keys
-            if service.regression_guard_mode() == service.GUARD_STABLE_KEYS:
-                out.append(stable_keys.regressed(prev, cur)[1])
-                continue
-        except (ImportError, AttributeError):
-            pass
-        out.append(by_names)
+        if keys_mode:
+            c = stable_keys.compare(prev, cur)
+            out.append({"revert": c["revert"], "keys": {
+                "new": sorted(map(list, c["new"])), "removed": sorted(map(list, c["removed"])),
+                "prev_keys": c["prev_keys"], "cur_keys": c["cur_keys"],
+                "prev_gates": sorted(c["prev_gates"]), "cur_gates": sorted(c["cur_gates"])}})
+        else:
+            pb, cb = service._regression_failures(prev), service._regression_failures(cur)
+            out.append({"revert": bool(cb - pb) and len(cb) >= len(pb), "keys": None})
     return out
+
+
+def _stored_sha(p: dict) -> dict:
+    """The stored contract's shas of a content_piece export row: gated (text_sha, written at gate time), stored (what
+    _finalize_piece received) and now (the row's text). No stored contract (a golden sample, a pre-W1 piece): n/a."""
+    from services.quality import final_contract as fc
+    rec = (p.get("writer_input") or {}).get("final_contract")
+    if not isinstance(rec, dict) or not rec.get("text_sha"):
+        return {"sha": "n/a"}
+    gated, now = rec["text_sha"], fc.text_sha(p["content_text"])
+    stored = rec.get("stored_sha") or now
+    return {"sha": "match" if gated == stored else "post_gate_edit", "edited_since_store": stored != now}
 
 
 def _contract(p: dict) -> dict:
     from services.acp_content_writing import service
-    from services.quality import final_contract as fc
     rec = service._t9_final_contract(
         p["content_text"], channel=p["channel"], cta=p["context"].get("cta"),
-        seo_meta={"seo_title": p["seo_title"], "meta_description": p["meta_description"], "slug": p["slug"]},
-        gate_ledger=p["gate_ledger"], held_reason=None, status=p.get("status") or "approved")
-    try:
-        from services.acp_content_writing import piece_store
-        store = piece_store.DryStore()
-        row = asyncio.run(store.finalize(None, content_text=p["content_text"], status=p.get("status"),
-                                         final_contract=rec))
-        stamped = row["final_contract"] or {}
-    except ImportError:
-        stamped = fc.stamp_stored(rec, fc.text_sha(p["content_text"])) or {}
+        seo_meta={k: p[k] for k in SEO_FIELDS}, gate_ledger=p["gate_ledger"], held_reason=None,
+        status=p.get("status") or "approved")
     return {"verdict": (rec or {}).get("verdict"), "findings": sorted(str(f.get("code") if isinstance(f, dict) else f)
-                                                                   for f in (rec or {}).get("findings") or []),
-            "sha_match": stamped.get("sha_match")}
+                                                                   for f in (rec or {}).get("findings") or [])}
 
 
 def replay(pieces: list[dict]) -> dict:
     rows = {}
     for p in pieces:
-        rows[p["id"]] = {"channel": p["channel"], "cassette_hit": _cassette_hit(p), "input": _input(p),
-                         "route": _route(p), "seo": _seo(p), "guard": _guard(p), "contract": _contract(p)}
+        seo = _seo(p)
+        f9_hit = _cassette_hit(p)
+        rows[p["id"]] = {"channel": p["channel"], "f9_hit": f9_hit, "seo_miss": bool(seo and seo["miss"]),
+                         "cassette_hit": f9_hit and not (seo and seo["miss"]), "input": _input(p),
+                         "route": _route(p), "seo": seo, "guard": _guard(p), "contract": _contract(p),
+                         "stored": _stored_sha(p)}
     return {"schema": SCHEMA, "rows": rows}
 
 
 # ---------------------------------------------------------------------------------------------------------- diff
 
+def _seo_prefix(writer: Optional[str], value: Optional[str]) -> bool:
+    """D-seo-1's shape: the value is the writer's own value or a non-empty prefix of it (whole sentences / the part
+    before a separator: seo_builder never adds a character)."""
+    return value == writer or bool(value and writer and writer.startswith(value.rstrip()))
+
+
+def _classify_seo(base: dict, cur: dict) -> tuple[str, str]:
+    if base.get("miss") and cur.get("miss"):
+        return "MISS", "SEO-fit cassette miss on both sides: not compared"
+    if cur.get("fit_calls", 0) == 0 and base.get("fit_calls", 0) > 0:
+        writer = cur.get("writer") or base.get("writer") or {}
+        if cur.get("slug") != base.get("slug"):
+            return "UNDECLARED", "slug changed"
+        changed = [k for k in ("seo_title", "meta_description") if cur.get(k) != writer.get(k)]
+        if all(_seo_prefix(writer.get(k), cur.get(k)) for k in changed):
+            return "D-seo-1", "fixed in code by a prefix of the writer's value, no fit call"
+        return "UNDECLARED", "0 fit calls but a field is not a prefix of the writer's value"
+    if cur.get("miss") or base.get("miss"):
+        return "UNDECLARED", "a fit call on one side only (not the D-seo-1 shape)"
+    return "UNDECLARED", "different SEO fields"
+
+
+def _classify_guard_pair(base: dict, cur: dict) -> tuple[str, str]:
+    """One flipped guard decision. D-guard-1 (branch reverts, main kept): the new keys are all in gates the previous
+    attempt already failed and the gate set is unchanged (a same-gate swap). D-guard-2 (branch keeps, main reverted):
+    the rewrite has fewer keys. Anything else, or no stable-key evidence, is UNDECLARED."""
+    k = cur.get("keys")
+    if not k:
+        return "UNDECLARED", "guard flipped without stable-key evidence"
+    prev_g, cur_g = set(k["prev_gates"]), set(k["cur_gates"])
+    new_g = {g for g, _ in k["new"]}
+    if cur["revert"] and not base["revert"]:
+        if k["new"] and new_g <= prev_g and cur_g == prev_g:
+            return "D-guard-1", "stable keys revert a same-gate swap"
+        return "UNDECLARED", (f"revert not a same-gate swap (new gates {sorted(new_g - prev_g)}, gates "
+                              f"{len(prev_g)}->{len(cur_g)})")
+    if base["revert"] and not cur["revert"]:
+        if k["cur_keys"] < k["prev_keys"]:
+            return "D-guard-2", "stable keys keep a rewrite with fewer findings"
+        return "UNDECLARED", f"keep without fewer keys ({k['prev_keys']}->{k['cur_keys']})"
+    return "UNDECLARED", "guard changed"
+
+
+def _revert(x: Any) -> Any:
+    return x.get("revert") if isinstance(x, dict) else x
+
+
 def _classify(section: str, base: Any, cur: Any) -> tuple[str, str]:
-    """(declared id or 'UNDECLARED', note) for one differing section of one piece."""
+    """(declared id or 'UNDECLARED' / 'MISS', note) for one differing section (guard: one attempt pair) of a piece."""
     if section == "seo" and base and cur:
-        same_out = all(base.get(k) == cur.get(k) for k in ("seo_title", "meta_description", "slug"))
-        if cur["fit_calls"] < base["fit_calls"]:
-            if cur["fit_calls"] == 0:
-                return "D-seo-1", "fixed in code, no fit call"
-            return "D-seo-2", "fewer fit calls"
-        if same_out:
-            return "UNDECLARED", "same fields, more fit calls"
-        return "UNDECLARED", "different SEO fields"
-    if section == "guard" and base is not None and cur is not None and len(base) == len(cur):
-        flips = [(b, c) for b, c in zip(base, cur) if b != c]
-        if flips and all(c and not b for b, c in flips):
-            return "D-guard-1", "stable keys revert a swap"
-        if flips and all(b and not c for b, c in flips):
-            return "D-guard-2", "stable keys keep a net-better rewrite"
-        return "D-guard-1/2", "both directions"
+        return _classify_seo(base, cur)
+    if section == "guard" and isinstance(base, dict) and isinstance(cur, dict):
+        return _classify_guard_pair(base, cur)
     return "UNDECLARED", f"{section} changed"
 
 
@@ -228,12 +286,28 @@ def diff(base: dict, cur: dict) -> dict:
     for pid in sorted(set(base["rows"]) & set(cur["rows"])):
         b, c = base["rows"][pid], cur["rows"][pid]
         for section in ("input", "route", "seo", "guard", "contract"):
-            if section == "input" and "fs_sha" not in (b.get("input") or {}):
-                b_in = {k: v for k, v in (c.get("input") or {}).items() if k in (b.get("input") or {})}
-                if b_in == b.get("input"):
+            bs, cs = b.get(section), c.get(section)
+            if section == "input" and "fs_sha" not in (bs or {}):
+                b_in = {k: v for k, v in (cs or {}).items() if k in (bs or {})}
+                if b_in == bs:
                     continue
-            if b.get(section) != c.get(section):
-                did, note = _classify(section, b.get(section), c.get(section))
+            if section == "seo" and bs and cs:
+                bs = {k: bs.get(k) for k in ("fit_calls", "miss", *SEO_FIELDS)}
+                cs = {k: cs.get(k) for k in ("fit_calls", "miss", *SEO_FIELDS)}
+                if bs != cs or (bs["miss"] and cs["miss"]):
+                    did, note = _classify_seo(b["seo"], c["seo"])
+                    out.append({"piece": pid, "section": section, "declared": did, "note": note})
+                continue
+            if section == "guard" and isinstance(bs, list) and isinstance(cs, list) and len(bs) == len(cs):
+                for i, (bp, cp) in enumerate(zip(bs, cs)):
+                    if _revert(bp) != _revert(cp):
+                        bp = bp if isinstance(bp, dict) else {"revert": bp, "keys": None}
+                        cp = cp if isinstance(cp, dict) else {"revert": cp, "keys": None}
+                        did, note = _classify_guard_pair(bp, cp)
+                        out.append({"piece": pid, "section": f"guard[{i}]", "declared": did, "note": note})
+                continue
+            if bs != cs:
+                did, note = _classify(section, bs, cs)
                 out.append({"piece": pid, "section": section, "declared": did, "note": note})
     return {"diffs": out, "missing": missing}
 
@@ -242,15 +316,20 @@ def summary(cur: dict, d: Optional[dict]) -> dict:
     rows = cur["rows"].values()
     s = {"pieces": len(cur["rows"]), "by_channel": dict(Counter(r["channel"] for r in rows)),
          "cassette_hits": sum(r["cassette_hit"] for r in rows),
-         "cassette_misses_needs_rejudge": sum(not r["cassette_hit"] for r in rows),
+         "cassette_misses_f9_needs_rejudge": sum(not r["f9_hit"] for r in rows),
+         "cassette_misses_seo_fit": sum(r["seo_miss"] for r in rows),
          "input_errors": sum(1 for r in rows if "error" in (r["input"] or {})),
-         "sha_match": sum(1 for r in rows if r["contract"]["sha_match"] is True),
-         "sha_mismatch": sum(1 for r in rows if r["contract"]["sha_match"] is False),
+         "stored_sha_na": sum(1 for r in rows if r["stored"]["sha"] == "n/a"),
+         "stored_sha_match": sum(1 for r in rows if r["stored"]["sha"] == "match"),
+         "post_gate_edit": sum(1 for r in rows if r["stored"]["sha"] == "post_gate_edit"),
+         "edited_since_store": sum(1 for r in rows if r["stored"].get("edited_since_store")),
          "seo_fit_calls": sum((r["seo"] or {}).get("fit_calls", 0) for r in rows),
          "guard_pairs": sum(len(r["guard"] or []) for r in rows)}
     if d is not None:
-        s["declared"] = dict(Counter(x["declared"] for x in d["diffs"] if x["declared"] != "UNDECLARED"))
-        s["undeclared"] = sum(1 for x in d["diffs"] if x["declared"] == "UNDECLARED")
+        ids = Counter(x["declared"] for x in d["diffs"])
+        s["declared"] = {k: v for k, v in ids.items() if k in DECLARED}
+        s["not_compared"] = {k: v for k, v in ids.items() if k in NOT_DECLARED}
+        s["undeclared"] = sum(v for k, v in ids.items() if k not in DECLARED and k not in NOT_DECLARED)
         s["missing_pieces"] = len(d["missing"])
     return s
 
@@ -261,7 +340,7 @@ def report_md(s: dict, d: Optional[dict]) -> str:
     if d is not None:
         lines += ["", "## Differences", "", "| piece | section | declared | note |", "|---|---|---|---|"]
         lines += [f"| {x['piece']} | {x['section']} | {x['declared']} | {x['note']} |" for x in d["diffs"]] or ["|"]
-        lines += ["", "## Declared diffs", ""] + [f"- **{k}** {v}" for k, v in DECLARED.items()]
+        lines += ["", "## Declared diffs", ""] + [f"- **{k}** {v}" for k, v in {**DECLARED, **NOT_DECLARED}.items()]
     return "\n".join(lines) + "\n"
 
 
@@ -281,7 +360,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.report:
         Path(a.report).write_text(report_md(s, d), encoding="utf-8")
     print(json.dumps(s, indent=1))
-    bad = s.get("undeclared", 0) or s["sha_mismatch"] or s.get("missing_pieces", 0)
+    bad = s.get("undeclared", 0) or s["post_gate_edit"] or s.get("missing_pieces", 0)
     return 1 if bad else 0
 
 

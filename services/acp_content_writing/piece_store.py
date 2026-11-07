@@ -7,7 +7,8 @@ a free offline replay can swap for a dry one.
 - the store step: run_write_background's one `service._finalize_piece` call. In production it writes the row
   (unchanged); inside `use_store(DryStore())` `_finalize_piece` hands the row to the dry store instead, which stamps
   the final contract with the sha of the text it would store (`final_contract.stamp_stored`) and touches no database.
-  A replay asserts on the dry rows that the stored sha equals the gated sha.
+  A replay that drives the store step reads the stamp on the dry rows (stored sha vs gated sha); the offline
+  declared-diff replay (scripts/quality/replay_aa1049_t9.py) does not drive it yet and checks stored contracts only.
 
 The active store is a ContextVar: a replay sets it for its own task only; production never sets it.
 """
