@@ -473,7 +473,8 @@ BRAND_AUDIT_SCHEMA = {
 BRAND_AUDIT_UNAVAILABLE = "BRAND_AUDIT_UNAVAILABLE"
 
 # A code that always means "a human must look", regardless of how many codes there are.
-_MANUAL_CHECK_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK"}
+# AA-1047: + the elephant-riding policy's own code (services/quality/elephant_policy.POLICY_CODE).
+_MANUAL_CHECK_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK", "POLICY_ELEPHANT_RIDING"}
 
 # AA-1026 I6: a brand audit answered on one of these connections may flag or hold a tour, never pass it. Since CIS
 # migrations 331 / 332 the brand audit routes (s1_brand_audit, t2_brand_audit) end on an acc2 Bedrock model (Nova

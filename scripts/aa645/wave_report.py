@@ -198,9 +198,10 @@ def outcome(row: dict) -> str:
 
 
 def _fact_check(v: dict) -> bool:
-    """Held on the elephant-riding rule: brand_audit stores FACT_CHECK_MANUAL_CHECK (an exact `in` on "FACT_CHECK"
-    never matched it)."""
-    return any(str(c).startswith("FACT_CHECK") for c in v.get("brand_audit_codes") or [])
+    """Held on the elephant-riding rule: brand_audit stores POLICY_ELEPHANT_RIDING (AA-1047), FACT_CHECK_MANUAL_CHECK
+    on a version written before it (an exact `in` on "FACT_CHECK" never matched it)."""
+    return any(str(c).startswith("FACT_CHECK") or str(c) == "POLICY_ELEPHANT_RIDING"
+               for c in v.get("brand_audit_codes") or [])
 
 
 def _mean(xs: list) -> Optional[float]:

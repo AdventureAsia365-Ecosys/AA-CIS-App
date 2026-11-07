@@ -19,6 +19,8 @@ export const SEO_META_MAX = 155;
 // AA-626 — classify a gate failure code by nature.
 const PRODUCT_TRUTH_CODES = new Set([
   "FACT_CHECK_MANUAL_CHECK",
+  // AA-1047: the elephant-riding policy's own code (was FACT_CHECK_MANUAL_CHECK) — a person reviews the tour.
+  "POLICY_ELEPHANT_RIDING",
   "UNSUPPORTED_NUMBER",
   "MISSING_FIELD",
   "ITINERARY_DAY_COUNT_MISMATCH",

@@ -28,6 +28,7 @@ import json
 from typing import Any, Optional
 
 from services.quality import elephant_policy
+from services.quality.elephant_policy import LEGACY_CODE as ELEPHANT_LEGACY_CODE
 from services.quality.elephant_policy import POLICY_CODE as ELEPHANT_CODE
 from services.quality.registry import threshold
 
@@ -66,6 +67,8 @@ def stored_result(row: Any) -> dict:
         "failure_codes": [str(c) for c in _json(_get(row, "failure_codes"), [])],
         "brand_audit_status": _get(row, "brand_audit_status"),
         "brand_audit_codes": [str(c) for c in _json(_get(row, "brand_audit_codes"), [])],
+        # AA-1047: the LLM audit's issues (the elephant rule reads them to tell its own restatement from another check)
+        "brand_audit_issues": list(_json(_get(row, "brand_audit_issues"), [])),
         "fix_pass_applied": bool(_get(row, "fix_pass_applied")),
         "writer_version": metadata.get("writer_version"),
         "metadata": metadata,
@@ -80,7 +83,8 @@ def is_policy_keep(result: dict) -> bool:
     code its only brand code, and the detector hits the stored text or the raw source. A FACT_CHECK_MANUAL_CHECK the
     LLM audit raised for another fact check (no elephant riding anywhere) is not a policy keep."""
     return elephant_policy.is_policy_only_hold(result.get("brand_audit_status"), result.get("brand_audit_codes"),
-                                               result.get("content"), result.get("source"))
+                                               result.get("content"), result.get("source"),
+                                               issues=result.get("brand_audit_issues"))
 
 
 def blockers(row: Any) -> list[dict]:
@@ -106,7 +110,7 @@ def blockers(row: Any) -> list[dict]:
                     "detail": f"{len(grounding['violations'])} sentence(s) the source does not support"})
     audit = r["brand_audit_status"]
     keep = is_policy_keep(r)
-    codes = [c for c in r["brand_audit_codes"] if not (keep and c == ELEPHANT_CODE)]
+    codes = [c for c in r["brand_audit_codes"] if not (keep and c in (ELEPHANT_CODE, ELEPHANT_LEGACY_CODE))]
     if audit == "flagged" and not r["fix_pass_applied"]:
         out.append({"code": "brand_flagged_unfixed",
                     "detail": "brand audit flags not repaired" + (": " + ", ".join(codes) if codes else "")})

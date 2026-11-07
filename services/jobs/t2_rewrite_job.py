@@ -228,6 +228,32 @@ def policy_hold_hits(pt, tour_dict: dict) -> list[dict]:
     return [{**h, "where": "master" if h["where"] == "generated" else h["where"]} for h in hits]
 
 
+def final_contract_record(rewritten: dict, tour_dict: dict, pt, *, exit: str, actual: str, qa: "dict | None" = None,
+                          fallback_held: bool = False, score: "float | None" = None, gated: "dict | None" = None,
+                          policy_hold: bool = False) -> "dict | None":
+    """AA-1047 W1 (root ADR 0020 "one exit", T10): the REPORT-mode final contract of a T2 version as it is saved —
+    the verdict the target design gives (ai_generated / needs_review / policy_hold) next to the status the current
+    gates gave (``actual``), the sha of the saved text and, when ``gated`` (the draft T3 checked) is given, whether a
+    code step changed it after T3. Recorded admin-only in judge_breakdown.final_contract; never changes the status.
+    Fails open: an error logs and returns None."""
+    from services.quality import elephant_policy
+    from services.quality import final_contract as fc
+    try:
+        inp = fc.T2Input(
+            content=rewritten, master=tour_dict, raw_source=elephant_policy.raw_source_from_row(pt),
+            structural_issues=list((qa or {}).get("structural_issues") or []),
+            grounding_issues=list((qa or {}).get("grounding_issues") or []),
+            fallback_writer_held=fallback_held, policy_hold=policy_hold, score=score,
+            gated_sha=fc.tour_text_sha(gated) if gated is not None else None)
+        record = fc.stamp_stored(fc.check_t2(inp, exit=exit, actual=actual).record(), fc.tour_text_sha(rewritten))
+        fc.log_record(record)
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the save
+        logger.warning("final_contract_failed", workflow="t2", exit=exit, error_type=type(exc).__name__,
+                       error=str(exc)[:300])
+        return None
+
+
 def _as_list(value) -> list:
     if isinstance(value, list):
         return value
@@ -278,6 +304,9 @@ async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     rewritten, dash_log = policy_hold_content(tour_dict, brand_rules)
     mark = {"reason": elephant_policy.POLICY_HOLD, "decision": "ADR 0020 D8", "llm_calls": 0,
             "hits": hits[:10]}
+    # AA-1047 W1: the REPORT-mode final contract of this exit (admin-only, judge_breakdown.final_contract)
+    contract = final_contract_record(rewritten, tour_dict, pt, exit="policy_hold", actual="needs_review",
+                                     policy_hold=True)
     progress_show(rewritten)
     progress_step("save")
     async with pool.acquire() as conn:
@@ -292,7 +321,8 @@ async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 qa_auto_passed = true,
                 judge_breakdown = $2::jsonb
             WHERE id = $3::uuid
-        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark}, default=str), version_id)
+        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark, "final_contract": contract}, default=str),
+            version_id)
         detail = [{"check_id": f"policy:{elephant_policy.POLICY_HOLD}", "field": h["field"],
                    "description": f"Elephant riding in the {h['where']} {h['field']}: the Master text is kept "
                                   "verbatim for a human review (policy, no rewrite)",
@@ -404,6 +434,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes
             interim = t2_interim.enabled()
             dashes_before = em_dash_count(rewritten)
+            gated_text = dict(rewritten)   # AA-1047 W1: the kept draft as T3 checked it (before the last code fix)
             rewritten, dash_log = fix_t2_dashes(rewritten, tour_dict)
             diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log,
                                  **({"fixed_in_t3": qa.get("em_dash_fixes", 0)} if interim else {})}
@@ -444,6 +475,13 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             if inst_mark is not None:
                 judge_breakdown = {**(judge_breakdown or {}), "route_degraded": inst_mark}
                 diag["route_degraded"] = inst_mark
+            # AA-1047 W1 (root ADR 0020 "one exit"): the REPORT-mode final contract of this save (admin-only).
+            contract = final_contract_record(
+                rewritten, tour_dict, pt, exit="done", actual=new_status, qa=qa,
+                fallback_held=bool((fb_mark or {}).get("held")), score=rewrite_score, gated=gated_text)
+            if contract is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "final_contract": contract}
+                diag["final_contract"] = {k: contract.get(k) for k in ("verdict", "agrees", "flip", "sha_match")}
             if judge_breakdown is not None:
                 diag["judge"] = {"binding": judge_breakdown.get("binding"),
                                  "brand_claims_unsupported": len(

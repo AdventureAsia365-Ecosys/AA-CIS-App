@@ -455,6 +455,10 @@ class ContentState(TypedDict):
     # LangGraph keeps them (AA-209 gotcha).
     writing_memory:         Optional[dict]
     writing_release:        Optional[dict]
+    # AA-1047 W1 (root ADR 0020 "one exit"): the REPORT-mode final contract record of this run's exit
+    # (services/quality/final_contract.py), set by final_contract_node, the last node before END. Declared so LangGraph
+    # keeps it (AA-209 gotcha); generated_content.metadata.final_contract stores it.
+    final_contract:         Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -1437,7 +1441,8 @@ def human_edit_gate_node(state: ContentState) -> ContentState:
     codes = state.get("failure_codes", []) or []
     hard_hits = sorted(set(codes) & hard_block_codes(state))   # AA-645: v2 drafts add V2_HARD_BLOCK_CODES
     policy_keep = audit_status == "manual_check" and elephant_policy.is_policy_only_hold(
-        audit_status, state.get("brand_audit_codes") or [], state.get("generated"), state.get("tour"))
+        audit_status, state.get("brand_audit_codes") or [], state.get("generated"), state.get("tour"),
+        issues=state.get("brand_audit_issues"))
     passed = (
         score >= MIN_QUALITY
         and (audit_status != "manual_check" or policy_keep)
@@ -1472,9 +1477,70 @@ def after_grounding(state: ContentState) -> str:
     return "revalidate" if state.get("exit_path") == HITL_EXIT else "flag_fix"
 
 
-def _wire_checks_tail(graph: StateGraph, *, hitl_from: Optional[str] = None) -> None:
+# AA-1047 W1: which graph a run left by (the exit recorded by the final contract); the hitl path adds "_hitl"
+# except on the live graph, where it is the "hitl" exit.
+ENTRY_LIVE, ENTRY_RESUMED, ENTRY_BATCH, ENTRY_REVALIDATION = "done", "resumed", "batch", "revalidation"
+FINAL_CONTRACT_NODE = "final_contract"
+
+
+def contract_exit(entry: str, state: dict) -> str:
+    """The exit name a run records: the graph's entry, or the hitl exit (``hitl`` on the live graph,
+    ``<entry>_hitl`` on a resumed / batch one). A re-validation has no hitl exit."""
+    if entry != ENTRY_REVALIDATION and state.get("exit_path") == HITL_EXIT:
+        return HITL_EXIT if entry == ENTRY_LIVE else f"{entry}_{HITL_EXIT}"
+    return entry
+
+
+def final_contract_node(state: ContentState, entry: str = ENTRY_LIVE) -> ContentState:
+    """AA-1047 W1 (root ADR 0020 invariant 4): the last node of every A1 graph, the one edge to END.
+
+    1. The S1 text normalizer (normalize.normalize_generated: title-case an all-caps name, flatten and clean the
+       itinerary, string highlights) — it used to run after the graph, on text no check had seen.
+    2. The REPORT-mode final contract over the text as it will be stored (services/quality/final_contract.py):
+       the verdict the target design gives (publish / policy_hold / review / source_hold / degraded) next to what
+       today's gates decided, recorded in ``state["final_contract"]``. It changes no status, score or code.
+
+    A tenant rewrite (T2) passes through unchanged: its exit is the T2 job's save, after T3 (t2_rewrite_job). A
+    contract error is logged and recorded as such; it never fails the run (report mode). No LLM call."""
+    if state.get("is_tenant_rewrite"):
+        return state
+    from services.content_generation.normalize import normalize_generated
+    from services.quality import final_contract as fc
+
+    generated = state.get("generated")
+    # A re-validation stores no text (the reviewer's text is already the stored one): checked as it is.
+    if entry != ENTRY_REVALIDATION and isinstance(generated, dict) and generated:
+        generated = normalize_generated(dict(generated), state.get("tour") or {})
+        state = {**state, "generated": generated}
+    exit_name = contract_exit(entry, state)
+    try:
+        record = fc.check_s1(fc.s1_input_from_state(state), exit=exit_name).record()
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the run
+        logger.warning("final_contract_failed", workflow=fc.S1, exit=exit_name, tour_id=state.get("tour_id"),
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        record = {"version": fc.CONTRACT_VERSION, "mode": fc.MODE, "workflow": fc.S1, "exit": exit_name,
+                  "verdict": None, "error": f"{type(exc).__name__}: {exc}"[:300],
+                  "text_sha": fc.tour_text_sha(generated if isinstance(generated, dict) else {})}
+    return {**state, "final_contract": record}
+
+
+def _final_contract_for(entry: str):
+    def node(state: ContentState) -> ContentState:
+        return final_contract_node(state, entry)
+    node.__name__ = f"final_contract_{entry}"
+    return node
+
+
+def _wire_exit(graph: StateGraph, last: str, entry: str) -> None:
+    """AA-1047 W1: ``last`` → final_contract → END. The only edge to END of every A1 graph (topology test)."""
+    graph.add_node(FINAL_CONTRACT_NODE, _final_contract_for(entry))
+    graph.add_edge(last, FINAL_CONTRACT_NODE)
+    graph.add_edge(FINAL_CONTRACT_NODE, END)
+
+
+def _wire_checks_tail(graph: StateGraph, *, hitl_from: Optional[str] = None, entry: str = ENTRY_LIVE) -> None:
     """The tail every A1 / T2 entry shares (S271 W0: one exit chain): brand_audit → grounding → flag_fix (skipped
-    on a hitl draft) → revalidate → END. The ``hitl`` exit reaches it through hitl_exit (the should_retry branch
+    on a hitl draft) → revalidate → final_contract → END (AA-1047 W1; ``entry`` names the exit it records). The ``hitl`` exit reaches it through hitl_exit (the should_retry branch
     targets it directly, or ``hitl_from`` — T2's restore_best — leads to it)."""
     graph.add_node("hitl_exit", hitl_exit_node)
     if hitl_from:
@@ -1483,7 +1549,7 @@ def _wire_checks_tail(graph: StateGraph, *, hitl_from: Optional[str] = None) -> 
     graph.add_edge("brand_audit", "grounding")
     graph.add_conditional_edges("grounding", after_grounding, {"flag_fix": "flag_fix", "revalidate": "revalidate"})
     graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+    _wire_exit(graph, "revalidate", entry)   # AA-1047 W1: revalidate → final_contract → END
 
 
 def build_revalidation_graph() -> StateGraph:
@@ -1503,7 +1569,7 @@ def build_revalidation_graph() -> StateGraph:
     graph.add_edge("validate", "llm_judge")
     graph.add_edge("llm_judge", "brand_audit")
     graph.add_edge("brand_audit", "human_edit_gate")
-    graph.add_edge("human_edit_gate", END)
+    _wire_exit(graph, "human_edit_gate", ENTRY_REVALIDATION)   # AA-1047 W1: → final_contract → END
 
     return graph.compile()
 
@@ -1590,7 +1656,7 @@ def build_graph_resumed() -> StateGraph:
         "retry": "increment_retry",
         "hitl":  "hitl_exit",
     })
-    _wire_checks_tail(graph)   # S271 W0: the hitl exit goes through the checks
+    _wire_checks_tail(graph, entry=ENTRY_RESUMED)   # S271 W0: the hitl exit goes through the checks
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()
@@ -1617,13 +1683,17 @@ def build_graph_from_generated() -> StateGraph:
 
     graph.set_entry_point("seed_generated")
     graph.add_edge("seed_generated", "validate")
+    # AA-1047 W1 (found by the exit topology test): the retry writer had no edge, so LangGraph ended the run right
+    # after it — a retried batch draft was stored with no validate, judge, grounding or day guard. It now loops back
+    # to validate like build_graph() / build_graph_resumed().
+    graph.add_edge("generate", "validate")
     graph.add_edge("validate", "llm_judge")
     graph.add_conditional_edges("llm_judge", should_retry, {
         "done":  "brand_audit",
         "retry": "increment_retry",
         "hitl":  "hitl_exit",
     })
-    _wire_checks_tail(graph)   # S271 W0: the hitl exit goes through the checks
+    _wire_checks_tail(graph, entry=ENTRY_BATCH)   # S271 W0: the hitl exit goes through the checks
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()

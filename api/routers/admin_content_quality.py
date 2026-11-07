@@ -57,6 +57,7 @@ from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction,
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.quality import registry as qr
+from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.writing_memory import signals as wm  # AA-916
 from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
 
@@ -638,6 +639,7 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             row = await conn.fetchrow(
                 """
                 SELECT cp.content_text, cp.status, cp.tenant_id, cp.writer_input,
+                       cp.seo_title, cp.meta_description, cp.slug, cp.gate_ledger, cp.held_reason,
                        COALESCE(cp.channel, (SELECT agr.channel FROM acp_shared.angle_gate_request agr
                                              WHERE agr.request_id = cp.angle_gate_request_id)) AS channel,
                        EXISTS (SELECT 1 FROM acp_shared.publish_log pl
@@ -690,9 +692,15 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             if len(new_text) < min_chars <= len(old_text):
                 raise HTTPException(status_code=422, detail=f"This would take the piece under the {min_chars}-char "
                                                             f"minimum for {row['channel']}")
+            # AA-1047 W1 (root ADR 0020 "one exit"): the edited piece through the REPORT-mode final contract, stored
+            # with the text (writer_input.final_contract; a piece without writer_input keeps NULL)
+            contract = _t9_contract_record(new_text, row, wi)
             await conn.execute(
-                "UPDATE acp_shared.content_piece SET content_text = $2 WHERE piece_id = $1::uuid",
-                piece_id, new_text)
+                "UPDATE acp_shared.content_piece SET content_text = $2,"
+                " writer_input = CASE WHEN writer_input IS NULL OR $3::jsonb IS NULL THEN writer_input"
+                " ELSE jsonb_set(writer_input, '{final_contract}', $3::jsonb) END"
+                " WHERE piece_id = $1::uuid",
+                piece_id, new_text, json.dumps(contract, default=str) if contract is not None else None)
             # AA-916 WM-06 — the sentence before / after as a writing signal (same transaction: it is the
             # edit's history now). A T9 piece has no Jev claim question, so fact_not_in_source is kept on the
             # signal only (fact_status fail).
@@ -1303,9 +1311,52 @@ _VERSION_DETAIL_SQL = """
 # that touches 0 rows (the tenant approved meanwhile, or a future FORCE RLS hides the row from the
 # admin role, D2) is a 409, never a silent success.
 _VERSION_UPDATE_SQL = """
-    UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $3::jsonb
+    UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $3::jsonb,
+        -- AA-1047 W1: the REPORT-mode final contract of this exit (admin-only; NULL $5 keeps the old record)
+        judge_breakdown = CASE WHEN $5::jsonb IS NULL THEN judge_breakdown
+                               ELSE COALESCE(judge_breakdown, '{}'::jsonb) || jsonb_build_object('final_contract', $5::jsonb)
+                          END
     WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])
 """
+
+
+def _t2_contract_record(new_rc: dict, tour: dict, structural: list, row) -> Optional[dict]:
+    """AA-1047 W1: the REPORT-mode final contract of an admin sentence apply on a T2 version (recorded in
+    judge_breakdown.final_contract, never blocks). None on an error (logged)."""
+    try:
+        inp = final_contract.T2Input(content=new_rc, master=tour, structural_issues=list(structural or []))
+        record = final_contract.check_t2(inp, exit="admin_sentence_apply", actual=row["status"]).record()
+        record = final_contract.stamp_stored(record, final_contract.tour_text_sha(new_rc))
+        final_contract.log_record(record, version_id=str(row["id"]))
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the edit
+        logger.warning("final_contract_failed", workflow="t2", exit="admin_sentence_apply",
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        return None
+
+
+def _t9_contract_record(new_text: str, row, wi: dict) -> Optional[dict]:
+    """AA-1047 W1: the REPORT-mode final contract of an admin sentence apply on a T9 piece (recorded in
+    writer_input.final_contract, never blocks). None on an error (logged)."""
+    def get(key):
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    try:
+        ledger = _j(get("gate_ledger"))
+        inp = final_contract.T9Input(content_text=new_text, channel=get("channel"), cta=(wi or {}).get("cta"),
+                                     seo_title=get("seo_title"), meta_description=get("meta_description"),
+                                     slug=get("slug"), gate_ledger=ledger if isinstance(ledger, list) else [],
+                                     held_reason=get("held_reason"))
+        record = final_contract.check_t9(inp, exit="admin_sentence_apply", actual=get("status")).record()
+        record = final_contract.stamp_stored(record, final_contract.text_sha(new_text))
+        final_contract.log_record(record)
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the edit
+        logger.warning("final_contract_failed", workflow="t9", exit="admin_sentence_apply",
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        return None
 
 
 def t2_edit_block(status: Optional[str], version_number: Optional[int],
@@ -1630,8 +1681,11 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
                            - set(_t3_structural_issues(rc, tour, rules)))
             if added:
                 raise HTTPException(status_code=422, detail=f"This edit adds a T3 problem — {', '.join(added)}")
+            # AA-1047 W1 (root ADR 0020 "one exit"): the edited version through the REPORT-mode final contract
+            contract = _t2_contract_record(new_rc, tour, _t3_structural_issues(new_rc, tour, rules), row)
             res = await conn.execute(_VERSION_UPDATE_SQL, version_id, str(row["tenant_id"]),
-                                     json.dumps(new_rc), list(_T2_EDITABLE_STATUSES))
+                                     json.dumps(new_rc), list(_T2_EDITABLE_STATUSES),
+                                     json.dumps(contract, default=str) if contract is not None else None)
             if not str(res).endswith(" 1"):
                 raise HTTPException(status_code=409, detail="The version was not updated (it changed or is no "
                                                             "longer editable) — reload and try again")

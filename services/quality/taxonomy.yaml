@@ -467,6 +467,7 @@ a1_codes:
   BRAND_SEO_META_VIOLATION: {classes: [other.lexicon]}
   DFS_INTENT_UNDERUSED: {classes: [other.c1]}
   FACT_CHECK_MANUAL_CHECK: {classes: [fact.inclusion]}
+  POLICY_ELEPHANT_RIDING: {classes: [fact.inclusion]}  # AA-1047: the elephant-riding policy's own code (D8)
   FORBIDDEN_WORD: {classes: [other.lexicon]}
   GENERIC_AI_WORDING: {classes: [other.v1]}
   HIGHLIGHTS_NOT_LIST: {classes: [other.s7]}

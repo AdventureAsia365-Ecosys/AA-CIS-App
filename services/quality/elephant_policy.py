@@ -34,8 +34,12 @@ review): marketing idioms stay hits ("Don't miss the elephant ride", "You will n
 "No trip is complete without an elephant ride", "You cannot leave without riding an elephant", "non-stop fun with
 elephant rides", "an elephant ride is not to be missed").
 
-``POLICY_CODE`` is shared with the LLM brand audit's other fact checks, so a gate that exempts the policy reads
-``is_policy_only_hold`` (the code AND a detector hit on the version or its source), never the code alone.
+AA-1047 W1 (follow-up of the W0 review, #1355): the detector has its own code, ``POLICY_CODE``
+(``POLICY_ELEPHANT_RIDING``), no longer the LLM brand audit's shared ``FACT_CHECK_MANUAL_CHECK``. Before, a tour with
+elephant riding AND an unrelated LLM fact check (a rare-wildlife / location mismatch) carried one code and was read
+as held by the policy alone (``policy_keep``), so the other check was approved away. A gate that exempts the policy
+reads ``is_policy_only_hold`` (the policy code AND a detector hit; any other manual-check code keeps the hold),
+never the code alone.
 
 Pure: no DB, no LLM, no I/O.
 """
@@ -45,8 +49,12 @@ import json
 import re
 from typing import Any, Iterable, Optional
 
-# The brand-audit code a hit adds (brand_audit_node._MANUAL_CHECK_CODES: manual_check, Review Queue).
-POLICY_CODE = "FACT_CHECK_MANUAL_CHECK"
+# The brand-audit code a hit adds (brand_audit_node._MANUAL_CHECK_CODES: manual_check, Review Queue). AA-1047: its own
+# code; LEGACY_CODE is what a hit added before (stored versions written up to S271 carry it).
+POLICY_CODE = "POLICY_ELEPHANT_RIDING"
+LEGACY_CODE = "FACT_CHECK_MANUAL_CHECK"
+# An LLM brand-audit issue that restates this policy (the audit prompt also names elephant riding as a fact check).
+_ISSUE_ABOUT_RIDING_RE = re.compile(r"\belephant", re.IGNORECASE)
 # The policy-hold reason a T2 version and its review row carry (D8).
 POLICY_HOLD = "elephant_riding"
 
@@ -226,14 +234,25 @@ def scan(generated: Optional[dict] = None, source: Optional[dict] = None, *,
 
 
 def is_policy_only_hold(brand_audit_status: Optional[str], brand_audit_codes: Iterable[str],
-                        generated: Optional[dict] = None, source: Optional[dict] = None) -> bool:
-    """A version held ONLY by this policy: brand audit manual_check, ``POLICY_CODE`` its only brand code, AND the
-    detector hits the version text or its source. ``POLICY_CODE`` alone is not enough: the LLM brand audit also
-    emits it for other fact checks (a rare-wildlife / location mismatch, an uncertain claim), and those keep their
-    manual_check. Read by the approve gate (an unedited approve = the policy's human review) and the re-validation
-    gate (a human edit of an elephant tour is that review too)."""
-    return (brand_audit_status == "manual_check" and set(brand_audit_codes or ()) == {POLICY_CODE}
-            and bool(scan(generated, source)))
+                        generated: Optional[dict] = None, source: Optional[dict] = None, *,
+                        issues: Optional[Iterable[Any]] = None) -> bool:
+    """A version held ONLY by this policy: brand audit manual_check, the detector hits the version text or its
+    source, and no other manual-check reason is on it. The codes may be ``POLICY_CODE`` alone, or ``POLICY_CODE``
+    with the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` when every audit issue it gave is about the elephant ride (the
+    audit restating the same policy). A stored version from before AA-1047 carries ``LEGACY_CODE`` alone for a hit;
+    it is the policy only under the same issue rule (an issue about anything else, e.g. a rare-wildlife check, keeps
+    the hold). Read by the approve gate (an unedited approve = the policy's human review), the re-validation gate (a
+    human edit of an elephant tour is that review too) and the final contract."""
+    if brand_audit_status != "manual_check" or not scan(generated, source):
+        return False
+    codes = set(brand_audit_codes or ())
+    texts = [_as_text(i) for i in (issues or ()) if _as_text(i).strip()]
+    issues_about_riding = all(_ISSUE_ABOUT_RIDING_RE.search(t) for t in texts)
+    if codes == {POLICY_CODE}:
+        return True
+    if codes == {POLICY_CODE, LEGACY_CODE} or codes == {LEGACY_CODE}:
+        return issues_about_riding
+    return False
 
 
 def _getter(row: Any):
