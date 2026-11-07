@@ -401,14 +401,27 @@ class BilledUnusableReply(UnusableReply):
     Converse retry, empty content, invalid JSON). `billed_usage` = one dict per billed model attempt
     (model, account, tokens, cost — internal retries folded, `provider_requests` > 1), so the gateway can
     write the llm_call_log row nobody else would: the caller never sees this attempt. Built with
-    `_billed_unusable()`."""
+    `_billed_unusable()`.
+
+    AA-900 (S272): `reply_facts` = what the provider sent back for the cassette (``content``: the raw reply text, when
+    there was one; ``request_id``, ``provider_model``, ``effort`` when the adapter knows them), or None."""
 
     billed_usage: tuple = ()
+    reply_facts: Optional[dict] = None
 
 
-def _billed_unusable(message: str, billed_usage: list[dict]) -> BilledUnusableReply:
+_REPLY_FACT_KEYS = ("content", "request_id", "provider_model", "effort")
+
+
+def _billed_unusable(message: str, billed_usage: list[dict], *, reply: Optional[str] = None,
+                     **facts) -> BilledUnusableReply:
+    """The BilledUnusableReply of one billed attempt. AA-900 (S272): ``reply`` (the raw reply text) and ``facts``
+    (request_id / provider_model / effort, the strings the adapter has) go to ``reply_facts`` for the cassette."""
     exc = BilledUnusableReply(message)
     exc.billed_usage = billed_usage
+    kept = {k: v for k, v in {"content": reply, **facts}.items()
+            if k in _REPLY_FACT_KEYS and isinstance(v, str) and v}
+    exc.reply_facts = kept or None
     return exc
 
 
@@ -481,6 +494,25 @@ def _add_converse_usage(total: dict, usage: dict) -> None:
     for wire, key in (("inputTokens", "in"), ("outputTokens", "out"), ("cacheReadInputTokens", "cache_read"),
                       ("cacheWriteInputTokens", "cache_write")):
         total[key] = total.get(key, 0) + (usage.get(wire, 0) or 0)
+
+
+def _converse_reply_text(blocks) -> Optional[str]:
+    """AA-900 (S272): the raw reply of a Converse response for the cassette: its text blocks, then each tool input as
+    canonical JSON, one per line. None when there is nothing (or the blocks are not the expected shape). Never
+    raises."""
+    try:
+        parts = []
+        for block in blocks or []:
+            if not isinstance(block, dict):
+                continue
+            if isinstance(block.get("text"), str) and block["text"]:
+                parts.append(block["text"])
+            tool = block.get("toolUse")
+            if isinstance(tool, dict) and "input" in tool:
+                parts.append(json.dumps(tool["input"], ensure_ascii=False, sort_keys=True, default=str))
+        return "\n".join(parts) or None
+    except Exception:  # noqa: BLE001 — a cassette read never breaks the call
+        return None
 
 
 def _first_tool_input(blocks: list, schema: dict, model, allow_text_json: bool = False) -> dict:
@@ -768,6 +800,18 @@ def _billed_usage_of(exc: BaseException) -> list:
             return list(billed)
         exc = exc.__cause__ or exc.__context__
     return []
+
+
+def _billed_exception_of(exc: BaseException) -> Optional[BaseException]:
+    """AA-900 (S272): the exception in `exc`'s cause / context chain that carries the billed usage (the one
+    `_billed_usage_of` reads), else None."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if getattr(exc, "billed_usage", None):
+            return exc
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 def log_gateway_billed_failure(request: LLMRequest, *, role: str, billed: list[dict], error: str,
@@ -1239,10 +1283,20 @@ class LLMClient:
         except Exception as e:
             latency = int((time.monotonic() - started) * 1000)
             if _billed_usage_of(e):
+                # AA-900 (S272): the route trace + position too, so every billed_unusable ledger row (the admin
+                # probe's included) joins its cassette row on (route_trace, attempt_no).
                 _enrich_billed(e, {"latency_ms": latency, "attempt_no": attempt_no, "deployment_wire_id": wire_id,
                                    "connection_key": connection_key,
                                    "prompt_hash": scope.prompt_hash if scope is not None else None,
-                                   "prompt_version": scope.prompt_version if scope is not None else None})
+                                   "prompt_version": scope.prompt_version if scope is not None else None,
+                                   "route_trace": scope.trace_id if scope is not None else None,
+                                   "route_position": scope.position if scope is not None else None})
+                # AA-900 (S272): the billed but unusable reply goes to the cassette too, marked (stop_reason
+                # 'billed_unusable[:<provider stop reason>]'). Never raises.
+                cassette.record_unusable_attempt(request, _billed_exception_of(e), model=model,
+                                                 connection_key=connection_key, wire_id=wire_id, provider=provider,
+                                                 scope=scope, truncation_retry=truncation_retry,
+                                                 attempt_no=attempt_no)
             else:
                 log_gateway_failed_attempt(request, e, model=model, connection_key=connection_key, wire_id=wire_id,
                                            provider=provider, latency_ms=latency, attempt_no=attempt_no,
@@ -2438,6 +2492,9 @@ class LLMClient:
         # AA-927: every billed Converse request of this attempt (the schema retry makes it 2).
         billed_tok: dict = {}
         provider_requests = 1
+        # AA-900 (S272): the last reply's raw text and request id, for the cassette row of an unusable reply.
+        raw_reply: Optional[str] = None
+        request_id: Optional[str] = None
 
         def billed_failure(message: str, cause: Optional[BaseException] = None):
             t = billed_tok
@@ -2447,7 +2504,8 @@ class LLMClient:
                 label, account,
                 {"tokens_in": t.get("in", 0) + t.get("cache_read", 0) + t.get("cache_write", 0),
                  "tokens_out": t.get("out", 0)}, cost_, stop_reason, provider_requests,
-                cache_read=t.get("cache_read", 0), cache_write=t.get("cache_write", 0))])
+                cache_read=t.get("cache_read", 0), cache_write=t.get("cache_write", 0))],
+                reply=raw_reply, request_id=request_id)
             exc.__cause__ = cause
             return exc
 
@@ -2460,6 +2518,7 @@ class LLMClient:
             # the retry, the retry request itself failing, a malformed body) carries the billed usage.
             try:
                 blocks = resp["output"]["message"]["content"]
+                raw_reply = _converse_reply_text(blocks)
                 if schema:
                     # AA-803 / AA-642 I6: a JSON object answered as text is accepted unless the tool was forced by
                     # name ("prompt": no tool at all, the first JSON object of the reply).
@@ -2489,7 +2548,9 @@ class LLMClient:
                         provider_requests = 2
                         _add_converse_usage(billed_tok, resp.get("usage", {}))
                         stop_reason = resp.get("stopReason")
+                        request_id = _bedrock_request_id(resp) or request_id
                         blocks = resp["output"]["message"]["content"]
+                        raw_reply = _converse_reply_text(blocks)
                         content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model, auto),
                                                 schema)
                 else:
@@ -2622,7 +2683,9 @@ class LLMClient:
                 return RuntimeError(message)
             return _billed_unusable(message, [_billed_usage(
                 label, conn.connection_key, {"tokens_in": prompt_tok, "tokens_out": out_tok}, cost, stop_reason, 1,
-                cache_read=cache_read, cache_write=cache_write, pricing_mode=priced.pricing_mode)])
+                cache_read=cache_read, cache_write=cache_write, pricing_mode=priced.pricing_mode)],
+                reply=_str_attr(result, "text"), request_id=_str_attr(result, "request_id"),
+                provider_model=_str_attr(result, "provider_model"), effort=_str_attr(result, "effort"))
 
         content = result.text
         if stop_reason == "refusal":
@@ -2738,6 +2801,7 @@ class LLMClient:
                 openai_chat.forget_connection(conn_key)              # a rotated key is read on the next call
             raise
         content = resp.choices[0].message.content or ""
+        raw_content = content           # AA-900 (S272): the reply as sent, for the cassette row of an unusable one
         # AA-637 — no token streaming on this last-resort path; a live view gets the whole text.
         _cb = None if request.json_schema else stream_sink.delta_callback(request.stage)   # S251: as on Converse
         if _cb is not None and content:
@@ -2760,7 +2824,9 @@ class LLMClient:
             # AA-1002 (S6): the row's account is the connection (no AWS account on the OpenAI API).
             return _billed_unusable(message, [_billed_usage(
                 reply_label, conn_key, {"tokens_in": in_tok, "tokens_out": out_tok}, cost,
-                finish_reason, 1, cache_read=cached, pricing_mode=priced.pricing_mode)])
+                finish_reason, 1, cache_read=cached, pricing_mode=priced.pricing_mode)],
+                reply=raw_content, request_id=_str_attr(resp, "_request_id"),
+                provider_model=_str_attr(resp, "model"), effort=reasoning_effort)
 
         if catalog_model is not None and not content:
             # A reasoning model can spend the whole token budget thinking and return nothing.

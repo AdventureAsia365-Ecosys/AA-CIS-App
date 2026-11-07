@@ -47,6 +47,10 @@ AA-642 A3: the stage's ``route_deadline_s`` is checked before every attempt afte
 ``errors.MAX_CHAIN_ATTEMPTS`` attempts run per call (both end as a 0 USD 'deadline' row and RouteDeadlineExceeded /
 RouteAttemptCapReached). AA-642 A5: ``deployment_plan`` is asked with role ``embed`` (a connection whose
 ``served_roles`` leave embeddings out is not used).
+
+AA-900 (S272, root ADR 0020 d8): an embedding writes NO cassette row (``cassette.py``), by design: the reply is a
+vector, not text, the caller keeps it in its own vector column, and a re-embed is deterministic. Its ledger row is the
+whole record.
 """
 from __future__ import annotations
 

@@ -4,7 +4,8 @@ The table itself (CHECKs, pii tag, grants): test_aa900_migration_387.py.
 - The recorder (cassette.record_attempt, its background write on its own connection): the row of a returned reply
   carries the links; the caller's ledger row (call_log.record_call_with_pool with billed_fields) is found again from
   its id (get_by_call_log_id: route_trace + attempt_no, a truncation retry told apart); get_by_request_sha replays a
-  whole reply. A failed write does not raise, LLM_CASSETTE=off writes nothing, a row is written as cis_app.
+  whole reply; (S272) a billed but unusable reply is a marked row its billed_unusable ledger row finds, never replayed.
+  A failed write does not raise, LLM_CASSETTE=off writes nothing, a row is written as cis_app.
 
 Invented names and texts only; every row of this module has stage adhoc_aa900_cassette and is deleted at the end.
 """
@@ -144,6 +145,35 @@ async def test_the_truncation_retry_reply_is_told_apart_from_the_cut_one(pool):
         assert (await cassette.get_by_request_sha(
             c, cassette.request_sha(req, model_key="sonnet-5-5", effort="medium")))["reply_text"] == \
             "Morning walk along the"
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_reply_is_found_from_its_billed_ledger_row_but_never_replayed(pool):
+    """S272: the billed but unusable reply is a marked row; its billed_unusable ledger row (route_trace + attempt_no
+    from the enriched billed record) finds it; replay by request sha does not serve it."""
+    scope = client_mod._AttemptScope(role="judge", position=2)
+    req = _request(json_schema={"name": "opal_check", "schema": {"type": "object"}})
+    billed = {"model": "satellite-sonnet-5-5", "account": "acc3", "tokens_in": 40, "tokens_out": 9,
+              "cost_usd": 0.0003, "stop_reason": "max_tokens", "provider_requests": 1,
+              "attempt_no": 1, "route_trace": scope.trace_id, "route_position": 2, "connection_key": "acc3"}
+    exc = client_mod._billed_unusable("sonnet-5-5 returned invalid JSON", [billed], reply='{"opal": "half',
+                                      request_id="req-opal-9")
+    cassette.record_unusable_attempt(req, exc, model="sonnet-5-5", connection_key="acc3",
+                                     wire_id="global.anthropic.claude-sonnet-5-5", provider="bedrock-satellite",
+                                     scope=scope, attempt_no=1)
+    call_log.wait_for_pending_writes()
+    assert cassette.stats()["written"] == 1 and cassette.stats()["unusable"] == 1
+    (row,) = call_log.billed_unusable_rows(stage=STAGE, role="judge", billed=[billed], error=str(exc),
+                                           quality_signal_extra={"gateway_attempt": True})
+    await call_log.record_call_with_pool(pool, **row)             # the gateway's billed_unusable row
+    async with pool.acquire() as c:
+        ledger_id = str(await c.fetchval("SELECT id FROM shared.llm_call_log WHERE stage = $1 "
+                                         "AND status = 'billed_unusable'", STAGE))
+        got = await cassette.get_by_call_log_id(c, ledger_id)
+        assert got is not None and got["ledger_status"] == "billed_unusable" and cassette.is_unusable(got)
+        assert (got["reply_text"], got["stop_reason"], got["attempt_no"], got["rung"]) == \
+            ('{"opal": "half', "billed_unusable:max_tokens", 1, 2)
+        assert await cassette.get_by_request_sha(c, got["request_sha256"]) is None
 
 
 @pytest.mark.asyncio
