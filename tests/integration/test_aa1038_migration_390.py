@@ -204,21 +204,21 @@ def test_route_checks_refuse_bad_values(cur, cols):
 
 
 def test_ai_budget_sources(cur):
+    # A new tenant gets the content subscription of its plan tier from the CIS triggers (355 bridge): starter here.
     plan, _ = _tenant(cur, "Fernhollow Trails synthetic")
-    _subscribe(cur, plan, "content", "content.growth")
     override, _ = _tenant(cur, "Moorgate Passage synthetic")
-    _subscribe(cur, override, "content", "content.growth")
     cur.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, limit_value, enabled, reason, "
                 "granted_by) VALUES (%s, 'ai.budget_usd_monthly', 12.5, true, 'synthetic test', 'test:390')",
                 (override,))
     disabled, _ = _tenant(cur, "Bramblecourt Travel synthetic")
-    _subscribe(cur, disabled, "content", "content.growth")
     cur.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, enabled, reason, granted_by) "
                 "VALUES (%s, 'ai.budget_usd_monthly', false, 'synthetic test', 'test:390')", (disabled,))
-    nokey, _ = _tenant(cur, "Inkwell Coast synthetic")   # TripPlanner only: no content plan, no budget key
+    nokey, _ = _tenant(cur, "Inkwell Coast synthetic")   # its content plan canceled: no platform key resolves
+    cur.execute("UPDATE shared.tenant_subscription SET status = 'canceled', updated_by = 'test:390' "
+                "WHERE tenant_id = %s AND product = 'content'", (nokey,))
     cur.execute("SET LOCAL ROLE tripplanner")
     by = {t: _rows(cur, TP_BUDGET_SQL, t)[0] for t in (plan, override, disabled, nokey)}
-    assert by[plan]["budget_source"] == "entitlement" and float(by[plan]["monthly_usd"]) == 40.0
+    assert by[plan]["budget_source"] == "entitlement" and float(by[plan]["monthly_usd"]) == 15.0
     assert by[override]["budget_source"] == "entitlement" and float(by[override]["monthly_usd"]) == 12.5
     assert by[disabled]["budget_source"] == "disabled" and float(by[disabled]["monthly_usd"]) == 0.0
     assert by[nokey]["budget_source"] == "none" and by[nokey]["monthly_usd"] is None
