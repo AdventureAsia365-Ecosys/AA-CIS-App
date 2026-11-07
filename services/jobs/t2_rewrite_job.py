@@ -40,7 +40,10 @@ _PT_SQL = """
            -- S271 W0 (D8): the raw source fields the elephant-riding policy reads (never the writer's input)
            rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
            rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
-           rt.activities::text AS activities, rt.price_raw
+           rt.activities::text AS activities, rt.price_raw,
+           -- AA-1047 (Quality W1): the rest of the raw source the T2 FactSheet is built from (tour builder, the same
+           -- fields S1 reads: exclusions and the agency fields group_size / best_time_to_go)
+           rt.exclusions, rt.group_size, rt.best_time_to_go
     FROM gold_aa_internal.published_tours pt
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     WHERE pt.id = $1::uuid
@@ -528,6 +531,21 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     return diag
 
 
+async def _store_fact_sheet(pool, pt, tenant_id: str, published_tour_id: str):
+    """AA-1047 — fs_id of the T2 FactSheet (the raw source of the published tour, ``_PT_SQL`` row), or None."""
+    from services.quality import factsheet_store
+    if not factsheet_store.enabled():
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await factsheet_store.save_tour_sheet(
+                conn, pt, tenant_id=tenant_id, workflow="t2", tour_id=pt.get("tour_id"),
+                meta={"published_tour_id": str(published_tour_id)})
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the rewrite
+        logger.warning("t2_factsheet_store_failed", published_tour_id=str(published_tour_id), error=str(e)[:200])
+        return None
+
+
 async def mark_version_failed(pool, job_row: dict) -> None:
     """on_terminal: the job ended without success, so the version must not stay 'pending'. Except a job that waits
     for staff approval of its tenant's AI budget (AA-1016, review S262): the version stays 'pending' so the approval
@@ -584,6 +602,10 @@ async def run(ctx: JobContext) -> dict:
     from services.content_generation.t2_facts import with_facts
     tour_dict, facts_diag = await with_facts(pool, tour_dict, tenant_id)
 
+    # AA-1047 (Quality W1): the FactSheet of this version's raw source (tour builder; acp_shared.fact_sheet, CIS 386),
+    # stored once per distinct source and stamped on the version after its save. Best-effort: None changes nothing.
+    fs_id = await _store_fact_sheet(pool, pt, tenant_id, published_tour_id)
+
     # AA-637 — live progress (steps + streamed tour fields), read by GET /v1/progress/tour/{id}.
     progress = WritingProgress(
         ctx.resources.get("redis"), tenant_id=str(tenant_id), kind="tour", job_id=str(version_id),
@@ -609,9 +631,13 @@ async def run(ctx: JobContext) -> dict:
                               ON_HOLD_MESSAGE if on_hold else "Writing didn't finish. Please try again.")
 
     async with pool.acquire() as conn:
+        if fs_id:
+            from services.quality import factsheet_store
+            await factsheet_store.stamp_tenant_version(conn, version_id, fs_id)
         final = await conn.fetchrow(
             "SELECT status, quality_score::float AS score, qa_status FROM "
             "gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
     await ctx.progress(phase="done")
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
-            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag, **(diag or {})}
+            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag,
+            **({"fs_id": fs_id} if fs_id else {}), **(diag or {})}

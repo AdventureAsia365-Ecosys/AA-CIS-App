@@ -87,6 +87,7 @@ from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
+from services.quality import factsheet_store  # AA-1047 (CIS 386)
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
 from services.quality import registry as qr
@@ -870,6 +871,41 @@ def _grounding_text(context: dict) -> str:
         brand_audience=context.get("brand_audience"), trip_name=trip,
         destination=context.get("destination"),
     )
+
+
+def _grounding_sheet(context: dict) -> factsheet.FactSheet:
+    """AA-1047 (Quality W1) — the T9 FactSheet of a write: the same text as _grounding_text(context), as typed lines
+    with provenance, plus what the facts budget left out (resolve_facts: facts_excluded, fact_scopes)."""
+    trip = context["writer_trip_name"] if "writer_trip_name" in context else context.get("trip_name")
+    return grounding_factsheet(
+        seed=context["atom_text"], facts_text=context.get("facts_text"),
+        brand_audience=context.get("brand_audience"), trip_name=trip, destination=context.get("destination"),
+        fact_scopes=context.get("fact_scopes"), excluded_facts=context.get("facts_excluded") or (),
+        meta={k: context[k] for k in ("channel", "atom_id") if context.get(k)},
+    )
+
+
+def _valid_fs_id(value) -> Optional[str]:
+    try:
+        return str(UUID(str(value))) if value else None
+    except ValueError:
+        return None
+
+
+async def _store_fact_sheet(pool, sheet: factsheet.FactSheet, context: dict) -> None:
+    """AA-1047 — store the piece's FactSheet (acp_shared.fact_sheet, CIS 386) and keep its id on the context, so
+    writer_input_snapshot records it (`fs_id`, `fs_sha`). Best-effort: a failure leaves no id and the write goes on."""
+    context["fs_sha"] = sheet.sha()
+    if not factsheet_store.enabled():
+        return
+    try:
+        async with pool.acquire() as conn:
+            fs_id = await factsheet_store.save(conn, sheet, tenant_id=context.get("tenant_id"), workflow="t9")
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the write
+        logger.warning("t9_factsheet_store_failed", error=str(e)[:200])
+        return
+    if _valid_fs_id(fs_id):
+        context["fs_id"] = _valid_fs_id(fs_id)
 
 
 def grounding_from_writer_input(writer_input: dict) -> str:
@@ -1935,7 +1971,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # Khövsgöl Lake'); the hygiene context keeps the full name (its gazetteer needs those places).
     writer_trip = hygiene.scoped_trip_name(trip_name, context.get("scope"), hyg.lexicon)
     context["writer_trip_name"] = writer_trip
-    grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
+    # AA-1047 (Quality W1) — the FactSheet of this write: its render is _grounding_text(context) byte for byte
+    fact_sheet = _grounding_sheet(context)
+    grounding_text = fact_sheet.render()  # AA-768 — + audience/trip lines
+    await _store_fact_sheet(pool, fact_sheet, context)
     # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
     # JSON job payload).
     # AA-771 (S234) — the channel spec (LinkedIn) caps the hashtags, moves them to the last line and
@@ -2684,6 +2723,9 @@ def writer_input_snapshot(context: dict) -> dict:
     goal = context.get("goal") or {}
     return {
         "writer_prompt_version": WRITER_PROMPT_VERSION,  # AA-916 WM-08
+        # AA-1047 (Quality W1) — the piece's FactSheet (acp_shared.fact_sheet); absent before W1 or when not stored
+        **({"fs_id": context["fs_id"]} if context.get("fs_id") else {}),
+        **({"fs_sha": context["fs_sha"]} if context.get("fs_sha") else {}),
         "seed": context.get("atom_text"),
         "route_moments": [{"atom_id": a, "seed": t} for a, t in (context.get("route_segments") or [])],
         # AA-741 (S271 review) — the moment a Segment-grain Blog walk is about; absent for every other piece.

@@ -32,7 +32,6 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
 - **Exclusions are recorded.** Route: `excluded_facts` (the facts the facts budget left out) -> reason
   `facts_budget`. Tour: figures beyond `MAX_FIGURES` that the FACT SHEET never shows -> reason `figures_cap`. Neither
   changes the text.
-
 - **Budget order (declared diff, W1 item 2), separate commit.** `FactSheet.render_budgeted(max_chars)` is the text
   for a reader with a size cap: over the cap it drops whole lines, never cuts one, in a fixed order (other trips O
   and audience A first, then place background P; last line first inside a tier) and records each with reason
@@ -44,11 +43,34 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
   order); what it leaves out is now handed back (`fetch_facts_for_writing(excluded_out=)`), kept on the context
   (`facts_excluded`, compact: id, scope, chars) and recorded in the piece's FactSheet with reason `facts_budget`.
 
+- **Persistence (CIS 386, contract, MIG-4).** `acp_shared.fact_sheet`: one row per (tenant, workflow, fs_sha), so
+  a retry, a resumed job or a second piece on the same inputs reuses the row; `fs_sha` = sha256 of the canonical
+  record plus the rendered text. No UPDATE grant (a sheet never changes), no FK (the owning objects are pruned and
+  erased on their own windows). `lines` and `render_text` are tagged `pii:free_text` (agency facts, brand and audience
+  lines are tenant content), like the cassette's reply text. RLS like the CIS 360 tables (ENABLE + FORCE, the X1
+  parity policies, tenant_isolation for aa_app_user with no grant). Erasure: `delete` (inventory entry).
+  `generated_content.fs_id` and `tenant_tour_versions.fs_id` (uuid, no default); a T9 piece keeps `fs_id` and `fs_sha`
+  in `writer_input` (no DDL). `tenant_tour_versions` is absent from the CI replay (CIS 001 is skipped; 297 / 300 fail
+  there): 386 adds that column only when the table exists, so the replay still builds the table for the tests.
+- **Where the writers store and stamp.** Best-effort everywhere, each statement in its own savepoint: S1
+  (`admin_pipeline._stamp_fact_sheet`, right after the version INSERT, raw_tours row), T2 (`t2_rewrite_job.run`: the
+  sheet is stored before the rewrite and stamped after the save, so a policy hold is stamped too; job result `fs_id`),
+  T9 (`run_write_background`, right where the gates' SOURCE is built; `writer_input.fs_id` / `fs_sha`). A missing
+  table or column (code deployed before 386) backs off for 5 minutes. `FACTSHEET_PERSIST=off` switches it off;
+  unit tests run with it off (`tests/unit/conftest.py`, marker `real_factsheet_store`).
+- **T2 source query.** `_PT_SQL` gains `rt.exclusions`, `rt.group_size`, `rt.best_time_to_go` (it already read the
+  src_* fields, inclusions and price for the elephant detector), so the T2 sheet is built from the same raw source as
+  S1's. `source_tour_dict` (what the T2 writer reads) is unchanged.
+
 ## Changed
 
 - `services/acp_content_writing/service.py`: `grounding_text_from` = `grounding_factsheet(...).render()`;
   `grounding_factsheet` exposes the sheet; `resolve_facts` stores `facts_excluded` and `fact_scopes` on the context.
 - `services/acp_content_writing/facts.py`: `fetch_facts_for_writing(..., excluded_out=None)`.
+- `services/quality/factsheet_store.py` (new); `api/routers/admin_pipeline.py`, `services/jobs/t2_rewrite_job.py`,
+  `services/acp_content_writing/service.py` call it.
+- `api/migrations/386_fact_sheet.sql` (migration-only PR), `services/erasure/inventory.py`,
+  `tests/integration/conftest.py` (386's FORCE RLS table in the post-244 / post-245 lists).
 
 ## Tradeoffs
 
@@ -60,3 +82,7 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
 ## Should know
 
 - Fixtures use invented places only (Zemlia, Varn Valley, Lumen Gorge …): CI's golden-set text guard.
+- **Ship order.** Migration-only PR first (386 + its test + inventory + conftest lists), Migration Apply, then this
+  code PR. The code is safe before the apply too (the store backs off on UndefinedTable / UndefinedColumn), but the
+  stamps only land after it.
+- **Readiness.** `REQUIRED_CIS_SCHEMA` is not raised: nothing fails without 386 (same as the cassette, 385).
