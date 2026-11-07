@@ -4,7 +4,9 @@ No LLM, no DB, no network. It runs over stored T9 pieces: the golden fixture (ro
 the T9 samples) and/or a read-only export of acp_shared.content_piece rows with their repair_log. The stored gate
 verdicts are the cassette: the F9 judge is never called; a piece whose F9 verdict is missing or was an outage is a
 cassette MISS and is reported as "needs rejudge", never as a pass. An SEO-fit model call is a cassette miss too
-(`fit_seo_fields` raises): the piece is counted as a miss (never a hit) and its SEO fields are left out of the diff.
+(`fit_seo_fields` raises): the piece is counted as a miss (never a hit) and only the FITTED answer is left out of the
+diff: the request sent to the fit (its kwargs) and the fields the soft-fail path ships during a fit outage are
+deterministic and are compared.
 
 Per piece it records, through the code of the checkout it runs in:
 
@@ -12,9 +14,17 @@ Per piece it records, through the code of the checkout it runs in:
   without the seam) and its sha;
 - route: sentence_repair.plan over the stored ledger (gates + sentences), hold_failure, never_holds, the style-only
   repair choice, the cut gates;
-- seo (blog): the SEO-fit calls _fit_seo_meta would make and the fields it would keep (a call = an SEO miss);
-- guard (pieces with a repair_log): the AA-528 decision for each consecutive pair of attempt ledgers, with the
-  stable-key evidence (keys added / removed, key counts, gate sets) when the checkout has stable_keys;
+- seo (blog): the SEO-fit calls _fit_seo_meta would make, the request it would send and the fields it would keep (a
+  call = an SEO miss), called with the production arguments: the HygieneContext run_write_background builds from the
+  sample context (scope places, trip places, brand, CTA, channel spec, Facts) and the taken titles of the same
+  tenant's other blog pieces in the replay set (production reads its 50 most recent; the replay set stands in for
+  them). Plus a VERDICT that does not depend on the checkout's _fit_seo_meta flow: an independent copy of main's
+  acceptance tests (band + keyword, scope places, taken title, unsupported products, date authority, rarity,
+  authenticity) over the writer's values and the delivered values;
+- guard (pieces with a repair_log): the AA-528 decision for each consecutive pair of attempt ledgers, main's gate-name
+  view of both ledgers (service._regression_failures) and their hold gate (quality_gates.hold_failure) on every
+  checkout, with the stable-key evidence (keys added / removed, key counts, gate sets) when the checkout has
+  stable_keys;
 - contract: the REPORT-mode final contract over the stored text; for a content_piece export with a stored contract
   (writer_input.final_contract), the gated sha vs the sha _finalize_piece stored (a mismatch = a post-gate edit in
   production) and vs the row's text now (a later tenant edit, reported only). Golden samples carry no stored
@@ -30,7 +40,9 @@ script itself only needs the modules of the checkout it runs in, so the branch c
 
 The report classifies every difference as a DECLARED diff (DECLARED below: one id per change this train makes on
 purpose, checked against the declared SHAPE, not just the direction) or UNDECLARED. Exit code 1 when any difference
-is undeclared, a piece is missing, or a stored contract shows a post-gate edit.
+is undeclared, a piece is missing, a stored contract shows a post-gate edit, or the SEO context of a piece could not
+be built (the replay would then check looser predicates than production). A flipped guard decision also reports the
+piece status each side continues with (`guard_status_flips`).
 """
 from __future__ import annotations
 
@@ -46,15 +58,21 @@ from unittest.mock import patch
 
 SCHEMA = "aa1049-t9-replay/1"
 DECLARED = {
-    "D-seo-1": "a title/meta fixed by a whole-sentence / separator prefix of the writer's value: 0 SEO-fit calls",
+    "D-seo-1": "a title/meta the writer got wrong (it fails main's acceptance tests) is fixed in code by a whole-sentence"
+               " / separator prefix of the writer's value that passes them: 0 SEO-fit calls when both fields then pass;"
+               " else the fit is asked only about the rest and a fit outage ships the fixed field",
     "D-seo-2": "at most one SEO-fit call per attempt (the retry call is gone); unit tests only: a replayed fit call is "
                "a cassette miss that aborts before main's retry, so the replay can never show it",
-    "D-guard-1": "regression guard on stable keys: a same-gate swap of flagged sentences is reverted",
-    "D-guard-2": "regression guard on stable keys: clearing more findings than it adds is kept",
+    "D-guard-1": "regression guard on stable keys: a same-gate swap of flagged sentences (same gate set, as many keys "
+                 "or more) is reverted",
+    "D-guard-2": "regression guard on stable keys: clearing more findings than it adds is kept (the piece status can "
+                 "flip: held->approved when the kept rewrite clears every hold gate, approved->held when it traded "
+                 "style findings for a hold gate)",
 }
 SEO_FIELDS = ("seo_title", "meta_description", "slug")
 NOT_DECLARED = {
-    "MISS": "a section with no recorded answer on either side (an SEO-fit cassette miss): not compared",
+    "MISS": "an SEO-fit cassette miss on both sides with the same request and the same soft-fail fields: only the "
+            "fitted answer is not compared",
 }
 
 
@@ -142,23 +160,81 @@ def _cassette_hit(p: dict) -> bool:
                                                             or []) for g in f9)
 
 
-def _seo(p: dict) -> Optional[dict]:
+SEO_CHECKED = ("seo_title", "meta_description")
+
+
+def _hygiene(ctx: dict):
+    """The HygieneContext run_write_background builds (service.py, after _add_date_spans), from the sample context."""
+    from services.acp_content_writing import hygiene, service
+    ba = ctx.get("brand_audience") or {}
+    spec = service.channel_spec(ctx.get("channel"), ctx.get("brand_audience"))
+    return hygiene.HygieneContext(seed=ctx.get("atom_text"), scope=ctx.get("scope"), trip_name=ctx.get("trip_name"),
+                                  brand_name=ba.get("brand_name"), cta=ctx.get("cta"),
+                                  hashtags_max=spec.hashtags_max if spec else None,
+                                  first_line_max=spec.first_line_max if spec else None,
+                                  audience=ba.get("customer_segment"), facts=ctx.get("facts_text") or "",
+                                  trip_places=tuple(ctx.get("trip_places") or ()))
+
+
+def _seo_predicates(ctx: dict, keyword: Optional[str], body: str, hyg, taken: list[str]) -> dict:
+    """An independent copy of main's _fit_seo_meta acceptance tests (S234 rounds 2-4, AA-819), built from the
+    module-level checks both checkouts have (imported from their own modules, not through service's names). The
+    verdict it gives does not depend on the checkout's _fit_seo_meta flow, so a branch that ships a value its own flow
+    accepted without checking (or with a loosened closure) shows a failing verdict."""
+    from services.acp_content_writing import authenticity, hygiene, seo_grounding, service, trip_facts
+    from services.acp_content_writing.quality_gates import title_taken
+    lex = hyg.lexicon if hyg is not None else None
+    seed = ctx.get("atom_text") or ""
+
+    def title_ok(v) -> bool:
+        return bool(service._seo_title_ok(v, keyword) and (lex is None or not hygiene.places_named(lex, v))
+                    and not title_taken(v, taken) and not authenticity.field_hits(v))
+
+    def meta_ok(v) -> bool:
+        return bool(service._meta_ok(v, keyword) and (lex is None or not hygiene.places_named(lex, v))
+                    and not seo_grounding.meta_unsupported_products(v, seed, body)
+                    and not trip_facts.date_authority_claims("", seed, extra_texts=(("meta", v),))
+                    and not trip_facts.rarity_claims("", hygiene.split_seed(seed)[0], extra_texts=(("meta", v),))
+                    and not authenticity.field_hits(v))
+    return {"seo_title": title_ok, "meta_description": meta_ok}
+
+
+def _fit_request(kw: dict) -> dict:
+    """The deterministic request of one SEO-fit call (the body as a sha: it is the piece's own text)."""
+    import hashlib
+    out = {k: v for k, v in kw.items() if k != "body"}
+    out["body_sha"] = hashlib.sha256(str(kw.get("body") or "").encode()).hexdigest()[:16]
+    return out
+
+
+def _seo(p: dict, taken: Optional[list[str]] = None) -> Optional[dict]:
     if p["channel"] != "blog":
         return None
     from services.acp_content_writing import service
-    calls: list[int] = []
+    calls: list[dict] = []
 
-    def miss(**_kw):
-        calls.append(1)
+    def miss(**kw):
+        calls.append(_fit_request(kw))
         raise CassetteMiss("t9_repair SEO fit")
 
     seo = {"seo_title": p["seo_title"], "meta_description": p["meta_description"], "slug": p["slug"]}
     ctx = dict(p["context"])
+    taken = list(taken or [])
+    try:
+        service._add_date_spans(ctx)
+        hyg, ctx_error = _hygiene(ctx), None
+    except Exception as e:  # noqa: BLE001 — reported (exit 1): the replay would check looser predicates
+        hyg, ctx_error = None, type(e).__name__
+    keyword, body = ctx.get("keyword"), p["content_text"]
     with patch.object(service, "fit_seo_fields", side_effect=miss):
-        out, _ = asyncio.run(service._fit_seo_meta(seo, ctx.get("keyword"), body=p["content_text"], context=ctx,
-                                                   request_id="replay", hyg=None, taken_titles=[]))
+        out, _ = asyncio.run(service._fit_seo_meta(dict(seo), keyword, body=body, context=ctx, request_id="replay",
+                                                   hyg=hyg, taken_titles=taken))
+    ok = _seo_predicates(ctx, keyword, body, hyg, taken)
     return {"fit_calls": len(calls), "miss": bool(calls), **{k: out.get(k) for k in SEO_FIELDS},
-            "writer": {k: p[k] for k in SEO_FIELDS}}
+            "writer": {k: p[k] for k in SEO_FIELDS}, "fit_request": calls[0] if calls else None,
+            "verdict": {"writer": {k: ok[k](p[k]) for k in SEO_CHECKED}, "out": {k: ok[k](out.get(k))
+                                                                            for k in SEO_CHECKED}},
+            "taken_titles": len(taken), "context_error": ctx_error}
 
 
 def _guard(p: dict) -> Optional[list]:
@@ -169,22 +245,31 @@ def _guard(p: dict) -> Optional[list]:
     from services.acp_content_writing import service
     ledgers = [e.get("gate_ledger") for e in p["repair_log"] if isinstance(e, dict) and e.get("gate_ledger")]
     ledgers.append(p["gate_ledger"])
+    from services.acp_content_writing import quality_gates as qg
     try:
         from services.acp_content_writing import stable_keys
         keys_mode = service.regression_guard_mode() == service.GUARD_STABLE_KEYS
     except (ImportError, AttributeError):
         stable_keys, keys_mode = None, False
+
+    def hold(ledger):
+        h = qg.hold_failure(ledger)
+        return h["gate"] if h else None
     out = []
     for prev, cur in zip(ledgers, ledgers[1:]):
+        # main's gate-name view and hold gate of both ledgers, on every checkout: the classifier checks the branch's
+        # stable-key evidence against the base row's view, never against the branch's own (a key-extraction bug
+        # would certify itself)
+        pb, cb = service._regression_failures(prev), service._regression_failures(cur)
+        row = {"gates": {"prev": sorted(pb), "cur": sorted(cb)}, "hold": {"prev": hold(prev), "cur": hold(cur)}}
         if keys_mode:
             c = stable_keys.compare(prev, cur)
-            out.append({"revert": c["revert"], "keys": {
+            out.append({"revert": c["revert"], **row, "keys": {
                 "new": sorted(map(list, c["new"])), "removed": sorted(map(list, c["removed"])),
                 "prev_keys": c["prev_keys"], "cur_keys": c["cur_keys"],
                 "prev_gates": sorted(c["prev_gates"]), "cur_gates": sorted(c["cur_gates"])}})
         else:
-            pb, cb = service._regression_failures(prev), service._regression_failures(cur)
-            out.append({"revert": bool(cb - pb) and len(cb) >= len(pb), "keys": None})
+            out.append({"revert": bool(cb - pb) and len(cb) >= len(pb), **row, "keys": None})
     return out
 
 
@@ -210,10 +295,21 @@ def _contract(p: dict) -> dict:
                                                                    for f in (rec or {}).get("findings") or [])}
 
 
+def _taken_titles(p: dict, pieces: list[dict]) -> list[str]:
+    """Production's _sibling_titles: the SEO titles of the same tenant's other pieces on the same channel (blog only),
+    here from the replay set, sorted by piece id (at most 50, as production); [] without a tenant (as production)."""
+    tenant = (p.get("context") or {}).get("tenant_id")
+    if not tenant or p["channel"] != "blog":
+        return []
+    return [q["seo_title"] for q in sorted(pieces, key=lambda q: q["id"])
+            if q is not p and q["id"] != p["id"] and q["channel"] == p["channel"]
+            and (q.get("context") or {}).get("tenant_id") == tenant and isinstance(q.get("seo_title"), str)][:50]
+
+
 def replay(pieces: list[dict]) -> dict:
     rows = {}
     for p in pieces:
-        seo = _seo(p)
+        seo = _seo(p, _taken_titles(p, pieces))
         f9_hit = _cassette_hit(p)
         rows[p["id"]] = {"channel": p["channel"], "f9_hit": f9_hit, "seo_miss": bool(seo and seo["miss"]),
                          "cassette_hit": f9_hit and not (seo and seo["miss"]), "input": _input(p),
@@ -230,18 +326,71 @@ def _seo_prefix(writer: Optional[str], value: Optional[str]) -> bool:
     return value == writer or bool(value and writer and writer.startswith(value.rstrip()))
 
 
+def _seo_fix_problem(changed: list[str], cur: dict, writer: dict, verdict: dict) -> Optional[str]:
+    """None when every changed field has D-seo-1's shape: the writer's value fails main's acceptance tests, the new
+    value is a strict prefix of it and passes them. Else the reason it does not."""
+    if not changed:
+        return "no field changed"
+    for k in changed:
+        if cur.get(k) == writer.get(k) or not _seo_prefix(writer.get(k), cur.get(k)):
+            return f"{k} is not a prefix of the writer's value"
+        if verdict["writer"].get(k):
+            return f"{k}: the writer's value already passed"
+        if not verdict["out"].get(k):
+            return f"{k}: the value kept fails main's acceptance tests"
+    return None
+
+
+def _fit_request_problem(kb: Optional[dict], kc: Optional[dict], cur: dict, changed: list[str]) -> Optional[str]:
+    """None when the branch's fit request is main's with only the code-fixed fields replaced: the fit is asked about
+    the values the code kept, forbidden words are a subset of main's (a fixed field has none left), the taken-title
+    list is main's or gone with a fixed title, everything else identical."""
+    if not kb or not kc:
+        return "no fit request recorded"
+    for k in set(kb) | set(kc):
+        if k in ("seo_title", "meta_description", "forbidden_words", "taken_titles"):
+            continue
+        if kb.get(k) != kc.get(k):
+            return f"fit request {k} changed"
+    for k in SEO_CHECKED:
+        if kc.get(k) != cur.get(k) or (k not in changed and kc.get(k) != kb.get(k)):
+            return f"fit request {k} is not the value the code kept"
+    if not set(kc.get("forbidden_words") or []) <= set(kb.get("forbidden_words") or []):
+        return "fit request has forbidden words main did not send"
+    if kc.get("taken_titles") != kb.get("taken_titles") and not ("seo_title" in changed
+                                                                  and kc.get("taken_titles") is None):
+        return "fit request taken_titles changed"
+    return None
+
+
 def _classify_seo(base: dict, cur: dict) -> tuple[str, str]:
-    if base.get("miss") and cur.get("miss"):
-        return "MISS", "SEO-fit cassette miss on both sides: not compared"
-    if cur.get("fit_calls", 0) == 0 and base.get("fit_calls", 0) > 0:
-        writer = cur.get("writer") or base.get("writer") or {}
-        if cur.get("slug") != base.get("slug"):
-            return "UNDECLARED", "slug changed"
-        changed = [k for k in ("seo_title", "meta_description") if cur.get(k) != writer.get(k)]
-        if all(_seo_prefix(writer.get(k), cur.get(k)) for k in changed):
-            return "D-seo-1", "fixed in code by a prefix of the writer's value, no fit call"
-        return "UNDECLARED", "0 fit calls but a field is not a prefix of the writer's value"
-    if cur.get("miss") or base.get("miss"):
+    vb, vc = base.get("verdict"), cur.get("verdict")
+    if not vb or not vc:
+        return "UNDECLARED", "no acceptance verdict recorded"
+    if vb["writer"] != vc["writer"]:
+        return "UNDECLARED", "the acceptance tests judge the writer's values differently from main"
+    if cur.get("slug") != base.get("slug"):
+        return "UNDECLARED", "slug changed"
+    writer = cur.get("writer") or base.get("writer") or {}
+    bc, cc = base.get("fit_calls", 0), cur.get("fit_calls", 0)
+    if cc == 0 and bc > 0:
+        changed = [k for k in SEO_CHECKED if cur.get(k) != writer.get(k)]
+        bad = _seo_fix_problem(changed, cur, writer, vc)
+        if bad is None and not all(vc["out"].values()):
+            bad = "0 fit calls but a delivered field fails main's acceptance tests"
+        if bad:
+            return "UNDECLARED", f"0 fit calls where main made one: {bad}"
+        return "D-seo-1", "fixed in code by a prefix of the writer's value, no fit call"
+    if cc > 0 and bc > 0:
+        changed = [k for k in SEO_CHECKED if cur.get(k) != base.get(k)]
+        kb, kc = base.get("fit_request"), cur.get("fit_request")
+        if not changed and kb == kc:
+            return "MISS", "SEO-fit cassette miss on both sides, same request and soft-fail fields"
+        bad = _seo_fix_problem(changed, cur, writer, vc) or _fit_request_problem(kb, kc, cur, changed)
+        if bad:
+            return "UNDECLARED", f"fit outage path differs from main: {bad}"
+        return "D-seo-1", "fixed in code by a prefix of the writer's value; the fit is asked only about the rest"
+    if cc > 0 or bc > 0:
         return "UNDECLARED", "a fit call on one side only (not the D-seo-1 shape)"
     return "UNDECLARED", "different SEO fields"
 
@@ -253,13 +402,19 @@ def _classify_guard_pair(base: dict, cur: dict) -> tuple[str, str]:
     k = cur.get("keys")
     if not k:
         return "UNDECLARED", "guard flipped without stable-key evidence"
+    main_view = base.get("gates")
+    if not main_view:
+        return "UNDECLARED", "no main gate view in the base row"
+    if sorted(k["prev_gates"]) != list(main_view["prev"]) or sorted(k["cur_gates"]) != list(main_view["cur"]):
+        return "UNDECLARED", "stable-key evidence disagrees with main's gate view"
     prev_g, cur_g = set(k["prev_gates"]), set(k["cur_gates"])
     new_g = {g for g, _ in k["new"]}
     if cur["revert"] and not base["revert"]:
-        if k["new"] and new_g <= prev_g and cur_g == prev_g:
+        if (k["new"] and new_g <= prev_g and cur_g == prev_g and len(cur_g) >= len(prev_g)
+                and k["cur_keys"] >= k["prev_keys"]):
             return "D-guard-1", "stable keys revert a same-gate swap"
         return "UNDECLARED", (f"revert not a same-gate swap (new gates {sorted(new_g - prev_g)}, gates "
-                              f"{len(prev_g)}->{len(cur_g)})")
+                              f"{len(prev_g)}->{len(cur_g)}, keys {k['prev_keys']}->{k['cur_keys']})")
     if base["revert"] and not cur["revert"]:
         if k["cur_keys"] < k["prev_keys"]:
             return "D-guard-2", "stable keys keep a rewrite with fewer findings"
@@ -269,6 +424,18 @@ def _classify_guard_pair(base: dict, cur: dict) -> tuple[str, str]:
 
 def _revert(x: Any) -> Any:
     return x.get("revert") if isinstance(x, dict) else x
+
+
+def _status_flip(base: dict, cur: dict) -> Optional[str]:
+    """The piece status each side continues with after a flipped guard decision, by main's hold view of the attempt it
+    keeps (revert = the previous attempt): 'held->approved' / 'approved->held', or None. Exact for the last pair; an
+    earlier pair only says which attempt the next round starts from (the stored later attempts followed main)."""
+    hold = base.get("hold")
+    if not hold:
+        return None
+    main = "held" if hold["prev" if base["revert"] else "cur"] else "approved"
+    branch = "held" if hold["prev" if cur["revert"] else "cur"] else "approved"
+    return None if main == branch else f"{main}->{branch}"
 
 
 def _classify(section: str, base: Any, cur: Any) -> tuple[str, str]:
@@ -292,19 +459,25 @@ def diff(base: dict, cur: dict) -> dict:
                 if b_in == bs:
                     continue
             if section == "seo" and bs and cs:
-                bs = {k: bs.get(k) for k in ("fit_calls", "miss", *SEO_FIELDS)}
-                cs = {k: cs.get(k) for k in ("fit_calls", "miss", *SEO_FIELDS)}
-                if bs != cs or (bs["miss"] and cs["miss"]):
-                    did, note = _classify_seo(b["seo"], c["seo"])
+                keys = ("fit_calls", "miss", *SEO_FIELDS, "verdict", "fit_request")
+                if {k: bs.get(k) for k in keys} != {k: cs.get(k) for k in keys} or (bs.get("miss")
+                                                                                   and cs.get("miss")):
+                    did, note = _classify_seo(bs, cs)
                     out.append({"piece": pid, "section": section, "declared": did, "note": note})
                 continue
             if section == "guard" and isinstance(bs, list) and isinstance(cs, list) and len(bs) == len(cs):
                 for i, (bp, cp) in enumerate(zip(bs, cs)):
-                    if _revert(bp) != _revert(cp):
-                        bp = bp if isinstance(bp, dict) else {"revert": bp, "keys": None}
-                        cp = cp if isinstance(cp, dict) else {"revert": cp, "keys": None}
+                    bp = bp if isinstance(bp, dict) else {"revert": bp, "keys": None}
+                    cp = cp if isinstance(cp, dict) else {"revert": cp, "keys": None}
+                    entry = {"piece": pid, "section": f"guard[{i}]"}
+                    if bp.get("gates") != cp.get("gates") or bp.get("hold") != cp.get("hold"):
+                        out.append({**entry, "declared": "UNDECLARED",
+                                    "note": "the gate-name view or the hold gate of an attempt changed"})
+                    elif _revert(bp) != _revert(cp):
                         did, note = _classify_guard_pair(bp, cp)
-                        out.append({"piece": pid, "section": f"guard[{i}]", "declared": did, "note": note})
+                        flip = _status_flip(bp, cp)
+                        out.append({**entry, "declared": did, "note": note + (f"; status {flip}" if flip else ""),
+                                    **({"status_flip": flip} if flip else {})})
                 continue
             if bs != cs:
                 did, note = _classify(section, bs, cs)
@@ -324,6 +497,8 @@ def summary(cur: dict, d: Optional[dict]) -> dict:
          "post_gate_edit": sum(1 for r in rows if r["stored"]["sha"] == "post_gate_edit"),
          "edited_since_store": sum(1 for r in rows if r["stored"].get("edited_since_store")),
          "seo_fit_calls": sum((r["seo"] or {}).get("fit_calls", 0) for r in rows),
+         "seo_context_errors": sum(1 for r in rows if (r["seo"] or {}).get("context_error")),
+         "seo_taken_titles_max": max([(r["seo"] or {}).get("taken_titles", 0) for r in rows] or [0]),
          "guard_pairs": sum(len(r["guard"] or []) for r in rows)}
     if d is not None:
         ids = Counter(x["declared"] for x in d["diffs"])
@@ -331,6 +506,7 @@ def summary(cur: dict, d: Optional[dict]) -> dict:
         s["not_compared"] = {k: v for k, v in ids.items() if k in NOT_DECLARED}
         s["undeclared"] = sum(v for k, v in ids.items() if k not in DECLARED and k not in NOT_DECLARED)
         s["missing_pieces"] = len(d["missing"])
+        s["guard_status_flips"] = dict(Counter(x["status_flip"] for x in d["diffs"] if x.get("status_flip")))
     return s
 
 
@@ -360,7 +536,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.report:
         Path(a.report).write_text(report_md(s, d), encoding="utf-8")
     print(json.dumps(s, indent=1))
-    bad = s.get("undeclared", 0) or s["post_gate_edit"] or s.get("missing_pieces", 0)
+    bad = s.get("undeclared", 0) or s["post_gate_edit"] or s.get("missing_pieces", 0) or s["seo_context_errors"]
     return 1 if bad else 0
 
 

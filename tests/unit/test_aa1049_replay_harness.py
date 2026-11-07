@@ -143,20 +143,50 @@ def test_replay_against_itself_has_no_diff_and_a_changed_route_is_undeclared(tmp
     assert json.loads(out.read_text())["diff"]["diffs"][0]["declared"] == "UNDECLARED"
 
 
-def _seo_row(calls, title="Dunmere Walk: Sea Wall", meta="One. Two.", slug="s", writer=None):
-    w = writer or {"seo_title": "Dunmere Walk: Sea Wall", "meta_description": "One. Two.", "slug": "s"}
+W_TITLE, W_META = "Dunmere Walk: Sea Wall", "One. Two."
+# main's acceptance tests in these rows: the writer's title and meta fail; "Dunmere Walk" and "One." pass
+_PASS = {"Dunmere Walk", "One."}
+
+
+def _seo_row(calls, title=W_TITLE, meta=W_META, slug="s", request=None):
+    """A replay seo row: the delivered fields, the writer's own, the verdict of main's acceptance tests on both and,
+    with a fit call, its request (by default: the fields delivered)."""
+    req = request if request is not None else {"seo_title": title, "meta_description": meta, "keyword": "k",
+                                               "body_sha": "b"}
     return {"fit_calls": calls, "miss": calls > 0, "seo_title": title, "meta_description": meta, "slug": slug,
-            "writer": w}
+            "writer": {"seo_title": W_TITLE, "meta_description": W_META, "slug": "s"},
+            "fit_request": req if calls else None,
+            "verdict": {"writer": {"seo_title": W_TITLE in _PASS, "meta_description": W_META in _PASS},
+                        "out": {"seo_title": title in _PASS, "meta_description": meta in _PASS}}}
+
+
+def _passing_writer(row):
+    """The same row where main's acceptance tests already pass the writer's values."""
+    return {**row, "verdict": {"writer": {"seo_title": True, "meta_description": True},
+                               "out": row["verdict"]["out"]}}
 
 
 @pytest.mark.parametrize("base, cur, want", [
-    (_seo_row(1), _seo_row(0, meta="One."), "D-seo-1"),                        # whole-sentence prefix, no call
-    (_seo_row(1), _seo_row(0, title="Dunmere Walk"), "D-seo-1"),               # separator prefix, no call
-    (_seo_row(1), _seo_row(0, meta="Three."), "UNDECLARED"),                   # not a prefix of the writer's meta
-    (_seo_row(1), _seo_row(0, meta="One.", slug="t"), "UNDECLARED"),           # the slug moved
-    (_seo_row(0), _seo_row(1), "UNDECLARED"),                                  # a new fit call
-    (_seo_row(1), _seo_row(1, meta="One."), "MISS"),                           # both sides missed
+    (_seo_row(1), _seo_row(0, title="Dunmere Walk", meta="One."), "D-seo-1"),    # both fixed by a prefix, no call
+    (_seo_row(1), _seo_row(0, meta="One."), "UNDECLARED"),         # no call, but the title kept still fails
+    (_seo_row(1), _seo_row(0, title="Dunmere Walk", meta="Three."), "UNDECLARED"),  # not a prefix of the writer's
+    (_seo_row(1), _seo_row(0, title="Dunmere Walk", meta="One.", slug="t"), "UNDECLARED"),  # the slug moved
+    (_seo_row(1), _seo_row(0), "UNDECLARED"),   # review S272 M1: 0 calls and NO field changed (gate skipped)
+    (_seo_row(0), _seo_row(1), "UNDECLARED"),                                    # a new fit call
+    (_seo_row(1), _seo_row(1), "MISS"),          # both missed: same request, same soft-fail fields
     (_seo_row(0), _seo_row(0, title="z"), "UNDECLARED"),
+    # review S272 M2: both missed, the soft-fail path ships a cut that is no fix ("Dunmere" fails, "Cheap." no prefix)
+    (_seo_row(1), _seo_row(1, title="Dunmere", meta="Cheap."), "UNDECLARED"),
+    # both missed: the meta fixed by a prefix ships on a fit outage, the fit is asked only about the title
+    (_seo_row(1), _seo_row(1, meta="One."), "D-seo-1"),
+    # ... but the fit request must be the values the code kept
+    (_seo_row(1), _seo_row(1, meta="One.", request={"seo_title": W_TITLE, "meta_description": W_META,
+                                                    "keyword": "k", "body_sha": "b"}), "UNDECLARED"),
+    # both missed, same soft-fail fields, a different request (forbidden words main never sent)
+    (_seo_row(1), _seo_row(1, request={"seo_title": W_TITLE, "meta_description": W_META, "keyword": "k",
+                                       "body_sha": "b", "forbidden_words": ["cheap"]}), "UNDECLARED"),
+    # a predicate change: the writer's values are judged differently from main
+    (_seo_row(1), _passing_writer(_seo_row(1)), "UNDECLARED"),
 ])
 def test_seo_diffs_are_classified_by_shape(base, cur, want):
     assert rp._classify("seo", base, cur)[0] == want
@@ -167,35 +197,63 @@ def _keys(new, prev_gates, cur_gates, prev_n, cur_n):
             "cur_gates": cur_gates}
 
 
+def _main(revert, prev_gates, cur_gates, hold=(None, None)):
+    """A base (main) guard pair: its decision, its gate-name view and its hold gate of both attempts."""
+    return {"revert": revert, "keys": None, "gates": {"prev": sorted(prev_gates), "cur": sorted(cur_gates)},
+            "hold": {"prev": hold[0], "cur": hold[1]}}
+
+
+F9, F17, F13, F1 = "F9_cta_fact", "F17_trip_fact", "F13_repeat", "F1_grounding"
+
+
 @pytest.mark.parametrize("base, cur, want", [
     # a same-gate swap the branch reverts
-    ({"revert": False}, {"revert": True, "keys": _keys([["F9_cta_fact", "b"]], ["F9_cta_fact"], ["F9_cta_fact"],
-                                                         1, 1)}, "D-guard-1"),
+    (_main(False, [F9], [F9]), {"revert": True, "keys": _keys([[F9, "b"]], [F9], [F9], 1, 1)}, "D-guard-1"),
     # a revert whose new key is in a gate the previous attempt did not fail: not a swap
-    ({"revert": False}, {"revert": True, "keys": _keys([["F17_trip_fact", "b"]], ["F9_cta_fact"],
-                                                         ["F9_cta_fact", "F17_trip_fact"], 1, 2)}, "UNDECLARED"),
+    (_main(False, [F9], [F9, F17]), {"revert": True, "keys": _keys([[F17, "b"]], [F9], [F9, F17], 1, 2)},
+     "UNDECLARED"),
     # a revert after the gate set shrank (F1 + F9 -> F13_repeat): never declared
-    ({"revert": False}, {"revert": True, "keys": _keys([["F13_repeat", "a"]], ["F1_grounding", "F9_cta_fact"],
-                                                         ["F13_repeat"], 2, 3)}, "UNDECLARED"),
+    (_main(False, [F1, F9], [F13]), {"revert": True, "keys": _keys([[F13, "a"]], [F1, F9], [F13], 2, 3)},
+     "UNDECLARED"),
+    # review S272 M3: same gate, 3 findings -> 1 new one (clears 3, adds 1): a revert is never declared
+    (_main(False, [F13], [F13]), {"revert": True, "keys": _keys([[F13, "d"]], [F13], [F13], 3, 1)}, "UNDECLARED"),
     # a keep with fewer keys
-    ({"revert": True}, {"revert": False, "keys": _keys([["F17_trip_fact", "d"]], ["F9_cta_fact"],
-                                                         ["F17_trip_fact"], 3, 1)}, "D-guard-2"),
+    (_main(True, [F9], [F17]), {"revert": False, "keys": _keys([[F17, "d"]], [F9], [F17], 3, 1)}, "D-guard-2"),
     # a keep without fewer keys
-    ({"revert": True}, {"revert": False, "keys": _keys([["F17_trip_fact", "d"]], ["F9_cta_fact"],
-                                                         ["F17_trip_fact"], 1, 1)}, "UNDECLARED"),
+    (_main(True, [F9], [F17]), {"revert": False, "keys": _keys([[F17, "d"]], [F9], [F17], 1, 1)}, "UNDECLARED"),
+    # review S272 M4: the branch's key evidence lost a gate main sees (F13 dropped by a key-extraction bug)
+    (_main(True, ["F12_scope", "F2_superlatives"], ["F2_superlatives", F13]),
+     {"revert": False, "keys": _keys([], ["F12_scope", "F2_superlatives"], ["F2_superlatives"], 2, 1)},
+     "UNDECLARED"),
+    # a base row without main's gate view
+    ({"revert": False}, {"revert": True, "keys": _keys([[F9, "b"]], [F9], [F9], 1, 1)}, "UNDECLARED"),
     # a flip with no stable-key evidence (gate_names mode)
-    ({"revert": False}, {"revert": True, "keys": None}, "UNDECLARED"),
+    (_main(False, [F9], [F9]), {"revert": True, "keys": None}, "UNDECLARED"),
 ])
 def test_guard_flips_are_classified_by_shape(base, cur, want):
     assert rp._classify("guard", base, cur)[0] == want
     assert rp._classify("route", {"a": 1}, {"a": 2})[0] == "UNDECLARED"
 
 
+@pytest.mark.parametrize("hold, base_revert, want", [
+    ((F9, None), True, "held->approved"),     # main reverts to the held attempt, the branch keeps the clean rewrite
+    ((None, F1), True, "approved->held"),     # main reverts to a style-only attempt, the branch keeps a new F1 hold
+    ((None, F1), False, "held->approved"),    # main keeps a rewrite that holds, the branch reverts to a clean one
+    ((F9, F1), True, None),                   # held either way
+])
+def test_a_guard_flip_reports_the_status_each_side_continues_with(hold, base_revert, want):
+    base = _main(base_revert, [F9], [F9], hold=hold)
+    cur = {"revert": not base_revert, "keys": _keys([], [F9], [F9], 1, 1)}
+    assert rp._status_flip(base, cur) == want
+
+
 def test_mixed_guard_flips_are_one_diff_per_pair(tmp_path):
-    swap = {"revert": True, "keys": _keys([["F9_cta_fact", "b"]], ["F9_cta_fact"], ["F9_cta_fact"], 1, 1)}
-    keep_bad = {"revert": False, "keys": _keys([["F17_trip_fact", "d"]], ["F9_cta_fact"], ["F17_trip_fact"], 1, 1)}
+    swap = {"revert": True, **{k: v for k, v in _main(False, [F9], [F9]).items() if k in ("gates", "hold")},
+            "keys": _keys([[F9, "b"]], [F9], [F9], 1, 1)}
+    keep_bad = {"revert": False, **{k: v for k, v in _main(True, [F9], [F17]).items() if k in ("gates", "hold")},
+                "keys": _keys([[F17, "d"]], [F9], [F17], 1, 1)}
     row = {"input": {}, "route": {}, "seo": None, "contract": {}}
-    base = {"rows": {"p": {**row, "guard": [{"revert": False, "keys": None}, {"revert": True, "keys": None}]}}}
+    base = {"rows": {"p": {**row, "guard": [_main(False, [F9], [F9]), _main(True, [F9], [F17])]}}}
     cur = {"rows": {"p": {**row, "guard": [swap, keep_bad]}}}
     got = [(x["section"], x["declared"]) for x in rp.diff(base, cur)["diffs"]]
     assert got == [("guard[0]", "D-guard-1"), ("guard[1]", "UNDECLARED")]
@@ -226,7 +284,141 @@ def test_guard_section_reads_attempt_pairs_of_a_piece_export(tmp_path, monkeypat
     base = tmp_path / "base.json"
     monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_GATE_NAMES)
     rp.main(["--pieces", str(p), "--out", str(base)])
-    assert json.loads(base.read_text())["rows"]["p-1"]["guard"] == [{"revert": False, "keys": None}]
+    assert json.loads(base.read_text())["rows"]["p-1"]["guard"] == [
+        {"revert": False, "keys": None, "gates": {"prev": [F9], "cur": [F9]}, "hold": {"prev": F9, "cur": F9}}]
     monkeypatch.delenv(service.REGRESSION_GUARD_ENV)
     assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)]) == 0
     assert json.loads(out.read_text())["summary"]["declared"] == {"D-guard-1": 1}
+
+
+# ----------------------------------------------------------------------------- review S272: mutations end to end
+# Each mutation makes the branch more permissive than main (or wrongly declares a diff); the replay of the mutated
+# code against the unmutated base must exit 1 with an UNDECLARED diff.
+
+TENANT = "00000000-0000-0000-0000-00000000a1b2"
+TITLE_OK = "Dunmere Harbour Walk Guide: The Sea Wall and the Net Sheds"
+META_OK = ("The Dunmere harbour walk follows the stone sea wall from the net sheds to the old signal station, "
+           "a flat path at sea level along the calm water.")
+
+
+def _blog(sid, title, meta):
+    s = _sample(sid, "blog", BLOG, [F9_PASS], seo_title=title, meta_description=meta, slug="dunmere-harbour")
+    s["input"]["context"]["tenant_id"] = TENANT
+    return s
+
+
+def _base_then(tmp_path, fx, mutation=None):
+    """(exit code, replay doc) of a run over `fx` against a base run of the unmutated code."""
+    base, out = tmp_path / "base.json", tmp_path / "cur.json"
+    assert rp.main(["--golden", fx, "--out", str(base)]) == 0
+    if mutation is None:
+        code = rp.main(["--golden", fx, "--base", str(base), "--out", str(out)])
+    else:
+        with mutation:
+            code = rp.main(["--golden", fx, "--base", str(base), "--out", str(out)])
+    return code, json.loads(out.read_text())
+
+
+def test_m1_a_skipped_seo_gate_is_undeclared(tmp_path, monkeypatch):
+    """M1: _fit_seo_meta returns after build_seo without checking the fields: an out-of-band title ships unfitted."""
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_blog("t9-m1", "Dunmere", "Too short for any band.")])
+    assert _base_then(tmp_path, fx)[0] == 0
+    code, doc = _base_then(tmp_path, fx, patch.object(service.seo_builder, "fields_ok", return_value=True))
+    assert code == 1 and [x["declared"] for x in doc["diff"]["diffs"]] == ["UNDECLARED"]
+    assert doc["rows"]["t9-m1"]["seo"]["verdict"]["out"] == {"seo_title": False, "meta_description": False}
+
+
+def test_m2_a_soft_fail_cut_on_a_fit_outage_is_undeclared(tmp_path, monkeypatch):
+    """M2: the fields sent to the fit (and shipped when it fails) are cut to junk: both sides miss, still compared."""
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_blog("t9-m2", "Dunmere", "Too short for any band.")])
+
+    def junk(seo, **_kw):
+        return {**seo, "seo_title": (seo.get("seo_title") or "")[:4], "meta_description": "Cheap."}, []
+    code, doc = _base_then(tmp_path, fx, patch.object(service.seo_builder, "build_seo", side_effect=junk))
+    assert code == 1 and [x["declared"] for x in doc["diff"]["diffs"]] == ["UNDECLARED"]
+    assert doc["rows"]["t9-m2"]["seo"]["miss"]
+
+
+def test_m6_a_loosened_taken_title_check_is_undeclared(tmp_path, monkeypatch):
+    """M6: the replay passes production's taken titles (the same tenant's other blog pieces), so a branch whose
+    title_ok forgets them ships a title this brand already used, and the independent verdict sees it."""
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_blog("t9-m6a", TITLE_OK, META_OK), _blog("t9-m6b", TITLE_OK, META_OK)])
+    code, doc = _base_then(tmp_path, fx)
+    assert code == 0 and doc["rows"]["t9-m6a"]["seo"]["taken_titles"] == 1
+    assert doc["rows"]["t9-m6a"]["seo"]["fit_calls"] == 1  # main: a taken title goes to the fit
+    code, doc = _base_then(tmp_path, fx, patch.object(service, "title_taken", return_value=False))
+    assert code == 1 and {x["declared"] for x in doc["diff"]["diffs"]} == {"UNDECLARED"}
+
+
+def test_seo_replay_builds_the_production_hygiene_context(monkeypatch):
+    seen = {}
+    real = service._fit_seo_meta
+
+    async def spy(seo, kw, **k):
+        seen.update(k)
+        return await real(seo, kw, **k)
+    ctx = {**CONTEXT, "tenant_id": TENANT, "scope": None, "trip_places": ["Dunmere"]}
+    piece = {"id": "x", "channel": "blog", "context": ctx, "content_text": BLOG, "seo_title": TITLE_OK,
+             "meta_description": META_OK, "slug": "s"}
+    with patch.object(service, "_fit_seo_meta", side_effect=spy):
+        row = rp._seo(piece, ["Another Dunmere Title For The Same Brand Here"])
+    assert seen["hyg"] is not None and seen["hyg"].lexicon is not None
+    assert seen["taken_titles"] == ["Another Dunmere Title For The Same Brand Here"]
+    assert row["context_error"] is None and row["verdict"]["writer"] == {"seo_title": True, "meta_description": True}
+
+
+def _ledger(*entries):
+    return [{"gate": g, "passed": False, "blocking": True, "violations": [f"repeats an earlier line: '{q}'"
+                                                                          for q in qs]} for g, qs in entries]
+
+
+def _guard_run(tmp_path, monkeypatch, prev, cur, mutation):
+    rows = [{"piece_id": "p-g", "channel": "linkedin", "content_text": POST, "status": "approved",
+             "gate_ledger": cur, "repair_log": [{"attempt": 1, "gate_ledger": prev}],
+             "writer_input": {"context": {**CONTEXT, "channel": "linkedin"}}}]
+    p, base, out = tmp_path / "pieces.json", tmp_path / "base.json", tmp_path / "cur.json"
+    p.write_text(json.dumps(rows))
+    monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_GATE_NAMES)  # main's guard
+    rp.main(["--pieces", str(p), "--out", str(base)])
+    monkeypatch.delenv(service.REGRESSION_GUARD_ENV)
+    clean = rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)])
+    with mutation:
+        code = rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)])
+    return clean, code, json.loads(out.read_text())
+
+
+SX, SY = "The quay bell rings at noon.", "The net sheds are painted blue."
+
+
+def test_m3_reverting_a_same_gate_rewrite_that_cleared_more_findings_is_undeclared(tmp_path, monkeypatch):
+    """M3: stable_keys.compare without `len(cur) >= len(prev)`: F13_repeat x3 -> x1 (new sentence) is reverted."""
+    from services.acp_content_writing import stable_keys
+    real = stable_keys.compare
+
+    def no_count(prev, cur):
+        c = real(prev, cur)
+        return {**c, "revert": bool(c["new"]) and len(c["cur_gates"]) >= len(c["prev_gates"])}
+    prev = _ledger(("F13_repeat", ["Line A here.", "Line B here.", "Line C here."]))
+    cur = _ledger(("F13_repeat", ["Line D here."]))
+    clean, code, doc = _guard_run(tmp_path, monkeypatch, prev, cur, patch.object(stable_keys, "compare", no_count))
+    assert clean == 0 and code == 1
+    assert [x["declared"] for x in doc["diff"]["diffs"]] == ["UNDECLARED"]
+
+
+def test_m4_key_evidence_that_lost_a_gate_cannot_certify_itself(tmp_path, monkeypatch):
+    """M4: blocking_keys skips F13_repeat, so a same-count rewrite with a new gate looks like 'fewer keys'."""
+    from services.acp_content_writing import stable_keys
+    real = stable_keys.blocking_keys
+
+    def skip_f13(ledger):
+        return frozenset(k for k in real(ledger) if k[0] != "F13_repeat")
+    prev = _ledger(("F12_scope", [SX]), ("F2_superlatives", ["The finest harbour anywhere."]))
+    cur = _ledger(("F2_superlatives", ["The finest harbour anywhere."]), ("F13_repeat", [SY]))
+    clean, code, doc = _guard_run(tmp_path, monkeypatch, prev, cur,
+                                  patch.object(stable_keys, "blocking_keys", skip_f13))
+    assert clean == 0 and code == 1
+    d = doc["diff"]["diffs"]
+    assert [x["declared"] for x in d] == ["UNDECLARED"] and "main's gate view" in d[0]["note"]
