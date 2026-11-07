@@ -3,9 +3,12 @@
 - ``ci_shards.py files --shuffle SEED`` prints the same files as without it, in an order fixed by SEED.
 - .github/workflows/nightly-integration.yml runs the whole suite (minus test_007, as CI) in one job on CI's Postgres,
   on a schedule and by hand with a seed, never on a pull request, and prints the seed.
+- Its job "report" keeps one open issue labelled nightly-red while the nightly is red and closes it on a green run
+  (the run script is executed here with a fake gh).
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -65,3 +68,59 @@ def test_nightly_runs_the_whole_suite_in_one_job_on_ci_postgres():
     env = {k: resolve(v) for k, v in run["env"].items() if k != "INPUT_SEED"}
     db = re.search(r'export DATABASE_URL="([^"]+)"', run["run"]).group(1).replace("${CI_DB_PASS}", job_env["CI_DB_PASS"])
     assert {**env, "DATABASE_URL": db} == shard_env
+
+
+FAKE_GH = """#!/usr/bin/env bash
+# Stands in for gh: logs the call; `issue list` prints $FAKE_OPEN (the open nightly-red issue number, or nothing).
+echo "gh $*" >>"$FAKE_LOG"
+case "$1 $2" in
+  "issue list") echo "${FAKE_OPEN:-}" ;;
+  "issue create") echo "https://github.com/o/r/issues/77" ;;
+esac
+exit 0
+"""
+
+
+def _report(tmp_path: Path, result: str, open_issue: str = "") -> tuple[str, str]:
+    job = yaml.safe_load(NIGHTLY.read_text(encoding="utf-8"))["jobs"]["report"]
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "gh").write_text(FAKE_GH)
+    (bindir / "gh").chmod(0o755)
+    log, summary = tmp_path / "gh.log", tmp_path / "summary.md"
+    log.write_text("")
+    summary.write_text("")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_LOG": str(log), "FAKE_OPEN": open_issue,
+           "GITHUB_STEP_SUMMARY": str(summary), "RESULT": result, "SEED": "4242", "EVENT": "schedule",
+           "RUN_URL": "https://github.com/o/r/actions/runs/1"}
+    p = subprocess.run(["bash", "-c", job["steps"][0]["run"]], env=env, capture_output=True, text=True, timeout=30)
+    assert p.returncode == 0, p.stdout + p.stderr
+    return log.read_text(), p.stdout
+
+
+def test_report_job_writes_issues_only_and_runs_after_every_finished_night():
+    wf = yaml.safe_load(NIGHTLY.read_text(encoding="utf-8"))
+    job = wf["jobs"]["report"]
+    assert job["needs"] == "random-order" and job["if"] == "${{ !cancelled() }}"
+    assert job["permissions"] == {"issues": "write"}
+    assert not any("uses" in s for s in job["steps"]), "the report job runs no action and checks nothing out"
+    assert wf["jobs"]["random-order"]["outputs"]["seed"] == "${{ steps.suite.outputs.seed }}"
+    run = next(s for s in wf["jobs"]["random-order"]["steps"] if s.get("id") == "suite")["run"]
+    assert 'echo "seed=$SEED" >> "$GITHUB_OUTPUT"' in run
+    assert run.index("GITHUB_OUTPUT") < run.index("pytest "), "the seed is an output even when pytest fails"
+
+
+def test_first_red_night_opens_the_issue_and_later_ones_comment(tmp_path: Path):
+    calls, out = _report(tmp_path, "failure")
+    assert "gh label create nightly-red" in calls and "gh issue create" in calls and "--label nightly-red" in calls
+    assert "4242" in calls and "issue #77" in out
+    calls, _ = _report(tmp_path, "failure", open_issue="12")
+    assert "gh issue comment 12" in calls and "issue create" not in calls
+
+
+def test_green_night_closes_the_open_issue_or_does_nothing(tmp_path: Path):
+    calls, _ = _report(tmp_path, "success", open_issue="12")
+    assert "gh issue close 12" in calls
+    calls, _ = _report(tmp_path, "success")
+    assert calls.strip().splitlines() == ["gh issue list --label nightly-red --state open --limit 1 --json number "
+                                          "--jq .[0].number // empty"]

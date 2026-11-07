@@ -3,6 +3,9 @@
 # split or a new file moves them (lessons S252..S270: a dropped geo schema, shared seed rows, self-FK leftovers, the
 # 304 replay run before 322). Not a required check and never on a PR: a red run is a finding to fix, not a merge block.
 # Replay a red order: Run workflow with its seed. Same Postgres / Redis / env as ci.yml "Integration shard i/4".
+# A red run is visible beyond GitHub's e-mail (AA-1024 follow-up; lesson S255: the full-history Secret Scan was red three
+# times and nobody saw it): job "report" keeps ONE open issue labelled nightly-red, opened on the first red night,
+# commented on each further red night, closed by the next green one. `gh issue list --label nightly-red` is the probe.
 name: Nightly integration (random order)
 
 on:
@@ -27,6 +30,8 @@ jobs:
     name: Integration (random module order)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      seed: ${{ steps.suite.outputs.seed }}
     # The dummy values of ci.yml's integration shards, by reference: a literal credential-shaped value on a new line
     # trips the PR gitleaks check (ci.yml's own lines are in the baseline).
     env:
@@ -82,6 +87,7 @@ jobs:
             -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN CREATE ROLE app_user LOGIN PASSWORD 'appuser123'; END IF; END \$\$;"
 
       - name: Run the integration suite in a random module order
+        id: suite
         env:
           INPUT_SEED: ${{ inputs.seed }}
           ENVIRONMENT: test
@@ -101,6 +107,7 @@ jobs:
           SEED="${INPUT_SEED:-}"
           [ -n "$SEED" ] || SEED=$(( $(date +%s) % 1000000 ))
           [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "::error::seed must be a number"; exit 2; }
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
           mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --shards 1 --index 1 --shuffle "$SEED" \
             --exclude tests/integration/test_007_rls_isolation.py tests/integration)
           {
@@ -110,3 +117,48 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "seed=$SEED, ${#FILES[@]} test files"
           pytest "${FILES[@]}" -v --tb=short -p no:cacheprovider
+
+  # One open issue labelled nightly-red while the nightly is red (opened, then commented on), closed by a green run.
+  # Only this job may write, and only issues; it reads nothing from the repository (no checkout).
+  report:
+    name: Report the result (issue nightly-red)
+    needs: random-order
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RESULT: ${{ needs.random-order.result }}
+      SEED: ${{ needs.random-order.outputs.seed }}
+      EVENT: ${{ github.event_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, comment on or close the nightly-red issue
+        run: |
+          set -euo pipefail
+          N=$(gh issue list --label nightly-red --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$N" ]; then
+              gh issue close "$N" --comment "Green again ($EVENT, seed \`${SEED:-?}\`): $RUN_URL"
+              echo "- nightly green: closed #$N" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          BODY="Nightly integration (random module order) ended **$RESULT** ($EVENT, seed \`${SEED:-?}\`): $RUN_URL
+
+          Replay the same module order: Actions > Nightly integration (random order) > Run workflow, with this seed.
+          A module that passes alone but fails here leans on an earlier module's leftovers (lessons S252..S270).
+          The next green run closes this issue."
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --body "$BODY"
+          else
+            gh label create nightly-red --color B60205 --force \
+              --description "The nightly random-order integration run is red (nightly-integration.yml)"
+            N=$(gh issue create --title "Nightly integration (random order) is red" --label nightly-red --body "$BODY" \
+              | sed -nE 's#.*/issues/([0-9]+)$#\1#p')
+          fi
+          echo "::warning::nightly integration $RESULT: issue #$N (label nightly-red)"
+          echo "- nightly $RESULT: issue #$N (label nightly-red)" >> "$GITHUB_STEP_SUMMARY"
