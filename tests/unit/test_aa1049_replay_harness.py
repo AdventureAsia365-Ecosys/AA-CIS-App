@@ -38,7 +38,9 @@ def _fixture(tmp_path, samples):
 
 
 def _env(monkeypatch):
+    """Every AA-1049 switch at its default (= main)."""
     monkeypatch.delenv(service.REGRESSION_GUARD_ENV, raising=False)
+    monkeypatch.delenv(service.SEO_BUILDER_ENV, raising=False)
 
 
 def test_production_input_is_the_service_builder():
@@ -254,12 +256,17 @@ def test_mixed_guard_flips_are_one_diff_per_pair(tmp_path):
                 "keys": _keys([[F17, "d"]], [F9], [F17], 1, 1)}
     row = {"input": {}, "route": {}, "seo": None, "contract": {}}
     base = {"rows": {"p": {**row, "guard": [_main(False, [F9], [F9]), _main(True, [F9], [F17])]}}}
-    cur = {"rows": {"p": {**row, "guard": [swap, keep_bad]}}}
-    got = [(x["section"], x["declared"]) for x in rp.diff(base, cur)["diffs"]]
+    cur = {"flags": {"T9_REGRESSION_GUARD_MODE": "stable_keys", "T9_SEO_BUILDER": "off"},
+           "rows": {"p": {**row, "guard": [swap, keep_bad]}}}
+    got = [(x["section"], x["declared"]) for x in rp.diff(base, cur, opt_in=True)["diffs"]]
     assert got == [("guard[0]", "D-guard-1"), ("guard[1]", "UNDECLARED")]
     s = rp.summary({"rows": {"p": {**cur["rows"]["p"], "channel": "linkedin", "f9_hit": True, "seo_miss": False,
-                                   "cassette_hit": True, "stored": {"sha": "n/a"}}}}, rp.diff(base, cur))
+                                   "cassette_hit": True, "stored": {"sha": "n/a"}}}}, rp.diff(base, cur, opt_in=True))
     assert s["undeclared"] == 1 and s["declared"] == {"D-guard-1": 1}
+    # without --opt-in, or with --opt-in but the switch off in this run, a declared shape is still UNDECLARED
+    for d in (rp.diff(base, cur), rp.diff(base, {**cur, "flags": {}}, opt_in=True)):
+        assert [x["declared"] for x in d["diffs"]] == ["UNDECLARED", "UNDECLARED"]
+        assert "needs --opt-in" in d["diffs"][0]["note"]
 
 
 def test_guard_section_reads_attempt_pairs_of_a_piece_export(tmp_path, monkeypatch):
@@ -277,18 +284,27 @@ def test_guard_section_reads_attempt_pairs_of_a_piece_export(tmp_path, monkeypat
     p = tmp_path / "pieces.json"
     p.write_text(json.dumps(rows))
     out = tmp_path / "cur.json"
+    monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_STABLE_KEYS)  # opt-in
     rp.main(["--pieces", str(p), "--out", str(out)])
     pair = json.loads(out.read_text())["rows"]["p-1"]["guard"][0]
     assert pair["revert"] is True  # a same-gate swap reverts (D-guard-1)
     assert pair["keys"]["prev_gates"] == pair["keys"]["cur_gates"] == ["F9_cta_fact"]
     base = tmp_path / "base.json"
-    monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_GATE_NAMES)
+    monkeypatch.delenv(service.REGRESSION_GUARD_ENV)  # the default: main's guard
     rp.main(["--pieces", str(p), "--out", str(base)])
     assert json.loads(base.read_text())["rows"]["p-1"]["guard"] == [
         {"revert": False, "keys": None, "gates": {"prev": [F9], "cur": [F9]}, "hold": {"prev": F9, "cur": F9}}]
-    monkeypatch.delenv(service.REGRESSION_GUARD_ENV)
+    # the default run equals main: no diff at all
     assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)]) == 0
-    assert json.loads(out.read_text())["summary"]["declared"] == {"D-guard-1": 1}
+    s = json.loads(out.read_text())["summary"]
+    assert s["declared"] == {} and s["undeclared"] == 0 and s["flags"]["T9_REGRESSION_GUARD_MODE"] == "gate_names"
+    monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_STABLE_KEYS)
+    # an opt-in run without --opt-in is never labelled declared
+    assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)]) == 1
+    assert json.loads(out.read_text())["summary"]["undeclared"] == 1
+    assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out), "--opt-in"]) == 0
+    s = json.loads(out.read_text())["summary"]
+    assert s["declared"] == {"D-guard-1": 1} and s["opt_in"] == ["guard"]
 
 
 # ----------------------------------------------------------------------------- review S272: mutations end to end
@@ -307,15 +323,20 @@ def _blog(sid, title, meta):
     return s
 
 
-def _base_then(tmp_path, fx, mutation=None):
-    """(exit code, replay doc) of a run over `fx` against a base run of the unmutated code."""
+def _base_then(tmp_path, fx, mutation=None, monkeypatch=None, seo_on=False):
+    """(exit code, replay doc) of a run over `fx` against a base run of the unmutated code at the defaults (main);
+    `seo_on`: the branch run opts in to T9_SEO_BUILDER=on with --opt-in."""
+    from contextlib import nullcontext
     base, out = tmp_path / "base.json", tmp_path / "cur.json"
     assert rp.main(["--golden", fx, "--out", str(base)]) == 0
-    if mutation is None:
-        code = rp.main(["--golden", fx, "--base", str(base), "--out", str(out)])
-    else:
-        with mutation:
-            code = rp.main(["--golden", fx, "--base", str(base), "--out", str(out)])
+    extra = []
+    if seo_on:
+        monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
+        extra = ["--opt-in"]
+    with mutation or nullcontext():
+        code = rp.main(["--golden", fx, "--base", str(base), "--out", str(out), *extra])
+    if seo_on:
+        monkeypatch.delenv(service.SEO_BUILDER_ENV)
     return code, json.loads(out.read_text())
 
 
@@ -324,7 +345,9 @@ def test_m1_a_skipped_seo_gate_is_undeclared(tmp_path, monkeypatch):
     _env(monkeypatch)
     fx = _fixture(tmp_path, [_blog("t9-m1", "Dunmere", "Too short for any band.")])
     assert _base_then(tmp_path, fx)[0] == 0
-    code, doc = _base_then(tmp_path, fx, patch.object(service.seo_builder, "fields_ok", return_value=True))
+    assert _base_then(tmp_path, fx, monkeypatch=monkeypatch, seo_on=True)[0] == 0
+    code, doc = _base_then(tmp_path, fx, patch.object(service.seo_builder, "fields_ok", return_value=True),
+                           monkeypatch=monkeypatch, seo_on=True)
     assert code == 1 and [x["declared"] for x in doc["diff"]["diffs"]] == ["UNDECLARED"]
     assert doc["rows"]["t9-m1"]["seo"]["verdict"]["out"] == {"seo_title": False, "meta_description": False}
 
@@ -336,7 +359,8 @@ def test_m2_a_soft_fail_cut_on_a_fit_outage_is_undeclared(tmp_path, monkeypatch)
 
     def junk(seo, **_kw):
         return {**seo, "seo_title": (seo.get("seo_title") or "")[:4], "meta_description": "Cheap."}, []
-    code, doc = _base_then(tmp_path, fx, patch.object(service.seo_builder, "build_seo", side_effect=junk))
+    code, doc = _base_then(tmp_path, fx, patch.object(service.seo_builder, "build_seo", side_effect=junk),
+                           monkeypatch=monkeypatch, seo_on=True)
     assert code == 1 and [x["declared"] for x in doc["diff"]["diffs"]] == ["UNDECLARED"]
     assert doc["rows"]["t9-m2"]["seo"]["miss"]
 
@@ -381,12 +405,15 @@ def _guard_run(tmp_path, monkeypatch, prev, cur, mutation):
              "writer_input": {"context": {**CONTEXT, "channel": "linkedin"}}}]
     p, base, out = tmp_path / "pieces.json", tmp_path / "base.json", tmp_path / "cur.json"
     p.write_text(json.dumps(rows))
-    monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_GATE_NAMES)  # main's guard
+    monkeypatch.delenv(service.REGRESSION_GUARD_ENV, raising=False)  # the default: main's guard
     rp.main(["--pieces", str(p), "--out", str(base)])
-    monkeypatch.delenv(service.REGRESSION_GUARD_ENV)
-    clean = rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)])
+    assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)]) == 0  # default = main
+    with mutation:  # the default path never reads stable_keys: a stable-key mutation changes nothing
+        assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)]) == 0
+    monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_STABLE_KEYS)  # opt-in
+    clean = rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out), "--opt-in"])
     with mutation:
-        code = rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)])
+        code = rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out), "--opt-in"])
     return clean, code, json.loads(out.read_text())
 
 
@@ -422,3 +449,22 @@ def test_m4_key_evidence_that_lost_a_gate_cannot_certify_itself(tmp_path, monkey
     assert clean == 0 and code == 1
     d = doc["diff"]["diffs"]
     assert [x["declared"] for x in d] == ["UNDECLARED"] and "main's gate view" in d[0]["note"]
+
+
+def test_a_default_run_equals_main_and_the_seo_prefix_is_opt_in_only(tmp_path, monkeypatch):
+    """S272 decision: with the defaults the SEO section equals main (the fit call is made: a cassette miss on both
+    sides); the code-first prefix shows only with T9_SEO_BUILDER=on, and is labelled D-seo-1 only with --opt-in."""
+    _env(monkeypatch)
+    long_meta = META_OK + " Then follow the slip down to the net sheds for tea with the harbour crews at dusk."
+    fx = _fixture(tmp_path, [_blog("t9-p1", TITLE_OK, long_meta)])
+    code, doc = _base_then(tmp_path, fx)
+    assert code == 0 and doc["summary"]["declared"] == {} and doc["summary"]["undeclared"] == 0
+    assert doc["rows"]["t9-p1"]["seo"]["fit_calls"] == 1                       # main's path
+    code, doc = _base_then(tmp_path, fx, monkeypatch=monkeypatch, seo_on=True)
+    assert code == 0 and doc["summary"]["declared"] == {"D-seo-1": 1} and doc["summary"]["opt_in"] == ["seo"]
+    assert doc["rows"]["t9-p1"]["seo"]["meta_description"] == META_OK and doc["rows"]["t9-p1"]["seo"]["fit_calls"] == 0
+    # the same opt-in run without --opt-in: UNDECLARED, exit 1
+    base, out = tmp_path / "base.json", tmp_path / "cur.json"
+    monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
+    assert rp.main(["--golden", fx, "--base", str(base), "--out", str(out)]) == 1
+    assert json.loads(out.read_text())["summary"]["undeclared"] == 1

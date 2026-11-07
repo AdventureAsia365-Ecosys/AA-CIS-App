@@ -43,6 +43,27 @@ purpose, checked against the declared SHAPE, not just the direction) or UNDECLAR
 is undeclared, a piece is missing, a stored contract shows a post-gate edit, or the SEO context of a piece could not
 be built (the replay would then check looser predicates than production). A flipped guard decision also reports the
 piece status each side continues with (`guard_status_flips`).
+
+Defaults vs opt-in (S272 orchestrator decision): with every AA-1049 switch at its default (T9_REGRESSION_GUARD_MODE
+unset = gate_names, T9_SEO_BUILDER unset = off) the branch must equal main: 0 declared and 0 undeclared diffs. The
+two declared-diff families belong to opt-in switches only: D-seo-* to T9_SEO_BUILDER=on, D-guard-* to
+T9_REGRESSION_GUARD_MODE=stable_keys. A diff is labelled with a declared id only when the run was started with
+`--opt-in` AND the switch of that family is on in this run (recorded under "flags"); otherwise it is UNDECLARED
+("opt-in diff without --opt-in"), so an opt-in run can never pass as a default-equals-main run.
+
+Known limits of the declared-diff classifier (review S272 round 3; they matter only for an --opt-in run):
+
+- SEO: the acceptance verdict (`_seo_predicates`) is computed with the checkout's own band and predicates
+  (service._seo_title_ok / _meta_ok, hygiene, seo_grounding, trip_facts, authenticity). The only cross-check against
+  main is that both sides judge the WRITER's values the same, so a loosened predicate that still fails the writer's
+  value (for example a lower meta floor) certifies its own shortened value as D-seo-1. Not every predicate change shows
+  as UNDECLARED; the unit tests of the predicates (test_aa1047_contradictions.py and the band tests) are the guard.
+- Guard: D-guard-1 / D-guard-2 are decided on the branch's own stable-key COUNTS (stable_keys output). The gate sets
+  are checked against main's gate-name view, the counts are not: a key-folding bug that keeps every gate name can
+  certify itself. test_aa1049_stable_keys.py is the guard for the key extraction.
+- Guard: the decision is taken through service.guard_decision when the checkout has it (main: the same rule written
+  out here); the AA-780 floor-only exception and the revert wiring of the call site are not replayed (pinned by
+  test_aa450 TestDiscardedAttempts and test_aa780), so a floor-only attempt-1 pair can differ from what production did.
 """
 from __future__ import annotations
 
@@ -58,16 +79,18 @@ from unittest.mock import patch
 
 SCHEMA = "aa1049-t9-replay/1"
 DECLARED = {
-    "D-seo-1": ("a title/meta the writer got wrong (it fails main's acceptance tests) is fixed in code by a "
-                "whole-sentence / separator prefix of the writer's value that passes them: 0 SEO-fit calls when both "
-                "fields then pass; else the fit is asked only about the rest and a fit outage ships the fixed field"),
-    "D-seo-2": "at most one SEO-fit call per attempt (the retry call is gone); unit tests only: a replayed fit call is "
-               "a cassette miss that aborts before main's retry, so the replay can never show it",
-    "D-guard-1": "regression guard on stable keys: a same-gate swap of flagged sentences (same gate set, as many keys "
-                 "or more) is reverted",
-    "D-guard-2": "regression guard on stable keys: clearing more findings than it adds is kept (the piece status can "
-                 "flip: held->approved when the kept rewrite clears every hold gate, approved->held when it traded "
-                 "style findings for a hold gate)",
+    "D-seo-1": ("opt-in T9_SEO_BUILDER=on: a title/meta the writer got wrong (it fails main's acceptance tests) is "
+                "fixed in code by a whole-sentence / separator prefix of the writer's value that passes them: 0 "
+                "SEO-fit calls when both fields then pass; else the fit is asked only about the rest and a fit outage "
+                "ships the fixed field"),
+    "D-seo-2": ("opt-in T9_SEO_BUILDER=on: at most one SEO-fit call per attempt (the retry call is gone); unit tests "
+                "only: a replayed fit call is a cassette miss that aborts before main's retry, so the replay can "
+                "never show it"),
+    "D-guard-1": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys: a same-gate swap of flagged sentences (same gate "
+                  "set, as many keys or more) is reverted"),
+    "D-guard-2": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys: clearing more findings than it adds is kept (the "
+                  "piece status can flip: held->approved when the kept rewrite clears every hold gate, "
+                  "approved->held when it traded style findings for a hold gate)"),
 }
 SEO_FIELDS = ("seo_title", "meta_description", "slug")
 NOT_DECLARED = {
@@ -237,6 +260,28 @@ def _seo(p: dict, taken: Optional[list[str]] = None) -> Optional[dict]:
             "taken_titles": len(taken), "context_error": ctx_error}
 
 
+OPT_IN = {"seo": ("T9_SEO_BUILDER", "on"), "guard": ("T9_REGRESSION_GUARD_MODE", "stable_keys")}
+
+
+def run_flags() -> dict:
+    """The AA-1049 switches as this checkout reads them (main has neither: both report their default)."""
+    from services.acp_content_writing import service
+    seo = service.seo_builder_mode() if hasattr(service, "seo_builder_mode") else "off"
+    guard = service.regression_guard_mode() if hasattr(service, "regression_guard_mode") else "gate_names"
+    return {"T9_SEO_BUILDER": seo, "T9_REGRESSION_GUARD_MODE": guard}
+
+
+def _opted_families(flags: dict, opt_in: bool) -> set:
+    """The declared-diff families this run may label: only with --opt-in, and only those whose switch is on."""
+    if not opt_in:
+        return set()
+    return {fam for fam, (env, on) in OPT_IN.items() if (flags or {}).get(env) == on}
+
+
+def _family(declared: str) -> Optional[str]:
+    return "seo" if declared.startswith("D-seo") else "guard" if declared.startswith("D-guard") else None
+
+
 def _guard(p: dict) -> Optional[list]:
     """One entry per consecutive pair of attempt ledgers: {"revert": the guard's decision in this checkout, "keys": the
     stable-key evidence (None on a checkout without stable_keys or in gate_names mode)}."""
@@ -262,14 +307,20 @@ def _guard(p: dict) -> Optional[list]:
         # would certify itself)
         pb, cb = service._regression_failures(prev), service._regression_failures(cur)
         row = {"gates": {"prev": sorted(pb), "cur": sorted(cb)}, "hold": {"prev": hold(prev), "cur": hold(cur)}}
+        decide = getattr(service, "guard_decision", None)
+        if decide is not None:  # the production decision function (before the AA-780 floor-only exception)
+            new, revert = decide(prev, cur)[:2]
+            revert = bool(new) and bool(revert)
+        else:                   # main: its call-site rule, written out
+            revert = bool(cb - pb) and len(cb) >= len(pb)
         if keys_mode:
             c = stable_keys.compare(prev, cur)
-            out.append({"revert": c["revert"], **row, "keys": {
+            out.append({"revert": revert, **row, "keys": {
                 "new": sorted(map(list, c["new"])), "removed": sorted(map(list, c["removed"])),
                 "prev_keys": c["prev_keys"], "cur_keys": c["cur_keys"],
                 "prev_gates": sorted(c["prev_gates"]), "cur_gates": sorted(c["cur_gates"])}})
         else:
-            out.append({"revert": bool(cb - pb) and len(cb) >= len(pb), **row, "keys": None})
+            out.append({"revert": revert, **row, "keys": None})
     return out
 
 
@@ -315,7 +366,7 @@ def replay(pieces: list[dict]) -> dict:
                          "cassette_hit": f9_hit and not (seo and seo["miss"]), "input": _input(p),
                          "route": _route(p), "seo": seo, "guard": _guard(p), "contract": _contract(p),
                          "stored": _stored_sha(p)}
-    return {"schema": SCHEMA, "rows": rows}
+    return {"schema": SCHEMA, "flags": run_flags(), "rows": rows}
 
 
 # ---------------------------------------------------------------------------------------------------------- diff
@@ -447,7 +498,20 @@ def _classify(section: str, base: Any, cur: Any) -> tuple[str, str]:
     return "UNDECLARED", f"{section} changed"
 
 
-def diff(base: dict, cur: dict) -> dict:
+def diff(base: dict, cur: dict, opt_in: bool = False) -> dict:
+    out = _diff(base, cur)
+    families = _opted_families(cur.get("flags") or {}, opt_in)
+    for x in out["diffs"]:
+        fam = _family(x["declared"])
+        if fam is not None and fam not in families:
+            env, on = OPT_IN[fam]
+            x["note"] = (f"{x['declared']} shape, but an opt-in diff needs --opt-in and {env}={on} in this run "
+                         f"({x['note']})")
+            x["declared"] = "UNDECLARED"
+    return {**out, "flags": {"base": base.get("flags"), "cur": cur.get("flags")}, "opt_in": sorted(families)}
+
+
+def _diff(base: dict, cur: dict) -> dict:
     out: list[dict] = []
     missing = sorted(set(base["rows"]) ^ set(cur["rows"]))
     for pid in sorted(set(base["rows"]) & set(cur["rows"])):
@@ -507,6 +571,8 @@ def summary(cur: dict, d: Optional[dict]) -> dict:
         s["undeclared"] = sum(v for k, v in ids.items() if k not in DECLARED and k not in NOT_DECLARED)
         s["missing_pieces"] = len(d["missing"])
         s["guard_status_flips"] = dict(Counter(x["status_flip"] for x in d["diffs"] if x.get("status_flip")))
+        s["opt_in"] = d.get("opt_in") or []
+    s["flags"] = cur.get("flags") or {}
     return s
 
 
@@ -527,10 +593,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--base", help="the replay JSON of the main checkout to diff against")
     ap.add_argument("--out", required=True)
     ap.add_argument("--report")
+    ap.add_argument("--opt-in", action="store_true",
+                    help="label diffs of an opt-in switch that is on in this run (T9_SEO_BUILDER=on, "
+                         "T9_REGRESSION_GUARD_MODE=stable_keys) with their declared id; without it every diff is "
+                         "UNDECLARED (a default run must equal main)")
     a = ap.parse_args(argv)
     pieces = [p for g in a.golden for p in load_golden(g)] + [p for f in a.pieces for p in load_pieces(f)]
     cur = replay(pieces)
-    d = diff(_read_json(a.base), cur) if a.base else None
+    d = diff(_read_json(a.base), cur, opt_in=a.opt_in) if a.base else None
     s = summary(cur, d)
     Path(a.out).write_text(json.dumps({**cur, "summary": s, "diff": d}, indent=1, default=str), encoding="utf-8")
     if a.report:
