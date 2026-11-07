@@ -506,6 +506,12 @@ a1_codes:
   # AA-926 (S250): codes added since the first registry base (AA-925 day oracle and degraded marker, AA-645
   # S1-first code checks, writer-v2 brand audit, the meta cut signature).
   BRAND_AUDIT_FLAGGED: {classes: [other.v1], note: "writer-v2 brand audit, report-only (quality_shadow)"}
+  # AA-1047 W1 fix pass 5: brand-audit model codes named in brand_audit_node (_VOICE_MODEL_CODES /
+  # _PRODUCT_TRUTH_MODEL_CODES, the elephant policy keep) that had no row.
+  BRAND_TONE_HYPE: {classes: [other.v1], note: "brand-audit model voice code"}
+  HIGHLIGHTS_WILDLIFE_UNVERIFIED: {classes: [fact.embellish], note: "brand-audit model product-truth code; gates on a v2 draft"}
+  KEYWORD_STUFFING_RISK: {classes: [other.v1], note: "brand-audit model voice / SEO code"}
+  PORTFOLIO_NAME_COLLISION: {classes: [other.v1], note: "brand-audit model naming code"}
   BRAND_AUDIT_UNAVAILABLE: {classes: [other.degraded_detector]}
   BRAND_AUDIT_UNCALIBRATED_JUDGE: {classes: [other.degraded_detector], note: "AA-1026 I6: a pass from an uncalibrated fallback judge (acc2) is held as manual_check"}
   DAY_CHECK_SKIPPED: {classes: [other.degraded_detector], note: "day oracle degraded marker, never enforced"}
