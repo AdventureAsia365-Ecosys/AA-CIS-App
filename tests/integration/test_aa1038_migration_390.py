@@ -213,9 +213,12 @@ def test_ai_budget_sources(cur):
     disabled, _ = _tenant(cur, "Bramblecourt Travel synthetic")
     cur.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, enabled, reason, granted_by) "
                 "VALUES (%s, 'ai.budget_usd_monthly', false, 'synthetic test', 'test:390')", (disabled,))
-    nokey, _ = _tenant(cur, "Inkwell Coast synthetic")   # its content plan canceled: no platform key resolves
-    cur.execute("UPDATE shared.tenant_subscription SET status = 'canceled', updated_by = 'test:390' "
-                "WHERE tenant_id = %s AND product = 'content'", (nokey,))
+    # No content plan at all (a state the CIS guards normally prevent; the triggers are off for this one statement of
+    # the superuser test login): no platform key resolves, so the view says 'none' and TripPlanner fails closed.
+    nokey, _ = _tenant(cur, "Inkwell Coast synthetic")
+    cur.execute("SET LOCAL session_replication_role = replica")
+    cur.execute("DELETE FROM shared.tenant_subscription WHERE tenant_id = %s AND product = 'content'", (nokey,))
+    cur.execute("SET LOCAL session_replication_role = DEFAULT")
     cur.execute("SET LOCAL ROLE tripplanner")
     by = {t: _rows(cur, TP_BUDGET_SQL, t)[0] for t in (plan, override, disabled, nokey)}
     assert by[plan]["budget_source"] == "entitlement" and float(by[plan]["monthly_usd"]) == 15.0
