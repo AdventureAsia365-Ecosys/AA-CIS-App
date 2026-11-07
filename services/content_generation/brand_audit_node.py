@@ -504,6 +504,22 @@ def hold_uncalibrated_pass(status: str, codes: list[str], resp) -> tuple[str, li
     return "manual_check", list(dict.fromkeys([*codes, BRAND_AUDIT_UNCALIBRATED_JUDGE])), issue
 
 
+MODEL_MANUAL_CHECK_CODE = "FACT_CHECK_MANUAL_CHECK"
+
+
+def with_model_manual_code(model_codes: list[str], model_status) -> list[str]:
+    """AA-1047 W1 fix pass 4 (review finding 5): a model "manual_check" verdict with no manual-check code of its own
+    gets ``FACT_CHECK_MANUAL_CHECK``. Without it, an elephant tour whose model held it for something else (status
+    manual_check, codes [], issue "the Day 4 balloon flight is not in the source") was stored with the policy code
+    alone, which ``elephant_policy.is_policy_only_hold`` reads as the policy, and the other check was approved away
+    (also on a v2 draft, where the model's other codes are report-only). The status is unchanged (derive_status
+    already reads model_status)."""
+    codes = list(model_codes or [])
+    if model_status == "manual_check" and not set(codes) & _MANUAL_CHECK_CODES:
+        codes.append(MODEL_MANUAL_CHECK_CODE)
+    return codes
+
+
 def derive_status(failure_codes: list[str], publish_ready, model_status=None) -> str:
     """AA-714: compute brand_audit status from the evidence, not from a key the model may omit.
 
@@ -705,8 +721,8 @@ Return JSON only per schema."""
         result = json.loads(resp.content)["brand_audit"]
 
         # Merge deterministic pre-codes into LLM codes
-        all_codes = list(dict.fromkeys(result["failure_codes"] + pre_codes))
         model_status = result.get("status")
+        all_codes = list(dict.fromkeys(with_model_manual_code(result["failure_codes"], model_status) + pre_codes))
         # AA-714: derive status ourselves (do not depend on the model emitting it — Luna drops it).
         status = derive_status(all_codes, result.get("publish_ready"), model_status)
         voice_report: list[dict] = []

@@ -157,6 +157,62 @@ def test_a_paraphrased_or_empty_claim_falls_back_to_the_sentence():
     assert fp.claim_span("You board a boat at dawn.", "") == "You board a boat at dawn."
 
 
+# W1 fix pass 4 (review finding 1, blocking): a relative clause about the trip's own stay is never place background,
+# a passive is not a history marker, and a view from the rooms / after "with" is the guest's. These held on main.
+@pytest.mark.parametrize("sentence,claim", [
+    ("You stay at the Bay Lodge, which was upgraded to sea-view rooms for this departure.",
+     "upgraded to sea-view rooms"),
+    ("You stay at the Bay Lodge, which was chosen for its sunset views over the bay.",
+     "chosen for its sunset views over the bay"),
+    ("You stay at the lodge, which was named for the sunrise views from its private hilltop deck.",
+     "named for the sunrise views from its private hilltop deck"),
+    ("You stay at Tarvo Lodge, which was built by villagers with every room overlooking the rapids.",
+     "every room overlooking the rapids"),
+    ("You stay at Tarvo Lodge, which sits above the rapids with sweeping views from every room.",
+     "sweeping views from every room"),
+    ("You stay at the Bay Lodge, which was restored in 2010 with a rooftop bar overlooking the river at sunset.",
+     "a rooftop bar overlooking the river at sunset"),
+    ("You stay at the Nam Ondra camp, which is famous for its dawn gibbon spotting from the treehouse.",
+     "dawn gibbon spotting from the treehouse"),
+])
+def test_a_relative_clause_about_the_trips_stay_holds(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) != ()
+    out = fp.apply_policy(_f9(_claim(sentence, claim, why="not in source")), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is True and out["f9_policy"]["classes"] == {fp.TRIP_PROMISE: 1}
+
+
+# W1 fix pass 4 (review finding 2, pre-existing): a promise with no reader / group subject (a passive, a service
+# noun, the reader as an object, a highlight line) still holds.
+@pytest.mark.parametrize("sentence,claim", [
+    ("Lunch is served on a floating restaurant.", "lunch served on a floating restaurant"),
+    ("Bicycles are provided for the ride to the temples.", "bicycles provided"),
+    ("The summit is reached just after dawn.", "summit reached just after dawn"),
+    ("The caves are explored by torchlight.", "caves explored by torchlight"),
+    ("Sunrise is watched from the top of Tarvo Hill.", "sunrise watched from the top of Tarvo Hill"),
+    ("A traditional dinner is enjoyed with a Hmong family.", "dinner with a Hmong family"),
+    ("Ondra Bay is cruised overnight on a traditional junk.", "cruised overnight on a traditional junk"),
+    ("A sunrise balloon flight over the Tarvo plain opens the day.", "a sunrise balloon flight over the Tarvo plain"),
+    ("A tuk-tuk takes the group to the night market.", "a tuk-tuk to the night market"),
+    ("Overnight in a stilt house, a homestay with a local family.", "a homestay with a local family"),
+    ("Mr Sok, our naturalist, points out hornbills along the trail.", "points out hornbills along the trail"),
+    ("Day 2 brings you to the village, where locals teach you to weave baskets.",
+     "locals teach you to weave baskets"),
+    ("Highlights: Tarvo Wat at sunrise, the Ondra gate and the Old Tower.", "Tarvo Wat at sunrise"),
+    ("You take a sunset cruise past the fort, which has guarded the river for 900 years.",
+     "a sunset cruise past the fort"),
+])
+def test_a_subjectless_promise_holds(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) != ()
+    out = fp.apply_policy(_f9(_claim(sentence, claim, why="not in source")), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is True and out["f9_policy"]["classes"] == {fp.TRIP_PROMISE: 1}
+
+
+def test_the_fort_history_next_to_a_sunset_cruise_still_warns():
+    """The history claim of the same sentence stays place background (its clause is positively background)."""
+    sentence = "You take a sunset cruise past the fort, which has guarded the river for 900 years."
+    assert fp.claim_kinds(sentence, "the fort has guarded the river for 900 years") == ()
+
+
 # ── 4. ledger_snapshot classifies with the lexicon ───────────────────────────────────────────────────────────────
 
 def test_ledger_snapshot_passes_the_lexicon_like_failing_gates():
@@ -349,6 +405,84 @@ def test_a_riding_issue_with_another_concern_in_a_relative_still_holds(issue):
 ])
 def test_is_voice_issue_is_narrow(text, voice):
     assert ep.is_voice_issue(text) is voice
+
+
+# W1 fix pass 4 (review finding 3): a locator or field name is boilerplate only when attached to the ride; another
+# day or a field standing on its own asks for another fact check and holds.
+@pytest.mark.parametrize("issue", [
+    "Elephant riding on Day 2. Day 5 must be verified.",
+    "Elephant riding on day 2; the summary on day 4 must be verified.",
+    "Elephant riding in the highlights. Fact-check the itinerary on day 4.",
+    "Elephant riding on Day 2, verify the summary.",
+    "Elephant riding in highlights; check the description.",
+])
+def test_a_separate_verification_request_holds(issue):
+    assert ep.is_policy_only_hold("manual_check", POLICY_FC, RIDE, None, issues=[issue]) is False
+    assert ep.is_policy_only_hold("manual_check", LEGACY, RIDE, None, issues=[issue]) is False
+
+
+@pytest.mark.parametrize("issue", [
+    "Elephant riding on Day 2. Day 2 must be verified.",
+    "Elephant riding is included in the itinerary (Day 2); flagged for human review.",
+])
+def test_a_locator_of_the_ride_itself_is_the_policy(issue):
+    assert ep.is_policy_only_hold("manual_check", POLICY_FC, RIDE, None, issues=[issue]) is True
+
+
+# W1 fix pass 4 (review finding 4): the riding clause is not dropped whole; a concern sharing its clause holds.
+@pytest.mark.parametrize("codes,issue", [
+    (POLICY_FC, "Elephant riding with a free spa massage the source does not list."),
+    (POLICY_FC, "Elephant riding including a private sunset cruise that the source lacks."),
+    (POLICY_FC, "Elephant riding followed by a night safari not listed in the source."),
+    (POLICY_FC, "Elephant ride at the camp where guests get a complimentary hot-air balloon flight not in source."),
+    (POLICY_FC, "Riding an elephant to the floating market with lunch included"),
+    (POLICY_FC, "Travel by elephant back to a village homestay dinner"),
+    (LEGACY, "Elephant riding with free spa massage at the lodge."),
+    (POLICY_FC, "Elephant riding on Day 3 is not in the source."),
+    (LEGACY, "Elephant riding on Day 3 is not in the source."),
+])
+def test_a_concern_in_the_riding_clause_holds(codes, issue):
+    assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=[issue]) is False
+
+
+# W1 fix pass 4 (review finding 5): a model manual_check verdict with no code of its own gets FACT_CHECK_MANUAL_CHECK,
+# so the elephant tour is not stored with the policy code alone and its issue is read.
+def test_a_model_manual_check_without_a_code_is_read_not_approved_away():
+    from services.content_generation import brand_audit_node as ba
+    assert ba.with_model_manual_code([], "manual_check") == ["FACT_CHECK_MANUAL_CHECK"]
+    assert ba.with_model_manual_code(["PRODUCT_TRUTH_RISK"], "manual_check") == ["PRODUCT_TRUTH_RISK"]
+    assert ba.with_model_manual_code(["BRAND_TONE_HYPE"], "flagged") == ["BRAND_TONE_HYPE"]
+    issue = ["The Day 4 sunset balloon flight is not in the source."]
+    codes = ba.with_model_manual_code([], "manual_check") + [ep.POLICY_CODE]
+    assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=issue) is False
+
+
+@pytest.mark.parametrize("v2", [False, True])
+def test_brand_audit_node_keeps_the_models_manual_check_on_an_elephant_tour(v2, monkeypatch):
+    """v2: the A1 writer-v2 LLM audit path (S1_JUDGE_LIVE=on), where the model's other codes are report-only."""
+    from services.content_generation import brand_audit_node as ba
+    monkeypatch.setenv("S1_JUDGE_LIVE", "on")
+    reply = {"brand_audit": {"status": "manual_check", "publish_ready": False, "fields_to_fix": [],
+                             "failure_codes": [], "issues": ["The Day 4 sunset balloon flight is not in the source."],
+                             "scores": {"brand_fit": 1, "human_read": 1, "seo_fit": 1, "trip_type_accuracy": 1,
+                                        "publish_readiness": 0},
+                             "notes": "", "lessons_extracted": []}}
+    resp = MagicMock(content=json.dumps(reply), input_tokens=10, output_tokens=5, cost_usd=0.001,
+                     stop_reason="end_turn", model_used="m", satellite_account=None, fallback_used=False,
+                     provider="bedrock")
+    client = MagicMock()
+    client.generate.return_value = resp
+    generated = {"name": "Tarvo Valleys", "subtitle": "Rivers and a slow pace", "summary": "s",
+                 "highlights": ["An elephant ride at dawn"], "itineraries": "Day 1 — Tarvo\nWalk.",
+                 "seo_title": "t", "seo_meta": "m"}
+    state = {"generated": generated, "tour": {"itineraries": "Day 1: Tarvo"}, "is_tenant_rewrite": False,
+             **({"writer_version": "v2"} if v2 else {})}
+    with patch.object(ba, "LLMClient", return_value=client), patch.object(ba, "record_call_sync"):
+        out = ba.brand_audit_node(state)
+    assert out["brand_audit_status"] == "manual_check"
+    assert set(out["brand_audit_codes"]) == {ep.POLICY_CODE, "FACT_CHECK_MANUAL_CHECK"}
+    assert ep.is_policy_only_hold(out["brand_audit_status"], out["brand_audit_codes"], generated, None,
+                                  issues=out["brand_audit_issues"]) is False
 
 
 def test_no_ride_is_never_a_policy_keep():

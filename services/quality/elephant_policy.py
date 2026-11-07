@@ -45,6 +45,12 @@ voice / SEO / format issue (``is_voice_issue``) is neither, and ANY other issue 
 A mixed issue ("elephant riding on day 2; also the balloon flight is not in the source") is split into clauses and
 its non-riding clauses are judged on their own.
 
+W1 fix pass 4 (review findings 3-5): the riding clause is never dropped whole (the ride is masked and the rest is
+judged: "Elephant riding with a free spa massage", "Elephant riding on Day 3 is not in the source" hold); a locator
+("(Day 3)", "in the highlights") is boilerplate only when it is attached to the ride, so "Day 5 must be verified" or
+"verify the summary" standing on its own holds; and a model manual_check verdict always carries a manual-check code
+(``brand_audit_node``), so its issues are always read.
+
 Pure: no DB, no LLM, no I/O.
 """
 from __future__ import annotations
@@ -85,9 +91,12 @@ _ISSUE_CLAUSE_SPLIT_RE = re.compile(
     r"|\s+(?:and\s+also|also|but|while|whereas|plus|as\s+well\s+as|and|however)\s+",
     re.IGNORECASE,
 )
-_ISSUE_WORD_RE = re.compile(r"[a-z_'-]+")
+# AA-1047 W1 fix pass 4 (review finding 3): digits are words. "Day 5 must be verified" next to a Day 2 ride is a
+# separate request, not boilerplate.
+_ISSUE_WORD_RE = re.compile(r"[a-z0-9_'-]+")
 # The words of a clause that only asks for the review the policy already gives ("needs a manual check", "flag for
-# human review per policy", "FACT_CHECK_MANUAL_CHECK").
+# human review per policy", "FACT_CHECK_MANUAL_CHECK"). No locator or field name here: "verify the summary" or
+# "check the description" standing on its own asks for another fact check and holds.
 _REVIEW_FILLER = frozenset({
     "a", "an", "the", "this", "it", "is", "be", "should", "must", "needs", "need", "requires", "require", "required",
     "requiring", "for", "per", "by", "to", "so", "please", "as", "under", "our", "aa", "brand", "policy", "rule",
@@ -97,9 +106,36 @@ _REVIEW_FILLER = frozenset({
     "before", "publishing", "publication", "here", "triggers", "trigger", "applies", "hold", "held",
     # relative links and verification verbs ("..., which must be manually verified"): they name no concern
     "which", "that", "these", "verify", "verified", "verification", "confirmation", "re-check",
-    # a bare locator of the ride ("(Day 3)", "in the highlights"): digits are not words here, so "Day 3" is "day"
-    "day", "in", "on", "at", "of", "highlights", "highlight", "itinerary", "summary", "description", "mentioned",
+    "in", "on", "at", "of",
 })
+# The words that only LOCATE the ride: allowed in a clause attached to the riding clause ("(Day 3)", "which is in
+# the highlights") and after a joiner inside the riding clause ("is included on Day 2", "with a manual check").
+_LOCATOR_WORDS = frozenset({
+    "day", "days", "highlights", "highlight", "itinerary", "itineraries", "summary", "description", "mentioned",
+    "mention", "mentions", "included", "includes", "include", "offered", "offers", "offer", "listed", "featured",
+    "features", "are", "was", "were", "tour", "trip", "page", "text", "copy", "programme", "program", "package",
+    "and", "also",
+})
+_DAY_NUM_RE = re.compile(r"\bday\s+(\d+)\b", re.IGNORECASE)
+_RELATIVE_LEAD_RE = re.compile(r"^(?:which|that|where\s+it)\b", re.IGNORECASE)
+# Inside the riding clause (the ride masked): a source / truth negation ...
+_RIDE_TRUTH_NEGATION_RE = re.compile(
+    r"\b(?:sources?|sourced|unsupported|invent\w*|fabricat\w*|lacks?|lacking|missing|absent|unlisted"
+    r"|contradict\w*|inconsisten\w*|mismatch\w*|inaccura\w*|incorrect\w*|wrong\w*|mislead\w*"
+    r"|not\s+(?:in|listed|mentioned|included|offered|supported|stated|part|confirmed|found|backed|provided)"
+    r"|(?:does|do|did)\s+not\s+(?:appear|mention|list|include|offer|support|match|exist|state|say)\w*"
+    r"|(?:doesn|don|didn)['’]?t\s+(?:appear|mention|list|include|offer|support|match|exist|state|say)\w*"
+    r"|(?:cannot|can['’]?t|could\s+not|unable\s+to)\s+(?:be\s+)?(?:confirm|verif|find|found|locat|match)\w*"
+    r"|no\s+(?:mention|evidence|support|record))\b",
+    re.IGNORECASE,
+)
+# ... or a joiner to another offer followed by words that are not filler ("with a free spa massage", "followed by a
+# night safari", "to the floating market", "where guests get a balloon flight").
+_RIDE_JOINER_RE = re.compile(
+    r"\b(?:with|including|includes|included|plus|followed\s+by|then|to|where|along\s+with|together\s+with"
+    r"|combined\s+with|featuring)\b",
+    re.IGNORECASE,
+)
 # The policy-hold reason a T2 version and its review row carry (D8).
 POLICY_HOLD = "elephant_riding"
 
@@ -305,8 +341,22 @@ def _issue_list(issues: Any) -> list:
         return [issues]
 
 
-def _issue_clauses(text: str) -> list[str]:
-    return [c.strip() for c in _ISSUE_CLAUSE_SPLIT_RE.split(text or "") if c and c.strip()]
+def _issue_clauses(text: str) -> list[tuple[str, str]]:
+    """[(the separator(s) before the clause, the clause)] of one issue text."""
+    text = text or ""
+    out: list[tuple[str, str]] = []
+    pos, sep = 0, ""
+    for m in _ISSUE_CLAUSE_SPLIT_RE.finditer(text):
+        chunk = text[pos:m.start()].strip()
+        if chunk:
+            out.append((sep, chunk))
+            sep = ""
+        sep += m.group(0)
+        pos = m.end()
+    tail = text[pos:].strip()
+    if tail:
+        out.append((sep, tail))
+    return out
 
 
 def is_voice_issue(text: Optional[str]) -> bool:
@@ -316,16 +366,76 @@ def is_voice_issue(text: Optional[str]) -> bool:
     return bool(_VOICE_ISSUE_RE.search(text)) and not _PRODUCT_TRUTH_ISSUE_RE.search(text)
 
 
-def _is_review_boilerplate(clause: str) -> bool:
-    """A clause that only asks for the review itself ("needs a manual check", "flag for human review per policy")."""
+def _is_review_boilerplate(clause: str, ride_days: frozenset = frozenset()) -> bool:
+    """A clause that only asks for the review itself ("needs a manual check", "flag for human review per policy").
+    A "day N" in it is boilerplate only when N is the ride's own day (``ride_days``): "Day 5 must be verified" next
+    to a Day 2 ride asks for another check."""
     words = _ISSUE_WORD_RE.findall((clause or "").lower())
-    return bool(words) and all(w in _REVIEW_FILLER for w in words)
+    if not words:
+        return False
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w == "day" and i + 1 < len(words) and words[i + 1] in ride_days:
+            i += 2
+            continue
+        if w not in _REVIEW_FILLER:
+            return False
+        i += 1
+    return True
+
+
+def _is_ride_locator(clause: str) -> bool:
+    """A clause attached to the riding clause that only locates the ride or asks for its review ("Day 3", "which
+    must be manually verified", "which is in the highlights")."""
+    words = _ISSUE_WORD_RE.findall((clause or "").lower())
+    return bool(words) and all(w in _REVIEW_FILLER or w in _LOCATOR_WORDS or w.isdigit() for w in words)
+
+
+def _riding_clause_concern(clause: str) -> bool:
+    """The riding clause, the ride itself masked, still carries another concern (AA-1047 W1 fix pass 4, review
+    finding 4): a source / truth negation ("Elephant riding on Day 3 is not in the source") or a joiner to another
+    offer followed by words that are not filler ("Elephant riding with a free spa massage", "Riding an elephant to
+    the floating market with lunch included"). "is included on Day 2" and "requires a manual fact check" are not."""
+    rest = ELEPHANT_RIDING_RE.sub(" ", clause or "")
+    if _RIDE_TRUTH_NEGATION_RE.search(rest):
+        return True
+    for m in _RIDE_JOINER_RE.finditer(rest):
+        words = _ISSUE_WORD_RE.findall(rest[m.end():].lower())
+        if any(not (w in _REVIEW_FILLER or w in _LOCATOR_WORDS or w.isdigit()) for w in words):
+            return True
+    return False
 
 
 def _riding_issue_rest(text: str) -> list[str]:
-    """The clauses of a riding issue that are NOT about the ride and not review boilerplate ("Elephant riding on day
-    2; also the Day 4 balloon flight is not in the source" -> ["the Day 4 balloon flight is not in the source"])."""
-    return [c for c in _issue_clauses(text) if not names_riding(c) and not _is_review_boilerplate(c)]
+    """The parts of a riding issue that the policy does NOT account for ("Elephant riding on day 2; also the Day 4
+    balloon flight is not in the source" -> ["the Day 4 balloon flight is not in the source"]):
+
+    - a riding clause is never dropped whole: the ride is masked and the rest is judged (``_riding_clause_concern``);
+    - a clause attached to the ride (a parenthetical right after it, "(Day 3)", or a "which / that" relative) may
+      locate the ride (``_is_ride_locator``);
+    - any other clause is boilerplate only when it is pure review filler (``_is_review_boilerplate``; a "day N" only
+      for the ride's own day); a field name or another day standing on its own ("verify the summary", "Day 5 must be
+      verified") is another concern.
+    """
+    clauses = _issue_clauses(text)
+    riding = [names_riding(c) for _, c in clauses]
+    ride_days = frozenset(d for (_, c), r in zip(clauses, riding) if r for d in _DAY_NUM_RE.findall(c))
+    out: list[str] = []
+    chain = False   # the previous clause is the ride or a locator attached to it
+    for (sep, c), r in zip(clauses, riding):
+        if r:
+            if _riding_clause_concern(c):
+                out.append(c)
+            chain = True
+            continue
+        attached = chain and ("(" in sep or "[" in sep or bool(_RELATIVE_LEAD_RE.match(c)))
+        if attached and _is_ride_locator(c):
+            continue
+        chain = False
+        if not _is_review_boilerplate(c, ride_days):
+            out.append(c)
+    return out
 
 
 def other_product_truth_issues(issues: Any) -> list[str]:
@@ -352,7 +462,12 @@ def is_policy_only_hold(brand_audit_status: Optional[str], brand_audit_codes: It
     human review), the re-validation gate (a human edit of an elephant tour is that review too) and the final
     contract. By codes:
 
-    - ``POLICY_CODE`` alone: the policy.
+    - ``POLICY_CODE`` alone: the policy. This holds because the LLM audit can no longer leave a manual_check verdict
+      without a code (AA-1047 W1 fix pass 4, review finding 5): ``brand_audit_node.with_model_manual_code`` adds
+      ``FACT_CHECK_MANUAL_CHECK`` when the model says manual_check and emits no manual-check code, so its issues are
+      read in the branch below (also on a v2 draft, where the other model codes are report-only). The rows left with
+      the policy code alone come from the deterministic paths (judge feedback, no tenant brand): their issue text is
+      not a fact-check verdict.
     - ``POLICY_CODE`` + the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` (since the split only the LLM emits that code;
       brand_standards still tells it to for the ride): the policy only when at least one issue names elephant riding
       (``names_riding``) and EVERY non-empty issue is accounted for (``other_product_truth_issues`` is empty): about

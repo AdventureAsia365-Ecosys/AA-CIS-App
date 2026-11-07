@@ -72,6 +72,20 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   verified") and bare locators ("(Day 3)", "in the highlights"), so "Itinerary includes elephant riding (Day 3), which
   must be manually verified" is the policy, while "..., which is not in the source" still holds ("not" / "source"
   are not filler).
+  Fix pass 4 (review findings 3-5). (3) Locators were filler everywhere and digits were dropped, so "Elephant
+  riding on Day 2. Day 5 must be verified." or "..., verify the summary." was a keep. Now digits are words, a "day N"
+  is boilerplate only for the ride's own day, and a locator / field name (day, highlights, itinerary, summary,
+  description) is boilerplate only in a clause ATTACHED to the ride (a parenthetical right after it, or a "which /
+  that" relative). (4) The riding clause was dropped whole, so "Elephant riding with a free spa massage the source
+  does not list" or "Elephant riding on Day 3 is not in the source" was a keep. Now the ride is masked and the rest is
+  judged: a source / truth negation (source, not listed / in / mentioned, lacks, unsupported, invented, "cannot
+  confirm" ...) or a joiner (with, including, followed by, to, where, plus ...) followed by a non-filler word holds.
+  "is included on Day 2" and "requires a manual fact check" stay keeps. (5) `codes == {POLICY_ELEPHANT_RIDING}` is
+  still a keep without reading issues, because `brand_audit_node.with_model_manual_code` now adds
+  `FACT_CHECK_MANUAL_CHECK` to a model "manual_check" verdict that carries no manual-check code (also on a v2 draft,
+  where the model's other codes are report-only), so the LLM's issues are always read in the {POLICY, FC} branch.
+  Rows with the policy code alone come from the deterministic paths (judge feedback, no tenant brand), whose issue
+  text is not a fact-check verdict (reading it would hold every judged elephant tour on praise).
 - **F9 claim span (follow-up 3).** `f9_policy.claim_span` picks the clause of the quoted sentence that holds the
   judge's claim (most shared words), with the sentence's trip subject in front when the clause continues its verb
   phrase ("you visit the market and taste the tea") or, fix pass, when it names a service, a time or a view (a
@@ -92,6 +106,16 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   to swim is built in" is still an inclusion); a relative after a locative antecedent with a time word and no
   background marker ("near the old fort, which comes alive with a lantern parade each evening") is not proven
   background; event nouns (parade, festival, concert, fireworks, procession, dance) count as activity nouns.
+  Fix pass 4 (review finding 1, blocking regression from pass 3, and finding 2). The background marker had a
+  catch-all passive ("was / were / had been" + participle), so "You stay at the Bay Lodge, which was chosen for its
+  sunset views" was background and warned. Now: no catch-all (history verbs only; "named" only with after / by / in
+  a year); a relative clause whose antecedent head noun is the trip's stay / vehicle / table (lodge, camp, hotel,
+  junk, boat, room ..., or a SERVICE_RE noun) is never background; a view word with room / deck / balcony / terrace /
+  every / private, or a view / time word after "with", is never background. Finding 2 (fail-open on main too): a
+  service noun is a promise on its own (no subject needed); a present passive promise ("is served / reached /
+  explored / watched / cruised") and the reader or the group as the object of a doing verb ("teach you", "takes the
+  group") count as the trip subject and as an activity; a highlight / list line or a bullet is about the trip; the
+  service lexicon takes cruise, balloon (flight), tuk-tuk, boat, junk, kayak, bicycle, naturalist, ranger, mahout ...
 - **/stats (follow-up 1).** The F9_cta_fact gate rows count in `failed` / `blocking_failed` only the entries with a
   content class; `failed_judge_unavailable` / `failed_text_integrity` count the rest; `f9_classes` sums the classes per
   channel (stored `f9_policy.classes`, else parsed).
@@ -130,6 +154,10 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   keep. The pre-split `FACT_CHECK_MANUAL_CHECK`-alone rows keep the pre-split keep on empty issues on purpose: the
   detector added that code with no issue text, so requiring a riding issue there would turn every stored elephant
   tour into a plain manual check.
+- F9 fix pass 4 broadens what holds (any service noun, present passives, object "you"): more false holds on
+  subjectless background that names a boat or a lunch ("fishing boats line the harbour"). Accepted by the rule "when
+  unsure, hold": a false hold costs a click, a false keep ships a promise. The counter-example tests use invented
+  place names (the file's golden-set text guard convention); the sentence shapes are the reviewer's.
 - The day-oracle codes are `block` in the contract while the oracle is still shadow in validate: the report must show
   what enforcing them would move (that is the W1 proof); precision is read on the flip list before any W3 enforce.
 - The sha "assert" is a recorded `sha_match` + an error log, not an exception: report mode never fails a write. The
