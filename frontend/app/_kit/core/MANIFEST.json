@@ -14,6 +14,7 @@
       "theme.ts",
       "i18n.ts",
       "aiNotice.messages.ts",
+      "brandTheme.ts",
       "check-kit-copy.mjs",
       "eslint-kit.mjs",
       "MANIFEST.json"
@@ -95,8 +96,11 @@
     "brand.ts": {
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
     },
+    "brandTheme.ts": {
+      "sha256": "998300c4c672d896fdddc006cb11c5754fff6de37294e7d5518c2885c033a247"
+    },
     "check-kit-copy.mjs": {
-      "sha256": "87710459d94a7947dc5a539cfbaa4b1cf5af05138598dd396cfbac6f2be96a2d"
+      "sha256": "bfdc21b739ad08365b40299682c5af150a7a64b5269f522f903ce2556da3754a"
     },
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"

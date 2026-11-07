@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.4"
+  version: "1.5"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -71,6 +71,16 @@ info:
     the AA master tenant in their WHERE, so a bound tenant's own CIS rows never appear there; the tenant's own text is
     a later view (catalog.v_tenant_tour_v1) with its own rule. CIS 379 also creates the demo tenant aa-tripplanner
     (00000000-0000-0000-0000-000000000002, kind demo), the tenant of TripPlanner's bare path.
+    1.5 (AA-1038 R5 slice 3, additive; no HTTP shape change): catalog.v_tenant_tripplanner_v1 appends crm_core (the
+    crm.core entitlement is live), lead_channel (where the tenant's lead.submitted.v1 goes: crm when crm_core, else
+    webhook or email when the tenant's site settings name one with its target, else none = TripPlanner refuses the
+    request), lead_webhook_url and lead_email (the target of the resolved channel only, else null; the agency's own
+    endpoint and business inbox, never a traveller's, and no secret: the webhook key is TripPlanner's). New view
+    catalog.v_tenant_ai_budget_v1 (CIS 390, SELECT to tripplanner only), one row per tenant of the TripPlanner view:
+    tenant_id, budget_source (entitlement = the resolved ai.budget_usd_monthly, monthly_usd null = unlimited;
+    disabled = an active disabled override, served as 0; none = no key resolves, the consumer fails closed),
+    monthly_usd, month_spent_usd and month_calls (the tenant's ledger rows of the current UTC month on every app,
+    shadow rows out). Read by tenant_id. No personal data, no price.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]

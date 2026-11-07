@@ -2812,6 +2812,18 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   plan_tier internal, a `tripplanner.hosted` subscription), the soft key of every TripPlanner row since tp-025. A bound
   tenant reads AA master catalogue rows only (`catalog._live_tour` keeps the master tenant). No admin editor for the
   site row yet (kit brand token slice).
+  **Slice 3 (CIS 390, contract tenant.entitlements.v1 1.5; `docs/implementation-notes/AA-1038-r5-slice3.md`):** the site
+  row gains the lead route of a tenant without the CRM (`lead_channel` none | webhook | email, `lead_webhook_url` https,
+  `lead_email`; CHECKed, no secret); the view appends `crm_core`, the resolved `lead_channel` (crm when `crm.core` is live)
+  and the target of that channel only; the new view `catalog.v_tenant_ai_budget_v1` (SELECT to `tripplanner` only) serves
+  the tenant's resolved `ai.budget_usd_monthly` (`budget_source` entitlement / disabled / none) and its ledger spend this
+  UTC month on every app, so TripPlanner caps its AI stages per tenant (failing closed) and its ledger rows (now carrying
+  the tenant) count in the same pot as the T-stages. The **runtime brand-token layer** is kit core
+  `frontend/app/_kit/core/brandTheme.ts` (tokens profile, import-free; root ADR 0016 amendment): a tenant theme becomes
+  one CSS block over the accent family of `--aa-*` (light: every accent token that passes the WCAG pairs, the label
+  colour picked for contrast; dark: the accent only when it keeps 3:1 on the dark card), checked by
+  `lib/kitBrandTheme.test.mjs`. Still no Tenant 360 editor for the theme or the lead route (set by a reviewed
+  `run-script` on Dev until it ships).
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).
