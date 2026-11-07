@@ -234,3 +234,43 @@ Tradeoffs / not fixed
 - Versus origin/main, the body examples that main blocks and this branch warns on are only the D1 / D13 decisions
   (background numbers and years, place rarity); every review counter-example blocks in F1, apply_rules and
   check_replacement (or F17 / F18 and check_replacement).
+
+## S272 adversarial review 3 (fixes on PR #1368)
+
+Decisions
+- The number frame fails closed. `claim_rules.trip_number_frame` = `trip_attached` OR NOT `background_number_signal`:
+  a number the SOURCE lacks warns only when the sentence carries a positive background signal (a year form, a
+  founding / building verb, a dimension unit with its dimension word, a share or population, a count a place holds
+  that is not people or beds) and nothing ties it to the trip. Review 2's frame was an allow-list of trip words with
+  warn as the default, so a leg, a dotted time, a capacity or a group size phrased without those words only warned.
+  Same predicate in F1, `apply_rules` (number branch and place_background number case) and `check_replacement` (F1).
+- `trip_attached` (the positive half) widened: descent / ascent, boat(s), skipper, dotted clock times ('6.30', not a
+  decimal measure like '1.25 km' or '0.45%'), durations ('a 20-minute', '2 hours away', 'a 3-hour affair'), a lie /
+  is / leads / set-aside verb with a duration or distance (not '40 km long'), and group-size / capacity frames
+  ('holds 12 hikers', 'at most 8 hikers share', 'capped at 25 walkers', 'keeps 4 places').
+- 'boats' is now a trip noun (fail closed): 'Brecca harbour holds 300 fishing boats' blocks; 'holds 300 fishing nets'
+  stays background. The review 2 note that called boats background is superseded.
+- F18's trip-vs-place test (`trip_facts.rarity_blocks`) is `claim_rules.trip_attached` with the moment's own itinerary
+  lines (gate_trip_facts passes them), so the number frame and F18 agree on one sentence. The rule table reads F18's
+  rarity lexicon (`trip_facts.unsupported_rarity`, the same `RARITY_CLAIM_RE` and source test): trip-attached fails,
+  place rarity warns (D13 / D1). It is a separate tripwire, not part of `RARITY_RE` (the social tripwire always
+  fails, which would block the place-rarity warn twins). apply_rules now owns every rarity twin.
+- T9 short-meta tail: `seo_meta_utils.place_country_tail(destination, *seed_texts)` reads EVERY `Location:` line of
+  the own seed and of each route segment (`location_countries`) and names the destination only when every line
+  resolves to it; a line with no country part, or any other country, means no tail.
+- Harness: a meta example may carry `route: [<seed key>, ...]` (route moments' seed blocks joined by blank lines, as
+  `service._reread_seed`); a new synthetic seed `harbour` (Dunmere Harbour, Tesselmoor) is the cross-border moment.
+
+Changed
+- New twins: num-22..30 (the review's leg / time / capacity / group / duration cases block; a count a place holds and
+  'since 1820' warn), rar-13..17 (rarity on a crossing / visit / tour / walk blocks; place rarity warns), meta-13 /
+  meta-14 (route across a border: no tail; route inside the destination: composed). rar-01 / 04 / 07 list
+  apply_rules. Unit tests in test_aa1047_review2.py: the reviewer's Luang Prabang + Hanoi reproduction through
+  `_fit_seo_meta`, route segments, a Location line without a country part, the frame cases and rarity agreement.
+
+Should know
+- Compared with origin/main on every body example (F1, F17, F18): the only cases main blocks and this branch warns on
+  are the D1 / D13 decisions (background numbers with a background signal: bg-02, bg-06, num-05, num-09, num-10,
+  num-21, num-30; place rarity: rar-01, rar-04, rar-07, rar-17). Every review counter-example blocks.
+- No policy key changed (examples only): policy_sha stays 56729ec18379581c, the prompt registry check reports 0
+  problems, migration 387's manifest is unchanged.

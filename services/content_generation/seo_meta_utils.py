@@ -328,16 +328,24 @@ def extend_short_meta(meta: Optional[str], facts: Optional[dict] = None, tenant_
 _PAREN_RE = re.compile(r"\([^)]*\)")
 
 
-def location_country(seed_text: Optional[str]) -> Optional[str]:
-    """AA-1047 (S272 review 2): the country of the moment's own place — the last part of the seed's first
-    'Location:' line (atom_seed._location_lines writes '<place>, <locality>, <region>, <card country>'), or None.
-    A place keeps its own country: the tour country (one per trip, from the Excel row) can be another one."""
+def location_countries(seed_text: Optional[str]) -> list[Optional[str]]:
+    """AA-1047 (S272 review 3): the country of EVERY 'Location:' line of a seed, in order — the last part of the
+    line (atom_seed._location_lines writes '<place>, <locality>, <region>, <card country>'), or None for a line with
+    no comma-separated last part. A T9 route piece's seed is several moment blocks joined by blank lines
+    (service._reread_seed), each with its own Location line; a place keeps its own country."""
+    out: list[Optional[str]] = []
     for line in (seed_text or "").splitlines():
         if line.startswith("Location:"):
             where = _PAREN_RE.sub("", line.split(":", 1)[1]).strip().rstrip(",").strip()
             last = where.rsplit(",", 1)[-1].strip() if "," in where else ""
-            return last or None
-    return None
+            out.append(last or None)
+    return out
+
+
+def location_country(seed_text: Optional[str]) -> Optional[str]:
+    """The country of the seed's first 'Location:' line (location_countries), or None."""
+    found = location_countries(seed_text)
+    return found[0] if found else None
 
 
 def same_country(a: Optional[str], b: Optional[str]) -> bool:
@@ -351,12 +359,18 @@ def same_country(a: Optional[str], b: Optional[str]) -> bool:
     return a.strip().casefold() == b.strip().casefold()
 
 
-def place_country_tail(destination: Optional[str], seed_text: Optional[str]) -> Optional[str]:
-    """The country a T9 short-meta tail may name: the DESTINATION only when it is the place's own Location country
-    (location_country); None — no country tail — when the seed has no Location country or it is another one (a
-    cross-border trip: ', in Laos.' after a meta about Ha Long Bay). Fail closed: when unsure, no tail."""
-    loc = location_country(seed_text)
-    return destination.strip() if destination and same_country(destination, loc) else None
+def place_country_tail(destination: Optional[str], *seed_texts: Optional[str]) -> Optional[str]:
+    """The country a T9 short-meta tail may name: the DESTINATION only when EVERY 'Location:' line of every seed text
+    (the piece's own seed and each route segment) names that same country; None — no country tail — when there is no
+    Location line, a line has no country part, or any line names another country (a cross-border trip or route:
+    ', in Laos.' after a meta about Ha Long Bay, or about Hanoi on a route that starts in Luang Prabang). Fail closed:
+    when unsure, no tail (S272 review 3: the first Location line alone put Hanoi in Laos)."""
+    if not (destination and destination.strip()):
+        return None
+    found = [c for text in seed_texts for c in location_countries(text)]
+    if not found or not all(same_country(destination, c) for c in found):
+        return None
+    return destination.strip()
 
 
 def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden=None) -> str:

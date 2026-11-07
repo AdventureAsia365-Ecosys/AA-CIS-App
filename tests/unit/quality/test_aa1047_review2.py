@@ -194,7 +194,21 @@ def test_check_replacement_skips_piece_level_trip_fact_checks():
     ("The climb to Corran Monastery takes 3 hours.", True),
     ("The monastery stands 900 metres above the lake.", False),
     ("Corran Monastery was founded in 1937 by monks from the coast.", False),
-    ("Brecca harbour holds 300 fishing boats.", False),
+    # S272 review 3: fail closed — 'boats' is a trip noun, and a number with no background signal is in the frame
+    ("Brecca harbour holds 300 fishing boats.", True),
+    ("The library hall holds 900 handwritten books.", False),
+    ("Lake Orvine is 40 km long.", False),
+    ("Only 0.4% of the valley is forest.", False),
+    ("Brecca has been a fishing village since 1820.", False),
+    ("Afterwards, a 20-minute descent leads back to Orvine.", True),
+    ("Boats pull away from the Brecca jetty at 6.30 sharp.", True),
+    ("A small boat holds 12 hikers and a skipper.", True),
+    ("At most 8 hikers share each dormitory in Brecca.", True),
+    ("Brecca lies 2 hours away by water.", True),
+    ("Getting back to Orvine is a 3-hour affair.", True),
+    ("2 hours are set aside in the library hall.", True),
+    ("Brecca lies 40 km from Orvine.", True),
+    ("The gate is 300 metres from the guesthouse.", True),
 ])
 def test_trip_number_frame(text, frame):
     from services.acp_content_writing import claim_rules as cr
@@ -206,3 +220,85 @@ def test_audience_line_supports_an_age_only():
     src, aud = ["Walk up to Corran Monastery."], ["AUDIENCE: Walkers aged 25-50"]
     assert cr.novel_trip_numbers("The walk takes 50 minutes.", src, aud) == ["50"]
     assert cr.novel_trip_numbers("The walk suits walkers aged 25 to 50.", src, aud) == []
+
+
+@pytest.mark.parametrize("text", [
+    "Lake Orvine is 1.25 km wide.", "Only 0.45% of the valley is forest.", "The tower rises 12.50 m above the lake."])
+def test_a_decimal_measure_is_not_a_clock_time(text):
+    from services.acp_content_writing import claim_rules as cr
+    assert not cr._CLOCK_RE.search(text)
+
+
+# ---------------------------------------------------------------- rarity: one trip-vs-place test (review 3)
+
+
+@pytest.mark.parametrize("seed_key,text", [
+    ("lake", "The ferry crossing to Brecca is unparalleled anywhere on earth."),
+    ("monastery", "The library hall visit is the only one of its kind in the world."),
+    ("monastery", "Corran's library hall tour is unique in the world."),
+    ("monastery", "Walking up to Corran Monastery is an experience unmatched in Asia."),
+])
+def test_rarity_blocks_agrees_with_the_trip_frame(seed_key, text):
+    """F18's trip-vs-place test is claim_rules.trip_attached: a rarity claim on a crossing, a visit, a tour or a walk
+    holds in F18 (and so in check_replacement), never only warns while the number frame calls the sentence a trip's."""
+    from services.acp_content_writing import claim_rules as cr, hygiene
+    from services.acp_content_writing import quality_gates as qg
+    from services.acp_content_writing.trip_facts import TripFactContext, rarity_blocks, rarity_claims
+    seed = ph._seed(wp.load_source()["example_seeds"][seed_key])
+    lines = cr.trip_lines_of(hygiene.split_seed(seed)[0])
+    found = rarity_claims(text, hygiene.split_seed(seed)[0])
+    assert found and all(rarity_blocks(v, lines) for v in found)
+    assert cr.trip_attached(text, lines)
+    ctx = TripFactContext(seed=seed, cta=ph.DEFAULT_CTA, channel="blog", brand_name=ph.BRAND)
+    f18 = [g for g in qg.gate_trip_facts(text, ctx) if g["gate"] == qg.F18_GATE][0]
+    assert not f18["passed"] and f18["blocking"]
+
+
+def test_place_rarity_still_warns():
+    from services.acp_content_writing import claim_rules as cr
+    from services.acp_content_writing.trip_facts import rarity_blocks, rarity_claims
+    text = "Corran Monastery is one of the last walled monasteries in the world."
+    found = rarity_claims(text, "Walk up to Corran Monastery above Orvine and visit its library hall.")
+    assert found and not any(rarity_blocks(v, ("Walk up to Corran Monastery above Orvine.",)) for v in found)
+    assert cr.trip_lines_of("") == ()
+
+
+# ---------------------------------------------------------------- T9 meta tail: every Location line (review 3)
+
+
+def _route_seed() -> str:
+    from services.acp_shared.atom_seed import compose_seed
+    return (compose_seed("Luang Prabang — old town walk", "Walk the old town of Luang Prabang.", None, None, [],
+                         place="Luang Prabang", country="Laos", day=2)
+            + "\n\n"
+            + compose_seed("Hanoi Old Quarter — walk", "Walk the Hanoi Old Quarter lanes.", None, None, [],
+                           place="Hanoi Old Quarter", country="Vietnam", day=7))
+
+
+HANOI_META = ("Take a slow Hanoi old quarter walk through narrow lanes of street food stalls, temples and shophouses "
+              "on the final day of the journey.")
+
+
+def test_cross_border_route_never_puts_hanoi_in_laos():
+    """The reviewer's reproduction: a route seed whose first moment is in the DESTINATION (Laos) and whose later
+    moment is in Vietnam; a short meta about Hanoi got ', in Laos.' from the first Location line."""
+    seed = _route_seed()
+    assert smu.location_countries(seed) == ["Laos", "Vietnam"]
+    assert smu.place_country_tail("Laos", seed) is None
+    assert smu.place_country_tail("Vietnam", seed) is None
+    out, cost = _fit(HANOI_META, seed, "Laos", "Mekong Journey: Luang Prabang to Hanoi")
+    assert cost == 0.0 and "Laos" not in out["meta_description"] and out["meta_description"] == HANOI_META
+
+
+def test_route_segments_are_read_too():
+    """A route segment in another country (passed as context route_segments) also stops the tail."""
+    seed = ph._seed(wp.load_source()["example_seeds"]["monastery"])
+    other = ph._seed(wp.load_source()["example_seeds"]["harbour"])
+    assert smu.place_country_tail("Velmora", seed) == "Velmora"
+    assert smu.place_country_tail("Velmora", seed, other) is None
+    assert smu.place_country_tail("Velmora", seed, seed) == "Velmora"
+
+
+def test_a_location_line_without_a_country_part_means_no_tail():
+    seed = HALONG_SEED + "\n\nCat Ba — boat\nLocation: Cat Ba (do not place it in any other town, region or country)"
+    assert smu.place_country_tail("Vietnam", seed) is None

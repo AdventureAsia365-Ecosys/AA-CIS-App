@@ -986,7 +986,11 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
             return out
         # S272 review 2: the DESTINATION is raw_tours.country (one per trip); it is named only when it is the place's
         # own seed Location country (a place keeps its own country), and the trip name runs the AA-794 check
-        country = seo_meta_utils.place_country_tail(context.get("destination"), hygiene.split_seed(seed)[0])
+        # S272 review 3: every Location line counts — a route piece's seed is one block per moment, and the route
+        # segments are read too — so a cross-border route never names one country for all its places
+        country = seo_meta_utils.place_country_tail(
+            context.get("destination"), hygiene.split_seed(seed)[0],
+            *(hygiene.split_seed(t)[0] for _a, t in (context.get("route_segments") or [])))
         if not country:
             return out
         cand = seo_meta_utils.extend_short_meta(meta, {"country": country, "name": context.get("trip_name")})

@@ -277,7 +277,10 @@ def test_background_position_and_trip_number_follow_f17_and_f1():
         return "block" if v.blocking else ("warn" if v.problem else "pass")
 
     assert verdict("Brecca sits on the far shore of Lake Tamsel.") == "block"
-    assert verdict("Brecca harbour holds 300 fishing boats.") == "warn"
+    # S272 review 3: 'boats' is a trip noun (fail closed: 'Boats pull away at 6.30'), so a harbour count of boats now
+    # blocks; a count of things the harbour holds that are not boats or people stays background
+    assert verdict("Brecca harbour holds 300 fishing nets.") == "warn"
+    assert verdict("Brecca harbour holds 300 fishing boats.") == "block"
     assert verdict("On this walk you count 300 fishing boats in Brecca harbour.") == "block"
 
 

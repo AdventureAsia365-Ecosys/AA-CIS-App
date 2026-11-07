@@ -26,15 +26,17 @@ SEEDS = SOURCE["example_seeds"]
 # S271 T9 contradiction number -> the examples that show the code now agrees with itself and the policy.
 CODE_VS_CODE = {
     1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-07", "bg-08", "bg-11", "bg-12", "bg-13", "rar-01", "rar-04", "rar-07",
-        "rar-09", "rar-10", "rar-11", "rar-12"],                                        # D1, D13
+        "rar-09", "rar-10", "rar-11", "rar-12", "rar-13", "rar-14", "rar-15", "rar-16", "rar-17"],  # D1, D13
     4: ["tim-01", "tim-03", "tim-05", "tim-02", "tim-04"],                              # timing: repair vs F17
     5: ["tim-01", "faq-03", "faq-05", "scp-01"],                                        # severity of f7 / s5 / scope
     6: ["faq-02", "faq-03", "faq-04", "faq-06"],                                        # FAQ topics: filter vs dropper
     8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08", "num-09", "num-10", "num-11", "num-12", "num-13",
-        "num-14", "num-15", "num-16", "num-17", "num-18", "num-19", "num-20", "num-21"],  # numbers: one trip frame
+        "num-14", "num-15", "num-16", "num-17", "num-18", "num-19", "num-20", "num-21", "num-22", "num-23", "num-24",
+        "num-25", "num-26", "num-27", "num-28", "num-29", "num-30"],                  # numbers: one trip frame
     9: ["scp-01", "scp-02", "scp-03", "scp-05", "scp-07"],                              # scope
     10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05", "cta-09"],                   # CTA literal line
     12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "meta-09", "meta-10", "meta-11", "meta-12",
+         "meta-13", "meta-14",
          "tit-03", "tit-04",
          "slug-01", "slug-03"],                                                     # SEO bands, slug boundary
 }
@@ -65,11 +67,13 @@ def test_every_body_example_gives_apply_rules_a_claim_row():
 def test_every_body_fire_twin_names_its_owning_detectors():
     """`combined` takes the most severe verdict, so a lax detector hides behind a strict one; each detector that owns
     the example's rule must reach `expect` on its own (`all`, checked in test_example_is_decided_as_the_policy_expects).
-    By design not an owner: apply_rules for a time of day (F17 owns it), for a rarity claim about a place (D1
-    background passes it, F18 warns), and check_replacement for scope (an admin's sentence gets F12 as a warning until
-    the replay shows no false positives). S272 review 2: a number inside the one trip frame
-    (claim_rules.trip_number_frame) is owned by F1, apply_rules AND check_replacement; check_replacement also owns the
-    sentence-level F17 / F18 findings (it runs them), so every timing and rarity fire twin lists it."""
+    By design not an owner: apply_rules for a time of day (F17 owns it), and check_replacement for scope (an admin's
+    sentence gets F12 as a warning until the replay shows no false positives). S272 review 2: a number inside the one
+    trip frame (claim_rules.trip_number_frame) is owned by F1, apply_rules AND check_replacement; check_replacement
+    also owns the sentence-level F17 / F18 findings (it runs them), so every timing and rarity fire twin lists it.
+    S272 review 3: the frame fails closed (a novel number warns only with a positive background signal), and the rule
+    table reads F18's rarity lexicon with F18's trip-vs-place test (claim_rules.trip_attached), so apply_rules owns
+    every rarity twin too (place rarity warns, trip rarity blocks)."""
     missing = [e["id"] for e in BODY if e["expect"] != "pass" and not e.get("all")]
     assert missing == []
     unknown = {d for e in BODY for d in e.get("all") or []} - BODY_DETECTORS
@@ -110,7 +114,8 @@ def test_the_code_vs_code_contradictions_are_proved_gone():
 
 def test_examples_are_synthetic():
     """Public repo: invented places only (CI golden-set text guard). The seeds name only the invented world."""
-    invented = {"Corran Monastery", "Orvine", "Lake Orvine", "Velmora", "Brecca", "Tesselmoor", "Northpine Travel"}
+    invented = {"Corran Monastery", "Orvine", "Lake Orvine", "Velmora", "Brecca", "Tesselmoor", "Northpine Travel",
+                "Dunmere Harbour"}
     for seed in SEEDS.values():
         assert seed["place"] in invented and seed["country"] in invented
 

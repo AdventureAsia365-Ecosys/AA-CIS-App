@@ -18,8 +18,9 @@ Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fa
   the sentence-level F17 / F18 checks)
 - meta / title / slug: F4 gate_seo_surface (that field only), the S1 band checks (s1_checks.check_meta,
   SEO_TITLE_MAX), the T9 acceptance (service._meta_ok) and the T9 short-meta tail (a meta inside the T9 writer aim
-  but under the band must be composed into the band by service._fit_seo_meta, only with the place's own Location
-  country: seo_meta_utils.place_country_tail + extend_short_meta), the slug fold
+  but under the band must be composed into the band by service._fit_seo_meta, only when every Location line of the
+  seed names the destination: seo_meta_utils.place_country_tail + extend_short_meta; `route` adds route moments'
+  seed blocks, as a T9 route piece's seed), the slug fold
   (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
 - faq: drop_unanswerable_faq (topic needs a source line), F16 gate_faq_contract
@@ -222,6 +223,9 @@ def run_example(ex: dict, seeds: dict) -> Outcome:
     """The Outcome of one policy example (see the module docstring)."""
     out = Outcome(example_id=ex["id"], expect=ex["expect"])
     seed = _seed(seeds[ex.get("seed", "monastery")])
+    if ex.get("route"):
+        # a T9 route piece: one seed block per moment, joined by blank lines (service._reread_seed)
+        seed = "\n\n".join([seed] + [_seed(seeds[k]) for k in ex["route"]])
     facts = ex.get("facts", "")
     grounding = grounding_text(seed, facts)
     cta = ex.get("cta", DEFAULT_CTA)

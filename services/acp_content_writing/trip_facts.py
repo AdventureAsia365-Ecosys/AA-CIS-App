@@ -739,18 +739,32 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
 _QUOTED_SENTENCE_RE = re.compile(r": '(.*)'$", re.S)
 
 
-def rarity_blocks(violation: str) -> bool:
-    """AA-1047 (writing policy D13): does this F18 finding hold? A rarity / uniqueness claim attached to the trip
-    (the sentence makes the trip, the reader or the group its subject: 'this tour is the only …') is a promise and
-    blocks; one about a place follows D1 (background) and only warns. A quantifier or generalisation finding ('most
-    travellers …', a stronger quantifier than the source's) always blocks: it is social proof, not background."""
+def unsupported_rarity(sentence: str, source: str) -> Optional[str]:
+    """The first RARITY_CLAIM_RE phrase of `sentence` that `source` does not make (rarity_claims' test), or None.
+    AA-1047 (S272 review 3): the rule table (claim_rules._decide) reads the same lexicon through this."""
+    src = _norm_rarity(source)
+    for m in RARITY_CLAIM_RE.finditer(sentence or ""):
+        if _norm_rarity(m.group(0)) not in src:
+            return m.group(0)
+    return None
+
+
+def rarity_blocks(violation: str, own_trip_lines: tuple = ()) -> bool:
+    """AA-1047 (writing policy D13): does this F18 finding hold? A rarity / uniqueness claim attached to the trip is a
+    promise and blocks; one about a place follows D1 (background) and only warns. Attached to the trip =
+    claim_rules.trip_attached (S272 review 3: the predicate the number frame and the rule table use — the trip, the
+    reader or the group as subject, a trip activity / leg / service word such as 'visit', 'crossing', 'tour',
+    'walking', or an activity shared with `own_trip_lines`, the moment's own itinerary lines); before, only the
+    subject counted, so 'The ferry crossing to Brecca is unparalleled anywhere on earth.' only warned. A quantifier
+    or generalisation finding ('most travellers …', a stronger quantifier than the source's) always blocks: it is
+    social proof, not background."""
     if RARITY_PROBLEM_PREFIX not in str(violation or ""):
         return True
-    from services.acp_content_writing.f9_policy import TRIP_SUBJECT_RE
+    from services.acp_content_writing.claim_rules import trip_attached  # claim_rules imports this module lazily
     m = _QUOTED_SENTENCE_RE.search(str(violation))
     sentence = m.group(1) if m else str(violation)
     place_mode = _wp.claim("rarity").get("place", "warn")
-    return bool(TRIP_SUBJECT_RE.search(sentence)) or place_mode == "enforce"
+    return trip_attached(sentence, own_trip_lines) or place_mode == "enforce"
 
 
 # ---------------------------------------------------------------- date authority
@@ -2374,6 +2388,8 @@ __all__ = [
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
     "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
-    "pace_claims", "parse_moments", "rarity_blocks", "rarity_claims", "role_claim", "timing_claims", "with_date_spans",
+    "pace_claims", "parse_moments", "rarity_blocks", "rarity_claims", "unsupported_rarity", "role_claim",
+    "timing_claims",
+    "with_date_spans",
     "service_claims",
 ]

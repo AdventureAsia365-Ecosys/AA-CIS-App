@@ -539,6 +539,7 @@ class _Ctx:
     number_src_trip: tuple = ()
     own_trip_lines: tuple = ()   # KIND_TRIP lines: the trip-frame activity overlap (trip_number_frame)
     number_src_audience: tuple = ()   # AUDIENCE / BRAND lines: an age only (novel_trip_numbers)
+    rarity_src: tuple = ()   # the lines a rarity claim may rest on: the moment's own seed lines and Facts (as F18)
 
 
 PASS, WARN, FAIL = "pass", "warn", "fail"
@@ -577,48 +578,121 @@ _NUMBERS = _wp.claim("numbers")
 _POSITION_KINDS = (KIND_TRIP, KIND_LOCATION, KIND_PLACE)
 
 
-# AA-1047 (S272 review 2) — the trip frame of a number, ONE predicate for F1 (quality_gates.gate_grounding), the rule
-# table (apply_rules: the number branch and the place_background number case) and the admin sentence check
-# (sentence_repair.check_replacement runs F1). A number the SOURCE lacks is a trip promise (blocks) when the sentence
-# is about the trip: its subject is the trip, the reader, the group or a day (f9_policy.TRIP_SUBJECT_RE); it names a
-# trip service or an inclusion word (f9_policy.SERVICE_RE, CONCRETE_TRIP_RE / a promise frame); it names a trip
-# activity, a leg of travel or a stay (walk, hike, climb, crossing, ride, ferry, boat, transfer, visit, tasting,
-# nights, overnight, stay); it gives a clock time; a departs / leaves / takes / lasts verb carries a duration or a
-# distance; or it shares an activity word with the moment's own itinerary lines ('crossing' ← 'Cross Lake Orvine').
-# Only a number outside every one of these (a place's height, a founding year, a share of a valley) is background and
-# warns (writing policy claims.numbers, D1). Before this review the frame was the subject or a service word only, so
-# 'The ferry crossing to Brecca takes 40 minutes.' and 'The boat ride to Brecca leaves at 7 am.' only warned.
+# AA-1047 (S272 review 2 + 3) — the trip frame of a number, ONE predicate for F1 (quality_gates.gate_grounding), the
+# rule table (apply_rules: the number branch and the place_background number case) and the admin sentence check
+# (sentence_repair.check_replacement runs F1). Fail closed (review 3): a number the SOURCE lacks is a trip promise
+# (blocks) UNLESS the sentence carries a positive background signal and nothing ties it to the trip.
+#
+# Tied to the trip (`trip_attached`, also F18's trip-vs-place test for a rarity claim): its subject is the trip, the
+# reader, the group or a day (f9_policy.TRIP_SUBJECT_RE); it names a trip service or an inclusion word
+# (f9_policy.SERVICE_RE, CONCRETE_TRIP_RE / a promise frame); it names a trip activity, a leg of travel or a stay (walk,
+# hike, climb, descent, crossing, ride, ferry, boat, transfer, visit, tasting, nights, overnight, stay); it gives a
+# clock time (7 am, 6.30, 18:00); it gives a duration ('a 20-minute', '2 hours away', 'a 3-hour affair'); a departs /
+# leaves / takes / lasts / leads verb carries a duration or a distance; it states a group size or a capacity ('holds 12
+# hikers', 'at most 8 hikers share', 'capped at 25 walkers'); or it shares an activity word with the moment's own
+# itinerary lines ('crossing' ← 'Cross Lake Orvine').
+#
+# A positive background signal (`background_number_signal`): a year form ('in 1388', 'the 1630s', 'the 14th
+# century'), a founding / building verb ('founded', 'built', 'dates from', 'since'), a height, depth, length or area
+# unit with its dimension word ('900 metres above', '40 km long'), a share ('0.4%'), a population ('home to') or a
+# count a place holds that is not people or beds ('holds 900 handwritten books'). Only then does a novel number warn
+# (writing policy claims.numbers, D1: background numbers and years warn). Review 2's frame was an allow-list of trip
+# words with warn as the default, so 'A small boat holds 12 hikers' and 'Brecca lies 2 hours away by water' warned.
 _TRIP_ACTIVITY_RE = re.compile(
     r"\b(?:walks?|walking|hikes?|hiking|climbs?|climbing|treks?|trekking|rides?|riding|drives?|driving|crossings?"
-    r"|cruises?|cruising|transfers?|visits?|tours?|excursions?|journeys?|trips?|outings?|ferry|ferries"
-    r"|kayak\w*|cycl(?:e|es|ing)|bik(?:e|es|ing)|sail(?:s|ing)?|paddl\w*|rafting|flights?|trains?|bus|buses"
-    r"|jeeps?|stays?|overnights?|stopovers?|nights?|programmes?|programs?|itinerar(?:y|ies)|sessions?|classes"
-    r"|lessons?|demonstrations?|tastings?|meals?|departures?)\b", re.I)
-_CLOCK_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?!\w)|\b\d{1,2}:\d{2}\b|\bo'clock\b", re.I)
+    r"|cruises?|cruising|transfers?|visits?|tours?|excursions?|journeys?|trips?|outings?|ferry|ferries|boats?"
+    r"|descents?|ascents?|descend\w*|ascend\w*|kayak\w*|cycl(?:e|es|ing)|bik(?:e|es|ing)|sail(?:s|ing)?|paddl\w*"
+    r"|rafting|flights?|trains?|bus|buses|jeeps?|stays?|overnights?|stopovers?|nights?|programmes?|programs?"
+    r"|itinerar(?:y|ies)|sessions?|classes|lessons?|demonstrations?|tastings?|meals?|departures?|skippers?)\b", re.I)
+_CLOCK_RE = re.compile(
+    r"\b\d{1,2}(?:[:.]\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?!\w)|\b\d{1,2}:\d{2}\b|\bo'clock\b"
+    # a dotted time ('at 6.30 sharp'); never a measure or a share ('1.25 km', '0.45%')
+    r"|\b\d{1,2}\.[0-5]\d\b(?!\s*(?:%|per\s?cent|percent|km|kilomet|met|m\b|ft|feet|foot|miles?|hectares?|acres?"
+    r"|kg|tonnes?|million|billion))", re.I)
+_NUM_WORD = (r"(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty"
+             r"|thirty|forty|forty-five|fifty|sixty|ninety|several|a few|a couple of|half an?)")
+_DURATION_RE = re.compile(
+    rf"\b{_NUM_WORD}[- ](?:minute|min|hour|hr|day|night|week)s?\b"
+    r"|\b(?:minutes?|mins?|hours?|hrs?|days?|nights?)\s+(?:away|long|of\s+\w+ing|on\s+foot|by\s+\w+)\b", re.I)
 _LEG_RE = re.compile(
     r"\b(?:depart\w*|leav(?:e|es|ing)|left|takes?|took|taking|lasts?|lasted|lasting|starts?|begins?|ends?|returns?"
-    r"|arriv\w*|covers?|runs?)\b[^.;:!?]{0,40}?\b(?:minutes?|mins?|hours?|hrs?|nights?|days?|km|kilomet(?:re|er)s?"
-    r"|miles?)\b", re.I)
+    r"|arriv\w*|covers?|runs?|leads?|led|lies|lie|is|are|set\s+aside)\b[^.;:!?]{0,40}?\b(?:minutes?|mins?|hours?"
+    r"|hrs?|nights?|days?|km|kilomet(?:re|er)s?|miles?)\b(?!\s+(?:long|wide|deep|high|across|in\s+(?:length|area)))",
+    re.I)
+_PEOPLE_OR_CAPACITY = (r"(?:people|persons?|hikers?|walkers?|travell?ers?|guests?|visitors?|passengers?|tourists?"
+                       r"|participants?|adults?|children|kids|pax|riders?|paddlers?|climbers?|trekkers?|members?"
+                       r"|seats?|beds?|berths?|bunks?|places|spots|rooms?|cabins?|dormitor(?:y|ies)|tents?)")
+_GROUP_SIZE_RE = re.compile(
+    rf"\b(?:holds?|seats?|sleeps?|carr(?:y|ies)|shares?|fits?|accommodates?|takes?|welcomes?|at\s+most|up\s+to"
+    rf"|no\s+more\s+than|(?:a\s+)?maximum\s+of|max(?:imum)?|capped\s+at|limited\s+to|groups?\s+of|parties\s+of"
+    rf"|only)\b[^.;:!?]{{0,30}}?\b{_NUM_WORD}\s+(?:[\w-]+\s+)?{_PEOPLE_OR_CAPACITY}\b"
+    rf"|\b{_NUM_WORD}\s+(?:[\w-]+\s+)?{_PEOPLE_OR_CAPACITY}\s+(?:share|fit|sleep|join|ride|travel|walk|go)\b", re.I)
 # The activity verbs of an itinerary line, by stem ('Cross Lake Orvine by ferry' → 'cross').
 _ACTIVITY_STEM_RE = re.compile(
     r"\b(board|ride|hike|trek|walk|cycl|bike|kayak|paddl|raft|swim|snorkel|dive|climb|sail|cruis|visit|explor|stay"
     r"|spend|sleep|meet|join|tast|sampl|cook|learn|drive|cross|camp|reach|arriv|continu|descend|ascend|picnic|tour"
     r"|transfer|ferry|boat|fly|flight)\w*", re.I)
+# A positive background signal for a number (see above).
+_YEAR_SIGNAL_RE = re.compile(
+    r"\b(?:in|since|from|by|until|till|around|circa|c\.|after|before|between|and|to|year|of)\s+(?:the\s+)?"
+    r"(?:early\s+|late\s+|mid-?\s*)?(?:1[0-9]{3}|20[0-9]{2})(?:s|['’]s)?\b"
+    r"|\b(?:1[0-9]{3}|20[0-9]{2})(?:s|['’]s)\b|\b\d{1,4}\s*(?:AD|BC|BCE|CE)\b|\bA\.?D\.?\s*\d{1,4}\b"
+    r"|\b(?:century|centuries|millennium|millennia|dynasty|dynasties|reign)\b", re.I)
+_FOUNDING_RE = re.compile(
+    r"\b(?:founded|built|constructed|erected|established|consecrated|rebuilt|restored|carved|dates?\s+(?:back\s+)?"
+    r"(?:from|to)|dating\s+(?:back\s+)?(?:from|to)|since|ago)\b", re.I)
+_DIMENSION_UNIT_RE = re.compile(
+    r"\b(?:metres?|meters?|ft|feet|foot|km|kilomet(?:re|er)s?|miles?|hectares?|acres?|km2|m2)\b|km²|m²"
+    r"|\d\s?(?:m|ha)\b", re.I)
+_DIMENSION_WORD_RE = re.compile(
+    r"\b(?:high|tall|deep|long|wide|across|thick|in\s+(?:length|height|depth|diameter|area|size)|above|below"
+    r"|sea\s+level|elevation|altitude|area|covers?|spans?|stretch(?:es)?|rises?|towers?|drops?)\b", re.I)
+_SHARE_RE = re.compile(r"%|\bper\s?cent\b|\bpercent\b|\bpopulation\b|\binhabitants\b|\bresidents\b|\bhome\s+to\b",
+                       re.I)
+_PLACE_COUNT_RE = re.compile(
+    rf"\b(?:holds?|houses?|contains?|keeps?|preserves?|displays?|has|have|counts?|boasts?|shelters?)\s+(?:about\s+"
+    rf"|around\s+|some\s+|over\s+|more\s+than\s+|nearly\s+|almost\s+|roughly\s+)?(?:\d[\d,]*|{_NUM_WORD}|hundreds"
+    rf"|thousands)\s+((?:[\w-]+\s+){{0,2}}[\w-]+)", re.I)
+_PEOPLE_OR_CAPACITY_RE = re.compile(rf"\b{_PEOPLE_OR_CAPACITY}\b", re.I)
 
 
-def trip_number_frame(sentence: Optional[str], own_trip_lines: Iterable[str] = ()) -> bool:
-    """Is a number in `sentence` a trip attribute (it blocks) rather than background (it warns)? See the comment
-    above. `own_trip_lines` = the moment's own itinerary lines (KIND_TRIP: label, Day line, Source itinerary)."""
+def trip_attached(sentence: Optional[str], own_trip_lines: Iterable[str] = ()) -> bool:
+    """Is `sentence` about this trip (see the comment above)? The trip-vs-place test of a novel number
+    (trip_number_frame) and of a rarity claim (trip_facts.rarity_blocks, the rule table's rarity tripwire).
+    `own_trip_lines` = the moment's own itinerary lines (KIND_TRIP: label, Day line, Source itinerary)."""
     from services.acp_content_writing.f9_policy import SERVICE_RE, TRIP_SUBJECT_RE
     text = strip_tags(sentence or "")
     if not text:
         return False
     if (TRIP_SUBJECT_RE.search(text) or SERVICE_RE.search(text) or _trip_level(text) in ("concrete", "framed")
-            or _TRIP_ACTIVITY_RE.search(text) or _CLOCK_RE.search(text) or _LEG_RE.search(text)):
+            or _TRIP_ACTIVITY_RE.search(text) or _CLOCK_RE.search(text) or _DURATION_RE.search(text)
+            or _LEG_RE.search(text) or _GROUP_SIZE_RE.search(text)):
         return True
     stems = {m.group(1).lower() for line in own_trip_lines for m in _ACTIVITY_STEM_RE.finditer(line or "")}
     words = re.findall(r"[a-z]+", fold(text))
     return any(w.startswith(st) for st in stems for w in words)
+
+
+def background_number_signal(sentence: Optional[str]) -> bool:
+    """Does `sentence` carry a positive sign that its number is place background (a year, a founding verb, a
+    dimension with its unit, a share or population, a count of things a place holds)? See the comment above."""
+    text = strip_tags(sentence or "")
+    if not text:
+        return False
+    if _YEAR_SIGNAL_RE.search(text) or _FOUNDING_RE.search(text) or _SHARE_RE.search(text):
+        return True
+    if _DIMENSION_UNIT_RE.search(text) and _DIMENSION_WORD_RE.search(text):
+        return True
+    return any(not _PEOPLE_OR_CAPACITY_RE.search(m.group(1)) for m in _PLACE_COUNT_RE.finditer(text))
+
+
+def trip_number_frame(sentence: Optional[str], own_trip_lines: Iterable[str] = ()) -> bool:
+    """Does a number in `sentence` that the SOURCE lacks block (a trip promise) rather than warn (background)? True
+    unless the sentence carries a background signal and nothing ties it to the trip — fail closed (review 3)."""
+    text = strip_tags(sentence or "")
+    if not text:
+        return False
+    return trip_attached(text, own_trip_lines) or not background_number_signal(text)
 
 
 _NOT_TRIP_FACT_PREFIXES = ("AUDIENCE", "BRAND")
@@ -710,6 +784,18 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
     if "social" in hits:  # whatever the model typed (design f9-v2): never in the SOURCE
         return "social_proof", FAIL, ("social proof or rarity claim — what other travellers or itineraries do "
                                       "is never in the SOURCE")
+    # AA-1047 (writing policy claims.rarity, D13; S272 review 3): F18's rarity / uniqueness lexicon
+    # (trip_facts.RARITY_CLAIM_RE: 'unparalleled', 'unmatched', 'the only one of its kind', 'unique in the world', ...)
+    # read here too, with F18's trip-vs-place test (trip_attached, as trip_facts.rarity_blocks): attached to the trip
+    # it is a promise and fails; about a place it follows D1 and warns. The rule table never passes what F18 flags.
+    if s.where == "body" and not _is_question(s):
+        from services.acp_content_writing.trip_facts import unsupported_rarity  # trip_facts imports hygiene only
+        rarity = unsupported_rarity(s.text, "\n".join(c.rarity_src))
+        if rarity:
+            problem = f"a rarity or uniqueness claim the SOURCE does not make ('{rarity}')"
+            if trip_attached(masked, c.own_trip_lines) or _wp.claim("rarity").get("place") == "enforce":
+                return "comparison", FAIL, f"{problem} — attached to this trip, it is a promise"
+            return "comparison", WARN, f"{problem} — place background, check it"
     if t == "hypothetical":
         if HYPOTHETICAL_RE.search(s.text):
             # a promise in a conditional ('You could stay in a private lodge with meals included')
@@ -817,7 +903,9 @@ def apply_rules(rows: dict[str, ClaimRow], source_lines: list[SourceLine], sente
              number_src_trip=tuple(number_source_text(ln.text) for ln in source_lines
                                    if ln.kind not in (KIND_OTHER_TRIP, KIND_AUDIENCE, KIND_BRAND)),
              own_trip_lines=tuple(ln.text for ln in source_lines if ln.kind == KIND_TRIP),
-             number_src_audience=tuple(ln.text for ln in source_lines if ln.kind in (KIND_AUDIENCE, KIND_BRAND)))
+             number_src_audience=tuple(ln.text for ln in source_lines if ln.kind in (KIND_AUDIENCE, KIND_BRAND)),
+             rarity_src=tuple(ln.text for ln in source_lines
+                              if ln.kind not in (KIND_OTHER_TRIP, KIND_AUDIENCE, KIND_BRAND)))
     out: list[Verdict] = []
     for s in sentences:
         row = rows.get(s.sid)

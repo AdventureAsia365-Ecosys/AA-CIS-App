@@ -2246,7 +2246,13 @@ def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_
         return flag and any(not v.startswith(("title ", "meta ")) for v in vs)
     # AA-1047 (writing policy D13): a rarity claim about a place follows D1 (background) and only warns; one
     # attached to the trip, and every quantifier / generalisation finding, still blocks (trip_facts.rarity_blocks).
-    rarity_hold = [v for v in found["rarity"] if rarity_blocks(v)]
+    # S272 review 3: the trip-vs-place test is claim_rules.trip_attached, with the moment's own itinerary lines
+    trip_lines = ()
+    if found["rarity"]:
+        from services.acp_content_writing.claim_rules import trip_lines_of
+        from services.acp_content_writing.hygiene import split_seed as _split_seed
+        trip_lines = trip_lines_of(_split_seed(trip_ctx.seed)[0])
+    rarity_hold = [v for v in found["rarity"] if rarity_blocks(v, trip_lines)]
     return [_result(F17_GATE, found["trip_fact"], repairable=True,
                     blocking=body_blocking(found["trip_fact"], F17_BLOCKING) if found["trip_fact"] else F17_BLOCKING),
             _result(F18_GATE, found["rarity"], repairable=True,
