@@ -89,6 +89,7 @@ from services.acp_content_writing import route_table  # AA-1049 (the one T9 rout
 from services.acp_content_writing import seo_builder  # AA-1049 (code-composed SEO fields)
 from services.acp_content_writing import stable_keys  # AA-1049 (stable-key regression guard)
 from services.acp_content_writing import piece_store  # AA-1049 R0b (the store seam a replay swaps for a dry store)
+from services.acp_content_writing import prespend  # AA-1049 (pre-spend angle tripwires, report mode)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
@@ -2069,6 +2070,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     fact_sheet = _grounding_sheet(context)
     grounding_text = fact_sheet.render()  # AA-768 — + audience/trip lines
     await _store_fact_sheet(pool, fact_sheet, context)
+    # AA-1049 W3 (ADR 0020 "Plan", D2) — pre-spend angle tripwires against the FactSheet, REPORT mode only (recorded
+    # in writer_input.prespend, never a reject or a re-pick until W2 measures them on briefs)
+    try:
+        context["prespend"] = prespend.angle_tripwires(context.get("chosen"), grounding_text)
+    except Exception as e:  # noqa: BLE001 — a report never fails the write
+        logger.warning("t9_prespend_report_failed", request_id=str(request_id), error=str(e)[:200])
     # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
     # JSON job payload).
     # AA-771 (S234) — the channel spec (LinkedIn) caps the hashtags, moves them to the last line and
@@ -2845,6 +2852,8 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
         # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.
         **({"faq_answer_fit": context["faq_answer_fit"]} if context.get("faq_answer_fit") else {}),
+        # AA-1049 W3 — the pre-spend angle tripwire report (admin-only, report mode)
+        **({"prespend": context["prespend"]} if context.get("prespend") else {}),
         # AA-789 tier 1 — seed alignment per attempt (modes, candidates, nlp version); absent when every class is off.
         **({"seed_align": context["seed_align"]} if context.get("seed_align") else {}),
         # AA-918 (WM-16) — the learned lexicon rules this piece got (and the ones skipped, with why); absent when no
