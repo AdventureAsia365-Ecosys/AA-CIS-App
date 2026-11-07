@@ -31,6 +31,22 @@ def test_stale_expected_entry_is_a_problem_unless_pgvector_is_installed():
     assert guard.replay_problems({}, {"041_pgvector_embeddings.sql": "x"}, vector_available=True) == []
 
 
+def test_an_expected_file_failing_with_another_error_is_a_problem():
+    expected = {"019_social_content.sql": 'schema "acp_silver_s4" does not exist'}
+    # The recorded error is a substring of the first line: expected (psycopg2's LINE / HINT lines are ignored).
+    assert guard.replay_problems({"019_social_content.sql": 'schema "acp_silver_s4" does not exist\nLINE 3: x'},
+                                 expected) == []
+    got = guard.replay_problems({"019_social_content.sql": 'syntax error at or near "CREAT"\nLINE 1: CREAT'}, expected)
+    assert len(got) == 1
+    assert got[0].startswith("019_social_content.sql failed during the test replay with another error")
+    assert 'syntax error at or near "CREAT"' in got[0] and "acp_silver_s4" in got[0]
+    # The expected text must sit on the first line, not in the detail lines below it.
+    assert len(guard.replay_problems({"019_social_content.sql": 'permission denied\nschema "acp_silver_s4" does not '
+                                      "exist"}, expected)) == 1
+    # A local Postgres with pgvector replays another chain: no mismatch check there (as for stale entries).
+    assert guard.replay_problems({"019_social_content.sql": "other"}, expected, vector_available=True) == []
+
+
 def test_the_expected_set_matches_the_ci_replay_shape():
     assert guard.replay_problems(dict(guard.EXPECTED_REPLAY_FAILURES)) == []
     for name in guard.EXPECTED_REPLAY_FAILURES:

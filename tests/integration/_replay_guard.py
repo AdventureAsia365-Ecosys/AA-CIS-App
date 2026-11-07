@@ -8,8 +8,9 @@ calls ``replay_problems``; any problem ends the session (pytest.exit) with the l
 EXPECTED_REPLAY_FAILURES is the set that fails on CI's fresh postgres:15 (superuser cistest, no pgvector) today: the
 ACPv1 lineage (schemas never created here), migration 001's tenant_tour_versions (skipped), pgvector (no extension in
 the CI image) and 205 (CREATE INDEX CONCURRENTLY inside BEGIN). Each entry keeps the error CI prints. A new failure
-fails the session; so does an entry that now applies (stale: delete it), except where pgvector is installed locally,
-where the vector entries and the files that follow from them may apply.
+fails the session; so does an expected file that fails with another error (the entry must be a substring of the first
+line of the error) and an entry that now applies (stale: delete it), except where pgvector is installed locally,
+where the vector entries and the files that follow from them may apply or fail differently.
 """
 
 from __future__ import annotations
@@ -77,11 +78,19 @@ def replay_problems(failed: dict[str, str], expected: dict[str, str] | None = No
                     vector_available: bool = False) -> list[str]:
     """Problems of one replay: ``failed`` = {file: error} of the files that did not apply.
 
-    A file outside ``expected`` that failed is a problem; an expected file that applied is a problem (a stale entry)
-    unless ``vector_available`` (a local Postgres with pgvector applies the vector files and some that follow)."""
+    A file outside ``expected`` that failed is a problem. An expected file counts as expected only when its recorded
+    error is a substring of the first line of the error it raised now: the same file failing for another reason (a
+    typo in a later edit, a missing grant) is a problem too. An expected file that applied is a problem (a stale entry).
+    With ``vector_available`` (a local Postgres with pgvector) neither of the last two is checked: the vector files
+    and some that follow apply there, or fail further on with another error."""
     expected = EXPECTED_REPLAY_FAILURES if expected is None else expected
     out = [f"{name} failed during the test replay: {failed[name]}" for name in sorted(set(failed) - set(expected))]
     if not vector_available:
+        for name in sorted(set(failed) & set(expected)):
+            got = (failed[name].strip().splitlines() or [""])[0]
+            if expected[name] not in got:
+                out.append(f"{name} failed during the test replay with another error than the expected one: got "
+                           f"{got!r}, expected {expected[name]!r} (tests/integration/_replay_guard.py)")
         out += [f"{name} is in EXPECTED_REPLAY_FAILURES (tests/integration/_replay_guard.py) but now applies: delete "
                 "the entry" for name in sorted(set(expected) - set(failed))]
     return out
