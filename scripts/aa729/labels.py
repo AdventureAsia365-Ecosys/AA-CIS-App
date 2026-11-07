@@ -30,28 +30,20 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from scripts.aa729.common import bump_minor, dumps, find_pii, flatten_text, make_label
+from services.quality import writing_policy as _wp
 
+# AA-1047: pass / fail / rules are the writing policy's label rubric (services/quality/writing_policy.yaml, compiled),
+# the same object the R2 judge reads (eval_judge.LABEL_RUBRIC). S256 calibration review (AA-919): the rules settle how a
+# one-phrase claim, the brief and reflection count; W1 (root ADR 0020, D1-D4, D13-D15) re-frames the brief as an
+# instruction, never a source, and adds place background, hypotheticals, rarity and suitability.
+_POLICY_RUBRIC = _wp.label_rubric()
 RUBRIC = {
-    "pass": "Publishable as is or after a light edit (minutes, no fact or structure change).",
-    "fail": "Needs a heavy edit or a rewrite: an invented or wrong fact, a promise the source does not make, "
-            "off-brand voice, broken structure, wrong scope, or anything a customer must not read.",
+    "pass": _POLICY_RUBRIC["pass"],
+    "fail": _POLICY_RUBRIC["fail"],
     "grades": {"as_is": "pass", "light": "pass", "heavy": "fail", "reject": "fail"},
     "post_edit": "When output_post_edit is true the text was already edited by a person: label the text you see.",
-    # S256 calibration review (AA-919): "minutes" and "no fact change" pulled panel votes apart on one-phrase claims
-    # (the same kind of flaw was labelled heavy on some texts and light on others). These rules settle it; the judge
-    # reads the same list (eval_judge.LABEL_RUBRIC, kept equal by a test).
-    "rules": (
-        "Every customer-facing field counts: body, title, SEO title, meta description and hashtags.",
-        "A claim the source does not support is a fact change, so the text fails even when one phrase would fix "
-        "it: a wrong or invented fact, a fact the source contradicts, or a promise about the trip (an activity, "
-        "access, time, view or service) that the itinerary does not make.",
-        "A light edit changes wording only: typos, repetition, stray blank lines, awkward or garbled phrasing that "
-        "still says something true, an imprecise but not false paraphrase, or a point of the brief left out.",
-        "Reflection that states no fact (what a place means, why its setting matters) is voice, not a fact claim.",
-        "The writer's brief and brand pack are part of the source: what they ask for is supported unless the facts "
-        "or the itinerary contradict it. Naming another part of the trip that the itinerary does include, because "
-        "the brief asked for it, is a light fix; promising one the itinerary does not include is a fail.",
-    ),
+    "rules": _POLICY_RUBRIC["rules"],
+    "policy_sha": _POLICY_RUBRIC["policy_sha"],
 }
 # Label sources a calibration review may relabel: the panel's own labels. Labels made from a person's edit or by hand
 # (admin_edit, tenant_edit, human_label) and synthetic traps are evidence of another kind and are never relabelled.

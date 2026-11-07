@@ -1,0 +1,241 @@
+# Writing policy v1 (AA-1047, root ADR 0020 "Policy registry") — the ONE source of what AI-written content may say.
+#
+# Frozen from the S271 decision page (D1–D16, the tech lead chose the recommended option A for all 16; root
+# docs/audits/2026-11-06-S271-writing-quality-audit/decisions.md). Everything a writer prompt, a repair prompt, the
+# eval judge rubric, the panel label rubric (LABEL_RUBRIC / labels.RUBRIC), claim_rules.RulesConfig, the gate route
+# rows and the length bands say about these topics is COMPILED from this file by services/quality/writing_policy.py
+# into writing_policy.compiled.json (policy_sha stamped on every artefact). The CI lint
+# (`python -m services.quality.lint`, services/quality/policy_lint.py) fails on any hand restatement in code or
+# config: a band number, a copied fragment, or a retired wording.
+#
+# Change a rule HERE, run `python -m services.quality.writing_policy --write`, and the contradiction suite
+# (tests/unit/quality/test_aa1047_contradictions.py, generated from `examples` below) shows its effect on every
+# fixer, gate and apply_rules before it reaches live. Public repo: SYNTHETIC examples only (invented places, trips
+# and brands; never a quote from the database, an audit or a prompt).
+#
+# Fragments are text the compiler renders with `<<key>>` tokens (see `tokens`) and that consumers take as is; a
+# writer-prompt fragment renders byte-equal to the line it replaced unless the implementation notes
+# (docs/implementation-notes/AA-1047-policy-registry.md) list it as a contradiction-resolving change (CTA, meta band,
+# background, meals: critic fix F9, proved by the 3-piece writer smoke).
+
+version: writing-policy-v1
+frozen_from: "S271 decision page D1-D16, all option A (tech lead, 06/11/2026)"
+
+decisions:
+  D1: {topic: background, text: "Background about places named in the FactSheet is allowed; never this trip's activities, services, times or views; numbers and years in background warn."}
+  D2: {topic: brief, text: "The brief is not a source; support comes only from FactSheet line ids."}
+  D3: {topic: reflection, text: "Reflective sentences are voice, allowed when they state no fact about the trip."}
+  D4: {topic: hypothetical, text: "Hypothetical framing warns; naming a concrete trip activity, service, time or view makes it a promise."}
+  D5: {topic: seo_bands, text: "One meta band, 140-155 characters, for every workflow; title per the existing fitter band; code composes and trims."}
+  D6: {topic: truth_cut, text: "Tenant content with a residual promise after the repair budget: the last attempt stops and labels ($0); code cuts only classes with a passing measurement record, clause first; tenant-authored spans are never cut; no publish block."}
+  D7: {topic: instrument, text: "One claim instrument may hold: R1 calibrates at least two candidates, the winner is pinned to one rung with no fallback (a miss is unverified); GPT-6 leaves every writer route."}
+  D8: {topic: elephant, text: "T2 elephant-riding tours: Master text verbatim, code-composed brand fields, 0 LLM calls, a review row; the agency still receives it."}
+  D9: {topic: s1_judge, text: "The S1 brand judge leaves the live path; a weekly Writing Lab sample of about 20 tours, pinned; it returns as a gate only at kappa >= 0.6 on >= 40 labelled pairs."}
+  D10: {topic: claim_engine, text: "The eval and production share one claim engine; independence comes from human claim labels and a second-vendor vote on unconfirmed blocking claims."}
+  D11: {topic: labels, text: "Tech lead adjudication of about 2-3 hours over 1-2 weeks (agent panel first), then 10 new objects per workflow per month."}
+  D12: {topic: paid_caps, text: "Paid writer proofs: eval null run <= $5, T9 <= $15, S1 <= $8, T2 <= $5 (<= $33 in total), each after its own yes."}
+  D13: {topic: rarity, text: "Rarity, uniqueness or age attached to the trip is a promise (enforce unless sourced); about a place it follows D1."}
+  D14: {topic: suitability, text: "Suitability, safety and pace claims only as the source or the audience fields state them; beyond that, enforce."}
+  D15: {topic: scene, text: "A staged scene with a concrete trip activity, time or view is a promise (enforce unless sourced); general feeling is voice."}
+  D16: {topic: vendor_check, text: "The vendor API may be the primary verifier for the check role (tour text only, no personal data); reviewed when acc3 access is granted."}
+
+# ---------------------------------------------------------------------------------------------------- bands (D5)
+# One meta band and one title band in code. A writer AIMS below the band (lesson S233: a model overshoots a character
+# target; aim 130-145 lands 139-154); code fits and trims into the band.
+bands:
+  meta: {min: 140, max: 155}
+  title: {min: 45, max: 60}
+  slug: {max: 60, cut: word_boundary}
+writer_aims:
+  meta:
+    t9: {min: 130, max: 145}        # T9 blog writer and the SEO fit call
+    s1: {min: 130, max: 148}        # S1 writer v2 meta call
+    t2: {min: 145, max: 152}        # S1 v1 / T2 rewrite prompt ("aim ..., hard band <meta band>")
+
+# ------------------------------------------------------------------------------------------------- contract fields
+cta: {count: 1, form: literal_line, owner: code}            # hygiene.ensure_cta puts the configured line in, word for word
+faq:
+  pairs: {min: 3, max: 4, regenerate: 4}                    # F16_faq holds under min; the one regeneration asks `regenerate`
+  required_channels: [blog]
+  # Topics a FAQ question may ask only when a line of the moment's own seed or its Facts answers it (never the
+  # AUDIENCE, BRAND or "other trips" lines). The deterministic PAA selection, the LLM question filter and the FAQ
+  # dropper all apply this one list.
+  topics_need_source: [age, fitness, price, booking, accommodation, best_time]
+meals: {owner: code, source_day_line: allowed_all_writers}  # a meal fact line copied from the same source day is source-backed (S1 and T2)
+day_count: {must_equal: source}
+
+# --------------------------------------------------------------------------------------------- claim policy (D1-D15)
+# Each topic: the decision(s) it implements, the verdict per case (pass | warn | enforce), and the class it reports.
+claims:
+  background:  {decisions: [D1], named_place: pass, number_or_year: warn, trip_activity_service_time_view: enforce, unnamed_place: enforce}
+  brief:       {decisions: [D2], brief_is_source: false}
+  reflection:  {decisions: [D3], no_trip_fact: pass}
+  hypothetical: {decisions: [D4], framing: warn, concrete_trip_detail: enforce}
+  rarity:      {decisions: [D13, D1], trip: enforce, place: warn}
+  suitability: {decisions: [D14], sourced: pass, beyond_source: enforce}
+  scene:       {decisions: [D15], general_feeling: pass, concrete_trip_detail: enforce}
+  timing:      {decisions: [D4, D15], unsourced_trip_time: enforce}
+  numbers:     {decisions: [D1], digits_and_words: true, other_trip_lines_support: false, trip_frame: enforce, elsewhere: warn}
+  scope:       {places_outside_trip: block_class, gate_mode: measured}
+  truth_cut:   {decisions: [D6], tenant_content_after_budget: stop_and_label, cut: measured_classes_only, clause_first: true, tenant_spans: never_cut, publish_block: false}
+  elephant:    {decisions: [D8], t2: master_verbatim_no_llm, review_row: true, delivered: true}
+
+# claim_rules.RulesConfig (F9 v2 rule table). `uncited_background`: a place_background sentence with no cited line
+# about a place the source names; `background_numbers`: the same with a number or year the source lacks.
+rules_config: {hypothetical: warn, uncited_background: pass, background_numbers: warn}
+
+# Class severities the policy owns (taxonomy.yaml must say the same; the lint checks). A detector in `warn` mode on a
+# block class is a gate waiting for its measurement record (ADR 0020: only measured gates hold), not a contradiction.
+severities:
+  other.f7: block      # an invented timing or schedule is a promise (D4, D15); F17 enforces it
+  other.c3: block      # a thin moment given a full heading invites invented detail; F17 enforces it
+  other.s5: block      # a broken FAQ breaks the blog contract; F16 holds it
+  scope.framing: block # wrong scope fails (rubric); F12 warns until measured (AA-788 mode switch)
+
+# ---------------------------------------------------------------------------------------------------- eval (D2, D10)
+eval:
+  # Classes the reader-text judge reports. Deterministic classes (other.*, safety.*, struct.day_structure) are
+  # measured by code (writing_memory.eval_checks) and the pipeline's own gates, never asked of the judge.
+  judge_classes: [fact.inclusion, fact.number, fact.misbinding, fact.name, fact.direction, fact.embellish,
+                  fact.self_contradiction, scope.persona_promise, scope.framing, struct.leaked_instruction,
+                  struct.truncated]
+  code_measured_prefixes: [other., safety., struct.day_structure]
+
+label_rubric:
+  pass: "Publishable as is or after a light edit (minutes, no fact or structure change)."
+  fail: "Needs a heavy edit or a rewrite: an invented or wrong fact, a promise the source does not make, off-brand voice, broken structure, wrong scope, or anything a customer must not read."
+  rules:
+    - "Every customer-facing field counts: body, title, SEO title, meta description and hashtags."
+    - "A claim the source does not support is a fact change, so the text fails even when one phrase would fix it: a wrong or invented fact, a fact the source contradicts, or a promise about the trip (an activity, access, time, view or service) that the itinerary does not make."
+    - "A light edit changes wording only: typos, repetition, stray blank lines, awkward or garbled phrasing that still says something true, an imprecise but not false paraphrase, or a point of the brief left out."
+    - "Reflection that states no fact (what a place means, why its setting matters) is voice, not a fact claim."
+    - "The source is the facts and the itinerary. The writer's brief and brand pack are instructions, never a source: what they ask for is supported only when a fact or itinerary line states it. Naming another part of the trip that the itinerary does include, because the brief asked for it, is a light fix; promising one the itinerary does not include is a fail."
+    - "Background about a place the source names (what it is, its history, geography, culture, architecture or setting) is allowed and is not a fact change, as long as it says nothing this trip does there. A number or year in that background which the source does not give is a light fix, not a fail by itself."
+    - "A hypothetical or staged scene ('imagine', 'you might') that only sets a general feeling is voice; when it names a concrete activity, service, time or view of this trip that the itinerary does not state, it is a promise and fails."
+    - "Rarity, uniqueness or age attached to the trip ('the only tour that ...') is a promise and fails unless the source states it; about a place it is background (the rule above)."
+    - "Suitability, safety and pace claims (for children, for swimmers, an easy pace) count only as the source or the audience fields state them; beyond that they are a promise and fail."
+
+# ------------------------------------------------------------------------------------------------- route rows (L5)
+# One row per T10 gate: how a failed entry is repaired. `cheap`: sentence repair on the t9_repair route; `fix_step`:
+# owned by a deterministic / one-call step in service.py (never turned into a rewrite); `default`: the attempt loop's
+# own rule. `style_only`: may block for one repair but never holds a piece. Compiled into quality_gates
+# CHEAP_REPAIR_GATES, STYLE_ONLY_GATES and OWNED_BY_FIX_STEP (byte-equal sets to S271; no behaviour change).
+route_rows:
+  - {gate: F6_cta_present, repair: default}
+  - {gate: F1_grounding, repair: default}
+  - {gate: F2_lexicon, repair: default}
+  - {gate: F2_banned_patterns, repair: default}
+  - {gate: F2_brand_forbidden, repair: default}
+  - {gate: F2_platform_truth, repair: cheap}
+  - {gate: F2_superlatives, repair: cheap, style_only: true}
+  - {gate: F2_style_warn, repair: default}
+  - {gate: F11_brand_name, repair: default}
+  - {gate: F19_authenticity, repair: cheap}
+  - {gate: F10_cannibalization_cross_tenant, repair: default}
+  - {gate: F4_extreme_length, repair: default}
+  - {gate: F0_complete, repair: default}
+  - {gate: F12_scope, repair: default}
+  - {gate: F13_hygiene, repair: default}
+  - {gate: F13_leak, repair: default}
+  - {gate: F13_repeat, repair: cheap}
+  - {gate: F17_trip_fact, repair: cheap}
+  - {gate: F18_rarity, repair: cheap}
+  - {gate: F14_social_shape, repair: default}
+  - {gate: F14_first_line, repair: fix_step}
+  - {gate: F15_voice, repair: cheap, style_only: true}
+  - {gate: F15_voice_warn, repair: default}
+  - {gate: F4_seo_surface, repair: default}
+  - {gate: F9_cta_fact, repair: default}
+  - {gate: F9_brand_style, repair: cheap, style_only: true}
+  - {gate: F16_faq, repair: fix_step}
+# The F9_cta_fact classes (services/acp_content_writing/f9_policy.py): which class may hold a piece today.
+f9_class_rows:
+  - {class: trip_promise, action: hold}
+  - {class: unsupported_other, action: warn}
+  - {class: fact_check_unquoted, action: warn}
+  - {class: seo_field_claim, action: warn}
+  - {class: cta_not_reflected, action: warn}
+  - {class: text_integrity, action: warn}
+  - {class: judge_unavailable, action: warn}
+  - {class: reasonless, action: warn}
+  - {class: other, action: warn}
+
+# ------------------------------------------------------------------------- registry entries (absorbed, no behaviour)
+# AA-788: the promoted T10 checks and their run-time mode switch (quality_gates; a test keeps these equal to code).
+gate_promotions:
+  - {gate: F12_scope, env: T10_F12_SCOPE_MODE, modes: [warn, block], default: warn}
+  - {gate: F9_brand_style, env: T10_F9_BRAND_STYLE_MODE, modes: [warn, repair], default: warn}
+  - {gate: F14_social_shape, env: T10_F14_FLOOR_MODE, modes: [warn, repair], default: repair}
+# AA-920: writing-memory rule injection into the four writers (not built; the registry names where it plugs in).
+rule_injection:
+  status: planned
+  writers: [a1, t2, t9_blog, t9_social]
+  tenant_release_kinds: [cut, ban, lexicon]     # tenant releases are constraint-only (ADR 0020 layer 4)
+  post_check: contract_replay                   # exemplars pass a contract replay on the tenant's recent objects
+
+# ------------------------------------------------------------------------------------------------- prompt fragments
+# Rendered with tokens; `byte_equal: true` = the line a consumer had before AA-1047, unchanged; `changed: <topic>` =
+# a contradiction-resolving line (critic fix F9), listed in the implementation notes and proved by the writer smoke.
+fragments:
+  t9_writer.background_allowed:
+    changed: background
+    text: |-
+      ALLOWED: short, widely known background about a place the content seed names: what it is,
+        its history and era, its geography, who founded it, its religious or cultural role, its architecture or
+        setting, whether it is still in use, written in words, without numbers unless the seed has them. Background
+        never says what this trip does there: no activity, service, time or view.
+  t9_writer.cta:
+    changed: cta
+    text: |-
+      - End with the given call to action as its own sentence, word for word (code puts the exact line in
+        when it is missing or reworded); never rework it into another sentence.
+  t9_writer.cta_close_example:
+    changed: cta
+    text: "so the piece closes on its last fact, then the call to action line."
+  t9_writer.cta_dont_write:
+    changed: cta
+    text: |-
+      WRITE the call
+            to action line, word for word, as the piece's own last sentence, with no label line before it.
+  t9_repair.background:
+    changed: background
+    text: "Use only what the SOURCE states, or short background about a place it names (what it is, its history, geography, culture or setting), never what this trip does there."
+  # D1 background, in the words each consumer had before AA-1047 (consistent with D1; moved here so it has one home)
+  s1v1_t2_writer.background_allowed:
+    byte_equal: true
+    text: "   ALLOWED: short, well-known background about a place the source names (what it is, its era,\n   architecture or setting), e.g. \"Hawa Mahal, the five-storey pink sandstone palace\"."
+  s1_writer.background_allow:
+    byte_equal: true
+    text: "You may add one short clause of well-known background about a place the fact sheet names (what it is, its era or setting), never presented as part of this tour."
+  s1_judge.background:
+    byte_equal: true
+    text: "One short clause of well-known background about a place the source names is\n  allowed and is not an unsupported specific."
+  t10_judge.background:
+    byte_equal: true
+    text: "Widely known background about a place the SOURCE names — what it is, its history and era, who founded it, its religious or cultural role, whether it is still in use — is allowed when it does not contradict the SOURCE (AA-768)."
+  a3_place_card.facts_scope:
+    byte_equal: true
+    text: "(what it is, its history and era, its setting and what is physically there). Never write how visitors reach it, what visitors do or see, permits or access, or safety advice: those are trip facts and come only from the itinerary."
+  t9_writer.meta_instruction:
+    byte_equal: true
+    text: "<<aim.t9.meta.min>>-<<aim.t9.meta.max>> characters (never over <<meta.max>>)"
+  t9_writer.title_instruction:
+    byte_equal: true
+    text: "<<title.min>>-<<title.max>> characters"
+  t9_writer.slug_instruction:
+    byte_equal: true
+    text: "<=<<slug.max>> characters"
+
+# Wordings the policy retired (each contradicted a decision). The lint fails when one comes back in code.
+retired_wordings:
+  - {pattern: "brief and brand pack are part of the source", decision: D2}
+  - {pattern: "worked into the last fact", decision: cta}
+  - {pattern: "with the call to action worked into it", decision: cta}
+  - {pattern: "worked naturally into the piece", decision: cta}
+  - {pattern: "or widely known background about a place it names", decision: D1}
+
+# ------------------------------------------------------------------------------------------------------- examples
+# Fire / no-fire twins per topic, SYNTHETIC only. `expect`: block (some check holds or must repair it), warn (no check
+# blocks, at least one warns), pass (no check blocks or warns). services/quality/policy_harness.py runs each through
+# every fixer, gate and apply_rules that reads its field; the contradiction suite needs 100% as expected.
+examples: []

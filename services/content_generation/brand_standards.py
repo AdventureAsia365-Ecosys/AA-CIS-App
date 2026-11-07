@@ -1,7 +1,9 @@
 """AA-135: Adventure Asia brand identity constants for LLM-as-Judge audit."""
+from services.quality import writing_policy as _wp
 from services.quality.registry import threshold
 
-AA_BRAND_IDENTITY_PROMPT = """
+# AA-1047: the SEO bands below are rendered from services/quality/writing_policy.yaml.
+AA_BRAND_IDENTITY_PROMPT = _wp.fill("""
 ADVENTURE ASIA BRAND IDENTITY — EDITORIAL STANDARD
 
 Voice attributes (must feel this way):
@@ -61,18 +63,18 @@ AA_ITINERARIES:
   meals/times are PRODUCT_TRUTH_RISK; describe activities by sequence
 
 SEO_TITLE:
-- 60 chars max
+- <<title.max>> chars max
 - Never ends with conjunction, preposition, or ampersand
 - Never echoes AA_NAME verbatim
 - Activity label must match actual tour content
 
 SEO_META:
-- 140-155 chars ideal (flag if under 140)
+- <<meta.min>>-<<meta.max>> chars ideal (flag if under <<meta.min>>)
 - Must end with a period
 - Must NOT open with: "This is a", "Discover", "Book", "Find"
 - Must NOT contain: "package", "reviews", "authentic reviews", price-comparison queries
 - Trip type in meta must match summary and title
-"""
+""")
 
 AA_COWORK_STRUCTURE_PROMPT = """
 ADVENTURE ASIA PIPELINE STRUCTURE — AUDIT REFERENCE

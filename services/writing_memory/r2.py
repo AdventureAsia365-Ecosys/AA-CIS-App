@@ -306,8 +306,8 @@ def row_judge_version(judge, pin: Optional[str]) -> Optional[str]:
 
 
 def judge_detail(judge) -> dict:
-    """{"judge": {model_key, connection, provider_model}} of a verdict, {} when it carries none (a test double)."""
-    d = {k: getattr(judge, k, None) for k in ("model_key", "connection", "provider_model")}
+    """{"judge": {model_key, connection, provider_model, evidence_sha (AA-1047)}} of a verdict, {} when it carries none (a test double)."""
+    d = {k: getattr(judge, k, None) for k in ("model_key", "connection", "provider_model", "evidence_sha")}
     d = {k: (str(v)[:128] if v is not None else None) for k, v in d.items()}
     return {"judge": d} if any(d.values()) else {}
 

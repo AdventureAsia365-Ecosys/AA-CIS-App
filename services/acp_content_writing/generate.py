@@ -27,6 +27,7 @@ from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS, SYSTEM_PROMPT, build_user_prompt
 from services.acp_content_writing.quality_gates import strip_citation_tags
+from services.quality import writing_policy as _wp  # AA-1047: bands, FAQ pairs, prompt fragments
 from shared.llm_client import stream_sink
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -273,12 +274,12 @@ def rewrite_with_feedback(
     return content, cost, {"seo_title": None, "meta_description": None, "slug": None}, summary
 
 
-_REPAIR_SYSTEM = """You fix single sentences inside a finished piece of travel content.
+_REPAIR_SYSTEM = _wp.fill("""You fix single sentences inside a finished piece of travel content.
 For each numbered sentence you get the problem a checker found. Return a replacement that keeps
 the sentence's role, tone and flow in the piece but removes the problem — the unsupported claim
 or number, the word the brand forbids, the wrong brand name (use the BRAND named in the SOURCE,
-or drop the self-reference), or the place outside the piece's scope. Use only what the SOURCE
-states, or widely known background about a place it names. Never add a new claim, number, place,
+or drop the self-reference), or the place outside the piece's scope.
+<<t9_repair.background>> Never add a new claim, number, place,
 scene detail, promise, or social proof (what travellers, guests or families feel, say or
 remember). Never add a time of day, a part of the day ("the afternoon"), an ordinal day or night, or
 a pace or rest word the SOURCE does not give; when the sentence already has one and the PROBLEM is
@@ -294,7 +295,7 @@ facts — the only case where a replacement holds two sentences. When the PROBLE
 optional, say so in the sentence ("can", "optional"); when it gives a time, ordinal or rarity the
 source lacks, drop that part and keep the rest. Never mention the source, the notes or the seed.
 Return ONLY JSON:
-{"replacements": ["...", "..."]} — one string per numbered sentence, in the same order."""
+{"replacements": ["...", "..."]} — one string per numbered sentence, in the same order.""")
 
 
 def repair_sentences(
@@ -376,17 +377,21 @@ class SentenceRepairError(Exception):
     """The sentence-repair reply was not one string per sentence — fall back to the full rewrite."""
 
 
-_SEO_FIT_SYSTEM = """You write the search-result title and meta description for a finished blog post.
+_SEO_FIT_SYSTEM = _wp.fill("""You write the search-result title and meta description for a finished blog post.
 Rules:
-- Title: 45-60 characters, uses every content word of the target keyword (the keyword is a raw
+- Title: <<title.min>>-<<title.max>> characters, uses every content word of the target keyword (the keyword is a raw
   search query — reorder it into natural English, never paste it ungrammatically), names the place,
   reads as one natural headline (never a fragment cut at a colon).
-- Meta description: aim for 130-145 characters, never over 155 (models overshoot — keep it short),
+- Meta description: aim for <<aim.t9.meta.min>>-<<aim.t9.meta.max>> characters, never over <<meta.max>> """
+                            """(models overshoot — keep it short),
   ONE complete sentence of about 20 words ending in '.', uses every
   content word of the target keyword in natural English, says what the reader gets from the post.
 - Use only places and facts that appear in the post. No new claims, numbers or promises.
 - Never use a word from the NEVER USE list, even if the keyword or the current title has it.
-Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}"""
+Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}""")
+
+_TITLE_MUST = _wp.fill(" — must be <<title.min>>-<<title.max>>")
+_META_MUST = _wp.fill(" — must be <<aim.t9.meta.min>>-<<aim.t9.meta.max>>, never over <<meta.max>>")
 
 # S234 (C12) — the SEO fit is a short rewrite whose lengths are checked in code and whose failure
 # keeps the writer's value, so it runs on the cheap repair route (Haiku, Sonnet fallback):
@@ -417,8 +422,11 @@ def fit_seo_fields(
         parts.append("TITLES THIS BRAND ALREADY USED (write a clearly different title):\n- "
                      + "\n- ".join(t for t in taken_titles[:10]))
     tl, ml = len(seo_title or ""), len(meta_description or "")
-    parts.append(f"CURRENT TITLE ({tl} chars{'' if 45 <= tl <= 60 else ' — must be 45-60'}): {seo_title or '(none)'}")
-    parts.append(f"CURRENT META ({ml} chars{'' if 120 <= ml <= 155 else ' — must be 130-145, never over 155'}): "
+    # AA-1047: the policy bands (D5); before, this check passed a 120-139 meta that the gate then failed.
+    t_lo, t_hi = _wp.band("title")
+    m_lo, m_hi = _wp.band("meta")
+    parts.append(f"CURRENT TITLE ({tl} chars{'' if t_lo <= tl <= t_hi else _TITLE_MUST}): {seo_title or '(none)'}")
+    parts.append(f"CURRENT META ({ml} chars{'' if m_lo <= ml <= m_hi else _META_MUST}): "
                  f"{meta_description or '(none)'}")
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
@@ -456,9 +464,9 @@ def fit_seo_fields(
     return out, reply.cost_usd
 
 
-_FAQ_SYSTEM = """You write the FAQ section that ends a finished travel blog post.
+_FAQ_SYSTEM = _wp.fill("""You write the FAQ section that ends a finished travel blog post.
 Rules:
-- Write exactly 4 question/answer pairs.
+- Write exactly <<faq.pairs.regenerate>> question/answer pairs.
 - When SEARCH QUESTIONS are given, prefer them: take one only if a SOURCE fact answers it, and never
   invent a question that sounds like one. Otherwise write the answer's SOURCE fact first, then the
   question that fact answers. Never answer from general knowledge or add a fact the SOURCE lacks.
@@ -472,7 +480,7 @@ Rules:
 - 40-60 words per answer, in the brand's plain voice. No places outside the SOURCE, no
   promises about the trip, no social proof.
 - Never mention the source, the notes, the seed or the itinerary as such.
-Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}"""
+Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}""")
 
 
 def write_faq(

@@ -32,6 +32,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from services.quality import writing_policy as _wp  # AA-1047: the D1 background line of the house style
+
 RUBRIC_V1 = "v1"
 RUBRIC_V2 = "v2"
 RUBRICS = (RUBRIC_V1, RUBRIC_V2)
@@ -62,8 +64,7 @@ adding facts. Plain, accurate wording on a thin source is correct, not a fault. 
 _HOUSE_STYLE = """HOUSE STYLE (a white-label master page):
 - Calm, factual and specific; third person, present tense.
 - Every concrete detail (activity, service, meal, transport, time, distance, altitude, view, wildlife, lodging,
-  inclusion) comes from the SOURCE below. One short clause of well-known background about a place the source names is
-  allowed and is not an unsupported specific.
+  inclusion) comes from the SOURCE below. """ + _wp.fragment("s1_judge.background") + """
 - Length and detail follow the source: a thin source gives a short, plain page.
 - No hype or superlative the source does not make (breathtaking, stunning, unforgettable, once-in-a-lifetime,
   paradise, exotic), no abstract filler ("unhurried", "rewards attention", "a different register"), no second-person

@@ -66,6 +66,7 @@ from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
 from shared.llm_client.call_log import BILLED_FIELD_KEYS, record_billed_failure_sync, record_call_sync
 from services.quality import registry as qr
+from services.quality import writing_policy as _wp  # AA-1047: bands, FAQ pairs, route rows
 from services.acp_content_writing.seed_align import modes as seed_align
 from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate
 
@@ -82,15 +83,13 @@ _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
 # log whether a citation tag reached the judge (`piece_tag_free`). It matches any id, one or several.
 # AA-912: TAG_RE is the shared definition (services/acp_shared/citation_tags.py), imported above.
 
-# AA-514 — exact numeric thresholds ported verbatim from the origin's own
-# `reference/gate-thresholds.toml` (not invented), for gate_seo_surface().
-_SEO_TITLE_MAX_CHARS = 60
-# AA-768 (S233) — a title under 45 chars is a stub, not a headline (S232: 21-char
-# "Bhutan's Craft Bazaar" shipped on 6/20 blogs, two of them approved).
-_SEO_TITLE_MIN_CHARS = 45
-_META_DESCRIPTION_MIN_CHARS = 120
-_META_DESCRIPTION_MAX_CHARS = 158
-_SLUG_MAX_CHARS = 60
+# AA-1047 (root ADR 0020 D5) — the SEO bands of gate_seo_surface() come from the writing policy
+# (services/quality/writing_policy.yaml), the one meta band of every workflow. Before AA-1047 this gate used 120-158
+# while the SEO fit aimed 120-155 and the writer 130-145 (S271 T9 contradiction 12). AA-768 (S233): a title under the
+# band's floor is a stub, not a headline (S232: a 21-char title shipped on 6/20 blogs).
+_SEO_TITLE_MIN_CHARS, _SEO_TITLE_MAX_CHARS = _wp.band("title")
+_META_DESCRIPTION_MIN_CHARS, _META_DESCRIPTION_MAX_CHARS = _wp.band("meta")
+_SLUG_MAX_CHARS = _wp.slug_max()
 _SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 
 
@@ -1112,10 +1111,9 @@ def f9_user_prompt(content_text: str, cta: str, brand_rubric_text: str, source_t
             "Quote that exact sentence in flagged_phrases. These are NOT factual claims and must "
             "never get this code: opinions, impressions, mood or rhetorical sentences, "
             "generalisations about how travellers feel, the brand describing its own approach "
-            "or values (as in the BRAND RUBRIC), and the required call to action. Widely known "
-            "background about a place the SOURCE names — what it is, its history and era, who "
-            "founded it, its religious or cultural role, whether it is still in use — is allowed "
-            "when it does not contradict the SOURCE (AA-768). Always unsupported: placing the "
+            "or values (as in the BRAND RUBRIC), and the required call to action. "
+            + _wp.fragment("t10_judge.background") +  # AA-1047: D1, writing_policy.yaml
+            " Always unsupported: placing the "
             "place in a town, region or country other than the SOURCE's Location; invented scene "
             "detail (what the place looks, sounds or smells like, its paths, steps or roads, how "
             "it is reached, crowds) the SOURCE does not give. If no sentence is an unsupported "
@@ -1626,7 +1624,7 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
 # the single deciding structural defect of those blogs. A blog must end on "## FAQ" with at least
 # FAQ_MIN_PAIRS pairs, counted AFTER drop_restated_faq / drop_unanswerable_faq ran. service.py
 # regenerates a short FAQ once (generate.write_faq, t9_repair) before the gates read the text.
-FAQ_MIN_PAIRS = 3
+FAQ_MIN_PAIRS = _wp.faq_pairs()["min"]  # AA-1047: writing_policy.yaml faq.pairs
 F16_GATE = qr.F16_FAQ
 
 
@@ -2233,18 +2231,19 @@ F15_WARN_GATE = qr.F15_VOICE_WARN
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 # AA-800: a second stock superlative (F2_superlatives) is style too.
 # AA-788: F9_brand_style too (off-brand voice / generic AI wording; it blocks only in its `repair` mode, attempt 1).
-STYLE_ONLY_GATES = frozenset({F15_GATE, qr.F2_SUPERLATIVES, qr.F9_BRAND_STYLE})
+# AA-1047: the three gate sets below are the policy's route rows (writing_policy.yaml route_rows), equal to the S271
+# hand-written sets (a test pins them).
+STYLE_ONLY_GATES = _wp.style_only_gates()
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage route when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
 # AA-800 — the F2 word layers too: the repair swaps or cuts one word.
 # AA-788 — F9_brand_style too: the repair rewrites the flagged sentence in the brand's voice or cuts it.
-CHEAP_REPAIR_GATES = frozenset({F15_GATE, qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
-                                qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES, qr.F9_BRAND_STYLE})
+CHEAP_REPAIR_GATES = _wp.gates_with_repair("cheap")
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
-OWNED_BY_FIX_STEP = frozenset({qr.F16_FAQ, qr.F14_FIRST_LINE})
+OWNED_BY_FIX_STEP = _wp.gates_with_repair("fix_step")
 _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
 OPENER_REPEAT_JACCARD = 0.6
 

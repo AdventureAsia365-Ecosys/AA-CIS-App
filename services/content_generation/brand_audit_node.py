@@ -10,6 +10,7 @@ from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from services.content_generation.brand_fit import itinerary_digest
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
+from .seo_meta_utils import SEO_META_MAX, SEO_META_MIN, SEO_TITLE_MAX  # AA-1047: the policy bands
 
 logger = structlog.get_logger()
 
@@ -686,7 +687,7 @@ REVIEW ORDER:
 3. Trip type accuracy: subtitle/summary/SEO match actual activity?
 4. Highlights quality: specific moments, 4+ items, no "Optional"?
 5. Human readability: no editorial language leak?
-6. SEO quality: title 60 chars max, meta 140-155 chars, ends with period?
+6. SEO quality: title {SEO_TITLE_MAX} chars max, meta {SEO_META_MIN}-{SEO_META_MAX} chars, ends with period?
 7. Publish readiness: ready without any changes?
 
 Return JSON only per schema."""

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { scoreColor } from "./TourDetailPanelV2";
-import { SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { SCORE_BANDS, SEO_BANDS } from "@/lib/quality-registry.generated";
 import { K, Badge, IconButton, Tabs, mono, serif, useT } from "../../_kit";
 import { M } from "./tour.messages";
 
@@ -286,7 +286,7 @@ export function CompareModal({ tourIds, onClose }: {
                       {gen?.seo_title && (
                         <div>
                           <div style={{ fontSize: 11, color: K.muted, marginBottom: 3 }}>
-                            {t("title")} <span style={{ color: (gen.seo_title.length > 60 ? K.amber : K.muted2) }}>({gen.seo_title.length}/70)</span>
+                            {t("title")} <span style={{ color: (gen.seo_title.length > SEO_BANDS.title.max ? K.amber : K.muted2) }}>({gen.seo_title.length}/{SEO_BANDS.title.max})</span>
                           </div>
                           <div style={{ fontSize: 13, color: K.ink }}>{gen.seo_title}</div>
                         </div>
@@ -294,7 +294,7 @@ export function CompareModal({ tourIds, onClose }: {
                       {gen?.seo_meta && (
                         <div>
                           <div style={{ fontSize: 11, color: K.muted, marginBottom: 3 }}>
-                            {t("meta")} <span style={{ color: (gen.seo_meta.length > 155 ? K.amber : K.muted2) }}>({gen.seo_meta.length}/170)</span>
+                            {t("meta")} <span style={{ color: (gen.seo_meta.length > SEO_BANDS.meta.max ? K.amber : K.muted2) }}>({gen.seo_meta.length}/{SEO_BANDS.meta.max})</span>
                           </div>
                           <div style={{ fontSize: 13, color: K.body }}>{gen.seo_meta}</div>
                         </div>

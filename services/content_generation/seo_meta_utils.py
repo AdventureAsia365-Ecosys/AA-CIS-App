@@ -16,10 +16,12 @@ from typing import Optional
 
 import structlog
 
+from services.quality import writing_policy as _wp
+
 logger = structlog.get_logger()
 
-SEO_META_MIN = 140
-SEO_META_MAX = 155
+# AA-1047 (root ADR 0020 D5): the one meta band of every workflow, from services/quality/writing_policy.yaml.
+SEO_META_MIN, SEO_META_MAX = _wp.band("meta")
 
 # AA-201: seo_meta must be a complete sentence (port of v5 repair_seo_fields)
 BAD_META_ENDINGS = {
@@ -208,7 +210,7 @@ def fit_seo_meta(meta: str, tenant_forbidden=None) -> str:
 
 
 # ── AA-740: seo_title fit (moved from tenant_pipeline, AA-639) ───────────────────────────────────
-SEO_TITLE_MAX = 60  # same limit graph.py validate_node applies (SEO_TITLE_TOO_LONG)
+SEO_TITLE_MAX = _wp.band("title")[1]  # AA-1047: the policy title band (graph.py validate_node: SEO_TITLE_TOO_LONG)
 _TITLE_SEPARATORS = (" — ", " – ", " | ", ": ", " - ")
 _TITLE_DANGLING = {"and", "&", "with", "of", "in", "to", "for", "the", "a", "an", "—", "–", "-", "|", ":", ","}
 

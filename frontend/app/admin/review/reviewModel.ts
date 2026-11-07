@@ -4,6 +4,7 @@
 // page keeps identical behaviour; only the data/table layer changed.
 
 import { K, KX, formatDate } from "../../_kit";
+import { SEO_BANDS } from "@/lib/quality-registry.generated";
 
 // ── Field model ───────────────────────────────────────────────────────────────
 // Mirrors backend _ALLOWED_GC_FIELDS (11). og_tags is read-only in v1 (data empty).
@@ -13,8 +14,9 @@ export const LIST_FIELDS = ["aa_highlights", "seo_keywords_used"] as const; // n
 
 // The field labels (English and Vietnamese) are the FIELD catalogue in messages.ts (AA-994): `useT(FIELD)`.
 
-export const SEO_META_MIN = 140;
-export const SEO_META_MAX = 155;
+// AA-1047: the one meta band of the writing policy (generated from services/quality/writing_policy.yaml).
+export const SEO_META_MIN = SEO_BANDS.meta.min;
+export const SEO_META_MAX = SEO_BANDS.meta.max;
 
 // AA-626 — classify a gate failure code by nature.
 const PRODUCT_TRUTH_CODES = new Set([
