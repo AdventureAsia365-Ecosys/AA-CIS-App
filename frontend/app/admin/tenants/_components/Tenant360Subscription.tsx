@@ -7,7 +7,8 @@
 // …/provision, one job, the UI waits for it), "Cancel" runs its cancel mode (POST …/provision/cancel). Overrides: PUT /
 // DELETE …/entitlement-overrides/{key} (reason required, audited). Kit only (Section, DataTable, Drawer, Field, Select,
 // Input, ConfirmModal, Badge, Toast). AA-1036 R3: the agency's add-on requests sit above the subscriptions
-// (Tenant360AddOnRequests: approve runs the same saga, decline needs a reason).
+// (Tenant360AddOnRequests: approve runs the same saga, decline needs a reason). AA-1038 follow-up: the TripPlanner
+// lead route sits below the overrides (Tenant360LeadRoute).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,6 +28,7 @@ import { can } from "@/lib/rbac";
 import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { T360_SUB } from "./subscription.messages";
 import { Tenant360AddOnRequests } from "./Tenant360AddOnRequests";
+import { Tenant360LeadRoute } from "./Tenant360LeadRoute";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45, margin: 0 } as const;
 
@@ -351,6 +353,9 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
           getRowId={(r) => r.feature_key} paginate={false} compact tableMinWidth={720}
           emptyTitle={t("noOverrides")} onRowClick={(r) => featuresQ.data && setOverride({ row: r })} />
       </Section>
+
+      <Tenant360LeadRoute tenantId={tenantId} canEdit={can(role, "tenant.write")}
+        crmCore={data.entitlements.some((e) => e.feature_key === "crm.core")} />
 
       {addOn && <AddOnDrawer tenantId={tenantId} data={data} start={addOn.start} onClose={() => setAddOn(null)} />}
       {override && featuresQ.data && (

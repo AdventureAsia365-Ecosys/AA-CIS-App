@@ -759,6 +759,10 @@
     "capability": "tenant.read|tenant.book.account.read|billing.read",
     "module": "api.routers.admin_tenant_subscription"
   },
+  "GET /admin/tenants/{tenant_id}/tripplanner-site/lead-route": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_subscription"
+  },
   "GET /admin/tenants/{tenant_id}/usage": {
     "capability": "tenant.read|tenant.book.account.read|billing.read",
     "module": "api.routers.admin"
@@ -1744,6 +1748,10 @@
     "module": "api.routers.admin"
   },
   "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
+  "PUT /admin/tenants/{tenant_id}/tripplanner-site/lead-route": {
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_subscription"
   }
