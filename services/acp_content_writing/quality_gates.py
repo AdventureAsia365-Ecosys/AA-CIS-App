@@ -267,15 +267,22 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
     # before only in the unwired F9 v2), and a novel number holds only inside a trip frame (the sentence makes the
     # trip, the reader or a day its subject, or names a trip service); elsewhere (place background: a year, a height)
     # it warns. The violation text is unchanged (sentence_repair._F1_QUOTE_RE parses it).
-    own = hygiene_split_seed(atom_text)[0] if _NUMBER_POLICY["other_trip_lines_support"] is False else atom_text
-    from services.acp_content_writing.claim_rules import number_source_text
-    own = number_source_text(own)   # a "Day 2 of the trip" index never supports "two nights" (as in the F9 v2 table)
+    # S272 review 2: the trip frame is claim_rules.trip_number_frame (ONE predicate with the rule table), and inside
+    # it the AUDIENCE / BRAND lines never support a number ('Walkers aged 25-50' never backs 'takes 50 minutes').
+    from services.acp_content_writing import claim_rules as _cr
+    raw_own = hygiene_split_seed(atom_text)[0] if _NUMBER_POLICY["other_trip_lines_support"] is False else atom_text
+    own = _cr.number_source_text(raw_own)  # a "Day 2 of the trip" index never supports "two nights"
+    own_trip = _cr.trip_number_source(raw_own)
+    trip_lines = _cr.trip_lines_of(raw_own)
+    audience = _cr.audience_number_text(raw_own)
     hold = False
     for sent in _SENT_SPLIT_RE.split(content_text or ""):
-        novel = find_novel_numeric_claims(sent, [own], year_forms=True)
-        if _NUMBER_POLICY.get("digits_and_words"):
-            from services.acp_content_writing.claim_rules import find_novel_word_numbers
-            novel = list(novel) + [w for w in find_novel_word_numbers(sent, [own]) if w not in novel]
+        in_frame = _cr.trip_number_frame(strip_citation_tags(sent), trip_lines)
+        if in_frame or _NUMBER_POLICY.get("digits_and_words"):
+            novel = (_cr.novel_trip_numbers(sent, [own_trip], [audience]) if in_frame
+                     else _cr.novel_trip_numbers(sent, [own]))
+        else:
+            novel = find_novel_numeric_claims(sent, [own], year_forms=True)
         if novel:
             # AA-452: strip_citation_tags() here too, not just at the final output boundary —
             # for channel='blog' `sent` may carry a [R:atom_id] tag; deep_strip_citation_tags()
@@ -283,20 +290,18 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
             # this specific violation string is never tagged in the first place.
             quoted = strip_citation_tags(sent.strip())[:100]
             violations.append(f"sentence states {novel} not present in the content seed: '{quoted}'")
-            hold = hold or _NUMBER_POLICY["elsewhere"] == "enforce" or number_in_trip_frame(sent)
+            hold = hold or _NUMBER_POLICY["elsewhere"] == "enforce" or in_frame
     return _result(qr.F1_GROUNDING, violations, blocking=hold or not violations)
 
 
 _NUMBER_POLICY = _wp.claim("numbers")
 
 
-def number_in_trip_frame(sentence: str) -> bool:
-    """AA-1047 (F6): is a number in this sentence a trip attribute? The trip, the reader, the group or a day is the
-    sentence's subject (f9_policy.TRIP_SUBJECT_RE), or it names a concrete trip service / a promise frame
-    (claim_rules' trip level 'concrete' or 'framed')."""
-    from services.acp_content_writing.claim_rules import _trip_level
-    text = strip_citation_tags(sentence or "")
-    return bool(f9_policy.TRIP_SUBJECT_RE.search(text)) or _trip_level(text) in ("concrete", "framed")
+def number_in_trip_frame(sentence: str, own_trip_lines=()) -> bool:
+    """AA-1047 (F6): is a number in this sentence a trip attribute? claim_rules.trip_number_frame — the one predicate
+    F1, the rule table and the admin sentence check share (S272 review 2)."""
+    from services.acp_content_writing.claim_rules import trip_number_frame
+    return trip_number_frame(strip_citation_tags(sentence or ""), own_trip_lines)
 
 
 # ---------------------------------------------------------------- F2-adjusted (banned patterns)
@@ -2227,11 +2232,13 @@ F18_BLOCKING = True
 
 
 def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_title: Optional[str] = None,
-                    meta_description: Optional[str] = None) -> list[GateResultLite]:
-    """[F17_trip_fact, F18_rarity] from trip_facts.find_trip_fact_issues. No context → both pass."""
+                    meta_description: Optional[str] = None, *, sentence_only: bool = False) -> list[GateResultLite]:
+    """[F17_trip_fact, F18_rarity] from trip_facts.find_trip_fact_issues. No context → both pass. `sentence_only`:
+    the admin sentence check (piece-level checks skipped, AA-1047 S272 review 2)."""
     if trip_ctx is None:
         return [_result(F17_GATE, [], blocking=F17_BLOCKING), _result(F18_GATE, [], blocking=F18_BLOCKING)]
-    found = find_trip_fact_issues(content_text, trip_ctx, seo_title=seo_title, meta_description=meta_description)
+    found = find_trip_fact_issues(content_text, trip_ctx, seo_title=seo_title, meta_description=meta_description,
+                                  sentence_only=sentence_only)
 
     def body_blocking(vs: list[str], flag: bool) -> bool:
         # a title / meta finding alone never holds a piece: service._fit_seo_meta already refused that

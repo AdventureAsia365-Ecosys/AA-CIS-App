@@ -9,14 +9,21 @@ services/quality/writing_policy.{yaml,py,compiled.json}, this file, and frontend
   (p1) a band number in a string: a range like "140-155" / "130 to 145" whose two numbers are policy band or aim
        bounds, or a single band bound (meta, title, slug) next to "char", "meta", "title" or "slug" — render it with
        `writing_policy.fill("<<meta.min>>-<<meta.max>>")` or read `writing_policy.band(...)`.
-  (p2) a comparison of a meta / title / slug length with a band-bound literal (`120 <= ml <= 155`).
-  (p3) a constant named like META/TITLE/SLUG + MIN/MAX/TARGET/BAND/AIM/CHARS assigned a band-bound literal.
+  (p2) a comparison of a meta / title / slug / description length with a band-bound literal (`120 <= ml <= 155`), or
+       a slice of one cut at a band bound (`meta_description[:155]`).
+  (p3) a constant named like META/TITLE/SLUG/DESC + MIN/MAX/TARGET/BAND/AIM/CHARS/LIMIT (any case) assigned a
+       band-bound literal; a dict keyed 'meta' / 'title' / 'slug' holding one; a band default on a limit parameter of
+       a meta / title / slug function; in YAML a min / max key with a band value under a meta / title / slug key.
   (p4) a copy of a compiled policy text (a fragment, a label-rubric line): a string sharing an 8-word run with it.
   (p5) a retired wording (`retired_wordings` in the YAML) back in a string.
   (p6) the compiled file is stale; a class severity in taxonomy.yaml differs from the policy's; a route row names a
        gate the registry does not know.
-  (p7) TS (frontend/, portal/): a meta / title / slug length compared with a band-bound literal, or a SEO_META_MIN /
-       SEO_META_MAX constant with a literal value — import it from quality-registry.generated.ts.
+  (p7) TS (frontend/, portal/): a meta / title / slug length compared with a band-bound literal, a band-named constant
+       with a band literal, a maxLength / minLength attribute with one on a meta / title / slug line, or a field-keyed
+       object literal with one — import it from quality-registry.generated.ts.
+
+Not covered (S272 review 2, recorded in the AA-1047 notes): a band bound built into a string by concatenation
+(`"..." + str(155)`), and a bare band literal with no field word in its statement.
 
 Docstrings and comments are not code and are not scanned. Tests, docs and migrations are out of scope.
 """
@@ -44,12 +51,21 @@ RANGE_RE = re.compile(r"(?<![\d.])(\d{2,3})\s*(?:-|–|—|to)\s*(\d{2,3})(?![\d
 NUM_RE = re.compile(r"(?<![\d.:/])(\d{2,3})(?![\d.:%])")
 CONTEXT_RE = re.compile(r"char|meta|title|slug", re.I)
 FIELD_RE = re.compile(r"meta|title|slug|seo", re.I)          # a single bound needs a field word nearby
-LEN_OPERAND_RE = re.compile(r"meta|title|slug|seo|\bml\b|\btl\b", re.I)
-CONST_NAME_RE = re.compile(r"(?:META|TITLE|SLUG)\w*(?:MIN|MAX|TARGET|BAND|AIM|CHARS)|(?:MIN|MAX)\w*(?:META|TITLE|SLUG)")
+LEN_OPERAND_RE = re.compile(r"meta|title|slug|seo|desc|\bml\b|\btl\b", re.I)
+# S272 review 2: any case ('meta_max = 155' as well as 'SEO_META_MAX = 155')
+CONST_NAME_RE = re.compile(r"(?:META|TITLE|SLUG|DESC)\w*(?:MIN|MAX|TARGET|BAND|AIM|CHARS|LIMIT|LEN)"
+                           r"|(?:MIN|MAX|LIMIT)\w*(?:META|TITLE|SLUG|DESC)", re.I)
+LIMIT_PARAM_RE = re.compile(r"limit|max|min|cap|len|chars|size|band|width", re.I)
 SHINGLE = 8
 TS_CMP_RE = re.compile(r"\b[\w.$?]*(?:meta|title|slug)[\w.$?]*(?:\.length)?\s*(?:>=|<=|<|>)\s*(\d{2,3})\b"
                        r"|\b(\d{2,3})\s*(?:>=|<=|<|>)\s*[\w.$?]*(?:meta|title|slug)", re.I)
 TS_CONST_RE = re.compile(r"\b(?:export\s+)?const\s+SEO_(?:META|TITLE)_(?:MIN|MAX)\s*=\s*\d")
+# S272 review 2: any band-named constant ('META_MAX = 155'), a field's maxLength / minLength attribute and a field-keyed
+# object literal ('{ meta: [140, 155] }') with a band bound
+TS_NAMED_CONST_RE = re.compile(r"\bconst\s+\w*(?:meta|title|slug|desc)\w*(?:min|max|limit|len)\w*\s*=\s*(\d{2,3})\b"
+                               r"|\bconst\s+\w*(?:min|max|limit)\w*(?:meta|title|slug|desc)\w*\s*=\s*(\d{2,3})\b", re.I)
+TS_ATTR_RE = re.compile(r"\b(?:maxLength|minLength|max|min)\s*=\s*\{?\s*['\"]?(\d{2,3})\b")
+TS_KEYED_RE = re.compile(r"\b(?:meta|title|slug)\w*['\"]?\s*:\s*[\[(]?\s*(\d{2,3})(?:\s*,\s*(\d{2,3}))?", re.I)
 
 
 def bounds(c: dict) -> tuple[frozenset, frozenset]:
@@ -162,6 +178,36 @@ def scan_python(path: str, src: str, c: dict) -> list[str]:
             others = " ".join(ast.get_source_segment(src, o) or "" for o in operands if o not in lits)
             if lits and LEN_OPERAND_RE.search(others):
                 add(node, f"(p2) {others.strip()[:50]} compared with {lits[0].value} — use writing_policy.band(...)")
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice) \
+                and _int_in(node.slice.upper, band_b) \
+                and LEN_OPERAND_RE.search(ast.get_source_segment(src, node.value) or ""):
+            # S272 review 2: `meta_description[:155]` is how code trims to a band
+            add(node, f"(p2) {ast.get_source_segment(src, node.value)[:50]} cut at {node.slice.upper.value} — use "
+                      "writing_policy.band(...)")
+        elif isinstance(node, ast.Dict):
+            # S272 review 2: `{"meta": (140, 155), "title": (45, 60)}`
+            for k, v in zip(node.keys, node.values):
+                if isinstance(k, ast.Constant) and isinstance(k.value, str) and FIELD_RE.search(k.value) and (
+                        _int_in(v, band_b) or (isinstance(v, (ast.Tuple, ast.List))
+                                               and any(_int_in(e, band_b) for e in v.elts))):
+                    add(node, f"(p3) {k.value!r} keyed to a band literal — read it from writing_policy")
+                    break
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # S272 review 2: `def fit(meta, limit=155)` — a band default on a limit parameter of a meta / title / slug
+            # function
+            args = node.args
+            params = args.posonlyargs + args.args
+            pairs = list(zip(params[len(params) - len(args.defaults):], args.defaults))
+            pairs += [(a, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None]
+            field = LEN_OPERAND_RE.search(node.name) or any(LEN_OPERAND_RE.search(a.arg) for a in params)
+            for a, d in pairs:
+                if _int_in(d, band_b) and (LEN_OPERAND_RE.search(a.arg) or (field and LIMIT_PARAM_RE.search(a.arg))):
+                    add(d, f"(p3) {node.name}({a.arg}={d.value}) — a band default; read it from writing_policy")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format" \
+                and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str) \
+                and FIELD_RE.search(node.func.value.value) and any(_int_in(a, band_b) for a in node.args):
+            add(node, "(p1) a band bound formatted into a meta / title / slug string — render it from "
+                      "writing_policy.yaml")
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             names = [t.id for t in targets if isinstance(t, ast.Name)]
@@ -174,12 +220,20 @@ def scan_python(path: str, src: str, c: dict) -> list[str]:
 
 
 def scan_ts(path: str, src: str, c: dict) -> list[str]:
-    all_b, _ = bounds(c)
+    all_b, band_b = bounds(c)
     out = []
     for i, line in enumerate(src.splitlines(), 1):
         code = line.split("//", 1)[0]
         if TS_CONST_RE.search(code):
             out.append(f"{path}:{i}: (p7) SEO band constant with a literal — import it from "
+                       "lib/quality-registry.generated.ts")
+            continue
+        named = TS_NAMED_CONST_RE.search(code)
+        attr = TS_ATTR_RE.search(code) if re.search(r"meta|title|slug|desc", code, re.I) else None
+        keyed = [int(x) for m in TS_KEYED_RE.finditer(code) for x in m.groups() if x]
+        if (named and int(named.group(1) or named.group(2)) in band_b) or (attr and int(attr.group(1)) in band_b) \
+                or any(n in band_b for n in keyed):
+            out.append(f"{path}:{i}: (p7) a meta / title / slug band literal — import it from "
                        "lib/quality-registry.generated.ts")
             continue
         for m in TS_CMP_RE.finditer(code):
@@ -192,13 +246,30 @@ def scan_ts(path: str, src: str, c: dict) -> list[str]:
 
 
 def scan_yaml(path: str, src: str, c: dict) -> list[str]:
-    all_b, _ = bounds(c)
+    all_b, band_b = bounds(c)
     out = []
+    # S272 review 2: a min / max key with a band value under a meta / title / slug parent ('meta:\n  max: 155')
+    parents: list[tuple[int, str]] = []
     for i, line in enumerate(src.splitlines(), 1):
         body = line.split("#", 1)[0]
         for m in RANGE_RE.finditer(body):
             if int(m.group(1)) in all_b and int(m.group(2)) in all_b and CONTEXT_RE.search(body):
                 out.append(f"{path}:{i}: (p1) band range {m.group(0)!r} restated in config")
+        km = re.match(r"^(\s*)-?\s*['\"]?([\w-]+)['\"]?\s*:\s*(.*)$", body)
+        if not km:
+            continue
+        indent, key, rest = len(km.group(1)), km.group(2), km.group(3).strip()
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        under_field = any(FIELD_RE.search(k) for _, k in parents)
+        if re.fullmatch(r"(?:min|max|limit|target)\w*", key, re.I) and under_field \
+                and re.fullmatch(r"\d{2,3}", rest) and int(rest) in band_b:
+            out.append(f"{path}:{i}: (p3) {key}: {rest} under a meta / title / slug key — read it from the policy")
+        flow = re.findall(r"\b(?:min|max)\s*:\s*(\d{2,3})\b", rest)
+        if flow and (FIELD_RE.search(key) or under_field) and any(int(x) in band_b for x in flow):
+            out.append(f"{path}:{i}: (p3) {key}: {rest[:40]} restates a band — read it from the policy")
+        if not rest:
+            parents.append((indent, key))
     return out
 
 

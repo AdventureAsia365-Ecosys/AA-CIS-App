@@ -890,6 +890,18 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
                                      brand_name=pack.get("brand_name"), cta=wi.get("cta"),
                                      audience=pack.get("customer_segment"), facts=wi.get("facts"))
         found = hygiene.find_issues(sentence, ctx)
+        # AA-1047 (S272 review 2): F17 (a time, an ordinal day, a position, an optional activity as fixed, a service
+        # level the seed lacks) and F18 (rarity, social proof) on the admin's sentence too, with the pipeline's own
+        # blocking flags — the admin path never saves what the pipeline refuses
+        from services.acp_content_writing.trip_facts import TripFactContext
+        tctx = TripFactContext(seed=wi["seed"], source=f"{ctx.lexicon.own_text}\n{wi.get('facts') or ''}",
+                               cta=wi.get("cta"), channel=wi.get("channel") or "blog",
+                               brand_name=pack.get("brand_name"), trip_places=tuple(wi.get("trip_places") or ()),
+                               audience=pack.get("customer_segment"))
+        for r in qg.gate_trip_facts(sentence, tctx, sentence_only=True):
+            if not r["passed"]:
+                out.append({"gate": r["gate"], "violations": list(r["violations"]),
+                            "blocking": r.get("blocking", True)})
         if found["scope"]:
             out.append({"gate": qr.F12_SCOPE, "violations": list(found["scope"]), "blocking": False})
         # S234 round 2 — leaks are blocking in the pipeline (F13_leak) but a warning on an admin's text;

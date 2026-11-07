@@ -14,10 +14,12 @@ Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fa
 
 - body: claim_rules.apply_rules (with the example's `claim` row: the type an extraction call would give; every body
   example has one), F1 gate_grounding, F17 / F18 gate_trip_facts, F12 gate_scope (the scope lexicon), and the admin
-  sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality)
+  sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality; it runs F1 and
+  the sentence-level F17 / F18 checks)
 - meta / title / slug: F4 gate_seo_surface (that field only), the S1 band checks (s1_checks.check_meta,
   SEO_TITLE_MAX), the T9 acceptance (service._meta_ok) and the T9 short-meta tail (a meta inside the T9 writer aim
-  but under the band must be composed into the band: seo_meta_utils.extend_short_meta), the slug fold
+  but under the band must be composed into the band by service._fit_seo_meta, only with the place's own Location
+  country: seo_meta_utils.place_country_tail + extend_short_meta), the slug fold
   (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
 - faq: drop_unanswerable_faq (topic needs a source line), F16 gate_faq_contract
@@ -119,7 +121,7 @@ def _body(ex: dict, out: Outcome, seed: str, grounding: str, cta: str) -> None:
     out.notes["check_replacement"] = checks
 
 
-def _seo(ex: dict, out: Outcome) -> None:
+def _seo(ex: dict, out: Outcome, seed: str) -> None:
     from services.acp_content_writing import quality_gates as qg
     from services.acp_content_writing import service as svc
     from services.acp_publish.idempotency import blog_slug
@@ -145,12 +147,24 @@ def _seo(ex: dict, out: Outcome) -> None:
         # the T9 acceptance of a writer / fit meta (service._meta_ok: the same band as F4)
         out.verdicts["t9_meta_ok"] = "pass" if svc._meta_ok(meta, None) else "block"
         # S272 review: the T9 writer aims under the band floor (writer_aims.meta.t9), so a complete meta inside that
-        # aim but under the band must be composed into the band by code (its short_fix), never left to F4
+        # aim but under the band must be composed into the band by code (its short_fix), never left to F4. S272
+        # review 2: through the real service step (_fit_seo_meta, the fit call stubbed to return nothing) with the
+        # example's seed and DESTINATION — the tail names the destination only when it is the place's own seed
+        # Location country; `tail: none` examples (cross-border, country already named) must stay uncomposed.
         aim_lo, _aim_hi = wp.writer_aim("t9")
         if aim_lo <= len(meta) < lo:
-            from services.content_generation.seo_meta_utils import extend_short_meta
-            tail = extend_short_meta(meta, {"country": "Velmora"})
-            out.fixed["t9_short_meta_composed"] = tail is not None and svc._meta_ok(tail, None)
+            import asyncio
+            from uuid import uuid4
+            ctx = {"destination": ex.get("destination", "Velmora"), "atom_text": seed,
+                   "trip_name": "Velmora Highlands Walk"}
+            with mock.patch.object(svc, "fit_seo_fields", return_value=({}, 0.0)):
+                got, _cost = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None,
+                                                           body="b", context=ctx, request_id=uuid4()))
+            new_meta = got.get("meta_description")
+            if ex.get("tail") == "none":
+                out.fixed["t9_short_meta_not_composed"] = new_meta == meta
+            else:
+                out.fixed["t9_short_meta_composed"] = new_meta != meta and svc._meta_ok(new_meta, None)
     if fld == "title":
         out.verdicts["s1_title_cap"] = "block" if len(title) > SEO_TITLE_MAX else "pass"
     if fld == "slug":
@@ -215,7 +229,7 @@ def run_example(ex: dict, seeds: dict) -> Outcome:
     if fld == "body":
         _body(ex, out, seed, grounding, cta)
     elif fld in ("meta", "title", "slug"):
-        _seo(ex, out)
+        _seo(ex, out, seed)
     elif fld == "cta":
         _cta(ex, out, cta)
     elif fld == "faq":

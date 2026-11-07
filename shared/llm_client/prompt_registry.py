@@ -83,7 +83,7 @@ def prompt_hash_of(source_path: str, symbols: list[str], root: Path = REPO_ROOT)
     if missing:
         raise PromptSourceError(f"{source_path}: no module-level symbol {', '.join(missing)}")
     joined = _SEPARATOR.join(sources[s] for s in symbols)
-    if POLICY_REF in joined or reads_policy(source_path, root):
+    if POLICY_REF in joined or reads_policy(source_path, root) or symbols_read_policy(source_path, symbols, root):
         # AA-1047: a prompt rendered from the writing policy (`_wp.fill` / `_wp.fragment`, a policy band constant)
         # changes when the policy does, so the policy_sha is part of its hash (a policy edit needs a version bump
         # like a code edit).
@@ -126,7 +126,11 @@ def _module_names(path: Path, root: Path) -> tuple[dict[str, ast.AST], set[str],
     package = list(path.resolve().relative_to(root.resolve()).with_suffix("").parts)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            policy.update(a.asname or a.name.split(".")[0] for a in node.names if a.name == POLICY_MODULE)
+            for a in node.names:
+                if a.name == POLICY_MODULE:
+                    policy.add(a.asname or a.name.split(".")[0])
+                elif a.asname:  # `import a.b.c as x`: x.CONST reads module a.b.c (S272 review 2)
+                    imports[a.asname] = (a.name, MODULE_ALIAS)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if node.level:
@@ -135,9 +139,30 @@ def _module_names(path: Path, root: Path) -> tuple[dict[str, ast.AST], set[str],
                 local = a.asname or a.name
                 if module == POLICY_MODULE or (module == "services.quality" and a.name == "writing_policy"):
                     policy.add(local)
+                elif _module_file(f"{module}.{a.name}" if module else a.name, root) is not None:
+                    # `from pkg import mod [as x]`: a module alias, x.CONST reads pkg.mod (S272 review 2)
+                    imports[local] = (f"{module}.{a.name}" if module else a.name, MODULE_ALIAS)
                 else:
                     imports[local] = (module, a.name)
     return defs, policy, imports
+
+
+MODULE_ALIAS = "<module>"
+
+
+def _attr_reads_policy(module: str, attr: str, root: Path, depth: int, seen: set) -> bool:
+    """AA-1047 (S272 review 2): `m.ATTR` through a module alias (`import x.y as m` / `from x import y as m`) reads the
+    writing policy when ATTR is the policy module itself or a module-level constant of x.y whose value reads it."""
+    other = _module_file(module, root)
+    if other is None or depth > _IMPORT_DEPTH:
+        return False
+    defs, policy, _imports = _module_names(other, root)
+    if attr in policy:
+        return True
+    target = defs.get(attr)
+    if target is None or isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return False  # a helper's output is behaviour, not prompt text (as for a `from M import f`)
+    return _name_reads_policy(other, attr, root, depth, seen)
 
 
 def _name_reads_policy(path: Path, name: str, root: Path, depth: int, seen: set) -> bool:
@@ -153,9 +178,17 @@ def _name_reads_policy(path: Path, name: str, root: Path, depth: int, seen: set)
         if n in policy:
             return True
         if n in defs:
-            stack.extend(x.id for x in ast.walk(defs[n]) if isinstance(x, ast.Name))
+            for x in ast.walk(defs[n]):
+                if isinstance(x, ast.Name):
+                    stack.append(x.id)
+                elif (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name)
+                      and imports.get(x.value.id, ("", ""))[1] == MODULE_ALIAS and depth < _IMPORT_DEPTH
+                      and _attr_reads_policy(imports[x.value.id][0], x.attr, root, depth + 1, seen)):
+                    return True  # `smu.SEO_META_MAX` through a module alias (S272 review 2)
         elif n in imports and depth < _IMPORT_DEPTH:
             module, orig = imports[n]
+            if orig == MODULE_ALIAS:
+                continue  # the alias's attribute reads are checked above, one by one
             other = _module_file(module, root)
             if other is None:
                 continue
@@ -182,9 +215,18 @@ def reads_policy(source_path: str, root: Path = REPO_ROOT) -> bool:
     if policy:
         return True
     seen: set = set()
+    try:
+        # S272 review 2: a module-level constant that reads a policy-derived constant through a module alias
+        # (`P = f"... {smu.SEO_META_MAX} ..."`); a helper function reading one is checked per hashed symbol in
+        # prompt_hash_of (symbols_read_policy), as a file-level rule would flag every file that merely calls it
+        if any(not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+               and _name_reads_policy(path, name, root, 0, seen) for name, node in _defs.items()):
+            return True
+    except (OSError, SyntaxError, ValueError):
+        pass
     for module, orig in imports.values():
         other = _module_file(module, root)
-        if other is None or other.resolve() == path:
+        if other is None or other.resolve() == path or orig == MODULE_ALIAS:
             continue
         try:
             target = _module_names(other, root)[0].get(orig)
@@ -194,6 +236,17 @@ def reads_policy(source_path: str, root: Path = REPO_ROOT) -> bool:
         except (OSError, SyntaxError, ValueError):
             continue
     return False
+
+
+def symbols_read_policy(source_path: str, symbols: list[str], root: Path = REPO_ROOT) -> bool:
+    """True when one of the hashed `symbols` (or a same-file name it uses, transitively) reads the writing policy,
+    a constant derived from it, or such a constant through a module alias (S272 review 2)."""
+    path = (root / source_path).resolve()
+    seen: set = set()
+    try:
+        return any(_name_reads_policy(path, sym, root, 0, seen) for sym in symbols)
+    except (OSError, SyntaxError, ValueError):
+        return False
 
 
 def _policy_sha(root: Path) -> str:

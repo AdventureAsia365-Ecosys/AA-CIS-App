@@ -38,6 +38,7 @@ from typing import Iterable, Optional
 from services.quality import writing_policy as _wp
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_content_writing.hygiene import (
+    ACCESS_RARITY_RE,
     SIBLING_HEADER,
     SOCIAL_PROOF_RE,
     ScopeLexicon,
@@ -235,7 +236,9 @@ RARITY_RE = re.compile(
     r"|\btends? to (stay|sit|linger|be remembered)\b"
     r"|\b(visitors|travell?ers|guests|families) (often|usually|say|tell|describe|find|remember)\b"
     r"|\bwidely[- ]travell?ed\b|\b(rarely|seldom) (visited|seen|reached)\b|\bnever find their way\b"
-    r"|\boff the beaten\b|\bappears on every\b|\bfew (itineraries|tours|trips)\b|\bunlike most\b", re.I)
+    r"|\boff the beaten\b|\bappears on every\b|\bfew (itineraries|tours|trips)\b|\bunlike most\b"
+    # AA-1047 (S272 review 2): F18's access-rarity lexicon, the same list (hygiene.ACCESS_RARITY_RE)
+    rf"|{ACCESS_RARITY_RE.pattern}", re.I)
 REGULATORY_RE = re.compile(
     r"\b(visa|permits?|fees?|tariffs?|SDF|dress code|prices?|open|opens|closed|closes|hours)\b", re.I)
 HYPOTHETICAL_RE = re.compile(r"\b(imagine|picture|if you|you might|you could|could|you may|perhaps)\b", re.I)
@@ -532,6 +535,10 @@ class _Ctx:
     source_lines: list
     cta: Optional[str]
     config: RulesConfig
+    # AA-1047 (S272 review 2): inside a trip frame the AUDIENCE and BRAND lines never support a number
+    number_src_trip: tuple = ()
+    own_trip_lines: tuple = ()   # KIND_TRIP lines: the trip-frame activity overlap (trip_number_frame)
+    number_src_audience: tuple = ()   # AUDIENCE / BRAND lines: an age only (novel_trip_numbers)
 
 
 PASS, WARN, FAIL = "pass", "warn", "fail"
@@ -563,16 +570,97 @@ def _trip_level(masked: str) -> Optional[str]:
 
 
 _NUMBERS = _wp.claim("numbers")
-# The lines that may support a position ('the far shore'): this trip's lines, the location, place cards and Facts —
-# never another trip's, the audience or the brand (F17 reads the moment's own seed lines the same way).
-_POSITION_KINDS = (KIND_TRIP, KIND_LOCATION, KIND_PLACE, KIND_FACT)
+# The lines that may support a position ('the far shore'): this trip's lines, the location and the place cards — the
+# moment's own seed lines, exactly what F17 (trip_facts.timing_claims) reads. Never another trip's, the audience, the
+# brand, and not Facts either (S272 review 2: F17 never reads them, so a Fact-backed position passed here and blocked
+# there; fail closed until F17 reads Facts too).
+_POSITION_KINDS = (KIND_TRIP, KIND_LOCATION, KIND_PLACE)
 
 
-def _trip_subject(text: str) -> bool:
-    """The sentence makes the trip, the reader, the group or a day its subject (f9_policy.TRIP_SUBJECT_RE; imported
-    here lazily: f9_policy imports this module)."""
-    from services.acp_content_writing.f9_policy import TRIP_SUBJECT_RE
-    return bool(TRIP_SUBJECT_RE.search(text or ""))
+# AA-1047 (S272 review 2) — the trip frame of a number, ONE predicate for F1 (quality_gates.gate_grounding), the rule
+# table (apply_rules: the number branch and the place_background number case) and the admin sentence check
+# (sentence_repair.check_replacement runs F1). A number the SOURCE lacks is a trip promise (blocks) when the sentence
+# is about the trip: its subject is the trip, the reader, the group or a day (f9_policy.TRIP_SUBJECT_RE); it names a
+# trip service or an inclusion word (f9_policy.SERVICE_RE, CONCRETE_TRIP_RE / a promise frame); it names a trip
+# activity, a leg of travel or a stay (walk, hike, climb, crossing, ride, ferry, boat, transfer, visit, tasting,
+# nights, overnight, stay); it gives a clock time; a departs / leaves / takes / lasts verb carries a duration or a
+# distance; or it shares an activity word with the moment's own itinerary lines ('crossing' ← 'Cross Lake Orvine').
+# Only a number outside every one of these (a place's height, a founding year, a share of a valley) is background and
+# warns (writing policy claims.numbers, D1). Before this review the frame was the subject or a service word only, so
+# 'The ferry crossing to Brecca takes 40 minutes.' and 'The boat ride to Brecca leaves at 7 am.' only warned.
+_TRIP_ACTIVITY_RE = re.compile(
+    r"\b(?:walks?|walking|hikes?|hiking|climbs?|climbing|treks?|trekking|rides?|riding|drives?|driving|crossings?"
+    r"|cruises?|cruising|transfers?|visits?|tours?|excursions?|journeys?|trips?|outings?|ferry|ferries"
+    r"|kayak\w*|cycl(?:e|es|ing)|bik(?:e|es|ing)|sail(?:s|ing)?|paddl\w*|rafting|flights?|trains?|bus|buses"
+    r"|jeeps?|stays?|overnights?|stopovers?|nights?|programmes?|programs?|itinerar(?:y|ies)|sessions?|classes"
+    r"|lessons?|demonstrations?|tastings?|meals?|departures?)\b", re.I)
+_CLOCK_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?!\w)|\b\d{1,2}:\d{2}\b|\bo'clock\b", re.I)
+_LEG_RE = re.compile(
+    r"\b(?:depart\w*|leav(?:e|es|ing)|left|takes?|took|taking|lasts?|lasted|lasting|starts?|begins?|ends?|returns?"
+    r"|arriv\w*|covers?|runs?)\b[^.;:!?]{0,40}?\b(?:minutes?|mins?|hours?|hrs?|nights?|days?|km|kilomet(?:re|er)s?"
+    r"|miles?)\b", re.I)
+# The activity verbs of an itinerary line, by stem ('Cross Lake Orvine by ferry' → 'cross').
+_ACTIVITY_STEM_RE = re.compile(
+    r"\b(board|ride|hike|trek|walk|cycl|bike|kayak|paddl|raft|swim|snorkel|dive|climb|sail|cruis|visit|explor|stay"
+    r"|spend|sleep|meet|join|tast|sampl|cook|learn|drive|cross|camp|reach|arriv|continu|descend|ascend|picnic|tour"
+    r"|transfer|ferry|boat|fly|flight)\w*", re.I)
+
+
+def trip_number_frame(sentence: Optional[str], own_trip_lines: Iterable[str] = ()) -> bool:
+    """Is a number in `sentence` a trip attribute (it blocks) rather than background (it warns)? See the comment
+    above. `own_trip_lines` = the moment's own itinerary lines (KIND_TRIP: label, Day line, Source itinerary)."""
+    from services.acp_content_writing.f9_policy import SERVICE_RE, TRIP_SUBJECT_RE
+    text = strip_tags(sentence or "")
+    if not text:
+        return False
+    if (TRIP_SUBJECT_RE.search(text) or SERVICE_RE.search(text) or _trip_level(text) in ("concrete", "framed")
+            or _TRIP_ACTIVITY_RE.search(text) or _CLOCK_RE.search(text) or _LEG_RE.search(text)):
+        return True
+    stems = {m.group(1).lower() for line in own_trip_lines for m in _ACTIVITY_STEM_RE.finditer(line or "")}
+    words = re.findall(r"[a-z]+", fold(text))
+    return any(w.startswith(st) for st in stems for w in words)
+
+
+_NOT_TRIP_FACT_PREFIXES = ("AUDIENCE", "BRAND")
+
+
+def trip_lines_of(text: Optional[str]) -> tuple[str, ...]:
+    """The moment's own itinerary lines (KIND_TRIP) of a SOURCE text, for trip_number_frame's activity overlap."""
+    return tuple(ln.text for ln in number_source_lines(text) if ln.kind == KIND_TRIP)
+
+
+def audience_number_text(text: Optional[str]) -> str:
+    """The AUDIENCE and BRAND paragraphs of a SOURCE text (they support an age only: novel_trip_numbers)."""
+    return "\n\n".join(p for p in re.split(r"\n\s*\n", text or "") if p.strip().startswith(_NOT_TRIP_FACT_PREFIXES))
+
+
+def trip_number_source(text: Optional[str]) -> str:
+    """The SOURCE a number inside a trip frame is checked against: `number_source_text(text)` without the AUDIENCE
+    and BRAND paragraphs (who the brand writes for and what it says about itself are never a fact about this trip:
+    'Walkers aged 25-50' never supports 'The walk takes 50 minutes', S272 review 2)."""
+    paras = re.split(r"\n\s*\n", text or "")
+    keep = [p for p in paras if not p.strip().startswith(_NOT_TRIP_FACT_PREFIXES)]
+    return number_source_text("\n\n".join(keep))
+
+
+_AGE_RE = re.compile(r"\bage[ds]?\b|\byears?[- ]old\b|\byear-olds?\b", re.I)
+
+
+def novel_trip_numbers(sentence: str, source_texts: Iterable[str],
+                       audience_texts: Iterable[str] = ()) -> list[str]:
+    """Every number of `sentence` (digits, year forms and spelled-out figures) that `source_texts` lack. An age
+    ('children aged 7 to 16') may still rest on `audience_texts` (the AUDIENCE / BRAND lines): who the brand writes
+    for is an age band, never a duration, a distance, a count or a time of this trip (AA-768 kept audience ages)."""
+    src = list(source_texts)
+    novel = list(find_novel_numeric_claims(sentence, src, year_forms=True))
+    novel += [w for w in find_novel_word_numbers(sentence, src) if w not in novel]
+    aud = [t for t in audience_texts if t]
+    if novel and aud and _AGE_RE.search(strip_tags(sentence)):
+        full = src + aud
+        still = set(find_novel_numeric_claims(sentence, full, year_forms=True))
+        still |= set(find_novel_word_numbers(sentence, full))
+        novel = [n for n in novel if n in still]
+    return novel
 
 
 def _config_verdict(t: str, mode: str, note: str, fail_note: Optional[str] = None) -> tuple[str, str, str]:
@@ -598,16 +686,27 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
 
     if _is_cta(s.text, c.cta):
         return "cta", PASS, ""  # the configured CTA itself; a model-typed 'cta' is exempt-typed
-    novel = find_novel_word_numbers(s.text, c.number_src)
+    # AA-1047 (writing policy claims.numbers, D1 + F6; S272 review 2): a novel number holds as a trip attribute
+    # (trip_number_frame, the predicate F1 uses: digits and word numbers alike, AUDIENCE / BRAND lines never support
+    # it); outside a trip frame a spelled-out figure warns and a digit stays F1's (warn) or place background's
+    in_frame = s.where == "body" and trip_number_frame(masked, c.own_trip_lines)
+    novel = (novel_trip_numbers(s.text, c.number_src_trip, c.number_src_audience) if in_frame
+             else find_novel_word_numbers(s.text, c.number_src))
     if novel:
         problem = f"states {', '.join(novel)}, which the SOURCE does not give"
-        if quoted and _DIGITS_RE.search(line.text):
+        if quoted and line.kind in (KIND_TRIP, KIND_FACT, KIND_PLACE, KIND_LOCATION) and _DIGITS_RE.search(line.text):
             return "number", WARN, f"{problem} — check it against {ref}"  # a paraphrase of a cited figure
-        # AA-1047 (writing policy claims.numbers, D1 + F6): a novel number holds only as a trip attribute; outside a
-        # trip frame (a place's height, a year) it warns — the same rule as F1 (quality_gates.number_in_trip_frame)
-        if _NUMBERS["elsewhere"] == "enforce" or trip in ("concrete", "framed") or _trip_subject(masked):
+        if _NUMBERS["elsewhere"] == "enforce" or in_frame or trip in ("concrete", "framed"):
             return "number", FAIL, problem
         return "number", WARN, f"{problem} — background number, check it"
+    if s.where == "body" and not _is_question(s):
+        # claims.background.invented_direction_or_position: a position is fact.direction, F17's rule, for every type
+        # (S272 review 2: it ran for place_background only, so a 'location' row passed what F17 blocks)
+        from services.acp_content_writing.trip_facts import unsupported_positions  # trip_facts imports hygiene only
+        position = unsupported_positions(s.text, [ln.text for ln in c.source_lines if ln.kind in _POSITION_KINDS])
+        if position:
+            return ("location" if t == "location" else t), FAIL, (f"a position the SOURCE does not give "
+                                                                   f"('{position[0]}') — it cannot be placed there")
     if "social" in hits:  # whatever the model typed (design f9-v2): never in the SOURCE
         return "social_proof", FAIL, ("social proof or rarity claim — what other travellers or itineraries do "
                                       "is never in the SOURCE")
@@ -644,16 +743,13 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
         if outside:
             return t, FAIL, (f"background about {', '.join(repr(n) for n in outside)}, a place the SOURCE never "
                              "names")
-        from services.acp_content_writing.trip_facts import unsupported_positions  # trip_facts imports hygiene only
-        position = unsupported_positions(s.text, [ln.text for ln in c.source_lines if ln.kind in _POSITION_KINDS])
-        if position:  # claims.background.invented_direction_or_position: a position is fact.direction (F17's rule)
-            return t, FAIL, f"a position the SOURCE does not give ('{position[0]}') — background cannot place it"
         if "regulatory" in hits:
             return t, FAIL, "a rule, fee or opening time the SOURCE does not give — background cannot state it"
         if "number" in hits:
-            # numbers (F6): a number about the trip (the trip, the reader, the group or a day is the subject) holds,
-            # as in the number branch above and in F1 (quality_gates.number_in_trip_frame); elsewhere it warns
-            if _trip_subject(masked) and find_novel_numeric_claims(s.text, c.number_src, year_forms=True):
+            # numbers (F6): a number about the trip (trip_number_frame) holds, as in the number branch above and in
+            # F1; elsewhere it warns
+            if trip_number_frame(masked, c.own_trip_lines) and novel_trip_numbers(s.text, c.number_src_trip,
+                                                                                   c.number_src_audience):
                 return t, FAIL, "a number about this trip that the SOURCE does not give — background cannot state it"
             return _config_verdict(t, c.config.background_numbers,
                                    "background with a number or year the SOURCE does not give — check it")
@@ -717,7 +813,11 @@ def apply_rules(rows: dict[str, ClaimRow], source_lines: list[SourceLine], sente
     (hygiene's ≥60% CTA-word rule) skips the tripwires — a model's 'cta' label alone does not."""
     c = _Ctx(by_id={ln.id: ln for ln in source_lines}, lexicon=lexicon or scope_lexicon(source_lines),
              number_src=[number_source_text(ln.text) for ln in source_lines if ln.kind != KIND_OTHER_TRIP],
-             source_lines=source_lines, cta=cta, config=config)
+             source_lines=source_lines, cta=cta, config=config,
+             number_src_trip=tuple(number_source_text(ln.text) for ln in source_lines
+                                   if ln.kind not in (KIND_OTHER_TRIP, KIND_AUDIENCE, KIND_BRAND)),
+             own_trip_lines=tuple(ln.text for ln in source_lines if ln.kind == KIND_TRIP),
+             number_src_audience=tuple(ln.text for ln in source_lines if ln.kind in (KIND_AUDIENCE, KIND_BRAND)))
     out: list[Verdict] = []
     for s in sentences:
         row = rows.get(s.sid)

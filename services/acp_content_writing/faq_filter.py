@@ -83,6 +83,11 @@ def faq_filter_mode() -> str:
 # near a site (sensitive_no_travel_use), country trivia that answers with another place (off_scope_other_place).
 # Its examples are NOT questions of the 200-question labelled set (keep it that way, or the re-measure on that
 # set stops being a fair test). Kept short on purpose: the system prompt is most of the input tokens.
+# AA-1047 (S272 review 2): the KEEP list below is intentionally broader than the writing policy — it keeps practical
+# questions on money, weather / best season and booking ahead, which writing_policy.yaml faq.topics_need_source says
+# need a source line. The code post-filter owns that rule (`policy_dropped` in select_faq_questions, through
+# quality_gates.unanswerable_faq_topics, the same list the FAQ dropper reads); the prompt only classifies relevance.
+# Rendering the policy topics here would move this stage's prompt_version and the measured S247 calibration.
 SYSTEM_PROMPT = """You decide which real search questions (Google "People Also Ask") may appear in the \
 customer-facing FAQ of one travel blog post. The post covers ONE scope: a moment, a few days of a trip, or a tour. \
 You get the scope (what the post covers, its places, the trip's other places that are NOT in this post, and the \

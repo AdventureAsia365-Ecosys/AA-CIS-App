@@ -191,3 +191,46 @@ marked done; #13 and #14 need an issue (asked first, per the Linear rule):
   (review capacity for A1 rows) is a decision for the tech lead; both stay on AA-1047.
 - `config_fp` gets a new component `policy`: every release fingerprint moves once at deploy (reverify reason
   `prompt_version_mismatch`).
+
+## S272 adversarial review 2 (fixes on PR #1368)
+
+Decisions
+- One trip-frame predicate for a novel number: `claim_rules.trip_number_frame`, used by F1 (`gate_grounding`), the
+  rule table (`apply_rules`: the number branch, now digits too inside the frame, and the place_background number case)
+  and the admin check (`check_replacement` runs F1). The frame: trip / reader / group / day subject, a service word
+  (f9_policy.SERVICE_RE), a concrete or framed trip word, a trip activity / leg / stay noun (walk, hike, climb,
+  crossing, ride, ferry, transfer, visit, tasting, nights, overnight, stay), a clock time, a departs / leaves / takes /
+  lasts verb with a duration or distance, or an activity verb shared with the moment's own itinerary lines. 'boats'
+  is deliberately not a trip noun ('Brecca harbour holds 300 fishing boats' is background).
+- Inside the frame the AUDIENCE and BRAND lines support an age only (`novel_trip_numbers`): 'Walkers aged 25-50'
+  never backs 'takes 50 minutes' or 'capped at 25 walkers'; 'suits children aged 7 to 16' still rests on it (AA-768).
+- Access rarity ('a rare chance', 'a handful of travellers', 'few groups', 'the only ones allowed') is one lexicon,
+  `hygiene.ACCESS_RARITY_RE`, read by F18 (always blocking: its own problem text, not the place-rarity one) and the
+  rule table's social tripwire (`claim_rules.RARITY_RE`).
+- `check_replacement` now runs F17 / F18 on the admin's sentence (`gate_trip_facts(..., sentence_only=True)`: the
+  piece-level checks — missing family caveat, thin moment — are skipped) with the pipeline's blocking flags.
+- Positions: the rule table runs the position check for every claim type (not only place_background) and no longer
+  accepts Facts as support (F17 reads the moment's own seed lines only). Fail closed until F17 reads Facts too.
+- T9 short-meta tail: the DESTINATION (raw_tours.country, one per trip) is named only when it is the place's own seed
+  `Location:` country (`seo_meta_utils.place_country_tail`); otherwise no tail and the fit call / F4 decide. The trip
+  name is passed so the AA-794 other-country check runs; an alias spelling of a country the meta already names gets no
+  second tail.
+- Prompt registry: a module alias (`from pkg import mod as m` / `import a.b as m`) read as `m.CONST` counts when CONST
+  is policy-derived — file level for a module-level constant, per hashed symbol for a helper function
+  (`symbols_read_policy`), so a file that only calls a policy-reading helper outside the hashed symbols (brand_fit's
+  v2 judge path) does not move t7_debate_judge. No stage hash moved: the registry check reports 0 problems and the
+  migration 387 manifest is unchanged.
+- FAQ filter prompt: its KEEP list stays broader than `faq.topics_need_source` on purpose; the code post-filter
+  (`policy_dropped`) owns the rule (comment above SYSTEM_PROMPT; no prompt text change, no version move).
+
+Tradeoffs / not fixed
+- The T9 writer aim stays 130-145 (under the 140-155 band): raising it, or putting the band into the fit system
+  prompt, moves the t9_write / t9_seo_fit prompt versions past migration 387. Left for a later prompt release. Known
+  residue: with a 4-letter destination (Laos, Peru) a 130-meta reaches only 139 with the tail; a long destination
+  overshoots; a meta ending in '!' or '?' is never composed (meta_complete_sentence needs '.'); a meta that already
+  names the destination gets no tail. These stay with the fit call, then F4 holds — never a bad meta.
+- Policy lint: concatenation (`"..." + str(155)`) and a bare band literal with no field word in its statement are not
+  detected; the lint docstring says so.
+- Versus origin/main, the body examples that main blocks and this branch warns on are only the D1 / D13 decisions
+  (background numbers and years, place rarity); every review counter-example blocks in F1, apply_rules and
+  check_replacement (or F17 / F18 and check_replacement).

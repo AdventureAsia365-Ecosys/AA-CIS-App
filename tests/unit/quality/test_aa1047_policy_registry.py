@@ -307,7 +307,8 @@ def test_the_fit_note_tells_a_short_meta_the_band():
 
 def test_t9_short_meta_gets_the_destination_tail_without_a_fit_call():
     """S272 review (contradiction 12 inside the policy): a 130-139 T9 meta is on the writer's aim but under the band;
-    code composes it into the band from the DESTINATION line instead of a fit call and an F4 hold."""
+    code composes it into the band from the DESTINATION line instead of a fit call and an F4 hold. S272 review 2: only
+    when the DESTINATION is the place's own seed Location country (test_aa1047_review2 has the cross-border cases)."""
     import asyncio
     from unittest.mock import patch
     from uuid import uuid4
@@ -317,15 +318,20 @@ def test_t9_short_meta_gets_the_destination_tail_without_a_fit_call():
             "the steep path down to the lake.")
     title = "Corran Monastery: The Library Hall Above Orvine"
     lo, hi = wp.band("meta")
+    seed = ("Corran Monastery — visit\nLocation: Corran Monastery, Velmora\n"
+            "Source itinerary: Walk up to Corran Monastery.")
     assert wp.writer_aim("t9")[0] <= len(meta) < lo
     with patch.object(svc, "fit_seo_fields", side_effect=AssertionError("no fit call")) as fit:
         out, cost = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None, body="b",
-                                                  context={"destination": "Velmora"}, request_id=uuid4()))
+                                                  context={"destination": "Velmora", "atom_text": seed},
+                                                  request_id=uuid4()))
     assert fit.call_count == 0 and cost == 0.0
     assert out["meta_description"].endswith(", in Velmora.") and lo <= len(out["meta_description"]) <= hi
     # a destination tail that would overshoot the band is not used: the fit call runs as before
+    long_dest = "Velmora Highlands and the Tesselmoor Coast"
     with patch.object(svc, "fit_seo_fields", return_value=({}, 0.01)) as fit:
         out, _ = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None, body="b",
-                                               context={"destination": "Velmora Highlands and the Tesselmoor Coast"},
+                                               context={"destination": long_dest,
+                                                        "atom_text": seed.replace("Velmora", long_dest)},
                                                request_id=uuid4()))
     assert fit.call_count >= 1 and out["meta_description"] == meta

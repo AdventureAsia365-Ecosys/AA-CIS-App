@@ -280,6 +280,7 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
     body = t[:-1] if t.endswith(".") else t
     days = tour_days((facts or {}).get("duration"))
     country = ((facts or {}).get("country") or "").strip()
+    named_already = False
     if country:
         # AA-794: raw_tours.country holds ONE country, so a Laos→Vietnam tour got ", in Laos." after
         # a meta ending in Cuc Phuong (Vietnam). When the tour name or the meta names any other
@@ -288,6 +289,8 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
         own = countries.name(country) or country
         if _countries_named(f"{(facts or {}).get('name') or ''} {body}") - {own}:
             country = ""
+        # AA-1047 (S272 review 2): the meta already names it under another spelling ('Vietnam' vs 'Viet Nam')
+        named_already = own in _countries_named(body)
     if days and (_MENTIONS_DAYS.search(body) or _MENTIONS_DAY_TRIP.search(body)):
         days = None  # the meta already states the length; don't say it twice
     tails = []
@@ -303,7 +306,7 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
         tails += [f", in {country}."]
     for tail in tails:
         cand = (body + tail) if not tail.startswith(" Duration") else (body + "." + tail)
-        if country and country.lower() in body.lower() and f"in {country}" in tail:
+        if country and (named_already or country.lower() in body.lower()) and f"in {country}" in tail:
             continue  # don't repeat the country the meta already names
         if meta_in_band(cand, forbidden):
             return cand
@@ -320,6 +323,40 @@ def extend_short_meta(meta: Optional[str], facts: Optional[dict] = None, tenant_
         return None
     forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
     return _extend_short_meta(t, facts or {}, forbidden)
+
+
+_PAREN_RE = re.compile(r"\([^)]*\)")
+
+
+def location_country(seed_text: Optional[str]) -> Optional[str]:
+    """AA-1047 (S272 review 2): the country of the moment's own place — the last part of the seed's first
+    'Location:' line (atom_seed._location_lines writes '<place>, <locality>, <region>, <card country>'), or None.
+    A place keeps its own country: the tour country (one per trip, from the Excel row) can be another one."""
+    for line in (seed_text or "").splitlines():
+        if line.startswith("Location:"):
+            where = _PAREN_RE.sub("", line.split(":", 1)[1]).strip().rstrip(",").strip()
+            last = where.rsplit(",", 1)[-1].strip() if "," in where else ""
+            return last or None
+    return None
+
+
+def same_country(a: Optional[str], b: Optional[str]) -> bool:
+    """`a` and `b` name the same country (canonical ISO name when either resolves, else a case-folded match)."""
+    if not (a and a.strip() and b and b.strip()):
+        return False
+    from shared import countries
+    ca, cb = countries.name(a), countries.name(b)
+    if ca or cb:
+        return ca == cb
+    return a.strip().casefold() == b.strip().casefold()
+
+
+def place_country_tail(destination: Optional[str], seed_text: Optional[str]) -> Optional[str]:
+    """The country a T9 short-meta tail may name: the DESTINATION only when it is the place's own Location country
+    (location_country); None — no country tail — when the seed has no Location country or it is another one (a
+    cross-border trip: ', in Laos.' after a meta about Ha Long Bay). Fail closed: when unsure, no tail."""
+    loc = location_country(seed_text)
+    return destination.strip() if destination and same_country(destination, loc) else None
 
 
 def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden=None) -> str:

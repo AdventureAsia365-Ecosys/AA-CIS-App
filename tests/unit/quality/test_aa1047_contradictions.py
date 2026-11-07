@@ -25,15 +25,18 @@ SEEDS = SOURCE["example_seeds"]
 
 # S271 T9 contradiction number -> the examples that show the code now agrees with itself and the policy.
 CODE_VS_CODE = {
-    1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-07", "bg-08", "bg-11", "rar-01", "rar-04", "rar-07"],  # D1, D13
+    1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-07", "bg-08", "bg-11", "bg-12", "bg-13", "rar-01", "rar-04", "rar-07",
+        "rar-09", "rar-10", "rar-11", "rar-12"],                                        # D1, D13
     4: ["tim-01", "tim-03", "tim-05", "tim-02", "tim-04"],                              # timing: repair vs F17
     5: ["tim-01", "faq-03", "faq-05", "scp-01"],                                        # severity of f7 / s5 / scope
     6: ["faq-02", "faq-03", "faq-04", "faq-06"],                                        # FAQ topics: filter vs dropper
-    8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08", "num-09", "num-10", "num-11"],  # numbers
+    8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08", "num-09", "num-10", "num-11", "num-12", "num-13",
+        "num-14", "num-15", "num-16", "num-17", "num-18", "num-19", "num-20", "num-21"],  # numbers: one trip frame
     9: ["scp-01", "scp-02", "scp-03", "scp-05", "scp-07"],                              # scope
     10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05", "cta-09"],                   # CTA literal line
-    12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "meta-09", "meta-10", "tit-03", "tit-04",
-         "slug-01", "slug-03"],                                                                    # SEO bands, slug boundary
+    12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "meta-09", "meta-10", "meta-11", "meta-12",
+         "tit-03", "tit-04",
+         "slug-01", "slug-03"],                                                     # SEO bands, slug boundary
 }
 
 
@@ -62,9 +65,11 @@ def test_every_body_example_gives_apply_rules_a_claim_row():
 def test_every_body_fire_twin_names_its_owning_detectors():
     """`combined` takes the most severe verdict, so a lax detector hides behind a strict one; each detector that owns
     the example's rule must reach `expect` on its own (`all`, checked in test_example_is_decided_as_the_policy_expects).
-    By design not an owner: apply_rules for a time or a digit outside place background (F17 / F1 own them), for a
-    rarity claim about a place (D1 background passes it, F18 warns), and check_replacement for scope (an admin's
-    sentence gets F12 as a warning until the replay shows no false positives)."""
+    By design not an owner: apply_rules for a time of day (F17 owns it), for a rarity claim about a place (D1
+    background passes it, F18 warns), and check_replacement for scope (an admin's sentence gets F12 as a warning until
+    the replay shows no false positives). S272 review 2: a number inside the one trip frame
+    (claim_rules.trip_number_frame) is owned by F1, apply_rules AND check_replacement; check_replacement also owns the
+    sentence-level F17 / F18 findings (it runs them), so every timing and rarity fire twin lists it."""
     missing = [e["id"] for e in BODY if e["expect"] != "pass" and not e.get("all")]
     assert missing == []
     unknown = {d for e in BODY for d in e.get("all") or []} - BODY_DETECTORS
@@ -139,3 +144,13 @@ def test_contradiction_16_a_policy_change_moves_the_release_fingerprint():
     component of it (the route-control and catalog parts stay with the change-control work)."""
     from services.writing_memory import config_fp
     assert "policy" in config_fp.COMPONENTS
+
+
+def test_timing_and_rarity_fire_twins_list_the_admin_check():
+    """S272 review 2: check_replacement ran neither F17 nor F18, so the admin path saved 'You cross Lake Orvine at
+    dawn.' and 'Most travellers never find their way to Brecca.'; every blocking F17 / F18 twin now lists it as an
+    owner."""
+    owned = [e["id"] for e in BODY if e["expect"] == "block"
+             and {"F17_trip_fact", "F18_rarity"} & set(e.get("all") or [])
+             and "check_replacement" not in (e.get("all") or [])]
+    assert owned == []

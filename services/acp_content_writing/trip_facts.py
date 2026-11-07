@@ -27,7 +27,7 @@ from functools import lru_cache
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
+    ACCESS_RARITY_RE, COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
 )
 from services.acp_shared.citation_tags import TAG, trailing_tags
 from services.quality import writing_policy as _wp  # AA-1047: D13 rarity (trip vs place)
@@ -658,6 +658,10 @@ RARITY_CLAIM_RE = re.compile(
     r"|\bunparalleled\b|\bunmatched\b|\bunrivall?ed\b|\bincomparable\b"
     r"|\bunique\s+(?:in|on|to)\s+(?:the world|earth|asia|central asia)\b", re.I)
 RARITY_PROBLEM_PREFIX = "makes a rarity claim the source does not"
+# AA-1047 (S272 review 2): access rarity ('a rare chance', 'only a handful of travellers', 'few groups', 'the only ones
+# allowed') is social proof by scarcity — a different problem text, so rarity_blocks always holds it.
+ACCESS_RARITY_PROBLEM = "claims few others get this access, which the source does not say"
+
 # 'one of the last' ≈ 'among the last'; 'on earth' ≈ 'in the world'
 _RARITY_EQUIV = (("among the", "one of the"), ("on earth", "in the world"), ("’s", "'s"))
 # 'one of the world's most distinctive living cultures' — supported only when the seed has a
@@ -698,7 +702,10 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
     out = []
     for sentence, prefix in spans:
         problem = None
-        for m in RARITY_CLAIM_RE.finditer(sentence):
+        access = ACCESS_RARITY_RE.search(sentence)
+        if access and _norm_rarity(access.group(0)) not in src:
+            problem = f"{ACCESS_RARITY_PROBLEM} ('{access.group(0)}') — cut it"
+        for m in RARITY_CLAIM_RE.finditer(sentence if problem is None else ""):
             if _norm_rarity(m.group(0)) not in src:
                 problem = f"{RARITY_PROBLEM_PREFIX} ('{m.group(0)}') — keep to what the source says"
                 break
@@ -2332,20 +2339,23 @@ def service_claims(text: str, ctx: Optional[TripFactContext]) -> list[str]:
 
 
 def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_title: Optional[str] = None,
-                          meta_description: Optional[str] = None) -> dict[str, list[str]]:
+                          meta_description: Optional[str] = None, sentence_only: bool = False) -> dict[str, list[str]]:
     """{"trip_fact": [...], "rarity": [...]} — every finding quotes its sentence; title/meta
-    findings start with "title " / "meta "."""
+    findings start with "title " / "meta ". AA-1047 (S272 review 2): `sentence_only` skips the checks that read the
+    whole piece (a missing family caveat, a thin moment) — the admin sentence check (sentence_repair
+    .check_replacement) runs the rest on one sentence, so it never saves what F17 / F18 refuse in the pipeline."""
     if ctx is None:
         return {"trip_fact": [], "rarity": []}
     extra = (("title", seo_title), ("meta", meta_description))
     trip = optional_as_fixed(text, ctx.moments, ctx.cta) + timing_claims(text, ctx.moments, ctx.cta)
-    for miss in missing_family_caveat(text, ctx.moments, ctx.audience, ctx.cta):
+    for miss in ([] if sentence_only else missing_family_caveat(text, ctx.moments, ctx.audience, ctx.cta)):
         trip.append(_quoted(f"pitches {miss['moment']} to families but never says what the source says about "
                             f"getting there ({miss['caveat'][:160].rstrip('.')}) — keep this sentence and add ONE "
                             "short sentence that states that caveat in the source's words", miss["sentence"]))
     trip += date_authority_claims(text, ctx.seed, ctx.cta, extra)
     # S234 round 4 (r3 panel §4 fixes 2, 3, 4)
-    trip += thin_moment_issues(text, ctx.moments, ctx.cta)
+    if not sentence_only:
+        trip += thin_moment_issues(text, ctx.moments, ctx.cta)
     trip += [_quoted("plays down a hazard the source states, for a family audience — keep the hazard, cut the "
                      "reassurance", hit["span"]["clean"]) for hit in minimised_hazards(text, ctx)]
     trip += [_quoted(f"makes {hit['place']} the reader's gateway or base, but this trip does not go there (the "

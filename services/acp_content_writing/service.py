@@ -979,12 +979,17 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     def composed(out: dict) -> dict:
         # AA-1047 (D5 "code composes"; writing policy writer_aims.meta.t9.short_fix): the writer and the fit aim under
-        # the band floor (lesson S233), so a complete meta left at 130-139 gets one tail from the DESTINATION line
+        # the band floor (lesson S233), so a complete meta left under it gets one tail from the DESTINATION line
         # (', in <destination>.') when that lands it in the band; no LLM call, never a word the source lacks.
         meta = out.get("meta_description") if out else None
         if not out or meta_ok(meta):
             return out
-        cand = seo_meta_utils.extend_short_meta(meta, {"country": context.get("destination")})
+        # S272 review 2: the DESTINATION is raw_tours.country (one per trip); it is named only when it is the place's
+        # own seed Location country (a place keeps its own country), and the trip name runs the AA-794 check
+        country = seo_meta_utils.place_country_tail(context.get("destination"), hygiene.split_seed(seed)[0])
+        if not country:
+            return out
+        cand = seo_meta_utils.extend_short_meta(meta, {"country": country, "name": context.get("trip_name")})
         return {**out, "meta_description": cand} if cand and meta_ok(cand) else out
 
     seo_meta = composed(seo_meta)
