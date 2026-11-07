@@ -6,8 +6,8 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
 ## Decisions
 
 - **G17 wave stop flags enforced** (`scripts/aa645/wave_report.py`): the report computed `stop_conditions` and always
-  exited 0. It now also reads `shared.job` (queued / running rows whose payload `tour_id` or `published_tour_id` is a
-  tour of the wave) and gives each flag as `true` / `false`, or `pending` while such jobs exist. Exit 3 = a flag is
+  exited 0. It now also reads `shared.job` (queued / running rows whose payload names a tour of the wave: `tour_id`, a
+  `tour_ids` list, or a t2_rewrite `published_tour_id` mapped through `published_tours.id`) and gives each flag as `true` / `false`, or `pending` while such jobs exist. Exit 3 = a flag is
   true, 5 = pending (run again after the jobs drain), 0 = none. `stop_conditions` keeps its boolean shape (readers of
   the JSON keep working); `stop_state`, `active_jobs` and `exit_code` are new keys.
 - **G11 PR text guard**: `.github/workflows/pr-title.yml` (new in CIS; the same file as Booking, Partner, root): no issue
@@ -29,10 +29,19 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
 
 - G17: every flag is `pending` while any job of the wave's tours is active (the design named "the kinds it depends
   on"): a job of any kind can still move a tour's outcome, so a per-kind map would only hide a pending state.
-- G17 next-wave refusal (review fix pass): `POST /admin/waves` recomputes the newest wave's stop flags (no stored
-  report, so no migration) and answers 409 while one is true or pending, or when they cannot be computed; a
-  `stop_override` of at least 20 characters (the tech lead's written approval, quoted) lets it through and is kept at
-  the top of the new wave's notes, with the flags it overrode (log `rerun_wave_stop_override`).
+- G17 next-wave refusal: STRIPPED in review fix pass 2 (S272). The first version made `POST /admin/waves` recompute
+  the newest wave's stop flags inside the request and answer 409. The reviewer measured `_compute_tours` (the S1 code
+  checks on the before and after page of every tour; most of the time in `check_numbers` ->
+  `find_novel_word_numbers` -> `hygiene.fold`): 16.3 s for 50 dense tours and 74.6 s for 250 on a laptop, before the
+  DB reads, on a 0.5 vCPU api task behind the API Gateway's 29 s integration timeout. A 504 still inserted the wave and
+  a retry then read that empty wave as "previous" (no versions, no jobs: not applicable) and inserted a second open
+  wave with the same expected set. `POST /admin/waves` is back to its main-branch code (no `stop_override`, no openapi
+  change); the CLI keeps exit 3 / 5. Follow-up (not built): `wave_report.py --wave <id>` stores its `stop_state`,
+  `exit_code` and `computed_at` under `shared.rerun_wave.last_check.stop_gate` (no migration: `last_check` is jsonb;
+  `wave_report.check()` must then keep that key when it rewrites `last_check`), and `POST /admin/waves` reads the
+  stored value: never computed, or computed while jobs were active = pending = 409 unless overridden; plus
+  idempotency on (name, expected set) for a retried create. Tested by a unit test that `create_wave` never calls the
+  quality read.
 - To share one definition, the quality read moved from `scripts/aa645/wave_report.py` to `services/waves/quality.py`
   (the image carries `services/`, not `scripts/`: AA-725 keeps scripts out of it). The gate code sets moved to
   `services/quality/s1_gates.py` and figure coverage to `services/quality/s1_coverage.py`; `scripts/aa645/gates.py`,
@@ -47,13 +56,18 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
   bronze bucket and adds a `blocked_by` line per `<run>.txt.running` younger than 120 s with no `.done` next to it
   (`exec_scripts` in the answer; `shared/jobs/exec_heartbeat.py`). The API reads it, not CI: the task role already has
   `s3:ListBucket` (AA-CIS-Infra `modules/ecs` ecs_task_policy), so no Infra grant and no AWS step in the deploy
-  workflow are needed. A failed list raises (the gate fails closed); `DEPLOY_GATE_ECSX=off` turns it off (both test
-  conftests set it).
+  workflow are needed. A failed list is one `blocked_by` line "ECS exec heartbeat unreadable" (fail closed:
+  `safe_to_deploy` false, the CI guard blocks) plus `exec_scripts: null` and `exec_scripts_error`; the rest of the
+  answer stays, so the Platform Apps card keeps its wave and job counts and lists the error as a problem (review fix
+  pass 2: it used to raise and blank the whole card). `DEPLOY_GATE_ECSX=off` turns it off (both test conftests set it).
+- G3 (c) re-check before the roll (review fix pass 2): the preflight guard runs in parallel with the image build, so a
+  script started during the build was not seen. `deploy-dev.yml` runs `deploy_job_guard.sh` again as the step right
+  before `Deploy api` (same secret, same `override_running_jobs`).
 
 ## Tradeoffs
 
-- The wave start runs the code checks of every tour of the previous wave (both versions) in a worker thread: a few
-  seconds for a country wave, once per wave start. Cheaper than a stored report that could go stale.
+- (Removed: the in-request wave gate. Its cost, measured by the reviewer, was 16-75 s per wave start, not "a few
+  seconds".)
 - Heartbeat age 120 s = four missed beats: a script killed by OOM stops blocking two minutes later; a live script whose
   S3 put fails four times in a row would not block (accepted: the put is the same call that writes its result).
 - A gate that cannot compute refuses (fail closed) instead of passing: the override is the way through.

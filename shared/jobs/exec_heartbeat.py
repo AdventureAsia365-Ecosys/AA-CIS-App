@@ -10,8 +10,13 @@ next to them: a script that is running now. A heartbeat older than that is a run
 local side never cleaned up; it does not block. `shared.jobs.worker.deploy_gate_status` adds one `blocked_by` line per
 running script, so the CI pre-deploy guard (`.github/scripts/deploy_job_guard.sh`) refuses the roll.
 
-The api and worker task role may list the bucket (AA-CIS-Infra modules/ecs, ecs_task_policy). A failed list raises:
-the gate fails closed like its DB reads. `DEPLOY_GATE_ECSX=off` turns the check off (the test conftests do: no AWS).
+The api and worker task role may list the bucket (AA-CIS-Infra modules/ecs, ecs_task_policy). A failed list raises
+here; `deploy_gate_status` turns it into a `blocked_by` line ("heartbeat unreadable", fail closed) and keeps the rest
+of its answer. `DEPLOY_GATE_ECSX=off` turns the check off (the test conftests do: no AWS).
+
+A hung script blocks every CIS deploy until it ends or its `ECSX_SCRIPT_TIMEOUT` passes (the runner caps it at
+3,600 s); to clear it sooner, stop the script in the container (runbook `deploy-gate-override.md`, row "ECS exec
+script running").
 """
 from __future__ import annotations
 

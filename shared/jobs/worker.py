@@ -565,7 +565,14 @@ async def deploy_gate_status(pool) -> dict:
     counts = await queue.active_count(pool, exempt_kinds=exempt)
     blockers = await queue.deploy_blockers(pool, blocking_kinds=blocking)
     from shared.jobs.exec_heartbeat import running_exec_scripts
-    exec_scripts = await asyncio.to_thread(running_exec_scripts)
+    # S272 review: a failed S3 list blocks (fail closed: an unread heartbeat may be a running script) but no longer
+    # raises, so the platform card keeps the wave and job counts and says what it could not read.
+    exec_error = None
+    try:
+        exec_scripts = await asyncio.to_thread(running_exec_scripts)
+    except Exception as e:  # noqa: BLE001 - any S3 / credential error is "unreadable"
+        logger.warning("deploy_gate_exec_heartbeat_unreadable", error=repr(e)[:200])
+        exec_scripts, exec_error = None, "ECS exec heartbeat unreadable (scripts/out/ list failed)"
     open_waves, running, due = blockers["open_waves"], blockers["blocking_running"], blockers["blocking_due"]
     blocked_by = []
     if open_waves:
@@ -574,11 +581,13 @@ async def deploy_gate_status(pool) -> dict:
         blocked_by.append(f"{n} {kind} job(s) running (deploy-blocking kind)")
     for kind, n in due.items():
         blocked_by.append(f"{n} {kind} job(s) due (deploy-blocking kind, queued to start within 15 min)")
-    for script in exec_scripts:
+    for script in exec_scripts or []:
         blocked_by.append(f"ECS exec script {script['run_id']} running (heartbeat {script['age_s']} s ago)")
+    if exec_error:
+        blocked_by.append(exec_error)
     return {**counts, "exempt_kinds": exempt, "open_waves": open_waves, "blocking_kinds": blocking,
-            "blocking_running": running, "blocking_due": due, "exec_scripts": exec_scripts, "blocked_by": blocked_by,
-            "safe_to_deploy": not blocked_by}
+            "blocking_running": running, "blocking_due": due, "exec_scripts": exec_scripts,
+            "exec_scripts_error": exec_error, "blocked_by": blocked_by, "safe_to_deploy": not blocked_by}
 
 
 async def _main() -> None:
