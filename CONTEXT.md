@@ -3084,6 +3084,17 @@ Distinct from Facts Entry (tenant scope) below — same table (`acp_shared.facts
 tells them apart, never merged.
 _Avoid_: Fact (bare), reference data.
 
+**FactSheet (AA-1047, root ADR 0020)**:
+The facts one write rests on, built by code (`services/quality/factsheet.py`): typed, numbered lines, each with
+its provenance (`source_raw`, `human_verified`, `tenant_asserted`, `llm_derived`, `external`) and, for a tour,
+a pointer into the supplier source; plus what the builder left out and why. Two builders: the **tour builder**
+(S1 / T2: the raw source tour, rendered as the S1 writer v2 FACT SHEET) and the **route builder** (T9: seed +
+Facts Entries + brand / audience / trip / destination lines, rendered as the gates' SOURCE). `render()` is
+byte-equal to what each workflow read before W1. Stored once per distinct input in `acp_shared.fact_sheet`
+(CIS 386, `services/quality/factsheet_store.py`, best-effort) and named by `generated_content.fs_id`,
+`tenant_tour_versions.fs_id` and `content_piece.writer_input.fs_id`. The brief is never a FactSheet line.
+_Avoid_: fact pack, source bundle, grounding text (the old names of its parts).
+
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):
 `served` (live source version + live Master), `paused` (Master inactive, or a supersede waiting for the new
