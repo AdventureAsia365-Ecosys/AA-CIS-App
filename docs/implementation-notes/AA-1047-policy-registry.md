@@ -10,7 +10,9 @@ exit paths.
 Two PRs, in merge order:
 
 1. **CIS migration 387** (migration-only, contract): registers the sixteen prompt versions the registry moves. Joins
-   lane l2's migration-only PR (one CIS migration PR per wave: 386-387).
+   lane l2's migration-only PR (one CIS migration PR per wave: 386-387). Merged (#1367) and applied on Dev; review 5
+   adds **CIS 389** (migration-only PR `chore/aa1047-prompt-versions-389`) for the versions the fail-closed revision
+   moves.
 2. **CIS code PR**: the registry, compiler, lint, consumers, contradiction suite. Its branch carries the 387 commit
    (identical bytes) so the prompt registry gate passes locally; after the migration PR merges, that file is no
    longer in its diff.
@@ -20,7 +22,7 @@ Two PRs, in merge order:
 - `services/quality/writing_policy.yaml` — v1, frozen from D1–D16: one meta band 140–155 and one title band 45–60
   (D5), the slug cap 60 cut at a word boundary, writer aims below the band (S1 130–148, T9 130–145, T2/v1 145–152),
   the CTA as a literal line owned by code, FAQ pairs 3–4 (regenerate 4) and the FAQ topics that need a source line,
-  meals (a source-day meal line is source-backed for every writer), day count = source, the claim policy per topic
+  meals (a source-day meal line is source-backed for the A1 writer only, as on main; S272 review 5), day count = source, the claim policy per topic
   (background D1, brief D2, reflection D3, hypothetical D4, rarity D13, suitability D14, scene D15, timing, numbers
   F6, scope, truth_cut D6, elephant D8), `rules_config`, class severities, the eval judge classes, the label rubric,
   the T10 route rows and F9 class rows, the AA-788 gate promotions and the AA-920 rule injection (registry entries
@@ -113,13 +115,16 @@ W2 claim instrument (D7, D10) can hold these claims with a measurement record.
 
 ### Should know
 
-- **Prompt versions / migration 387**: the policy YAML change moves `policy_sha` (now `3f1c2ec09ea1048f`), and every
-  prompt whose source reads the policy hashes it, so the sixteen 387 versions' hashes changed (no prompt TEXT
-  changed). The versions stay as 387 named them (no new version); the manifest rows and `387_prompt_versions_aa1047_
-  policy.sql` were re-pinned to the new hashes. 387 on main (merged from the migration-only PR) carries the OLD hashes,
-  so this branch's 387 no longer matches it: see the migration note of this commit (before the code PR merges, either
-  replace 387 and its Infra byte copy before it is applied, or, if Dev already applied it, ship a forward migration
-  for the sixteen rows).
+- **Prompt versions / migrations 387 and 389**: the fail-closed revision moves `policy_sha`, and every prompt whose
+  source reads the policy hashes it, so the sixteen 387 versions' hashes changed (no prompt TEXT changed). 387 was
+  already merged on main (#1367), byte-copied to Infra and APPLIED on Dev with the earlier hashes, so it is never
+  edited: this branch carries 387 at origin/main's exact bytes, and a forward migration **CIS 389**
+  (`389_prompt_versions_aa1047_policy_fail_closed.sql`, contract, created_by `migration-389`) registers the next
+  version of each of the sixteen stages (t9_write v5, writing_memory_eval v4, the other fourteen v3). The manifest
+  keeps 387's entries with 387's hashes and appends the 389 ones (`prompt_registry_check.py --bump`). 388 belongs to
+  another lane (l9, `shared.eval_claim_label`); if it is not on Dev when 389 applies, the apply needs
+  `--allow-out-of-order` (389 does not depend on 388). MIG-4: 389 goes first in its own migration-only PR (branch
+  `chore/aa1047-prompt-versions-389`, byte-identical file), then its Infra copy, apply, then this code PR.
 - Sections "S272 adversarial review 2 / 3 / 4" below describe code that this decision reverted; they stay as the
   record of why.
 
@@ -143,8 +148,11 @@ W2 claim instrument (D7, D10) can hold these claims with a measurement record.
 - **FAQ topics.** `faq.topics_need_source` is one list for the deterministic PAA selection, the FAQ dropper and now
   the LLM question filter (`faq_filter.select_faq_questions` drops a kept question on a topic with no source line,
   logged as `policy_dropped`).
-- **Meals.** The A1 exemption for a meal line copied from the same source day now covers T2 too
-  (`brand_audit_node.meal_time_claims_supported`).
+- **Meals. Withdrawn by the S272 fail-closed decision (review 5).** The A1 exemption for a meal line copied from the
+  same source day stays A1-only, as on main (`meals.source_day_line: a1_only`; `brand_audit_node` no longer reads a
+  policy switch). A T2 rewrite's copied meal line takes main's Jev path and keeps the flag without an enforced accept
+  (`test_aa645_flagfix_day_loss` reviewer case; examples meal-07 / meal-08 assert block on T2, meal-01 / meal-06
+  pass on A1 via the new example key `writers`). The every-writer intent waits in the W2 fixture (`w2_intent`).
 - **Slug.** Over 60 chars the slug is cut at a hyphen, never mid-word, in the T9 fold and in the publish
   `blog_slug` stem.
 - **CTA check. Reverted by the S272 fail-closed decision above.** `claim_rules.check_cta` also passes a text whose prose ends with the CTA line (a short one-paragraph
@@ -258,10 +266,11 @@ marked done; #13 and #14 need an issue (asked first, per the Linear rule):
   after it passes `check_cta` (the closing window is the last two paragraphs) although the policy says "last
   sentence". `ensure_cta` keeps it. Left for W5 (channel shapes).
 - Behaviour changes on Dev after deploy (T9 gates, no paid call; S272: F1, F18 and check_cta stay as on main): F4
-  meta band 120–158 → 140–155; the FAQ filter drops source-less topics; T2 meal lines copied from the source day
-  pass; slugs cut at a word boundary. Prompt versions move (t9_write v4, writing_memory_eval v3, v2 of t9_repair,
+  meta band 120–158 → 140–155; the FAQ filter drops source-less topics; slugs cut at a word boundary (S272 review 5:
+  T2 meal lines stay as on main). Prompt versions move (t9_write v4, writing_memory_eval v3, v2 of t9_repair,
   s1/t2_brand_audit, a3_place_card, a3_place_card_check, s1/t2_generate, s1/t2_judge, s1/t2_flag_fix,
-  t9_faq_answer_fit, t10_claims, t10_judge) — CIS 387 registers all sixteen. A T9 meta of 130–139 goes to the fit call and
+  t9_faq_answer_fit, t10_claims, t10_judge) — CIS 387 registers all sixteen; after review 5 the deployed versions
+  are the next ones (t9_write v5, writing_memory_eval v4, the rest v3), registered by CIS 389. A T9 meta of 130–139 goes to the fit call and
   F4 holds what the fit leaves (S272: no country tail).
 - The paid 3-piece writer smoke (critic fix F9, ~$0.50) was NOT run here: it is a live step of the code PR.
 - Not in this lane: critic fix F10 (A3 input check, unanchored-atom share) is the W1 input measurements item; F13
@@ -307,7 +316,9 @@ Tradeoffs / not fixed
   overshoots; a meta ending in '!' or '?' is never composed (meta_complete_sentence needs '.'); a meta that already
   names the destination gets no tail. These stay with the fit call, then F4 holds — never a bad meta.
 - Policy lint: concatenation (`"..." + str(155)`) and a bare band literal with no field word in its statement are not
-  detected; the lint docstring says so.
+  detected; the lint docstring says so. Review 5: a band literal passed as a call argument (`shorten(meta, 155)`,
+  `shorten(page['seo_title'], width=60)`) is now (p2) when the function name, a keyword name or another non-literal,
+  non-f-string argument starts an identifier part with meta / title / slug / seo / desc (`DATAFORSEO_BASE` does not).
 - Versus origin/main, the body examples that main blocks and this branch warns on are only the D1 / D13 decisions
   (background numbers and years, place rarity); every review counter-example blocks in F1, apply_rules and
   check_replacement (or F17 / F18 and check_replacement).
@@ -411,3 +422,18 @@ Should know
   call (as before AA-1047) or F4 holds it. Fail closed by design.
 - No policy key changed (examples and seeds only): policy_sha stays 56729ec18379581c, the prompt registry check
   reports 0 problems, migration 387's manifest is unchanged.
+
+## S272 review 5 (fail closed, migration 389)
+
+Changed
+- `api/migrations/387_prompt_versions_aa1047_policy.sql` is origin/main's bytes again (it is applied on Dev); the new
+  hashes go into CIS 389 (see "Prompt versions / migrations 387 and 389" above) with
+  `tests/integration/test_aa1047_migration_389.py` (each 389 row = its 387 row one version up, new hash, same path).
+- T2 meal exemption reverted (see "Meals").
+- `eval_judge.clip()` and `CUT_MARK` removed: nothing called them since the judge reads the uncut `evidence_view`. The
+  judge's source layout no longer names a cut mark, so `judge_version()` moves once more; it stays deterministic (the
+  same code gives the same 12 hex), and `writing_memory_eval` gets v4 in 389.
+- Policy lint: the call-argument form (see Tradeoffs).
+
+Should know
+- `policy_sha` is now `739223d6cc24f1e5` (meals `a1_only`); the frontend registry was regenerated.
