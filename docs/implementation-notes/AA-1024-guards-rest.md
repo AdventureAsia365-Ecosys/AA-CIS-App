@@ -29,6 +29,13 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
 
 - G17: every flag is `pending` while any job of the wave's tours is active (the design named "the kinds it depends
   on"): a job of any kind can still move a tour's outcome, so a per-kind map would only hide a pending state.
+- G17 (review pass 3): the job lookup covers the wave's EXPECTED set, not only the tours with an A1 version in the
+  window: the `--tour-ids-file` ids, the window's tours and, with `--country`, the country's active raw tours
+  (`COUNTRY_TOURS_SQL`). A tour whose prefetch / ingest / rewrite is still queued has no version yet; reading only the
+  window gave `active=[]` and exit 3 (STOP) on an empty table, or final flags on 10 of 50 tours. A named set with no
+  version in the window and no active job reports one `no_a1_version_in_window` row (pending, exit 5), never a STOP.
+  A window-only run (no ids, no country) still reads only the window's tours: the runbook always passes the expected
+  set. Later, `shared.rerun_wave.expected_tour_ids` (`--wave`) can feed the same set.
 - G17 next-wave refusal: STRIPPED in review fix pass 2 (S272). The first version made `POST /admin/waves` recompute
   the newest wave's stop flags inside the request and answer 409. The reviewer measured `_compute_tours` (the S1 code
   checks on the before and after page of every tour; most of the time in `check_numbers` ->

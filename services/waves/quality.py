@@ -265,8 +265,18 @@ WHERE j.status IN ('queued', 'running')
 GROUP BY 1, 2 ORDER BY 1, 2
 """
 
+# The active tours of a country, when the report is scoped by --country: a wave tour whose prefetch / ingest /
+# rewrite is still queued has no A1 version in the window yet, so the window alone cannot name it (S272 review).
+COUNTRY_TOURS_SQL = """
+SELECT rt.tour_id::text AS tour_id
+FROM silver_aa_internal.raw_tours rt
+WHERE rt.country = $1 AND rt.source_status = 'active' AND rt.deleted_at IS NULL
+"""
+
 EXIT_STOP = 3
 EXIT_PENDING = 5
+# A synthetic active-jobs row: the requested tours have no A1 version in the window yet (nothing to judge).
+NO_VERSION_KIND = "no_a1_version_in_window"
 
 
 def stop_state(stops: dict, active_jobs: list[dict]) -> dict:
@@ -308,7 +318,9 @@ def _compute_tours(rows: list[dict], pages: dict) -> list[dict]:
 async def collect(conn, since: dt.datetime, until: dt.datetime, ids: Optional[list[str]] = None,
                   country: Optional[str] = None) -> tuple[list[dict], list[dict]]:
     """(tours, active_jobs) of a wave window: every tour with an A1 version created in [since, until), optionally
-    limited to `ids` / `country`. The code checks run in a worker thread (an API request must not block the loop)."""
+    limited to `ids` / `country`. The code checks run in a worker thread (an API request must not block the loop).
+    active_jobs are the queued / running jobs of the wave's expected set (ids, the window's tours, the country's
+    active tours); with a named set and no version in the window yet, one `no_a1_version_in_window` row (pending)."""
     rows = [dict(r) for r in await conn.fetch(VERSIONS_SQL, since, until, ids, country)]
     vids = sorted({r[k] for r in rows for k in ("after_id", "before_id") if r.get(k)})
     pages = {p["id"]: dict(p) for p in await conn.fetch(PAGES_SQL, vids)} if vids else {}
@@ -320,7 +332,17 @@ async def collect(conn, since: dt.datetime, until: dt.datetime, ids: Optional[li
         by_tour = {a["tour_id"]: dict(a) for a in arows}
         for t in pub:
             t["atoms"] = by_tour.get(t["tour_id"])
-    active = await load_active_jobs(conn, [t["tour_id"] for t in tours])
+    # The job lookup covers the wave's expected set, not only the tours found in the window (S272 review): the
+    # requested ids, the window's tours, and with --country the country's active tours. A tour whose s1_seo_prefetch /
+    # s1_batch_ingest / s1_rewrite is still queued has no version yet; reading only the window called the flags final.
+    expected = {str(t) for t in ids or []} | {t["tour_id"] for t in tours}
+    if country:
+        expected |= {r["tour_id"] for r in await conn.fetch(COUNTRY_TOURS_SQL, country)}
+    active = await load_active_jobs(conn, sorted(expected))
+    requested = {str(t) for t in ids or []}
+    if not tours and (requested or country) and not active:
+        # nothing ran yet for a named set: report pending (exit 5), never a STOP on an empty table
+        active = [{"kind": NO_VERSION_KIND, "status": "expected", "n": len(requested) or 1}]
     return tours, active
 
 

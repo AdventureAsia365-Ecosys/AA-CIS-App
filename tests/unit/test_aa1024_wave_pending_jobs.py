@@ -73,3 +73,74 @@ async def test_wave_start_does_not_recompute_quality_in_the_request():
         out = await admin_waves.create_wave(admin_waves.WaveCreate(name="Next", tour_ids=["t-1"]), req, "s", None)
     assert out["id"] == "w2"
     assert not hasattr(wq, "previous_wave_gate")
+
+
+def _conn(versions=(), active=(), country_tours=()):
+    """A fake connection that answers each query of collect() by its SQL text."""
+    calls = []
+
+    async def fetch(sql, *args):
+        calls.append((sql, args))
+        if sql == wq.VERSIONS_SQL:
+            return [dict(v) for v in versions]
+        if sql == wq.ACTIVE_JOBS_SQL:
+            return [dict(a) for a in active]
+        if sql == wq.COUNTRY_TOURS_SQL:
+            return [{"tour_id": t} for t in country_tours]
+        return []
+    conn = AsyncMock()
+    conn.fetch = AsyncMock(side_effect=fetch)
+    return conn, calls
+
+
+def _active_ids(calls):
+    return [args[0] for sql, args in calls if sql == wq.ACTIVE_JOBS_SQL]
+
+
+@pytest.mark.asyncio
+async def test_collect_reads_jobs_of_requested_tours_that_have_no_version_yet():
+    # S272 review pass 3: no A1 version in the window, 50 queued s1_rewrite jobs of the requested tours. Reading jobs
+    # only for the window's tours gave active=[], not_clearly_better true, exit 3 (STOP) while the wave was running.
+    conn, calls = _conn(active=[{"kind": "s1_rewrite", "status": "queued", "n": 50}])
+    tours, active = await wq.collect(conn, T0, T0 + dt.timedelta(hours=2), ids=["t-2", "t-1"])
+    assert tours == [] and _active_ids(calls) == [["t-1", "t-2"]]
+    ev = wq.evaluate(tours, active)
+    assert set(ev["stop_state"].values()) == {"pending"} and ev["exit_code"] == wq.EXIT_PENDING
+
+
+@pytest.mark.asyncio
+async def test_collect_with_a_named_set_and_nothing_run_yet_is_pending_not_stop():
+    conn, _ = _conn()
+    tours, active = await wq.collect(conn, T0, T0 + dt.timedelta(hours=2), ids=["t-1"])
+    assert active and active[0]["kind"] == wq.NO_VERSION_KIND
+    assert wq.evaluate(tours, active)["exit_code"] == wq.EXIT_PENDING
+
+
+@pytest.mark.asyncio
+async def test_collect_by_country_reads_the_countrys_active_tours():
+    conn, calls = _conn(active=[{"kind": "s1_seo_prefetch", "status": "queued", "n": 1}], country_tours=["t-9", "t-8"])
+    tours, active = await wq.collect(conn, T0, T0 + dt.timedelta(hours=2), country="Invented Land")
+    assert (wq.COUNTRY_TOURS_SQL, ("Invented Land",)) in calls
+    assert _active_ids(calls) == [["t-8", "t-9"]]
+    assert wq.evaluate(tours, active)["exit_code"] == wq.EXIT_PENDING
+
+
+@pytest.mark.asyncio
+async def test_collect_partial_wave_reads_jobs_of_every_requested_tour():
+    # 1 of 3 requested tours rewritten, the other two still queued: the flags on the one tour are not final
+    row = {"tour_id": "t-1", "after_id": "v-1", "before_id": None, "country": "Invented Land"}
+    conn, calls = _conn(versions=[row], active=[{"kind": "s1_rewrite", "status": "queued", "n": 2}])
+    done = [{"tour_id": "t-1", "country": "Invented Land", "outcome": "stayed_v1", "master_status": None,
+             "after": None, "before": None}]
+    with patch.object(wq, "_compute_tours", return_value=done):
+        tours, active = await wq.collect(conn, T0, T0 + dt.timedelta(hours=2), ids=["t-1", "t-2", "t-3"])
+    assert _active_ids(calls) == [["t-1", "t-2", "t-3"]]
+    assert wq.evaluate(tours, active)["exit_code"] == wq.EXIT_PENDING
+
+
+@pytest.mark.asyncio
+async def test_collect_window_only_with_no_jobs_stays_final():
+    # no named set (window only) and nothing in it: no synthetic pending row, the flags read as they are
+    conn, calls = _conn()
+    tours, active = await wq.collect(conn, T0, T0 + dt.timedelta(hours=2))
+    assert tours == [] and active == [] and _active_ids(calls) == []
