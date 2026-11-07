@@ -182,7 +182,7 @@ def reads_policy(source_path: str, root: Path = REPO_ROOT) -> bool:
     if policy:
         return True
     seen: set = set()
-    for local, (module, orig) in imports.items():
+    for module, orig in imports.values():
         other = _module_file(module, root)
         if other is None or other.resolve() == path:
             continue

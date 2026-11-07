@@ -17,7 +17,8 @@ Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fa
   sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality)
 - meta / title / slug: F4 gate_seo_surface (that field only), the S1 band checks (s1_checks.check_meta,
   SEO_TITLE_MAX), the T9 acceptance (service._meta_ok) and the T9 short-meta tail (a meta inside the T9 writer aim
-  but under the band must be composed into the band: seo_meta_utils.extend_short_meta), the slug fold (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
+  but under the band must be composed into the band: seo_meta_utils.extend_short_meta), the slug fold
+  (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
 - faq: drop_unanswerable_faq (topic needs a source line), F16 gate_faq_contract
 - itinerary: S1 day oracle (s1_checks.check_days) for day counts; the brand audit meal-line check for meals
