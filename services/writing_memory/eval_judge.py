@@ -33,8 +33,8 @@ check and the shadow) is unchanged; only R2 calls this module (a test pins it).
 
 S271 W0 (AA-900, judge root cause RC2 / RC5, audit docs/audits/2026-11-06-S271-writing-quality-audit): the judge no
 longer reads a cut input without knowing it. The SEED cap is 24000 (the longest golden seed is ~19.5k chars, so the
-moment a label rests on is never cut), the SOURCE 32000 and the OUTPUT 16000 chars; an OUTPUT over its cap ends in
-CUT_MARK and the system prompt says such a text was shortened by the grader (never `struct.truncated`). The OUTPUT is
+moment a label rests on is never cut), the SOURCE 32000 and the OUTPUT 16000 chars; an OUTPUT over its cap ended in
+a cut mark and the system prompt said such a text was shortened by the grader (never `struct.truncated`). The OUTPUT is
 sent as labelled fields (`judge_output_text`: SEO TITLE / META DESCRIPTION / SLUG / ... / BODY, the short fields
 first), so the judge can tell the slug from the meta. A run may pin the judge (`model_key`, optionally a connection):
 the Verdict then carries the judge's identity (requested key, answering connection, provider model id) and a reply
@@ -46,7 +46,9 @@ writing policy's (services/quality/writing_policy.yaml, compiled; the panel's la
 system prompt names the policy version and `policy_sha`, so `judge_version` moves with any policy change. The judge no
 longer clips anything: it reads the `evidence_view` (the panel's uncut SOURCE in the judge's section order + the
 labelled OUTPUT, with one sha), and an item whose view is over SOURCE_CHARS / OUTPUT_CHARS is excluded before any model
-call (`InputOverCap`, error `input_over_cap`), never cut.
+call (`InputOverCap`, error `input_over_cap`), never cut. The W0 cutter (`clip`, `CUT_MARK`) is gone with it, and
+the source layout no longer names a cut mark, so `judge_version` moved once more (deterministic: the same code gives
+the same 12 hex).
 
 llm_call_log, AA-927 canonical shape: a usable reply writes one row (`json_parsed: true`); a billed reply that cannot
 be used writes one `billed_unusable` row and the caller records the item as an error.
@@ -79,7 +81,6 @@ OUTPUT_CHARS = 16000
 INPUT_OVER_CAP = "input_over_cap"
 MAX_CLAIMS = 8
 CLAIM_CHARS = 240
-CUT_MARK = " [... cut for length]"
 # The T9 SOURCE sections, in order, with their size cap (chars). FACTS comes last and takes the space left
 # (SOURCE_CHARS minus the sections before it). A T9 blog's seed is the joined route moments (golden median ~7.5k,
 # max ~19.5k chars; S271: the 16000 cap cut the seed of 3 calibration items, so the judge never saw the moment their
@@ -189,7 +190,7 @@ def _source_layout() -> str:
                        "evidence": "uncut, over cap excluded", "policy_sha": _wp.policy_sha(),
                        "output_fields": [OUTPUT_FIELDS_FIRST, OUTPUT_FIELDS_LAST],
                        "brief": _BRIEF_KEYS, "goal": _GOAL_KEYS, "brand": _BRAND_KEYS, "channel": _CHANNEL_KEYS,
-                       "cut": CUT_MARK, "schema": JUDGE_SCHEMA, "max_claims": MAX_CLAIMS,
+                       "schema": JUDGE_SCHEMA, "max_claims": MAX_CLAIMS,
                        "questions": "t9_blog:search_questions|people_also_ask"}, sort_keys=True)
 
 
@@ -214,21 +215,6 @@ def _fields(obj, keys) -> str:
     if not isinstance(obj, dict):
         return ""
     return "\n".join(f"{label}: {t}" for k, label in keys for t in [_flat(obj.get(k))] if t)
-
-
-def clip(text: str, cap: int) -> str:
-    """`text` cut to at most `cap` chars at a line, else a word, boundary in the second half, with CUT_MARK. Pure."""
-    text = (text or "").strip()
-    if len(text) <= cap:
-        return text
-    room = max(cap - len(CUT_MARK), 0)
-    cut = text[:room]
-    for sep in ("\n", " "):
-        at = cut.rfind(sep)
-        if at >= room // 2:
-            cut = cut[:at]
-            break
-    return (cut.rstrip() + CUT_MARK)[:cap]
 
 
 def _search_questions(ctx: dict, writer: str) -> str:
@@ -497,6 +483,6 @@ async def judge_output(pool, *, writer: str, source_text: str, output_text: str,
 
 __all__ = ["EvidenceView", "INPUT_OVER_CAP", "InputOverCap", "JUDGE_CLASSES", "JUDGE_SCHEMA", "JudgeIdentityMismatch",
            "LABEL_RUBRIC", "OUTPUT_CHARS", "SOURCE_CHARS", "T9_SOURCE_SECTIONS", "Verdict", "evidence_sha",
-           "evidence_view", "answered_connection", "build_user_prompt", "clip", "identity",
+           "evidence_view", "answered_connection", "build_user_prompt", "identity",
            "judge_output", "judge_output_text", "judge_source_text", "judge_version", "parse_verdict",
            "system_prompt"]

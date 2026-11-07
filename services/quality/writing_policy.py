@@ -55,6 +55,7 @@ ROUTE_REPAIRS = ("cheap", "fix_step", "default")
 F9_ACTIONS = ("hold", "warn")
 EXAMPLE_EXPECT = ("block", "warn", "pass")
 EXAMPLE_FIELDS = ("body", "meta", "title", "slug", "cta", "faq", "itinerary")
+EXAMPLE_WRITERS = ("a1", "t2")    # the writers an itinerary example's meal check runs (`writers`, default both)
 FIXTURE_KEYS = ("examples", "example_seeds")    # synthetic fixtures: no behaviour, not part of policy_sha
 RULES_CONFIG_KEYS = ("hypothetical", "uncited_background")
 # S272: `block_until_w2_instrument` = the topic's cases are the verdicts the gates give today (main's, fail closed);
@@ -206,6 +207,9 @@ def schema_errors(source: dict) -> list[str]:
         _need(ex.get("seed", "monastery") in (source.get("example_seeds") or {}), f"{where}: unknown seed", e)
         _need(ex.get("field") != "itinerary" or isinstance(ex.get("source_itinerary"), str),
               f"{where}: an itinerary example needs source_itinerary", e)
+        writers = ex.get("writers", list(EXAMPLE_WRITERS))
+        _need(isinstance(writers, list) and bool(writers) and set(writers) <= set(EXAMPLE_WRITERS),
+              f"{where}: writers must be a non-empty list from {EXAMPLE_WRITERS}", e)
     ids = [ex.get("id") for ex in source.get("examples") or [] if isinstance(ex, dict)]
     _need(len(ids) == len(set(ids)), "examples: ids must be unique", e)
     return e

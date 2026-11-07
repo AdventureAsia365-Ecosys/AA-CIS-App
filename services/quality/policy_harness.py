@@ -25,7 +25,7 @@ Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fa
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
 - faq: drop_unanswerable_faq (topic needs a source line), F16 gate_faq_contract
 - itinerary: S1 day oracle (s1_checks.check_days) for day counts; the brand audit meal-line check for meals
-  (A1 and T2 writers)
+  (the example's `writers`, default A1 and T2; S272 fail-closed: the source-day meal line is exempt on A1 only)
 """
 from __future__ import annotations
 
@@ -208,7 +208,7 @@ def _itinerary(ex: dict, out: Outcome) -> None:
         found = s1_checks.check_days(tour, {"itineraries": text})
         out.verdicts["day_oracle"], out.notes["day_oracle"] = ("block" if found else "pass"), found
         return
-    for writer in ("a1", "t2"):
+    for writer in ex.get("writers") or wp.EXAMPLE_WRITERS:
         with mock.patch.object(ba, "_jev_clears_meal_claims", return_value=False):  # a Jev miss is fail-closed
             ok = ba.meal_time_claims_supported(text, tour, is_tenant_rewrite=writer == "t2")
         out.verdicts[f"meal_check_{writer}"] = "pass" if ok else "block"

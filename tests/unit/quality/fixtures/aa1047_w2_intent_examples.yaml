@@ -75,6 +75,10 @@ w2_intent:
   - {id: num-38, main: block, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Built in 1388, the monastery gate stands 30 metres high.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: scp-04, main: warn, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "Corran Monastery looks down on Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
   - {id: scp-03, main: block, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Corran Monastery sits a short drive from Tesselmoor.", claim: {type: place_background, places: [Corran Monastery, Tesselmoor]}}
+  # meals (S272 review): the T2 exemption for a meal line copied from the same source day was withdrawn; on T2 it
+  # blocks as on main (asserted meal-07 / meal-08). Intent: source-backed for every writer, like A1 (meal-01 / 06).
+  - {id: meal-07, main: block, topic: meals, field: itinerary, expect: pass, writers: [t2], source_itinerary: "Day 1: Arrive in Orvine.\nMeals: dinner.\nDay 2: Walk to Corran Monastery.\nMeals: breakfast, lunch.", duration: "2 days", text: "Day 1 — Orvine\nArrive in Orvine.\nMeals: dinner.\nDay 2 — Corran Monastery\nWalk up to the monastery.\nMeals: breakfast, lunch."}
+  - {id: meal-08, main: block, topic: meals, field: itinerary, expect: pass, writers: [t2], source_itinerary: "Day 1: Arrive in Orvine.\nMeals: dinner.\nDay 2: Walk to Corran Monastery.\nMeals: breakfast.", duration: "2 days", text: "Day 1 — Orvine\nArrive in Orvine.\nMeals: dinner.\nDay 2 — Corran Monastery\nWalk up to the monastery.\nMeals: breakfast."}
 
 main_gaps:
   - {id: bg-05, main: warn, topic: background, expect: block, all: [apply_rules], text: "Corran Monastery is the sister house of Delmont Abbey.", claim: {type: place_background, places: [Corran Monastery, Delmont Abbey]}}

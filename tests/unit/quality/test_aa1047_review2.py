@@ -61,13 +61,19 @@ def _compiled() -> dict:
     'SEO_LIMITS = {"meta": (140, 155), "title": (45, 60)}\n',
     "def fit(meta, limit=155):\n    return meta\n",
     'x = "meta description up to {} characters".format(155)\n',
+    # S272 review 5: the band passed as a call argument
+    "import textwrap\ndef cut(meta):\n    return textwrap.shorten(meta, 155)\n",
+    "def cut(page):\n    return shorten(page['seo_title'], width=60)\n",
+    "x = clip_meta(text, 155)\n",
 ])
 def test_lint_catches_python_band_restatements(src):
     from services.quality import policy_lint as pl
     assert pl.scan_python("services/x.py", src, _compiled())
 
 
-@pytest.mark.parametrize("src", ["def fetch(timeout=60):\n    pass\n", "items = rows[:60]\n", "PAGE_SIZE = 60\n"])
+@pytest.mark.parametrize("src", ["def fetch(timeout=60):\n    pass\n", "items = rows[:60]\n", "PAGE_SIZE = 60\n",
+                                 "wait(url, 60)\n", "log.info('title', count=60)\n",
+                                 "fetch(DATAFORSEO_BASE, timeout=60)\n", "get(f'{SEO_BASE}/x', timeout=60)\n"])
 def test_lint_leaves_unrelated_numbers(src):
     from services.quality import policy_lint as pl
     assert pl.scan_python("services/x.py", src, _compiled()) == []

@@ -9,8 +9,9 @@ services/quality/writing_policy.{yaml,py,compiled.json}, this file, and frontend
   (p1) a band number in a string: a range like "140-155" / "130 to 145" whose two numbers are policy band or aim
        bounds, or a single band bound (meta, title, slug) next to "char", "meta", "title" or "slug" — render it with
        `writing_policy.fill("<<meta.min>>-<<meta.max>>")` or read `writing_policy.band(...)`.
-  (p2) a comparison of a meta / title / slug / description length with a band-bound literal (`120 <= ml <= 155`), or
-       a slice of one cut at a band bound (`meta_description[:155]`).
+  (p2) a comparison of a meta / title / slug / description length with a band-bound literal (`120 <= ml <= 155`),
+       a slice of one cut at a band bound (`meta_description[:155]`), or a call that passes a band bound as an
+       argument with a meta / title / slug operand or function name (`shorten(meta, 155)`, `trim(title, width=60)`).
   (p3) a constant named like META/TITLE/SLUG/DESC + MIN/MAX/TARGET/BAND/AIM/CHARS/LIMIT (any case) assigned a
        band-bound literal; a dict keyed 'meta' / 'title' / 'slug' holding one; a band default on a limit parameter of
        a meta / title / slug function; in YAML a min / max key with a band value under a meta / title / slug key.
@@ -55,6 +56,9 @@ LEN_OPERAND_RE = re.compile(r"meta|title|slug|seo|desc|\bml\b|\btl\b", re.I)
 # S272 review 2: any case ('meta_max = 155' as well as 'SEO_META_MAX = 155')
 CONST_NAME_RE = re.compile(r"(?:META|TITLE|SLUG|DESC)\w*(?:MIN|MAX|TARGET|BAND|AIM|CHARS|LIMIT|LEN)"
                            r"|(?:MIN|MAX|LIMIT)\w*(?:META|TITLE|SLUG|DESC)", re.I)
+# a call operand / function name about a field: the word starts an identifier part ('clip_meta', "page['seo_title']",
+# 'metaDescription'), never inside another word ('DATAFORSEO_BASE')
+CALL_FIELD_RE = re.compile(r"(?<![a-z])(?:meta|title|slug|seo|desc)|\bml\b|\btl\b", re.I)
 LIMIT_PARAM_RE = re.compile(r"limit|max|min|cap|len|chars|size|band|width", re.I)
 SHINGLE = 8
 TS_CMP_RE = re.compile(r"\b[\w.$?]*(?:meta|title|slug)[\w.$?]*(?:\.length)?\s*(?:>=|<=|<|>)\s*(\d{2,3})\b"
@@ -139,6 +143,25 @@ def _int_in(node: ast.AST, nums: frozenset) -> bool:
             and node.value in nums)
 
 
+def _band_call_arg(node: ast.Call, src: str, band_b: frozenset) -> tuple[int, str] | None:
+    """(the literal, the call) when a call passes a band bound as an argument (positional or keyword) and the call
+    is about a meta / title / slug: its function name, a keyword name or another argument (not a literal or an
+    f-string) names one (CALL_FIELD_RE).
+    None otherwise (`rows[:60]`-like numbers in unrelated calls, `fetch(url, 60)`, stay quiet)."""
+    kw_vals = [k.value for k in node.keywords]
+    lits = [a for a in list(node.args) + kw_vals if _int_in(a, band_b)]
+    if not lits:
+        return None
+    func = ast.get_source_segment(src, node.func) or ""
+    others = [ast.get_source_segment(src, a) or "" for a in list(node.args) + kw_vals
+              if a not in lits and not isinstance(a, (ast.Constant, ast.JoinedStr))]
+    names = [k.arg or "" for k in node.keywords if k.value in lits]
+    if CALL_FIELD_RE.search(func) or any(CALL_FIELD_RE.search(o) for o in others) \
+            or any(CALL_FIELD_RE.search(n) for n in names):
+        return lits[0].value, ast.get_source_segment(src, node) or func
+    return None
+
+
 def scan_python(path: str, src: str, c: dict) -> list[str]:
     """Every (p1)–(p5) finding of one Python file as 'path:line: message'."""
     try:
@@ -208,6 +231,10 @@ def scan_python(path: str, src: str, c: dict) -> list[str]:
                 and FIELD_RE.search(node.func.value.value) and any(_int_in(a, band_b) for a in node.args):
             add(node, "(p1) a band bound formatted into a meta / title / slug string — render it from "
                       "writing_policy.yaml")
+        elif isinstance(node, ast.Call) and _band_call_arg(node, src, band_b) is not None:
+            # S272 review 5: `shorten(meta, 155)` / `trim(title, width=60)` passes the band as an argument
+            lit, what = _band_call_arg(node, src, band_b)
+            add(node, f"(p2) {what[:50]} called with the band literal {lit} — read it from writing_policy.band(...)")
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             names = [t.id for t in targets if isinstance(t, ast.Name)]

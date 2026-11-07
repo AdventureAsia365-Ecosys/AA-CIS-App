@@ -303,11 +303,12 @@ def test_judge_caps_exclude_never_cut():
         ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text=long_out)
     assert e.value.code == ej.INPUT_OVER_CAP
     short = ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text="Zz short text.")
-    assert ej.CUT_MARK.strip() not in short and "Zz short text." in short
+    assert "cut for length" not in short and "Zz short text." in short
     sp = ej.system_prompt()
     assert "Nothing in the SOURCE or the OUTPUT was shortened by the grader" in sp
     assert "shortened by the grader; never report struct.truncated there" not in sp
     assert ej.judge_version() != "73e641a99aca"
+    assert not hasattr(ej, "clip") and not hasattr(ej, "CUT_MARK")   # AA-1047: the W0 cutter is gone
 
 
 def test_judge_output_text_labels_the_fields_short_ones_first():

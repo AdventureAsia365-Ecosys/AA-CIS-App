@@ -94,7 +94,7 @@ def test_judge_source_is_deterministic_never_cut_and_over_the_cap_excluded():
                chosen={**ANGLE, "best_final_style": "Zz style words " * 1000})
     src = ej.judge_source_text("t9_blog", {"context": big})
     assert src == ej.judge_source_text("t9_blog", {"context": big}) == ej.panel_source_text("t9_blog", {"context": big})
-    assert ej.CUT_MARK.strip() not in src and len(src) > ej.SOURCE_CHARS
+    assert "cut for length" not in src and len(src) > ej.SOURCE_CHARS
     assert "Zz private journeys with expert guiding." in src and src.rindex("FACTS:") > src.rindex("BRAND PACK:")
     with pytest.raises(ej.InputOverCap):
         ej.build_user_prompt(writer="t9_blog", source_text=src, output_text="x")
@@ -105,16 +105,6 @@ def test_judge_source_is_deterministic_never_cut_and_over_the_cap_excluded():
     prompt = ej.build_user_prompt(writer="t9_blog", source_text=view.source, output_text=view.output)
     assert f"<SOURCE>\n{view.source}\n</SOURCE>" in prompt and view.source == ej.panel_source_text("t9_blog", small)
     assert view.sha == ej.evidence_sha(view.source, view.output) and len(view.sha) == 16
-
-
-def test_clip_cuts_at_a_line_then_a_word_boundary():
-    text = "first line here\nsecond line is longer than the cap allows"
-    out = ej.clip(text, 40)
-    assert out == "first line here" + ej.CUT_MARK and len(out) <= 40
-    words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda"
-    out = ej.clip(words, 45)
-    assert out.endswith(ej.CUT_MARK) and len(out) <= 45 and not out[:-len(ej.CUT_MARK)].endswith(("alp", "et"))
-    assert ej.clip("short", 45) == "short"
 
 
 def test_isolation_source_text_is_unchanged_and_a1_t2_judge_source_is_it():
@@ -139,7 +129,7 @@ def test_judge_version_covers_the_source_layout(monkeypatch):
 def test_system_prompt_names_the_sections_and_asks_for_the_quoted_phrase():
     sp = ej.system_prompt()
     assert "BRAND PACK" in sp and "ANGLE BRIEF" in sp and "unsupported_claims" in sp
-    assert ej.CUT_MARK.strip() not in sp           # AA-1047: nothing is cut any more
+    assert "cut for length" not in sp           # AA-1047: nothing is cut any more
 
 
 def test_reply_schema_is_strict_at_every_level():
@@ -222,7 +212,7 @@ def test_panel_source_is_the_judge_layout_never_cut():
     panel = ej.panel_source_text("t9_social", inp)
     judge = ej.judge_source_text("t9_social", inp)
     assert panel.rstrip().endswith("Zz fact block.") and "Zz the last line of the seed." in panel
-    assert ej.CUT_MARK.strip() not in panel and len(panel) > ej.SOURCE_CHARS
+    assert "cut for length" not in panel and len(panel) > ej.SOURCE_CHARS
     assert judge == panel                        # AA-1047: the judge reads the panel's bytes (over the cap: excluded)
     heads = [ln[:-1] for ln in panel.splitlines() if ln.endswith(":") and ln[:-1] in dict(ej.T9_SOURCE_SECTIONS)]
     assert heads == ["SEED", "SCOPE", "TRIP", "ANGLE BRIEF", "GOAL", "BRAND PACK", "CHANNEL", "WRITER ASKS", "FACTS"]
