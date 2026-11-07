@@ -403,7 +403,7 @@
       "symbols": [
         "_CARD_SYSTEM"
       ],
-      "prompt_sha256": "82d27101b850d1ad8f9d04b57f66da9f2f91976758d0ee42ac84504c7efc673e"
+      "prompt_sha256": "0309d5ac9b0fd0479fd17c48f0a853f4159ab952da2f6ae3032ddee9c3ed9900"
     },
     {
       "stage": "t9_write",

@@ -146,7 +146,8 @@ def test_slug_folds_cut_at_a_word_boundary():
     from services.acp_publish.idempotency import blog_slug
     long = "corran-monastery-library-hall-above-orvine-and-the-old-pilgrim-path"
     assert _ascii_slug(long) == "corran-monastery-library-hall-above-orvine-and-the-old"
-    assert blog_slug(long, "p:blog:0123456789abcdef") == "corran-monastery-library-hall-above-orvine-and-the-old-01234567"
+    want = "corran-monastery-library-hall-above-orvine-and-the-old-01234567"
+    assert blog_slug(long, "p:blog:0123456789abcdef") == want
 
 
 def test_taxonomy_severities_agree_with_the_policy():

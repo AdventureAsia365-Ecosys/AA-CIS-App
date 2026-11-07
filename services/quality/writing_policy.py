@@ -23,8 +23,8 @@ What is compiled, and who reads it:
 - **severities**: the class severities the policy owns (taxonomy.yaml must agree; the lint checks).
 
 `policy_sha` = sha256 (16 hex) of the canonical JSON of the YAML without its `examples` / `example_seeds` (synthetic
-fixtures change no behaviour). It is part of the release fingerprint (writing_memory.config_fp component `policy`) and of the eval
-judge version.
+fixtures change no behaviour). It is part of the release fingerprint (writing_memory.config_fp component `policy`)
+and of the eval judge version.
 
 Pure: standard library + PyYAML (the CI Lint job runs the lint with only PyYAML installed). Accessors read the
 compiled JSON once per process and never raise on a request path for a known key.

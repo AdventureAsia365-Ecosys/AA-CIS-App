@@ -1608,7 +1608,8 @@ _FAQ_TOPICS = {
 # dropper all read this one list (S271 T9 contradiction 6: the LLM filter kept questions the dropper then removed).
 FAQ_TOPICS_NEED_SOURCE = _wp.faq_topics_need_source()
 if set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS):  # pragma: no cover — a policy topic with no detector
-    raise RuntimeError(f"writing policy FAQ topics without a detector: {set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS)}")
+    raise RuntimeError("writing policy FAQ topics without a detector: "
+                       f"{set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS)}")
 _FAQ_Q_RE = re.compile(r"\*\*Q: (.*?)\*\*", re.DOTALL)
 
 

@@ -306,7 +306,8 @@ def row_judge_version(judge, pin: Optional[str]) -> Optional[str]:
 
 
 def judge_detail(judge) -> dict:
-    """{"judge": {model_key, connection, provider_model, evidence_sha (AA-1047)}} of a verdict, {} when it carries none (a test double)."""
+    """{"judge": {model_key, connection, provider_model, evidence_sha (AA-1047)}} of a verdict, {} when it carries
+    none (a test double)."""
     d = {k: getattr(judge, k, None) for k in ("model_key", "connection", "provider_model")}
     d = {k: (str(v)[:128] if v is not None else None) for k, v in d.items()}
     ev = getattr(judge, "evidence_sha", None)
@@ -428,7 +429,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     models that wrote it (`_judge_family`; `family_models` = the catalog rows, None = the catalog cache). A same-family
     verdict is an `error` row, never a verdict (a writer route may end on the judge's maker, migration 327)."""
     from services.writing_memory import eval_writers as ew
-    from services.writing_memory.eval_judge import identity, judge_output_text, judge_source_text
+    from services.writing_memory.eval_judge import evidence_view, identity
     from shared.llm_client.call_log import bind_eval_stage
 
     conf.validate()
@@ -556,9 +557,11 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     async def judge(item: dict, output: dict, arm: str):
         # S256 source parity: the judge reads what the AA-729 panel read (eval_judge.judge_source_text), not the
         # isolation probe's shorter `ew.source_text`. S271 W0: the OUTPUT as labelled fields (judge_output_text).
-        v = await judge_fn(pool, writer=writer, source_text=judge_source_text(writer, item["input"], shared_inputs),
-                           output_text=judge_output_text(writer, output), run_id=run_id, item_id=item["item_id"],
-                           arm=arm)
+        # AA-1047: both through the one evidence builder (eval_judge.evidence_view): uncut, an item over the cap
+        # raises InputOverCap before any model call (a counted error, $0).
+        ev = evidence_view(writer, item["input"], output, shared_inputs)
+        v = await judge_fn(pool, writer=writer, source_text=ev.source, output_text=ev.output, run_id=run_id,
+                           item_id=item["item_id"], arm=arm)
         key = identity(v)
         judges_seen[key] = judges_seen.get(key, 0) + 1
         return v

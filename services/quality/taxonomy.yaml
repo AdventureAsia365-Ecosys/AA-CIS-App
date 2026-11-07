@@ -109,7 +109,8 @@ classes:
     writers: [A1, T2, T9_blog, T9_social]
     definition: >-
       An invented description, superlative, rarity or editorial claim (the most challenging route, the only
-      place) that the source does not support.
+      place) that the source does not support. Reflection that states no fact about the trip is voice, not this
+      class (writing policy D3, AA-1047).
     detectors:
       - {ref: NAME_SUPERLATIVE, kind: rule, writers: [A1], mode: warn}
       - {ref: STOCK_SUPERLATIVE, kind: rule, writers: [A1], mode: warn}

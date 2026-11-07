@@ -7,7 +7,8 @@ the example's `all` must agree on its own, and every fixer's output must satisfy
 
 The S271 audit listed 16 T9 contradictions (root docs/audits/2026-11-06-S271-writing-quality-audit, data/
 blog-pipeline-audit.json plan.contradictions). CODE_VS_CODE maps each code-vs-code one to the examples that prove it
-is gone; the writer-vs-code ones stay open until W5 (implementation notes AA-1047-policy-registry.md).
+is gone; 2, 3 and 16 are rubric / fingerprint contradictions (tests below); the writer-vs-code ones (7, 11) and the
+ones owned by other lanes or waves (13, 14, 15) are listed in the implementation notes AA-1047-policy-registry.md.
 """
 from __future__ import annotations
 
@@ -28,9 +29,9 @@ CODE_VS_CODE = {
     4: ["tim-01", "tim-03", "tim-05", "tim-02", "tim-04"],                              # timing: repair vs F17
     5: ["tim-01", "faq-03", "faq-05", "scp-01"],                                        # severity of f7 / s5 / scope
     6: ["faq-02", "faq-03", "faq-04", "faq-06"],                                        # FAQ topics: filter vs dropper
-    8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08"],                    # numbers: words, other trips
-    9: ["scp-01", "scp-02", "scp-03"],                                                  # scope
-    10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05"],                             # CTA literal line
+    8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08", "num-09", "num-10", "num-11"],  # numbers
+    9: ["scp-01", "scp-02", "scp-03", "scp-05", "scp-07"],                              # scope
+    10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05", "cta-09"],                   # CTA literal line
     12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "tit-03", "tit-04", "slug-01",
          "slug-03"],                                                                    # SEO bands, slug boundary
 }
@@ -79,3 +80,29 @@ def test_examples_are_synthetic():
 def test_policy_sha_ignores_the_fixtures():
     changed = {**SOURCE, "examples": EXAMPLES[:1]}
     assert wp.sha_of(changed) == wp.sha_of(SOURCE) == wp.policy_sha()
+
+
+def test_contradiction_2_the_brief_is_never_a_source():
+    """S271 T9 #2: the eval judge and the golden rubric counted the brief and brand pack as source (D2)."""
+    from services.writing_memory import eval_judge as ej
+    rules = " ".join(wp.label_rubric()["rules"])
+    assert "instructions, never a source" in rules
+    assert "instructions, never a source" in ej.system_prompt()
+    assert "brief and brand pack are part of the source" not in ej.system_prompt()
+
+
+def test_contradiction_3_reflection_is_voice_in_the_rubric_and_the_taxonomy():
+    """S271 T9 #3: 'reflection is voice' sat next to fact.embellish 'editorial claim' (D3)."""
+    from services.quality import registry as qr
+    from services.writing_memory import eval_judge as ej
+    assert any(r.startswith("Reflection that states no fact") for r in wp.label_rubric()["rules"])
+    embellish = next(c for c in qr.taxonomy()["classes"] if c["id"] == "fact.embellish")
+    assert "Reflection that states no fact about the trip is voice" in " ".join(embellish["definition"].split())
+    assert "Reflection that states no fact about the trip is voice" in ej.system_prompt()
+
+
+def test_contradiction_16_a_policy_change_moves_the_release_fingerprint():
+    """S271 T9 #16 (in part): a rule change outside a prompt symbol never moved the fingerprint; the policy is now a
+    component of it (the route-control and catalog parts stay with the change-control work)."""
+    from services.writing_memory import config_fp
+    assert "policy" in config_fp.COMPONENTS

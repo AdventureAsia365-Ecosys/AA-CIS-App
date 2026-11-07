@@ -835,6 +835,11 @@ def check_cta(content_text: Optional[str], cta: Optional[str], channel: Optional
     # service.py restores the literal line (hygiene.ensure_cta) before the gates.
     if f" {cta_norm(cta)} " in f" {cta_norm(tail)} ":
         return CtaCheck(True, matched=tuple(sorted(matched)))
+    # AA-1047 (writing policy `cta`: the literal line as the piece's last sentence): a short one-paragraph text whose
+    # 35% tail starts inside the CTA line still ends with it (hygiene.ensure_cta then left it alone while this check
+    # failed it: a fixer-vs-check contradiction).
+    if f" {cta_norm(prose)}".endswith(f" {cta_norm(cta)}"):
+        return CtaCheck(True, matched=tuple(sorted(want)))
     missing = sorted(want - have)
     why = (f"missing {', '.join(missing)}" if missing
            else "the line is reworded — it must be the configured CTA word for word")
