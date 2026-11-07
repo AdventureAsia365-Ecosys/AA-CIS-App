@@ -28,6 +28,13 @@ Output: one JSON document (``--out``, default stdout) with ``countries`` (one ro
 (per-tour rows, no page text) and ``stop_conditions`` (memo section 6, each true = stop and report). ``--markdown``
 also prints a table for the wave report.
 
+Stop flags are enforced (AA-1024 G17; root lessons log, wave family): a wave went on past an approved stop threshold
+because the report always exited 0, and a flag read while jobs were still queued was once taken for a stop.
+``stop_state`` gives each flag as ``true`` / ``false``, or ``pending`` while shared.job still has queued or running
+jobs for the wave's tours (``active_jobs``: the numbers can still move). Exit code: 3 = a flag is true (stop the
+wave and report; the next wave starts only with the tech lead's written approval quoted in the wave report),
+5 = pending (run the report again after the jobs drain), 0 = no flag.
+
 Runs on the deployed image with the container DATABASE_URL (cis_app reads every CIS schema; ssl=require), shipped
 through S3 like the other aa645 scripts:
 
@@ -284,7 +291,40 @@ def stop_conditions(all_row: dict) -> dict:
     }
 
 
-async def load(args) -> list[dict]:
+ACTIVE_JOBS_SQL = """
+SELECT kind, status, count(*) AS n
+FROM shared.job
+WHERE status IN ('queued', 'running')
+  AND (payload->>'tour_id' = ANY($1::text[]) OR payload->>'published_tour_id' = ANY($1::text[]))
+GROUP BY 1, 2 ORDER BY 1, 2
+"""
+
+EXIT_STOP = 3
+EXIT_PENDING = 5
+
+
+def stop_state(stops: dict, active_jobs: list[dict]) -> dict:
+    """Each flag as true / false, or pending while the wave's tours still have queued or running jobs."""
+    if any(int(j.get("n") or 0) > 0 for j in active_jobs or []):
+        return {k: "pending" for k in stops}
+    return {k: "true" if v else "false" for k, v in stops.items()}
+
+
+def exit_code(state: dict) -> int:
+    if "true" in state.values():
+        return EXIT_STOP
+    if "pending" in state.values():
+        return EXIT_PENDING
+    return 0
+
+
+async def load_active_jobs(conn, tour_ids: list) -> list[dict]:
+    if not tour_ids:
+        return []
+    return [dict(r) for r in await conn.fetch(ACTIVE_JOBS_SQL, sorted({str(t) for t in tour_ids}))]
+
+
+async def load(args) -> tuple[list[dict], list[dict]]:
     import asyncpg
 
     from services.quality.s1_facts import build_fact_table
@@ -314,12 +354,14 @@ async def load(args) -> list[dict]:
             by_tour = {a["tour_id"]: dict(a) for a in arows}
             for t in pub:
                 t["atoms"] = by_tour.get(t["tour_id"])
+        active = await load_active_jobs(conn, [t["tour_id"] for t in tours])
     finally:
         await conn.close()
-    return tours
+    return tours, active
 
 
-def markdown(countries: dict, stops: dict) -> str:
+def markdown(countries: dict, stops: dict, state: Optional[dict] = None,
+             active_jobs: Optional[list] = None) -> str:
     head = ("| Country | Tours | Published | Stayed v1 | Gate pages before → after | Unsupported before → after |"
             " Figure cov. before → after | Brand fit before → after (report-only) | $ / tour | Clearly better |")
     lines = [head, "|" + "---|" * 10]
@@ -340,8 +382,16 @@ def markdown(countries: dict, stops: dict) -> str:
     if all_row.get("brand_audit_report_only_codes_after"):
         lines.append("Brand-audit voice codes recorded report-only on v2 (ALL): "
                      + json.dumps(all_row["brand_audit_report_only_codes_after"]))
+    state = state or {k: "true" if v else "false" for k, v in stops.items()}
     lines.append("Stop conditions (true = stop and report): "
-                 + ", ".join(f"{k}={'TRUE' if v else 'false'}" for k, v in stops.items()))
+                 + ", ".join(f"{k}={'TRUE' if state[k] == 'true' else state[k]}" for k in stops))
+    if "pending" in state.values():
+        lines.append("PENDING: the wave's tours still have queued or running jobs ("
+                     + ", ".join(f"{j['kind']} {j['status']} {j['n']}" for j in active_jobs or [])
+                     + "); the flags can still change. Run the report again after they drain.")
+    elif "true" in state.values():
+        lines.append("STOP: a stop condition is true. Stop the wave and report; the next wave starts only with the "
+                     "tech lead's written approval, quoted in the wave report.")
     return "\n".join(lines)
 
 
@@ -363,15 +413,19 @@ def parse_args(argv=None):
     return args
 
 
-def build(tours: list[dict], args) -> dict[str, Any]:
+def build(tours: list[dict], args, active_jobs: Optional[list] = None) -> dict[str, Any]:
     countries = aggregate(tours)
+    stops = stop_conditions(countries.get("ALL", {}))
+    state = stop_state(stops, active_jobs or [])
     return {"window": {"since": args.since.isoformat(), "until": args.until.isoformat(), "country": args.country},
-            "countries": countries, "stop_conditions": stop_conditions(countries.get("ALL", {})), "tours": tours}
+            "countries": countries, "stop_conditions": stops, "stop_state": state,
+            "active_jobs": active_jobs or [], "exit_code": exit_code(state), "tours": tours}
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    report = build(asyncio.run(load(args)), args)
+    tours, active = asyncio.run(load(args))
+    report = build(tours, args, active)
     text = json.dumps(report, indent=2, default=str)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
@@ -379,8 +433,8 @@ def main(argv=None) -> int:
     else:
         print(text)
     if args.markdown:
-        print(markdown(report["countries"], report["stop_conditions"]))
-    return 0
+        print(markdown(report["countries"], report["stop_conditions"], report["stop_state"], report["active_jobs"]))
+    return report["exit_code"]
 
 
 if __name__ == "__main__":
