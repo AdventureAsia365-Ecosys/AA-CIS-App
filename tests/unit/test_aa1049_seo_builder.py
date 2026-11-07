@@ -73,3 +73,46 @@ def test_contract_counts():
     counts = sb.contract_counts(text, cta)
     assert counts["cta"] == 1 and counts["faq_pairs"] == 2
     assert sb.contract_counts("x", None) == {"cta": 0, "faq_pairs": 0}
+
+
+# Review S272 (finding 6): the old 1-3 capital-letter rule made "approx.", "vs.", "Prof.", "Capt." and "U.S." sentence
+# ends, so a mid-sentence prefix passed the real meta band and shipped with 0 fit calls; and "Bay." / "Hue." were
+# dropped as abbreviations. An explicit list + dotted initialisms now decide.
+def test_no_cut_after_an_abbreviation_or_a_dotted_initialism():
+    assert sb.meta_candidates("Ride with a guide for approx. 3 hours. Lunch follows.") == [
+        "Ride with a guide for approx. 3 hours."]
+    assert sb.meta_candidates("Ride from Saigon vs. Hanoi traffic. Lunch follows.") == [
+        "Ride from Saigon vs. Hanoi traffic."]
+    assert sb.meta_candidates("Walk with Prof. Tran through the old quarter. Lunch follows.") == [
+        "Walk with Prof. Tran through the old quarter."]
+    assert sb.meta_candidates("Sail with Capt. Orvine. Then lunch.") == ["Sail with Capt. Orvine."]
+    assert sb.meta_candidates("Visit the U.S. Consulate, e.g. Monday. Then lunch.") == [
+        "Visit the U.S. Consulate, e.g. Monday."]
+    assert sb.meta_candidates("Start at 7 a.m. Bikes are ready. Then lunch.")[-1] == "Start at 7 a.m. Bikes are ready."
+
+
+def test_a_real_word_at_a_sentence_end_is_an_end():
+    assert sb.meta_candidates("Cruise Ha Long Bay. Then kayak past the caves.") == ["Cruise Ha Long Bay."]
+    assert sb.meta_candidates("Start in Hue. Then ride south.") == ["Start in Hue."]
+    assert sb.meta_candidates("Rest at the Spa. Then dinner.") == ["Rest at the Spa."]
+
+
+def test_fit_seo_meta_never_ships_a_cut_after_approx():
+    """End to end through service._fit_seo_meta with the real band and meta_ok: the writer meta has no whole-sentence
+    prefix, so the fit call is made (as on main) and the delivered meta is never the cut after 'approx.'."""
+    import asyncio
+    from unittest.mock import patch
+    from uuid import uuid4
+
+    from services.acp_content_writing import service
+    meta = ("Join our Hoi An cycling tour through Tra Que village, past rice paddies, herb gardens and quiet riverside "
+            "lanes with a local guide for approx. 3 hours, then lunch with a farming family.")
+    cut = meta[:meta.index("approx.") + len("approx.")]
+    body = "A Hoi An cycling tour rides through Tra Que village, its herb gardens and a farming family's lunch."
+    assert META_LO <= len(cut) <= META_HI and service._meta_ok(cut, "hoi an cycling tour")  # the old trap
+    assert not service.seo_grounding.meta_unsupported_products(cut, body, body)
+    seo = {"seo_title": "Hoi An Cycling Tour Through Tra Que Village Gardens", "meta_description": meta}
+    with patch.object(service, "fit_seo_fields", side_effect=RuntimeError("fit outage")) as fit:
+        out, cost = asyncio.run(service._fit_seo_meta(seo, "hoi an cycling tour", body=body,
+                                                      context={"atom_text": body}, request_id=uuid4()))
+    assert fit.call_count == 1 and out["meta_description"] == meta and cost == 0.0

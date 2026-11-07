@@ -27,8 +27,21 @@ from services.acp_content_writing.quality_gates import faq_pair_count
 from services.acp_shared.citation_tags import strip_citation_tags
 
 _SENTENCE_END_RE = re.compile(r"[.!?]\s+(?=[A-Z0-9\"'“‘(])")
-# A full stop after a short capitalised abbreviation ("Mt.", "St.", "Dr.") or an initial is not a sentence end.
-_ABBREV_RE = re.compile(r"(?:^|\s)(?:[A-Z][a-z]{0,2}|[A-Z])\.$")
+# A full stop after one of these tokens (matched case-insensitively on the last token, its leading punctuation and
+# final full stop removed) is not a sentence end. An explicit list, not a length rule (review S272: "approx.", "vs.",
+# "Prof.", "Capt." ended sentences under the old 1-3 letter rule, while "Bay." / "Hue." / "Spa." did not).
+ABBREVIATIONS = frozenset({"mt", "st", "dr", "mr", "mrs", "ms", "prof", "capt", "approx", "vs", "etc", "e.g", "i.e",
+                           "incl", "est", "ca", "no", "ave", "rd", "a.m", "p.m"})
+_TOKEN_EDGE = "\"'“‘(["
+
+
+def _not_an_end(head: str) -> bool:
+    """True when the full stop that ends `head` belongs to an abbreviation or an initial, not to a sentence: the last
+    token is in ABBREVIATIONS, is a single letter ("J."), or has an inner period ("U.S.", "e.g.")."""
+    if not head.endswith("."):
+        return False
+    token = head.rsplit(None, 1)[-1].lstrip(_TOKEN_EDGE)[:-1]
+    return token.lower() in ABBREVIATIONS or len(token) == 1 or "." in token
 TITLE_SEPARATORS = (" | ", " — ", " – ", ": ")
 
 
@@ -37,7 +50,7 @@ def meta_candidates(meta: Optional[str]) -> list[str]:
     if not isinstance(meta, str) or not meta.strip():
         return []
     text = " ".join(meta.split())
-    ends = [m.start() + 1 for m in _SENTENCE_END_RE.finditer(text) if not _ABBREV_RE.search(text[:m.start() + 1])]
+    ends = [m.start() + 1 for m in _SENTENCE_END_RE.finditer(text) if not _not_an_end(text[:m.start() + 1])]
     return [text[:e] for e in reversed(ends)]
 
 
