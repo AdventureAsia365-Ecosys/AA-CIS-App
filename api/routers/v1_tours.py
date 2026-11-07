@@ -1205,8 +1205,9 @@ async def export_version_docx(
 
     doc = Document()
     # AA-1040 — the machine-readable AI mark in the file's own metadata (File > Properties: keywords, comments).
-    from services.acp_content_writing.ai_marking import docx_properties, version_mark
-    for _prop, _value in docx_properties(version_mark(row.get("edit_source"), row.get("created_at"))).items():
+    from services.acp_content_writing.ai_marking import docx_properties, response_headers, version_mark
+    _ai_mark = version_mark(row.get("edit_source"), row.get("created_at"))
+    for _prop, _value in docx_properties(_ai_mark).items():
         setattr(doc.core_properties, _prop, _value)
 
     def _section(text):
@@ -1285,7 +1286,9 @@ async def export_version_docx(
     return StreamingResponse(
         iter([buf.read()]),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename=tour_{short}_v{row['version_number']}.docx"},
+        # AA-1040 (S272): the download also carries the X-AI-* headers, like the T9 piece exports.
+        headers={"Content-Disposition": f"attachment; filename=tour_{short}_v{row['version_number']}.docx",
+                 **response_headers(_ai_mark)},
     )
 
 
