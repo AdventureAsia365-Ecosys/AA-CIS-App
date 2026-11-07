@@ -30,7 +30,8 @@ Rules
    on the trigger's check.
 5. Unknown identity, an inactive row, or a row bound to another identity -> 401.
 5a. **Preview cap (AA-911 decision D-1, root ADR 0006a A11).** A token from the Preview-only ``cis-admin-preview``
-   client (the fixed Preview host ``aa-cis-preview.lumiguides.it.com``, which runs unmerged PR code) resolves to
+   client (the fixed Preview host, which ran unmerged PR code; retired with Vercel in S272, so the client id is empty by
+   default and this cap applies only to a client set through ``COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID``) resolves to
    the **viewer** role and ``is_owner = False`` whatever ``cis-*`` group the user holds (``preview = True`` on the
    identity, ``staff_identity_preview_capped`` logged). The bearer middleware then rewrites ``x-admin-role`` to
    ``viewer`` and ``staff_authz`` refuses every write (``READ_ONLY_ROLES``); ``/auth/verify-admin`` returns

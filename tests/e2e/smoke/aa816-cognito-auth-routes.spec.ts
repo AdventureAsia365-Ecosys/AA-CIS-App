@@ -1,7 +1,7 @@
 // tests/e2e/smoke/aa816-cognito-auth-routes.spec.ts
 // AA-816 (C4) — the Cognito auth routes refuse what they must refuse, with only hand-made cookies (no
-// admin storage state) and without ever reaching Cognito with a real credential. Safe on a Vercel
-// preview: a preview host is not on the redirect-URI allowlist, so no route can start a real sign-in.
+// admin storage state) and without ever reaching Cognito with a real credential. Safe on any host: a host
+// that is not on the redirect-URI allowlist cannot start a real sign-in.
 //   • GET  /api/auth/refresh?next=//evil.com, no cookie      → /login on this origin, never evil.com;
 //   • POST /api/auth/refresh with a forged cis_staff_rt      → 401, no session cookie with a value;
 //   • GET  /api/auth/signin/cognito on a non-allowlisted host → /login?error=cognito_host;
@@ -10,7 +10,6 @@ import { test, expect, request as pwRequest, type APIRequestContext, type APIRes
 import { baseUrl } from './smoke-helpers';
 
 const PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
-const PREVIEW_SIGNIN_ORIGIN = 'https://aa-cis-preview.lumiguides.it.com';
 const SESSION_COOKIES = ['cis_admin_token', 'cis_staff_rt', 'cis_role', 'cis_user'];
 
 async function contextWith(cookie?: string): Promise<APIRequestContext> {
@@ -75,8 +74,7 @@ test.describe('AA-816 — Cognito auth routes refuse forged or missing state', (
   });
 
   test('sign-in on a host without a registered callback goes back to /login', async () => {
-    // AA-816 P6a: the fixed Preview host is a registered callback too (the cis-admin-preview client).
-    test.skip([PROD_ORIGIN, PREVIEW_SIGNIN_ORIGIN].includes(new URL(baseUrl()).origin),
+    test.skip(new URL(baseUrl()).origin === PROD_ORIGIN,
       'a registered callback host starts a real sign-in');
     const ctx = await contextWith();
     try {

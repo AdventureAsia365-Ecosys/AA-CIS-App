@@ -9,14 +9,14 @@
 // Deep links are built from here only: no free-form return URL (open redirect) and never a token in
 // the URL. Staff sign in once (Cognito WORKFORCE SSO, ADR 0006a); each app still checks its own role.
 
-export const DEV_BOOKING_ADMIN_URL = "https://booking.lumiguides.it.com"; // custom domain (AA-818); the Vercel alias still works
+export const DEV_BOOKING_ADMIN_URL = "https://booking.lumiguides.it.com"; // custom domain (AA-818), ECS since AA-911
 export const DEV_TRIPPLANNER_URL = "https://tripplanner.lumiguides.it.com"; // custom domain
 
 function trimSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
-/** AA-Booking staff admin (separate Vercel project, signs in with the CIS staff account). */
+/** AA-Booking staff admin (its own ECS service aa-booking-dev-admin; staff sign in with the shared WORKFORCE pool). */
 export const BOOKING_ADMIN_URL = trimSlash(process.env.NEXT_PUBLIC_BOOKING_ADMIN_URL || DEV_BOOKING_ADMIN_URL);
 
 /** TripPlanner public site (no admin of its own, design §6.4). */
@@ -95,7 +95,7 @@ export function bookingStaffUrl(cisUserId: string): string {
 
 const GITHUB_ORG_URL = "https://github.com/AdventureAsia365-Ecosys";
 
-/** The CIS admin console itself (this app, Vercel aa-cis-frontend). */
+/** The CIS admin console itself (this app, ECS service aa-cis-dev-admin). */
 export const CIS_ADMIN_URL = "https://aa-cis.lumiguides.it.com";
 
 /** AA-Partner's agency host (CloudFront; the agency CRM web, AA-CIS-Infra crm_agency_edge.tf). AA-936; AA-979 P2b
