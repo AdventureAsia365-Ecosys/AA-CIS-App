@@ -40,9 +40,10 @@ def test_atom_forbidden_words_never_raises():
 
 
 def test_judge_path_marks_fact_check_as_manual_check():
-    # Elephant riding fires FACT_CHECK_MANUAL_CHECK as a pre-code; it must read as manual_check.
+    # Elephant riding fires its policy pre-code (AA-1047: POLICY_ELEPHANT_RIDING, was FACT_CHECK_MANUAL_CHECK); it must
+    # read as manual_check.
     gen = {"name": "Jaipur Day", "subtitle": "", "summary": "", "seo_meta": "",
            "highlights": ["Amber Fort with elephant ride to the entrance"], "itineraries": ""}
     out = _audit_from_judge({"tour": {}}, gen)
-    assert "FACT_CHECK_MANUAL_CHECK" in out["brand_audit_codes"]
+    assert "POLICY_ELEPHANT_RIDING" in out["brand_audit_codes"]
     assert out["brand_audit_status"] == "manual_check"

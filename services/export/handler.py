@@ -548,14 +548,6 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if not src.live:
             await _refuse_not_live(src)
 
-        # 1b. AA-1047 W1: the final contract of this publish exit (report mode: recorded, never blocks; best-effort).
-        try:
-            from services.quality.final_contract_store import record_s1_exit
-        except ImportError:   # the legacy export Lambda package ships without services/quality
-            record_s1_exit = None
-        if record_s1_exit is not None:
-            await record_s1_exit(conn, version_id, contract_exit, actual="approved")
-
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key
         # that was paused (a supersede waiting for this Master) happen in one transaction.
@@ -664,6 +656,15 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         # entire lifetime — see docs/implementation-notes/AA-492.md for the full trace.
         if batch_id:
             await sync_batch_completion(conn, batch_id, silver)
+
+        # 5. AA-1047 W1: the final contract of this publish exit, over the version as published (report mode: recorded,
+        # never blocks; best-effort, after every publish step so it can never delay or fail one).
+        try:
+            from services.quality.final_contract_store import record_s1_exit
+        except ImportError:   # the legacy export Lambda package ships without services/quality
+            record_s1_exit = None
+        if record_s1_exit is not None:
+            await record_s1_exit(conn, version_id, contract_exit, actual="published")
 
         return {
             "status":     "exported",

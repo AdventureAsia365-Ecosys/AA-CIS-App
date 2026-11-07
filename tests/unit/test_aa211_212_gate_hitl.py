@@ -173,7 +173,7 @@ async def test_approve_null_token_exports_once_then_409_on_second_call():
         assert first["status"] == "approved"
         assert first["exported"] is True
         assert first["sf_notified"] is False
-        mock_export.assert_awaited_once_with(str(GCID))
+        mock_export.assert_awaited_once_with(str(GCID), contract_exit="approve")
 
         with pytest.raises(HTTPException) as exc:
             await v1_pipeline.approve_review(REVIEW_ID, req, TENANT)

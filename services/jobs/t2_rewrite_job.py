@@ -475,6 +475,10 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             if inst_mark is not None:
                 judge_breakdown = {**(judge_breakdown or {}), "route_degraded": inst_mark}
                 diag["route_degraded"] = inst_mark
+            if judge_breakdown is not None:
+                diag["judge"] = {"binding": judge_breakdown.get("binding"),
+                                 "brand_claims_unsupported": len(
+                                     (judge_breakdown.get("brand_claims") or {}).get("unsupported") or [])}
             # AA-1047 W1 (root ADR 0020 "one exit"): the REPORT-mode final contract of this save (admin-only).
             contract = final_contract_record(
                 rewritten, tour_dict, pt, exit="done", actual=new_status, qa=qa,
@@ -482,10 +486,6 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             if contract is not None:
                 judge_breakdown = {**(judge_breakdown or {}), "final_contract": contract}
                 diag["final_contract"] = {k: contract.get(k) for k in ("verdict", "agrees", "flip", "sha_match")}
-            if judge_breakdown is not None:
-                diag["judge"] = {"binding": judge_breakdown.get("binding"),
-                                 "brand_claims_unsupported": len(
-                                     (judge_breakdown.get("brand_claims") or {}).get("unsupported") or [])}
             # qa_status keeps its migration-107 meaning unchanged (the real QA verdict,
             # 'escalated' still means the gate did NOT actually clear) — qa_auto_passed
             # (migration 109) is the new, separate tenant-facing badge flag: true means

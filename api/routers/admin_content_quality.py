@@ -34,7 +34,7 @@ import hashlib
 import json
 import re
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 import asyncpg
@@ -46,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.tenant_scope import tenant_scope_filter
 from api.routers.admin import verify_admin_secret
-from services.acp_content_writing import hygiene, sentence_repair, text_integrity
+from services.acp_content_writing import f9_policy, hygiene, sentence_repair, text_integrity
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
 from services.acp_shared.token_budget import T9_REPAIR_MAX_TOKENS
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
@@ -1207,7 +1207,52 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
             WHERE cp.created_at > now() - make_interval(days => $1) {tenant_clause}
             GROUP BY 1, 2 ORDER BY pieces DESC
             """, *params)
-    return {"days": days, "gates": [_row(r) for r in gates], "tenants": [_row(r) for r in tenants]}
+        # AA-1047 W1 (W0 review #1356): the failed F9_cta_fact entries, split by the classes the entry recorded
+        # (f9_policy.classes) — a judge outage or TEXT_INTEGRITY is not a fidelity failure.
+        f9_rows = await conn.fetch(
+            f"""
+            SELECT COALESCE(cp.channel, 'unknown') AS channel, g AS entry
+            FROM acp_shared.content_piece cp, jsonb_array_elements(cp.gate_ledger) g
+            WHERE cp.created_at > now() - make_interval(days => $1) AND cp.status <> 'processing' {tenant_clause}
+              AND g->>'gate' = '{qr.F9_CTA_FACT}' AND (g->>'passed')::boolean = false
+            """, *params)
+    gate_rows = [_row(r) for r in gates]
+    split = f9_stats_split([(r["channel"], _j(r["entry"])) for r in f9_rows])
+    for g in gate_rows:
+        if g.get("gate") == qr.F9_CTA_FACT:
+            g.update(split["by_channel"].get(g.get("channel"), {}))
+    return {"days": days, "gates": gate_rows, "tenants": [_row(r) for r in tenants],
+            "f9_classes": split["classes"]}
+
+
+# The F9 classes that are not a fidelity failure of the text (f9_policy): no verdict, or a broken sentence.
+_F9_NOT_FIDELITY = frozenset({f9_policy.JUDGE_UNAVAILABLE, f9_policy.TEXT_INTEGRITY})
+
+
+def f9_stats_split(entries: list[tuple[str, Any]]) -> dict:
+    """AA-1047 W1: /stats' view of the failed F9_cta_fact entries. Per channel, ``failed`` / ``blocking_failed``
+    count only the entries with a class other than a judge outage or TEXT_INTEGRITY (the content failures);
+    ``failed_judge_unavailable`` / ``failed_text_integrity`` count the rest (an entry with both counts in both);
+    ``classes`` sums every class over the window ({channel: {class: n}})."""
+    by_channel: dict[str, dict] = {}
+    classes: dict[str, dict[str, int]] = {}
+    for channel, g in entries:
+        if not isinstance(g, dict):
+            continue
+        cls = f9_policy.entry_classes(g)
+        row = by_channel.setdefault(channel, {"failed": 0, "blocking_failed": 0, "failed_judge_unavailable": 0,
+                                              "failed_text_integrity": 0})
+        if set(cls) - _F9_NOT_FIDELITY or not cls:
+            row["failed"] += 1
+            row["blocking_failed"] += 1 if g.get("blocking", True) else 0
+        if f9_policy.JUDGE_UNAVAILABLE in cls:
+            row["failed_judge_unavailable"] += 1
+        if f9_policy.TEXT_INTEGRITY in cls:
+            row["failed_text_integrity"] += 1
+        ch = classes.setdefault(channel, {})
+        for k, n in cls.items():
+            ch[k] = ch.get(k, 0) + int(n)
+    return {"by_channel": by_channel, "classes": classes}
 
 
 # ── T2 tenant tour versions ────────────────────────────────────────────────────────────────────

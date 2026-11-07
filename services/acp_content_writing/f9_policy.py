@@ -126,6 +126,62 @@ def trip_promise_kinds(sentence: Optional[str], lexicon=None) -> tuple[str, ...]
     return tuple(kinds)
 
 
+# ---------------------------------------------------------------------------------------------- claim span
+
+# Clause breaks inside a sentence: punctuation, a dash, and a coordinating / relative link that starts a new clause.
+_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:[,;:()\u2014\u2013]|\s-\s)\s*|\s+(?=(?:and|but|while|whereas|where|which|"
+                              r"before|after|then)\b)", re.I)
+_WORD_RE = re.compile(r"[a-z0-9']+")
+_SPAN_STOPWORDS = frozenset({"the", "a", "an", "of", "and", "to", "in", "on", "at", "for", "with", "is", "are", "its",
+                             "it", "this", "that", "by", "from", "as"})
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in _WORD_RE.findall((text or "").lower().translate(_QUOTES)) if w not in _SPAN_STOPWORDS}
+
+
+def _clauses(sentence: str) -> list[str]:
+    return [c for c in _CLAUSE_SPLIT_RE.split(sentence or "") if c and c.strip()]
+
+
+def claim_span(sentence: Optional[str], claim: Optional[str]) -> str:
+    """The part of ``sentence`` the judge's ``claim`` is about: the clause that holds the claim's words (most overlap,
+    first on a tie), with the sentence's trip subject put in front when that clause has none of its own ("You dine
+    at the lodge, near the 900-year-old temple": the temple clause is background, the dinner clause is the promise).
+    A claim with no word in common with the sentence (a paraphrase, a placeholder) or an empty one falls back to the
+    whole sentence (the pre-W1 behaviour: fail safe, a missed promise is worse than a warned background)."""
+    sentence = sentence or ""
+    claim = (claim or "").strip()
+    if not claim:
+        return sentence
+    cw = _words(claim)
+    clauses = _clauses(sentence)
+    if not cw or not clauses:
+        return sentence
+    best, best_n = None, 0
+    for c in clauses:
+        n = len(cw & _words(c))
+        if n > best_n:
+            best, best_n = c, n
+    if best is None:
+        return sentence
+    if not TRIP_SUBJECT_RE.search(best):
+        at = sentence.find(best)
+        subjects = [m for m in TRIP_SUBJECT_RE.finditer(sentence) if m.end() <= at]
+        if subjects and _same_clause_chain(sentence, best, subjects[-1].group(0)):
+            return f"{subjects[-1].group(0)} {_CHAIN_LEAD_RE.sub('', best).strip()}"
+    return best
+
+
+_CHAIN_LEAD_RE = re.compile(r"^\s*(?:and|then)\b", re.I)
+
+
+def _same_clause_chain(sentence: str, clause: str, subject: str) -> bool:
+    """The subject governs ``clause`` only when the clause continues the subject's verb phrase (it opens with "and" /
+    "then": "you visit the market and taste the tea"), not when it is a separate description after a comma."""
+    return bool(_CHAIN_LEAD_RE.match(clause)) and subject.lower() in sentence[:sentence.find(clause)].lower()
+
+
 # ---------------------------------------------------------------------------------------------- classification
 
 def parse_claims(violation: str) -> list[tuple[str, str, str]]:
@@ -154,7 +210,9 @@ def violation_items(violation: str, lexicon=None) -> list[dict]:
         items.append({"class": CTA_NOT_REFLECTED})
     claims = parse_claims(v)
     for sentence, claim, why in claims:
-        kinds = trip_promise_kinds(sentence, lexicon) if why else ()
+        # AA-1047 W1 (W0 review #1356): classify the CLAIM's span, not the whole sentence — a place-background claim
+        # in a sentence that also names a supported dinner is not a "service" promise.
+        kinds = trip_promise_kinds(claim_span(sentence, claim), lexicon) if why else ()
         items.append({"class": TRIP_PROMISE if kinds else UNSUPPORTED_OTHER, "sentence": sentence, "claim": claim,
                       "why": why, **({"kinds": list(kinds)} if kinds else {})})
     if not claims and "FACT_CHECK_MANUAL_CHECK" in head:
@@ -241,6 +299,6 @@ __all__ = [
     "POLICY_VERSION", "F9_POLICY_MODE_ENV", "INTERIM_MODE", "LEGACY_MODE", "F9_CLAIM_RE", "CLAIMS_MARK",
     "NO_REASON_MARK", "TRIP_PROMISE", "UNSUPPORTED_OTHER", "FACT_CHECK_UNQUOTED", "SEO_FIELD_CLAIM",
     "CTA_NOT_REFLECTED", "TEXT_INTEGRITY", "JUDGE_UNAVAILABLE", "REASONLESS", "OTHER", "FIDELITY_CLASSES",
-    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "trip_promise_kinds", "parse_claims", "violation_items",
+    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "trip_promise_kinds", "claim_span", "parse_claims", "violation_items",
     "violation_classes", "entry_classes", "policy_mode", "apply_policy",
 ]

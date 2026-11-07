@@ -80,8 +80,11 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "api/routers/admin_pipeline.py::_revalidate_tour": ("revalidation",),
         # a reviewer's edit of a version's text
         "api/routers/admin_pipeline.py::update_generated_content_fields": ("human_edit",),
-        # every publish of a Master (auto publish after a run, review approve, promote, the legacy Lambda)
+        # every publish of a Master (auto publish after a run, review approve, promote, the legacy Lambda); each
+        # caller names its exit (contract_exit=)
         "services/export/handler.py::process_export": ("auto_publish", "approve", "promote", "lambda"),
+        "api/routers/admin_pipeline.py::promote_tour_version": ("promote",),
+        "services/export/handler.py::lambda_handler": ("lambda",),
         # the review approve (also the legacy Step Functions branch that does not publish here)
         "api/routers/v1_pipeline.py::approve_review": ("approve",),
     },

@@ -2445,7 +2445,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger, channel, source=grounding_text, content_text=content_text),
                 # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
-                "gate_ledger": ledger_snapshot(gate_ledger),
+                "gate_ledger": ledger_snapshot(gate_ledger, hyg.lexicon),  # AA-1047: same lexicon as failing
                 # AA-900 W0 — every failing gate of this attempt in one stable shape (gate_eval.failing_gates)
                 "failing": gate_eval.failing_gates(gate_ledger, hyg.lexicon),
             })

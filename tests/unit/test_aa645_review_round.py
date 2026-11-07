@@ -130,7 +130,7 @@ def test_v2_draft_product_truth_and_fact_check_still_gate():
         "name": "Laos", "subtitle": "s", "summary": "s", "highlights": ["An elephant ride at dawn"],
         "itineraries": "Day 1 — Luang Prabang\nWalk.", "seo_title": "t", "seo_meta": "m"}}, codes=[])
     assert elephant["brand_audit_status"] == "manual_check"
-    assert "FACT_CHECK_MANUAL_CHECK" in elephant["brand_audit_codes"]
+    assert "POLICY_ELEPHANT_RIDING" in elephant["brand_audit_codes"]   # AA-1047: the policy's own code
 
 
 def test_a_tenant_rewrite_marked_v2_keeps_its_rubric_gating():

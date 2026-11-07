@@ -21,11 +21,13 @@ MAX_VIOLATIONS_PER_GATE = 5
 MAX_VIOLATION_CHARS = 300
 
 
-def ledger_snapshot(gate_ledger: list[dict] | None) -> list[dict]:
+def ledger_snapshot(gate_ledger: list[dict] | None, lexicon=None) -> list[dict]:
     """Every gate of one attempt, trimmed to what gate evaluation needs: gate, passed (the verdict),
     blocking and the violations (at most 5, each cut to 300 chars). Passed gates are kept with no
     violations so a gate's runs per attempt can be counted, not only its failures. AA-924: a merged entry (F2_lexicon,
-    F15_voice) also keeps `severity` and its `findings` ({text, severity, source}, the same cut)."""
+    F15_voice) also keeps `severity` and its `findings` ({text, severity, source}, the same cut).
+    AA-1047 W1 (W0 review #1356): `lexicon` (the piece's scope lexicon) classifies the F9 claims the way
+    `failing_gates` does, so a place name is not read as a trip promise in one record and not in the other."""
     out: list[dict] = []
     for g in gate_ledger or []:
         if not isinstance(g, dict) or "gate" not in g:
@@ -41,7 +43,7 @@ def ledger_snapshot(gate_ledger: list[dict] | None) -> list[dict]:
                 {"text": str(f.get("text"))[:MAX_VIOLATION_CHARS], "severity": f.get("severity"),
                  "source": f.get("source")}
                 for f in g["findings"][:MAX_VIOLATIONS_PER_GATE] if isinstance(f, dict)]
-        classes = f9_policy.entry_classes(g)
+        classes = f9_policy.entry_classes(g, lexicon)
         if classes:  # AA-900 W0 — the F9 failure classes, read before the violations are cut
             entry["classes"] = classes
         if g.get("degraded"):
