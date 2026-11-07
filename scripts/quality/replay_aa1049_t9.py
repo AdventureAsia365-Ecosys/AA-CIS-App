@@ -58,9 +58,9 @@ from unittest.mock import patch
 
 SCHEMA = "aa1049-t9-replay/1"
 DECLARED = {
-    "D-seo-1": "a title/meta the writer got wrong (it fails main's acceptance tests) is fixed in code by a whole-sentence"
-               " / separator prefix of the writer's value that passes them: 0 SEO-fit calls when both fields then pass;"
-               " else the fit is asked only about the rest and a fit outage ships the fixed field",
+    "D-seo-1": ("a title/meta the writer got wrong (it fails main's acceptance tests) is fixed in code by a "
+                "whole-sentence / separator prefix of the writer's value that passes them: 0 SEO-fit calls when both "
+                "fields then pass; else the fit is asked only about the rest and a fit outage ships the fixed field"),
     "D-seo-2": "at most one SEO-fit call per attempt (the retry call is gone); unit tests only: a replayed fit call is "
                "a cassette miss that aborts before main's retry, so the replay can never show it",
     "D-guard-1": "regression guard on stable keys: a same-gate swap of flagged sentences (same gate set, as many keys "
