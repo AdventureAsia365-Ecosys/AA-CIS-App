@@ -1,0 +1,1271 @@
+{
+ "clean": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": false,
+    "flip": "unpublish",
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "brand_fit",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 0,
+    "chosen_via": "initial",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": true,
+      "grounding": 0,
+      "score": 10.0,
+      "structural": 0,
+      "via": "initial"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": 8.5,
+      "revision": false,
+      "score": 10.0
+     }
+    ],
+    "sentence_repairs": 0
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_judge",
+    "cba5de9b1f6fd709"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.\n\nDay 3: Depart Velmora\nKeep the morning free for the market before your transfer to the station.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A canal town and an easy ridge walk at a gentle pace",
+      "summary": "Spend three unhurried days in Velmora, an old market town on a canal. Walk through pine woods up Corran Ridge to its chapel, share a lunch in a farm kitchen and keep a free morning for the market before you leave.",
+      "trip_type": "Walking"
+     },
+     "ai_generated",
+     10.0,
+     "passed",
+     0,
+     false,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 0,
+      "binding": "brand_fit",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 8.5,
+      "cross_brand_distinct": 8.5,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "ai_generated",
+       "agrees": false,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        }
+       ],
+       "flip": "unpublish",
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
+       "text_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 10.0,
+      "gate": "brand_fit_mission",
+      "judge_score": 8.5,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 10.0,
+      "version": 1
+     }
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "day_dropped": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": false,
+    "flip": "unpublish",
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "brand_fit",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 0,
+    "chosen_via": "initial",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": true,
+      "grounding": 0,
+      "score": 9.75,
+      "structural": 0,
+      "via": "initial"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": 5.0,
+      "revision": false,
+      "score": 9.75
+     }
+    ],
+    "sentence_repairs": 0
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_judge",
+    "3238d1bdd6f98301"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A canal town and an easy ridge walk at a gentle pace",
+      "summary": "Spend three unhurried days in Velmora, an old market town on a canal. Walk through pine woods up Corran Ridge to its chapel, share a lunch in a farm kitchen and keep a free morning for the market before you leave.",
+      "trip_type": "Walking"
+     },
+     "ai_generated",
+     9.75,
+     "passed",
+     0,
+     false,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 0,
+      "binding": "brand_fit",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 5.0,
+      "cross_brand_distinct": 5.0,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "ai_generated",
+       "agrees": false,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        }
+       ],
+       "flip": "unpublish",
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "ad66eba2a0c7bfca6179cc1aeb055f397ec418f0b406edf9d2baa70df5b7b73b",
+       "text_sha": "ad66eba2a0c7bfca6179cc1aeb055f397ec418f0b406edf9d2baa70df5b7b73b",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 9.75,
+      "gate": "brand_fit_mission",
+      "judge_score": 5.0,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 9.75,
+      "version": 1
+     }
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "elephant": {
+  "diag": {
+   "em_dashes": {
+    "fields": [
+     "itineraries: 3 -> 0 em-dash(es)"
+    ]
+   },
+   "policy_hold": {
+    "decision": "ADR 0020 D8",
+    "hits": [
+     {
+      "field": "itineraries",
+      "mention": "elephant riding",
+      "where": "source"
+     }
+    ],
+    "llm_calls": 0,
+    "reason": "elephant_riding"
+   }
+  },
+  "llm": [],
+  "sql": [
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = 'needs_review', quality_score = NULL, qa_status = 'escalated', qa_repair_count = 0, qa_checked_at = now(), qa_auto_passed = true, judge_breakdown = $2::jsonb WHERE id = $3::uuid",
+    [
+     {
+      "highlights": [
+       "Velmora old market",
+       "Corran Ridge chapel walk",
+       "Farm kitchen lunch"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. An evening stroll along the canal with your guide.\nDay 2: Corran Ridge walk\nA morning walk up Corran Ridge through pine woods to the ridge chapel, then lunch at a farm kitchen and a slow return to Velmora.\nDay 3: Depart Velmora\nA free morning at the market before the transfer to the station.",
+      "name": "Velmora and Corran Ridge — 3 Days",
+      "seo_meta": "Three easy days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to the chapel and a farm kitchen lunch before you leave, over 3 days.",
+      "seo_title": "Velmora and Corran Ridge 3-Day Walking Tour",
+      "status": "done",
+      "subtitle": "Canal town and ridge walks",
+      "summary": "Three easy days in Velmora: an old market town on a canal, a ridge walk through pine woods and a farm lunch.",
+      "trip_type": ""
+     },
+     {
+      "final_contract": {
+       "actual": "needs_review",
+       "agrees": true,
+       "exit": "policy_hold",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        },
+        {
+         "class_id": "policy.elephant_riding",
+         "code": "ELEPHANT_RIDING",
+         "count": 1,
+         "detail": "source itineraries",
+         "severity": "block"
+        }
+       ],
+       "flip": null,
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "4eecb4fad16b73e72dc675cd6dc9d45aa6290b15d817aa829901fdefccdc9b09",
+       "text_sha": "4eecb4fad16b73e72dc675cd6dc9d45aa6290b15d817aa829901fdefccdc9b09",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "policy_hold": {
+       "decision": "ADR 0020 D8",
+       "hits": [
+        {
+         "field": "itineraries",
+         "mention": "elephant riding",
+         "where": "source"
+        }
+       ],
+       "llm_calls": 0,
+       "reason": "elephant_riding"
+      }
+     },
+     "00000000-0000-4000-8000-000000001049"
+    ]
+   ],
+   [
+    "INSERT INTO silver_aa_internal.review_queue (tour_id, tenant_id, tenant_tour_version_id, failure_summary, escalate_detail) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb)",
+    [
+     "00000000-0000-4000-8000-00000000a1a1",
+     "00000000-0000-4000-8000-00000000c0de",
+     "00000000-0000-4000-8000-000000001049",
+     "POLICY_HOLD elephant_riding: Master text kept verbatim, 0 LLM calls (ADR 0020 D8); review the tour",
+     [
+      {
+       "check_id": "policy:elephant_riding",
+       "description": "Elephant riding in the source itineraries: the Master text is kept verbatim for a human review (policy, no rewrite)",
+       "field": "itineraries",
+       "source_span": "elephant riding",
+       "suggested_fix": null
+      }
+     ]
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "forbidden_and_meta": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": false,
+    "flip": "unpublish",
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "brand_fit",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 0,
+    "chosen_via": "initial",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": true,
+      "grounding": 0,
+      "score": 10.0,
+      "structural": 0,
+      "via": "initial"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": 8.5,
+      "revision": false,
+      "score": 10.0
+     }
+    ],
+    "sentence_repairs": 0
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_judge",
+    "de7fe59cfcb6a160"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.\n\nDay 3: Depart Velmora\nKeep the morning free for the market before your transfer to the station.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A dramatic canal town and an easy ridge walk",
+      "summary": "Spend three unhurried days in Velmora, an old market town on a canal. Walk through pine woods up Corran Ridge to its chapel, share a lunch in a farm kitchen and keep a free morning for the market before you leave.",
+      "trip_type": "Walking"
+     },
+     "ai_generated",
+     10.0,
+     "passed",
+     0,
+     false,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 0,
+      "binding": "brand_fit",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 8.5,
+      "cross_brand_distinct": 8.5,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "ai_generated",
+       "agrees": false,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        }
+       ],
+       "flip": "unpublish",
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "4e40aa55f6087017cb9defec6717080d9aa619f8b7d575dea7513d1d9588434c",
+       "text_sha": "4e40aa55f6087017cb9defec6717080d9aa619f8b7d575dea7513d1d9588434c",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 10.0,
+      "gate": "brand_fit_mission",
+      "judge_score": 8.5,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 10.0,
+      "version": 1
+     }
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "grounding_repair": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": false,
+    "flip": "unpublish",
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "brand_fit",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 1,
+    "chosen_via": "sentence_repair",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": false,
+      "grounding": 1,
+      "score": 10.0,
+      "structural": 0,
+      "via": "initial"
+     },
+     {
+      "attempt": 1,
+      "background": 0,
+      "clean": true,
+      "grounding": 0,
+      "score": 10.0,
+      "structural": 0,
+      "via": "sentence_repair"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": 8.5,
+      "revision": false,
+      "score": 10.0
+     }
+    ],
+    "sentence_repairs": 1
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_judge",
+    "60bb1cc3346bbf58"
+   ],
+   [
+    "t2_flag_fix",
+    "7a44033dcf6a1721"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.\n\nDay 3: Depart Velmora\nKeep the morning free for the market before your transfer to the station.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A canal town and an easy ridge walk at a gentle pace",
+      "summary": "Spend three unhurried days in Velmora, an old market town on a canal. Walk up Corran Ridge to its chapel and share a farm lunch before a free morning at the market.",
+      "trip_type": "Walking"
+     },
+     "ai_generated",
+     10.0,
+     "passed",
+     1,
+     false,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 1,
+      "binding": "brand_fit",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 8.5,
+      "cross_brand_distinct": 8.5,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "ai_generated",
+       "agrees": false,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        }
+       ],
+       "flip": "unpublish",
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "2783619a13d5a3501e29a0608e6e11fc1f1795cb87a3f5d5a59240488e41e62d",
+       "text_sha": "2783619a13d5a3501e29a0608e6e11fc1f1795cb87a3f5d5a59240488e41e62d",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 10.0,
+      "gate": "brand_fit_mission",
+      "judge_score": 8.5,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 10.0,
+      "version": 1
+     }
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "grounding_unrepaired": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": false,
+    "flip": "unpublish",
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "brand_fit",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 0,
+    "chosen_via": "initial",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": false,
+      "grounding": 1,
+      "score": 10.0,
+      "structural": 0,
+      "via": "initial"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": 8.5,
+      "revision": false,
+      "score": 10.0
+     }
+    ],
+    "sentence_repairs": 0
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_judge",
+    "60bb1cc3346bbf58"
+   ],
+   [
+    "t2_flag_fix",
+    "7a44033dcf6a1721"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.\n\nDay 3: Depart Velmora\nKeep the morning free for the market before your transfer to the station.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A canal town and an easy ridge walk at a gentle pace",
+      "summary": "Spend three unhurried days in Velmora, an old market town on a canal that is 412 years old. Walk up Corran Ridge to its chapel and share a farm lunch before a free morning at the market.",
+      "trip_type": "Walking"
+     },
+     "ai_generated",
+     10.0,
+     "escalated",
+     0,
+     true,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 0,
+      "binding": "brand_fit",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 8.5,
+      "cross_brand_distinct": 8.5,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "ai_generated",
+       "agrees": false,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        },
+        {
+         "class_id": "fact.grounding",
+         "code": "T3_GROUNDING",
+         "count": 1,
+         "severity": "block"
+        }
+       ],
+       "flip": "unpublish",
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "f8347f5299e9df9dac2aa8f1aa80415572f8f3716e5f6b191dd57f63712338ea",
+       "text_sha": "f8347f5299e9df9dac2aa8f1aa80415572f8f3716e5f6b191dd57f63712338ea",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 10.0,
+      "gate": "brand_fit_mission",
+      "judge_score": 8.5,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 10.0,
+      "version": 1
+     }
+    ]
+   ],
+   [
+    "INSERT INTO silver_aa_internal.review_queue (tour_id, tenant_id, tenant_tour_version_id, failure_summary, escalate_detail) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb)",
+    [
+     "00000000-0000-4000-8000-00000000a1a1",
+     "00000000-0000-4000-8000-00000000c0de",
+     "00000000-0000-4000-8000-000000001049",
+     "T3 QA failed after 2 repair attempt(s) — 0 structural, 1 grounding issue(s)",
+     [
+      {
+       "check_id": "grounding:novel_numeric_claim",
+       "description": "Unsupported number(s) ['412'] in a summary sentence",
+       "field": "summary",
+       "source_span": "Spend three unhurried days in Velmora, an old market town on a canal that is 412 years old.",
+       "suggested_fix": null
+      }
+     ]
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "missing_summary": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": true,
+    "flip": null,
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "validate",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 0,
+    "chosen_via": "initial",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": false,
+      "grounding": 0,
+      "score": 4.0,
+      "structural": 1,
+      "via": "initial"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": 8.5,
+      "revision": false,
+      "score": 4.0
+     },
+     {
+      "attempt": 1,
+      "judge_score": 8.5,
+      "revision": true,
+      "score": 4.0
+     },
+     {
+      "attempt": 2,
+      "judge_score": 8.5,
+      "revision": true,
+      "score": 4.0
+     }
+    ],
+    "sentence_repairs": 0
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_judge",
+    "2fdff9ae0bbf3f8f"
+   ],
+   [
+    "t2_generate",
+    "b8e92b62eb658af8"
+   ],
+   [
+    "t2_judge",
+    "2fdff9ae0bbf3f8f"
+   ],
+   [
+    "t2_generate",
+    "b8e92b62eb658af8"
+   ],
+   [
+    "t2_judge",
+    "2fdff9ae0bbf3f8f"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.\n\nDay 3: Depart Velmora\nKeep the morning free for the market before your transfer to the station.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A canal town and an easy ridge walk at a gentle pace",
+      "summary": "",
+      "trip_type": "Walking"
+     },
+     "needs_review",
+     4.0,
+     "escalated",
+     0,
+     true,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 0,
+      "binding": "validate",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 8.5,
+      "cross_brand_distinct": 8.5,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "needs_review",
+       "agrees": true,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.field",
+         "code": "MISSING_FIELD",
+         "count": 1,
+         "field": "summary",
+         "severity": "block"
+        },
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        },
+        {
+         "class_id": "gate.t3",
+         "code": "T3_STRUCTURAL",
+         "count": 1,
+         "detail": "MISSING_FIELD",
+         "severity": "block"
+        },
+        {
+         "class_id": "report.score",
+         "code": "SCORE_BELOW_PASS",
+         "count": 1,
+         "detail": "score 4.0",
+         "severity": "warn"
+        }
+       ],
+       "flip": null,
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "04776bd8cbcb485a04767200b88ce96cd0a2a0642d4948963a2ff43484a51fe4",
+       "text_sha": "04776bd8cbcb485a04767200b88ce96cd0a2a0642d4948963a2ff43484a51fe4",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 4.0,
+      "gate": "brand_fit_mission",
+      "judge_score": 8.5,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 4.0,
+      "version": 1
+     }
+    ]
+   ],
+   [
+    "INSERT INTO silver_aa_internal.review_queue (tour_id, tenant_id, tenant_tour_version_id, failure_summary, escalate_detail) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb)",
+    [
+     "00000000-0000-4000-8000-00000000a1a1",
+     "00000000-0000-4000-8000-00000000c0de",
+     "00000000-0000-4000-8000-000000001049",
+     "T3 QA failed after 2 repair attempt(s) — 1 structural, 0 grounding issue(s)",
+     [
+      {
+       "check_id": "structural:MISSING_FIELD",
+       "description": "MISSING_FIELD",
+       "field": null,
+       "source_span": null,
+       "suggested_fix": null
+      }
+     ]
+    ]
+   ]
+  ],
+  "unexpected": []
+ },
+ "writer_retry": {
+  "diag": {
+   "em_dashes": {
+    "after": 0,
+    "before": 0,
+    "fields": [],
+    "fixed_in_t3": 1
+   },
+   "final_contract": {
+    "agrees": false,
+    "flip": "unpublish",
+    "sha_match": true,
+    "verdict": "needs_review"
+   },
+   "judge": {
+    "binding": "brand_fit",
+    "brand_claims_unsupported": 0
+   },
+   "market": "US",
+   "seo_source": "none",
+   "t3": {
+    "background_cleared": 0,
+    "best_draft_restored": false,
+    "chosen_attempt": 0,
+    "chosen_via": "initial",
+    "degraded": [],
+    "drafts": [
+     {
+      "attempt": 0,
+      "background": 0,
+      "clean": true,
+      "grounding": 0,
+      "score": 10.0,
+      "structural": 0,
+      "via": "initial"
+     }
+    ],
+    "graph_degraded": [],
+    "graph_draft_scores": [
+     {
+      "attempt": 0,
+      "judge_score": null,
+      "revision": false,
+      "score": 4.0
+     },
+     {
+      "attempt": 1,
+      "judge_score": 8.5,
+      "revision": false,
+      "score": 10.0
+     }
+    ],
+    "sentence_repairs": 0
+   }
+  },
+  "llm": [
+   [
+    "t2_generate",
+    "e13e9bdbff395339"
+   ],
+   [
+    "t2_generate",
+    "b65d1b4055a5783c"
+   ],
+   [
+    "t2_judge",
+    "cba5de9b1f6fd709"
+   ]
+  ],
+  "sql": [
+   [
+    "SELECT top_keywords, keyword_ideas, people_also_ask FROM silver_aa_internal.seo_context WHERE tour_id = $1::uuid ORDER BY fetched_at DESC LIMIT 1",
+    [
+     "00000000-0000-4000-8000-00000000a1a1"
+    ]
+   ],
+   [
+    "UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $1::jsonb, status = $2, quality_score = $3, qa_status = $4, qa_repair_count = $5, qa_checked_at = now(), qa_auto_passed = $6, generation_meta = $8::jsonb, judge_breakdown = $9::jsonb WHERE id = $7::uuid",
+    [
+     {
+      "highlights": [
+       "Stroll the canal in Velmora with your guide",
+       "Walk the pine woods up Corran Ridge",
+       "Share lunch in a farm kitchen",
+       "Browse the old market on a free morning"
+      ],
+      "itineraries": "Day 1: Arrive in Velmora\nArrive in Velmora and settle into the guesthouse near the old market. In the evening your guide takes you on a stroll along the canal.\n\nDay 2: Corran Ridge walk\nWalk up Corran Ridge in the morning through pine woods to the ridge chapel. Lunch is at a farm kitchen, then you return slowly to Velmora.\n\nDay 3: Depart Velmora\nKeep the morning free for the market before your transfer to the station.",
+      "name": "Velmora and Corran Ridge",
+      "seo_meta": "Spend three slow days in Velmora with a canal stroll, a pine-wood walk up Corran Ridge to its chapel and a lunch in a farm kitchen near the town.",
+      "seo_title": "Velmora and Corran Ridge Walking Tour",
+      "status": "done",
+      "subtitle": "A canal town and an easy ridge walk at a gentle pace",
+      "summary": "Spend three unhurried days in Velmora, an old market town on a canal. Walk through pine woods up Corran Ridge to its chapel, share a lunch in a farm kitchen and keep a free morning for the market before you leave.",
+      "trip_type": "Walking"
+     },
+     "ai_generated",
+     10.0,
+     "passed",
+     0,
+     false,
+     "00000000-0000-4000-8000-000000001049",
+     {
+      "writer_answer": {
+       "answered_model": "harness-stub",
+       "fallback_used": false
+      },
+      "writer_prompt_version": "53ebcce6"
+     },
+     {
+      "attempt": 0,
+      "binding": "brand_fit",
+      "brand_claims": {
+       "checked": 0,
+       "supported": 0,
+       "unsupported": [],
+       "version": "bc_v1"
+      },
+      "brand_fit": 8.5,
+      "cross_brand_distinct": 8.5,
+      "feedback": "Warm and plain.",
+      "final_contract": {
+       "actual": "ai_generated",
+       "agrees": false,
+       "exit": "done",
+       "findings": [
+        {
+         "class_id": "struct.day_structure",
+         "code": "T2_DAY_COUNT_VS_MASTER",
+         "count": 1,
+         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "field": "itineraries",
+         "severity": "block"
+        }
+       ],
+       "flip": "unpublish",
+       "mode": "report",
+       "sha_match": true,
+       "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
+       "text_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
+       "verdict": "needs_review",
+       "version": "fc-w1-report-1",
+       "workflow": "t2"
+      },
+      "final_score": 10.0,
+      "gate": "brand_fit_mission",
+      "judge_score": 8.5,
+      "judged": true,
+      "mission_cap": 6.0,
+      "mission_present": true,
+      "mission_source": "tenant_core_idea",
+      "score_source": "rewrite",
+      "validate_score": 10.0,
+      "version": 1
+     }
+    ]
+   ]
+  ],
+  "unexpected": []
+ }
+}
