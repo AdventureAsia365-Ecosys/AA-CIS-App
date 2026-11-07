@@ -160,7 +160,8 @@ BEGIN
         COMMENT ON COLUMN gold_aa_internal.tenant_tour_versions.fs_id IS
             'AA-1047 (386): the acp_shared.fact_sheet row (tour builder, raw source of the tour) of this T2 version; '
             'NULL before W1, for a tenant edit, or when the best-effort write failed. No FK. Admin data, never shown '
-            'to a tenant.';
+            'to a tenant: the tenant pool''s table-level grant covers this column, so the tenant read projection '
+            '(TENANT_HIDDEN_VERSION_FIELDS) is what hides it.';
     END IF;
 END
 $$;
