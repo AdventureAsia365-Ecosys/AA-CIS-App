@@ -91,6 +91,8 @@ from services.quality import factsheet_store  # AA-1047 (CIS 386)
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
 from services.quality import registry as qr
+from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
+from services.quality import final_contract as _fc  # (the name _finalize_piece's parameter shadows)
 from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
 from services.writing_memory import signals as wm_signals  # AA-916
@@ -1916,6 +1918,73 @@ def _add_date_spans(context: dict) -> None:
         context["route_segments"] = [(a, trip_facts.with_date_spans(t)) for a, t in context["route_segments"]]
 
 
+async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: list, status: str,
+                                held_reason: Optional[str], repair_log: list, summary, embedding, attempt: int,
+                                channel: str, spec, cta, brand_ignore, hyg: hygiene.HygieneContext, context: dict,
+                                piece_id, request_id, tenant_id) -> dict:
+    """AA-1047 W1 (root ADR 0020 invariant 4, "T9 post-loop edits fold into the normalizer") — the one ordered step
+    that owns every edit of a piece's text after the write/check loop, in production order:
+
+    1. AA-780 stock-line cut (whatever the status), 2. AA-819 authenticity cut (may hold),
+    3. AA-452 citation-tag strip (text, ledger, repair log, flags, held reason), 4. S247 FAQ answer fit (blog),
+    5. S234 r4 final integrity pass (fail closed: may hold).
+
+    It returns the text the final contract checks and ``_finalize_piece`` stores (no step after it edits the text)
+    with the ledger, flags, status, held reason, repair log, summary / embedding (re-made after a cut) and the
+    cost of its model calls. Moved from ``run_write_background`` unchanged; one function so the order is one place.
+    """
+    cost_usd = 0.0
+    # AA-780 (S246 panel) — a STOCK_PATTERNS line left in the final attempt's text (F15 blocks on
+    # attempt 1 only) is cut in code here, whatever the status; never the hook or the CTA.
+    content_text, gate_ledger, flags, stock_entry = _cut_stock_lines(
+        content_text, gate_ledger, flags, channel=channel, spec=spec, cta=cta, ignore=brand_ignore,
+        moments=hyg.moments)
+    if stock_entry:
+        repair_log.append({"attempt": attempt, **stock_entry})
+        if stock_entry["sentences_cut"]:
+            summary, embedding = await _after_cut(content_text, tenant_id, embedding)
+
+    # AA-819 (AUP 2026-11) — a review / customer voice / independence claim the repair could not
+    # remove is cut here, never shipped (a held piece still reaches the tenant, AA-770).
+    content_text, gate_ledger, flags, status, held_reason, aup_entry = _enforce_authenticity(
+        content_text, gate_ledger, flags, status, held_reason, cta=cta, channel=channel, spec=spec)
+    if aup_entry:
+        repair_log.append({"attempt": attempt, **aup_entry})
+        summary, embedding = await _after_cut(content_text, tenant_id, embedding)
+
+    # AA-452 — mandatory, tenant-facing-leak-prevention step: strip every [R:atom_id]/[F:id]
+    # citation tag (channel='blog' only ever produces one, prompts.py's _BLOG_FORMAT_INSTRUCTIONS)
+    # from content_text AND from every gate_ledger/repair_log violation string (a gate's own
+    # violation message can itself quote a tagged excerpt — see quality_gates.gate_grounding()'s
+    # own comment) BEFORE this piece is persisted or returned, regardless of status ('approved'
+    # or 'held' both go through this — a held piece is still fully visible to the tenant per
+    # _hold()'s own "hold VISIBLE, never silent" precedent, so a held piece leaking a raw tag
+    # would be exactly as real a leak as an approved one). Runs unconditionally for every
+    # channel — a no-op for the 7 that never produce a tag, real for blog.
+    content_text = strip_citation_tags(content_text)
+    gate_ledger = deep_strip_citation_tags(gate_ledger)
+    repair_log = deep_strip_citation_tags(repair_log)
+    flags = deep_strip_citation_tags(flags)
+    if held_reason:
+        held_reason = strip_citation_tags(held_reason)
+    # S247 (AA-779, ADR 0011) — behind T9_FAQ_LLM_FILTER (default off) one t9_faq_answer_fit call checks
+    # that each final FAQ answer answers its question; `on` drops the ones that do not (never a hold, never
+    # a regeneration), `shadow` only records. After the tag strip (the model reads clean text), before the
+    # final integrity pass (it reads the result).
+    if channel == "blog":
+        content_text, flags, fit_cost = await _apply_faq_answer_fit(
+            content_text, flags, context=context, piece_id=piece_id, request_id=request_id)
+        cost_usd += fit_cost
+    # S234 round 4 (r3 panel §4 fix 1) — the very last step before the piece is stored, after every
+    # repair, revert and the tag strip: fail closed — a duplicate, a second CTA or a fragment the
+    # pass cannot remove holds the piece (r3 #19 was approved with three visible duplicates).
+    content_text, gate_ledger, flags, status, held_reason = _final_integrity(
+        content_text, hyg, gate_ledger, flags, status, held_reason)
+    return {"content_text": content_text, "gate_ledger": gate_ledger, "flags": flags, "status": status,
+            "held_reason": held_reason, "repair_log": repair_log, "summary": summary, "embedding": embedding,
+            "cost_usd": cost_usd}
+
+
 async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, pool) -> None:
     """The write/rewrite + T10-check loop — UNCHANGED body from the pre-AA-466 single-function
     write_and_check(), just reading its inputs from `context` (built by start_write()) instead
@@ -2416,7 +2485,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger, channel, source=grounding_text, content_text=content_text),
                 # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
-                "gate_ledger": ledger_snapshot(gate_ledger),
+                "gate_ledger": ledger_snapshot(gate_ledger, hyg.lexicon),  # AA-1047: same lexicon as failing
                 # AA-900 W0 — every failing gate of this attempt in one stable shape (gate_eval.failing_gates)
                 "failing": gate_eval.failing_gates(gate_ledger, hyg.lexicon),
             })
@@ -2528,52 +2597,19 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
 
-        # AA-780 (S246 panel) — a STOCK_PATTERNS line left in the final attempt's text (F15 blocks on
-        # attempt 1 only) is cut in code here, whatever the status; never the hook or the CTA.
-        content_text, gate_ledger, flags, stock_entry = _cut_stock_lines(
-            content_text, gate_ledger, flags, channel=channel, spec=spec, cta=cta, ignore=brand_ignore,
-            moments=hyg.moments)
-        if stock_entry:
-            repair_log.append({"attempt": attempt, **stock_entry})
-            if stock_entry["sentences_cut"]:
-                summary, embedding = await _after_cut(content_text, tenant_id, embedding)
-
-        # AA-819 (AUP 2026-11) — a review / customer voice / independence claim the repair could not
-        # remove is cut here, never shipped (a held piece still reaches the tenant, AA-770).
-        content_text, gate_ledger, flags, status, held_reason, aup_entry = _enforce_authenticity(
-            content_text, gate_ledger, flags, status, held_reason, cta=cta, channel=channel, spec=spec)
-        if aup_entry:
-            repair_log.append({"attempt": attempt, **aup_entry})
-            summary, embedding = await _after_cut(content_text, tenant_id, embedding)
-
-        # AA-452 — mandatory, tenant-facing-leak-prevention step: strip every [R:atom_id]/[F:id]
-        # citation tag (channel='blog' only ever produces one, prompts.py's _BLOG_FORMAT_INSTRUCTIONS)
-        # from content_text AND from every gate_ledger/repair_log violation string (a gate's own
-        # violation message can itself quote a tagged excerpt — see quality_gates.gate_grounding()'s
-        # own comment) BEFORE this piece is persisted or returned, regardless of status ('approved'
-        # or 'held' both go through this — a held piece is still fully visible to the tenant per
-        # _hold()'s own "hold VISIBLE, never silent" precedent, so a held piece leaking a raw tag
-        # would be exactly as real a leak as an approved one). Runs unconditionally for every
-        # channel — a no-op for the 7 that never produce a tag, real for blog.
-        content_text = strip_citation_tags(content_text)
-        gate_ledger = deep_strip_citation_tags(gate_ledger)
-        repair_log = deep_strip_citation_tags(repair_log)
-        flags = deep_strip_citation_tags(flags)
-        if held_reason:
-            held_reason = strip_citation_tags(held_reason)
-        # S247 (AA-779, ADR 0011) — behind T9_FAQ_LLM_FILTER (default off) one t9_faq_answer_fit call checks
-        # that each final FAQ answer answers its question; `on` drops the ones that do not (never a hold, never
-        # a regeneration), `shadow` only records. After the tag strip (the model reads clean text), before the
-        # final integrity pass (it reads the result).
-        if channel == "blog":
-            content_text, flags, fit_cost = await _apply_faq_answer_fit(
-                content_text, flags, context=context, piece_id=piece_id, request_id=request_id)
-            total_cost += fit_cost
-        # S234 round 4 (r3 panel §4 fix 1) — the very last step before the piece is stored, after every
-        # repair, revert and the tag strip: fail closed — a duplicate, a second CTA or a fragment the
-        # pass cannot remove holds the piece (r3 #19 was approved with three visible duplicates).
-        content_text, gate_ledger, flags, status, held_reason = _final_integrity(
-            content_text, hyg, gate_ledger, flags, status, held_reason)
+        # AA-1047 W1 (root ADR 0020 invariant 4): every text edit after the loop runs in ONE ordered normalizer
+        # (_normalize_final_text: stock-line cut, authenticity cut, citation-tag strip, FAQ answer fit, final
+        # integrity), then the REPORT-mode final contract checks exactly that text. Nothing below edits it: what
+        # _finalize_piece stores is the gated text (its sha is compared there).
+        norm = await _normalize_final_text(
+            content_text, gate_ledger=gate_ledger, flags=flags, status=status, held_reason=held_reason,
+            repair_log=repair_log, summary=summary, embedding=embedding, attempt=attempt, channel=channel, spec=spec,
+            cta=cta, brand_ignore=brand_ignore, hyg=hyg, context=context, piece_id=piece_id, request_id=request_id,
+            tenant_id=tenant_id)
+        content_text, gate_ledger, flags = norm["content_text"], norm["gate_ledger"], norm["flags"]
+        status, held_reason, repair_log = norm["status"], norm["held_reason"], norm["repair_log"]
+        summary, embedding = norm["summary"], norm["embedding"]
+        total_cost += norm["cost_usd"]
         # AA-925 (Q-2, design §6.3) — the very last verdict step: a hard fail-open detector on the FINAL attempt
         # (the F9 judge outage marker on its ledger) labels an approved piece held. Reverses AA-770's "an F9
         # outage is a warn, not a hold"; `held` stays an admin-only label, the tenant still receives the piece.
@@ -2630,11 +2666,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                                                    context.get("search_questions") or [],
                                                    context.get("real_questions") or [])
             context["faq_pairs_after"] = faq_pair_stats(content_text, context)
+        # AA-1047 W1 (root ADR 0020 S6): the REPORT-mode final contract over the text the normalizer gave (nothing
+        # since edited it: tests/unit/quality/test_chain_order.py) with the final status; _finalize_piece compares its
+        # sha with the stored text and records it (writer_input.final_contract, admin-only). Never changes the status.
+        contract = _t9_final_contract(content_text, channel=channel, cta=cta, seo_meta=seo_meta,
+                                      gate_ledger=gate_ledger, held_reason=held_reason, status=status)
         await _finalize_piece(
             pool, piece_id=piece_id, attempt_number=attempt,
             content_text=content_text, status=status, held_reason=held_reason,
             gate_ledger=gate_ledger, repair_log=repair_log, flags=flags,
-            discarded_attempts=discarded_attempts,
+            discarded_attempts=discarded_attempts, final_contract=contract,
             seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
             slug=seo_meta.get("slug"), content_summary=summary,
             # AA-770 (S233) — a held piece now reaches the tenant too, so it is indexed like an
@@ -2686,6 +2727,21 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "t9_write_background_failed_status_write_also_failed",
                 request_id=str(request_id), piece_id=str(piece_id),
             )
+
+
+def _t9_final_contract(content_text: str, *, channel, cta, seo_meta: dict, gate_ledger: list,
+                       held_reason: Optional[str], status: str) -> Optional[dict]:
+    """AA-1047 W1: the T9 final contract record of a finished write (REPORT mode). None on an error (logged)."""
+    try:
+        inp = final_contract.T9Input(
+            content_text=content_text, channel=channel, cta=cta, seo_title=(seo_meta or {}).get("seo_title"),
+            meta_description=(seo_meta or {}).get("meta_description"), slug=(seo_meta or {}).get("slug"),
+            gate_ledger=gate_ledger, held_reason=held_reason)
+        return final_contract.check_t9(inp, exit="done", actual=status).record()
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the write
+        logger.warning("final_contract_failed", workflow="t9", exit="done", error_type=type(exc).__name__,
+                       error=str(exc)[:300])
+        return None
 
 
 def _keep_discarded(discarded: list[dict], snap: dict | None, current_text: str | None,
@@ -2785,6 +2841,7 @@ async def _finalize_piece(
     content_embedding: Optional[list[float]] = None,
     discarded_attempts: Optional[list[dict]] = None,
     writer_input: Optional[dict] = None,
+    final_contract: Optional[dict] = None,
 ) -> dict:
     # AA-514 — seo_title/meta_description/slug default None (the exception handler's own
     # "failed" finalize call above never has a real seo_meta to pass, and every non-blog piece
@@ -2805,6 +2862,12 @@ async def _finalize_piece(
     # default for the exception-handler/buffer-retry call sites (neither ever has more than 1
     # attempt) — only run_write_background()'s own main loop ever passes a non-empty list.
     discarded_attempts = discarded_attempts or []
+    if final_contract is not None and writer_input is not None:
+        # AA-1047 W1 (root ADR 0020 invariant 4): the stored text must be the text the contract gated — compared by
+        # sha here, at the one write (a mismatch is recorded as POST_GATE_EDIT and logged as an error).
+        record = _fc.stamp_stored(final_contract, _fc.text_sha(content_text), actual=status)
+        _fc.log_record(record, piece_id=str(piece_id))
+        writer_input = {**writer_input, "final_contract": record}
     async with pool.acquire() as conn:
         if writer_input is not None and status in ("approved", "held"):
             # AA-1040 — the machine-readable AI mark of a piece with content (ai_marking.py): the writer model of the
@@ -3168,6 +3231,7 @@ async def update_piece_content_text(
                 raise _piece_edit_not_found(piece_id)
             signal = await _record_piece_edit_signal(conn, tenant_id, piece_id, row, content_text)
             await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text, signal)
+        _log_piece_edit_contract(row, content_text)   # AA-1047 W1
         # AA-613 — tenant-safe projection (this is a tenant edit endpoint, PATCH /v1/.../pieces/{id}).
         return _tenant_safe_piece(row)
 
@@ -3202,8 +3266,28 @@ async def update_piece_content_text(
         except Exception as exc:
             logger.warning("aa859_piece_edit_audit_failed", tenant_id=str(tenant_id), piece_id=str(piece_id),
                            error=repr(exc))
+    _log_piece_edit_contract(row, content_text)   # AA-1047 W1
     # AA-613 — tenant-safe projection (this is a tenant edit endpoint, PATCH /v1/.../pieces/{id}).
     return _tenant_safe_piece(row)
+
+
+def _log_piece_edit_contract(row, content_text: str) -> None:
+    """AA-1047 W1: a tenant's hand edit through the REPORT-mode final contract (log only: tenant-owned text, BYO)."""
+    def get(key):
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    ledger = get("gate_ledger")
+    if isinstance(ledger, str):
+        try:
+            ledger = json.loads(ledger)
+        except ValueError:
+            ledger = []
+    final_contract.log_tenant_edit(final_contract.T9, "tenant_edit", content=content_text, actual=get("status"),
+                                   channel=get("channel"), seo_title=get("seo_title"),
+                                   meta_description=get("meta_description"), slug=get("slug"),
+                                   gate_ledger=ledger if isinstance(ledger, list) else [])
 
 
 # ── AA-501: tenant-facing pre-T11 review (deliberately narrower than fetch_piece() above) ──────

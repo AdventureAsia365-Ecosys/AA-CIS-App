@@ -60,6 +60,14 @@ def load_golden(path: str) -> list[dict]:
     return out
 
 
+def piece_context(writer_input) -> dict:
+    """The lexicon context of a stored piece. AA-1047 (W0 review #1356): writer_input stores the seed as `seed` and
+    the trip as `trip` (service.writer_input_snapshot), while the lexicon reads `atom_text` / `trip_name` (the job's
+    context names): read both, so a --pieces replay builds the same scope lexicon the write did."""
+    wi = writer_input if isinstance(writer_input, dict) else {}
+    return {**wi, "atom_text": wi.get("atom_text") or wi.get("seed"), "trip_name": wi.get("trip_name") or wi.get("trip")}
+
+
 def load_pieces(path: str) -> list[dict]:
     out = []
     for r in _read_json(path) or []:
@@ -67,7 +75,7 @@ def load_pieces(path: str) -> list[dict]:
         out.append({"id": str(r.get("piece_id")), "source": "pieces", "channel": r.get("channel"),
                     "gate_ledger": _json(r.get("gate_ledger")) or [], "flags": _json(r.get("flags")) or [],
                     "repair_log": _json(r.get("repair_log")), "status": r.get("status"),
-                    "attempt_number": r.get("attempt_number"), "context": wi if isinstance(wi, dict) else {}})
+                    "attempt_number": r.get("attempt_number"), "context": piece_context(wi)})
     return out
 
 

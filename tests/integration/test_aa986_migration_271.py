@@ -259,10 +259,10 @@ async def test_approve_trash_between_claim_and_export_leaves_nothing_approved(co
     gc, rq = await _review(conn, t.tour)
     real_export = handler.process_export
 
-    async def trash_then_export(version_id):
+    async def trash_then_export(version_id, **kw):
         await conn.execute("UPDATE silver_aa_internal.raw_tours SET source_status = 'trashed', deleted_at = now() "
                            "WHERE tour_id = $1", t.tour)
-        return await real_export(version_id)
+        return await real_export(version_id, **kw)
 
     with patch("services.export.handler.process_export", new=trash_then_export), \
          patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=_NoClose(conn))), \
