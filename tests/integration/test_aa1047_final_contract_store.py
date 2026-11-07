@@ -7,7 +7,7 @@ runs in one transaction that is rolled back).
     page lost days against the stated duration in the publish-flip set, and leaves a clean one out;
   * the approve gate query reads quality_scores.brand_audit_issues (the elephant rule's issue check).
 
-Invented tours and places only.
+Invented tours and places only (the country is a real one: raw_tours.country must be a listed country name).
 """
 import json
 import os
@@ -46,7 +46,7 @@ async def conn():
 
 
 async def _version(conn, *, page_itin=PAGE_ITIN, duration="4 days", src_itin=SRC_ITIN, publish=False,
-                   country="Nowhereland"):
+                   country="Vietnam"):
     tour_id = uuid.uuid4()
     await conn.execute(
         "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
@@ -94,15 +94,15 @@ async def test_the_report_lists_a_day_loss_master_in_the_flip_set(conn):
     from scripts.quality import final_contract_report as report
     lost_tour, _ = await _version(conn, page_itin="Day 1 — Velmora\nArrive.\n\nDay 2 — Gorge\nWalk.",
                                   duration="12 days", src_itin="Walk, sail and rest.", publish=True,
-                                  country="Zembla")
-    clean_tour, _ = await _version(conn, publish=True, country="Zembla")
+                                  country="Thailand")
+    clean_tour, _ = await _version(conn, publish=True, country="Thailand")
     rows = [r for r in await conn.fetch(report.masters_sql(False)) if r["tour_id"] in (lost_tour, clean_tour)]
     assert len(rows) == 2
     out = report.summarize(rows)
     assert out["masters"] == 2 and out["publish_flip"]["count"] == 1
     [flip] = out["flips"]
     assert flip["tour_id"] == lost_tour and "DAY_COUNT_VS_DURATION" in flip["block_codes"]
-    assert out["day_loss"] == [{"tour_id": lost_tour, "country": "Zembla", "page_days": 2, "duration_days": 12}]
+    assert out["day_loss"] == [{"tour_id": lost_tour, "country": "Thailand", "page_days": 2, "duration_days": 12}]
     assert "Karsh" not in json.dumps(out)       # ids and counts only, never page text
 
 
