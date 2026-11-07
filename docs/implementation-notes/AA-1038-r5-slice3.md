@@ -64,6 +64,10 @@ cap, the brand), AA-Partner (`crm_tp_lead_pull`), root (contracts, ADR amendment
   `test_never_resolves_dns` pins that CIS does not.
 - **A target is checked whenever it is given**, also when the channel does not use it: it is stored and goes live the
   moment the channel is switched.
+- **A trailing root dot is stripped before the host checks** (review fix): `127.0.0.1.`, `10.0.0.1..`, `0x7f.1.` and
+  `2130706433.` are still the IPv4 address to getaddrinfo and to WHATWG URL parsers, so they are `not_public`; a public
+  FQDN with its root dot (`hooks.example.com.`) still passes (the 390 CHECK takes it); a host that is only dots is
+  `invalid`, and `hooks.example.123.` is `invalid` like `hooks.example.123`. `[::1].` fails `urlsplit` (`invalid`).
 - **422 shape** `{detail: {detail: <code>, field, message}}` + `X-Error-Code` (the Subscription routes' shape plus
   `field`); the form maps the code to its field (`fieldOfCode`) and shows the EN / VI message under it.
 

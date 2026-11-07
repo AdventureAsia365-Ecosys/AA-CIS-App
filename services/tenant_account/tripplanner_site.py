@@ -138,6 +138,11 @@ def webhook_url_problem(url: str) -> Optional[str]:
         return URL_INVALID
     if not host:
         return URL_INVALID
+    # A trailing root dot ("127.0.0.1.", "10.0.0.1..") is still the same address to getaddrinfo and to WHATWG URL
+    # parsers, so every host check below reads the name without it.
+    host = host.rstrip(".")
+    if not host:
+        return URL_INVALID
     try:
         ip = host_ip(host)
     except ValueError:

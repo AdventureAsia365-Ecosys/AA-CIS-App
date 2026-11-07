@@ -22,6 +22,7 @@ TRIPPLANNER_NOT_PUBLIC = ["https://127.0.0.1/hook", "https://10.0.3.7:8443/leads
                           "https://[::1]/hook"]
 TRIPPLANNER_NOT_HTTPS = ["http://hooks.example.invalid/l"]
 PUBLIC = ["https://hooks.example.invalid/l", "https://larchfield-tours.example.com/hooks/tripplanner",
+          "https://hooks.larchfield-tours.example.com./l",   # a fully qualified name with its root dot
           "https://93.184.215.14/leads", "https://api.wrenhollow.example.org:8443/v2/leads?src=tp"]
 
 NOT_PUBLIC = TRIPPLANNER_NOT_PUBLIC + [
@@ -33,6 +34,9 @@ NOT_PUBLIC = TRIPPLANNER_NOT_PUBLIC + [
     # the legacy IPv4 spellings a resolver library accepts
     "https://127.1/h", "https://2130706433/h", "https://0x7f.0.0.1/h", "https://0177.0.0.1/h", "https://0x7f000001/h",
     "https://10.1/h",
+    # a trailing root dot: the resolver and URL parsers still read the IPv4 address
+    "https://127.0.0.1./h", "https://127.0.0.1../h", "https://10.0.0.1./h", "https://10.0.0.1../h",
+    "https://169.254.169.254./latest", "https://0x7f.1./h", "https://2130706433./h",
     # IPv6 loopback, unspecified, unique local, link-local (with a zone), multicast, documentation
     "https://[::]/h", "https://[fd12:3456:789a::1]/h", "https://[fc00::1]/h", "https://[fe80::1]/h",
     "https://[fe80::1%25eth0]/h", "https://[ff02::1]/h", "https://[2001:db8::1]/h",
@@ -73,7 +77,8 @@ def test_public_targets_pass(url):
     "https://user@hooks.example.com/l", "https://user:pw@hooks.example.com/l", "https://hooks.example.com/a b",
     "https://hooks.example.com/l\n", "https://hooks_x.example.com/l", "https://hööks.example.com/l",
     "https://[2606:4700:4700::1111]/h",   # a public IPv6 literal: the CIS 390 CHECK takes no bracketed host
-    "https://999.1.1.1/h", "https://hooks.example.123/h",
+    "https://999.1.1.1/h", "https://hooks.example.123/h", "https://hooks.example.123./h", "https://./h",
+    "https://../h", "https://[::1]./h",
 ])
 def test_malformed_targets_are_invalid(url):
     assert tp.webhook_url_problem(url) == tp.URL_INVALID
