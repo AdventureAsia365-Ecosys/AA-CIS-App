@@ -86,7 +86,10 @@ def dangling(lines: list[tuple[str, int, str]], head_names: list[str], base_name
 
 
 def git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+    """git's stdout as text. Bytes that are not UTF-8 (a Latin-1 fixture, a binary-ish file git prints as text)
+    become U+FFFD instead of crashing the check: only ``NNN_name`` tokens matter, and they are ASCII."""
+    out = subprocess.run(["git", *args], check=True, capture_output=True).stdout
+    return out.decode("utf-8", errors="replace")
 
 
 def check(migrations_dir: str, base: str) -> list[str]:

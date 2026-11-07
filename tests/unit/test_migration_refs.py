@@ -141,6 +141,22 @@ def test_preflight_refuses_a_reference_left_behind_by_a_renumber(repo: Path) -> 
     assert "dangling migration reference: notes.md:2: `004_widget_gate.sql`" in md
 
 
+def test_a_non_utf8_added_line_does_not_crash_the_check(repo: Path) -> None:
+    """A Latin-1 byte in an added line (a fixture, a legacy export) used to raise UnicodeDecodeError in git()'s strict
+    decode and crash the preflight; the line is read with U+FFFD and the tokens on it are still checked."""
+    (repo / "migrations" / "002_widget_gate.sql").write_text("BEGIN;\nCOMMIT;\n", encoding="utf-8")
+    (repo / "notes.md").write_bytes(b"history\ncaf\xe9 note: the gate is in 004_widget_gate.sql\n")
+    (repo / "legacy.csv").write_bytes(b"name\nM\xfcller\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "a Latin-1 line next to a stale reference")
+    base = _git(repo, "rev-list", "--max-parents=0", "HEAD")
+    errors = mr.check("migrations", base)
+    assert len(errors) == 1 and errors[0].startswith("notes.md:2: `004_widget_gate.sql`")
+    code, md, refs = _preflight(repo)
+    assert code == 1 and refs == 1
+    assert "dangling migration reference: notes.md:2: `004_widget_gate.sql`" in md
+
+
 def test_preflight_passes_once_the_reference_follows_the_file(repo: Path) -> None:
     (repo / "migrations" / "002_widget_gate.sql").write_text("BEGIN;\nCOMMIT;\n", encoding="utf-8")
     (repo / "notes.md").write_text("history\nthe gate is in 002_widget_gate.sql\n", encoding="utf-8")
