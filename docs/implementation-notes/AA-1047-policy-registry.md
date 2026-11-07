@@ -136,8 +136,15 @@ Meals changed in code only (no prompt line). The T9 writer `WRITER_PROMPT_VERSIO
 
 ## Should know
 
-- Contradiction suite: 99 synthetic examples, 100% as the policy expects (each topic has fire and no-fire twins;
-  most have 8–12, scope 8, slug 8, meals 6, day count 5).
+- Contradiction suite: 101 synthetic examples, 100% as the policy expects (each topic has fire and no-fire twins:
+  background, timing, numbers 11; rarity, scope, meta band, slug, FAQ 8; CTA 7; meals 6; title band, day count 5;
+  hypothetical 3, reflection 2).
+- Pins: `tests/unit/snapshots/aa919_release0_prompts.json` regenerated; only the 40 T9 system prompts (blog + social)
+  moved, every A1 / T2 prompt and all 80 user prompts kept their pins. `WRITER_PROMPT_VERSION` tests assert both the
+  new value and the pre-AA-1047 one through `pre_aa1047`.
+- Local only: `test_aa899_openapi_export` fails in the shared venv (fastapi 0.110.1 instead of the pinned 0.161.1);
+  no route or schema changed here, so `docs/api/openapi.json` is not regenerated. `tsc` errors seen locally come from
+  a stale shared `node_modules` (dompurify, react-markdown missing), none in the touched TS files.
 - CTA gap not fixed (out of scope): a social text whose CTA sits in the second-last paragraph with one more paragraph
   after it passes `check_cta` (the closing window is the last two paragraphs) although the policy says "last
   sentence". `ensure_cta` keeps it. Left for W5 (channel shapes).
