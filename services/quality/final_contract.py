@@ -107,20 +107,24 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 
-# ── policy values (lane l1 swaps the source) ──────────────────────────────────────────────────────
-
-_W1_DEFAULTS: dict[str, Any] = {
-    "meta_band": (140, 155),        # D5: one meta band for every workflow
-    "title_max": 60,                # the existing title fitter band (seo_meta_utils.SEO_TITLE_MAX)
-    "faq_counts": (0, 3, 4, 5),     # 0 or 3-4 pairs (F16), 5 = FAQ_MAX_PAIRS after a merge
-    "cta_count": 1,                 # the configured CTA, word for word, exactly once
-}
+# ── policy values (from services/quality/writing_policy.yaml through the registry, AA-1047 part A) ───────────────
 
 
 def policy_value(key: str) -> Any:
-    """One policy value the contract checks against. W1 (l1 merge note): read from writing_policy.yaml through the
-    policy registry once it exists; until then the decision-page values above (D5 and the T9 contracts)."""
-    return _W1_DEFAULTS[key]
+    """One policy value the contract checks against, read from the compiled writing policy (one policy_sha)."""
+    from services.quality import writing_policy as wp
+
+    if key == "meta_band":
+        return wp.band("meta")
+    if key == "title_max":
+        return wp.band("title")[1]
+    if key == "faq_counts":
+        from services.acp_content_writing.quality_gates import FAQ_MAX_PAIRS  # the merge cap, not a policy value
+        pairs = wp.faq_pairs()
+        return (0, int(pairs["min"]), int(pairs["max"]), int(FAQ_MAX_PAIRS))
+    if key == "cta_count":
+        return int(wp.compiled()["cta"]["count"])
+    raise KeyError(key)
 
 
 # ── findings / record ─────────────────────────────────────────────────────────────────────────────

@@ -31,13 +31,14 @@ import json
 import re
 from typing import Any, Optional
 
+from services.quality import writing_policy as _wp
 from services.quality.s1_facts import build_fact_table, field_text, item_lines
 
 ARMS = ("aplus", "w", "e")
 VERSION = "s1-writer-v2/1"
 WRITER_MAX_TOKENS = 16000   # Claude 5.5 models think adaptively and the thinking counts against max_tokens (S246)
 META_MAX_TOKENS = 4000
-META_TARGET = (130, 148)    # aim below the gate band 140–155 (lesson S233: LLMs overshoot a character target)
+META_TARGET = _wp.writer_aim("s1")    # AA-1047: aim below the policy meta band (lesson S233: LLMs overshoot a target)
 MAX_KEYWORDS = 3
 MAX_FIGURES = 80
 
@@ -220,8 +221,7 @@ def render_fact_sheet(tour: dict, facts: dict, plan: dict) -> str:
 # ------------------------------------------------------------------ prompts: W (new writer)
 
 _BACKGROUND = {
-    "allow": ("You may add one short clause of well-known background about a place the fact sheet names (what it"
-              " is, its era or setting), never presented as part of this tour."),
+    "allow": _wp.fragment("s1_writer.background_allow"),      # AA-1047: D1, from writing_policy.yaml
     "forbid": "Do not add background about places: every name and statement comes from the fact sheet.",
 }
 
@@ -617,7 +617,8 @@ def meta_system_prompt(forbidden: list[str]) -> str:
         "You write the SEO title and the meta description for one tour page of a white-label tour catalogue.",
         "",
         "RULES",
-        "1. seo_title: at most 60 characters; the place and the activity or duration; no brand, no hype.",
+        _wp.fill("1. seo_title: at most <<title.max>> characters; the place and the activity or duration; no brand,"
+                 " no hype."),
         f"2. seo_meta: one complete sentence ending in a period, {lo}–{hi} characters (count them). Facts only from"
         " the PAGE and FIGURES given: never a service, inclusion, view, guide, transfer or comfort the page does not"
         " state. Name the duration and the main places or activity.",

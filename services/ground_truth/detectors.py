@@ -32,9 +32,10 @@ from typing import Callable, Iterable, Optional
 
 from services.ground_truth import sample_size as ss
 from services.quality import registry as qr
+from services.quality import writing_policy as _wp
 
-# D5: one meta band for every workflow.
-META_BAND = (140, 155)
+# D5: one meta band for every workflow (from writing_policy.yaml).
+META_BAND = _wp.band("meta")
 META_FIELDS = frozenset({"meta_description", "seo_meta", "meta"})
 MODE_ENFORCE, MODE_WARN, MODE_ROUTE = "enforce", "warn", "route_only"
 

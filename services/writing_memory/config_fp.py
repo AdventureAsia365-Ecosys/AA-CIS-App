@@ -39,6 +39,8 @@ component and one sha256 over all of them:
                  (a platform release: none; the release's own items are its items_sha256).
   l0_lexicon     the active L0 lexicon rules of the writer (`writing_rule` kind lexicon, status active, platform +
                  the release's tenant): rule id, phrase, replacement, channels (t9 writers only).
+  policy         (AA-1047) the writing policy's policy_sha (services/quality/writing_policy.yaml): prompt fragments,
+                 rubrics, RulesConfig and route rows are compiled from it.
   brand_config   the owner's house style: active `shared.tenant_brand_rules` rows and `shared.tenant_seo_config` of
                  the AA master tenant for A1, of the release's tenant for a tenant release; none for a platform T2 /
                  T9 release (each write reads its tenant's own pack: an input, not config).
@@ -137,6 +139,7 @@ REVERIFY_REASON: dict[str, str] = {
     "routes": "model_route", "stage_params": "model_route", "catalog": "model_route", "route_control": "model_route",
     "mode_flags": "model_route", "prompts": "prompt_version_mismatch", "memory_items": "prompt_version_mismatch",
     "l0_lexicon": "prompt_version_mismatch", "brand_config": "prompt_version_mismatch",
+    "policy": "prompt_version_mismatch",
 }
 COMPONENTS = tuple(REVERIFY_REASON)
 
@@ -327,10 +330,22 @@ def build(writer: str, *, routes: Any, policies: Any = (), params: Any = (), cat
         parts["l0_lexicon"] = sha(l0) if l0 else None
     parts["brand_config"] = (UNAVAILABLE if brand_rows == UNAVAILABLE
                              else None if brand_rows is None else sha(brand_rows))
+    # AA-1047: the writing policy every prompt fragment, rubric, rule table and route row of the path is compiled from
+    # (services/quality/writing_policy.yaml): a policy change moves the fingerprint even when no prompt symbol changed.
+    parts["policy"] = _policy_sha()
 
     return {"v": FP_VERSION, "sha": hashlib.sha256(_canon(parts).encode("utf-8")).hexdigest(), "parts": parts,
             "stage_shas": dict(sorted(stage_shas.items())), "mode_flags_set": sorted(flags),
             "route_config_version": version, "service": service or current_service()}
+
+
+def _policy_sha() -> str:
+    try:
+        from services.quality import writing_policy
+        return writing_policy.policy_sha()
+    except Exception as e:  # noqa: BLE001 — a fingerprint never fails on a policy read problem
+        logger.warning("wm_config_fp_policy_unreadable", error=f"{type(e).__name__}: {str(e)[:200]}")
+        return UNAVAILABLE
 
 
 def _usable(v: Any) -> bool:

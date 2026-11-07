@@ -294,17 +294,21 @@ def test_a_pinned_judge_error_is_an_error_row_never_a_verdict():
 
 # ── (4) judge input ───────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_judge_caps_and_the_cut_mark():
-    assert (ej.SOURCE_CHARS, ej.OUTPUT_CHARS, dict(ej.T9_SOURCE_SECTIONS)["SEED"]) == (32000, 16000, 24000)
+def test_judge_caps_exclude_never_cut():
+    """AA-1047 (W1): the caps are evidence caps. Over one the item is excluded (InputOverCap) before any model call;
+    nothing is ever cut (S271 W0 had clipped with a cut mark)."""
+    assert (ej.SOURCE_CHARS, ej.OUTPUT_CHARS) == (32000, 16000)
     long_out = "Zz an invented sentence about a pretend valley. " * 500
-    prompt = ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text=long_out)
-    body = prompt.split("<OUTPUT>\n", 1)[1].split("\n</OUTPUT>", 1)[0]
-    assert body.endswith(ej.CUT_MARK) and len(body) <= ej.OUTPUT_CHARS
+    with pytest.raises(ej.InputOverCap) as e:
+        ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text=long_out)
+    assert e.value.code == ej.INPUT_OVER_CAP
     short = ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text="Zz short text.")
-    assert ej.CUT_MARK.strip() not in short.split("<OUTPUT>", 1)[1]
+    assert "cut for length" not in short and "Zz short text." in short
     sp = ej.system_prompt()
-    assert "shortened by the grader; never report struct.truncated there" in sp
+    assert "Nothing in the SOURCE or the OUTPUT was shortened by the grader" in sp
+    assert "shortened by the grader; never report struct.truncated there" not in sp
     assert ej.judge_version() != "73e641a99aca"
+    assert not hasattr(ej, "clip") and not hasattr(ej, "CUT_MARK")   # AA-1047: the W0 cutter is gone
 
 
 def test_judge_output_text_labels_the_fields_short_ones_first():
@@ -315,11 +319,10 @@ def test_judge_output_text_labels_the_fields_short_ones_first():
     heads = [ln[:-1] for ln in text.splitlines() if ln.endswith(":")]
     assert heads == ["SEO TITLE", "META DESCRIPTION", "SLUG (URL key, at most 60 characters)", "FAQ", "BODY"]
     assert "F9" not in text and "Zz the body of an invented blog." in text
-    # a long body is what a cut shortens; the meta and slug stay whole
+    # AA-1047: a body over the cap excludes the item; nothing is cut
     out["content_text"] = "Zz body words go on. " * 2000
-    prompt = ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text=ej.judge_output_text("t9_blog",
-                                                                                                        out))
-    assert "zz-invented-valley-walk" in prompt and prompt.split("</OUTPUT>")[0].rstrip("\n").endswith(ej.CUT_MARK)
+    with pytest.raises(ej.InputOverCap):
+        ej.build_user_prompt(writer="t9_blog", source_text="zz", output_text=ej.judge_output_text("t9_blog", out))
 
 
 def test_r2_sends_the_labelled_view_to_the_judge_and_keeps_the_plain_text_for_checks():

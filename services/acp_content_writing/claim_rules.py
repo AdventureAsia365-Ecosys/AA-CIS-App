@@ -35,6 +35,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from services.quality import writing_policy as _wp
 from services.acp_content_writing.hygiene import (
     SIBLING_HEADER,
     SOCIAL_PROOF_RE,
@@ -441,12 +442,20 @@ class Verdict:
     ref: str = ""
 
 
+_POLICY_RULES = _wp.rules_config()
+
+
 @dataclass(frozen=True)
 class RulesConfig:
     """The two open product decisions (design f9-v2 G2 and 'uncited background'), as flags the
-    replay measures. 'warn' passes the sentence with a non-blocking note; 'fail' blocks it."""
-    hypothetical: str = "warn"
-    uncited_background: str = "warn"
+    replay measures. 'warn' passes the sentence with a non-blocking note; 'fail' blocks it.
+    AA-1047: the defaults are compiled from the writing policy (services/quality/writing_policy.yaml `rules_config`)
+    and stamped with its policy_sha. S272: they stay main's ('warn', 'warn': an uncited background sentence warns
+    only when no place has a card, else it fails) until the W2 claim instrument; the D1 intent (pass) is recorded in
+    the policy's `claims.background` with `enforcement: block_until_w2_instrument`."""
+    hypothetical: str = _POLICY_RULES["hypothetical"]
+    uncited_background: str = _POLICY_RULES["uncited_background"]
+    policy_sha: str = _wp.policy_sha()
 
 
 def parse_rows(data: Optional[dict], sentences: list[PieceSentence]) -> tuple[dict[str, ClaimRow], list[str]]:

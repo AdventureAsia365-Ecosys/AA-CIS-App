@@ -27,7 +27,7 @@ from . import t2_interim
 from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
-from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
+from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta_final, fit_seo_title, meta_cut_signature, tour_days)
 from services.quality import day_oracle, degraded, repair_contract, route_guard
 from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
@@ -848,7 +848,7 @@ def _apply_seo_meta_fit(generated: dict, state: ContentState) -> bool:
         if new != meta:
             generated["seo_meta"], changed = new, True
     title = generated.get("seo_title")
-    if isinstance(title, str) and len(title) > 60:
+    if isinstance(title, str) and len(title) > SEO_TITLE_MAX:
         new = fit_seo_title(title)
         if new != title:
             generated["seo_title"], changed = new, True
@@ -1082,18 +1082,18 @@ def validate_node(state: ContentState) -> ContentState:
             break  # one violation is enough
 
     # SEO field lengths
-    if len(generated.get("seo_title", "")) > 60:
-        issues.append("seo_title exceeds 60 chars")
+    if len(generated.get("seo_title", "")) > SEO_TITLE_MAX:
+        issues.append(f"seo_title exceeds {SEO_TITLE_MAX} chars")
         fired.append("SEO_TITLE_TOO_LONG")
         score -= 0.5
     if len(generated.get("seo_meta", "")) > SEO_META_MAX:
-        issues.append("seo_meta exceeds 155 chars")
+        issues.append(f"seo_meta exceeds {SEO_META_MAX} chars")
         fired.append("SEO_META_TOO_LONG")
         score -= 0.5
     # AA-201: enforce lower band — no under-length meta
     _meta_len = generated.get("seo_meta", "").strip()
     if _meta_len and len(_meta_len) < SEO_META_MIN:
-        issues.append("seo_meta under 140 chars")
+        issues.append(f"seo_meta under {SEO_META_MIN} chars")
         fired.append("META_TOO_SHORT")
         score -= 0.5
 

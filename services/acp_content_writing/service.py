@@ -90,6 +90,7 @@ from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
+from services.quality import writing_policy as _wp  # AA-1047: the slug cap at a word boundary
 from services.quality import registry as qr
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.quality import final_contract as _fc  # (the name _finalize_piece's parameter shadows)
@@ -949,11 +950,12 @@ def _meta_ok(meta, keyword: Optional[str]) -> bool:
 
 
 def _ascii_slug(slug: Optional[str]) -> Optional[str]:
-    """S233 — a slug with accents ("…-khövsgöl") failed F4 lowercase-kebab; fold it to ASCII."""
+    """S233 — a slug with accents ("…-khövsgöl") failed F4 lowercase-kebab; fold it to ASCII. AA-1047 (writing
+    policy bands.slug, D5): over the cap it is cut at a hyphen, never mid-word (S271 T9 contradiction 12)."""
     if not isinstance(slug, str) or not slug:
         return slug
     folded = re.sub(r"[^a-z0-9]+", "-", _fold_kw(slug)).strip("-")
-    return folded[:60].rstrip("-") or slug
+    return _wp.slug_at_boundary(folded) or slug
 
 
 def _title_variant(title: Optional[str], brand: Optional[str], taken: list[str]) -> Optional[str]:
@@ -978,7 +980,11 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     S234 — with `hyg`, a title or meta naming a place outside the piece's scope (r1: 'Gobi' in
     8/8 titles) is out of band too; the fit is told never to use those places, and a fitted value
-    that still names one is rejected (F12 then reports the writer's own)."""
+    that still names one is rejected (F12 then reports the writer's own).
+
+    AA-1047 (S272): a meta under the policy band floor goes to the fit call like any other out-of-band value, and F4
+    reports what the fit leaves (as on main); no deterministic country tail (three review rounds kept finding
+    cross-border inputs it put in the wrong country)."""
     if seo_meta and seo_meta.get("slug"):
         seo_meta = {**seo_meta, "slug": _ascii_slug(seo_meta["slug"])}
     lex = hyg.lexicon if hyg is not None else None

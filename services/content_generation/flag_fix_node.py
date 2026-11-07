@@ -605,13 +605,13 @@ def flag_fix_node(state: dict) -> dict:
             meta_rules = f"""
 
 SEO_META RULES:
-- SEO_META MUST be 140-155 characters and a COMPLETE sentence (ends with a period, \
+- SEO_META MUST be {SEO_META_MIN}-{SEO_META_MAX} characters and a COMPLETE sentence (ends with a period, \
 not ending on a preposition/conjunction, contains a clear verb).
 - Include the DFS primary topic + one intent clue + one practical reassurance when available.
 - Do NOT pad with filler to reach length; rewrite naturally to land in band.
-- NEVER return meta under 140 chars.
-- If the current SEO_META exceeds 155 chars, SHORTEN it to land within 140-155 as a COMPLETE \
-sentence ending in a period — do NOT truncate mid-phrase.
+- NEVER return meta under {SEO_META_MIN} chars.
+- If the current SEO_META exceeds {SEO_META_MAX} chars, SHORTEN it to land within {SEO_META_MIN}-{SEO_META_MAX} as a \
+COMPLETE sentence ending in a period — do NOT truncate mid-phrase.
 Current SEO_META ({len(_cur_meta)} chars): {json.dumps(_cur_meta)}"""
 
         user_prompt = f"""{fix_user_prompt_head(state)}

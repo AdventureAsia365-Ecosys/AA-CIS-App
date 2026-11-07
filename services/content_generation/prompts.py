@@ -3,6 +3,8 @@ import re
 
 import structlog
 
+from services.quality import writing_policy as _wp  # AA-1047: the meta / title bands and the background line
+
 logger = structlog.get_logger()
 
 # AA-747: per-day target word counts in the main generate prompt. Default ON since S223: A/B on 10
@@ -177,8 +179,7 @@ _RULES_3_TO_6 = """\
    simple transit/rest day. Do NOT normalize every day to the same length regardless of source;
    that is the single most common mistake on this task.
 6. SOURCE FIDELITY — what you may and may not add beyond the source:
-   ALLOWED: short, well-known background about a place the source names (what it is, its era,
-   architecture or setting), e.g. "Hawa Mahal, the five-storey pink sandstone palace".
+""" + _wp.fragment("s1v1_t2_writer.background_allowed") + """
    FORBIDDEN: anything that promises the traveller something about THIS tour that the source does
    not state — activities or experiences, food and drink (tastings, chai, dinners), services
    (guides, orientation, support team, upgrades), transport mode or travel time, clock-times,
@@ -189,12 +190,14 @@ _A1_RULE_7 = """7. seo_meta must NOT contain budget travel language: "hostel", "
    "cheap", "backpacker", "dorm" — this base catalog reads as premium editorial regardless of
    price point; a specific tenant brand's own forbidden-word list (if any) applies on top.
 """
-_RULE_8_AND_OUTPUT = """8. SEO META LENGTH: seo_meta MUST be 140–155 characters — count carefully, NEVER under 140.
-   It must be one complete sentence ending in a period. If a draft is under 140, expand it
+_RULE_8_AND_OUTPUT = _wp.fill(
+    "8. SEO META LENGTH: seo_meta MUST be <<meta.min>>–<<meta.max>> characters — count carefully, NEVER under "
+    "<<meta.min>>." + """
+   It must be one complete sentence ending in a period. If a draft is under <<meta.min>>, expand it
    with concrete, relevant detail (place, activity, audience) — do NOT pad with filler words.
 
 Output ONLY valid JSON. No preamble, no markdown, no explanation.
-"""
+""")
 
 SYSTEM_PROMPT = (_A1_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _A1_RULE_2_HEAD + _RULE_2_BODY
                  + _RULES_3_TO_6 + _A1_RULE_7 + _RULE_8_AND_OUTPUT)
@@ -253,7 +256,8 @@ T2_DASHLESS = (
     ("own source length — a day with a lot", "own source length: a day with a lot"),
     ("6. SOURCE FIDELITY — what you may", "6. SOURCE FIDELITY: what you may"),
     ("   not state — activities or experiences", "   not state: activities or experiences"),
-    ("140–155 characters — count carefully", "140–155 characters; count carefully"),
+    (_wp.fill("<<meta.min>>–<<meta.max>> characters — count carefully"),
+     _wp.fill("<<meta.min>>–<<meta.max>> characters; count carefully")),
     ("(place, activity, audience) — do NOT pad", "(place, activity, audience); do NOT pad"),
     # system prompt: AA-202 contrast rules + the forbidden-words constraint (batch_prompt)
     ("clearly distinct — not a synonym swap", "clearly distinct, not a synonym swap"),
@@ -269,7 +273,8 @@ T2_DASHLESS = (
     ("CRITICAL LENGTH REQUIREMENT — seo_meta:", "CRITICAL LENGTH REQUIREMENT for seo_meta:"),
     ("as the source supports — minimum 3", "as the source supports: minimum 3"),
     ("PER-DAY SOURCE LENGTH above exactly —\n", "PER-DAY SOURCE LENGTH above exactly:\n"),
-    ('"SEO title — MUST be under 60 chars"', '"SEO title: MUST be under 60 chars"'),
+    (_wp.fill('"SEO title — MUST be under <<title.max>> chars"'),
+     _wp.fill('"SEO title: MUST be under <<title.max>> chars"')),
     # itinerary nudge rules (itinerary_utils._NUDGE_RULES)
     ("primary activity — never generic", "primary activity, never generic"),
 )
@@ -413,10 +418,11 @@ _USER_VOICE = {
         first-person ('our launchpad', 'fellow adventurers'). State what happens, where, and for how
         long — not how it feels. See NEUTRALIZE PROMOTIONAL SOURCE COPY in the system prompt.""",
         "day_rest": "do not add, merge, or drop days. The neutral register applies to EVERY day, not just the first.",
-        "seo_meta": """SEO meta description — MUST be 140-155 characters (NEVER under 140), a complete
+        "seo_meta": _wp.fill("SEO meta description — MUST be <<meta.min>>-<<meta.max>> characters (NEVER under "
+                             "<<meta.min>>), a complete" + """
     sentence ending in a period, opening with a concrete editorial clause. GOOD example (145 chars):
     'This Sri Lanka journey covers Sigiriya, Kandy and Yala with unhurried pacing, expert local
-    guides and comfortable transfers throughout the route.'""",
+    guides and comfortable transfers throughout the route.'"""),
     },
     "tenant": {
         "opening": ("Rewrite the following tour content as this client brand's own tour page, in its brand"
@@ -431,9 +437,10 @@ _USER_VOICE = {
         not fall back to a neutral catalogue register, and do not echo the source's own voice.""",
         "day_rest": """do not add, merge, or drop days. The brand voice applies to EVERY day, not just the first:
     same facts, no neutral register.""",
-        "seo_meta": """SEO meta description: MUST be 140-155 characters (NEVER under 140), a complete
+        "seo_meta": _wp.fill("SEO meta description: MUST be <<meta.min>>-<<meta.max>> characters (NEVER under "
+                             "<<meta.min>>), a complete" + """
     sentence ending in a period, in this brand's voice and naming the tour's concrete places or
-    activities.""",
+    activities."""),
     },
 }
 
@@ -454,6 +461,13 @@ def _render_t2_facts_block(facts: str) -> str:
         " written here. A fact never changes what TOUR DATA says the trip does. Never add a fact that is in neither"
         " TOUR DATA nor this list, and never say where a fact comes from.\n"
     )
+
+
+# AA-1047: the bands the rewrite prompt states (writing_policy.yaml): the T2 / v1 aim, the meta band, the title cap.
+_T2_AIM = _wp.fill("<<aim.t2.meta.min>>–<<aim.t2.meta.max>>")
+_BAND = _wp.fill("<<meta.min>>–<<meta.max>>")
+_META_MIN = _wp.band("meta")[0]
+_TITLE_MAX = _wp.band("title")[1]
 
 
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
@@ -545,8 +559,8 @@ SEO CONTEXT:
 - Target keywords: {', '.join(seo_keywords[:5])}
 - People also ask: {'; '.join(paa[:3])}
 
-CRITICAL LENGTH REQUIREMENT — seo_meta: aim 145–152 characters, hard band 140–155, a complete
-sentence ending with a period. Under 140 is rejected. Count characters before finalizing.
+CRITICAL LENGTH REQUIREMENT — seo_meta: aim {_T2_AIM} characters, hard band {_BAND}, a complete
+sentence ending with a period. Under {_META_MIN} is rejected. Count characters before finalizing.
 
 OUTPUT JSON FORMAT:
 {{
@@ -564,7 +578,7 @@ OUTPUT JSON FORMAT:
     "... one object per source day, in day order, matching PER-DAY SOURCE LENGTH above exactly —
     {v["day_rest"]}"
   ],
-  "seo_title": "SEO title — MUST be under 60 chars",
+  "seo_title": "SEO title — MUST be under {_TITLE_MAX} chars",
   "seo_meta": "{v["seo_meta"]}",
   "trip_type": "cultural|adventure|wellness|culinary|wildlife|trekking|festival|river_journey"
 }}"""

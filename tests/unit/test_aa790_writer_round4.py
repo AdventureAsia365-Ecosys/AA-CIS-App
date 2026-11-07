@@ -173,14 +173,17 @@ def test_self_check_quotes_the_full_more_than_set_up_and_keeps_seed_quantities()
     assert 'a quantity from the seed, such as "more than 300 monks", stays word for word' in check
 
 
-def test_cta_pairs_do_not_contradict_the_worked_in_cta_rule():
-    """Review fix: SYSTEM_PROMPT says the CTA is worked into the piece, not pasted on as a bare final sentence; the
-    DON'T / WRITE pairs ban only the label line and never ask for the CTA 'alone' or 'then the call to action'."""
-    assert "worked naturally into the piece, not pasted on as a bare" in _flat(prompts.SYSTEM_PROMPT)
+def test_cta_pairs_do_not_contradict_the_literal_cta_rule():
+    """AA-1047 (writing policy `cta`, S271 T9 contradiction 10): SYSTEM_PROMPT says the CTA is the configured line,
+    word for word, as the piece's own last sentence (code puts it in: hygiene.ensure_cta); the DON'T / WRITE pairs say
+    the same and never ask to work it into a fact. Before AA-1047 both said 'worked into', which ensure_cta undid."""
+    assert "End with the given call to action as its own sentence, word for word" in _flat(prompts.SYSTEM_PROMPT)
+    assert "worked naturally into the piece" not in _flat(prompts.SYSTEM_PROMPT)
     writes = [w for _, w in _pairs() if "call to action" in w]
     assert len(writes) == 2
     for w in writes:
-        assert "worked into" in w and "alone" not in w and "then the call to action" not in w, w
+        assert "worked into" not in w and "alone" not in w, w
+        assert "call to action line" in w, w
 
 
 @pytest.mark.parametrize("channel", ["linkedin", "blog", "facebook"])

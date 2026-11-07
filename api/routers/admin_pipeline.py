@@ -2603,7 +2603,7 @@ def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
     from services.content_generation.forbidden_words import has_word
     from services.content_generation.graph import _CODE_FIELD_MAP, _VALIDATE_FORBIDDEN
     from services.content_generation.seo_meta_utils import (
-        SEO_META_MIN, SEO_META_MAX, SEO_META_FORBIDDEN, meta_complete_sentence,
+        SEO_META_MIN, SEO_META_MAX, SEO_META_FORBIDDEN, SEO_TITLE_MAX, meta_complete_sentence,
     )
 
     seen = set(codes or [])
@@ -2635,8 +2635,8 @@ def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
         add("seo_meta", "META_TOO_SHORT", f"meta {len(meta)}<{SEO_META_MIN}")
     if "SEO_META_TOO_LONG" in seen and len(meta) > SEO_META_MAX:
         add("seo_meta", "SEO_META_TOO_LONG", f"meta {len(meta)}>{SEO_META_MAX}")
-    if "SEO_TITLE_TOO_LONG" in seen and len(title) > 60:
-        add("seo_title", "SEO_TITLE_TOO_LONG", f"title {len(title)}>60")
+    if "SEO_TITLE_TOO_LONG" in seen and len(title) > SEO_TITLE_MAX:
+        add("seo_title", "SEO_TITLE_TOO_LONG", f"title {len(title)}>{SEO_TITLE_MAX}")
     if "META_INCOMPLETE_SENTENCE" in seen and meta.strip() and not meta_complete_sentence(meta):
         add("seo_meta", "META_INCOMPLETE_SENTENCE", "meta does not end in a complete sentence")
     if "BRAND_SEO_META_VIOLATION" in seen:

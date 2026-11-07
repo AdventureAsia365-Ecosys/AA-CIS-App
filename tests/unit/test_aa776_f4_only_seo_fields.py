@@ -38,7 +38,7 @@ def test_title_meta_only_f4_is_the_fits(violations):
 @pytest.mark.parametrize("slug", [None, "mongolia-gobi-khövsgöl", "a-" * 60 + "b"])
 def test_slug_violation_still_needs_the_rewrite(slug):
     """The violation strings come from the real gate, so a reworded slug message breaks this test."""
-    f4 = gate_seo_surface("Lake Khovsgol in Winter: A Field Guide to the Ice", "x" * 130 + ".", slug, None)
+    f4 = gate_seo_surface("Lake Khovsgol in Winter: A Field Guide to the Ice", "x" * 145 + ".", slug, None)  # AA-1047
     assert f4["violations"] and all(v.startswith(("no slug", "slug ")) for v in f4["violations"])
     assert sr.plan(TEXT, [f4]) is None
     assert sr.plan(TEXT, [f4, F4_TITLE_META]) is None

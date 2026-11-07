@@ -60,6 +60,7 @@ from typing import Callable, Optional
 from services.acp_content_writing import hygiene
 from services.acp_content_writing.hygiene import content_words, cta_norm, fold, sentence_spans, tidy_after_cut
 from services.acp_shared.citation_tags import TAG
+from services.quality import writing_policy as _wp  # AA-1047: the CTA lines of the writer rules
 
 AI_TELLS_VERSION = "ai_tells.v3"  # v2: AA-790 round 2 (S251 re-panel); v3: round 3 (S252 re-panel)
 
@@ -116,11 +117,11 @@ PROMPT_RULES = """- AI TELLS (an editor must not be able to tell a model wrote t
     - DON'T "the valley is still making up its mind" / "volcanic candour". WRITE what it is: "<Place> is <what the
       content seed says it is>."
     - DON'T "It is the kind of memory that stays with them long after the trip." WRITE nothing: delete the line,
-      so the piece closes on its last fact with the call to action worked into it.
+      """ + _wp.fragment("t9_writer.cta_close_example") + """
     - DON'T "that link is concrete and real" / "a grounded, accessible stop". WRITE the link itself: "<Who> <does
       what> at <place>."
-    - DON'T "This is one moment of the <trip>. If a journey like this sounds right, message us." WRITE the call
-      to action as the piece's own sentence, worked into the last fact, with no label line before it."""
+    - DON'T "This is one moment of the <trip>. If a journey like this sounds right, message us." """ + _wp.fragment(
+    "t9_writer.cta_dont_write")
 
 # AA-790 round 4 (S252 4-arm panel: AI-tells 5.22, bar 5.5; the writer itself still produced the shapes above) — the
 # last rule before the output line, so it is the last thing the writer reads.

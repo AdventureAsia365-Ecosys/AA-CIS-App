@@ -53,6 +53,7 @@ import structlog
 from json_repair import repair_json
 
 from services.acp_contract.ranking_reference import PLACE_KINDS, names_somewhere
+from services.quality import writing_policy as _wp  # AA-1047: the place-card facts scope (D1)
 from shared import countries as _countries
 from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
@@ -119,10 +120,8 @@ the country the tour is sold as).
 - naming_note: one sentence on how to name the location for an international travel audience \
 (e.g. a widely used region name), and any spelling variants. Empty string if nothing to say.
 - aliases: up to 4 other names or spellings people use for this same place (may be empty).
-- facts: 4-6 short, standalone, well-established facts about the PLACE ITSELF (what it is, its \
-history and era, its setting and what is physically there). Never write how visitors reach it, what \
-visitors do or see, permits or access, or safety advice: those are trip facts and come only from the \
-itinerary. kind is one of: what_it_is, history, setting, naming.
+- facts: 4-6 short, standalone, well-established facts about the PLACE ITSELF """ + _wp.fragment(
+    "a3_place_card.facts_scope") + """ kind is one of: what_it_is, history, setting, naming.
 - Each fact describes the place only. Never end a background fact with a clause about travellers: \
 how people reach it (roads, drives, distances by road, gateways, staging or stopping points), the \
 views visitors get, what visitors do there, which other sites it is combined with, or "making it a \
