@@ -441,7 +441,13 @@ def test_route_attempts_counts_the_models_enabled_deployments(monkeypatch):
     monkeypatch.setattr(deployments, "alias_targets_sync", lambda key: ("m1", "m2"))
     assert r1.route_attempts(KIMI) == 6
     monkeypatch.setattr(deployments, "deployments_for_sync", lambda key: [])
-    assert r1.route_attempts(KIMI) == 1
+    from shared.llm_client.errors import MAX_CHAIN_ATTEMPTS
+    assert r1.route_attempts(KIMI) == MAX_CHAIN_ATTEMPTS       # unreadable/empty registry: the gateway's own cap
+
+    def boom(key):
+        raise RuntimeError("registry down")
+    monkeypatch.setattr(deployments, "deployments_for_sync", boom)
+    assert r1.route_attempts(KIMI) == MAX_CHAIN_ATTEMPTS
 
 
 def test_a_split_vote_with_a_missing_vote_is_unverified():
@@ -476,3 +482,22 @@ def test_precision_bar_is_per_writer_surface():
     assert rec["writers"]["a1"]["precision_passes_bar"]
     assert rec["classes"]["unsupported_superlative"]["passing_writers"] == ["a1"]
     assert rec["instrument_conditions_met"] and rec["passing_classes"] == ["a1:unsupported_superlative"]
+
+
+def test_a_writer_passes_only_on_its_own_labelled_violations():
+    """Review S272 repro: a1 has 18 caught violations of Y and 1 caught violation of X; t9_blog has 19 missed
+    violations of X. Pooled n_pos let 'a1:X' pass on t9_blog's labels; n_pos now counts per writer and class."""
+    def it(i, writer, cls, label, stratum="representative"):
+        return r1.Item(f"{i:064x}", writer, cls, label, stratum, "a" * 64, "content_text", f"claim {i}", "", "", (),
+                       "held_out")
+    items = [it(i, "a1", "Y", "violation", "hard" if i < 10 else "representative") for i in range(18)]
+    items += [it(100, "a1", "X", "violation")]
+    items += [it(200 + i, "a1", "Z", "ok") for i in range(20)]
+    items += [it(300 + i, "t9_blog", "X", "violation") for i in range(19)]
+    items += [it(400 + i, "t9_blog", "Z", "ok") for i in range(180)]
+    votes = {x.claim_hash: [x.writer == "a1" and x.label == "violation"] * 3 for x in items}
+    for x in items[19 + 20 + 19: 19 + 20 + 19 + 30]:
+        votes[x.claim_hash] = [True] * 3
+    rec = r1.measure(items, votes)
+    assert rec["classes"]["X"]["n_pos_by_writer"] == {"a1": 1, "t9_blog": 19}
+    assert "a1:X" not in rec["passing_classes"]

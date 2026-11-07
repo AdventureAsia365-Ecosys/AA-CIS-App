@@ -38,7 +38,8 @@ is raised).
 Measurement. Precision is the instrument's over EVERY fire on one writer surface (an entailment or extraction
 instrument does not know the class at run time: a hold acts on any fire; it does know the writer, and holds act per
 writer surface), with its Wilson lower bound. A class passes for a writer only when that writer's precision clears the
-bar, the class has n_pos >= the bar and at least one caught violation on that writer; passing classes are listed as
+bar, that writer has n_pos >= the bar for the class and at least one caught violation of it; passing classes are
+listed as
 "<writer>:<class>". A verdict needs votes // 2 + 1 real votes that agree (2 of 3); otherwise it is unverified, a miss
 on a violation and not cleared on an ok claim (D7: "a miss is unverified"), and the instrument conditions also need
 unverified / items <= UNVERIFIED_MAX.
@@ -282,7 +283,12 @@ def route_attempts(inst: Instrument) -> int:
         n = sum(len(deployments.deployments_for_sync(m)) for m in models)
     except Exception:                                        # noqa: BLE001 — never raises (registry unreadable)
         n = 0
-    return max(1, n)
+    if n <= 0:
+        # Registry unreadable or empty: the gateway may still walk up to its own attempt cap once it reloads, so the
+        # gate reserves that cap rather than one attempt (S272 review).
+        from shared.llm_client.errors import MAX_CHAIN_ATTEMPTS
+        return int(MAX_CHAIN_ATTEMPTS)
+    return n
 
 
 def _num(v: Any) -> Optional[float]:
@@ -573,7 +579,8 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
     writer surface (tp = fires on violations of any class of that writer, fired = every fire on it): `writers` holds
     them per writer, the top-level precision pools every writer (reading only). Per class: n_pos / tp / recall (and the
     class-local precision, reading only), and `passing_writers`: the writers whose precision clears the bar, when the
-    class's n_pos reaches the bar and it has at least one caught violation on that writer. Also test-retest agreement
+    writer's own n_pos for the class reaches the bar and it has at least one caught violation of it. Also test-retest
+    agreement
     (over items with >= 2 real votes), hard-subset recall, ok-cleared rate and the unverified count. An unverified item
     (no agreeing majority of real votes) is a miss on a violation and not cleared on an ok claim. `split` names the
     items' split; only a held-out record lists passing classes ("<writer>:<class>"; a train or mixed one is
@@ -581,6 +588,7 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
     per_class: dict[str, Counter] = defaultdict(Counter)
     per_writer: dict[str, Counter] = defaultdict(Counter)
     tp_writer_class: Counter = Counter()
+    pos_writer_class: Counter = Counter()
     retest_n = retest_same = unverified = 0
     unverified_by_label: Counter = Counter()
     hard_pos = hard_hit = ok_n = ok_cleared = 0
@@ -604,6 +612,7 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
             c["tp"] += flagged
             w["tp"] += flagged
             tp_writer_class[(i.writer, i.claim_class)] += flagged
+            pos_writer_class[(i.writer, i.claim_class)] += 1
             if i.stratum == "hard":
                 hard_pos += 1
                 hard_hit += flagged
@@ -621,12 +630,16 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
         fired = c["tp"] + c["fp"]
         lb = ss.wilson_lower(c["tp"], fired) if fired else None
         ok_writers = sorted(wr for wr, rec in writers.items()
-                            if rec["precision_passes_bar"] and c["n_pos"] >= bar.n_pos
+                            if rec["precision_passes_bar"] and pos_writer_class[(wr, cls)] >= bar.n_pos
                             and tp_writer_class[(wr, cls)] >= 1)
         classes[cls] = {"n": c["n"], "n_pos": c["n_pos"], "tp": c["tp"], "fp": c["fp"],
                         "precision": round(c["tp"] / fired, 4) if fired else None,
                         "precision_lb": round(lb, 4) if lb is not None else None,
                         "recall": round(c["tp"] / c["n_pos"], 4) if c["n_pos"] else None,
+                        "n_pos_by_writer": {wr: pos_writer_class[(wr, cls)] for wr in sorted(per_writer)
+                                            if pos_writer_class[(wr, cls)]},
+                        "recall_by_writer": {wr: round(tp_writer_class[(wr, cls)] / pos_writer_class[(wr, cls)], 4)
+                                             for wr in sorted(per_writer) if pos_writer_class[(wr, cls)]},
                         "passing_writers": ok_writers, "passes_bar": bool(ok_writers)}
     retest = round(retest_same / retest_n, 4) if retest_n else None
     ok_rate = round(ok_cleared / ok_n, 4) if ok_n else None
