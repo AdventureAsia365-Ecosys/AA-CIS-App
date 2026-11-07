@@ -98,7 +98,6 @@ from services.acp_content_writing import brief_grounding  # AA-790 round 9 (writ
 from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate  # AA-1000 (regression guard)
 from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
 from services.content_generation.batch_prompt import prompt_version_of
-from services.content_generation import seo_meta_utils  # AA-1047: the deterministic short-meta tail (D5)
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -949,9 +948,9 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
     8/8 titles) is out of band too; the fit is told never to use those places, and a fitted value
     that still names one is rejected (F12 then reports the writer's own).
 
-    AA-1047 (S272 review) — a complete meta under the band floor (the writer aims 130-145, the band is 140-155) first
-    gets the deterministic DESTINATION tail (seo_meta_utils.extend_short_meta) when that lands it in the band, before
-    and after the fit call: no fit call for it, and no F4 hold on a 130-139 meta the tail can fix."""
+    AA-1047 (S272): a meta under the policy band floor goes to the fit call like any other out-of-band value, and F4
+    reports what the fit leaves (as on main); no deterministic country tail (three review rounds kept finding
+    cross-border inputs it put in the wrong country)."""
     if seo_meta and seo_meta.get("slug"):
         seo_meta = {**seo_meta, "slug": _ascii_slug(seo_meta["slug"])}
     lex = hyg.lexicon if hyg is not None else None
@@ -977,28 +976,6 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
                 and not trip_facts.rarity_claims("", hygiene.split_seed(seed)[0], extra_texts=(("meta", value),))
                 and not authenticity.field_hits(value))  # AA-819
 
-    def composed(out: dict) -> dict:
-        # AA-1047 (D5 "code composes"; writing policy writer_aims.meta.t9.short_fix): the writer and the fit aim under
-        # the band floor (lesson S233), so a complete meta left under it gets one tail from the DESTINATION line
-        # (', in <destination>.') when that lands it in the band; no LLM call, never a word the source lacks.
-        meta = out.get("meta_description") if out else None
-        if not out or meta_ok(meta):
-            return out
-        # S272 review 2: the DESTINATION is raw_tours.country (one per trip); it is named only when it is the place's
-        # own seed Location country (a place keeps its own country), and the trip name runs the AA-794 check
-        # S272 review 3: every Location line counts — a route piece's seed is one block per moment, and the route
-        # segments are read too — so a cross-border route never names one country for all its places
-        # S272 review 4: only a place CARD's Location line says where a place is (the fallback line is written from
-        # raw_tours.country, the DESTINATION itself); a block without one gets no tail
-        country = seo_meta_utils.place_country_tail(
-            context.get("destination"), hygiene.split_seed(seed)[0],
-            *(hygiene.split_seed(t)[0] for _a, t in (context.get("route_segments") or [])))
-        if not country:
-            return out
-        cand = seo_meta_utils.extend_short_meta(meta, {"country": country, "name": context.get("trip_name")})
-        return {**out, "meta_description": cand} if cand and meta_ok(cand) else out
-
-    seo_meta = composed(seo_meta)
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
     audience = context.get("brand_audience") or {}
@@ -1048,7 +1025,6 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
             out = merge(out, again)
         except Exception as e:  # noqa: BLE001
             logger.warning("t9_seo_fit_retry_failed", request_id=str(request_id), error=str(e)[:200])
-    out = composed(out)
     if title_taken(out.get("seo_title"), taken):
         variant = _title_variant(out.get("seo_title"), audience.get("brand_name"), taken)
         if variant and _seo_title_ok(variant, keyword):

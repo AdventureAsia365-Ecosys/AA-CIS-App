@@ -63,22 +63,22 @@ END $$;
 -- ── 1. the manifest rows ─────────────────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO shared.prompt_version (stage, version, prompt_sha256, source_path, created_by) VALUES
-    ('a3_place_card', 'v2', '0299d2a5e5741f2a1179bca86a7f15747eb321342f2c9aff1399ddf41e5ea269', 'services/acp_shared/place_cards.py', 'migration-387'),
-    ('a3_place_card_check', 'v2', '36f53b73c7323070d266463342b91b38eb49a66ac6b0a18f0d14cb09ccc6b014', 'services/acp_shared/place_cards.py', 'migration-387'),
-    ('s1_brand_audit', 'v2', '756b8331cb281278b007d75b70caf92640d8ce7e4f44b1ac7ab66dca2f92b9c4', 'services/content_generation/brand_standards.py', 'migration-387'),
-    ('s1_flag_fix', 'v2', 'ac3acbf26e69fa34d3801a26b47973e45bd44f976084e346372a7caf0cfdb426', 'services/content_generation/flag_fix_node.py', 'migration-387'),
-    ('s1_generate', 'v2', 'e2b47a076a9138843335079f12155a03a5ed05b62f7f0cdeecc752694f5f7d65', 'services/content_generation/s1_writer_v2.py', 'migration-387'),
-    ('s1_judge', 'v2', 'ecfa10c33f36e42c6c039f0db45b21b6ff1541ce53ae711a572a0a8d6d1d7aec', 'services/content_generation/brand_fit_v2.py', 'migration-387'),
-    ('t10_claims', 'v2', 'ed3de5c319505803998caab7d17abdaf7ffc5a61f53ed33682c2fb7d3722268f', 'services/acp_content_writing/claim_rules.py', 'migration-387'),
-    ('t10_judge', 'v2', '39e6ba9591049ee2a708708331ff5de1fd83e9e0af5d1f6ea2fb9a807932e7ad', 'services/acp_content_writing/quality_gates.py', 'migration-387'),
-    ('t2_brand_audit', 'v2', '756b8331cb281278b007d75b70caf92640d8ce7e4f44b1ac7ab66dca2f92b9c4', 'services/content_generation/brand_standards.py', 'migration-387'),
-    ('t2_flag_fix', 'v2', 'ac3acbf26e69fa34d3801a26b47973e45bd44f976084e346372a7caf0cfdb426', 'services/content_generation/flag_fix_node.py', 'migration-387'),
-    ('t2_generate', 'v2', '0ecd2e82ed994e0ba2b760d22d3c4afcf1ba68ee3b6ffea44630c0a2797e763c', 'services/content_generation/prompts.py', 'migration-387'),
-    ('t2_judge', 'v2', 'ecfa10c33f36e42c6c039f0db45b21b6ff1541ce53ae711a572a0a8d6d1d7aec', 'services/content_generation/brand_fit_v2.py', 'migration-387'),
-    ('t9_faq_answer_fit', 'v2', '42cad51b3e177b2be57c59a3537d30a972c73f60f5a4414ff9dc19b31c542f2b', 'services/acp_content_writing/faq_answer_fit.py', 'migration-387'),
-    ('t9_repair', 'v2', 'ed8061ddd087731b3c74c0113a39a8f30907e0b6141449ac32e1079eeb4c9766', 'services/acp_content_writing/generate.py', 'migration-387'),
-    ('t9_write', 'v4', 'a238ab7d6e1bd8c3b65df30c899f2ff2cd5a155623ed18d45603d5910d8c611e', 'services/acp_content_writing/prompts.py', 'migration-387'),
-    ('writing_memory_eval', 'v3', 'bbbf4e778dee02722854e488c185e60e5f1d5b49396cf865fe732a544129b8c6', 'services/writing_memory/eval_judge.py', 'migration-387')
+    ('a3_place_card', 'v2', '588f1e99649190710138baeb6259b46a28818598c0f113dacbc0472ac8682db7', 'services/acp_shared/place_cards.py', 'migration-387'),
+    ('a3_place_card_check', 'v2', 'a3187a8d39ec38fc78c964a8ada0d3c6ca4ae422815725a2d420164515d7d39c', 'services/acp_shared/place_cards.py', 'migration-387'),
+    ('s1_brand_audit', 'v2', '504c482127b6b7b96cc1f114ba0a927e8f787626b9caaad07e34a7b9326420a2', 'services/content_generation/brand_standards.py', 'migration-387'),
+    ('s1_flag_fix', 'v2', 'd3ea3ec4b233e245fa5c08e9363cda9f1796b7ff38743d6946e369aa311e0977', 'services/content_generation/flag_fix_node.py', 'migration-387'),
+    ('s1_generate', 'v2', '01c18efbe2412240412253f7d5e65564bdf7cf7e6f6fac809c610894a5382476', 'services/content_generation/s1_writer_v2.py', 'migration-387'),
+    ('s1_judge', 'v2', '808a07b8b5d5cd7832d9898341ff1bf6e358b7936df32d0c13a6e212dd194481', 'services/content_generation/brand_fit_v2.py', 'migration-387'),
+    ('t10_claims', 'v2', 'dcff98166099c0dc9c5c6396e90d9ca1aa8355cb66d6d8bc9a16d57c7ed478c1', 'services/acp_content_writing/claim_rules.py', 'migration-387'),
+    ('t10_judge', 'v2', '5f7d5704af9bf853524dddb7927e90e780d93aad65c06259244bda3c16b2f75b', 'services/acp_content_writing/quality_gates.py', 'migration-387'),
+    ('t2_brand_audit', 'v2', '504c482127b6b7b96cc1f114ba0a927e8f787626b9caaad07e34a7b9326420a2', 'services/content_generation/brand_standards.py', 'migration-387'),
+    ('t2_flag_fix', 'v2', 'd3ea3ec4b233e245fa5c08e9363cda9f1796b7ff38743d6946e369aa311e0977', 'services/content_generation/flag_fix_node.py', 'migration-387'),
+    ('t2_generate', 'v2', '88df7c8f2f84c3d940fc69e65572ae4c72e206b7fec5b285c6c2ffd322ebf355', 'services/content_generation/prompts.py', 'migration-387'),
+    ('t2_judge', 'v2', '808a07b8b5d5cd7832d9898341ff1bf6e358b7936df32d0c13a6e212dd194481', 'services/content_generation/brand_fit_v2.py', 'migration-387'),
+    ('t9_faq_answer_fit', 'v2', '290742f42bafbda199d5976c4270051f2dab6669b9434ba4b4eff73e06cb2146', 'services/acp_content_writing/faq_answer_fit.py', 'migration-387'),
+    ('t9_repair', 'v2', '346460b3cce89e9cee5df178d1fe26f29e0a9fe526890e54a96dc79fd747b9fd', 'services/acp_content_writing/generate.py', 'migration-387'),
+    ('t9_write', 'v4', 'ed6b2767697544b46b6c97a1c52d7baa47faaafc972a7c62016dbf5c63ee4ef8', 'services/acp_content_writing/prompts.py', 'migration-387'),
+    ('writing_memory_eval', 'v3', '75a825a40e3370e4bb72b2bb8750ccba1609788e731cbada3b95ef2d5932851e', 'services/writing_memory/eval_judge.py', 'migration-387')
 ON CONFLICT (stage, version) DO NOTHING;
 
 -- ── 2. guard ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -86,22 +86,22 @@ ON CONFLICT (stage, version) DO NOTHING;
 DO $$
 DECLARE
     expected CONSTANT text[][] := ARRAY[
-        ['a3_place_card', 'v2', '0299d2a5e5741f2a1179bca86a7f15747eb321342f2c9aff1399ddf41e5ea269', 'services/acp_shared/place_cards.py'],
-        ['a3_place_card_check', 'v2', '36f53b73c7323070d266463342b91b38eb49a66ac6b0a18f0d14cb09ccc6b014', 'services/acp_shared/place_cards.py'],
-        ['s1_brand_audit', 'v2', '756b8331cb281278b007d75b70caf92640d8ce7e4f44b1ac7ab66dca2f92b9c4', 'services/content_generation/brand_standards.py'],
-        ['s1_flag_fix', 'v2', 'ac3acbf26e69fa34d3801a26b47973e45bd44f976084e346372a7caf0cfdb426', 'services/content_generation/flag_fix_node.py'],
-        ['s1_generate', 'v2', 'e2b47a076a9138843335079f12155a03a5ed05b62f7f0cdeecc752694f5f7d65', 'services/content_generation/s1_writer_v2.py'],
-        ['s1_judge', 'v2', 'ecfa10c33f36e42c6c039f0db45b21b6ff1541ce53ae711a572a0a8d6d1d7aec', 'services/content_generation/brand_fit_v2.py'],
-        ['t10_claims', 'v2', 'ed3de5c319505803998caab7d17abdaf7ffc5a61f53ed33682c2fb7d3722268f', 'services/acp_content_writing/claim_rules.py'],
-        ['t10_judge', 'v2', '39e6ba9591049ee2a708708331ff5de1fd83e9e0af5d1f6ea2fb9a807932e7ad', 'services/acp_content_writing/quality_gates.py'],
-        ['t2_brand_audit', 'v2', '756b8331cb281278b007d75b70caf92640d8ce7e4f44b1ac7ab66dca2f92b9c4', 'services/content_generation/brand_standards.py'],
-        ['t2_flag_fix', 'v2', 'ac3acbf26e69fa34d3801a26b47973e45bd44f976084e346372a7caf0cfdb426', 'services/content_generation/flag_fix_node.py'],
-        ['t2_generate', 'v2', '0ecd2e82ed994e0ba2b760d22d3c4afcf1ba68ee3b6ffea44630c0a2797e763c', 'services/content_generation/prompts.py'],
-        ['t2_judge', 'v2', 'ecfa10c33f36e42c6c039f0db45b21b6ff1541ce53ae711a572a0a8d6d1d7aec', 'services/content_generation/brand_fit_v2.py'],
-        ['t9_faq_answer_fit', 'v2', '42cad51b3e177b2be57c59a3537d30a972c73f60f5a4414ff9dc19b31c542f2b', 'services/acp_content_writing/faq_answer_fit.py'],
-        ['t9_repair', 'v2', 'ed8061ddd087731b3c74c0113a39a8f30907e0b6141449ac32e1079eeb4c9766', 'services/acp_content_writing/generate.py'],
-        ['t9_write', 'v4', 'a238ab7d6e1bd8c3b65df30c899f2ff2cd5a155623ed18d45603d5910d8c611e', 'services/acp_content_writing/prompts.py'],
-        ['writing_memory_eval', 'v3', 'bbbf4e778dee02722854e488c185e60e5f1d5b49396cf865fe732a544129b8c6', 'services/writing_memory/eval_judge.py']
+        ['a3_place_card', 'v2', '588f1e99649190710138baeb6259b46a28818598c0f113dacbc0472ac8682db7', 'services/acp_shared/place_cards.py'],
+        ['a3_place_card_check', 'v2', 'a3187a8d39ec38fc78c964a8ada0d3c6ca4ae422815725a2d420164515d7d39c', 'services/acp_shared/place_cards.py'],
+        ['s1_brand_audit', 'v2', '504c482127b6b7b96cc1f114ba0a927e8f787626b9caaad07e34a7b9326420a2', 'services/content_generation/brand_standards.py'],
+        ['s1_flag_fix', 'v2', 'd3ea3ec4b233e245fa5c08e9363cda9f1796b7ff38743d6946e369aa311e0977', 'services/content_generation/flag_fix_node.py'],
+        ['s1_generate', 'v2', '01c18efbe2412240412253f7d5e65564bdf7cf7e6f6fac809c610894a5382476', 'services/content_generation/s1_writer_v2.py'],
+        ['s1_judge', 'v2', '808a07b8b5d5cd7832d9898341ff1bf6e358b7936df32d0c13a6e212dd194481', 'services/content_generation/brand_fit_v2.py'],
+        ['t10_claims', 'v2', 'dcff98166099c0dc9c5c6396e90d9ca1aa8355cb66d6d8bc9a16d57c7ed478c1', 'services/acp_content_writing/claim_rules.py'],
+        ['t10_judge', 'v2', '5f7d5704af9bf853524dddb7927e90e780d93aad65c06259244bda3c16b2f75b', 'services/acp_content_writing/quality_gates.py'],
+        ['t2_brand_audit', 'v2', '504c482127b6b7b96cc1f114ba0a927e8f787626b9caaad07e34a7b9326420a2', 'services/content_generation/brand_standards.py'],
+        ['t2_flag_fix', 'v2', 'd3ea3ec4b233e245fa5c08e9363cda9f1796b7ff38743d6946e369aa311e0977', 'services/content_generation/flag_fix_node.py'],
+        ['t2_generate', 'v2', '88df7c8f2f84c3d940fc69e65572ae4c72e206b7fec5b285c6c2ffd322ebf355', 'services/content_generation/prompts.py'],
+        ['t2_judge', 'v2', '808a07b8b5d5cd7832d9898341ff1bf6e358b7936df32d0c13a6e212dd194481', 'services/content_generation/brand_fit_v2.py'],
+        ['t9_faq_answer_fit', 'v2', '290742f42bafbda199d5976c4270051f2dab6669b9434ba4b4eff73e06cb2146', 'services/acp_content_writing/faq_answer_fit.py'],
+        ['t9_repair', 'v2', '346460b3cce89e9cee5df178d1fe26f29e0a9fe526890e54a96dc79fd747b9fd', 'services/acp_content_writing/generate.py'],
+        ['t9_write', 'v4', 'ed6b2767697544b46b6c97a1c52d7baa47faaafc972a7c62016dbf5c63ee4ef8', 'services/acp_content_writing/prompts.py'],
+        ['writing_memory_eval', 'v3', '75a825a40e3370e4bb72b2bb8750ccba1609788e731cbada3b95ef2d5932851e', 'services/writing_memory/eval_judge.py']
     ];
     i int;
 BEGIN

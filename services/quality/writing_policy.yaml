@@ -46,11 +46,13 @@ bands:
   meta: {min: 140, max: 155}
   title: {min: 45, max: 60}
   slug: {max: 60, cut: word_boundary}
-# An aim under the band floor is an exception the schema check only accepts with `short_fix`: the deterministic step
-# that lands a value the writer left under the floor in the band (a tail built from source fields, no LLM).
+# An aim under the band floor is an exception the schema check only accepts with `short_fix`: the step that handles a
+# value the writer left under the floor (S1: a deterministic tail built from source fields, no LLM; T9: the SEO fit
+# call, and F4 holds what it leaves, as on main; S272: the T9 deterministic country tail was withdrawn, it kept naming
+# the wrong country on cross-border inputs).
 writer_aims:
   meta:
-    t9: {min: 130, max: 145, short_fix: "services.content_generation.seo_meta_utils:extend_short_meta"}  # T9 writer + SEO fit
+    t9: {min: 130, max: 145, short_fix: "services.acp_content_writing.service:_fit_seo_meta"}  # T9 writer + SEO fit
     s1: {min: 130, max: 148, short_fix: "services.content_generation.seo_meta_utils:fit_seo_meta_final"}  # S1 writer v2
     t2: {min: 145, max: 152}        # S1 v1 / T2 rewrite prompt ("aim ..., hard band <meta band>")
 
@@ -68,23 +70,55 @@ day_count: {must_equal: source}
 
 # --------------------------------------------------------------------------------------------- claim policy (D1-D15)
 # Each topic: the decision(s) it implements, the verdict per case (pass | warn | enforce), and the class it reports.
+#
+# S272 (fail closed until W2): three adversarial review rounds showed that every hand-written rule turning a block into
+# a warn (a background number, a place rarity, an uncited place background) kept failing open on new inputs. A topic
+# with `enforcement: block_until_w2_instrument` is ENFORCED as on main (the cases below are the verdicts the gates give
+# today) and records the decided intent under `w2_intent`; the W2 claim instrument (D7, D10) turns `w2_intent` on once
+# it is measured. The warn-expected sentences of those intents live in
+# tests/unit/quality/fixtures/aa1047_w2_intent_examples.yaml (kept, not asserted).
 claims:
-  background:  {decisions: [D1], named_place: pass, number_or_year: warn, trip_activity_service_time_view: enforce, unnamed_place: enforce, invented_direction_or_position: enforce}  # a position is fact.direction (hard)
+  background:
+    decisions: [D1]
+    enforcement: block_until_w2_instrument
+    # the F9 v2 rule table's place_background row as on main: an uncited background sentence warns only when no place
+    # of the SOURCE has a card and it has no number, rule, scene or trip word; otherwise it fails (cite a P line)
+    named_place: warn_without_place_card
+    number_or_year: enforce
+    trip_activity_service_time_view: enforce
+    unnamed_place: warn_without_place_card
+    invented_direction_or_position: enforce    # F17 (trip_facts.timing_claims) owns it
+    w2_intent: {named_place: pass, number_or_year: warn, trip_activity_service_time_view: enforce, unnamed_place: enforce, invented_direction_or_position: enforce}
   brief:       {decisions: [D2], brief_is_source: false}
   reflection:  {decisions: [D3], no_trip_fact: pass}
   hypothetical: {decisions: [D4], framing: warn, concrete_trip_detail: enforce}
-  rarity:      {decisions: [D13, D1], trip: enforce, place: warn}
+  rarity:
+    decisions: [D13, D1]
+    enforcement: block_until_w2_instrument
+    trip: enforce
+    place: enforce                             # F18 holds every rarity claim the source does not make, as on main
+    w2_intent: {trip: enforce, place: warn}
   suitability: {decisions: [D14], sourced: pass, beyond_source: enforce}
   scene:       {decisions: [D15], general_feeling: pass, concrete_trip_detail: enforce}
   timing:      {decisions: [D4, D15], unsourced_trip_time: enforce}
-  numbers:     {decisions: [D1], digits_and_words: true, other_trip_lines_support: false, trip_frame: enforce, elsewhere: warn}
+  numbers:
+    decisions: [D1]
+    enforcement: block_until_w2_instrument
+    # F1 (quality_gates.gate_grounding) as on main: every digit / year form the SOURCE (all of it) lacks blocks; the
+    # rule table fails a spelled-out figure the SOURCE lacks
+    digits_and_words: false
+    other_trip_lines_support: true
+    trip_frame: enforce
+    elsewhere: enforce
+    w2_intent: {digits_and_words: true, other_trip_lines_support: false, trip_frame: enforce, elsewhere: warn}
   scope:       {places_outside_trip: block_class, gate_mode: measured}
   truth_cut:   {decisions: [D6], tenant_content_after_budget: stop_and_label, cut: measured_classes_only, clause_first: true, tenant_spans: never_cut, publish_block: false}
   elephant:    {decisions: [D8], t2: master_verbatim_no_llm, review_row: true, delivered: true}
 
-# claim_rules.RulesConfig (F9 v2 rule table). `uncited_background`: a place_background sentence with no cited line
-# about a place the source names; `background_numbers`: the same with a number or year the source lacks.
-rules_config: {hypothetical: warn, uncited_background: pass, background_numbers: warn}
+# claim_rules.RulesConfig (F9 v2 rule table) as on main until W2 (see `claims.background`): `uncited_background: warn`
+# = an uncited place_background sentence warns only when no place has a card and it carries no number, rule, scene or
+# trip word, else it fails; `hypothetical: warn` = an imagined scene with no concrete trip detail warns (D4).
+rules_config: {hypothetical: warn, uncited_background: warn}
 
 # Class severities the policy owns (taxonomy.yaml must say the same; the lint checks). A detector in `warn` mode on a
 # block class is a gate waiting for its measurement record (ADR 0020: only measured gates hold), not a contradiction.
@@ -266,8 +300,8 @@ example_seeds:
     place: "Dunmere Harbour"
     country: "Tesselmoor"
     day: 6
-  # S272 review 4: the T9 short-meta tail reads only a place CARD's Location line (the card-less fallback line carries
-  # raw_tours.country, the DESTINATION itself); these seeds give the moment a verified card with its own country
+  # moments with a verified place card (its own country); the T9 short-meta examples below use them to show that code
+  # never composes a country tail, whatever the card says (S272: the tail was withdrawn)
   monastery_card:
     label: "Corran Monastery — visit"
     evidence: "Walk up to Corran Monastery above Orvine and visit its library hall with a local guide."
@@ -293,113 +327,95 @@ example_seeds:
     label: "Lake Orvine — ferry crossing"
 
 examples:
-  # ---- background (D1): about a place the source names = pass; a number or year = warn; this trip's
-  #      activity / service / time / view, or a place the source never names = block
-  - {id: bg-01, topic: background, expect: pass, text: "Corran Monastery was built by travelling monks and keeps a working library.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-02, topic: background, expect: warn, all: [apply_rules, F1_grounding, check_replacement], text: "Corran Monastery was built by travelling monks in 1388.", claim: {type: place_background, places: [Corran Monastery]}}
+  # S272: the claim examples (background, rarity, timing, numbers, scope) assert the verdicts the gates give on main
+  # (`claims.<topic>.enforcement: block_until_w2_instrument`, fail closed); their D1 / D13 intent (warn or pass) is in
+  # tests/unit/quality/fixtures/aa1047_w2_intent_examples.yaml, kept for W2 and not asserted.
+  # ---- background (D1, held at main's rule table): a cited background line = pass; uncited background about a place
+  #      with no card = warn; a number or year, a rule or fee, or this trip's activity / service = block
+  - {id: bg-01, topic: background, expect: warn, all: [apply_rules], text: "Corran Monastery was built by travelling monks and keeps a working library.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-02, topic: background, expect: block, all: [apply_rules, F1_grounding, check_replacement], text: "Corran Monastery was built by travelling monks in 1388.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: bg-03, topic: background, expect: block, all: [apply_rules], text: "At Corran Monastery you join the monks for dinner.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-04, topic: background, expect: pass, text: "The monastery sits on a ridge above Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
-  - {id: bg-05, topic: background, expect: block, all: [apply_rules], text: "Corran Monastery is the sister house of Delmont Abbey.", claim: {type: place_background, places: [Corran Monastery, Delmont Abbey]}}
-  - {id: bg-06, topic: background, expect: warn, all: [apply_rules, F1_grounding, check_replacement], text: "The library hall holds 900 handwritten books.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-04, topic: background, expect: warn, all: [apply_rules], text: "The monastery sits on a ridge above Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
+  - {id: bg-06, topic: background, expect: block, all: [apply_rules, F1_grounding, check_replacement], text: "The library hall holds 900 handwritten books.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: bg-07, topic: background, expect: block, all: [apply_rules, F1_grounding, check_replacement], text: "On this tour you see 900 handwritten books in the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-08, topic: background, expect: pass, text: "The library hall is the oldest room of the monastery.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-08, topic: background, expect: warn, all: [apply_rules], text: "The library hall is the oldest room of the monastery.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: bg-09, topic: background, expect: block, all: [apply_rules], text: "The monastery charges an entrance fee.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-11, topic: background, seed: lake, expect: block, all: [apply_rules, F17_trip_fact, check_replacement], text: "Brecca village sits on the far shore of Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
-  # S272 review 2: a position only a Fact gives is held (F17 reads the moment's own seed lines only; fail closed), and
-  # the position rule runs for every claim type, not only place_background
-  - {id: bg-12, topic: background, seed: lake, expect: block, all: [apply_rules, F17_trip_fact, check_replacement], facts: "[Fact id=f-1]\nBrecca village lies on the far shore of Lake Orvine.", text: "Brecca village sits on the far shore of Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
-  - {id: bg-13, topic: background, seed: lake, expect: block, all: [apply_rules, F17_trip_fact, check_replacement], text: "The guesthouse sits on the far shore of Lake Orvine.", claim: {type: location, places: [Lake Orvine]}}
-  - {id: bg-10, topic: background, expect: pass, text: "Corran Monastery belongs to an old order of teaching monks.", claim: {type: place_background, places: [Corran Monastery]}}
-  # ---- rarity (D13): attached to the trip = block; about a place = warn (D1)
-  - {id: rar-01, topic: rarity, expect: warn, all: [F18_rarity, apply_rules, check_replacement], text: "Corran Monastery is one of the last walled monasteries in the world.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-02, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "This tour is one of the last ways in the world to reach the library hall.", claim: {type: comparison}}
-  - {id: rar-03, topic: rarity, expect: pass, text: "Corran Monastery is the main monastery of the Orvine valley.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
-  - {id: rar-04, topic: rarity, seed: lake, expect: warn, all: [F18_rarity, apply_rules, check_replacement], text: "Lake Orvine has no real equivalent anywhere on earth.", claim: {type: place_background, places: [Lake Orvine]}}
-  - {id: rar-05, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Your group crosses a lake with no real equivalent anywhere on earth.", claim: {type: comparison}}
-  - {id: rar-06, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Most travellers never find their way to Corran Monastery.", claim: {type: social_proof, places: [Corran Monastery]}}
-  - {id: rar-07, topic: rarity, expect: warn, all: [F18_rarity, apply_rules, check_replacement], text: "The library hall is unparalleled in Velmora.", claim: {type: place_background, places: [Velmora]}}
-  - {id: rar-08, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "You will be among the few travellers who see the library hall.", claim: {type: social_proof}}
-  # S272 review 2: access rarity (a rare chance, a handful of travellers, few groups, the only ones allowed) is social
-  # proof by scarcity: F18, the rule table and the admin sentence check block it whatever the claim type
-  - {id: rar-09, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "This walk offers a rare chance to see the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-10, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Only a handful of travellers reach the library hall each year.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-11, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Your group is one of the only ones allowed into the library hall.", claim: {type: trip_fact, ref: S3, quote: "visit its library hall", places: [Corran Monastery]}}
-  - {id: rar-12, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Few groups ever reach the library hall, but yours will.", claim: {type: generic}}
-  # S272 review 3: F18's trip-vs-place test is claim_rules.trip_attached (a trip activity / leg / service word or the
-  # moment's own itinerary verbs, not only a trip subject), and the rule table reads F18's rarity lexicon: a rarity
-  # claim on a crossing, a visit, a tour or a walk blocks in F18, the rule table and the admin check
-  - {id: rar-13, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The ferry crossing to Brecca is unparalleled anywhere on earth.", claim: {type: place_background, places: [Brecca]}}
-  - {id: rar-14, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The library hall visit is the only one of its kind in the world.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-15, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Corran's library hall tour is unique in the world.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-16, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Walking up to Corran Monastery is an experience unmatched in Asia.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-17, topic: rarity, seed: lake, expect: warn, all: [F18_rarity, apply_rules, check_replacement], text: "Lake Orvine is unparalleled anywhere on earth.", claim: {type: place_background, places: [Lake Orvine]}}
-  # S272 review 4: the route, stay and experience of the trip (the way up, the approach, the shore path it walks, its
-  # arrival by water, an evening at its inn, the welcome it gets) are the trip: a rarity claim on them blocks everywhere
-  - {id: rar-18, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The way up to Corran Monastery is unmatched anywhere on earth.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-19, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The approach to Corran Monastery is unparalleled in Asia.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: rar-20, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The shore path to Brecca has no real equivalent anywhere on earth.", claim: {type: place_background, places: [Brecca]}}
-  - {id: rar-21, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Arrival at Brecca by water is unmatched in Velmora.", claim: {type: place_background, places: [Brecca, Velmora]}}
-  - {id: rar-22, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "An evening at the Brecca inn is unique in the world.", claim: {type: place_background, places: [Brecca]}}
-  - {id: rar-23, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The welcome at Corran Monastery is unmatched in Velmora.", claim: {type: place_background, places: [Corran Monastery, Velmora]}}
+  - {id: bg-11, topic: background, seed: lake, expect: block, all: [F17_trip_fact], text: "Brecca village sits on the far shore of Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
+  # a position the moment's own seed lines do not give is held by F17 (trip_facts.timing_claims), Fact or not
+  - {id: bg-12, topic: background, seed: lake, expect: block, all: [F17_trip_fact], facts: "[Fact id=f-1]\nBrecca village lies on the far shore of Lake Orvine.", text: "Brecca village sits on the far shore of Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
+  - {id: bg-13, topic: background, seed: lake, expect: block, all: [F17_trip_fact], text: "The guesthouse sits on the far shore of Lake Orvine.", claim: {type: location, places: [Lake Orvine]}}
+  - {id: bg-10, topic: background, expect: warn, all: [apply_rules], text: "Corran Monastery belongs to an old order of teaching monks.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-14, topic: background, expect: pass, all: [apply_rules, F1_grounding, F18_rarity, check_replacement], text: "Corran Monastery stands above Orvine.", claim: {type: place_background, ref: S3, quote: "Corran Monastery above Orvine", places: [Corran Monastery, Orvine]}}
+  # ---- rarity (D13, held at main's F18): every rarity claim the source does not make = block, trip or place
+  - {id: rar-01, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "Corran Monastery is one of the last walled monasteries in the world.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-02, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "This tour is one of the last ways in the world to reach the library hall.", claim: {type: comparison}}
+  - {id: rar-03, topic: rarity, expect: warn, all: [apply_rules], text: "Corran Monastery is the main monastery of the Orvine valley.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
+  - {id: rar-04, topic: rarity, seed: lake, expect: block, all: [F18_rarity], text: "Lake Orvine has no real equivalent anywhere on earth.", claim: {type: place_background, places: [Lake Orvine]}}
+  - {id: rar-05, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules], text: "Your group crosses a lake with no real equivalent anywhere on earth.", claim: {type: comparison}}
+  - {id: rar-06, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "Most travellers never find their way to Corran Monastery.", claim: {type: social_proof, places: [Corran Monastery]}}
+  - {id: rar-07, topic: rarity, expect: block, all: [F18_rarity], text: "The library hall is unparalleled in Velmora.", claim: {type: place_background, places: [Velmora]}}
+  - {id: rar-08, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "You will be among the few travellers who see the library hall.", claim: {type: social_proof}}
+  - {id: rar-11, topic: rarity, expect: block, all: [F18_rarity], text: "Your group is one of the only ones allowed into the library hall.", claim: {type: trip_fact, ref: S3, quote: "visit its library hall", places: [Corran Monastery]}}
+  - {id: rar-13, topic: rarity, seed: lake, expect: block, all: [F18_rarity], text: "The ferry crossing to Brecca is unparalleled anywhere on earth.", claim: {type: place_background, places: [Brecca]}}
+  - {id: rar-14, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "The library hall visit is the only one of its kind in the world.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-15, topic: rarity, expect: block, all: [F18_rarity], text: "Corran's library hall tour is unique in the world.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-16, topic: rarity, expect: block, all: [F18_rarity], text: "Walking up to Corran Monastery is an experience unmatched in Asia.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-17, topic: rarity, seed: lake, expect: block, all: [F18_rarity], text: "Lake Orvine is unparalleled anywhere on earth.", claim: {type: place_background, places: [Lake Orvine]}}
+  - {id: rar-18, topic: rarity, expect: block, all: [F18_rarity], text: "The way up to Corran Monastery is unmatched anywhere on earth.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-19, topic: rarity, expect: block, all: [F18_rarity], text: "The approach to Corran Monastery is unparalleled in Asia.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-20, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules], text: "The shore path to Brecca has no real equivalent anywhere on earth.", claim: {type: place_background, places: [Brecca]}}
+  - {id: rar-21, topic: rarity, seed: lake, expect: block, all: [F18_rarity], text: "Arrival at Brecca by water is unmatched in Velmora.", claim: {type: place_background, places: [Brecca, Velmora]}}
+  - {id: rar-22, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules], text: "An evening at the Brecca inn is unique in the world.", claim: {type: place_background, places: [Brecca]}}
+  - {id: rar-23, topic: rarity, expect: block, all: [F18_rarity], text: "The welcome at Corran Monastery is unmatched in Velmora.", claim: {type: place_background, places: [Corran Monastery, Velmora]}}
+  - {id: rar-24, topic: rarity, expect: pass, all: [F18_rarity, apply_rules, check_replacement], text: "Corran Monastery is the main monastery above Orvine.", claim: {type: place_background, ref: S3, quote: "Corran Monastery above Orvine", places: [Corran Monastery, Orvine]}}
   # ---- timing (D4, D15): a time, part of day or ordinal day the source does not give = block
-  - {id: tim-01, topic: timing, seed: lake, expect: block, all: [F17_trip_fact, check_replacement], text: "You cross Lake Orvine at dawn.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
+  - {id: tim-01, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "You cross Lake Orvine at dawn.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
   - {id: tim-02, topic: timing, seed: lake, expect: pass, text: "The ferry crosses Lake Orvine to Brecca village.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry to Brecca village", places: [Lake Orvine, Brecca]}}
-  - {id: tim-03, topic: timing, seed: lake, expect: block, all: [F17_trip_fact, check_replacement], text: "The second afternoon ends at the Brecca guesthouse.", claim: {type: trip_fact, ref: S3, quote: "walk the shore path to the guesthouse", places: [Brecca]}}
+  - {id: tim-03, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "The second afternoon ends at the Brecca guesthouse.", claim: {type: trip_fact, ref: S3, quote: "walk the shore path to the guesthouse", places: [Brecca]}}
   - {id: tim-04, topic: timing, seed: lake, expect: pass, text: "A shore path leads from the ferry to the guesthouse in Brecca.", claim: {type: location, places: [Brecca]}}
-  - {id: tim-05, topic: timing, seed: lake, expect: block, all: [F17_trip_fact, check_replacement], text: "The ferry leaves Orvine in the early morning.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Orvine]}}
+  - {id: tim-05, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "The ferry leaves Orvine in the early morning.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Orvine]}}
   - {id: tim-06, topic: timing, expect: pass, text: "The walk climbs from Orvine to the monastery gate.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery above Orvine", places: [Orvine]}}
-  - {id: tim-07, topic: timing, seed: lake, expect: block, all: [F17_trip_fact, check_replacement], text: "On the second day the ferry reaches Brecca.", claim: {type: trip_fact, ref: S3, quote: "by ferry to Brecca village", places: [Brecca]}}
+  - {id: tim-07, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "On the second day the ferry reaches Brecca.", claim: {type: trip_fact, ref: S3, quote: "by ferry to Brecca village", places: [Brecca]}}
   - {id: tim-08, topic: timing, seed: lake, expect: pass, text: "The ferry reaches Brecca village.", claim: {type: location, places: [Brecca]}}
-  - {id: tim-09, topic: timing, seed: lake, expect: block, all: [F17_trip_fact, check_replacement], text: "The ferry crosses Lake Orvine before sunset.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
-  - {id: tim-10, topic: timing, seed: lake, expect: pass, text: "Brecca is a fishing village on Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
+  - {id: tim-09, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "The ferry crosses Lake Orvine before sunset.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
+  - {id: tim-10, topic: timing, seed: lake, expect: warn, all: [apply_rules], text: "Brecca is a fishing village on Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
   - {id: tim-11, topic: timing, seed: lake, expect: pass, text: "On the third day the ferry reaches Brecca.", claim: {type: trip_fact, ref: S3, quote: "by ferry to Brecca village", places: [Brecca]}}
   # ---- hypotheticals and reflection (D3, D4)
   - {id: hyp-01, topic: hypothetical, expect: warn, all: [apply_rules], text: "Imagine the hall with its long shelves of books.", claim: {type: hypothetical}}
   - {id: hyp-02, topic: hypothetical, expect: block, all: [apply_rules], text: "You could stay in a private lodge with all meals included.", claim: {type: hypothetical}}
-  - {id: hyp-03, topic: hypothetical, expect: pass, text: "The hall keeps long shelves of books.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: hyp-03, topic: hypothetical, expect: warn, all: [apply_rules], text: "The hall keeps long shelves of books.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: hyp-04, topic: hypothetical, expect: pass, all: [apply_rules], text: "Picture the library hall above Orvine.", claim: {type: scene_detail, ref: S3, quote: "Corran Monastery above Orvine", places: [Corran Monastery, Orvine]}}
   - {id: ref-01, topic: reflection, expect: pass, text: "The library is a reminder of how long the valley has valued learning.", claim: {type: opinion}}
   - {id: ref-02, topic: reflection, expect: block, all: [apply_rules], text: "The monks serve every guest a dinner of valley trout.", claim: {type: opinion}}
-  # ---- numbers (D1, F6): digits and word numbers; other trips' lines never support; trip frame = block, else warn
-  - {id: num-01, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "The monastery gate stands thirty metres above the old road.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: num-02, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Your group walks thirty kilometres to reach the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
+  # ---- numbers (D1, F6, held at main): F1 blocks every digit / year form the SOURCE lacks, the rule table every
+  #      spelled-out figure; no background number warns until W2
+  - {id: num-01, topic: numbers, expect: block, all: [apply_rules], text: "The monastery gate stands thirty metres above the old road.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-02, topic: numbers, expect: block, all: [apply_rules], text: "Your group walks thirty kilometres to reach the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
   - {id: num-03, topic: numbers, expect: pass, text: "The walk climbs to the monastery gate above Orvine.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery above Orvine", places: [Orvine]}}
   - {id: num-04, topic: numbers, expect: block, all: [F1_grounding, check_replacement], text: "The walk takes you 12 km along the ridge to the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
-  - {id: num-05, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "The monastery stands 900 metres above the lake.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: num-06, topic: numbers, seed: monastery_sibling, expect: block, all: [F1_grounding, check_replacement], text: "You walk 14 km to the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
+  - {id: num-05, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The monastery stands 900 metres above the lake.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: num-07, topic: numbers, seed: monastery_sibling, expect: pass, text: "You walk up to the monastery above Orvine.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery above Orvine", places: [Orvine]}}
   - {id: num-08, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The tour includes 3 nights in the monastery guest wing.", claim: {type: service_promise, places: [Corran Monastery]}}
-  - {id: num-09, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Corran Monastery was founded in 1937 by monks from the coast.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: num-10, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Only 0.4% of the valley is forest.", claim: {type: place_background}}
-  - {id: num-11, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The tour includes two nights in the monastery guest wing.", claim: {type: service_promise, places: [Corran Monastery]}}
-  # S272 review 2: ONE trip frame (claim_rules.trip_number_frame) for F1, the rule table and the admin check — a trip
-  # activity, a leg of travel, a stay, a service, a clock time or a takes / leaves verb with a duration makes a number
-  # a trip promise (block) whatever the claim type; the AUDIENCE line ('Walkers aged 25-50') never supports one
+  - {id: num-09, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Corran Monastery was founded in 1937 by monks from the coast.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-10, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Only 0.4% of the valley is forest.", claim: {type: place_background}}
+  - {id: num-11, topic: numbers, expect: block, all: [apply_rules], text: "The tour includes two nights in the monastery guest wing.", claim: {type: service_promise, places: [Corran Monastery]}}
   - {id: num-12, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Overnight in Brecca is 2 nights at the guesthouse.", claim: {type: place_background, places: [Brecca]}}
-  - {id: num-13, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The boat ride to Brecca leaves at 7 am.", claim: {type: generic}}
-  - {id: num-14, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The ferry crossing to Brecca takes 40 minutes.", claim: {type: generic}}
-  - {id: num-15, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Two nights at the Brecca guesthouse round off the crossing.", claim: {type: place_background, places: [Brecca]}}
+  - {id: num-13, topic: numbers, seed: lake, expect: block, all: [F1_grounding, check_replacement], text: "The boat ride to Brecca leaves at 7 am.", claim: {type: generic}}
+  - {id: num-14, topic: numbers, seed: lake, expect: block, all: [F1_grounding, check_replacement], text: "The ferry crossing to Brecca takes 40 minutes.", claim: {type: generic}}
+  - {id: num-15, topic: numbers, seed: lake, expect: block, all: [apply_rules], text: "Two nights at the Brecca guesthouse round off the crossing.", claim: {type: place_background, places: [Brecca]}}
   - {id: num-16, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The visit ends with 3 tastings of monastery wine.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: num-17, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The hike up to the monastery gate is 12 km.", claim: {type: generic}}
+  - {id: num-17, topic: numbers, expect: block, all: [F1_grounding, check_replacement], text: "The hike up to the monastery gate is 12 km.", claim: {type: generic}}
   - {id: num-18, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The climb to Corran Monastery takes 3 hours.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: num-19, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The walk takes 50 minutes from Orvine.", claim: {type: generic}}
-  - {id: num-20, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Your group is capped at 25 walkers.", claim: {type: generic}}
-  - {id: num-21, topic: numbers, seed: lake, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Lake Orvine is 40 km long.", claim: {type: place_background, places: [Lake Orvine]}}
-  # S272 review 3: fail closed — a novel number warns ONLY with a positive background signal (a year form, a founding
-  # verb, a dimension unit with its word, a share, a count a place holds) and nothing tying it to the trip; a leg, a
-  # dotted time, a duration, a capacity or a group size phrased without the old trip nouns now blocks everywhere
+  - {id: num-21, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Lake Orvine is 40 km long.", claim: {type: place_background, places: [Lake Orvine]}}
   - {id: num-22, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Afterwards, a 20-minute descent leads back to Orvine.", claim: {type: place_background, places: [Orvine]}}
   - {id: num-23, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Boats pull away from the Brecca jetty at 6.30 sharp.", claim: {type: place_background, places: [Brecca]}}
   - {id: num-24, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "A small boat holds 12 hikers and a skipper.", claim: {type: place_background}}
   - {id: num-25, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "At most 8 hikers share each dormitory in Brecca.", claim: {type: place_background, places: [Brecca]}}
   - {id: num-26, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca lies 2 hours away by water.", claim: {type: place_background, places: [Brecca]}}
-  - {id: num-27, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Getting back to Orvine is a 3-hour affair.", claim: {type: place_background, places: [Orvine]}}
-  - {id: num-28, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "2 hours are set aside in the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-27, topic: numbers, seed: lake, expect: block, all: [apply_rules], text: "Getting back to Orvine is a 3-hour affair.", claim: {type: place_background, places: [Orvine]}}
+  - {id: num-28, topic: numbers, expect: block, all: [apply_rules], text: "2 hours are set aside in the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: num-29, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The library hall keeps 4 places for each group.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: num-30, topic: numbers, seed: lake, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca has been a fishing village since 1820.", claim: {type: place_background, places: [Brecca]}}
-  # S272 review 4: the background signal is bound to each novel number: a year or a height elsewhere in the sentence
-  # never launders a count, a stage or a distance of the trip; route nouns ('the shore path', 'the path to') and a
-  # distance between two places the moment's own itinerary line connects are the trip's leg; '9 km across the water
-  # from Orvine' reads like 'lies 9 km from Orvine'. A sentence whose every novel number has its own signal still warns.
+  - {id: num-30, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca has been a fishing village since 1820.", claim: {type: place_background, places: [Brecca]}}
   - {id: num-31, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The shore path to Brecca is 6 km long.", claim: {type: place_background, places: [Brecca]}}
   - {id: num-32, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca is 9 km across the water from Orvine.", claim: {type: place_background, places: [Brecca, Orvine]}}
   - {id: num-33, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca sits 9 km across the water from Orvine.", claim: {type: place_background, places: [Brecca, Orvine]}}
@@ -407,12 +423,12 @@ examples:
   - {id: num-35, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Built in 1388, the monastery gate is reached by 1,200 stone steps.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: num-36, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Rising 900 metres above the lake, the monastery gate is reached in four stages.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: num-37, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Corran Monastery stands 900 metres above Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
-  - {id: num-38, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Built in 1388, the monastery gate stands 30 metres high.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-38, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Built in 1388, the monastery gate stands 30 metres high.", claim: {type: place_background, places: [Corran Monastery]}}
   # ---- scope: a place only other trips visit = block (F12, block class)
   - {id: scp-01, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "From Tesselmoor a road climbs to the monastery.", claim: {type: location, places: [Tesselmoor]}}
   - {id: scp-02, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "From Orvine a road climbs to the monastery.", claim: {type: location, places: [Orvine]}}
-  - {id: scp-04, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "Corran Monastery looks down on Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
-  - {id: scp-03, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Corran Monastery sits a short drive from Tesselmoor.", claim: {type: place_background, places: [Corran Monastery, Tesselmoor]}}
+  - {id: scp-04, topic: scope, trip_places: [Tesselmoor], expect: warn, all: [apply_rules], text: "Corran Monastery looks down on Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
+  - {id: scp-03, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope], text: "Corran Monastery sits a short drive from Tesselmoor.", claim: {type: place_background, places: [Corran Monastery, Tesselmoor]}}
   - {id: scp-05, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Tesselmoor is the next stop after the monastery.", claim: {type: location, places: [Tesselmoor]}}
   - {id: scp-06, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "The walk to Corran Monastery starts in Orvine.", claim: {type: location, places: [Orvine]}}
   - {id: scp-07, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Many walkers continue from Orvine to Tesselmoor.", claim: {type: location, places: [Orvine, Tesselmoor]}}
@@ -424,7 +440,6 @@ examples:
   - {id: cta-04, topic: cta, field: cta, expect: block, text: "The path back to Orvine follows the lake.\n\nCorran Monastery keeps a working library, and Northpine Travel can plan your days in Orvine around it."}
   - {id: cta-05, topic: cta, field: cta, expect: pass, text: "The path back to Orvine follows the lake.\n\nAsk Northpine Travel to plan your days in Orvine.\n\n## FAQ\n\n**Q: Where is Corran Monastery?**\nA: Corran Monastery stands above Orvine."}
   - {id: cta-07, topic: cta, field: cta, expect: pass, text: "The library hall holds the monastery books.\n\nThe path climbs from Orvine.\n\nAsk Northpine Travel to plan your days in Orvine."}
-  - {id: cta-09, topic: cta, field: cta, expect: pass, text: "Corran Monastery keeps a working library. Ask Northpine Travel to plan your days in Orvine."}
   # ---- meta band (D5): one band, 140-155, for the T9 gate and the S1 check alike
   - {id: meta-01, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the lake shore."}
   - {id: meta-02, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the bay."}
@@ -434,22 +449,17 @@ examples:
   - {id: meta-06, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old trails to the lake."}
   - {id: meta-07, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the greenest lake shores."}
   - {id: meta-08, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and walk back down to the lakeshore."}
-  # inside the T9 writer aim (130-145) but under the band: the gate holds the raw value, code composes it into the band
+  # inside the T9 writer aim (130-145) but under the band: the T9 step sends it to the fit call and, when the fit leaves
+  # it, F4 holds it (as on main); code never composes a country tail (S272: withdrawn)
   - {id: meta-09, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
   - {id: meta-10, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrims path to the lake."}
-  # S272 review 2: the T9 tail names the DESTINATION only when it is the place's own seed Location country (a place
-  # keeps its own country): a cross-border trip (destination Tesselmoor, place in Velmora) gets no tail, and a meta that
-  # already names the country gets none either; both stay held for the fit call / F4
-  - {id: meta-11, topic: meta_band, field: meta, seed: monastery_card, destination: Tesselmoor, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
-  # S272 review 3: every Location line of the seed counts — a route piece (monastery in Velmora, then Dunmere Harbour in
-  # Tesselmoor) never gets ', in Velmora.' after a meta about the harbour; a route wholly in the destination still does
-  - {id: meta-13, topic: meta_band, field: meta, seed: monastery_card, route: [harbour_card], tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Ride a fishing boat around Dunmere Harbour, walk the old sea wall past the net sheds and watch the boats come back in at the end of day."}
+  # the cross-border, route and card-less cases that review rounds 2-4 found wrong-country tails on: no tail, held by F4
+  - {id: meta-11, topic: meta_band, field: meta, seed: monastery_card, destination: Tesselmoor, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-13, topic: meta_band, field: meta, seed: monastery_card, route: [harbour_card], expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Ride a fishing boat around Dunmere Harbour, walk the old sea wall past the net sheds and watch the boats come back in at the end of day."}
   - {id: meta-14, topic: meta_band, field: meta, seed: monastery_card, route: [lake_card], expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, then cross Lake Orvine by ferry to Brecca village and walk the shore path to the guesthouse."}
-  # S272 review 4: a moment with no place card (the fallback Location line is the tour country, the DESTINATION
-  # itself) and a route block with no Location line at all (a label-only block) get no tail: fail closed
-  - {id: meta-15, topic: meta_band, field: meta, seed: monastery, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
-  - {id: meta-16, topic: meta_band, field: meta, seed: monastery_card, route: [lake_label_only], tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
-  - {id: meta-12, topic: meta_band, field: meta, seed: monastery_card, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery in Velmora, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-15, topic: meta_band, field: meta, seed: monastery, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-16, topic: meta_band, field: meta, seed: monastery_card, route: [lake_label_only], expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-12, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery in Velmora, see the library hall the monks still keep open and follow the steep path down to the lake."}
   # ---- title band: 45-60 in the T9 gate, the 60 cap in S1
   - {id: tit-01, topic: title_band, field: title, expect: pass, all: [F4_seo_surface, s1_title_cap], text: "Corran Monastery: The Library Hall Above Orvine"}
   - {id: tit-02, topic: title_band, field: title, expect: pass, all: [F4_seo_surface, s1_title_cap], text: "Corran Monastery and Its Library Hall: A Walk Above the Lake"}

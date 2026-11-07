@@ -55,8 +55,7 @@ from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContex
                                                   names_place, near_verbatim, phrase_tokens, proper_nouns,
                                                   sentence_spans, sibling_templates, template_lines,
                                                   unsupported_ages, unsupported_reasons)
-from services.acp_content_writing.hygiene import split_seed as hygiene_split_seed
-from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues, rarity_blocks
+from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
@@ -262,31 +261,8 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
     number); T3/A1/source_facts keep the plain reading. The violation format is unchanged —
     sentence_repair._F1_QUOTE_RE parses it."""
     violations: list[str] = []
-    # AA-1047 (writing policy `claims.numbers`, D1 + critic fix F6): the lines of OTHER trips never support a number
-    # (S271 T9 contradiction 8: they did), a spelled-out number counts like digits (claim_rules.find_novel_word_numbers,
-    # before only in the unwired F9 v2), and a novel number holds only inside a trip frame (the sentence makes the
-    # trip, the reader or a day its subject, or names a trip service); elsewhere (place background: a year, a height)
-    # it warns. The violation text is unchanged (sentence_repair._F1_QUOTE_RE parses it).
-    # S272 review 2: the trip frame is claim_rules.trip_number_frame (ONE predicate with the rule table), and inside
-    # it the AUDIENCE / BRAND lines never support a number ('Walkers aged 25-50' never backs 'takes 50 minutes').
-    from services.acp_content_writing import claim_rules as _cr
-    raw_own = hygiene_split_seed(atom_text)[0] if _NUMBER_POLICY["other_trip_lines_support"] is False else atom_text
-    own = _cr.number_source_text(raw_own)  # a "Day 2 of the trip" index never supports "two nights"
-    own_trip = _cr.trip_number_source(raw_own)
-    trip_lines = _cr.trip_lines_of(raw_own)
-    audience = _cr.audience_number_text(raw_own)
-    hold = False
     for sent in _SENT_SPLIT_RE.split(content_text or ""):
-        # S272 review 4: the frame reads each novel number (trip source, AUDIENCE / BRAND for an age only): one
-        # without its own background signal keeps the sentence in the trip frame, whatever else the sentence says
-        strict = _cr.novel_trip_numbers(sent, [own_trip], [audience])
-        in_frame = bool(strict) and _cr.trip_number_frame(strip_citation_tags(sent), trip_lines, novel=strict)
-        if in_frame:
-            novel = strict
-        elif _NUMBER_POLICY.get("digits_and_words"):
-            novel = _cr.novel_trip_numbers(sent, [own])
-        else:
-            novel = find_novel_numeric_claims(sent, [own], year_forms=True)
+        novel = find_novel_numeric_claims(sent, [atom_text], year_forms=True)
         if novel:
             # AA-452: strip_citation_tags() here too, not just at the final output boundary —
             # for channel='blog' `sent` may carry a [R:atom_id] tag; deep_strip_citation_tags()
@@ -294,18 +270,7 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
             # this specific violation string is never tagged in the first place.
             quoted = strip_citation_tags(sent.strip())[:100]
             violations.append(f"sentence states {novel} not present in the content seed: '{quoted}'")
-            hold = hold or _NUMBER_POLICY["elsewhere"] == "enforce" or in_frame
-    return _result(qr.F1_GROUNDING, violations, blocking=hold or not violations)
-
-
-_NUMBER_POLICY = _wp.claim("numbers")
-
-
-def number_in_trip_frame(sentence: str, own_trip_lines=(), novel=None) -> bool:
-    """AA-1047 (F6): is a number in this sentence a trip attribute? claim_rules.trip_number_frame — the one predicate
-    F1, the rule table and the admin sentence check share (S272 review 2; per novel number, review 4)."""
-    from services.acp_content_writing.claim_rules import trip_number_frame
-    return trip_number_frame(strip_citation_tags(sentence or ""), own_trip_lines, novel=novel)
+    return _result(qr.F1_GROUNDING, violations)
 
 
 # ---------------------------------------------------------------- F2-adjusted (banned patterns)
@@ -2236,31 +2201,20 @@ F18_BLOCKING = True
 
 
 def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_title: Optional[str] = None,
-                    meta_description: Optional[str] = None, *, sentence_only: bool = False) -> list[GateResultLite]:
-    """[F17_trip_fact, F18_rarity] from trip_facts.find_trip_fact_issues. No context → both pass. `sentence_only`:
-    the admin sentence check (piece-level checks skipped, AA-1047 S272 review 2)."""
+                    meta_description: Optional[str] = None) -> list[GateResultLite]:
+    """[F17_trip_fact, F18_rarity] from trip_facts.find_trip_fact_issues. No context → both pass."""
     if trip_ctx is None:
         return [_result(F17_GATE, [], blocking=F17_BLOCKING), _result(F18_GATE, [], blocking=F18_BLOCKING)]
-    found = find_trip_fact_issues(content_text, trip_ctx, seo_title=seo_title, meta_description=meta_description,
-                                  sentence_only=sentence_only)
+    found = find_trip_fact_issues(content_text, trip_ctx, seo_title=seo_title, meta_description=meta_description)
 
     def body_blocking(vs: list[str], flag: bool) -> bool:
         # a title / meta finding alone never holds a piece: service._fit_seo_meta already refused that
         # meta and asked for a new one; what is left is a warning for the admin
         return flag and any(not v.startswith(("title ", "meta ")) for v in vs)
-    # AA-1047 (writing policy D13): a rarity claim about a place follows D1 (background) and only warns; one
-    # attached to the trip, and every quantifier / generalisation finding, still blocks (trip_facts.rarity_blocks).
-    # S272 review 3: the trip-vs-place test is claim_rules.trip_attached, with the moment's own itinerary lines
-    trip_lines = ()
-    if found["rarity"]:
-        from services.acp_content_writing.claim_rules import trip_lines_of
-        from services.acp_content_writing.hygiene import split_seed as _split_seed
-        trip_lines = trip_lines_of(_split_seed(trip_ctx.seed)[0])
-    rarity_hold = [v for v in found["rarity"] if rarity_blocks(v, trip_lines)]
     return [_result(F17_GATE, found["trip_fact"], repairable=True,
                     blocking=body_blocking(found["trip_fact"], F17_BLOCKING) if found["trip_fact"] else F17_BLOCKING),
             _result(F18_GATE, found["rarity"], repairable=True,
-                    blocking=body_blocking(rarity_hold, F18_BLOCKING) if found["rarity"] else F18_BLOCKING)]
+                    blocking=body_blocking(found["rarity"], F18_BLOCKING) if found["rarity"] else F18_BLOCKING)]
 
 
 # ---------------------------------------------------------------- F14 / F15 (AA-771, S234)

@@ -27,10 +27,9 @@ from functools import lru_cache
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    ACCESS_RARITY_RE, COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
+    COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
 )
 from services.acp_shared.citation_tags import TAG, trailing_tags
-from services.quality import writing_policy as _wp  # AA-1047: D13 rarity (trip vs place)
 from services.acp_shared.offered import (LOOSE_MARK_RE, OFFERED, activity_text, decide, is_status_line,
                                          status_of_line, strip_status_lines)
 
@@ -400,23 +399,14 @@ def _supported_position(phrase: str, sentence: str, moments: list[Moment]) -> bo
     """A position ('the southern tip') is supported when a seed line has it AND the sentence shares
     at least two other content words with that line (so the place background 'Khatgal at the
     lake's southern tip' supports a sentence about Khatgal, not 'standing at the southern tip')."""
-    return _position_in_lines(phrase, sentence, (line for m in moments for line in m.lines))
-
-
-def _position_in_lines(phrase: str, sentence: str, lines) -> bool:
     want = _norm(phrase)
     pw = set(content_words(phrase))
     sw = set(content_words(sentence)) - pw
-    return any(want in _norm(line) and len(sw & (set(content_words(line)) - pw - {"lake"})) >= 2 for line in lines)
-
-
-def unsupported_positions(sentence: str, lines) -> list[str]:
-    """AA-1047 (writing policy claims.background.invented_direction_or_position): the position phrases of one
-    sentence ('the far shore', 'the southern tip') that no line of `lines` supports, by F17's own rule
-    (`_supported_position`). claim_rules' place_background rule reads it, so the F9 v2 rule table and F17 agree."""
-    lines = list(lines)
-    return [m.group(0) for m in _POSITION_RE.finditer(sentence or "")
-            if not _position_in_lines(m.group(0), sentence, lines)]
+    for m in moments:
+        for line in m.lines:
+            if want in _norm(line) and len(sw & (set(content_words(line)) - pw - {"lake"})) >= 2:
+                return True
+    return False
 
 
 def timing_claims(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
@@ -657,11 +647,6 @@ RARITY_CLAIM_RE = re.compile(
     r"|\bthe\s+(?:last|only)\s+(?:remaining\s+|surviving\s+)?\w+(?:[- ]\w+)?\s+(?:of its kind|in the world|on earth)\b"
     r"|\bunparalleled\b|\bunmatched\b|\bunrivall?ed\b|\bincomparable\b"
     r"|\bunique\s+(?:in|on|to)\s+(?:the world|earth|asia|central asia)\b", re.I)
-RARITY_PROBLEM_PREFIX = "makes a rarity claim the source does not"
-# AA-1047 (S272 review 2): access rarity ('a rare chance', 'only a handful of travellers', 'few groups', 'the only ones
-# allowed') is social proof by scarcity — a different problem text, so rarity_blocks always holds it.
-ACCESS_RARITY_PROBLEM = "claims few others get this access, which the source does not say"
-
 # 'one of the last' ≈ 'among the last'; 'on earth' ≈ 'in the world'
 _RARITY_EQUIV = (("among the", "one of the"), ("on earth", "in the world"), ("’s", "'s"))
 # 'one of the world's most distinctive living cultures' — supported only when the seed has a
@@ -702,19 +687,16 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
     out = []
     for sentence, prefix in spans:
         problem = None
-        access = ACCESS_RARITY_RE.search(sentence)
-        if access and _norm_rarity(access.group(0)) not in src:
-            problem = f"{ACCESS_RARITY_PROBLEM} ('{access.group(0)}') — cut it"
-        for m in RARITY_CLAIM_RE.finditer(sentence if problem is None else ""):
+        for m in RARITY_CLAIM_RE.finditer(sentence):
             if _norm_rarity(m.group(0)) not in src:
-                problem = f"{RARITY_PROBLEM_PREFIX} ('{m.group(0)}') — keep to what the source says"
+                problem = f"makes a rarity claim the source does not ('{m.group(0)}') — keep to what the source says"
                 break
         if problem is None:
             for m in _SUPERLATIVE_RE.finditer(sentence):
                 scope = fold((m.group(1) or m.group(2) or "").strip())
                 if scope not in seed_scopes and not (not scope and seed_scopes):
-                    problem = (f"{RARITY_PROBLEM_PREFIX} ('{m.group(0).strip()[:60]}') — keep to what the source "
-                               "says")
+                    problem = (f"makes a rarity claim the source does not ('{m.group(0).strip()[:60]}') — keep to "
+                               "what the source says")
                     break
         if problem is None:
             for m in _QUANT_RE.finditer(sentence):
@@ -734,37 +716,6 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
         if problem:
             out.append(prefix + _quoted(problem, sentence))
     return out
-
-
-_QUOTED_SENTENCE_RE = re.compile(r": '(.*)'$", re.S)
-
-
-def unsupported_rarity(sentence: str, source: str) -> Optional[str]:
-    """The first RARITY_CLAIM_RE phrase of `sentence` that `source` does not make (rarity_claims' test), or None.
-    AA-1047 (S272 review 3): the rule table (claim_rules._decide) reads the same lexicon through this."""
-    src = _norm_rarity(source)
-    for m in RARITY_CLAIM_RE.finditer(sentence or ""):
-        if _norm_rarity(m.group(0)) not in src:
-            return m.group(0)
-    return None
-
-
-def rarity_blocks(violation: str, own_trip_lines: tuple = ()) -> bool:
-    """AA-1047 (writing policy D13): does this F18 finding hold? A rarity / uniqueness claim attached to the trip is a
-    promise and blocks; one about a place follows D1 (background) and only warns. Attached to the trip =
-    claim_rules.trip_attached (S272 review 3: the predicate the number frame and the rule table use — the trip, the
-    reader or the group as subject, a trip activity / leg / service word such as 'visit', 'crossing', 'tour',
-    'walking', or an activity shared with `own_trip_lines`, the moment's own itinerary lines); before, only the
-    subject counted, so 'The ferry crossing to Brecca is unparalleled anywhere on earth.' only warned. A quantifier
-    or generalisation finding ('most travellers …', a stronger quantifier than the source's) always blocks: it is
-    social proof, not background."""
-    if RARITY_PROBLEM_PREFIX not in str(violation or ""):
-        return True
-    from services.acp_content_writing.claim_rules import trip_attached  # claim_rules imports this module lazily
-    m = _QUOTED_SENTENCE_RE.search(str(violation))
-    sentence = m.group(1) if m else str(violation)
-    place_mode = _wp.claim("rarity").get("place", "warn")
-    return trip_attached(sentence, own_trip_lines) or place_mode == "enforce"
 
 
 # ---------------------------------------------------------------- date authority
@@ -2353,23 +2304,20 @@ def service_claims(text: str, ctx: Optional[TripFactContext]) -> list[str]:
 
 
 def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_title: Optional[str] = None,
-                          meta_description: Optional[str] = None, sentence_only: bool = False) -> dict[str, list[str]]:
+                          meta_description: Optional[str] = None) -> dict[str, list[str]]:
     """{"trip_fact": [...], "rarity": [...]} — every finding quotes its sentence; title/meta
-    findings start with "title " / "meta ". AA-1047 (S272 review 2): `sentence_only` skips the checks that read the
-    whole piece (a missing family caveat, a thin moment) — the admin sentence check (sentence_repair
-    .check_replacement) runs the rest on one sentence, so it never saves what F17 / F18 refuse in the pipeline."""
+    findings start with "title " / "meta "."""
     if ctx is None:
         return {"trip_fact": [], "rarity": []}
     extra = (("title", seo_title), ("meta", meta_description))
     trip = optional_as_fixed(text, ctx.moments, ctx.cta) + timing_claims(text, ctx.moments, ctx.cta)
-    for miss in ([] if sentence_only else missing_family_caveat(text, ctx.moments, ctx.audience, ctx.cta)):
+    for miss in missing_family_caveat(text, ctx.moments, ctx.audience, ctx.cta):
         trip.append(_quoted(f"pitches {miss['moment']} to families but never says what the source says about "
                             f"getting there ({miss['caveat'][:160].rstrip('.')}) — keep this sentence and add ONE "
                             "short sentence that states that caveat in the source's words", miss["sentence"]))
     trip += date_authority_claims(text, ctx.seed, ctx.cta, extra)
     # S234 round 4 (r3 panel §4 fixes 2, 3, 4)
-    if not sentence_only:
-        trip += thin_moment_issues(text, ctx.moments, ctx.cta)
+    trip += thin_moment_issues(text, ctx.moments, ctx.cta)
     trip += [_quoted("plays down a hazard the source states, for a family audience — keep the hazard, cut the "
                      "reassurance", hit["span"]["clean"]) for hit in minimised_hazards(text, ctx)]
     trip += [_quoted(f"makes {hit['place']} the reader's gateway or base, but this trip does not go there (the "
@@ -2388,8 +2336,6 @@ __all__ = [
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
     "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
-    "pace_claims", "parse_moments", "rarity_blocks", "rarity_claims", "unsupported_rarity", "role_claim",
-    "timing_claims",
-    "with_date_spans",
+    "pace_claims", "parse_moments", "rarity_claims", "role_claim", "timing_claims", "with_date_spans",
     "service_claims",
 ]

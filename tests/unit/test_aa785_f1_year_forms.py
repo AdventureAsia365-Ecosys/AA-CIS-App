@@ -140,19 +140,13 @@ def test_t9_gate_grounding_uses_year_forms():
 
 
 def test_f1_message_still_parsed_by_sentence_repair():
-    # AA-1047 (writing policy claims.numbers): the place-background year warns (not blocking, no repair planned) ...
-    background = "The dzong was founded in 1637–52 by the Zhabdrung. Book now."
-    warn = qg.gate_grounding(background, SEED_1637)
-    assert not warn["passed"] and warn["blocking"] is False
-    # ... and the same figure as a trip attribute blocks and goes to the sentence repair, parsed as before
-    text = "You visit the dzong your guide dates to 1637–52. Book now."
+    text = "The dzong was founded in 1637–52 by the Zhabdrung. Book now."
     gate = qg.gate_grounding(text, SEED_1637)
-    assert gate["blocking"] is True
     assert gate["violations"] == [
         "sentence states ['1652'] not present in the content seed: "
-        "'You visit the dzong your guide dates to 1637–52.'"]
+        "'The dzong was founded in 1637–52 by the Zhabdrung.'"]
     m = sr._F1_QUOTE_RE.search(gate["violations"][0])
-    assert m and m.group(1) == "You visit the dzong your guide dates to 1637–52."
+    assert m and m.group(1) == "The dzong was founded in 1637–52 by the Zhabdrung."
     items = sr.plan(text, [gate])
-    assert [i["sentence"] for i in items] == ["You visit the dzong your guide dates to 1637–52."]
+    assert [i["sentence"] for i in items] == ["The dzong was founded in 1637–52 by the Zhabdrung."]
     assert "states ['1652']" in items[0]["problem"]

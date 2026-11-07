@@ -56,6 +56,10 @@ F9_ACTIONS = ("hold", "warn")
 EXAMPLE_EXPECT = ("block", "warn", "pass")
 EXAMPLE_FIELDS = ("body", "meta", "title", "slug", "cta", "faq", "itinerary")
 FIXTURE_KEYS = ("examples", "example_seeds")    # synthetic fixtures: no behaviour, not part of policy_sha
+RULES_CONFIG_KEYS = ("hypothetical", "uncited_background")
+# S272: `block_until_w2_instrument` = the topic's cases are the verdicts the gates give today (main's, fail closed);
+# the decided intent waits in `w2_intent` until the W2 claim instrument is measured
+ENFORCEMENTS = ("block_until_w2_instrument",)
 
 
 class PolicyError(ValueError):
@@ -166,8 +170,16 @@ def schema_errors(source: dict) -> list[str]:
           and isinstance(rubric.get("rules"), list) and all(isinstance(r, str) for r in rubric["rules"]),
           "label_rubric needs pass, fail and a list of rules", e)
     rc = source.get("rules_config") or {}
-    for k in ("hypothetical", "uncited_background", "background_numbers"):
+    for k in RULES_CONFIG_KEYS:
         _need(rc.get(k) in ("pass", "warn", "fail"), f"rules_config.{k} must be pass | warn | fail", e)
+    # S272: a claim topic held back to main's verdicts until the W2 claim instrument records its decided intent
+    for topic, spec in (source.get("claims") or {}).items():
+        if not isinstance(spec, dict) or "enforcement" not in spec:
+            continue
+        _need(spec["enforcement"] in ENFORCEMENTS, f"claims.{topic}.enforcement must be one of {ENFORCEMENTS}", e)
+        intent = spec.get("w2_intent")
+        _need(isinstance(intent, dict) and bool(intent) and set(intent) <= set(spec) - {"w2_intent"},
+              f"claims.{topic}: enforcement {spec['enforcement']!r} needs a w2_intent over its own cases", e)
     tok = tokens_of(source)
     for key, frag in (source.get("fragments") or {}).items():
         if not isinstance(frag, dict) or not isinstance(frag.get("text"), str):
@@ -311,7 +323,7 @@ def judge_classes() -> tuple[str, ...]:
 
 def rules_config() -> dict:
     rc = compiled()["rules_config"]
-    return {k: rc[k] for k in ("hypothetical", "uncited_background", "background_numbers")}
+    return {k: rc[k] for k in RULES_CONFIG_KEYS}
 
 
 def faq_pairs() -> dict:

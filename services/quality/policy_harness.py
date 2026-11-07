@@ -14,13 +14,13 @@ Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fa
 
 - body: claim_rules.apply_rules (with the example's `claim` row: the type an extraction call would give; every body
   example has one), F1 gate_grounding, F17 / F18 gate_trip_facts, F12 gate_scope (the scope lexicon), and the admin
-  sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality; it runs F1 and
-  the sentence-level F17 / F18 checks)
+  sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality; it runs F1,
+  F2, F11, F19 and the lexicon checks, as on main; S272: not F17 / F18)
 - meta / title / slug: F4 gate_seo_surface (that field only), the S1 band checks (s1_checks.check_meta,
-  SEO_TITLE_MAX), the T9 acceptance (service._meta_ok) and the T9 short-meta tail (a meta inside the T9 writer aim
-  but under the band must be composed into the band by service._fit_seo_meta, only when every Location line of the
-  seed names the destination: seo_meta_utils.place_country_tail + extend_short_meta; `route` adds route moments'
-  seed blocks, as a T9 route piece's seed), the slug fold
+  SEO_TITLE_MAX), the T9 acceptance (service._meta_ok) and the T9 short meta (S272: a meta inside the T9 writer aim
+  but under the band goes to the fit call and, when the fit leaves it, stays as written for F4 to hold, as on main;
+  code never composes a country tail; `route` adds route moments' seed blocks, as a T9 route piece's seed), the slug
+  fold
   (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
 - faq: drop_unanswerable_faq (topic needs a source line), F16 gate_faq_contract
@@ -147,25 +147,20 @@ def _seo(ex: dict, out: Outcome, seed: str) -> None:
         out.fixed["meta_fit_band"] = lo <= len(new) <= hi or new == meta
         # the T9 acceptance of a writer / fit meta (service._meta_ok: the same band as F4)
         out.verdicts["t9_meta_ok"] = "pass" if svc._meta_ok(meta, None) else "block"
-        # S272 review: the T9 writer aims under the band floor (writer_aims.meta.t9), so a complete meta inside that
-        # aim but under the band must be composed into the band by code (its short_fix), never left to F4. S272
-        # review 2: through the real service step (_fit_seo_meta, the fit call stubbed to return nothing) with the
-        # example's seed and DESTINATION — the tail names the destination only when it is the place's own seed
-        # Location country; `tail: none` examples (cross-border, country already named) must stay uncomposed.
+        # S272: the T9 writer aims under the band floor (writer_aims.meta.t9); a complete meta inside that aim but
+        # under the band goes to the fit call (stubbed here to return nothing) and stays as written, so F4 holds it,
+        # as on main: no deterministic country tail (withdrawn after three review rounds found wrong-country tails)
         aim_lo, _aim_hi = wp.writer_aim("t9")
         if aim_lo <= len(meta) < lo:
             import asyncio
             from uuid import uuid4
             ctx = {"destination": ex.get("destination", "Velmora"), "atom_text": seed,
                    "trip_name": "Velmora Highlands Walk"}
-            with mock.patch.object(svc, "fit_seo_fields", return_value=({}, 0.0)):
+            with mock.patch.object(svc, "fit_seo_fields", return_value=({}, 0.0)) as fit:
                 got, _cost = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None,
                                                            body="b", context=ctx, request_id=uuid4()))
-            new_meta = got.get("meta_description")
-            if ex.get("tail") == "none":
-                out.fixed["t9_short_meta_not_composed"] = new_meta == meta
-            else:
-                out.fixed["t9_short_meta_composed"] = new_meta != meta and svc._meta_ok(new_meta, None)
+            out.fixed["t9_short_meta_goes_to_the_fit_call"] = fit.called
+            out.fixed["t9_short_meta_not_composed"] = got.get("meta_description") == meta
     if fld == "title":
         out.verdicts["s1_title_cap"] = "block" if len(title) > SEO_TITLE_MAX else "pass"
     if fld == "slug":

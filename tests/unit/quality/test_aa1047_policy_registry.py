@@ -92,7 +92,9 @@ def test_judge_classes_come_from_the_policy():
 def test_rules_config_defaults_are_the_policy():
     from services.acp_content_writing.claim_rules import RulesConfig
     rc = RulesConfig()
-    assert (rc.hypothetical, rc.uncited_background, rc.background_numbers) == ("warn", "pass", "warn")
+    # S272: main's values until the W2 claim instrument (the D1 intent is claims.background.w2_intent)
+    assert (rc.hypothetical, rc.uncited_background) == ("warn", "warn")
+    assert not hasattr(rc, "background_numbers")
     assert rc.policy_sha == wp.policy_sha()
 
 
@@ -251,39 +253,6 @@ def test_generated_ts_carries_the_bands_and_the_sha():
     assert "meta: { min: 140, max: 155 }" in ts
 
 
-def test_a_day_index_line_never_supports_a_count():
-    """S272 review: 'Day 2 of the trip' let F1 pass 'two nights' / '2 nights' (num-11); the day index is no figure."""
-    from services.acp_content_writing import claim_rules as cr
-    from services.acp_content_writing import quality_gates as qg
-    seed = "Brecca harbour — visit\n\nDay 2 of the trip\n\nSource itinerary: Walk to Brecca harbour."
-    assert cr.number_source_text(seed).count("2") == 0 and "Day 3: Walk" in cr.number_source_text("Day 3: Walk")
-    for text in ("The tour includes two nights in Brecca.", "The tour includes 2 nights in Brecca."):
-        g = qg.gate_grounding(text, seed)
-        assert not g["passed"] and g["blocking"], text
-    assert qg.gate_grounding("On day 2 you walk to Brecca harbour.", seed)["passed"]
-
-
-def test_background_position_and_trip_number_follow_f17_and_f1():
-    """S272 review: place_background passed an invented position (F17 holds it) and warned on a number about the trip
-    (F1 holds it)."""
-    from services.acp_content_writing import claim_rules as cr
-    seed = "Brecca harbour — visit\n\nSource itinerary: Walk to Brecca harbour on Lake Tamsel."
-    lines = cr.number_source_lines(seed)
-
-    def verdict(text):
-        sents = cr.split_piece(text)
-        rows = {s.sid: cr.ClaimRow(s.sid, type="place_background", places=("Brecca",)) for s in sents}
-        (v,) = cr.apply_rules(rows, lines, sents)
-        return "block" if v.blocking else ("warn" if v.problem else "pass")
-
-    assert verdict("Brecca sits on the far shore of Lake Tamsel.") == "block"
-    # S272 review 3: 'boats' is a trip noun (fail closed: 'Boats pull away at 6.30'), so a harbour count of boats now
-    # blocks; a count of things the harbour holds that are not boats or people stays background
-    assert verdict("Brecca harbour holds 300 fishing nets.") == "warn"
-    assert verdict("Brecca harbour holds 300 fishing boats.") == "block"
-    assert verdict("On this walk you count 300 fishing boats in Brecca harbour.") == "block"
-
-
 def test_an_aim_under_the_band_names_a_short_fix_that_exists():
     """S272 review: the T9 aim (130-145) sat under the band (140-155) with nothing to land a 130-139 meta in it."""
     import importlib
@@ -297,7 +266,9 @@ def test_an_aim_under_the_band_names_a_short_fix_that_exists():
             continue
         module, func = aim["short_fix"].split(":")
         assert callable(getattr(importlib.import_module(module), func)), (writer, aim["short_fix"])
-    assert "extend_short_meta" in inspect.getsource(svc._fit_seo_meta)
+    # S272: the T9 short fix is the SEO fit step itself (F4 holds what it leaves, as on main); no country tail
+    assert src["writer_aims"]["meta"]["t9"]["short_fix"] == "services.acp_content_writing.service:_fit_seo_meta"
+    assert "extend_short_meta" not in inspect.getsource(svc._fit_seo_meta)
     bad = {**src, "writer_aims": {"meta": {"t9": {"min": 130, "max": 145}}}}
     assert any("short_fix" in p for p in wp.schema_errors(bad))
 
@@ -308,34 +279,29 @@ def test_the_fit_note_tells_a_short_meta_the_band():
     assert "130-145" in gen._META_MUST
 
 
-def test_t9_short_meta_gets_the_destination_tail_without_a_fit_call():
-    """S272 review (contradiction 12 inside the policy): a 130-139 T9 meta is on the writer's aim but under the band;
-    code composes it into the band from the DESTINATION line instead of a fit call and an F4 hold. S272 review 2: only
-    when the DESTINATION is the place's own seed Location country (test_aa1047_review2 has the cross-border cases)."""
+def test_t9_short_meta_goes_to_the_fit_call_and_is_never_composed():
+    """S272: a 130-139 T9 meta is on the writer's aim but under the band. Three review rounds found the deterministic
+    DESTINATION tail naming the wrong country (cross-border trips, route pieces, card-less moments), so it was
+    withdrawn:
+    the meta goes to the fit call and, when the fit leaves it, stays as written for F4 to hold, as on main."""
     import asyncio
     from unittest.mock import patch
     from uuid import uuid4
 
+    from services.acp_content_writing import quality_gates as qg
     from services.acp_content_writing import service as svc
     meta = ("Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow "
             "the steep path down to the lake.")
     title = "Corran Monastery: The Library Hall Above Orvine"
-    lo, hi = wp.band("meta")
-    # S272 review 4: a place CARD's Location line (the card-less fallback line carries the tour country)
+    lo, _hi = wp.band("meta")
     seed = ("Corran Monastery — visit\nLocation: Corran Monastery, Velmora (do not place it in any other town, region "
             "or country)\nSource itinerary: Walk up to Corran Monastery.")
     assert wp.writer_aim("t9")[0] <= len(meta) < lo
-    with patch.object(svc, "fit_seo_fields", side_effect=AssertionError("no fit call")) as fit:
-        out, cost = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None, body="b",
-                                                  context={"destination": "Velmora", "atom_text": seed},
-                                                  request_id=uuid4()))
-    assert fit.call_count == 0 and cost == 0.0
-    assert out["meta_description"].endswith(", in Velmora.") and lo <= len(out["meta_description"]) <= hi
-    # a destination tail that would overshoot the band is not used: the fit call runs as before
-    long_dest = "Velmora Highlands and the Tesselmoor Coast"
     with patch.object(svc, "fit_seo_fields", return_value=({}, 0.01)) as fit:
-        out, _ = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None, body="b",
-                                               context={"destination": long_dest,
-                                                        "atom_text": seed.replace("Velmora", long_dest)},
-                                               request_id=uuid4()))
-    assert fit.call_count >= 1 and out["meta_description"] == meta
+        out, _cost = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None, body="b",
+                                                   context={"destination": "Velmora", "atom_text": seed},
+                                                   request_id=uuid4()))
+    assert fit.call_count >= 1
+    assert out["meta_description"] == meta
+    g = qg.gate_seo_surface(title, out["meta_description"], "corran-monastery-orvine", None)
+    assert not g["passed"] and any(v.startswith("meta description") for v in g["violations"])

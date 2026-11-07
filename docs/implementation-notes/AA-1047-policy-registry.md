@@ -46,20 +46,97 @@ Two PRs, in merge order:
   `RulesConfig.policy_sha`, `labels.RUBRIC["policy_sha"]`, the release fingerprint component `policy`
   (`writing_memory.config_fp`), and the prompt registry hash of any prompt whose source reads the policy.
 
+## S272 decision: gates fail closed as on main until the W2 instrument (registry kept)
+
+Three adversarial fix rounds (reviews 2, 3 and 4 below) did not converge: every hand-written rule that turned a block
+into a warn (a background number per D1 / F6, a place rarity per D13, the deterministic T9 meta country tail) kept
+failing open on new inputs. The S272 decision keeps the registry and puts the gates back to main's behaviour until the
+W2 claim instrument (D7, D10) can hold these claims with a measurement record.
+
+### Changed (what was reverted, and why)
+
+- **F1 numbers** (`quality_gates.gate_grounding`): main's code again. Every digit / year form the SOURCE (all of it)
+  lacks blocks; no background number warns. Reverted with it: the trip frame and its per-number background signals
+  (`claim_rules.trip_number_frame`, `trip_attached`, `number_has_background_signal`, ...), the warn path
+  (`blocking=False`), and the stricter parts that rode on the same code (other trips' lines and the AUDIENCE / BRAND
+  lines no longer supporting a number, spelled-out numbers in F1, the "Day N of the trip" line never supporting a
+  count). Why: the warn path failed open on new phrasings each round; the stricter parts can hold correct text main
+  passes (a Fact or brand number the split dropped, a "Days 2 and 3" day range) and were not separable from the frame.
+- **apply_rules** (`claim_rules._decide`, the unwired F9 v2 rule table): main's number branch, place_background branch
+  (an uncited background sentence warns only when no place has a card and it has no number, rule, scene or trip word;
+  otherwise it fails), no rarity branch, no position branch, main's `_DAY_INDEX_RE` and `RARITY_RE`. `RulesConfig` is
+  still compiled from the policy and stamped with `policy_sha`; its values are main's (`hypothetical: warn`,
+  `uncited_background: warn`); `background_numbers` is gone.
+- **F17 / F18 rarity** (`trip_facts`, `hygiene`): main's code. F18 holds every rarity claim the source does not make,
+  trip or place (`rarity_blocks` and the place-warn path are gone); the access-rarity lexicon
+  (`hygiene.ACCESS_RARITY_RE`) is gone too: it was stricter but held correct background ('Few people live in the
+  upper valley').
+- **Admin sentence check** (`sentence_repair.check_replacement`): main's code. Every failing gate blocks (the
+  per-gate `blocking` flag that let a background number warn is gone), and the F17 / F18 sentence-level run is gone
+  (`find_trip_fact_issues(sentence_only=...)` with it): stricter, but not proven safe on single admin sentences.
+- **T9 short meta** (`service._fit_seo_meta`, `seo_meta_utils`): no deterministic country tail. A meta under the
+  policy band floor goes to the fit call; when the fit leaves it, F4 holds it, as on main. `extend_short_meta`,
+  `place_country_tail`, `location_countries`, `card_location_countries`, `same_country` (the seo_meta_utils one) and
+  the `named_already` tail guard are gone. The policy's `writer_aims.meta.t9.short_fix` now names
+  `service:_fit_seo_meta`.
+- **check_cta**: main's code (the "prose ends with the CTA line" pass was a looser check). The short one-paragraph
+  case where `ensure_cta` leaves text the check fails is open again (cta-09, in the W2 fixture's `main_gaps`).
+- **Kept, not reverted**: the policy YAML, compiler, compiled file and `policy_sha` everywhere; the lint against hand
+  restatements; the generated eval rubric / LABEL_RUBRIC / RulesConfig / route-row sets; the eval judge reading
+  `evidence_view` with no truncation; the prompt-registry policy hashing; the contradiction-suite harness; the D5
+  bands (meta 140–155 in F4 and T9 acceptance; title and slug unchanged; slug cut at a word boundary); the FAQ topic
+  list shared by the LLM filter and the dropper; taxonomy severities f7 / c3 / s5 warn → block (labels, stricter).
+
+### Decisions
+
+- `writing_policy.yaml` `claims.background`, `claims.rarity` and `claims.numbers` carry
+  `enforcement: block_until_w2_instrument`: their cases are the verdicts the gates give today, and the decided D1 /
+  D13 intent sits under `w2_intent` (schema-checked: `w2_intent` keys must be cases of the topic). The compiled
+  `claims` therefore says main's behaviour.
+- The contradiction suite asserts main's verdicts (148 examples, 100%: block 101, warn 12, pass 35). The 53 examples
+  whose expectation or owners changed keep their decided intent in
+  `tests/unit/quality/fixtures/aa1047_w2_intent_examples.yaml` (`w2_intent`, not asserted). Eight examples where main
+  is laxer than even the fail-closed policy, or where a fixer leaves text its own check fails, moved out of the
+  asserted suite to `main_gaps` in the same file: bg-05 (a place outside the source in uncited background warns),
+  rar-09 / rar-10 / rar-12 (access rarity: main passes or warns), num-06 (a number only another trip's line gives),
+  num-19 / num-20 (a number only the AUDIENCE line gives), cta-09 (above). New pass twins: bg-14, rar-24, hyp-04
+  (cited background, a non-rarity 'main', a cited picture) so every topic keeps a no-fire twin.
+- S271 T9 contradictions #1 (background / rarity widths) and #8 (numbers) are open again (W2); #10 is closed except
+  cta-09. CODE_VS_CODE in the suite lists only what main's code proves.
+
+### Tradeoffs
+
+- Fail closed costs repairs and holds on correct background numbers and place rarity (as on main today) in exchange
+  for no new fail-open path. The W2 instrument turns `w2_intent` on per topic with a measurement record.
+- The stricter fixes for main's own gaps (num-06 / 19 / 20, access rarity) were withdrawn with the warn rules rather
+  than kept half-wired; they are W2's, recorded in `main_gaps`.
+
+### Should know
+
+- **Prompt versions / migration 387**: the policy YAML change moves `policy_sha` (now `3f1c2ec09ea1048f`), and every
+  prompt whose source reads the policy hashes it, so the sixteen 387 versions' hashes changed (no prompt TEXT
+  changed). The versions stay as 387 named them (no new version); the manifest rows and `387_prompt_versions_aa1047_
+  policy.sql` were re-pinned to the new hashes. 387 on main (merged from the migration-only PR) carries the OLD hashes,
+  so this branch's 387 no longer matches it: see the migration note of this commit (before the code PR merges, either
+  replace 387 and its Infra byte copy before it is applied, or, if Dev already applied it, ship a forward migration
+  for the sixteen rows).
+- Sections "S272 adversarial review 2 / 3 / 4" below describe code that this decision reverted; they stay as the
+  record of why.
+
 ## Decisions
 
 - **One meta band 140–155 in code, writers aim below it.** The writer aims are policy values, not a second band: a
   model overshoots a character target (lesson S233), so the band is enforced by code (fit / gate) and the prompt says
   "aim X–Y, never over 155". The lint treats aim bounds as policy values too, so they cannot be restated by hand.
-- **Numbers (critic fix F6).** A novel number holds only inside a trip frame (the trip, reader, group or a day is the
+- **Numbers (critic fix F6). Reverted by the S272 fail-closed decision above.** A novel number holds only inside a trip frame (the trip, reader, group or a day is the
   subject — `f9_policy.TRIP_SUBJECT_RE` — or `claim_rules` sees a concrete trip service / promise frame); outside it
   (a year, a height, a share) it warns. F1 and `apply_rules` use the same rule. Word numbers count like digits in F1
   (`claim_rules.find_novel_word_numbers`), and the lines of other trips never support a number (F1 now reads the
   seed's own lines, `hygiene.split_seed`).
-- **Rarity (D13).** F18 still reports every rarity finding; it blocks only when the claim is attached to the trip
+- **Rarity (D13). Reverted by the S272 fail-closed decision above.** F18 still reports every rarity finding; it blocks only when the claim is attached to the trip
   (trip subject) or is a quantifier / social-proof finding; a rarity claim about a place follows D1 and warns
   (`trip_facts.rarity_blocks`).
-- **Background (D1) in claim_rules.** An uncited place_background sentence about a place the SOURCE names passes
+- **Background (D1) in claim_rules. Reverted by the S272 fail-closed decision above.** An uncited place_background sentence about a place the SOURCE names passes
   (before: it failed whenever any place had a card); a number or year in it warns (`background_numbers`); a trip
   activity / service / time / view, a place the SOURCE never names, or a rule or fee blocks. This is the unwired F9 v2
   rule table, so live behaviour moves only where F1 / F18 moved.
@@ -70,7 +147,7 @@ Two PRs, in merge order:
   (`brand_audit_node.meal_time_claims_supported`).
 - **Slug.** Over 60 chars the slug is cut at a hyphen, never mid-word, in the T9 fold and in the publish
   `blog_slug` stem.
-- **CTA check.** `claim_rules.check_cta` also passes a text whose prose ends with the CTA line (a short one-paragraph
+- **CTA check. Reverted by the S272 fail-closed decision above.** `claim_rules.check_cta` also passes a text whose prose ends with the CTA line (a short one-paragraph
   text: the 35% tail started inside the line, so `hygiene.ensure_cta` left the text alone while the check failed it).
 - **Taxonomy severities** other.f7, other.c3, other.s5 → block (they were warn while F17 / F16 held); scope.framing
   stays block in the taxonomy while F12 runs in warn mode until measured (AA-788 mode switch, ADR 0020: only measured
@@ -85,7 +162,7 @@ Two PRs, in merge order:
   level on purpose (S272 review): the first cut looked for `_wp.` in the hashed symbols only and missed s1_generate
   (`_BACKGROUND`), t2_generate (`_RULES_3_TO_6`…), s1/t2_flag_fix (meta rules built inside `flag_fix_node`) and
   t10_judge (`f9_user_prompt`, now also one of its hashed symbols). Sixteen stages read the policy today.
-- **Short T9 meta (S272 review, contradiction 12 inside the policy).** The T9 writer and SEO fit aim 130–145 (lesson
+- **Short T9 meta (S272 review, contradiction 12 inside the policy). The deterministic tail was withdrawn by the S272 fail-closed decision above (the short_fix is the fit call).** The T9 writer and SEO fit aim 130–145 (lesson
   S233: a model overshoots its target), the band is 140–155. An aim under the band floor is now a documented
   exception the schema check only accepts with `short_fix` (the deterministic step that lands a short value in the
   band). T9: `service._fit_seo_meta` gives a complete 130–139 meta the DESTINATION tail (`seo_meta_utils.
@@ -118,16 +195,16 @@ Meals changed in code only (no prompt line). The T9 writer `WRITER_PROMPT_VERSIO
 
 | # | topic | status in this lane | proof |
 |---|---|---|---|
-| 1 | place background widths | gone (code + writer/repair lines) | bg-*, rar-01/04/07 |
+| 1 | place background widths | open again (S272 fail closed; W2): writer/repair lines kept, gates as on main | W2 fixture |
 | 2 | brief as source | gone (rubric + judge: the brief is an instruction) | test_contradiction_2 |
 | 3 | judge rubric vs embellish | gone (D3 in rubric and taxonomy) | test_contradiction_3 |
 | 4 | timing: repair vs F17 | code agrees (F17 holds every unsourced time) | tim-* |
 | 5 | severities f7 / c3 / s5 / scope | gone (taxonomy = policy, lint p6) | tim-01, faq-03/05, scp-01 |
 | 6 | FAQ filter vs dropper | gone (one topic list) | faq-* |
 | 7 | length vs background | writer-vs-writer: moves to W5 (writer prompts, measured with the paid smoke) | — |
-| 8 | numbers (digits only, other trips) | gone (F6 frames, word numbers, own lines) | num-* |
+| 8 | numbers (digits only, other trips) | open again (S272 fail closed; W2): F1 as on main | W2 fixture |
 | 9 | scope | code agrees (F12 by policy severity; run-time mode stays warn until measured) | scp-* |
-| 10 | CTA worked-in vs ensure_cta | gone (writer lines + check) | cta-* |
+| 10 | CTA worked-in vs ensure_cta | gone except cta-09 (writer lines; check_cta as on main) | cta-01..05 |
 | 11 | structure rules vs retired F3/F5 | writer-vs-code: moves to W5 (writer prompts) | — |
 | 12 | three meta bands, slug mid-word | gone (one band, slug at a word boundary) | meta-*, tit-*, slug-* |
 | 13 | retry ownership (token_budget) | not policy: no owner yet — needs an issue (gateway retry ownership); see "Done-when gap" | — |
@@ -164,7 +241,7 @@ marked done; #13 and #14 need an issue (asked first, per the Linear rule):
 
 ## Should know
 
-- Contradiction suite: 103 synthetic examples, 100% as the policy expects (each topic has fire and no-fire twins:
+- Contradiction suite (first cut; S272: now 148 examples at main's verdicts, see the fail-closed section): 103 synthetic examples, 100% as the policy expects (each topic has fire and no-fire twins:
   background, timing, numbers 11; meta band 10; rarity, scope, slug, FAQ 8; CTA 7; meals 6; title band, day count 5;
   hypothetical 3, reflection 2). Every body example carries a claim row, and every body fire twin lists its owning
   detectors (`all:`), each of which must reach `expect` on its own (S272 review: `combined` hid a lax detector).
@@ -180,19 +257,19 @@ marked done; #13 and #14 need an issue (asked first, per the Linear rule):
 - CTA gap not fixed (out of scope): a social text whose CTA sits in the second-last paragraph with one more paragraph
   after it passes `check_cta` (the closing window is the last two paragraphs) although the policy says "last
   sentence". `ensure_cta` keeps it. Left for W5 (channel shapes).
-- Behaviour changes on Dev after deploy (T9 gates, no paid call): F4 meta band 120–158 → 140–155; F1 holds only trip
-  numbers; F18 place rarity warns; the FAQ filter drops source-less topics; T2 meal lines copied from the source day
+- Behaviour changes on Dev after deploy (T9 gates, no paid call; S272: F1, F18 and check_cta stay as on main): F4
+  meta band 120–158 → 140–155; the FAQ filter drops source-less topics; T2 meal lines copied from the source day
   pass; slugs cut at a word boundary. Prompt versions move (t9_write v4, writing_memory_eval v3, v2 of t9_repair,
   s1/t2_brand_audit, a3_place_card, a3_place_card_check, s1/t2_generate, s1/t2_judge, s1/t2_flag_fix,
-  t9_faq_answer_fit, t10_claims, t10_judge) — CIS 387 registers all sixteen. A T9 meta of 130–139 that the
-  destination tail lands in the band no longer costs a fit call or an F4 hold.
+  t9_faq_answer_fit, t10_claims, t10_judge) — CIS 387 registers all sixteen. A T9 meta of 130–139 goes to the fit call and
+  F4 holds what the fit leaves (S272: no country tail).
 - The paid 3-piece writer smoke (critic fix F9, ~$0.50) was NOT run here: it is a live step of the code PR.
 - Not in this lane: critic fix F10 (A3 input check, unanchored-atom share) is the W1 input measurements item; F13
   (review capacity for A1 rows) is a decision for the tech lead; both stay on AA-1047.
 - `config_fp` gets a new component `policy`: every release fingerprint moves once at deploy (reverify reason
   `prompt_version_mismatch`).
 
-## S272 adversarial review 2 (fixes on PR #1368)
+## S272 adversarial review 2 (fixes on PR #1368; reverted by the S272 fail-closed decision)
 
 Decisions
 - One trip-frame predicate for a novel number: `claim_rules.trip_number_frame`, used by F1 (`gate_grounding`), the
@@ -235,7 +312,7 @@ Tradeoffs / not fixed
   (background numbers and years, place rarity); every review counter-example blocks in F1, apply_rules and
   check_replacement (or F17 / F18 and check_replacement).
 
-## S272 adversarial review 3 (fixes on PR #1368)
+## S272 adversarial review 3 (fixes on PR #1368; reverted by the S272 fail-closed decision)
 
 Decisions
 - The number frame fails closed. `claim_rules.trip_number_frame` = `trip_attached` OR NOT `background_number_signal`:
@@ -275,7 +352,7 @@ Should know
 - No policy key changed (examples only): policy_sha stays 56729ec18379581c, the prompt registry check reports 0
   problems, migration 387's manifest is unchanged.
 
-## S272 adversarial review 4 (fixes on PR #1368)
+## S272 adversarial review 4 (fixes on PR #1368; reverted by the S272 fail-closed decision)
 
 Decisions
 - The background signal is bound to each novel number, never to the sentence. `claim_rules.trip_number_frame(sentence,

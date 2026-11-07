@@ -280,7 +280,6 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
     body = t[:-1] if t.endswith(".") else t
     days = tour_days((facts or {}).get("duration"))
     country = ((facts or {}).get("country") or "").strip()
-    named_already = False
     if country:
         # AA-794: raw_tours.country holds ONE country, so a Laos→Vietnam tour got ", in Laos." after
         # a meta ending in Cuc Phuong (Vietnam). When the tour name or the meta names any other
@@ -289,8 +288,6 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
         own = countries.name(country) or country
         if _countries_named(f"{(facts or {}).get('name') or ''} {body}") - {own}:
             country = ""
-        # AA-1047 (S272 review 2): the meta already names it under another spelling ('Vietnam' vs 'Viet Nam')
-        named_already = own in _countries_named(body)
     if days and (_MENTIONS_DAYS.search(body) or _MENTIONS_DAY_TRIP.search(body)):
         days = None  # the meta already states the length; don't say it twice
     tails = []
@@ -306,92 +303,11 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
         tails += [f", in {country}."]
     for tail in tails:
         cand = (body + tail) if not tail.startswith(" Duration") else (body + "." + tail)
-        if country and (named_already or country.lower() in body.lower()) and f"in {country}" in tail:
+        if country and country.lower() in body.lower() and f"in {country}" in tail:
             continue  # don't repeat the country the meta already names
         if meta_in_band(cand, forbidden):
             return cand
     return None
-
-
-def extend_short_meta(meta: Optional[str], facts: Optional[dict] = None, tenant_forbidden=None) -> Optional[str]:
-    """AA-1047 (writing policy D5 "code composes"; writer_aims short_fix): a complete meta under the band floor with
-    one tail built only from source fields (days, country: `_extend_short_meta`) when that lands it in the band;
-    else None. The T9 blog uses it with its DESTINATION line (service._fit_seo_meta): the writer aims below the band
-    (lesson S233), so a value it leaves at 130-139 is composed into the band instead of failing F4."""
-    t = (meta or "").strip()
-    if not t or len(t) >= SEO_META_MIN or not meta_complete_sentence(t):
-        return None
-    forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
-    return _extend_short_meta(t, facts or {}, forbidden)
-
-
-_PAREN_RE = re.compile(r"\([^)]*\)")
-
-
-def location_countries(seed_text: Optional[str]) -> list[Optional[str]]:
-    """AA-1047 (S272 review 3): the country of EVERY 'Location:' line of a seed, in order — the last part of the
-    line (atom_seed._location_lines writes '<place>, <locality>, <region>, <card country>'), or None for a line with
-    no comma-separated last part. A T9 route piece's seed is several moment blocks joined by blank lines
-    (service._reread_seed), each with its own Location line; a place keeps its own country."""
-    out: list[Optional[str]] = []
-    for line in (seed_text or "").splitlines():
-        if line.startswith("Location:"):
-            where = _PAREN_RE.sub("", line.split(":", 1)[1]).strip().rstrip(",").strip()
-            last = where.rsplit(",", 1)[-1].strip() if "," in where else ""
-            out.append(last or None)
-    return out
-
-
-def location_country(seed_text: Optional[str]) -> Optional[str]:
-    """The country of the seed's first 'Location:' line (location_countries), or None."""
-    found = location_countries(seed_text)
-    return found[0] if found else None
-
-
-def same_country(a: Optional[str], b: Optional[str]) -> bool:
-    """`a` and `b` name the same country (canonical ISO name when either resolves, else a case-folded match)."""
-    if not (a and a.strip() and b and b.strip()):
-        return False
-    from shared import countries
-    ca, cb = countries.name(a), countries.name(b)
-    if ca or cb:
-        return ca == cb
-    return a.strip().casefold() == b.strip().casefold()
-
-
-# The card form of a seed Location line (atom_seed._location_lines with a place card): its last comma part is the
-# card's own country. The fallback form ('(do not name any other country or region for it)') is written from
-# raw_tours.country, the trip's DESTINATION itself, so it never says where the place is (S272 review 4).
-CARD_LOCATION_SUFFIX = "(do not place it in any other town, region or country)"
-
-
-def card_location_countries(block: Optional[str]) -> list[Optional[str]]:
-    """The country of every CARD-backed 'Location:' line of one seed block (CARD_LOCATION_SUFFIX), in order; None
-    for a card line with no comma-separated last part. A fallback Location line is skipped (it carries the tour
-    country, never the place's own)."""
-    lines = [ln for ln in (block or "").splitlines()
-             if ln.startswith("Location:") and ln.rstrip().endswith(CARD_LOCATION_SUFFIX)]
-    return location_countries("\n".join(lines))
-
-
-def place_country_tail(destination: Optional[str], *seed_texts: Optional[str]) -> Optional[str]:
-    """The country a T9 short-meta tail may name: the DESTINATION only when EVERY moment block (blank-line separated)
-    of every seed text (the piece's own seed and each route segment) has a CARD-backed 'Location:' line and every
-    such line names that same country. None — no country tail — when a block has no card Location line (a moment with
-    no place card: its fallback line is written from raw_tours.country, the DESTINATION itself, so comparing it with
-    the DESTINATION proves nothing; a label-only route block), a card line has no country part, or any line names
-    another country (a cross-border trip or route: ', in Laos.' after a meta about Ha Long Bay or Hanoi). Fail closed:
-    when unsure, no tail (S272 review 3 + 4)."""
-    if not (destination and destination.strip()):
-        return None
-    blocks = [b for text in seed_texts for b in re.split(r"\n\s*\n", text or "") if b.strip()]
-    if not blocks:
-        return None
-    for block in blocks:
-        found = card_location_countries(block)
-        if not found or not all(same_country(destination, c) for c in found):
-            return None
-    return destination.strip()
 
 
 def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden=None) -> str:

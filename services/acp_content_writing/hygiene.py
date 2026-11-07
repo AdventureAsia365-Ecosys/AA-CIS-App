@@ -1179,19 +1179,6 @@ SOCIAL_PROOF_RE = re.compile(
     # is a demand on the reader, not proof from others: not after 'of' / 'from'
     r"|(?<!\bof )(?<!\bfrom )everyone (?:who|says)|our (?:clients|guests|travell?ers) (?:say|love|tell))", re.I)
 
-# AA-1047 (S272 review 2) — access rarity: how few others reach a place, or that the reader is one of the only ones
-# let in. Social proof by scarcity, never in a SOURCE and never background: ONE lexicon for F18 (trip_facts
-# .rarity_claims, always blocking) and the rule table's social tripwire (claim_rules.RARITY_RE).
-ACCESS_RARITY_RE = re.compile(
-    r"\brare\s+(?:chance|opportunity|privilege|glimpse|access|invitation)\b"
-    r"|\b(?:only\s+)?a\s+handful\s+of\s+(?:travell?ers|visitors|groups|guests|people|tourists|outsiders|walkers)\b"
-    r"|\b(?:very\s+|only\s+a\s+|so\s+)?few\s+(?:other\s+)?(?:groups|visitors|travell?ers|guests|people|tourists"
-    r"|outsiders|walkers|foreigners)\b"
-    r"|\b(?:hardly\s+any|almost\s+no)\s+(?:other\s+)?(?:groups|visitors|travell?ers|guests|tourists|outsiders)\b"
-    r"|\bonly\s+(?:ones?|groups?|visitors|travell?ers|guests)\s+(?:\w+\s+)?(?:allowed|permitted|invited|let\s+in"
-    r"|admitted|able)\b"
-    r"|\bnever\s+find\s+their\s+way\b|\b(?:rarely|seldom)\s+(?:visited|seen|reached)\b", re.I)
-
 _SOCIAL_SUPPORT_MIN = 0.30  # social-proof sentence auto-deleted only below this seed overlap
 
 

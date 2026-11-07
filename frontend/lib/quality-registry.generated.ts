@@ -66,7 +66,7 @@ export const SCORE_BANDS = {
 
 /** AA-1047 — the writing policy's SEO bands (services/quality/writing_policy.yaml, decision D5): one meta
  *  band and one title band for every workflow; the slug cap. */
-export const WRITING_POLICY_SHA = "56729ec18379581c";
+export const WRITING_POLICY_SHA = "3f1c2ec09ea1048f";
 export const SEO_BANDS = {
   meta: { min: 140, max: 155 },
   title: { min: 45, max: 60 },
