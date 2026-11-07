@@ -333,7 +333,17 @@ def _route_text_without(text: str, dropped: Iterable[FactLine]) -> str:
                 continue
             kept.append(raw)
         out.append("\n".join(_drop_empty_headers(kept)) + sep)
-    return re.sub(r"(\n\s*\n)+$", "", "".join(out))
+    return _strip_trailing_blank_lines("".join(out))
+
+
+def _strip_trailing_blank_lines(text: str) -> str:
+    """Same result as ``re.sub(r"(\\n\\s*\\n)+$", "", text)`` in linear time (CodeQL py/redos on the regex): a
+    whitespace tail that ends with a newline and holds at least two of them is cut from its first newline."""
+    body = text.rstrip()
+    tail = text[len(body):]
+    if tail.endswith("\n") and tail.count("\n") >= 2:
+        return body + tail[:tail.index("\n")]
+    return text
 
 
 def _drop_empty_headers(lines: list[str]) -> list[str]:
