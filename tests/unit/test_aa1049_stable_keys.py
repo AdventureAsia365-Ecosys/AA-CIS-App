@@ -66,6 +66,23 @@ def test_fixing_three_claims_while_adding_one_finding_is_kept():
     assert new and not revert
 
 
+def test_a_rewrite_that_clears_whole_gates_is_never_reverted():
+    """Main's gate-count rule stays a condition: F1 + F9 cleared for three F13_repeat findings is kept (reverting it
+    would bring back the two product-truth failures), even though the key count grew 2 -> 3."""
+    prev = [_quoted(qr.F1_GROUNDING, A, "not present in the content seed"), _f9((B, "b"))]
+    cur = [{"gate": qr.F13_REPEAT, "passed": False, "blocking": True,
+            "violations": [f"repeats an earlier line: '{q}'" for q in (A, B, C)]}]
+    c = sk.compare(prev, cur)
+    assert c["new"] and c["cur_keys"] == 3 and c["prev_keys"] == 2
+    assert c["cur_gates"] == {qr.F13_REPEAT} and c["prev_gates"] == {qr.F1_GROUNDING, qr.F9_CTA_FACT}
+    assert c["revert"] is False and sk.regressed(prev, cur)[1] is False
+
+
+def test_same_gates_more_keys_is_reverted():
+    new, revert = sk.regressed([_f9((A, "a"))], [_f9((B, "b"), (C, "c"))])
+    assert revert and len(new) == 2
+
+
 def test_shrank_is_a_proper_subset():
     assert sk.shrank([_f9((A, "a"), (B, "b"))], [_f9((A, "a"))])
     assert not sk.shrank([_f9((A, "a"))], [_f9((A, "a"))])

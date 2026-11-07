@@ -2548,7 +2548,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 new_regressions = cur_blocking_fail - prev_blocking_fail
                 # AA-1049 W3 — by default the guard reads stable keys (stable_keys.regressed): a rewrite that swaps
                 # one F9 claim for another is a regression, one that fixes three claims and adds one F17 finding is
-                # not. `new_regressions` then names the gates of the new keys.
+                # not, and one that clears a whole failing gate is never reverted (main's gate-count rule stays a
+                # condition). `new_regressions` then names the gates of the new keys.
                 guard_keys = regression_guard_mode() == GUARD_STABLE_KEYS
                 if guard_keys:
                     new_keys, key_revert = stable_keys.regressed(prev_ledger, gate_ledger)

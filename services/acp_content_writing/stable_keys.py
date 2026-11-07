@@ -80,9 +80,28 @@ def shrank(before: Optional[list], after: Optional[list]) -> bool:
     return b < a
 
 
-def regressed(prev_ledger: Optional[list], cur_ledger: Optional[list]) -> tuple[frozenset, bool]:
-    """(new keys, revert?) for the regression guard: revert when the current attempt has a key the previous one did
-    not and is not net-better (as many keys or more)."""
+def gates_of(keys: frozenset) -> frozenset:
+    """The gate names of a set of stable keys (the S271 gate-name view of the same ledger)."""
+    return frozenset(g for g, _ in keys)
+
+
+def compare(prev_ledger: Optional[list], cur_ledger: Optional[list]) -> dict:
+    """The regression guard's evidence for one pair of attempts: the keys added and removed, both key counts and both
+    gate sets, and `revert`.
+
+    Revert only when the rewrite has a key the previous attempt did not AND it is not net-better on EITHER measure:
+    as many keys or more, and as many failing gates or more. So a same-gate swap is reverted (D-guard-1), a rewrite
+    that clears more findings than it adds is kept (D-guard-2), and a rewrite that clears a whole gate is never
+    reverted (as on main: putting it back would bring back a product-truth failure the rewrite cleared)."""
     prev, cur = blocking_keys(prev_ledger), blocking_keys(cur_ledger)
-    new = cur - prev
-    return frozenset(new), bool(new) and len(cur) >= len(prev)
+    new, removed = cur - prev, prev - cur
+    pg, cg = gates_of(prev), gates_of(cur)
+    revert = bool(new) and len(cur) >= len(prev) and len(cg) >= len(pg)
+    return {"new": frozenset(new), "removed": frozenset(removed), "prev_keys": len(prev), "cur_keys": len(cur),
+            "prev_gates": pg, "cur_gates": cg, "revert": revert}
+
+
+def regressed(prev_ledger: Optional[list], cur_ledger: Optional[list]) -> tuple[frozenset, bool]:
+    """(new keys, revert?) for the regression guard (compare)."""
+    c = compare(prev_ledger, cur_ledger)
+    return c["new"], c["revert"]
