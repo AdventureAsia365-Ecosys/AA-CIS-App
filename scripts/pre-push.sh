@@ -680,6 +680,11 @@ do_frontend_lint() {
 
 main() {
   cd "$(git rev-parse --show-toplevel)" || exit 2
+  # S272 incident: git exports GIT_DIR (and friends) to a hook. A test that runs `git init` / `git config` / `git commit`
+  # in a temp dir with the inherited env then writes into THIS clone (core.bare=true, user=ci, fake commits, a rewritten
+  # origin/main shared by every worktree). Drop them once cwd is the top level, so git finds the repo by itself.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_NAMESPACE GIT_PREFIX GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM
   MODE=fast CI_MODE=0 DRY=0 ONLY="" HEAD_REF=HEAD BASE=${AA_PREPUSH_BASE:-origin/main} RUN_INTEGRATION=0
   [[ ${AA_PREPUSH:-} == full ]] && MODE=full
   while (( $# )); do
