@@ -487,6 +487,9 @@ def _apply_schema(conn):
         # (TripPlanner's tenant read) through the catalog recipe (needs 245's owners) and seeds the demo tenant.
         # test_aa1038_migration_379 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
         and not f.startswith('379')
+        # AA-1038 R5 slice 3 (S272): 390 alters 379's site table and replaces / adds catalog views (catalog recipe,
+        # needs 379). test_aa1038_migration_390 applies 379 + 390 the DB Migrate way and undoes both at teardown.
+        and not f.startswith('390')
     ])
 
     for mf in migration_files:
