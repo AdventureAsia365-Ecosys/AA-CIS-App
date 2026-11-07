@@ -272,3 +272,32 @@ def test_compact_keeps_the_block_codes():
     rec = fc.check_s1(_s1(grounding_ran=False), exit="done", actual="approved").record()
     entry = fc.compact(rec, "2026-11-07T00:00:00+00:00")
     assert entry["codes"] == ["GROUNDING_NOT_RUN"] and entry["flip"] == "unpublish" and entry["at"]
+
+
+# ── report script ────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_report_reads_live_v2_masters_and_counts_flips_without_text():
+    from scripts.quality import final_contract_report as report
+    sql = report.masters_sql(False)
+    assert "writer_version' = 'v2'" in sql and "master_status = 'active'" in sql and "deleted_at IS NULL" in sql
+    assert "writer_version" not in report.masters_sql(True).split("WHERE pt.")[1]
+    base = {"aa_name": "Karsh", "aa_summary": "A walk.", "seo_meta": META, "aa_itineraries": PAGE_ITIN,
+            "src_itineraries": SRC_ITIN, "duration": "4 days",
+            "metadata": json.dumps({"writer_version": "v2", "grounding": {}}), "failure_codes": "[]",
+            "brand_audit_codes": "[]", "brand_audit_status": "pass", "score_overall": 9.0, "country": "Zembla",
+            "tour_id": "t-1", "generated_content_id": "g-1", "published_tour_id": "p-1"}
+    lost = {**base, "aa_itineraries": "Day 1 — A\nx.\n\nDay 2 — B\ny.", "src_itineraries": "No markers.",
+            "duration": "12 days", "tour_id": "t-2", "generated_content_id": "g-2", "published_tour_id": "p-2"}
+    out = report.summarize([base, lost])
+    assert out["masters"] == 2 and out["errors"] == 0 and out["publish_flip"]["count"] == 1
+    assert out["day_loss"] == [{"tour_id": "t-2", "country": "Zembla", "page_days": 2, "duration_days": 12}]
+    assert out["by_country"]["Zembla"]["flips"] == 1 and "Karsh" not in json.dumps(out)
+    assert report.summarize([lost, lost], sample=1)["publish_flip"]["count"] == 2
+    assert len(report.summarize([lost, lost], sample=1)["flips"]) == 1
+
+
+def test_report_counts_a_bad_row_and_goes_on():
+    from scripts.quality import final_contract_report as report
+    with patch.object(store, "s1_record_from_row", side_effect=ValueError("bad")):
+        out = report.summarize([{"country": None, "generated_content_id": "g-3"}])
+    assert out["errors"] == 1 and out["masters"] == 0
