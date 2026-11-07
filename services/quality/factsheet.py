@@ -148,25 +148,35 @@ class FactSheet:
 # ------------------------------------------------------------------ anchors
 
 
-def anchor_check(evidence: Optional[str], label: Optional[str], raw_text: Optional[str]) -> Optional[bool]:
-    """True when an atom's evidence (else its label) is grounded in the tour's raw source text; None when there is no
-    raw text to check against. See ANCHOR_MIN_SHARE."""
+class RawIndex:
+    """The folded text and the content words of one tour's raw source, built once and reused for all its atoms."""
+
+    def __init__(self, raw_text: Optional[str]):
+        from services.acp_content_writing.hygiene import content_words, fold
+
+        self.empty = not (raw_text or "").strip()
+        self.norm = " ".join(fold(raw_text or "").split())
+        self.words = set(content_words(raw_text or ""))
+
+
+def anchor_check(evidence: Optional[str], label: Optional[str], raw_text) -> Optional[bool]:
+    """True when an atom's evidence (else its label) is grounded in the tour's raw source (a text or a RawIndex);
+    None when there is no raw text to check against. See ANCHOR_MIN_SHARE."""
     from services.acp_content_writing.hygiene import content_words, fold
 
-    if not (raw_text or "").strip():
+    raw = raw_text if isinstance(raw_text, RawIndex) else RawIndex(raw_text)
+    if raw.empty:
         return None
     probe = (evidence or "").strip() or (label or "").strip()
     if not probe:
         return False
     norm = " ".join(fold(probe).split())
-    raw_norm = " ".join(fold(raw_text).split())
-    if norm and norm in raw_norm:
+    if norm and norm in raw.norm:
         return True
     words = set(content_words(probe))
     if not words:
         return False
-    raw_words = set(content_words(raw_text or ""))
-    hits = words & raw_words
+    hits = words & raw.words
     return len(hits) >= min(ANCHOR_MIN_WORDS, len(words)) and len(hits) / len(words) >= ANCHOR_MIN_SHARE
 
 
@@ -427,5 +437,6 @@ __all__ = [
     "ANCHOR_MIN_SHARE", "ANCHOR_MIN_WORDS", "BUILDERS", "BUILDER_ROUTE", "BUILDER_TOUR", "BUILDER_VERSION",
     "EXCLUDED_FACTS_BUDGET", "EXCLUDED_FIGURES_CAP", "EXCLUDED_READER_BUDGET", "EXTERNAL", "FactLine", "FactSheet",
     "HUMAN_VERIFIED", "LLM_DERIVED", "PROVENANCES", "SCHEMA", "SOURCE_RAW", "TENANT_ASSERTED", "anchor_check",
-    "build_route_factsheet", "build_tour_factsheet", "excluded_fact_refs", "raw_source_text", "raw_source_tour", "route_parts",
+    "RawIndex", "build_route_factsheet", "build_tour_factsheet", "excluded_fact_refs", "raw_source_text",
+    "raw_source_tour", "route_parts",
 ]

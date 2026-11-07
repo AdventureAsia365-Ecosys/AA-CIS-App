@@ -61,6 +61,21 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
 - **T2 source query.** `_PT_SQL` gains `rt.exclusions`, `rt.group_size`, `rt.best_time_to_go` (it already read the
   src_* fields, inclusions and price for the elephant detector), so the T2 sheet is built from the same raw source as
   S1's. `source_tour_dict` (what the T2 writer reads) is unchanged.
+- **Input measurements: one script, four passes** (`scripts/quality/aa1047_input_measure.py`, `MEASURE=all |
+  anchors | pointers | excluded | drift`). Read-only (a `readonly` transaction, SELECTs only, no whole-row select),
+  aggregates and ids only, database errors printed by class. Definitions:
+  - *unanchored atoms*: active platform atoms (`v_active_tour_atoms`) whose evidence (else label) fails
+    `anchor_check` against their tour's raw source; atoms of a tour without a raw row are `unknown`, not counted;
+  - *pointer failures*: `verify_pointers` of the tour FactSheet of every active raw source
+    (`source_status = 'active' AND deleted_at IS NULL`); failing tour ids, at most 20;
+  - *excluded facts per object*: per T9 piece of the last `PIECE_DAYS` days, the facts the facts budget leaves out
+    today for its tenant and destination (the stored seed is post-budget, so the drop is recomputed on today's
+    facts), and the lines `render_budgeted(16000)` would drop (the eval judge's cut); per S1 source, figures over the
+    FACT SHEET cap;
+  - *master_drift*: `s1_checks.run_checks` of every active Master (aa_* fields) against its raw source; blocking =
+    at least one finding of a fact class (number, name, inclusion, day structure); human-edited Masters are a source
+    (provenance human_verified) and are counted apart. The W1 bar: tune the provenance rules before W3 when the rate is
+    above 15% (`tune_provenance_before_w3`).
 
 ## Changed
 
@@ -69,6 +84,8 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
 - `services/acp_content_writing/facts.py`: `fetch_facts_for_writing(..., excluded_out=None)`.
 - `services/quality/factsheet_store.py` (new); `api/routers/admin_pipeline.py`, `services/jobs/t2_rewrite_job.py`,
   `services/acp_content_writing/service.py` call it.
+- `scripts/quality/aa1047_input_measure.py` (new; shipped by the root ECS exec tool, imports the deployed code at
+  /app).
 - `api/migrations/386_fact_sheet.sql` (migration-only PR), `services/erasure/inventory.py`,
   `tests/integration/conftest.py` (386's FORCE RLS table in the post-244 / post-245 lists).
 
