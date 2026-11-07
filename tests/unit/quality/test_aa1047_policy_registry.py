@@ -187,3 +187,33 @@ def test_generated_ts_carries_the_bands_and_the_sha():
     ts = gen_frontend.render()
     assert f'WRITING_POLICY_SHA = "{wp.policy_sha()}"' in ts
     assert "meta: { min: 140, max: 155 }" in ts
+
+
+def test_a_day_index_line_never_supports_a_count():
+    """S272 review: 'Day 2 of the trip' let F1 pass 'two nights' / '2 nights' (num-11); the day index is no figure."""
+    from services.acp_content_writing import claim_rules as cr
+    from services.acp_content_writing import quality_gates as qg
+    seed = "Brecca harbour — visit\n\nDay 2 of the trip\n\nSource itinerary: Walk to Brecca harbour."
+    assert cr.number_source_text(seed).count("2") == 0 and "Day 3: Walk" in cr.number_source_text("Day 3: Walk")
+    for text in ("The tour includes two nights in Brecca.", "The tour includes 2 nights in Brecca."):
+        g = qg.gate_grounding(text, seed)
+        assert not g["passed"] and g["blocking"], text
+    assert qg.gate_grounding("On day 2 you walk to Brecca harbour.", seed)["passed"]
+
+
+def test_background_position_and_trip_number_follow_f17_and_f1():
+    """S272 review: place_background passed an invented position (F17 holds it) and warned on a number about the trip
+    (F1 holds it)."""
+    from services.acp_content_writing import claim_rules as cr
+    seed = "Brecca harbour — visit\n\nSource itinerary: Walk to Brecca harbour on Lake Tamsel."
+    lines = cr.number_source_lines(seed)
+
+    def verdict(text):
+        sents = cr.split_piece(text)
+        rows = {s.sid: cr.ClaimRow(s.sid, type="place_background", places=("Brecca",)) for s in sents}
+        (v,) = cr.apply_rules(rows, lines, sents)
+        return "block" if v.blocking else ("warn" if v.problem else "pass")
+
+    assert verdict("Brecca sits on the far shore of Lake Tamsel.") == "block"
+    assert verdict("Brecca harbour holds 300 fishing boats.") == "warn"
+    assert verdict("On this walk you count 300 fishing boats in Brecca harbour.") == "block"

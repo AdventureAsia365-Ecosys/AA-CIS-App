@@ -849,7 +849,8 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     """The deterministic checks on a replacement sentence before it is saved (lesson AA-641: a
     repair needs a guard after it). Returns [{gate, violations, blocking}] — empty means clean.
 
-    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2_lexicon (F2
+    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks inside a trip frame;
+    AA-1047: a background number outside one warns, as in the pipeline), F2_lexicon (F2
     banned patterns and the brand's forbidden words, AA-924), F11 (no foreign brand / platform name), F19 (no
     review, testimonial, customer first person or independence claim — AA-819), and a
     near-verbatim copy of one of its ±4 neighbours (hygiene.near_verbatim — the rule the pipeline
@@ -876,7 +877,9 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         # AA-819 — an admin suggestion (t9_repair) or edit never puts a review / customer voice in
         qg.gate_authenticity(sentence, (writer_input or {}).get("cta")),
     ]
-    out = [{"gate": r["gate"], "violations": list(r["violations"]), "blocking": True}
+    # AA-1047 (writing policy claims.numbers, F6): each gate keeps its own `blocking` flag, so a background number
+    # F1 only warns on in the pipeline (a year, a height) warns on the admin's sentence too instead of refusing it
+    out = [{"gate": r["gate"], "violations": list(r["violations"]), "blocking": r.get("blocking", True)}
            for r in results if not r["passed"]]
     wi = writer_input or {}
     repeat_block: list[str] = []

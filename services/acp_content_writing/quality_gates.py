@@ -268,6 +268,8 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
     # trip, the reader or a day its subject, or names a trip service); elsewhere (place background: a year, a height)
     # it warns. The violation text is unchanged (sentence_repair._F1_QUOTE_RE parses it).
     own = hygiene_split_seed(atom_text)[0] if _NUMBER_POLICY["other_trip_lines_support"] is False else atom_text
+    from services.acp_content_writing.claim_rules import number_source_text
+    own = number_source_text(own)   # a "Day 2 of the trip" index never supports "two nights" (as in the F9 v2 table)
     hold = False
     for sent in _SENT_SPLIT_RE.split(content_text or ""):
         novel = find_novel_numeric_claims(sent, [own], year_forms=True)

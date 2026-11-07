@@ -25,7 +25,7 @@ SEEDS = SOURCE["example_seeds"]
 
 # S271 T9 contradiction number -> the examples that show the code now agrees with itself and the policy.
 CODE_VS_CODE = {
-    1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-08", "rar-01", "rar-04", "rar-07"],   # background widths (D1, D13)
+    1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-07", "bg-08", "bg-11", "rar-01", "rar-04", "rar-07"],  # D1, D13
     4: ["tim-01", "tim-03", "tim-05", "tim-02", "tim-04"],                              # timing: repair vs F17
     5: ["tim-01", "faq-03", "faq-05", "scp-01"],                                        # severity of f7 / s5 / scope
     6: ["faq-02", "faq-03", "faq-04", "faq-06"],                                        # FAQ topics: filter vs dropper
@@ -48,6 +48,39 @@ def test_example_is_decided_as_the_policy_expects(ex):
     for detector in ex.get("all") or []:
         assert o.verdicts.get(detector) == ex["expect"], (detector, o.verdicts, o.notes)
     assert all(o.fixed.values()), o.fixed
+
+
+BODY = [e for e in EXAMPLES if e.get("field", "body") == "body"]
+BODY_DETECTORS = {"apply_rules", "F1_grounding", "F17_trip_fact", "F18_rarity", "F12_scope", "check_replacement"}
+
+
+def test_every_body_example_gives_apply_rules_a_claim_row():
+    """Without a row apply_rules reads every sentence as 'generic' and is never really exercised (review S272)."""
+    assert [e["id"] for e in BODY if not e.get("claim")] == []
+
+
+def test_every_body_fire_twin_names_its_owning_detectors():
+    """`combined` takes the most severe verdict, so a lax detector hides behind a strict one; each detector that owns
+    the example's rule must reach `expect` on its own (`all`, checked in test_example_is_decided_as_the_policy_expects).
+    By design not an owner: apply_rules for a time or a digit outside place background (F17 / F1 own them), for a
+    rarity claim about a place (D1 background passes it, F18 warns), and check_replacement for scope (an admin's
+    sentence gets F12 as a warning until the replay shows no false positives)."""
+    missing = [e["id"] for e in BODY if e["expect"] != "pass" and not e.get("all")]
+    assert missing == []
+    unknown = {d for e in BODY for d in e.get("all") or []} - BODY_DETECTORS
+    assert unknown == set()
+
+
+def test_check_replacement_warns_where_the_pipeline_warns():
+    """S272 review: F1 warns on a background number (F6) but the admin sentence check refused it."""
+    from services.acp_content_writing import sentence_repair as sr
+    seed = ph._seed(SEEDS["monastery"])
+    checks = sr.check_replacement("Corran Monastery was founded in 1937 by monks from the coast.",
+                                  ph.grounding_text(seed), {"brand_name": ph.BRAND})
+    assert [(c["gate"], c["blocking"]) for c in checks] == [("F1_grounding", False)]
+    held = sr.check_replacement("Your group walks 30 km to the monastery.", ph.grounding_text(seed),
+                                {"brand_name": ph.BRAND})
+    assert [(c["gate"], c["blocking"]) for c in held] == [("F1_grounding", True)]
 
 
 def test_every_topic_has_fire_and_no_fire_twins():

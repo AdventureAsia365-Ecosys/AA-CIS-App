@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from services.quality import writing_policy as _wp
+from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_content_writing.hygiene import (
     SIBLING_HEADER,
     SOCIAL_PROOF_RE,
@@ -267,6 +268,14 @@ _RANGE_RE = re.compile(rf"\b({_NUMWORD})\s+to\s+({_NUMWORD})\b", re.I)
 _DAY_INDEX_RE = re.compile(r"\b(?:day|days|week|stage|part|chapter)\s+(?:[\w-]+\s+(?:to|and|through|or|-|–)\s+)?$",
                            re.I)
 _DIGITS_RE = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+# AA-1047 (writing policy claims.numbers): the seed's "Day 2 of the trip" line is an index, not a figure — it never
+# supports "two nights" or "2 nights" (F1 and apply_rules read their number source through `number_source_text`).
+_DAY_INDEX_LINE_RE = re.compile(r"^\s*Day\s+\d+\s+of the trip\b", re.I | re.M)
+
+
+def number_source_text(text: Optional[str]) -> str:
+    """`text` without the seed's day-index lines' numbers ('Day 2 of the trip'), for a number check's source."""
+    return _DAY_INDEX_LINE_RE.sub("", text or "")
 
 
 def _word_value(phrase: str) -> int:
@@ -554,6 +563,9 @@ def _trip_level(masked: str) -> Optional[str]:
 
 
 _NUMBERS = _wp.claim("numbers")
+# The lines that may support a position ('the far shore'): this trip's lines, the location, place cards and Facts —
+# never another trip's, the audience or the brand (F17 reads the moment's own seed lines the same way).
+_POSITION_KINDS = (KIND_TRIP, KIND_LOCATION, KIND_PLACE, KIND_FACT)
 
 
 def _trip_subject(text: str) -> bool:
@@ -632,9 +644,17 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
         if outside:
             return t, FAIL, (f"background about {', '.join(repr(n) for n in outside)}, a place the SOURCE never "
                              "names")
+        from services.acp_content_writing.trip_facts import unsupported_positions  # trip_facts imports hygiene only
+        position = unsupported_positions(s.text, [ln.text for ln in c.source_lines if ln.kind in _POSITION_KINDS])
+        if position:  # claims.background.invented_direction_or_position: a position is fact.direction (F17's rule)
+            return t, FAIL, f"a position the SOURCE does not give ('{position[0]}') — background cannot place it"
         if "regulatory" in hits:
             return t, FAIL, "a rule, fee or opening time the SOURCE does not give — background cannot state it"
         if "number" in hits:
+            # numbers (F6): a number about the trip (the trip, the reader, the group or a day is the subject) holds,
+            # as in the number branch above and in F1 (quality_gates.number_in_trip_frame); elsewhere it warns
+            if _trip_subject(masked) and find_novel_numeric_claims(s.text, c.number_src, year_forms=True):
+                return t, FAIL, "a number about this trip that the SOURCE does not give — background cannot state it"
             return _config_verdict(t, c.config.background_numbers,
                                    "background with a number or year the SOURCE does not give — check it")
         if "scene" in hits:
@@ -696,7 +716,7 @@ def apply_rules(rows: dict[str, ClaimRow], source_lines: list[SourceLine], sente
     word alone or SCENE / CONTRAST warns. Only a sentence that really is the configured CTA
     (hygiene's ≥60% CTA-word rule) skips the tripwires — a model's 'cta' label alone does not."""
     c = _Ctx(by_id={ln.id: ln for ln in source_lines}, lexicon=lexicon or scope_lexicon(source_lines),
-             number_src=[ln.text for ln in source_lines if ln.kind != KIND_OTHER_TRIP],
+             number_src=[number_source_text(ln.text) for ln in source_lines if ln.kind != KIND_OTHER_TRIP],
              source_lines=source_lines, cta=cta, config=config)
     out: list[Verdict] = []
     for s in sentences:

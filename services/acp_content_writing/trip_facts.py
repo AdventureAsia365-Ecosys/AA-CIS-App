@@ -400,14 +400,23 @@ def _supported_position(phrase: str, sentence: str, moments: list[Moment]) -> bo
     """A position ('the southern tip') is supported when a seed line has it AND the sentence shares
     at least two other content words with that line (so the place background 'Khatgal at the
     lake's southern tip' supports a sentence about Khatgal, not 'standing at the southern tip')."""
+    return _position_in_lines(phrase, sentence, (line for m in moments for line in m.lines))
+
+
+def _position_in_lines(phrase: str, sentence: str, lines) -> bool:
     want = _norm(phrase)
     pw = set(content_words(phrase))
     sw = set(content_words(sentence)) - pw
-    for m in moments:
-        for line in m.lines:
-            if want in _norm(line) and len(sw & (set(content_words(line)) - pw - {"lake"})) >= 2:
-                return True
-    return False
+    return any(want in _norm(line) and len(sw & (set(content_words(line)) - pw - {"lake"})) >= 2 for line in lines)
+
+
+def unsupported_positions(sentence: str, lines) -> list[str]:
+    """AA-1047 (writing policy claims.background.invented_direction_or_position): the position phrases of one
+    sentence ('the far shore', 'the southern tip') that no line of `lines` supports, by F17's own rule
+    (`_supported_position`). claim_rules' place_background rule reads it, so the F9 v2 rule table and F17 agree."""
+    lines = list(lines)
+    return [m.group(0) for m in _POSITION_RE.finditer(sentence or "")
+            if not _position_in_lines(m.group(0), sentence, lines)]
 
 
 def timing_claims(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:

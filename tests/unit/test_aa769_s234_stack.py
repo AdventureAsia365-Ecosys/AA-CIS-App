@@ -121,8 +121,12 @@ def test_check_replacement_scope_and_social_are_warnings_not_blocks():
     assert [(f["gate"], f["blocking"]) for f in out] == [("F12_scope", False)]
     out = sr.check_replacement("Families often love the quiet ruins.", SEED, WI["brand_pack"], writer_input=WI)
     assert [(f["gate"], f["blocking"]) for f in out] == [("F13_hygiene", False)]
-    out = sr.check_replacement("Groups of 40 visit the ruins.", SEED, WI["brand_pack"], writer_input=WI)
+    # AA-1047 (writing policy claims.numbers, F6): a novel number about the trip holds; a background one warns, as in
+    # the pipeline's F1
+    out = sr.check_replacement("Your group of 40 visits the ruins.", SEED, WI["brand_pack"], writer_input=WI)
     assert ("F1_grounding", True) in [(f["gate"], f["blocking"]) for f in out]
+    out = sr.check_replacement("The ruins hold 40 stone stupas.", SEED, WI["brand_pack"], writer_input=WI)
+    assert ("F1_grounding", False) in [(f["gate"], f["blocking"]) for f in out]
 
 
 def test_check_replacement_loose_restatement_is_only_a_warning():

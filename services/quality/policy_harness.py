@@ -4,15 +4,17 @@ rule that reads its field, and say what the system decides.
 The examples are the fire / no-fire twins in services/quality/writing_policy.yaml (`examples`, synthetic only). For
 each example every detector of its field gives `block`, `warn` or `pass`; the system's verdict is the most severe of
 them (`combined`). The contradiction suite (tests/unit/quality/test_aa1047_contradictions.py) needs `combined` ==
-the example's `expect` for 100% of them: two checks that disagree about one sentence (one passes it, the other holds
-it) show up as a wrong combined verdict, which is exactly the S271 code-vs-code contradiction. Fixers are run too: a
-fixer's output must satisfy the policy (`fixed`), e.g. ensure_cta leaves the CTA line once, the slug fold cuts at a
-word boundary, the meta fitter lands in the band or leaves the text for the gate to report.
+the example's `expect` for 100% of them, AND every detector the example names in `all` (the detectors that own its
+rule: every body fire twin names them) must reach `expect` on its own: `combined` alone hides a lax detector behind a
+strict one, and two owners that disagree about one sentence are exactly the S271 code-vs-code contradiction. Fixers
+are run too: a fixer's output must satisfy the policy (`fixed`), e.g. ensure_cta leaves the CTA line once, the slug
+fold cuts at a word boundary, the meta fitter lands in the band or leaves the text for the gate to report.
 
 Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fail-closed):
 
-- body: claim_rules.apply_rules (deterministic mode, plus the example's `claim` row), F1 gate_grounding, F17 / F18
-  gate_trip_facts, F12 gate_scope (the scope lexicon)
+- body: claim_rules.apply_rules (with the example's `claim` row: the type an extraction call would give; every body
+  example has one), F1 gate_grounding, F17 / F18 gate_trip_facts, F12 gate_scope (the scope lexicon), and the admin
+  sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality)
 - meta / title / slug: F4 gate_seo_surface (that field only), the S1 band checks (s1_checks.check_meta,
   SEO_TITLE_MAX), the slug fold (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
@@ -90,7 +92,7 @@ def _apply_rules(text: str, grounding: str, claim: Optional[dict], cta: str) -> 
 
 
 def _body(ex: dict, out: Outcome, seed: str, grounding: str, cta: str) -> None:
-    from services.acp_content_writing import hygiene, quality_gates as qg
+    from services.acp_content_writing import hygiene, quality_gates as qg, sentence_repair
     from services.acp_content_writing.trip_facts import TripFactContext
     text = ex["text"]
     out.verdicts["apply_rules"], out.notes["apply_rules"] = _apply_rules(text, grounding, ex.get("claim"), cta)
@@ -105,6 +107,14 @@ def _body(ex: dict, out: Outcome, seed: str, grounding: str, cta: str) -> None:
     with mock.patch.dict("os.environ", {qg.F12_SCOPE_MODE_ENV: "block"}):
         f12 = qg.gate_scope(text, hyg)       # the policy's severity (block class), whatever the run-time mode
     out.verdicts["F12_scope"], out.notes["F12_scope"] = _sev_of_gate(f12), f12["violations"]
+    # the admin sentence edit / suggest check (sentence_repair.check_replacement): the same sentence must not be
+    # refused there when the pipeline only warns on it (or the reverse)
+    wi = {"seed": seed, "scope": ex.get("scope"), "trip": "Velmora Highlands Walk", "cta": cta,
+          "trip_places": list(ex.get("trip_places") or ()), "facts": ex.get("facts") or None}
+    checks = sentence_repair.check_replacement(text, grounding, {"brand_name": BRAND}, writer_input=wi)
+    out.verdicts["check_replacement"] = ("block" if any(c["blocking"] for c in checks)
+                                         else "warn" if checks else "pass")
+    out.notes["check_replacement"] = checks
 
 
 def _seo(ex: dict, out: Outcome) -> None:

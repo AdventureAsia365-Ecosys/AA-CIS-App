@@ -263,63 +263,63 @@ examples:
   # ---- background (D1): about a place the source names = pass; a number or year = warn; this trip's
   #      activity / service / time / view, or a place the source never names = block
   - {id: bg-01, topic: background, expect: pass, text: "Corran Monastery was built by travelling monks and keeps a working library.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-02, topic: background, expect: warn, text: "Corran Monastery was built by travelling monks in 1388.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-03, topic: background, expect: block, text: "At Corran Monastery you join the monks for dinner.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-02, topic: background, expect: warn, all: [apply_rules, F1_grounding, check_replacement], text: "Corran Monastery was built by travelling monks in 1388.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-03, topic: background, expect: block, all: [apply_rules], text: "At Corran Monastery you join the monks for dinner.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: bg-04, topic: background, expect: pass, text: "The monastery sits on a ridge above Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
-  - {id: bg-05, topic: background, expect: block, text: "Corran Monastery is the sister house of Delmont Abbey.", claim: {type: place_background, places: [Corran Monastery, Delmont Abbey]}}
-  - {id: bg-06, topic: background, expect: warn, text: "The library hall holds 900 handwritten books.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-07, topic: background, expect: block, text: "On this tour you see 900 handwritten books in the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-05, topic: background, expect: block, all: [apply_rules], text: "Corran Monastery is the sister house of Delmont Abbey.", claim: {type: place_background, places: [Corran Monastery, Delmont Abbey]}}
+  - {id: bg-06, topic: background, expect: warn, all: [apply_rules, F1_grounding, check_replacement], text: "The library hall holds 900 handwritten books.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-07, topic: background, expect: block, all: [apply_rules, F1_grounding, check_replacement], text: "On this tour you see 900 handwritten books in the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: bg-08, topic: background, expect: pass, text: "The library hall is the oldest room of the monastery.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-09, topic: background, expect: block, text: "The monastery charges an entrance fee.", claim: {type: place_background, places: [Corran Monastery]}}
-  - {id: bg-11, topic: background, seed: lake, expect: block, text: "Brecca village sits on the far shore of Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
+  - {id: bg-09, topic: background, expect: block, all: [apply_rules], text: "The monastery charges an entrance fee.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: bg-11, topic: background, seed: lake, expect: block, all: [apply_rules, F17_trip_fact], text: "Brecca village sits on the far shore of Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
   - {id: bg-10, topic: background, expect: pass, text: "Corran Monastery belongs to an old order of teaching monks.", claim: {type: place_background, places: [Corran Monastery]}}
   # ---- rarity (D13): attached to the trip = block; about a place = warn (D1)
-  - {id: rar-01, topic: rarity, expect: warn, text: "Corran Monastery is one of the last walled monasteries in the world."}
-  - {id: rar-02, topic: rarity, expect: block, text: "This tour is one of the last ways in the world to reach the library hall."}
-  - {id: rar-03, topic: rarity, expect: pass, text: "Corran Monastery is the main monastery of the Orvine valley."}
-  - {id: rar-04, topic: rarity, seed: lake, expect: warn, text: "Lake Orvine has no real equivalent anywhere on earth."}
-  - {id: rar-05, topic: rarity, seed: lake, expect: block, text: "Your group crosses a lake with no real equivalent anywhere on earth."}
-  - {id: rar-06, topic: rarity, expect: block, text: "Most travellers never find their way to Corran Monastery."}
-  - {id: rar-07, topic: rarity, expect: warn, text: "The library hall is unparalleled in Velmora."}
-  - {id: rar-08, topic: rarity, expect: block, text: "You will be among the few travellers who see the library hall."}
+  - {id: rar-01, topic: rarity, expect: warn, all: [F18_rarity], text: "Corran Monastery is one of the last walled monasteries in the world.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-02, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "This tour is one of the last ways in the world to reach the library hall.", claim: {type: comparison}}
+  - {id: rar-03, topic: rarity, expect: pass, text: "Corran Monastery is the main monastery of the Orvine valley.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
+  - {id: rar-04, topic: rarity, seed: lake, expect: warn, all: [F18_rarity], text: "Lake Orvine has no real equivalent anywhere on earth.", claim: {type: place_background, places: [Lake Orvine]}}
+  - {id: rar-05, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules], text: "Your group crosses a lake with no real equivalent anywhere on earth.", claim: {type: comparison}}
+  - {id: rar-06, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "Most travellers never find their way to Corran Monastery.", claim: {type: social_proof, places: [Corran Monastery]}}
+  - {id: rar-07, topic: rarity, expect: warn, all: [F18_rarity], text: "The library hall is unparalleled in Velmora.", claim: {type: place_background, places: [Velmora]}}
+  - {id: rar-08, topic: rarity, expect: block, all: [F18_rarity, apply_rules], text: "You will be among the few travellers who see the library hall.", claim: {type: social_proof}}
   # ---- timing (D4, D15): a time, part of day or ordinal day the source does not give = block
-  - {id: tim-01, topic: timing, seed: lake, expect: block, text: "You cross Lake Orvine at dawn."}
-  - {id: tim-02, topic: timing, seed: lake, expect: pass, text: "The ferry crosses Lake Orvine to Brecca village."}
-  - {id: tim-03, topic: timing, seed: lake, expect: block, text: "The second afternoon ends at the Brecca guesthouse."}
+  - {id: tim-01, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "You cross Lake Orvine at dawn.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
+  - {id: tim-02, topic: timing, seed: lake, expect: pass, text: "The ferry crosses Lake Orvine to Brecca village.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry to Brecca village", places: [Lake Orvine, Brecca]}}
+  - {id: tim-03, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "The second afternoon ends at the Brecca guesthouse.", claim: {type: trip_fact, ref: S3, quote: "walk the shore path to the guesthouse", places: [Brecca]}}
   - {id: tim-04, topic: timing, seed: lake, expect: pass, text: "A shore path leads from the ferry to the guesthouse in Brecca.", claim: {type: location, places: [Brecca]}}
-  - {id: tim-05, topic: timing, seed: lake, expect: block, text: "The ferry leaves Orvine in the early morning."}
-  - {id: tim-06, topic: timing, expect: pass, text: "The walk climbs from Orvine to the monastery gate."}
-  - {id: tim-07, topic: timing, seed: lake, expect: block, text: "On the second day the ferry reaches Brecca."}
+  - {id: tim-05, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "The ferry leaves Orvine in the early morning.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Orvine]}}
+  - {id: tim-06, topic: timing, expect: pass, text: "The walk climbs from Orvine to the monastery gate.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery above Orvine", places: [Orvine]}}
+  - {id: tim-07, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "On the second day the ferry reaches Brecca.", claim: {type: trip_fact, ref: S3, quote: "by ferry to Brecca village", places: [Brecca]}}
   - {id: tim-08, topic: timing, seed: lake, expect: pass, text: "The ferry reaches Brecca village.", claim: {type: location, places: [Brecca]}}
-  - {id: tim-09, topic: timing, seed: lake, expect: block, text: "The ferry crosses Lake Orvine before sunset."}
+  - {id: tim-09, topic: timing, seed: lake, expect: block, all: [F17_trip_fact], text: "The ferry crosses Lake Orvine before sunset.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
   - {id: tim-10, topic: timing, seed: lake, expect: pass, text: "Brecca is a fishing village on Lake Orvine.", claim: {type: place_background, places: [Brecca, Lake Orvine]}}
-  - {id: tim-11, topic: timing, seed: lake, expect: pass, text: "On the third day the ferry reaches Brecca."}
+  - {id: tim-11, topic: timing, seed: lake, expect: pass, text: "On the third day the ferry reaches Brecca.", claim: {type: trip_fact, ref: S3, quote: "by ferry to Brecca village", places: [Brecca]}}
   # ---- hypotheticals and reflection (D3, D4)
-  - {id: hyp-01, topic: hypothetical, expect: warn, text: "Imagine the hall with its long shelves of books.", claim: {type: hypothetical}}
-  - {id: hyp-02, topic: hypothetical, expect: block, text: "You could stay in a private lodge with all meals included.", claim: {type: hypothetical}}
+  - {id: hyp-01, topic: hypothetical, expect: warn, all: [apply_rules], text: "Imagine the hall with its long shelves of books.", claim: {type: hypothetical}}
+  - {id: hyp-02, topic: hypothetical, expect: block, all: [apply_rules], text: "You could stay in a private lodge with all meals included.", claim: {type: hypothetical}}
   - {id: hyp-03, topic: hypothetical, expect: pass, text: "The hall keeps long shelves of books.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: ref-01, topic: reflection, expect: pass, text: "The library is a reminder of how long the valley has valued learning.", claim: {type: opinion}}
-  - {id: ref-02, topic: reflection, expect: block, text: "The monks serve every guest a dinner of valley trout.", claim: {type: opinion}}
+  - {id: ref-02, topic: reflection, expect: block, all: [apply_rules], text: "The monks serve every guest a dinner of valley trout.", claim: {type: opinion}}
   # ---- numbers (D1, F6): digits and word numbers; other trips' lines never support; trip frame = block, else warn
-  - {id: num-01, topic: numbers, expect: warn, text: "The monastery gate stands thirty metres above the old road."}
-  - {id: num-02, topic: numbers, expect: block, text: "Your group walks thirty kilometres to reach the monastery."}
-  - {id: num-03, topic: numbers, expect: pass, text: "The walk climbs to the monastery gate above Orvine."}
-  - {id: num-04, topic: numbers, expect: block, text: "The walk takes you 12 km along the ridge to the monastery."}
-  - {id: num-05, topic: numbers, expect: warn, text: "The monastery stands 900 metres above the lake."}
-  - {id: num-06, topic: numbers, seed: monastery_sibling, expect: block, text: "You walk 14 km to the monastery."}
-  - {id: num-07, topic: numbers, seed: monastery_sibling, expect: pass, text: "You walk up to the monastery above Orvine."}
-  - {id: num-08, topic: numbers, expect: block, text: "The tour includes 3 nights in the monastery guest wing."}
-  - {id: num-09, topic: numbers, expect: warn, text: "Corran Monastery was founded in 1937 by monks from the coast."}
-  - {id: num-10, topic: numbers, expect: warn, text: "Only 0.4% of the valley is forest."}
-  - {id: num-11, topic: numbers, expect: block, text: "The tour includes two nights in the monastery guest wing."}
+  - {id: num-01, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "The monastery gate stands thirty metres above the old road.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-02, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Your group walks thirty kilometres to reach the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
+  - {id: num-03, topic: numbers, expect: pass, text: "The walk climbs to the monastery gate above Orvine.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery above Orvine", places: [Orvine]}}
+  - {id: num-04, topic: numbers, expect: block, all: [F1_grounding, check_replacement], text: "The walk takes you 12 km along the ridge to the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
+  - {id: num-05, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "The monastery stands 900 metres above the lake.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-06, topic: numbers, seed: monastery_sibling, expect: block, all: [F1_grounding, check_replacement], text: "You walk 14 km to the monastery.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery", places: [Corran Monastery]}}
+  - {id: num-07, topic: numbers, seed: monastery_sibling, expect: pass, text: "You walk up to the monastery above Orvine.", claim: {type: trip_fact, ref: S3, quote: "Walk up to Corran Monastery above Orvine", places: [Orvine]}}
+  - {id: num-08, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The tour includes 3 nights in the monastery guest wing.", claim: {type: service_promise, places: [Corran Monastery]}}
+  - {id: num-09, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Corran Monastery was founded in 1937 by monks from the coast.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-10, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Only 0.4% of the valley is forest.", claim: {type: place_background}}
+  - {id: num-11, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The tour includes two nights in the monastery guest wing.", claim: {type: service_promise, places: [Corran Monastery]}}
   # ---- scope: a place only other trips visit = block (F12, block class)
-  - {id: scp-01, topic: scope, trip_places: [Tesselmoor], expect: block, text: "From Tesselmoor a road climbs to the monastery.", claim: {type: location, places: [Tesselmoor]}}
+  - {id: scp-01, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "From Tesselmoor a road climbs to the monastery.", claim: {type: location, places: [Tesselmoor]}}
   - {id: scp-02, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "From Orvine a road climbs to the monastery.", claim: {type: location, places: [Orvine]}}
   - {id: scp-04, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "Corran Monastery looks down on Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
-  - {id: scp-03, topic: scope, trip_places: [Tesselmoor], expect: block, text: "Corran Monastery sits a short drive from Tesselmoor.", claim: {type: place_background, places: [Corran Monastery, Tesselmoor]}}
-  - {id: scp-05, topic: scope, trip_places: [Tesselmoor], expect: block, text: "Tesselmoor is the next stop after the monastery.", claim: {type: location, places: [Tesselmoor]}}
+  - {id: scp-03, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Corran Monastery sits a short drive from Tesselmoor.", claim: {type: place_background, places: [Corran Monastery, Tesselmoor]}}
+  - {id: scp-05, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Tesselmoor is the next stop after the monastery.", claim: {type: location, places: [Tesselmoor]}}
   - {id: scp-06, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "The walk to Corran Monastery starts in Orvine.", claim: {type: location, places: [Orvine]}}
-  - {id: scp-07, topic: scope, trip_places: [Tesselmoor], expect: block, text: "Many walkers continue from Orvine to Tesselmoor.", claim: {type: location, places: [Orvine, Tesselmoor]}}
+  - {id: scp-07, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "Many walkers continue from Orvine to Tesselmoor.", claim: {type: location, places: [Orvine, Tesselmoor]}}
   - {id: scp-08, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "Corran Monastery stands above Orvine.", claim: {type: location, places: [Corran Monastery, Orvine]}}
   # ---- CTA: the configured line once, word for word; ensure_cta must leave exactly that
   - {id: cta-01, topic: cta, field: cta, expect: pass, text: "Corran Monastery keeps a working library.\n\nAsk Northpine Travel to plan your days in Orvine."}
