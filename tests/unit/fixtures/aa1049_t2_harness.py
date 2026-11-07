@@ -1,5 +1,6 @@
-"""AA-1049 W3 (T2 train) — the T2 full-chain scripted harness: drives the PRODUCTION ``t2_rewrite_job._rewrite_and_save``
-(the real ``_rewrite_tour`` LangGraph, the real T3 gate, the real save SQL) with every model call answered by a script
+"""AA-1049 W3 (T2 train) — the T2 full-chain scripted harness: drives the PRODUCTION
+``t2_rewrite_job._rewrite_and_save`` (the real ``_rewrite_tour`` LangGraph, the real T3 gate, the real save SQL)
+with every model call answered by a script
 keyed by stage, and returns a TRACE of what the run did:
 
 - ``llm``: every model request in order, as (stage, sha16 of the exact system + user prompt sent);

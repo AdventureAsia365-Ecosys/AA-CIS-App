@@ -4248,6 +4248,14 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     no copy of the Master's `quality_score` (NULL), em-dash fix inside T3 before every check. An **elephant-riding**
     tour (Master text or raw source) is `policy_hold` v0 (D8): Master text verbatim + code-fitted SEO title / meta,
     0 LLM calls, `needs_review` (the agency still receives it), `judge_breakdown.policy_hold`, a review row.
+  - **AA-1049 W3 linear orchestrator (opt-in, default off)** (`services/content_generation/t2_orchestrator.py`,
+    switch `T2_ORCHESTRATOR=linear`; unset / any other value = the graph + T3 path above, byte-equal to it): one
+    plain sequence (write -> code fixes -> verify -> route by the `t2` rows of
+    `services/acp_content_writing/route_table.yaml` -> sentence repair / meta regenerate / one field regen ->
+    select best -> one report-only judge call -> final contract -> save) reusing the graph's and T3's own steps (no
+    prompt change), a per-version budget (writer <= 2) persisted with the best candidate in `generation_meta` so a job
+    retry resumes without a new write, and a stricter status (any enforce finding left = `needs_review`). Dry store
+    seam `t2_store.py`; free replay `scripts/quality/replay_aa1049_t2.py`.
 - **T3 — QA Gate**: an automatic validate→repair loop (max 2 repairs) on T2's output. There is no
   manual tenant approval step: `status='approved'` is T3's own automatic result, not a button.
   - **Blocking and repair (AA-639).** T3 blocks only on `_HARD_BLOCK_CODES` and passes the specific

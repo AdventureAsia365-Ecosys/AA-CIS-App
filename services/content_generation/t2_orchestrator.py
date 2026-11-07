@@ -270,7 +270,8 @@ async def verify(generated: dict, bundle: Bundle, degraded_list: list) -> dict:
 
 
 def enforce_codes(f: dict) -> list[str]:
-    return list(f["structural"]) + (["T3_grounding"] if f["grounding"] else []) + list(f["slots"])
+    from services.quality.registry import T3_GROUNDING
+    return list(f["structural"]) + ([T3_GROUNDING] if f["grounding"] else []) + list(f["slots"])
 
 
 def plan(codes: list[str]) -> dict[str, list[str]]:
