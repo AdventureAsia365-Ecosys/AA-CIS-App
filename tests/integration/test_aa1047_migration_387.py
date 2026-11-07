@@ -1,5 +1,5 @@
-"""AA-1047 S272 W1 — migration 387 registers the prompt versions the writing policy registry moves (t9_write v4,
-t9_repair v2, writing_memory_eval v3, s1_brand_audit v2, t2_brand_audit v2, a3_place_card v2) in
+"""AA-1047 S272 W1 — migration 387 registers the prompt versions the writing policy registry moves (the sixteen
+stages whose prompt source reads the writing policy: t9_write v4, writing_memory_eval v3, the rest v2) in
 shared.prompt_version, against real Postgres.
 
 conftest applies every migration, 387 included; a later test may rebuild the table (lessons: never rely on seeded rows
@@ -25,8 +25,10 @@ SQL = open(M387, encoding="utf-8").read()
 # the file's own rows (the INSERT): the test never restates a hash
 ROWS = {(s, v): (sha, path) for s, v, sha, path in
         re.findall(r"\('(\w+)', '(v\d+)', '([0-9a-f]{64})', '([^']+)', 'migration-387'\)", SQL)}
-VERSIONS = [("a3_place_card", "v2"), ("s1_brand_audit", "v2"), ("t2_brand_audit", "v2"), ("t9_repair", "v2"),
-            ("t9_write", "v4"), ("writing_memory_eval", "v3")]
+VERSIONS = [("a3_place_card", "v2"), ("a3_place_card_check", "v2"), ("s1_brand_audit", "v2"), ("s1_flag_fix", "v2"),
+            ("s1_generate", "v2"), ("s1_judge", "v2"), ("t10_claims", "v2"), ("t10_judge", "v2"),
+            ("t2_brand_audit", "v2"), ("t2_flag_fix", "v2"), ("t2_generate", "v2"), ("t2_judge", "v2"),
+            ("t9_faq_answer_fit", "v2"), ("t9_repair", "v2"), ("t9_write", "v4"), ("writing_memory_eval", "v3")]
 BODY = SQL.replace("BEGIN;", "", 1).replace("COMMIT;", "")   # run inside the test's transaction
 
 
@@ -42,9 +44,10 @@ def cur():
         conn.close()
 
 
-def test_the_file_holds_the_six_versions():
+def test_the_file_holds_the_sixteen_versions():
     assert sorted(ROWS) == sorted(VERSIONS)
-    assert ROWS[("s1_brand_audit", "v2")] == ROWS[("t2_brand_audit", "v2")]   # one source, two stages
+    for a, b in (("s1_brand_audit", "t2_brand_audit"), ("s1_judge", "t2_judge"), ("s1_flag_fix", "t2_flag_fix")):
+        assert ROWS[(a, "v2")] == ROWS[(b, "v2")]   # one source, two stages
     assert ROWS[("t9_write", "v4")][1] == "services/acp_content_writing/prompts.py"
 
 
