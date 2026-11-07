@@ -513,7 +513,10 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
 # tenant always receives content"): the F9 entry is waived only when EVERY flagged sentence was cut;
 # anything left keeps F9 blocking, so the piece is labelled held for the admin. AA-777 extends the cut
 # to the blog on its attempt 3 only (BLOG_TRUTH_CUT_ATTEMPT), never under the blog's minimum length.
-F9_CUT_NOT_HOLD_CHANNELS = route_table.CUT_NOT_HOLD_CHANNELS  # AA-1049: writing_policy truth_cut
+# AA-1049: read from route_table.yaml `truth_cut.cut_not_hold_channels` (loop mechanics), NOT from the `truth_cut` row
+# of writing_policy.yaml (D6, policy_sha). Versioned by git only (as the Python literal it replaced on main); the lint
+# test_aa1049_route_table.py pins it to {linkedin}.
+F9_CUT_NOT_HOLD_CHANNELS = route_table.CUT_NOT_HOLD_CHANNELS
 # AA-777 — the blog attempt where an F1/F9 truth item that survived one sentence repair is cut, not
 # repaired again (attempt 2 stays the sentence repair). S233+S234: sentence repair fixes F9 49%, a full
 # rewrite 0/6, and a second repair adds new blocking fails the regression guard then reverts (16×).

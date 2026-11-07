@@ -49,5 +49,7 @@ rows:
   - {gate: F9_brand_style, action: repair_sentence, parse: brand_style}
   - {gate: F16_faq, action: regenerate_section, section: faq}
 # Channels whose F9 product-truth failure left after the last attempt is cut in code instead of held (AA-786).
+# Not the `truth_cut` row of writing_policy.yaml (D6, in policy_sha): this file is in neither policy_sha nor config_fp,
+# so a change here (hold vs cut) is versioned by git only, as the Python literal it replaced; the lint pins {linkedin}.
 truth_cut:
   cut_not_hold_channels: [linkedin]
