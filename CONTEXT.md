@@ -418,6 +418,14 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `attempt_no` (`get_by_call_log_id`; no FK, the ledger insert is unchanged); `get_by_request_sha` is the replay
   read. Switch `LLM_CASSETTE=record|off` (default record; unit and integration tests default off). Retention 30 days
   proposed (root data standards DM-7.1), no TTL job yet; the tenant erasure deletes a tenant's rows.
+  S272 (no migration): an attempt that ends **billed but unusable** gets its row too (`cassette.record_unusable_attempt`
+  from `_attempt`'s except path): the reply the `BilledUnusableReply` carries (`reply_facts`, set by the Converse,
+  Anthropic API and OpenAI-format adapters; empty when none), marked `stop_reason = 'billed_unusable[:<provider stop
+  reason>]'` (`cassette.is_unusable`); replay by request sha never serves it. Billed records carry `route_trace` +
+  `route_position`, so every `billed_unusable` ledger row (the probe's too) joins its cassette row. Link rule: one
+  cassette row per attempt that got a reply, joined on (`route_trace`, `attempt_no`), never on the model name (the
+  ledger names the answering label: acc3's legacy `haiku` and catalog `haiku-4-5` both log `haiku-4-5`). Embeddings
+  and Jev write no cassette row, by design (a vector is not text; replay re-embeds).
 - **Refusal noise: known no-access models** (AA-900, S271 lane l11, no migration). The ledger rule stays: every real
   provider call has one `shared.llm_call_log` row, refused included. What changes is how often a model with no grant
   is called and how its refusals are counted:

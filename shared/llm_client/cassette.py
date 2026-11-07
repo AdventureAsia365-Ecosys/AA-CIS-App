@@ -2,7 +2,12 @@
 attempt, with the request and prompt shas, for replay.
 
 Record-only (wave W0). ``LLMClient._attempt`` calls ``record_attempt`` once per provider attempt that RETURNED a
-reply (every role and stage, shadows, the admin probe and the gateway's truncation retry included). The row goes to
+reply (every role and stage, shadows, the admin probe and the gateway's truncation retry included), and (S272)
+``record_unusable_attempt`` once per attempt that ended billed but unusable (the provider answered and billed, the
+gateway refused the reply: empty, not JSON, schema mismatch, a refusal stop): that row holds the reply the
+BilledUnusableReply carried (``reply_facts``; empty when it carried none) and is marked ``stop_reason =
+'billed_unusable'`` or ``'billed_unusable:<provider stop reason>'`` (``UNUSABLE_MARK``; the 385 CHECK lets
+``reply_withheld`` hold only 'pii_stage'). The row goes to
 ``shared.llm_cassette`` (CIS migration 385) on a background write, best-effort like the ledger's gateway rows: a
 failure is logged and counted (``stats()``), never raised, and the call goes on. Nothing on a live path reads it yet;
 ``get_by_request_sha`` / ``get_by_call_log_id`` are the replay helpers.
@@ -19,6 +24,19 @@ What a row holds (no prompt text, DM-6.4 / DM-10.4: the prompt is kept as its sh
   ``quality_signal.route_trace`` and ``attempt_no``; the ledger row id is resolved through them, the ledger insert is
   not changed), the bound job and tenant (call_log's context), the bound eval run, and what a caller binds with
   ``bind_owner(content_piece_id=..., tour_id=..., eval_item=...)``.
+
+The ledger link rule (S272, test_aa900_s272_cassette_gaps.py): one cassette row per provider attempt that got a reply
+(answered, cut, or billed unusable), joined to its ``llm_call_log`` row on (route_trace, attempt_no), never on the
+model name. The ledger's ``model`` is the reply's label (``haiku-4-5`` for both the legacy key ``haiku`` and the
+catalog key ``haiku-4-5`` on acc3), the cassette's ``model_key`` is the key the gateway called (``haiku`` /
+``haiku-4-5``): counted by model name two probes of one model look like 2 ledger rows : 1 cassette row. A
+truncation retry shares the cut attempt's number (``is_truncation_retry`` tells it apart).
+
+Not recorded, by design: embeddings (``embed.py``: the reply is a vector, not text; the caller stores it in its own
+vector column and a re-embed is deterministic, so there is nothing to replay against a changed rule), Jev
+``decide()`` (its own client, a decision log), and an attempt that failed with nothing billed (no reply).
+A legacy-key structured request (``LLMClient._legacy_structured``) is checked after its attempt returned: its reply is
+recorded as a normal row and the later unusable error is not marked here (that path warns on use).
 
 Switch: ``LLM_CASSETTE`` = ``record`` (default) | ``off`` (``0``, ``false``, ``no`` too): off writes nothing.
 """
@@ -50,6 +68,9 @@ REPLY_CAP_BYTES = 262144
 WITHHELD_PII = "pii_stage"
 # The request-sha layout version: bump it when the canonical request changes, so old and new shas never collide.
 REQUEST_SHA_VERSION = 1
+# S272: the stop_reason mark of a billed but unusable reply (record_unusable_attempt); replay never serves it.
+UNUSABLE_MARK = "billed_unusable"
+_RECORDED_ATTR = "_aa900_cassette_recorded"
 # Before CIS 385 is applied the table is missing: a write is skipped (and counted) for this long, then tried again.
 _MISSING_RETRY_SECONDS = 300.0
 _missing_at = 0.0
@@ -75,7 +96,7 @@ _TEXT_CAPS = {"stage": 128, "model_key": 200, "prompt_version": 128, "answered_m
 
 # ── counters (a write never raises; these say what happened) ─────────────────────────────────────────────────────
 
-_COUNTS = {"recorded": 0, "written": 0, "write_failed": 0, "missing_table": 0, "build_failed": 0}
+_COUNTS = {"recorded": 0, "written": 0, "write_failed": 0, "missing_table": 0, "build_failed": 0, "unusable": 0}
 _COUNTS_LOCK = threading.Lock()
 
 
@@ -86,7 +107,8 @@ def _count(key: str) -> None:
 
 def stats() -> dict:
     """Counts since the process started (or ``reset_stats``): recorded (handed to a background write), written,
-    write_failed, missing_table (skipped before 385), build_failed (a row could not be built)."""
+    write_failed, missing_table (skipped before 385), build_failed (a row could not be built), unusable (rows of a
+    billed but unusable reply built, S272; also counted in recorded when handed over)."""
     with _COUNTS_LOCK:
         return dict(_COUNTS)
 
@@ -247,6 +269,45 @@ def build_row(request, resp, *, model: str, connection_key: Optional[str] = None
     return row
 
 
+def unusable_stop_reason(stop_reason) -> str:
+    """The stop_reason of a billed but unusable reply's row: ``billed_unusable`` or
+    ``billed_unusable:<provider stop reason>`` (cut to the 64-character CHECK by build_row)."""
+    if isinstance(stop_reason, str) and stop_reason:
+        return f"{UNUSABLE_MARK}:{stop_reason}"
+    return UNUSABLE_MARK
+
+
+def is_unusable(row) -> bool:
+    """True for the row of a billed but unusable reply (its stop_reason carries ``UNUSABLE_MARK``)."""
+    reason = (row or {}).get("stop_reason") if isinstance(row, dict) else getattr(row, "stop_reason", None)
+    return isinstance(reason, str) and (reason == UNUSABLE_MARK or reason.startswith(UNUSABLE_MARK + ":"))
+
+
+class _UnusableReply:
+    """The reply-shaped view of a BilledUnusableReply that ``build_row`` reads (what it lacks reads as None)."""
+
+    def __init__(self, exc, *, attempt_no: Optional[int], wire_id: Optional[str],
+                 connection_key: Optional[str]) -> None:
+        billed = list(getattr(exc, "billed_usage", None) or ())
+        first = billed[0] if billed and isinstance(billed[0], dict) else {}
+        facts = getattr(exc, "reply_facts", None)
+        facts = facts if isinstance(facts, dict) else {}
+        content = facts.get("content")
+        self.content = content if isinstance(content, str) else ""
+        self.model_used = first.get("model")
+        self.provider_model = facts.get("provider_model")
+        self.request_id = facts.get("request_id")
+        self.effort = facts.get("effort")
+        self.stop_reason = unusable_stop_reason(first.get("stop_reason"))
+        self.attempt_no = attempt_no
+        self.deployment_wire_id = first.get("deployment_wire_id") or wire_id
+        self.connection_key = first.get("connection_key") or connection_key
+        self.prompt_hash = first.get("prompt_hash")
+        self.prompt_version = first.get("prompt_version")
+        self.route_trace = first.get("route_trace")
+        self.route_position = first.get("route_position")
+
+
 def record_attempt(request, resp, *, model: str, connection_key: Optional[str] = None,
                    wire_id: Optional[str] = None, provider: Optional[str] = None, scope=None,
                    truncation_retry: bool = False) -> None:
@@ -263,6 +324,42 @@ def record_attempt(request, resp, *, model: str, connection_key: Optional[str] =
         _count("build_failed")
         logger.warning("llm_cassette_build_failed", stage=getattr(request, "stage", None), error=str(e)[:200])
         return
+    _hand_off(row)
+
+
+def record_unusable_attempt(request, exc, *, model: str, connection_key: Optional[str] = None,
+                            wire_id: Optional[str] = None, provider: Optional[str] = None, scope=None,
+                            truncation_retry: bool = False, attempt_no: Optional[int] = None) -> None:
+    """S272: record one attempt that ended billed but unusable (``LLMClient._attempt``'s except path, ``exc`` = the
+    BilledUnusableReply in the chain). The row holds the reply ``exc.reply_facts`` carries (empty when none) and is
+    marked with ``UNUSABLE_MARK`` in stop_reason. One row per exception object: an error seen again by an outer
+    attempt (a wrapped chain) is not recorded twice. Never raises (same counters as ``record_attempt``)."""
+    if not enabled():
+        return
+    try:
+        if exc is not None:
+            if getattr(exc, _RECORDED_ATTR, False):
+                return
+            setattr(exc, _RECORDED_ATTR, True)
+    except Exception:  # noqa: BLE001 — an exception that refuses attributes is still recorded
+        pass
+    try:
+        from .client import stage_pii_class      # lazy: client imports this module
+        view = _UnusableReply(exc, attempt_no=attempt_no, wire_id=wire_id, connection_key=connection_key)
+        row = build_row(request, view, model=model, connection_key=connection_key, wire_id=wire_id,
+                        provider=provider, scope=scope, truncation_retry=truncation_retry,
+                        pii_class=stage_pii_class(request))
+    except Exception as e:  # noqa: BLE001 — a recorder never breaks the call it records
+        _count("build_failed")
+        logger.warning("llm_cassette_build_failed", stage=getattr(request, "stage", None), unusable=True,
+                       error=str(e)[:200])
+        return
+    _count("unusable")
+    _hand_off(row)
+
+
+def _hand_off(row: dict) -> None:
+    """Hand a built row to the background write (skipped while 385 is known missing). Never raises."""
     if _missing_at and time.monotonic() - _missing_at < _MISSING_RETRY_SECONDS:
         _count("missing_table")
         return
@@ -310,8 +407,11 @@ async def write_row(row: dict, conn=None) -> bool:
 
 _SELECT = "SELECT c.id, c.created_at, " + ", ".join(f"c.{col}" for col in COLUMNS) + " FROM shared.llm_cassette c"
 
+# S272: a billed but unusable reply (stop_reason UNUSABLE_MARK[:...]) is never served as a replay answer.
 _BY_REQUEST_SQL = (_SELECT + " WHERE c.request_sha256 = $1 AND ($2::text IS NULL OR c.model_key = $2)"
                    " AND c.reply_text IS NOT NULL AND NOT c.reply_truncated"
+                   f" AND (c.stop_reason IS NULL OR (c.stop_reason <> '{UNUSABLE_MARK}'"
+                   f" AND c.stop_reason NOT LIKE '{UNUSABLE_MARK}:%'))"
                    " ORDER BY c.created_at DESC, c.id DESC LIMIT 1")
 
 # The ledger row's route_trace is a quality_signal text (64 characters at most, call_log.route_signal); only a uuid
@@ -346,15 +446,17 @@ def _as_dict(record) -> Optional[dict]:
 
 
 async def get_by_request_sha(conn, request_sha256: str, *, model_key: Optional[str] = None) -> Optional[dict]:
-    """The newest whole reply (stored, not cut, not withheld) recorded for this request sha (and model key, when
-    given), else None. ``conn`` is an asyncpg connection (or pool) that may read shared.llm_cassette."""
+    """The newest whole reply (stored, not cut, not withheld, not a billed unusable one) recorded for this request
+    sha (and model key, when given), else None. ``conn`` is an asyncpg connection (or pool) that may read
+    shared.llm_cassette."""
     return _as_dict(await conn.fetchrow(_BY_REQUEST_SQL, request_sha256, model_key))
 
 
 async def get_by_call_log_id(conn, call_log_id: str) -> Optional[dict]:
     """The reply behind one llm_call_log row (matched on route_trace + attempt_no), with the ledger row's own links
     (``call_log_id``, ``ledger_content_piece_id``, ``ledger_tour_id``, ``ledger_job_id``, ``ledger_status``), else
-    None (a row written outside a gateway request, a failed attempt, or a reply recorded before 385)."""
+    None (a row written outside a gateway request, a failed attempt, or a reply recorded before 385). A
+    ``billed_unusable`` ledger row finds its unusable reply (S272; ``is_unusable(row)``)."""
     cid = _uuid_or_none(call_log_id)
     if cid is None:
         return None
