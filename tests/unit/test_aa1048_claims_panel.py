@@ -233,6 +233,24 @@ def test_text_guard_flags_claim_export_and_label_lines():
     assert tg.markers('{"claim_hash": "' + "a" * 64 + '",\n "lens": "source"}') == []  # one line, not two
 
 
+def test_text_guard_flags_pretty_printed_and_yaml_claim_files():
+    """Review S272: the line marker missed any pretty-printed claim file (the CLI writes JSON with indent=1) and YAML;
+    the whole-file marker (a 64-hex claim_hash value anywhere + a claim_text key anywhere) catches them."""
+    import yaml
+
+    from services.golden_set import text_guard as tg
+
+    row = {"claim_hash": "ab" * 32, "claim_text": "Lunch at the camp.", "label": "ok"}
+    assert tg.markers(json.dumps(row)) == ["claim-label line marker"]
+    assert tg.markers(json.dumps(row, indent=1)) == ["claim-label file marker"]
+    assert tg.markers(json.dumps([row, row], indent=2)) == ["claim-label file marker"]
+    assert tg.markers(yaml.safe_dump(row)) == ["claim-label file marker"]
+    assert tg.markers(yaml.safe_dump({"rows": [row]}, default_style="'")) == ["claim-label file marker"]
+    assert tg.markers(json.dumps({"claim_hash": "ab" * 32, "label": "ok"}, indent=1)) == []    # no claim text
+    assert tg.markers(json.dumps({"claim_hash": "<64 hex>", "claim_text": "x"}, indent=1)) == []
+    assert tg.markers(json.dumps({"claim_hash": "ab" * 33, "claim_text": "x"}, indent=1)) == []  # not a sha256
+
+
 def test_final_labels_release_evidence_agreement_and_contradictions():
     lines = _export()
     by = {e["claim_hash"]: e for e in lines}

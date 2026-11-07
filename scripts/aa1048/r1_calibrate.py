@@ -4,7 +4,10 @@
 DRY RUN by default: no client, no call. It prints the plan (calls per instrument, expected and worst-case cost) and
 refuses a plan whose expected cost x 2 passes the cap. A live run is PAID and needs all three of --live,
 --confirm-spend and a --cap <= 2 USD (D12 spirit: each paid step after its own yes); it runs judge-only, 3 votes,
-pinned model + connection, stage adhoc_aa1048, one shared.llm_call_log row per reply.
+pinned model + connection, stage adhoc_aa1048, one shared.llm_call_log row per reply. The cap is hard (r1.py "Cost"):
+each call is gated on the spend so far plus its worst case, each reply is charged with its cut attempt and earlier
+attempts, and the spend is also re-read from shared.llm_call_log (stage adhoc_aa1048 since the run started) before
+every call. A caller error or the cap stops the run cleanly; the partial report is still printed and written.
 
   python -m scripts.aa1048.r1_calibrate --export <scratch>/claims.jsonl --finals <scratch>/finals.jsonl  # DRY RUN
   python -m scripts.aa1048.r1_calibrate --export <scratch>/claims.jsonl --finals <scratch>/finals.jsonl --live \\
@@ -23,6 +26,7 @@ import argparse
 import json
 import sys
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from scripts.aa1048.outpath import OutRefused, check_out
@@ -40,6 +44,34 @@ def _candidates(text: Optional[str]) -> list[tuple[str, str]]:
             raise r1.R1Refused(f"a candidate is <model>@<connection>, got {part!r}")
         out.append((model, conn))
     return out
+
+
+LEDGER_SQL = ("SELECT COALESCE(SUM(cost_usd), 0)::float8 FROM shared.llm_call_log "
+              "WHERE stage = $1 AND created_at >= $2")
+
+
+def ledger_probe(since: datetime) -> r1.SpendProbe:
+    """The ledger spend of stage r1.STAGE since `since` (every row: the replies, the gateway's cut-attempt and failed
+    rung rows; another adhoc_aa1048 run at the same time only makes it larger). None when the DB cannot be read: the
+    run then keeps its own charges, which already count every attempt at its worst case."""
+    def probe() -> Optional[float]:
+        import asyncio
+
+        async def _q() -> float:
+            import asyncpg
+
+            from shared.secrets import get_database_url
+
+            conn = await asyncpg.connect(get_database_url().strip(), ssl="require")
+            try:
+                return float(await conn.fetchval(LEDGER_SQL, r1.STAGE, since))
+            finally:
+                await conn.close()
+        try:
+            return asyncio.run(_q())
+        except Exception:                                    # noqa: BLE001 — the probe can only raise the spend
+            return None
+    return probe
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -84,13 +116,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(json.dumps({"ok": False, "refused": "the plan does not fit the cap", "plan": the_plan}, indent=1))
         return 3
     run_id = str(uuid.uuid4())
-    result = r1.run(items, insts, cap=a.cap, votes=a.votes, run_id=run_id)
-    rep = {"ok": True, "mode": "live", "run_id": run_id, "plan": the_plan, **r1.report(items, result, insts)}
-    if out_path:
+    started = datetime.now(timezone.utc)
+    result = r1.run(items, insts, cap=a.cap, votes=a.votes, run_id=run_id, caller=_caller,
+                    spend_probe=ledger_probe(started))
+    rep = {"ok": not result["stopped"], "mode": "live", "run_id": run_id, "plan": the_plan,
+           **r1.report(items, result, insts)}
+    if out_path:                                          # written partial too: the calls so far were paid
         with open(out_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps({**rep, "votes": result["votes"]}, indent=1))
+            f.write(json.dumps({**rep, "votes": result["votes"]}, indent=1, default=str))
     print(json.dumps(rep, indent=1, default=str))
     return 0 if not result["stopped"] else 3
+
+
+_caller: Optional[r1.Caller] = None                     # tests put a fake here; None = the Model Gateway
 
 
 if __name__ == "__main__":

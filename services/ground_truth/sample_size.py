@@ -8,15 +8,19 @@ Precision and its lower bound are measured on the FLAGGED claims (every fire of 
 class), recall on n_pos (the labelled violations of the class). So a class needs (a) enough labelled fires for the
 lower bound at the precision it shows and (b) enough labelled violations for recall. `min_flagged` answers (a);
 `label_budget` turns (a) and (b) into a number of claims to label (of any class: a claim's class is only known once
-it is labelled) from the fire rate and violation rate a first panel pass measures over all its labelled claims.
+it is labelled) from the fire rate and violation rate a first panel pass measures over all its labelled claims. Only a
+held-out measurement may pass (claims.HELD_OUT_PCT of the objects, about 30%), so (a) and (b) are held-out counts and
+the claims to label are the held-out claims needed divided by HELD_OUT_PCT (review S272: the budget was 3.3x low).
 
-Pure: standard library only.
+Pure: standard library and services.ground_truth.claims only.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 from typing import Iterable, Optional
+
+from services.ground_truth.claims import HELD_OUT_PCT
 
 Z95 = 1.959963984540054
 MAX_N = 5000
@@ -84,32 +88,48 @@ def table(bars: Iterable[Bar] = BARS, observed: Iterable[float] = OBSERVED) -> l
     return rows
 
 
-def label_budget(*, fire_rate: float, violation_rate: float, observed_precision: float, bar: Bar) -> Optional[int]:
-    """Claims to label (of any class) so that (a) the detector's fires reach `min_flagged` and (b) the labelled
-    violations of the class reach the bar's n_pos, given the share of ALL labelled claims the detector fires on and
-    the share that are violations of the class (both from a first panel pass, detectors.measure on the train split).
-    None when the bar is out of reach (precision under the bar, or a rate of 0)."""
+def held_out_claims_needed(*, fire_rate: float, violation_rate: float, observed_precision: float,
+                           bar: Bar) -> Optional[int]:
+    """Held-out claims to label (of any class) so that (a) the detector's held-out fires reach `min_flagged` and (b)
+    the held-out labelled violations of the class reach the bar's n_pos, given the share of ALL labelled claims the
+    detector fires on and the share that are violations of the class (both from a first panel pass, detectors.measure
+    on the train split). None when the bar is out of reach (precision under the bar, or a rate of 0)."""
     need = min_flagged(observed_precision, bar)
     if need is None or fire_rate <= 0 or violation_rate <= 0:
         return None
-    return max(math.ceil(need / fire_rate), math.ceil(bar.n_pos / violation_rate))
+    return max(math.ceil(need / fire_rate - 1e-9), math.ceil(bar.n_pos / violation_rate - 1e-9))
+
+
+def label_budget(*, fire_rate: float, violation_rate: float, observed_precision: float, bar: Bar,
+                 held_out_pct: float = HELD_OUT_PCT) -> Optional[int]:
+    """Claims to label in total (train and held-out) so that the held-out side alone holds
+    `held_out_claims_needed`: only a held-out measurement may pass (detectors.measure, r1.measure), and the split
+    puts about `held_out_pct` of the objects there. None when the bar is out of reach."""
+    if not 0 < held_out_pct <= 1:
+        raise ValueError(f"held_out_pct must be in (0, 1], got {held_out_pct}")
+    held = held_out_claims_needed(fire_rate=fire_rate, violation_rate=violation_rate,
+                                  observed_precision=observed_precision, bar=bar)
+    return None if held is None else math.ceil(held / held_out_pct - 1e-9)
 
 
 def budget_rows(rates: list[dict], *, budget: Optional[int] = None) -> list[dict]:
     """Per detector / class row of `rates` ({detector, class, kind: llm | deterministic (default), fire_rate,
-    violation_rate, observed_precision or precision}; a rows file of `cli detectors` works as is): the claims to
-    label and, with a total `budget`, whether the class can reach its bar ('stays warn' otherwise: say so up front,
-    critic F2)."""
+    violation_rate, observed_precision or precision}; a rows file of `cli detectors` works as is): the held-out claims
+    needed, the claims to label in total and, with a total `budget`, whether the class can reach its bar ('stays
+    warn' otherwise: say so up front, critic F2)."""
     out = []
     for r in rates:
         bar = BARS[0] if r.get("kind") == "llm" else BARS[1]
         observed = r.get("observed_precision", r.get("precision"))
         rates_ok = all(isinstance(v, (int, float)) for v in (r.get("fire_rate"), r.get("violation_rate"), observed))
-        need = label_budget(fire_rate=float(r["fire_rate"]), violation_rate=float(r["violation_rate"]),
-                            observed_precision=float(observed), bar=bar) if rates_ok else None
+        kw = dict(fire_rate=float(r["fire_rate"]), violation_rate=float(r["violation_rate"]),
+                  observed_precision=float(observed), bar=bar) if rates_ok else None
+        held = held_out_claims_needed(**kw) if kw else None
+        need = label_budget(**kw) if kw else None
         status = "out of reach" if need is None else (
             "reachable" if budget is None or need <= budget else "stays warn (over the label budget)")
-        out.append({**r, "bar": bar.name, "claims_to_label": need, "status": status})
+        out.append({**r, "bar": bar.name, "held_out_claims_needed": held, "claims_to_label": need,
+                    "held_out_pct": HELD_OUT_PCT, "status": status})
     return out
 
 
@@ -125,5 +145,5 @@ def markdown(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["BARS", "Bar", "MAX_N", "OBSERVED", "Z95", "budget_rows", "label_budget", "markdown", "min_flagged",
-           "passes", "table", "wilson_lower"]
+__all__ = ["BARS", "Bar", "MAX_N", "OBSERVED", "Z95", "budget_rows", "held_out_claims_needed", "label_budget",
+           "markdown", "min_flagged", "passes", "table", "wilson_lower"]

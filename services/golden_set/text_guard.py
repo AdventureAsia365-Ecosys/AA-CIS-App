@@ -8,7 +8,9 @@ Two checks over every tracked text file:
    AA-1048: the claim-label files too (they carry real T2 / T9 / S1 text the fingerprints do not cover): the schema
    key set to an aa1048-claim-export/ value (MARKER_CLAIM_EXPORT), and any line whose claim_hash key holds a real
    64-hex hash next to a claim_text, lens, labeller_kind or reason key (MARKER_CLAIM_LINE: panel, tech-lead and
-   finals lines).
+   finals lines), and a whole file that holds a claim_hash key with a 64-hex value anywhere and a claim_text key
+   anywhere (MARKER_CLAIM_FILE_HASH + MARKER_CLAIM_FILE_TEXT: pretty-printed JSON or YAML, where the line marker
+   misses).
 2. Keyed fingerprints: .github/golden_text_fingerprints.txt holds 64-bit keyed BLAKE2b digests of normalised 8-word
    shingles of the real golden set (every item's text and the tenant brand packs; the platform s1:* pack is left
    out, it is AA's own prompt text). The scan shingles every tracked file the same way and fails on any digest in
@@ -66,6 +68,9 @@ MARKER_KEYS = (re.compile(r'"shared_inputs"\s*:\s*\{'), re.compile(r'"samples"\s
 MARKER_CLAIM_EXPORT = re.compile(r'"schema"\s*:\s*"aa1048-claim-export/')
 MARKER_CLAIM_LINE = re.compile(r'^(?=[^\n]*"claim_hash"\s*:\s*"[0-9a-f]{64}")'
                                r'(?=[^\n]*"(?:claim_text|lens|labeller_kind|reason)"\s*:)', re.MULTILINE)
+# AA-1048 (review S272): the whole-file form — JSON ("key": "value", any indent) or YAML (key: value, quoted or not).
+MARKER_CLAIM_FILE_HASH = re.compile(r'["\']?\bclaim_hash["\']?\s*:\s*["\']?[0-9a-f]{64}(?![0-9a-f])')
+MARKER_CLAIM_FILE_TEXT = re.compile(r'["\']?\bclaim_text["\']?\s*:')
 _UNICODE_ESC = re.compile(r"\\u([0-9a-fA-F]{4})")
 _JSON_ESC = re.compile(r"\\[nrtbf\"/\\]")
 _TOKEN = re.compile(r"[^\W_]+")
@@ -245,6 +250,8 @@ def markers(text: str) -> list[str]:
         found.append("claim-label export marker")
     if MARKER_CLAIM_LINE.search(text):
         found.append("claim-label line marker")
+    elif MARKER_CLAIM_FILE_HASH.search(text) and MARKER_CLAIM_FILE_TEXT.search(text):
+        found.append("claim-label file marker")
     return found
 
 

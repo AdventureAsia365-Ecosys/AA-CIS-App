@@ -2,10 +2,14 @@
 """AA-1048 (Quality W2) — the claim-label tooling, $0. Every DB write is DRY RUN unless --apply; no model is called
 (the gateway entry points are refused for the whole process, services/golden_set/llm_guard).
 
-  export-fixture FIXTURE --set CL-1 --out <scratch>/claims.jsonl [--writers t9_blog,t9_social]
+  export-fixture FIXTURE --set CL-1 --out <scratch>/claims.jsonl [--writers t9_blog,t9_social] [--tour-map MAP]
       Claim lines (JSONL keyed by claim hash) of the frozen outputs of an AA-729 golden fixture, for the 3-lens panel
-      (docs/calibration/aa1048-claim-panel-brief.md). Real text: every --out / --thresholds path is refused inside a
-      git work tree unless git ignores it there (scripts/aa1048/outpath.py); use the workspace .tmp-session/.
+      (docs/calibration/aa1048-claim-panel-brief.md). Every T2 / T9 line carries its tour (refs.tour_id, the split
+      group: a blog and a social piece of one tour stay on one side); a T2 / T9 sample without one is refused. A
+      fixture frozen before select_samples kept refs.tour_id for T9 needs --tour-map: a JSON {piece_id | request_id |
+      version_id | sample_id: tour_id} (read-only query: acp_shared.content_piece -> angle_gate_request.trip_id).
+      Real text: every --out / --thresholds path is refused inside a git work tree unless it is in the ignored
+      scratch folder .tmp-session/ (scripts/aa1048/outpath.py); use the workspace .tmp-session/.
   import PANEL.jsonl --export claims.jsonl --set CL-1 --version 1.0.0 [--apply]
       Validate the panel (or tech-lead) lines against the export, consolidate the lenses, draw the 20% audit and
       write shared.eval_claim_label (CIS 388).
@@ -79,11 +83,40 @@ async def _connect():
 # ── fixture export (scripts side: it reads the AA-729 panel view) ──────────────────────────────────────────────
 
 
-def export_fixture(fixture: dict, *, set_id: str, writers: Optional[Iterable[str]] = None) -> list[dict]:
+# Writers whose objects come several per tour (S1 Master versions carry refs.tour_id by construction): their split
+# group must be the tour, so an export line without one is refused (review S272: a T9 blog and social piece of one tour
+# landed on different sides).
+TOUR_KEY_WRITERS = ("t2", "t9_blog", "t9_social")
+_TOUR_KEYS = ("tour_id", "trip_id")
+_MAP_KEYS = ("piece_id", "request_id", "version_id", "sample_id")
+
+
+def tour_key(sample: dict, tour_map: Optional[dict] = None) -> Optional[str]:
+    """The tour of a fixture sample: refs.tour_id / trip_id, else the frozen input's (input or input.context), else
+    the first of its piece / request / version / sample ids found in `tour_map`. None when none is known."""
+    refs = sample.get("refs") or {}
+    inp = sample.get("input") if isinstance(sample.get("input"), dict) else {}
+    ctx = inp.get("context") if isinstance(inp.get("context"), dict) else {}
+    for src in (refs, inp, ctx):
+        for k in _TOUR_KEYS:
+            v = src.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+    for k in _MAP_KEYS:
+        for src in (refs, inp, sample):
+            v = src.get(k)
+            if v is not None and str(v).strip() and tour_map and tour_map.get(str(v).strip()):
+                return str(tour_map[str(v).strip()]).strip()
+    return None
+
+
+def export_fixture(fixture: dict, *, set_id: str, writers: Optional[Iterable[str]] = None,
+                   tour_map: Optional[dict] = None) -> list[dict]:
     """Export lines for the non-trap samples of an AA-729 golden fixture (their frozen outputs, as the AA-729 panel
-    sees them: no gate ledger or flags), each with the full writer source (labels._source_text, never cut). A claim
-    is exported once: a second item with the same text (same claim hash) adds no line (`cli rederive` maps labels
-    back to every item by content sha)."""
+    sees them: no gate ledger or flags), each with the full writer source (labels._source_text, never cut) and its
+    tour in refs.tour_id (tour_key; ValueError for a T2 / T9 sample without one). A claim is exported once: a second
+    item with the same text (same claim hash) adds no line (`cli rederive` maps labels back to every item by content
+    sha)."""
     from scripts.aa729.labels import _source_text, panel_output
     from services.golden_set.derive import FixtureError, writer_and_channel
 
@@ -102,10 +135,15 @@ def export_fixture(fixture: dict, *, set_id: str, writers: Optional[Iterable[str
         refs = s.get("refs") or {}
         tenant = None if writer == "a1" else (str(refs.get("tenant_id") or "") or None)
         stratum = "hard" if {"held", "known_failure"} & set(s.get("tags") or []) else "representative"
+        tour = tour_key(s, tour_map)
+        if tour is None and writer in TOUR_KEY_WRITERS:
+            raise ValueError(f"sample {s.get('sample_id')!r} ({writer}) has no tour key (refs.tour_id): its split "
+                             "would fall back to the item and leak sentences of one tour across train / held_out; "
+                             "re-freeze it (select_samples keeps refs.tour_id) or pass --tour-map")
         new = pn.export_records(
             set_id=set_id, writer=writer, scope="platform" if writer == "a1" else "tenant", tenant_id=tenant,
             refs={"sample_id": s["sample_id"], "piece_id": refs.get("piece_id"), "version_id": refs.get("version_id"),
-                  "tour_id": refs.get("tour_id")},
+                  "tour_id": tour},
             output=panel_output(s.get("output")), source_text=_source_text(s), stratum=stratum)
         lines += [ln for ln in new if ln["claim_hash"] not in seen]
         seen.update(ln["claim_hash"] for ln in new)
@@ -127,11 +165,14 @@ def _finals_from_jsonl(rows: list[dict]) -> dict[str, pn.FinalLabel]:
 
 
 def claim_inputs(export_lines: list[dict]) -> list[det.ClaimInput]:
-    """Detector inputs from export lines. `scope_name` and `recorded` (producer -> fired, critic F10) are read when
-    the export line carries them (added by whoever exported the producers' stored verdicts)."""
+    """Detector inputs from export lines. `scope_name`, `recorded` (producer -> fired, critic F10) and
+    `recorded_classes` (producer -> the classes it checks; without it the producer is never measured as enforce) are
+    read when the export line carries them (added by whoever exported the producers' stored verdicts)."""
     return [det.ClaimInput(e["claim_hash"], e["writer"], e["field"], e["claim_text"], e.get("source_text") or "",
                            scope_name=e.get("scope_name"), country=e.get("country"),
                            recorded=dict(e.get("recorded") or {}),
+                           recorded_classes={str(k): tuple(v or ()) for k, v in
+                                             dict(e.get("recorded_classes") or {}).items()},
                            split=cl.split_of(cl.split_group(e.get("refs"), e["content_sha256"])))
             for e in export_lines]
 
@@ -155,7 +196,11 @@ def agreement_map(obj: Any) -> dict[str, Optional[float]]:
 
 def cmd_export_fixture(a) -> dict:
     fixture = json.loads(_read(a.fixture))
-    lines = export_fixture(fixture, set_id=a.set, writers=a.writers.split(",") if a.writers else None)
+    tour_map = json.loads(_read(a.tour_map)) if a.tour_map else None
+    if tour_map is not None and not isinstance(tour_map, dict):
+        raise ValueError("--tour-map is a JSON object {piece_id | request_id | version_id | sample_id: tour_id}")
+    lines = export_fixture(fixture, set_id=a.set, writers=a.writers.split(",") if a.writers else None,
+                           tour_map=tour_map)
     _write(a.out, _jsonl(lines))
     return {"claims": len(lines), "objects": len({ln["content_sha256"] for ln in lines}), "out": a.out,
             "by_writer": {w: sum(1 for ln in lines if ln["writer"] == w) for w in cl.WRITERS}}
@@ -255,6 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--writers")
+    p.add_argument("--tour-map", help="JSON {piece_id | request_id | version_id | sample_id: tour_id}")
     for name in ("import", "report", "manifest", "enqueue", "pull-resolutions", "finals"):
         p = sub.add_parser(name)
         if name == "import":

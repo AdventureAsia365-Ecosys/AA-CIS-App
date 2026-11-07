@@ -128,11 +128,18 @@ second judgement of the same claim by the same lens.
 
 All commands run with the repo on `PYTHONPATH`; DB commands as `cis_app` (`DATABASE_URL`), DRY RUN unless `--apply`.
 `S` below is the scratch folder `/home/nghiep/projects/AA-Ecosys/.tmp-session/aa1048` (ignored by the root repo).
-Every `--out` / `--thresholds` path is refused inside a git work tree unless git ignores it there, and CI's
-golden-set text guard fails on any tracked claim-export or claim-label line.
+Every `--out` / `--thresholds` path inside a git work tree is refused unless it sits in that tree's ignored
+`.tmp-session/` folder and is not tracked (an ignored path elsewhere in a checkout, such as `scripts/` or `*.jsonl` in
+this repo, is refused too), and CI's golden-set text guard fails on any tracked claim-export or claim-label line or
+pretty-printed / YAML claim file.
 
 1. Export: `python -m scripts.aa1048.cli export-fixture <fixture.json> --set CL-1 --writers t9_blog,t9_social --out
-   $S/claims.jsonl` (other objects: the same line format from the DB, with `refs.tour_id` set).
+   $S/claims.jsonl` (other objects: the same line format from the DB, with `refs.tour_id` set). Every T2 / T9 line
+   carries its tour; a sample without one is refused. A fixture frozen before S272 (T9 refs without `tour_id`)
+   needs `--tour-map $S/tours.json`: `{piece_id: tour_id}` from a read-only query (`acp_shared.content_piece` joined
+   to `acp_shared.angle_gate_request.trip_id`). A recorded producer's verdicts go on the line as `recorded`
+   (`{producer: fired}`) with `recorded_classes` (`{producer: [class, ...]}`); without declared classes the producer
+   is measured for exploration only, never enforce.
 2. Panel: three agents, one per lens, each with this brief and `$S/claims.jsonl`; concatenate their outputs into
    `$S/panel.jsonl`.
 3. Import: `cli import $S/panel.jsonl --export $S/claims.jsonl --set CL-1 --version 1.0.0` (DRY RUN), then

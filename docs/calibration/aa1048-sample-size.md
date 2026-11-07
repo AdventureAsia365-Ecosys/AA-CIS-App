@@ -41,13 +41,19 @@ that shows 0.92; one that shows exactly 0.90 needs 70.
 
 A first panel pass gives, per detector and class, the share of ALL labelled claims the detector fires on (fire_rate)
 and the share that are violations of the class (violation_rate); measure them on the train split
-(`cli detectors --split train`). Then
+(`cli detectors --split train`). Only a held-out measurement may pass, and the frozen split puts about 30% of the
+objects there (`HELD_OUT_PCT` in `services/ground_truth/claims.py`), so the fires and violations the bar needs must
+all be on the held-out side:
 
-    claims to label = max(fires needed / fire_rate, n_pos bar / violation_rate)
+    held-out claims needed = max(fires needed / fire_rate, n_pos bar / violation_rate)
+    claims to label        = held-out claims needed / HELD_OUT_PCT        (about 3.3x the held-out need)
 
-`python -m scripts.aa1048.cli sample-size --rates rates.json --budget N` prints this per row (the `rates.json` rows
-are the `fire_rate`, `violation_rate` and `precision` columns of `cli detectors`), and marks every class whose need
-is over the budget **stays warn**: decision D11 gives about 2-3 hours of tech-lead adjudication, so a class whose
+Example: fire_rate 0.1, violation_rate 0.1, a deterministic detector at precision 1.00: 150 held-out claims
+(12 fires, 15 violations), so 500 claims to label in total.
+
+`python -m scripts.aa1048.cli sample-size --rates rates.json --budget N` prints both per row
+(`held_out_claims_needed`, `claims_to_label`; the `rates.json` rows are the `fire_rate`, `violation_rate` and
+`precision` columns of `cli detectors`), and marks every class whose total is over the budget **stays warn**: decision D11 gives about 2-3 hours of tech-lead adjudication, so a class whose
 violations are rare stays warn-only through W5 and is said so up front.
 
 Rows are pooled across writers when the detector does not depend on the writer (critic F2); `--per-writer` splits

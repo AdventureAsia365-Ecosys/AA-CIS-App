@@ -12,12 +12,34 @@ from services.golden_set.derive import FIXTURE_SCHEMA
 TENANT = "00000000-0000-4000-8000-000000a10482"
 
 
-def _sample(sid, verdict, reason="ok by the panel", source="agent_panel", text="Walk 12 km to Ostrin Valley."):
+@pytest.fixture(autouse=True)
+def _undo_llm_guard(monkeypatch):
+    """cli.main installs the $0 guard for the whole process; undo it after each test so later test files can still
+    reach the (faked) gateway entry points."""
+    from services.golden_set import llm_guard
+
+    undo = []
+    real = llm_guard.install
+    monkeypatch.setattr(llm_guard, "install", lambda reason="golden_set": undo.append(real(reason)) or undo[-1])
+    yield
+    for restore in reversed(undo):
+        restore()
+TOUR = "00000000-0000-4000-8000-0000000a1048"
+
+
+def _freeze_t9_refs(piece_id):
+    """refs as scripts/aa729/select_samples.freeze_t9 wrote them before S272 (no tour_id)."""
+    return {"piece_id": piece_id, "request_id": piece_id.replace("4000", "4001"), "tenant_id": TENANT,
+            "tenant_slug": "zz-agency", "job_id": None}
+
+
+def _sample(sid, verdict, reason="ok by the panel", source="agent_panel", text="Walk 12 km to Ostrin Valley.",
+            tour=TOUR):
     ctx = {"atom_text": "Ostrin Valley — walk\nSource itinerary: Walk 12 km to Ostrin Valley.", "channel": "blog",
            "brand_audience": {"brand_name": "Lumen Trails"}, "trip_name": "Velmora Walk", "cta": "Ask us."}
     return {"sample_id": sid, "stratum": "t9_blog", "kind": "t9", "channel": "blog", "label_source": source,
             "label": common.make_label(verdict, source, reason=reason),
-            "refs": {"tenant_id": TENANT, "piece_id": f"00000000-0000-4000-8000-{int(sid[-3:]):012d}"},
+            "refs": {**_freeze_t9_refs(f"00000000-0000-4000-8000-{int(sid[-3:]):012d}"), "tour_id": tour},
             "input": {"context": ctx}, "output": {"content_text": f"{text} The valley is quiet in spring.",
                                                   "seo_title": "Velmora walk"}}
 
@@ -136,12 +158,14 @@ def test_outputs_are_refused_inside_a_work_tree_unless_ignored(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    (repo / ".gitignore").write_text("scratch/\n")
-    with pytest.raises(outpath.OutRefused, match="not ignored"):
+    (repo / ".gitignore").write_text("scratch/\n.tmp-session/\n")
+    with pytest.raises(outpath.OutRefused, match="not in its ignored scratch"):
         outpath.check_out(str(repo / "claims.jsonl"))
     with pytest.raises(outpath.OutRefused):
         outpath.check_out(str(repo / "new" / "deeper" / "rows.json"))        # a folder that does not exist yet
-    assert outpath.check_out(str(repo / "scratch" / "claims.jsonl")).endswith("claims.jsonl")
+    with pytest.raises(outpath.OutRefused):                                   # ignored, but not the scratch folder
+        outpath.check_out(str(repo / "scratch" / "claims.jsonl"))
+    assert outpath.check_out(str(repo / ".tmp-session" / "x" / "claims.jsonl")).endswith("claims.jsonl")
     outside = tmp_path / "plain"
     outside.mkdir()
     assert outpath.check_out(str(outside / "claims.jsonl")) == str(outside / "claims.jsonl")
@@ -175,3 +199,115 @@ def test_main_reports_a_refusal(tmp_path, capsys):
     fx.write_text(json.dumps(_fixture()))
     assert cli.main(["rederive", str(fx), "--finals", str(panel)]) == 2
     assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+# ── review S272: the split group of T9 lines is the tour ──────────────────────────────────────────────────────────
+
+
+def _social(sid, tour, text):
+    s = _sample(sid, "pass", text=text, tour=tour)
+    s.update({"stratum": "t9_social", "channel": "linkedin"})
+    s["input"]["context"]["channel"] = "linkedin"
+    return s
+
+
+def test_export_refuses_a_t9_sample_frozen_without_a_tour_and_reads_a_tour_map():
+    """A fixture shaped like freeze_t9 output before S272 (refs piece / request / tenant / job ids, no tour_id) is
+    refused: its claims would be split per item, a blog and a social piece of one tour on different sides."""
+    old = _sample("t9b-001", "pass")
+    del old["refs"]["tour_id"]
+    fx = {**_fixture(), "samples": [old]}
+    with pytest.raises(ValueError, match="no tour key"):
+        cli.export_fixture(fx, set_id="CL-1")
+    by_piece = {old["refs"]["piece_id"]: TOUR}
+    lines = cli.export_fixture(fx, set_id="CL-1", tour_map=by_piece)
+    assert lines and {ln["refs"]["tour_id"] for ln in lines} == {TOUR}
+    assert {ln["split_group"] for ln in lines} == {f"tour_id:{TOUR}"}
+    by_request = {old["refs"]["request_id"]: TOUR}
+    assert cli.export_fixture(fx, set_id="CL-1", tour_map=by_request)[0]["refs"]["tour_id"] == TOUR
+    ctx_trip = _sample("t9b-001", "pass")
+    del ctx_trip["refs"]["tour_id"]
+    ctx_trip["input"]["context"]["trip_id"] = TOUR                   # the angle request's trip in the frozen input
+    assert cli.export_fixture({**fx, "samples": [ctx_trip]}, set_id="CL-1")[0]["refs"]["tour_id"] == TOUR
+
+
+def test_blog_and_social_pieces_of_one_tour_land_on_one_side(tmp_path):
+    from services.ground_truth import claims as cl
+
+    tours = [f"00000000-0000-4000-8000-{n:012d}" for n in range(1, 9)]
+    samples = []
+    for n, tour in enumerate(tours, start=1):
+        samples.append(_sample(f"t9b-{n:03d}", "pass", text=f"Walk {n} km to Ostrin Valley.", tour=tour))
+        samples.append(_social(f"t9s-{n:03d}", tour, f"Cycle {n} km to Ostrin Valley."))
+    fx = {**_fixture(), "samples": samples}
+    lines = cli.export_fixture(fx, set_id="CL-1")
+    side: dict = {}
+    for ln in lines:
+        side.setdefault(ln["refs"]["tour_id"], set()).add(ln["split"])
+        assert ln["split"] == cl.split_of(f"tour_id:{ln['refs']['tour_id']}")
+    assert set(side) == set(tours) and all(len(v) == 1 for v in side.values())
+    assert {next(iter(v)) for v in side.values()} == {"train", "held_out"}      # both sides used across tours
+    # the CLI reads --tour-map
+    old = _sample("t9b-001", "pass")
+    del old["refs"]["tour_id"]
+    fxp, mp, out = tmp_path / "fx.json", tmp_path / "map.json", tmp_path / "claims.jsonl"
+    fxp.write_text(json.dumps({**_fixture(), "samples": [old]}))
+    mp.write_text(json.dumps({old["refs"]["piece_id"]: TOUR}))
+    assert cli.main(["export-fixture", str(fxp), "--set", "CL-1", "--out", str(out)]) == 2
+    assert cli.main(["export-fixture", str(fxp), "--set", "CL-1", "--out", str(out), "--tour-map", str(mp)]) == 0
+    assert all(json.loads(x)["refs"]["tour_id"] == TOUR for x in out.read_text().splitlines())
+
+
+def test_freeze_t9_keeps_the_angle_requests_trip_as_tour():
+    import asyncio
+
+    from scripts.aa729 import select_samples as sel
+
+    assert "agr.trip_id::text AS tour_id" in sel._T9_SQL
+    assert "LEFT JOIN acp_shared.angle_gate_request agr" in sel._T9_SQL
+
+    async def ctx(pool, r, wi):
+        return {"atom_text": "x"}, "job_payload"
+
+    row = {"piece_id": "p1", "request_id": "r1", "tenant_id": TENANT, "tenant_slug": "zz", "job_id": None,
+           "channel": "blog", "content_text": "Text.", "seo_title": None, "meta_description": None, "slug": None,
+           "gate_ledger": None, "flags": None, "tour_id": TOUR}
+    c = sel.Candidate(id="p1", group="zz", data={"row": row, "wi": {}, "post_edit": False, "label": {},
+                                                 "pipeline": {}})
+    orig = sel.t9_context
+    sel.t9_context = ctx
+    try:
+        frozen = asyncio.run(sel.freeze_t9(None, c, {}))
+    finally:
+        sel.t9_context = orig
+    assert frozen["refs"]["tour_id"] == TOUR
+
+
+# ── review S272: output paths ─────────────────────────────────────────────────────────────────────────────────────
+
+
+def test_outputs_never_overwrite_a_tracked_file_under_an_ignored_pattern(tmp_path):
+    """`git check-ignore --no-index` called a tracked file under an ignored folder 'ignored': the tools could overwrite
+    a tracked file of this public repo with real claim text. Tracked files and every non-scratch path are refused."""
+    import subprocess
+
+    from scripts.aa1048 import outpath
+
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("scripts/\n*.jsonl\n.tmp-session/\n")
+    (repo / "scripts" / "tool.py").write_text("x = 1\n")
+    (repo / "fixture.jsonl").write_text("{}\n")
+    (repo / ".tmp-session").mkdir()
+    (repo / ".tmp-session" / "kept.json").write_text("{}")
+    subprocess.run(["git", "-C", str(repo), "add", "-f", "scripts/tool.py", "fixture.jsonl",
+                    ".tmp-session/kept.json"], check=True)
+    for tracked in ("scripts/tool.py", "fixture.jsonl", ".tmp-session/kept.json"):
+        with pytest.raises(outpath.OutRefused, match="tracked"):
+            outpath.check_out(str(repo / tracked))
+    for ignored_not_scratch in ("scripts/new.json", "other.jsonl"):
+        with pytest.raises(outpath.OutRefused, match="scratch"):
+            outpath.check_out(str(repo / ignored_not_scratch))
+    assert outpath.check_out(str(repo / ".tmp-session" / "aa1048" / "claims.jsonl")).endswith("claims.jsonl")
+    assert (repo / "scripts" / "tool.py").read_text() == "x = 1\n"

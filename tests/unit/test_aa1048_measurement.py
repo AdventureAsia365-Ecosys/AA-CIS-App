@@ -1,5 +1,6 @@
 """AA-1048 (Quality W2) — the sample-size table (sample_size.py, its doc), the deterministic detector harness
 (detectors.py) and the mutation suites (mutations.py). Synthetic, invented texts only."""
+import dataclasses
 import os
 
 import pytest
@@ -46,17 +47,38 @@ def test_the_doc_holds_the_generated_table():
 
 def test_label_budget_and_budget_rows():
     llm, deterministic = ss.BARS
-    assert ss.label_budget(fire_rate=0.25, violation_rate=0.10, observed_precision=1.0, bar=deterministic) == 150
-    assert ss.label_budget(fire_rate=0.5, violation_rate=0.5, observed_precision=0.95, bar=deterministic) == 38
+    # only the held-out side (claims.HELD_OUT_PCT of the objects) may pass: the total is the held-out need / 0.30
+    assert ss.held_out_claims_needed(fire_rate=0.25, violation_rate=0.10, observed_precision=1.0,
+                                     bar=deterministic) == 150
+    assert ss.label_budget(fire_rate=0.25, violation_rate=0.10, observed_precision=1.0, bar=deterministic) == 500
+    assert ss.label_budget(fire_rate=0.5, violation_rate=0.5, observed_precision=0.95, bar=deterministic) == 127
     assert ss.label_budget(fire_rate=0, violation_rate=0.5, observed_precision=1.0, bar=llm) is None
     rows = ss.budget_rows([
         {"detector": "a", "class": "fact.number", "fire_rate": 0.25, "violation_rate": 0.1, "precision": 1.0},
         {"detector": "b", "class": "fact.name", "kind": "llm", "fire_rate": 0.5, "violation_rate": 0.5,
          "observed_precision": 0.95},
         {"detector": "c", "class": "fact.name", "fire_rate": 0.5, "violation_rate": 0.5, "precision": None}],
-        budget=100)
+        budget=300)
     assert [r["status"] for r in rows] == ["stays warn (over the label budget)", "reachable", "out of reach"]
-    assert rows[1]["claims_to_label"] == 66 and rows[1]["bar"] == "llm_instrument"
+    assert rows[1]["held_out_claims_needed"] == 66 and rows[1]["claims_to_label"] == 220
+    assert rows[1]["bar"] == "llm_instrument" and rows[1]["held_out_pct"] == 0.30
+
+
+def test_label_budget_leaves_enough_on_the_held_out_side():
+    """Review S272 repro: fire_rate 0.1, violation_rate 0.1, precision 1.0, deterministic bar. The old budget (150)
+    left about 45 held-out claims (4.5 fires, 4.5 violations against 12 and 15 needed)."""
+    from services.ground_truth.claims import HELD_OUT_PCT
+
+    _llm, deterministic = ss.BARS
+    total = ss.label_budget(fire_rate=0.1, violation_rate=0.1, observed_precision=1.0, bar=deterministic)
+    assert total == 500
+    held = total * HELD_OUT_PCT
+    assert held * 0.1 >= ss.min_flagged(1.0, deterministic) and held * 0.1 >= deterministic.n_pos
+    with pytest.raises(ValueError):
+        ss.label_budget(fire_rate=0.1, violation_rate=0.1, observed_precision=1.0, bar=deterministic, held_out_pct=0)
+    (row,) = ss.budget_rows([{"detector": "x", "class": "fact.number", "fire_rate": 0.1, "violation_rate": 0.1,
+                              "precision": 1.0}], budget=150)
+    assert row["claims_to_label"] == 500 and row["status"].startswith("stays warn")
 
 
 # ── detectors ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -171,9 +193,59 @@ def test_recorded_producers_are_measured_on_their_records_only():
               _claim("b", h="r2", recorded={"a3_place_card_check": False}), _claim("c", h="r3")]
     labels = {"r1": ("fact.name", "violation"), "r2": ("fact.name", "ok"), "r3": ("fact.name", "violation")}
     rec = det.recorded_detectors(claims)
-    assert [d.name for d in rec] == ["recorded:a3_place_card_check"]
+    assert [d.name for d in rec] == ["recorded:a3_place_card_check"] and rec[0].classes == ()
     (row,) = det.measure(rec, claims, labels, label_set="CL-1")
     assert (row["class"], row["n_labelled"], row["tp"], row["fp"], row["mode"]) == ("fact.name", 2, 1, 0, "warn")
+    assert row["classes_declared"] is False
+
+
+def _recorded(h, fired, classes=("fact.number",)):
+    return det.ClaimInput(h, "t9_blog", "body", f"claim {h}", SOURCE, recorded={"p": fired},
+                          recorded_classes={"p": classes} if classes is not None else {}, split="held_out")
+
+
+def test_recorded_producer_is_measured_against_its_declared_classes_only():
+    """Review S272 repro: producer p fires on 15 fact.number and 20 scope.framing violations (and not on 5 fact.number
+    ok claims). Measured against every class, both rows were enforce at precision 1.0; as a number checker its
+    precision is 15 / 35."""
+    labels = {}
+    claims = []
+    for i in range(15):
+        claims.append(_recorded(f"n{i}", True))
+        labels[f"n{i}"] = ("fact.number", "violation")
+    for i in range(20):
+        claims.append(_recorded(f"s{i}", True))
+        labels[f"s{i}"] = ("scope.framing", "violation")
+    for i in range(5):
+        claims.append(_recorded(f"o{i}", False))
+        labels[f"o{i}"] = ("fact.number", "ok")
+    agree = {"fact.number": 0.9, "scope.framing": 0.9}
+    rec = det.recorded_detectors(claims)
+    assert rec[0].classes == ("fact.number",)
+    (row,) = det.measure(rec, claims, labels, label_set="x", agreement=agree)
+    assert (row["class"], row["fired"], row["tp"], row["fp_other_class"]) == ("fact.number", 35, 15, 20)
+    assert row["precision"] == round(15 / 35, 4) and row["mode"] == det.MODE_WARN and not row["passes"]
+    # no declared class: explored against every class, never enforce
+    bare = [dataclasses.replace(c, recorded_classes={}) for c in claims]
+    rows = det.measure(det.recorded_detectors(bare), bare, labels, label_set="x", agreement=agree)
+    assert {r["class"] for r in rows} == {"fact.number", "scope.framing"}
+    assert all(r["mode"] == det.MODE_WARN and not r["meets_bar"] and r["classes_declared"] is False for r in rows)
+
+
+def test_a_class_the_detector_never_catches_does_not_pass():
+    """Review S272 repro: classes (other.f6, other.c3); 20 held-out f6 violations all fired, 15 c3 violations none
+    fired: the c3 row was enforce with tp_class 0."""
+    claims = [_claim(f"c{i}", h=f"c{i}") for i in range(35)]
+    labels = {f"c{i}": ("other.f6", "violation") for i in range(20)}
+    labels.update({f"c{i}": ("other.c3", "violation") for i in range(20, 35)})
+    d = det.Detector("x", ("other.f6", "other.c3"), "rule", lambda c: int(c.claim_hash[1:]) < 20)
+    rows = {r["class"]: r for r in det.measure((d,), claims, labels, label_set="x",
+                                                agreement={"other.f6": 0.9, "other.c3": 0.9})}
+    assert rows["other.f6"]["passes"] and rows["other.f6"]["mode"] == det.MODE_ENFORCE
+    c3 = rows["other.c3"]
+    assert c3["tp_class"] == 0 and c3["recall"] == 0.0 and not c3["passes"] and c3["mode"] == det.MODE_WARN
+    th = det.thresholds_rows(list(rows.values()))["thresholds"]
+    assert th["det.x.other.c3"]["calibration"]["calibrated"] is False
 
 
 # ── mutation suites ────────────────────────────────────────────────────────────────────────────────────────────

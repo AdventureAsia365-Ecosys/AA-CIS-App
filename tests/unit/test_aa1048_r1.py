@@ -50,7 +50,7 @@ def test_instruments_and_plan():
     plan = r1.plan(_items(), insts)
     rows = {r["instrument"]: r for r in plan["instruments"]}
     assert rows[LUNA.id]["calls"] == 4 * 3 and rows[LUNA_X.id]["calls"] == 1 * 3
-    assert plan["fits_cap"] and plan["expected_total_usd"] < 0.05 and plan["max_tokens"] >= 8192
+    assert plan["fits_cap"] and plan["expected_total_usd"] < 0.1 and plan["max_tokens"] >= 8192
     assert plan["worst_case_total_usd"] > plan["expected_total_usd"]
     assert plan["labels"]["fact.number:violation"] == 1
     for bad in (dict(cap=2.5), dict(cap=0)):
@@ -115,9 +115,10 @@ def test_entailment_votes_identity_and_unusable_replies():
 def test_cap_stops_before_the_call_that_would_pass_it():
     items = _items()
     uns = json.dumps({"verdict": "unsupported", "quote": "", "why": ""})
-    expected = r1.call_cost(LUNA, r1.entailment_prompt(items[0]), r1.EXPECTED_OUT["entailment"])
-    cap = expected * r1.SAFETY                                            # room for exactly one call
-    result, _ = _run(items, [LUNA], [_resp(uns, cost=expected)] * 20, cap=cap)
+    worst = max(r1.worst_call_cost(LUNA, r1.entailment_prompt(i)) for i in items)
+    cost = worst / 10
+    cap = worst + cost / 2                                                # room for exactly one call
+    result, _ = _run(items, [LUNA], [_resp(uns, cost=cost)] * 20, cap=cap)
     assert result["calls"] == 1 and result["stopped"]
     assert sum(v.count(None) for v in result["votes"][LUNA.id].values()) == 4 * 3 - 1
 
@@ -216,3 +217,163 @@ def test_script_dry_run_makes_no_call_and_refuses_live_without_confirm(tmp_path,
         r1_calibrate.main(["--export", str(export), "--finals", str(finals), "--live"])
     assert r1_calibrate.main(["--export", str(export), "--finals", str(finals), "--candidates", "bad"]) == 2
     assert r1_calibrate._candidates("m@c,n@d") == [("m", "c"), ("n", "d")]
+
+
+# ── review S272: the 2 USD cap is hard ────────────────────────────────────────────────────────────────────────────
+
+KIMI = r1.Instrument("kimi-k3", "acc2", "entailment")
+
+
+def _many(n=50):
+    return [r1.Item(f"{i:064x}", "t9_blog", "fact.number", "violation" if i % 2 else "ok", "representative",
+                    "a" * 64, "content_text", f"Walk {i} km to Ostrin Valley.", FIELD, SOURCE,
+                    ("Day 2: Walk 12 km to Ostrin Valley.",), "held_out") for i in range(n)]
+
+
+def _kimi_reply(**kw):
+    r = _resp(json.dumps({"verdict": "unsupported", "quote": "", "why": ""}), model="kimi-k3", conn="acc2")
+    for k, v in kw.items():
+        setattr(r, k, v)
+    return r
+
+
+def test_cap_counts_the_cut_attempt_of_a_truncation_retry():
+    """Review S272 repro: kimi-k3 entailment, 50 items x 3 votes, cap 2.0, every reply cost_usd 0.01 with
+    truncation_cut_cost_usd 0.30. The budget charged 0.01 a call (spent 1.5, no stop) while 46.5 USD was billed."""
+    billed = []
+
+    def caller(inst, system, user, schema):
+        r = _kimi_reply(cost_usd=0.01, truncation_cut_cost_usd=0.30, truncation_retry_max_tokens=16384,
+                        truncation_retry_reason="cut_reply")
+        billed.append(0.31)
+        return r
+    result = r1.run(_many(), [KIMI], cap=2.0, run_id="zz", caller=caller, log=lambda *a: None)
+    assert sum(billed) <= 2.0 and result["stopped"]
+    assert result["charged_usd"] == pytest.approx(sum(billed))
+    # a retry that gives no cut cost is charged the first attempt's worst case; a refusal to return a cut bills nothing
+    user = r1.entailment_prompt(_many(1)[0])
+    amount, notes = r1.billed_cost(KIMI, user, _kimi_reply(cost_usd=0.01, truncation_retry_max_tokens=16384))
+    assert amount == pytest.approx(0.01 + r1.call_cost(KIMI, user, r1.ceiling("kimi-k3"))) and notes
+    amount, _ = r1.billed_cost(KIMI, user, _kimi_reply(cost_usd=0.01, truncation_retry_max_tokens=16384,
+                                                       truncation_retry_reason="truncated_refusal"))
+    assert amount == pytest.approx(0.01)
+    # earlier route attempts the reply reports (attempt_no 3: two before it) are charged at the worst attempt each
+    amount, _ = r1.billed_cost(KIMI, user, _kimi_reply(cost_usd=0.01, attempt_no=3))
+    assert amount == pytest.approx(0.01 + 2 * r1.worst_attempt_cost(KIMI, user))
+
+
+def test_cap_charges_a_missing_cost_at_the_worst_case():
+    """Review S272 repro: cost_usd None and 8192-token replies: the budget charged the expected 150-token cost
+    (0.54 USD) while 20.28 USD was billed."""
+    billed = []
+
+    def caller(inst, system, user, schema):
+        billed.append(r1.call_cost(inst, user, 8192))
+        return _kimi_reply(cost_usd=None, output_tokens=8192)
+    result = r1.run(_many(), [KIMI], cap=2.0, run_id="zz", caller=caller, log=lambda *a: None)
+    assert sum(billed) <= 2.0 and result["stopped"] and result["charged_usd"] >= sum(billed)
+    assert result["worst_case_charges"]["no_cost_worst_case"] == len(billed)
+    assert r1.billed_cost(KIMI, "x", _kimi_reply(cost_usd=0))[0] == r1.worst_call_cost(KIMI, "x")
+
+
+def test_the_gate_uses_the_worst_case_with_the_retry_ceiling_and_the_reasoning_floor():
+    assert r1.ceiling("kimi-k3") == 8192 and r1.retry_ceiling("kimi-k3") == 16384
+    assert r1.worst_call_cost(KIMI, "x") == pytest.approx(r1.call_cost(KIMI, "x", 8192)
+                                                          + r1.call_cost(KIMI, "x", 16384))
+    # the plan adds the expected reasoning of a reasoning model (GPT-6 Luna), none for a model that does not reason
+    assert r1.expected_out(LUNA) == r1.EXPECTED_OUT["entailment"] + r1.EXPECTED_REASONING
+    assert r1.expected_out(r1.Instrument("llama4-maverick", "acc2", "entailment")) == r1.EXPECTED_OUT["entailment"]
+    plan = r1.plan(_items(), [LUNA])
+    (row,) = plan["instruments"]
+    assert row["expected_out_tokens"] == r1.expected_out(LUNA) and row["retry_ceiling"] == 16384
+    # a ledger reading above the run's own charges stops it
+    result = r1.run(_many(4), [KIMI], cap=2.0, run_id="zz", caller=lambda *a: _kimi_reply(cost_usd=0.001),
+                    log=lambda *a: None, spend_probe=lambda: 1.99)
+    assert result["calls"] == 0 and result["stopped"] and result["ledger_usd"] == 1.99
+
+
+def test_a_caller_error_keeps_the_votes_charges_the_worst_case_and_stops_clean():
+    items = _many(4)
+    uns = json.dumps({"verdict": "unsupported", "quote": "", "why": ""})
+    seq = iter([_resp(uns), _resp(uns), RuntimeError("route exhausted")])
+
+    def caller(*a):
+        nxt = next(seq)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+    result = r1.run(items, [LUNA], cap=2.0, run_id="zz", caller=caller, log=lambda *a: None)
+    votes = result["votes"][LUNA.id]
+    assert votes[items[0].claim_hash][0] is True and votes[items[1].claim_hash][0] is True
+    assert votes[items[2].claim_hash] == [None, None, None] and result["calls"] == 3
+    assert result["stopped"].startswith("caller error") and result["caller_errors"][0]["error"] == "RuntimeError"
+    worst = r1.worst_call_cost(LUNA, r1.entailment_prompt(items[2]))
+    assert result["charged_usd"] == pytest.approx(0.0008 + worst, abs=1e-6)
+    rep = r1.report(items, result, [LUNA])
+    assert rep["partial"] is True and rep["caller_errors"]
+
+
+def test_script_writes_the_partial_report_after_a_caller_error(tmp_path, monkeypatch, capsys):
+    from scripts.aa1048 import r1_calibrate
+
+    held = _tour_in("held_out")
+    export, finals, out = tmp_path / "claims.jsonl", tmp_path / "finals.jsonl", tmp_path / "r1.json"
+    export.write_text("".join(json.dumps({"claim_hash": it.claim_hash, "writer": it.writer,
+                                          "content_sha256": it.content_sha256, "field": it.field,
+                                          "claim_text": it.claim_text, "field_text": it.field_text,
+                                          "source_text": it.source_text, "refs": {"tour_id": held}}) + "\n"
+                              for it in _items()))
+    finals.write_text("".join(json.dumps({"claim_hash": it.claim_hash, "claim_class": it.claim_class,
+                                          "label": it.label}) + "\n" for it in _items()))
+
+    def boom(*a):
+        raise TimeoutError("deadline passed")
+    monkeypatch.setattr(r1_calibrate, "_caller", boom)
+    monkeypatch.setattr(r1_calibrate, "ledger_probe", lambda since: (lambda: None))
+    rc = r1_calibrate.main(["--export", str(export), "--finals", str(finals), "--live", "--confirm-spend",
+                            "--cap", "2", "--candidates", "gpt-6-luna-openai@openai-direct", "--modes", "entailment",
+                            "--out", str(out)])
+    assert rc == 3
+    rep = json.loads(out.read_text())
+    assert rep["partial"] is True and rep["caller_errors"][0]["error"] == "TimeoutError" and rep["charged_usd"] > 0
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+# ── review S272: instrument-wide precision, unverified votes ─────────────────────────────────────────────────────
+
+
+def _item(i, cls, label, stratum="representative"):
+    return r1.Item(f"{i:064x}", "t9_blog", cls, label, stratum, "a" * 64, "content_text", f"claim {i}", "", "", (),
+                   "held_out")
+
+
+def test_precision_is_the_instruments_over_every_fire():
+    """Review S272 repro: 20 hard fact.number violations all flagged, 200 ok scope.framing claims of which 30 are
+    flagged: fact.number passed at class precision 1.0 while the instrument's precision as a hold is 20 / 50."""
+    items = [_item(i, "fact.number", "violation", "hard") for i in range(20)]
+    items += [_item(100 + i, "scope.framing", "ok") for i in range(200)]
+    votes = {it.claim_hash: [True] * 3 for it in items[:20]}
+    votes.update({it.claim_hash: [n < 30] * 3 for n, it in enumerate(items[20:])})
+    rec = r1.measure(items, votes)
+    assert rec["ok_cleared"] == 0.85 and rec["classes"]["fact.number"]["precision"] == 1.0
+    assert (rec["tp"], rec["fired"], rec["precision"]) == (20, 50, 0.4) and not rec["precision_passes_bar"]
+    assert not rec["classes"]["fact.number"]["passes_bar"] and rec["passing_classes"] == []
+
+
+def test_unverified_votes_count_as_misses():
+    """Review S272 repro: 30 hard violations, 20 of them [None, None, None], the other 10 flagged: the hard subset
+    passed on 10 of 10 answered."""
+    items = [_item(i, "fact.number", "violation", "hard") for i in range(30)]
+    items += [_item(100 + i, "fact.number", "ok") for i in range(30)]
+    votes = {it.claim_hash: ([None] * 3 if n < 20 else [True] * 3) for n, it in enumerate(items[:30])}
+    votes.update({it.claim_hash: [False] * 3 for it in items[30:]})
+    rec = r1.measure(items, votes)
+    assert rec["hard_subset"] == {"positives": 30, "caught": 10, "passes": False}
+    assert rec["classes"]["fact.number"]["recall"] == round(10 / 30, 4) and rec["unverified"] == 20
+    assert rec["unverified_by_label"] == {"violation": 20} and not rec["instrument_conditions_met"]
+    # a few unverified ok claims are not cleared, and over UNVERIFIED_MAX the instrument fails its conditions
+    votes = {it.claim_hash: [True] * 3 for it in items[:30]}
+    votes.update({it.claim_hash: ([None] * 3 if n < 4 else [False] * 3) for n, it in enumerate(items[30:])})
+    rec = r1.measure(items, votes)
+    assert rec["ok_cleared"] == round(26 / 30, 4) and rec["unverified_rate"] > r1.UNVERIFIED_MAX
+    assert not rec["instrument_conditions_met"] and rec["passing_classes"] == []

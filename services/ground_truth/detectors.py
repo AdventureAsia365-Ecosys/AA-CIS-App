@@ -14,8 +14,11 @@ Precision is the detector's, over EVERY labelled claim it ran on (a gate in enfo
 positive is a fire on a violation of one of its classes; any other fire is a false positive (on an ok claim of any
 class, or on a violation of an unrelated class, counted apart as fp_other_class). Recall is per class. The bar
 (sample_size.BARS[1]) also needs the class's labeller agreement >= 0.7 (panel.agreement_report; unknown does not
-pass), and only a held-out measurement may pass: a train or pooled measurement is exploration (passes false, mode
-never enforce).
+pass) and at least one caught violation of the class (tp_class >= 1: a multi-class detector's precision never lets a
+class it does not catch pass), and only a held-out measurement may pass: a train or pooled measurement is exploration
+(passes false, mode never enforce). A recorded producer is measured against the classes it declares (the export line's
+`recorded_classes`); one with no declared class is measured against every labelled class for exploration and never
+passes (a fire on a violation of an unrelated class would otherwise count as a true positive, review S272).
 
 Detectors call the production functions (no copy of a rule). Pure apart from those functions: no DB, no network, no
 model call.
@@ -47,15 +50,21 @@ class ClaimInput:
     scope_name: Optional[str] = None
     country: Optional[str] = None
     recorded: dict = field(default_factory=dict)      # producer name -> fired (bool), critic F10
+    recorded_classes: dict = field(default_factory=dict)   # producer name -> the policy classes it checks
     split: str = "train"                              # claims.split_of(claims.split_group(refs, content sha))
 
 
 @dataclass(frozen=True)
 class Detector:
     name: str
-    classes: tuple[str, ...]          # the policy classes its fires are measured against
+    classes: tuple[str, ...]          # the policy classes its fires are measured against (() = none declared)
     kind: str                         # rule | tripwire | recorded
     fn: Callable[[ClaimInput], bool]
+
+    @property
+    def declared(self) -> bool:
+        """The detector names its classes: only then may a row pass (an undeclared recorded producer is explored)."""
+        return bool(self.classes)
 
 
 # ── adapters over the production functions ─────────────────────────────────────────────────────────────────────
@@ -186,9 +195,16 @@ def by_name(names: Optional[Iterable[str]] = None) -> tuple[Detector, ...]:
 
 def recorded_detectors(claims: Iterable[ClaimInput]) -> tuple[Detector, ...]:
     """One detector per producer name found in the claims' `recorded` maps (an A3 producer's stored verdict, critic
-    F10). Measured against every class it has records for; a claim without a record for it is not counted."""
+    F10), with the classes the claims declare for it (`recorded_classes`, their union). A claim without a record for
+    it is not counted. With no declared class it is measured against every labelled class, for exploration only:
+    `measure` never lets it pass (review S272)."""
+    claims = list(claims)
     names = sorted({n for c in claims for n in c.recorded})
-    return tuple(Detector(f"recorded:{n}", (), "recorded", (lambda c, n=n: bool(c.recorded.get(n)))) for n in names)
+    out = []
+    for n in names:
+        declared = sorted({str(k) for c in claims for k in (c.recorded_classes.get(n) or ()) if str(k).strip()})
+        out.append(Detector(f"recorded:{n}", tuple(declared), "recorded", (lambda c, n=n: bool(c.recorded.get(n)))))
+    return tuple(out)
 
 
 # ── measurement ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -230,9 +246,10 @@ def measure(detectors: Iterable[Detector], claims: list[ClaimInput], labels: dic
 
     Per detector, over every labelled claim it ran on: tp = fires on violations of one of its classes, fp = every
     other fire (fp_ok on ok claims, fp_other_class on violations of an unrelated class), precision = tp / fires.
-    Per class: tp_class / n_pos = recall. fire_rate = fires / labelled claims, violation_rate = n_pos / labelled
-    claims (the label-budget inputs, sample_size.budget_rows). `pooled` (default, critic F2): writers pooled; False
-    adds the writer to the key."""
+    Per class: tp_class / n_pos = recall; a class passes only with tp_class >= 1 and only for a detector that
+    declares its classes (an undeclared recorded producer is exploration). fire_rate = fires / labelled claims,
+    violation_rate = n_pos / labelled claims (the label-budget inputs, sample_size.budget_rows). `pooled` (default,
+    critic F2): writers pooled; False adds the writer to the key."""
     if split not in SPLIT_CHOICES:
         raise ValueError(f"split must be one of {SPLIT_CHOICES}, got {split!r}")
     detectors = tuple(detectors)
@@ -264,7 +281,8 @@ def measure(detectors: Iterable[Detector], claims: list[ClaimInput], labels: dic
                 n_pos = sum(1 for h in hashes if labels[h] == (cls, "violation"))
                 tp_cls = sum(1 for h in fires_ if labels[h] == (cls, "violation"))
                 agree = agreement.get(cls)
-                meets = ss.passes(tp, len(fires_), n_pos, bar, agreement=agree)
+                meets = (ss.passes(tp, len(fires_), n_pos, bar, agreement=agree) and tp_cls >= 1
+                         and d.declared)
                 ok = meets and split == "held_out"
                 rows.append({
                     "detector": d.name, "kind": d.kind, "class": cls, "writers": writer, "label_set": label_set,
@@ -274,7 +292,8 @@ def measure(detectors: Iterable[Detector], claims: list[ClaimInput], labels: dic
                     "recall": round(tp_cls / n_pos, 4) if n_pos else None,
                     "fire_rate": round(len(fires_) / n, 4) if n else None,
                     "violation_rate": round(n_pos / n, 4) if n else None,
-                    "agreement": agree, "errors": errors.get(d.name, 0), "bar": bar.name, "meets_bar": meets,
+                    "agreement": agree, "errors": errors.get(d.name, 0), "bar": bar.name,
+                    "classes_declared": d.declared, "meets_bar": meets,
                     "passes": ok, "mode": _mode(d.kind, ok)})
     return rows
 
