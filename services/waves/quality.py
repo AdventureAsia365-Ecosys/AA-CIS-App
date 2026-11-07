@@ -1,6 +1,10 @@
-"""AA-645 d13 / AA-1024 G17 — the quality read of an S1 rerun wave and its stop flags, shared by the wave report
-script (`scripts/aa645/wave_report.py`, the CLI, which documents each number) and the wave start (`POST /admin/waves`,
-which refuses a new wave while the previous wave has a stop flag that is true or still pending).
+"""AA-645 d13 / AA-1024 G17 — the quality read of an S1 rerun wave and its stop flags, used by the wave report script
+(`scripts/aa645/wave_report.py`, the CLI, which documents each number and exits 3 on a true flag, 5 while pending).
+
+Not called from an API request: the read runs the S1 code checks on the before and after page of every tour (S272
+review: about 16 s for 50 dense tours and 75 s for 250 on a laptop, past the API Gateway's 29 s on the 0.5 vCPU api
+task), so a wave-start gate on it was taken out. Follow-up: the CLI stores its stop_state on the wave and
+`POST /admin/waves` reads the stored value (docs/implementation-notes/AA-1024-guards-rest.md).
 
 Code-only and $0: SELECTs, the S1 code checks (`services.quality.s1_checks`), no model call, no write. Every query
 reads CIS schemas only (cis_app has SELECT on each). Moved from the script (AA-1024 G17) so the API reads the same
@@ -247,11 +251,17 @@ def stop_conditions(all_row: dict) -> dict:
     }
 
 
+# The wave's own jobs, by every payload shape that names its tours (S272 review): a single `tour_id` (s1_rewrite,
+# a3_atomize, ...), a `tour_ids` list (s1_seo_prefetch and s1_batch_ingest run before any s1_rewrite of the wave), and
+# t2_rewrite's `published_tour_id`, which is gold_aa_internal.published_tours.id, not the raw tour id.
 ACTIVE_JOBS_SQL = """
-SELECT kind, status, count(*) AS n
-FROM shared.job
-WHERE status IN ('queued', 'running')
-  AND (payload->>'tour_id' = ANY($1::text[]) OR payload->>'published_tour_id' = ANY($1::text[]))
+SELECT j.kind, j.status, count(*) AS n
+FROM shared.job j
+WHERE j.status IN ('queued', 'running')
+  AND (j.payload->>'tour_id' = ANY($1::text[])
+       OR (jsonb_typeof(j.payload->'tour_ids') = 'array' AND j.payload->'tour_ids' ?| $1::text[])
+       OR j.payload->>'published_tour_id' IN (
+              SELECT pt.id::text FROM gold_aa_internal.published_tours pt WHERE pt.tour_id::text = ANY($1::text[])))
 GROUP BY 1, 2 ORDER BY 1, 2
 """
 
@@ -321,41 +331,3 @@ def evaluate(tours: list[dict], active_jobs: Optional[list] = None) -> dict[str,
     state = stop_state(stops, active_jobs or [])
     return {"countries": countries, "stop_conditions": stops, "stop_state": state,
             "active_jobs": active_jobs or [], "exit_code": exit_code(state)}
-
-
-# --- the wave start gate (AA-1024 G17) -------------------------------------------------------------------------------
-
-PREVIOUS_WAVE_SQL = """
-SELECT id::text AS id, name, status, created_at, closed_at, expected_tour_ids::text[] AS expected_tour_ids
-FROM shared.rerun_wave
-ORDER BY created_at DESC, id DESC
-LIMIT 1
-"""
-
-
-async def previous_wave_gate(conn, now: Optional[dt.datetime] = None) -> Optional[dict[str, Any]]:
-    """The stop flags of the newest wave, recomputed now (the same numbers as the wave report over its window and
-    expected set), or None when there is no wave yet.
-
-    `blocks` is true when a flag is true (exit 3) or pending (exit 5: the wave's tours still have queued or running
-    jobs). A wave with no A1 version in its window (an atomize-only wave, or none of its rewrites ran yet and no job is
-    active) has no quality read: `applies` is false and it does not block (the "not clearly better" flag would
-    otherwise be true on an empty table)."""
-    prev = await conn.fetchrow(PREVIOUS_WAVE_SQL)
-    if prev is None:
-        return None
-    until = prev["closed_at"] or now or dt.datetime.now(dt.timezone.utc)
-    ids = list(prev["expected_tour_ids"] or [])
-    tours, active = await collect(conn, prev["created_at"], until, ids)
-    if not tours:
-        active = await load_active_jobs(conn, ids)
-    wave = {"id": prev["id"], "name": prev["name"], "status": prev["status"]}
-    if not tours and not any(int(j.get("n") or 0) > 0 for j in active):
-        return {"wave": wave, "applies": False, "tours": 0, "blocks": False, "stop_state": {}, "active_jobs": [],
-                "exit_code": 0}
-    ev = evaluate(tours, active)
-    if not tours:   # nothing written yet but jobs are still running: every flag is pending
-        ev["stop_state"] = {k: "pending" for k in ev["stop_conditions"]}
-        ev["exit_code"] = EXIT_PENDING
-    return {"wave": wave, "applies": True, "tours": len(tours), "blocks": ev["exit_code"] in (EXIT_STOP, EXIT_PENDING),
-            "stop_state": ev["stop_state"], "active_jobs": ev["active_jobs"], "exit_code": ev["exit_code"]}
