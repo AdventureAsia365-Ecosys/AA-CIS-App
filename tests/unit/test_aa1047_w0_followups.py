@@ -52,6 +52,35 @@ def test_a_chained_clause_keeps_the_trip_subject():
     assert span.startswith("you ") and set(fp.trip_promise_kinds(span)) >= {"time", "activity"}
 
 
+@pytest.mark.parametrize("sentence,claim", [
+    # W1 fix-pass review: a promise in a relative / attached clause is still the trip's
+    ("You stay at a riverside lodge, where dinner is served on the terrace.", "dinner served on the terrace"),
+    ("You spend the night at the Ondra guesthouse, with breakfast on the veranda.", "breakfast on the veranda"),
+    ("Day 3 is a free day, with a cooking class at the homestay.", "a cooking class at the homestay"),
+    ("You reach the Tarvo ridge, which looks out over the valley at sunset.", "looks out over the valley at sunset"),
+])
+def test_a_promise_in_an_attached_clause_still_holds(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) != ()
+    out = fp.apply_policy(_f9(_claim(sentence, claim)), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is True and out["f9_policy"]["classes"] == {fp.TRIP_PROMISE: 1}
+
+
+@pytest.mark.parametrize("sentence,claim", [
+    (SENT, "the fort has guarded the valley for 900 years"),
+    ("You walk to the Ondra bridge, which was built by the old salt traders.", "built by the old salt traders"),
+])
+def test_a_background_relative_clause_still_warns(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) == ()
+    out = fp.apply_policy(_f9(_claim(sentence, claim)), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is False and out["f9_policy"]["classes"] == {fp.UNSUPPORTED_OTHER: 1}
+
+
+def test_a_trip_term_span_with_its_subject_after_falls_back_to_the_sentence():
+    """No subject before the clause: the span alone names a service only, so the whole sentence decides."""
+    sentence = "Served on the terrace each evening, dinner is included for you at the lodge."
+    assert fp.claim_kinds(sentence, "served on the terrace each evening") != ()
+
+
 def test_a_paraphrased_or_empty_claim_falls_back_to_the_sentence():
     assert fp.claim_span("You board a boat at dawn.", "x") == "You board a boat at dawn."
     assert fp.claim_span("You board a boat at dawn.", "") == "You board a boat at dawn."
@@ -122,18 +151,50 @@ def test_the_policy_has_its_own_code():
     assert ep.POLICY_CODE in codes and ep.LEGACY_CODE not in codes
 
 
+# A realistic v2 issue list: the voice / SEO findings are report-only codes but their issue text stays.
+VOICE_SEO = ["SEO meta is 162 characters; keep it between 140 and 155.",
+             "The subtitle reads as a list of towns.", "The summary leans on hype ('unforgettable')."]
+JUDGE_FEEDBACK = ["Calm and precise overall; the second highlight could be more specific."]
+WILD = "Wild elephant sightings at the Tarvo reserve are not in the source."
+SANCTUARY = "The elephant sanctuary is placed in the wrong valley."
+RIDE_ISSUE = "Elephant riding is offered on day 2."
+
+
 @pytest.mark.parametrize("codes,issues,keep", [
     (["POLICY_ELEPHANT_RIDING"], [], True),
-    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], ["Elephant riding is offered on day 2."], True),
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], [RIDE_ISSUE], True),
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], [RIDE_ISSUE, *VOICE_SEO], True),
     # W0 review #1355: an unrelated LLM fact check next to the ride is NOT a policy keep
     (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], ["A rare marsh cat is placed in the wrong valley."], False),
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], [RIDE_ISSUE, WILD], False),
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], [RIDE_ISSUE, SANCTUARY], False),
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], [WILD], False),
+    # the fact check must be explained as the ride: none, or only voice / SEO text, keeps the hold
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], [], False),
+    (["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"], VOICE_SEO, False),
     (["POLICY_ELEPHANT_RIDING", "PRODUCT_TRUTH_RISK"], [], False),
-    # a stored version from before the split
+    # a stored version from before the split: the pre-split rule unless an issue names another concern
     (["FACT_CHECK_MANUAL_CHECK"], [], True),
+    (["FACT_CHECK_MANUAL_CHECK"], JUDGE_FEEDBACK, True),
+    (["FACT_CHECK_MANUAL_CHECK"], [RIDE_ISSUE, *VOICE_SEO], True),
     (["FACT_CHECK_MANUAL_CHECK"], ["A rare marsh cat is placed in the wrong valley."], False),
+    (["FACT_CHECK_MANUAL_CHECK"], [*VOICE_SEO, WILD], False),
 ])
 def test_policy_only_hold_reads_the_issues(codes, issues, keep):
     assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=issues) is keep
+
+
+@pytest.mark.parametrize("text,riding", [
+    ("Elephant riding is offered on day 2.", True),
+    ("The page must not promote elephant rides.", True),
+    ("An elephant-back crossing of the Tarvo river.", True),
+    ("A morning elephant safari on the back of a trained elephant.", True),
+    (WILD, False),
+    (SANCTUARY, False),
+    ("The elephant safari location does not match the source.", False),
+])
+def test_names_riding_is_about_the_ride_not_the_animal(text, riding):
+    assert ep.names_riding(text) is riding
 
 
 def test_no_ride_is_never_a_policy_keep():
@@ -172,7 +233,8 @@ def _finalize_pool():
     conn.fetchrow = AsyncMock(return_value={
         "piece_id": uuid.uuid4(), "tenant_id": uuid.uuid4(), "angle_gate_request_id": uuid.uuid4(),
         "attempt_number": 1, "content_text": "x", "status": "approved", "held_reason": None, "gate_ledger": "[]",
-        "repair_log": "[]", "created_at": datetime.datetime(2026, 11, 7), "seo_title": None, "meta_description": None, "slug": None,
+        "repair_log": "[]", "created_at": datetime.datetime(2026, 11, 7), "seo_title": None, "meta_description": None,
+        "slug": None,
         "route_hub_name": None, "route_segment_count": None, "flags": "[]", "discarded_attempts": "[]"})
     acquire = MagicMock()
     acquire.__aenter__ = AsyncMock(return_value=conn)

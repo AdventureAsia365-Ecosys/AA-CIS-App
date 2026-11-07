@@ -144,12 +144,21 @@ def _clauses(sentence: str) -> list[str]:
     return [c for c in _CLAUSE_SPLIT_RE.split(sentence or "") if c and c.strip()]
 
 
+def _names_trip_term(text: str, lexicon=None) -> bool:
+    """The text names a service, a time or a view (with or without a trip subject of its own)."""
+    masked = mask_names(text, lexicon=lexicon) if lexicon is not None else text
+    return bool(SERVICE_RE.search(masked) or TIME_RE.search(masked) or VIEW_RE.search(masked))
+
+
 def claim_span(sentence: Optional[str], claim: Optional[str]) -> str:
     """The part of ``sentence`` the judge's ``claim`` is about: the clause that holds the claim's words (most overlap,
-    first on a tie), with the sentence's trip subject put in front when that clause has none of its own ("You dine
-    at the lodge, near the 900-year-old temple": the temple clause is background, the dinner clause is the promise).
-    A claim with no word in common with the sentence (a paraphrase, a placeholder) or an empty one falls back to the
-    whole sentence (the pre-W1 behaviour: fail safe, a missed promise is worse than a warned background)."""
+    first on a tie). When that clause has no trip subject of its own, the sentence's trip subject is put in front
+    when the clause continues the subject's verb phrase ("and" / "then") or names a service, a time or a view ("You
+    stay at a lodge, where dinner is served on the terrace"; "Day 3 is a free day, with a cooking class"): a promise
+    in a relative or attached clause is still the trip's. A clause with none of those stays as it is ("You dine at
+    the lodge, near the fort, which has guarded the valley for 900 years": the fort clause is background). A claim
+    with no word in common with the sentence (a paraphrase, a placeholder) or an empty one falls back to the whole
+    sentence (the pre-W1 behaviour: fail safe, a missed promise is worse than a warned background)."""
     sentence = sentence or ""
     claim = (claim or "").strip()
     if not claim:
@@ -168,7 +177,7 @@ def claim_span(sentence: Optional[str], claim: Optional[str]) -> str:
     if not TRIP_SUBJECT_RE.search(best):
         at = sentence.find(best)
         subjects = [m for m in TRIP_SUBJECT_RE.finditer(sentence) if m.end() <= at]
-        if subjects and _same_clause_chain(sentence, best, subjects[-1].group(0)):
+        if subjects and (_same_clause_chain(sentence, best, subjects[-1].group(0)) or _names_trip_term(best)):
             return f"{subjects[-1].group(0)} {_CHAIN_LEAD_RE.sub('', best).strip()}"
     return best
 
@@ -177,9 +186,20 @@ _CHAIN_LEAD_RE = re.compile(r"^\s*(?:and|then)\b", re.I)
 
 
 def _same_clause_chain(sentence: str, clause: str, subject: str) -> bool:
-    """The subject governs ``clause`` only when the clause continues the subject's verb phrase (it opens with "and" /
-    "then": "you visit the market and taste the tea"), not when it is a separate description after a comma."""
+    """The subject governs ``clause`` when the clause continues the subject's verb phrase (it opens with "and" /
+    "then": "you visit the market and taste the tea")."""
     return bool(_CHAIN_LEAD_RE.match(clause)) and subject.lower() in sentence[:sentence.find(clause)].lower()
+
+
+def claim_kinds(sentence: Optional[str], claim: Optional[str], lexicon=None) -> tuple[str, ...]:
+    """The trip promise kinds of one judged claim: those of its span (``claim_span``), and when the span names none
+    but still names a service, a time or a view (its trip subject sits elsewhere in the sentence), those of the
+    whole sentence (fail safe: a missed promise is worse than a warned background)."""
+    span = claim_span(sentence, claim)
+    kinds = trip_promise_kinds(span, lexicon)
+    if not kinds and span != (sentence or "") and _names_trip_term(span, lexicon):
+        kinds = trip_promise_kinds(sentence, lexicon)
+    return kinds
 
 
 # ---------------------------------------------------------------------------------------------- classification
@@ -212,7 +232,7 @@ def violation_items(violation: str, lexicon=None) -> list[dict]:
     for sentence, claim, why in claims:
         # AA-1047 W1 (W0 review #1356): classify the CLAIM's span, not the whole sentence — a place-background claim
         # in a sentence that also names a supported dinner is not a "service" promise.
-        kinds = trip_promise_kinds(claim_span(sentence, claim), lexicon) if why else ()
+        kinds = claim_kinds(sentence, claim, lexicon) if why else ()
         items.append({"class": TRIP_PROMISE if kinds else UNSUPPORTED_OTHER, "sentence": sentence, "claim": claim,
                       "why": why, **({"kinds": list(kinds)} if kinds else {})})
     if not claims and "FACT_CHECK_MANUAL_CHECK" in head:
@@ -299,6 +319,6 @@ __all__ = [
     "POLICY_VERSION", "F9_POLICY_MODE_ENV", "INTERIM_MODE", "LEGACY_MODE", "F9_CLAIM_RE", "CLAIMS_MARK",
     "NO_REASON_MARK", "TRIP_PROMISE", "UNSUPPORTED_OTHER", "FACT_CHECK_UNQUOTED", "SEO_FIELD_CLAIM",
     "CTA_NOT_REFLECTED", "TEXT_INTEGRITY", "JUDGE_UNAVAILABLE", "REASONLESS", "OTHER", "FIDELITY_CLASSES",
-    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "trip_promise_kinds", "claim_span", "parse_claims", "violation_items",
-    "violation_classes", "entry_classes", "policy_mode", "apply_policy",
+    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "trip_promise_kinds", "claim_span", "claim_kinds", "parse_claims",
+    "violation_items", "violation_classes", "entry_classes", "policy_mode", "apply_policy",
 ]

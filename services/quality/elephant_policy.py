@@ -39,7 +39,9 @@ AA-1047 W1 (follow-up of the W0 review, #1355): the detector has its own code, `
 elephant riding AND an unrelated LLM fact check (a rare-wildlife / location mismatch) carried one code and was read
 as held by the policy alone (``policy_keep``), so the other check was approved away. A gate that exempts the policy
 reads ``is_policy_only_hold`` (the policy code AND a detector hit; any other manual-check code keeps the hold),
-never the code alone.
+never the code alone. Next to the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` it reads the audit's issues: an issue
+about the ride (``names_riding``: riding, not the animal) is the policy, an issue naming another product-truth
+concern keeps the hold, a voice / SEO / format issue is neither.
 
 Pure: no DB, no LLM, no I/O.
 """
@@ -53,8 +55,18 @@ from typing import Any, Iterable, Optional
 # code; LEGACY_CODE is what a hit added before (stored versions written up to S271 carry it).
 POLICY_CODE = "POLICY_ELEPHANT_RIDING"
 LEGACY_CODE = "FACT_CHECK_MANUAL_CHECK"
-# An LLM brand-audit issue that restates this policy (the audit prompt also names elephant riding as a fact check).
-_ISSUE_ABOUT_RIDING_RE = re.compile(r"\belephant", re.IGNORECASE)
+# An LLM brand-audit issue that names some other product-truth concern (a claim the source does not support, a
+# mismatch, a wrong place / duration ...). A voice / SEO / format issue ("meta 162 chars", a city-list subtitle, hype)
+# names none of these and does not count: on a v2 draft those codes are report-only, but their issue text stays in
+# brand_audit_issues (is_policy_only_hold).
+_PRODUCT_TRUTH_ISSUE_RE = re.compile(
+    r"\b(?:source|sources|sourced|unsupported|unverified|verif\w*|claim\w*|mismatch\w*|invent\w*|fabricat\w*"
+    r"|inaccura\w*|incorrect\w*|wrong\w*|contradict\w*|inconsisten\w*|mislead\w*|fact\w*|product[-\s]truth"
+    r"|(?:does|do|did)\s+not\s+(?:match|mention|state|include|offer|support)|doesn['’]?t\s+(?:match|mention|state"
+    r"|include|offer|support)|not\s+(?:mentioned|stated|included|offered|supported)\b"
+    r"|sightings?|guarantee\w*|location|duration|misplac\w*|rare|endangered)",
+    re.IGNORECASE,
+)
 # The policy-hold reason a T2 version and its review row carry (D8).
 POLICY_HOLD = "elephant_riding"
 
@@ -233,25 +245,56 @@ def scan(generated: Optional[dict] = None, source: Optional[dict] = None, *,
     return out
 
 
+def names_riding(text: Optional[str]) -> bool:
+    """An audit issue / note that is about elephant RIDING (the detector's phrases, negated or not: an issue that
+    says "elephant riding must not be promoted" is about the ride too). The animal alone is not riding ("wild
+    elephant sightings", "an elephant sanctuary"); a bare "elephant safari" counts only with a ride cue in its
+    clause (on an elephant, on the back, riding), whatever the country."""
+    text = text or ""
+    for m in ELEPHANT_RIDING_RE.finditer(text):
+        if not m.group("safari"):
+            return True
+        clause = _OTHER_RIDE_RE.sub(" ", _clause_before(text, m.start()) + " " + _clause_after(text, m.end()))
+        if _SAFARI_RIDE_CUE_RE.search(clause):
+            return True
+    return False
+
+
+def other_product_truth_issues(issues: Optional[Iterable[Any]]) -> list[str]:
+    """The audit issues that name a product-truth concern other than elephant riding (an issue that names the
+    ride is the policy's; a voice / SEO / format issue names no concern)."""
+    texts = [_as_text(i) for i in (issues or ()) if _as_text(i).strip()]
+    return [t for t in texts if not names_riding(t) and _PRODUCT_TRUTH_ISSUE_RE.search(t)]
+
+
 def is_policy_only_hold(brand_audit_status: Optional[str], brand_audit_codes: Iterable[str],
                         generated: Optional[dict] = None, source: Optional[dict] = None, *,
                         issues: Optional[Iterable[Any]] = None) -> bool:
     """A version held ONLY by this policy: brand audit manual_check, the detector hits the version text or its
-    source, and no other manual-check reason is on it. The codes may be ``POLICY_CODE`` alone, or ``POLICY_CODE``
-    with the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` when every audit issue it gave is about the elephant ride (the
-    audit restating the same policy). A stored version from before AA-1047 carries ``LEGACY_CODE`` alone for a hit;
-    it is the policy only under the same issue rule (an issue about anything else, e.g. a rare-wildlife check, keeps
-    the hold). Read by the approve gate (an unedited approve = the policy's human review), the re-validation gate (a
-    human edit of an elephant tour is that review too) and the final contract."""
+    source, and no other manual-check reason is on it. Read by the approve gate (an unedited approve = the policy's
+    human review), the re-validation gate (a human edit of an elephant tour is that review too) and the final
+    contract. By codes:
+
+    - ``POLICY_CODE`` alone: the policy.
+    - ``POLICY_CODE`` + the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` (since the split only the LLM emits that code):
+      the policy only when the audit explained its fact check as the ride (at least one issue that names elephant
+      riding, ``names_riding``) and no issue names another product-truth concern (``other_product_truth_issues``:
+      "wild elephant sightings are not in the source" is another concern, "meta 162 chars" is none). An unexplained
+      fact check (no riding issue) keeps the hold.
+    - ``LEGACY_CODE`` alone (a version stored before AA-1047, when the detector added that code with no issue text):
+      the pre-split rule, a detector hit is the policy, unless an issue names another product-truth concern.
+    - anything else: not the policy alone.
+    """
     if brand_audit_status != "manual_check" or not scan(generated, source):
         return False
     codes = set(brand_audit_codes or ())
-    texts = [_as_text(i) for i in (issues or ()) if _as_text(i).strip()]
-    issues_about_riding = all(_ISSUE_ABOUT_RIDING_RE.search(t) for t in texts)
     if codes == {POLICY_CODE}:
         return True
-    if codes == {POLICY_CODE, LEGACY_CODE} or codes == {LEGACY_CODE}:
-        return issues_about_riding
+    if codes == {POLICY_CODE, LEGACY_CODE}:
+        texts = [_as_text(i) for i in (issues or ())]
+        return any(names_riding(t) for t in texts) and not other_product_truth_issues(issues)
+    if codes == {LEGACY_CODE}:
+        return not other_product_truth_issues(issues)
     return False
 
 
