@@ -105,7 +105,8 @@ async def test_create_wave_from_country_uses_active_master_raw_tours():
         "id": "w1", "name": "Laos", "country": "Laos", "expected_tour_ids": ["1"], "status": "open",
         "notes": None, "created_by": "admin", "created_at": datetime(2026, 10, 11, tzinfo=timezone.utc),
         "closed_at": None, "last_checked_at": None, "last_check": None})
-    with patch.object(admin_waves, "verify_admin_secret"):
+    with patch.object(admin_waves, "verify_admin_secret"), \
+            patch.object(admin_waves.wave_quality, "previous_wave_gate", AsyncMock(return_value=None)):
         out = await admin_waves.create_wave(admin_waves.WaveCreate(name="Laos", country="Laos"), _req(conn), "s", None)
     sql, tenant, country = conn.fetch.call_args[0]
     assert "source_status = 'active'" in sql and "deleted_at IS NULL" in sql

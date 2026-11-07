@@ -9040,6 +9040,19 @@
             ],
             "title": "Notes"
           },
+          "stop_override": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Override"
+          },
           "tour_ids": {
             "anyOf": [
               {

@@ -1,7 +1,10 @@
 """AA-727 — rerun waves as objects (shared.rerun_wave, migration 217).
 
   POST /admin/waves                 create a wave: expected tour set written BEFORE the run
-                                    (explicit tour_ids, or every active raw tour of a country)
+                                    (explicit tour_ids, or every active raw tour of a country). AA-1024 G17: refused
+                                    (409) while the previous wave has a stop flag that is true or still pending
+                                    (services/waves/quality.py, the wave report's numbers recomputed now), unless
+                                    `stop_override` quotes the tech lead's written approval (kept in the notes)
   GET  /admin/waves                 list (newest first), optional ?status=
   GET  /admin/waves/{id}/report     4-column report + states + failure class + Jev coverage + cost
   POST /admin/waves/{id}/close      close it (ends the job window)
@@ -26,6 +29,7 @@ from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
+from services.waves import quality as wave_quality
 from services.waves import report as wave_report
 
 logger = structlog.get_logger()
@@ -47,6 +51,41 @@ class WaveCreate(BaseModel):
     country: Optional[str] = Field(None, max_length=100)
     tour_ids: Optional[list[str]] = Field(None, max_length=2000)
     notes: Optional[str] = Field(None, max_length=2000)
+    # AA-1024 G17: the tech lead's written approval, quoted, to start a wave while the previous wave has a stop flag
+    # that is true or pending. Kept at the top of the new wave's notes.
+    stop_override: Optional[str] = Field(None, min_length=20, max_length=1000)
+
+
+async def _stop_gate(conn, body: WaveCreate) -> tuple[Optional[dict], Optional[str]]:
+    """(gate, notes): the previous wave's recomputed stop flags; 409 while one is true or pending and no override.
+    An error while computing them refuses too (a gate that cannot read is not a pass), unless overridden."""
+    try:
+        gate = await wave_quality.previous_wave_gate(conn)
+    except Exception:
+        ref = log_exception_ref("rerun_wave_stop_gate_failed")
+        gate = {"wave": None, "blocks": True, "error": public_error("Previous wave stop flags", ref),
+                "stop_state": {}, "active_jobs": [], "exit_code": None}
+    if not gate or not gate.get("blocks"):
+        return gate, body.notes
+    flags = sorted(k for k, v in gate.get("stop_state", {}).items() if v in ("true", "pending"))
+    prev = gate.get("wave") or {}
+    if not (body.stop_override or "").strip():
+        if gate.get("error"):
+            why = "the previous wave's stop flags could not be computed"
+        elif gate.get("exit_code") == wave_quality.EXIT_STOP:
+            why = "the previous wave has a stop flag that is true"
+        else:
+            why = "the previous wave's stop flags are pending (its tours still have queued or running jobs)"
+        raise HTTPException(status_code=409, detail={
+            "error": why,
+            "previous_wave": prev, "stop_state": gate.get("stop_state"), "active_jobs": gate.get("active_jobs"),
+            "detail": gate.get("error"),
+            "next": "stop and report (wave runbook); start the next wave only after the flags clear, or send "
+                    "stop_override with the tech lead's written approval quoted"})
+    head = (f"[stop-flag override: previous wave {prev.get('name')!r} ({prev.get('id')}) "
+            f"{', '.join(flags) or 'not computed'}] {body.stop_override.strip()}")
+    logger.warning("rerun_wave_stop_override", previous_wave=prev.get("id"), flags=flags)
+    return gate, "\n".join(x for x in (head, body.notes) if x)[:2000]
 
 
 @router.post("", summary="Create a rerun wave (expected tour set)")
@@ -69,13 +108,14 @@ async def create_wave(body: WaveCreate, request: Request, x_admin_secret: str = 
             raise HTTPException(status_code=422, detail="give tour_ids or a country")
         if not ids:
             raise HTTPException(status_code=422, detail="the expected set is empty")
+        _gate, notes = await _stop_gate(conn, body)
         row = await conn.fetchrow(
             """
             INSERT INTO shared.rerun_wave (name, country, expected_tour_ids, notes, created_by)
             VALUES ($1, $2, $3::uuid[], $4, $5)
             RETURNING *
             """,
-            body.name.strip(), (body.country or "").strip() or None, ids, body.notes,
+            body.name.strip(), (body.country or "").strip() or None, ids, notes,
             f"admin:{x_admin_user_id}" if x_admin_user_id else "admin")
     logger.info("rerun_wave_created", wave_id=str(row["id"]), name=row["name"], expected=len(ids))
     return wave_report._wave_dict(row)

@@ -204,3 +204,46 @@ def test_conftest_or_its_helper_needs_the_smoke_stamp(tmp_path: Path, changed: s
     assert SMOKE in ran and "test_other_db.py" not in ran
     p = _run(r, "--only", "integration")
     assert p.returncode == 0 and "passed locally" in p.stdout, p.stdout
+
+
+FAKE_GITLEAKS = """#!/usr/bin/env bash
+# Stands in for gitleaks: prints a version, records the scan arguments and the rules file it was given.
+if [[ $1 == version ]]; then echo "${FAKE_GL_VERSION:-8.30.1}"; exit 0; fi
+echo "gitleaks $*" >>"$FAKE_LOG"
+while (( $# )); do [[ $1 == -c ]] && cat "$2" >>"$FAKE_LOG"; shift; done
+exit "${FAKE_GL_RC:-0}"
+"""
+
+
+def test_gitleaks_scans_the_pushed_range_with_the_base_rules(repo: Path):
+    """AA-1024 G14: every local push scans base..head with gitleaks v8.30.1 and the BASE's .gitleaks.toml (a branch
+    cannot allowlist its own leak); a finding, a missing binary or another version blocks; AA_SKIP_GITLEAKS warns."""
+    (repo / ".gitleaks.toml").write_text("# branch rules: allow everything\n")
+    _git(repo, "add", ".gitleaks.toml")
+    _git(repo, "commit", "-qm", "branch rules")
+    gl = repo.parent / "fake-gitleaks"
+    gl.write_text(FAKE_GITLEAKS)
+    gl.chmod(gl.stat().st_mode | stat.S_IEXEC)
+    log = repo.parent / "fake.log"
+
+    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(gl))
+    assert p.returncode == 0, p.stdout
+    ran = log.read_text()
+    assert "git . --log-opts=--no-renames base..HEAD" in ran and "--redact" in ran
+    assert "branch rules" not in ran  # the base has no .gitleaks.toml, so no -c file at all
+
+    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(gl), FAKE_GL_RC="1")
+    assert p.returncode == 1 and "FAIL" in p.stdout and "secret-scan.yml" in p.stdout
+    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(gl), FAKE_GL_VERSION="8.18.0")
+    assert p.returncode == 1 and "CI uses 8.30.1" in p.stdout
+    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(repo.parent / "missing"))
+    assert p.returncode == 1 and "AA_SKIP_GITLEAKS=1" in p.stdout
+    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(repo.parent / "missing"), AA_SKIP_GITLEAKS="1")
+    assert p.returncode == 0 and "WARN" in p.stdout
+
+
+def test_gitleaks_is_not_in_ci_mode(repo: Path):
+    p = _run(repo, "--ci", "--dry-run")
+    assert "gitleaks" not in p.stdout.split("checks:", 1)[1].splitlines()[0]
+    p = _run(repo, "--dry-run")
+    assert "gitleaks" in p.stdout.split("checks:", 1)[1].splitlines()[0]

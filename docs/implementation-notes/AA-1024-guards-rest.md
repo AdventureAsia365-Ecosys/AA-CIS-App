@@ -21,13 +21,26 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
 
 - G17: every flag is `pending` while any job of the wave's tours is active (the design named "the kinds it depends
   on"): a job of any kind can still move a tour's outcome, so a per-kind map would only hide a pending state.
-- G17: the next-wave refusal is not built: the wave start (`POST /admin/waves`) has no record of the last report, so
-  it needs a column or table (a migration) first. Until then the wave runbook (root `skill/aa-wave-rerun`) says the
-  next wave starts only after exit 0 or the tech lead's written approval quoted in the wave report.
-- G14 (gitleaks in the CIS pre-push) is not in this PR: `scripts/pre-push.sh` is being changed by the S272 GIT_DIR fix
-  in its own PR; it follows after that merges.
+- G17 next-wave refusal (review fix pass): `POST /admin/waves` recomputes the newest wave's stop flags (no stored
+  report, so no migration) and answers 409 while one is true or pending, or when they cannot be computed; a
+  `stop_override` of at least 20 characters (the tech lead's written approval, quoted) lets it through and is kept at
+  the top of the new wave's notes, with the flags it overrode (log `rerun_wave_stop_override`).
+- To share one definition, the quality read moved from `scripts/aa645/wave_report.py` to `services/waves/quality.py`
+  (the image carries `services/`, not `scripts/`: AA-725 keeps scripts out of it). The gate code sets moved to
+  `services/quality/s1_gates.py` and figure coverage to `services/quality/s1_coverage.py`; `scripts/aa645/gates.py`,
+  `s1_screen.py` and `wave_report.py` re-export the old names, so the other aa645 scripts and tests are unchanged.
+- G14: `scripts/pre-push.sh` now runs gitleaks v8.30.1 on `<base>..<head>` with the BASE's `.gitleaks.toml` /
+  `.gitleaksignore` in every mode but `--ci` (CI has its own Secret Scan). Binary: `AA_GITLEAKS`, PATH, or the
+  workspace copy `.tmp-session/gitleaks-8301/gitleaks` found by walking up from the checkout. A missing or
+  other-version binary blocks; `AA_SKIP_GITLEAKS=1` skips once with a WARN (same switch as the PR opener).
 
 ## Tradeoffs
+
+- The wave start runs the code checks of every tour of the previous wave (both versions) in a worker thread: a few
+  seconds for a country wave, once per wave start. Cheaper than a stored report that could go stale.
+- A gate that cannot compute refuses (fail closed) instead of passing: the override is the way through.
+- A wave with no A1 version and no active job is "not applicable" (else `not_clearly_better` is true on an empty
+  table and every wave after an atomize-only wave would be refused).
 
 - Exit 5 for "pending" instead of 0: a script or person waiting on the report sees that it is not final.
 
