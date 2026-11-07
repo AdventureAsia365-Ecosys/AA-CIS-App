@@ -6,9 +6,12 @@ label sets and re-imports:
 
   content_sha256 = sha256(canonical JSON of the object's output)               (golden_set.derive.sha256_json)
   claim_hash     = sha256("<content_sha256>:<field>:<normalised span text>")
-  split          = held_out when sha256("<SPLIT_SEED>:<content_sha256>") falls in the first HELD_OUT_PCT of the
-                   hash space, else train: every claim of one object is on the same side, and adding objects never
-                   moves an existing one (frozen, critic F14 / audit "30% frozen held-out split").
+  split          = held_out when sha256("<SPLIT_SEED>:<group key>") falls in the first HELD_OUT_PCT of the hash
+                   space, else train. The group key is the object's tour (refs.tour_id), else its item (sample_id,
+                   piece_id, version_id), else its content sha: every object of one tour (S1 Master versions, T2
+                   tenant versions, the T9 blog and social piece) is on the same side, so sentences they share never
+                   leak from train into held_out; a regenerated object keeps its side; adding objects never moves an
+                   existing one (frozen, critic F14 / audit "30% frozen held-out split").
 
 Pure: no DB, no network, no model call.
 """
@@ -62,8 +65,23 @@ def claim_hash(content_sha256: str, field: str, span_text: str) -> str:
     return sha256_text(f"{content_sha256}:{field}:{normalise(span_text)}")
 
 
-def split_of(content_sha256: str, pct: float = HELD_OUT_PCT) -> str:
-    bucket = int(sha256_text(f"{SPLIT_SEED}:{content_sha256}")[:8], 16) / 0xFFFFFFFF
+SPLIT_GROUP_REFS = ("tour_id", "sample_id", "piece_id", "version_id")
+
+
+def split_group(refs: Optional[dict], content_sha256: str) -> str:
+    """The key an object's split is hashed on: "<ref>:<id>" for the first of SPLIT_GROUP_REFS it has (the tour first:
+    objects about one tour share sentences and source), else "content:<content sha>"."""
+    refs = refs or {}
+    for k in SPLIT_GROUP_REFS:
+        v = refs.get(k)
+        if v is not None and str(v).strip():
+            return f"{k}:{str(v).strip()}"
+    return f"content:{content_sha256}"
+
+
+def split_of(group_key: str, pct: float = HELD_OUT_PCT) -> str:
+    """train | held_out of a group key (split_group): a fixed share of the hash space, frozen per key."""
+    bucket = int(sha256_text(f"{SPLIT_SEED}:{group_key}")[:8], 16) / 0xFFFFFFFF
     return "held_out" if bucket < pct else "train"
 
 
@@ -193,6 +211,7 @@ def valid_field(value: Optional[str]) -> bool:
     return bool(_FIELD_RE.match(value or ""))
 
 
-__all__ = ["Claim", "FIELD_ORDER", "HELD_OUT_PCT", "LABELS", "MAX_CLAIM_CHARS", "SPLITS", "SPLIT_SEED", "STRATA",
-           "WRITERS", "align", "check_span", "claim_hash", "claims_of", "content_sha", "field_texts", "normalise",
-           "sentence_spans", "sha256_text", "split_of", "valid_field", "valid_hex64", "valid_set"]
+__all__ = ["Claim", "FIELD_ORDER", "HELD_OUT_PCT", "LABELS", "MAX_CLAIM_CHARS", "SPLITS", "SPLIT_GROUP_REFS",
+           "SPLIT_SEED", "STRATA", "WRITERS", "align", "check_span", "claim_hash", "claims_of", "content_sha",
+           "field_texts", "normalise", "sentence_spans", "sha256_text", "split_group", "split_of", "valid_field",
+           "valid_hex64", "valid_set"]

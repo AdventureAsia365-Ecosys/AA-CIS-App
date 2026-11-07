@@ -10,6 +10,13 @@ and the gate mode the numbers allow (enforce only when the bar passes; a tripwir
 sentence to the claim engine, never hold). The rows have the shape of services/quality/thresholds.yaml calibration
 fields; they are written to a file for review, never into thresholds.yaml by this code.
 
+Precision is the detector's, over EVERY labelled claim it ran on (a gate in enforce mode holds on any fire): a true
+positive is a fire on a violation of one of its classes; any other fire is a false positive (on an ok claim of any
+class, or on a violation of an unrelated class, counted apart as fp_other_class). Recall is per class. The bar
+(sample_size.BARS[1]) also needs the class's labeller agreement >= 0.7 (panel.agreement_report; unknown does not
+pass), and only a held-out measurement may pass: a train or pooled measurement is exploration (passes false, mode
+never enforce).
+
 Detectors call the production functions (no copy of a rule). Pure apart from those functions: no DB, no network, no
 model call.
 """
@@ -40,6 +47,7 @@ class ClaimInput:
     scope_name: Optional[str] = None
     country: Optional[str] = None
     recorded: dict = field(default_factory=dict)      # producer name -> fired (bool), critic F10
+    split: str = "train"                              # claims.split_of(claims.split_group(refs, content sha))
 
 
 @dataclass(frozen=True)
@@ -210,45 +218,64 @@ def _mode(kind: str, ok: bool) -> str:
     return MODE_ROUTE if kind == "tripwire" else MODE_WARN
 
 
+SPLIT_CHOICES = ("held_out", "train", "all")
+
+
 def measure(detectors: Iterable[Detector], claims: list[ClaimInput], labels: dict[str, tuple[str, str]], *,
-            label_set: str, pooled: bool = True) -> list[dict]:
+            label_set: str, pooled: bool = True, split: str = "held_out",
+            agreement: Optional[dict[str, Optional[float]]] = None) -> list[dict]:
     """One row per (detector, class[, writer]). `labels`: claim_hash -> (class, label) final labels (unsure ones are
-    left out by the caller or ignored here). Precision = fires that are violations of the class / fires on claims of
-    the class; recall = those / violations of the class. `pooled` (default, critic F2): writers pooled per class;
-    False adds the writer to the key."""
+    ignored). `split` keeps the claims of that split ("all" pools both: exploration only). `agreement`: class -> the
+    panel's labeller agreement (panel.agreement_report); a class without one cannot pass.
+
+    Per detector, over every labelled claim it ran on: tp = fires on violations of one of its classes, fp = every
+    other fire (fp_ok on ok claims, fp_other_class on violations of an unrelated class), precision = tp / fires.
+    Per class: tp_class / n_pos = recall. fire_rate = fires / labelled claims, violation_rate = n_pos / labelled
+    claims (the label-budget inputs, sample_size.budget_rows). `pooled` (default, critic F2): writers pooled; False
+    adds the writer to the key."""
+    if split not in SPLIT_CHOICES:
+        raise ValueError(f"split must be one of {SPLIT_CHOICES}, got {split!r}")
     detectors = tuple(detectors)
+    claims = [c for c in claims if split == "all" or c.split == split]
     fired, errors = fires(detectors, claims)
     by_hash = {c.claim_hash: c for c in claims}
+    agreement = agreement or {}
+    bar = ss.BARS[1]
     rows = []
     for d in detectors:
-        classes = d.classes or tuple(sorted({labels[h][0] for h in fired.get(d.name, {}) if h in labels}))
-        for cls in classes:
-            groups: dict[str, list[str]] = defaultdict(list)
-            for h, (lc, lab) in labels.items():
-                if lc != cls or lab not in ("violation", "ok") or h not in by_hash:
-                    continue
-                if h not in fired.get(d.name, {}):           # a recorded producer without a record, or an error
-                    continue
-                groups["all" if pooled else by_hash[h].writer].append(h)
-            if not groups:
-                groups["all"] = []                       # still one row: no labelled claim (or every one raised)
-            for writer, hashes in sorted(groups.items()):
-                f = fired.get(d.name, {})
-                tp = sum(1 for h in hashes if f.get(h) and labels[h][1] == "violation")
-                fp = sum(1 for h in hashes if f.get(h) and labels[h][1] == "ok")
-                n_pos = sum(1 for h in hashes if labels[h][1] == "violation")
-                bar = ss.BARS[1]
-                ok = ss.passes(tp, tp + fp, n_pos, bar)
+        f = fired.get(d.name, {})
+        ran = [h for h in f if h in labels and labels[h][1] in ("violation", "ok") and h in by_hash]
+        classes = d.classes or tuple(sorted({labels[h][0] for h in ran}))
+        targets = set(classes)
+        groups: dict[str, list[str]] = defaultdict(list)
+        for h in ran:
+            groups["all" if pooled else by_hash[h].writer].append(h)
+        if not groups:
+            groups["all"] = []                           # still rows: no labelled claim (or every one raised)
+        for writer, hashes in sorted(groups.items()):
+            fires_ = [h for h in hashes if f.get(h)]
+            tp = sum(1 for h in fires_ if labels[h][1] == "violation" and labels[h][0] in targets)
+            fp_ok = sum(1 for h in fires_ if labels[h][1] == "ok")
+            fp_other = len(fires_) - tp - fp_ok
+            n = len(hashes)
+            precision = round(tp / len(fires_), 4) if fires_ else None
+            lb = None if not fires_ else round(ss.wilson_lower(tp, len(fires_)), 4)
+            for cls in classes:
+                n_pos = sum(1 for h in hashes if labels[h] == (cls, "violation"))
+                tp_cls = sum(1 for h in fires_ if labels[h] == (cls, "violation"))
+                agree = agreement.get(cls)
+                meets = ss.passes(tp, len(fires_), n_pos, bar, agreement=agree)
+                ok = meets and split == "held_out"
                 rows.append({
                     "detector": d.name, "kind": d.kind, "class": cls, "writers": writer, "label_set": label_set,
-                    "n_labelled": len(hashes), "fired": tp + fp, "tp": tp, "fp": fp, "fn": n_pos - tp,
-                    "n_pos": n_pos, "precision": round(tp / (tp + fp), 4) if tp + fp else None,
-                    "precision_lb": None if tp + fp == 0 else round(ss.wilson_lower(tp, tp + fp), 4),
-                    "recall": round(tp / n_pos, 4) if n_pos else None,
-                    "fire_rate": round((tp + fp) / len(hashes), 4) if hashes else None,
-                    "violation_rate": round(n_pos / len(hashes), 4) if hashes else None,
-                    "errors": errors.get(d.name, 0), "bar": bar.name, "passes": ok,
-                    "mode": _mode(d.kind, ok)})
+                    "split": split, "n_labelled": n, "fired": len(fires_), "tp": tp, "fp": fp_ok + fp_other,
+                    "fp_ok": fp_ok, "fp_other_class": fp_other, "tp_class": tp_cls, "fn": n_pos - tp_cls,
+                    "n_pos": n_pos, "precision": precision, "precision_lb": lb,
+                    "recall": round(tp_cls / n_pos, 4) if n_pos else None,
+                    "fire_rate": round(len(fires_) / n, 4) if n else None,
+                    "violation_rate": round(n_pos / n, 4) if n else None,
+                    "agreement": agree, "errors": errors.get(d.name, 0), "bar": bar.name, "meets_bar": meets,
+                    "passes": ok, "mode": _mode(d.kind, ok)})
     return rows
 
 
@@ -260,12 +287,13 @@ def thresholds_rows(rows: list[dict]) -> dict:
         key = f"det.{r['detector']}.{r['class']}" + ("" if r["writers"] == "all" else f".{r['writers']}")
         out[key] = {"value": r["mode"], "used_by": [],
                     "description": f"AA-1048 W2 measurement of {r['detector']} on {r['class']} "
-                                   f"({r['label_set']}, writers {r['writers']})",
+                                   f"({r['label_set']}, split {r['split']}, writers {r['writers']})",
                     "calibration": {"run_id": r["label_set"], "precision": r["precision"], "recall": r["recall"],
                                     "n": r["fired"], "calibrated": bool(r["passes"]),
-                                    "precision_lb": r["precision_lb"], "n_pos": r["n_pos"]}}
+                                    "precision_lb": r["precision_lb"], "n_pos": r["n_pos"], "split": r["split"],
+                                    "agreement": r["agreement"]}}
     return {"version": "aa1048-det-v1", "thresholds": out}
 
 
-__all__ = ["ClaimInput", "DETECTORS", "Detector", "META_BAND", "MODE_ENFORCE", "MODE_ROUTE", "MODE_WARN", "by_name",
-           "fires", "measure", "recorded_detectors", "thresholds_rows"]
+__all__ = ["ClaimInput", "DETECTORS", "Detector", "META_BAND", "MODE_ENFORCE", "MODE_ROUTE", "MODE_WARN",
+           "SPLIT_CHOICES", "by_name", "fires", "measure", "recorded_detectors", "thresholds_rows"]

@@ -10,7 +10,9 @@ Export record (one line per claim):
    "content_sha256", "field", "span": [start, end], "claim_text", "context": {"before", "after"} (300 chars each),
    "field_text": "<the whole field>", "source_text": "<the full source the writer read>",
    "evidence": ["<up to 3 source lines aligned by code: the panel checks them>"], "candidate_classes": [...],
-   "stratum", "split"}
+   "stratum", "split_group": "<tour_id:... | sample_id:... | ... | content:<sha>>", "split"}
+  The split is recomputed from refs + content sha on import (claims.split_group): a line whose split disagrees is
+  refused.
 Panel import record (one line per claim per lens):
   {"claim_hash", "lens": "source" | "promise" | "skeptic", "class": "<policy class id>",
    "label": "violation" | "ok" | "unsure", "reason": "<= 600 chars", "labeller": "panel:<run id>"}
@@ -58,19 +60,20 @@ def export_records(*, set_id: str, writer: str, scope: str, tenant_id: Optional[
     classes = sorted(candidate_classes) if candidate_classes else sorted(
         c.id for c in policy.policy_classes().values() if writer in c.writers)
     texts = dict(cl.field_texts(output))
+    refs = {k: v for k, v in refs.items() if v is not None}
     out = []
     for c in cl.claims_of(output, fields=fields):
+        group = cl.split_group(refs, c.content_sha256)
         text = texts[c.field]
         before = text[max(0, c.span_start - 300):c.span_start].strip()
         after = text[c.span_end:c.span_end + 300].strip()
         out.append({"schema": EXPORT_SCHEMA, "claim_hash": c.claim_hash, "set_id": set_id, "writer": writer,
-                    "scope": scope, "tenant_id": tenant_id,
-                    "refs": {k: v for k, v in refs.items() if v is not None},
+                    "scope": scope, "tenant_id": tenant_id, "refs": refs,
                     "content_sha256": c.content_sha256, "field": c.field, "span": [c.span_start, c.span_end],
                     "claim_text": c.claim_text, "context": {"before": before, "after": after},
                     "field_text": text, "source_text": source_text,
                     "evidence": cl.align(c.claim_text, source_text), "candidate_classes": classes, "stratum": stratum,
-                    "split": cl.split_of(c.content_sha256)})
+                    "split_group": group, "split": cl.split_of(group)})
     return out
 
 
@@ -185,6 +188,12 @@ def consolidate(export_lines: list[dict], judgements: list[Judgement], *, set_id
         majority[h] = top[0][0] if top and (len(top) == 1 or top[0][1] > top[1][1]) else None
     for h in _audit_drawn(sorted(h for h, s in states.items() if s == "agreed"), audit_pct):
         states[h] = "audit"
+    splits: dict[str, str] = {}
+    for h, e in by_hash.items():
+        split = cl.split_of(cl.split_group(e.get("refs"), e["content_sha256"]))
+        if e.get("split") is not None and e["split"] != split:
+            raise PanelError(f"{h[:12]}: the export says split {e['split']!r}, its group key gives {split!r}")
+        splits[h] = split
     rows = []
     for j in judgements:
         e = by_hash[j.claim_hash]
@@ -199,7 +208,7 @@ def consolidate(export_lines: list[dict], judgements: list[Judgement], *, set_id
             "field": e["field"], "span_start": s, "span_end": t, "claim_text": e["claim_text"],
             "claim_hash": j.claim_hash, "claim_class": j.claim_class, "label": j.label,
             "labeller_kind": j.labeller_kind, "labeller": j.labeller, "lens": j.lens, "reason": j.reason or None,
-            "split": e.get("split") or cl.split_of(e["content_sha256"]),
+            "split": splits[j.claim_hash],
             "stratum": e.get("stratum") or "representative",
             "adjudication": "final" if j.labeller_kind == "tech_lead" else states.get(j.claim_hash, "disputed"),
             "policy_sha": policy_sha})

@@ -2,9 +2,10 @@
 """AA-1048 (Quality W2) — the claim-label tooling, $0. Every DB write is DRY RUN unless --apply; no model is called
 (the gateway entry points are refused for the whole process, services/golden_set/llm_guard).
 
-  export-fixture FIXTURE --set CL-1 --out claims.jsonl [--writers t9_blog,t9_social]
+  export-fixture FIXTURE --set CL-1 --out <scratch>/claims.jsonl [--writers t9_blog,t9_social]
       Claim lines (JSONL keyed by claim hash) of the frozen outputs of an AA-729 golden fixture, for the 3-lens panel
-      (docs/calibration/aa1048-claim-panel-brief.md). Real text: write to the gitignored scratch folder only.
+      (docs/calibration/aa1048-claim-panel-brief.md). Real text: every --out / --thresholds path is refused inside a
+      git work tree unless git ignores it there (scripts/aa1048/outpath.py); use the workspace .tmp-session/.
   import PANEL.jsonl --export claims.jsonl --set CL-1 --version 1.0.0 [--apply]
       Validate the panel (or tech-lead) lines against the export, consolidate the lenses, draw the 20% audit and
       write shared.eval_claim_label (CIS 388).
@@ -21,7 +22,10 @@
   rederive FIXTURE --finals finals.jsonl
       Item verdicts re-derived under the policy (verdict_rule) and every golden label that flips.
   detectors --export claims.jsonl --finals finals.jsonl --out rows.json [--thresholds rows.yaml] [--per-writer]
-      The deterministic detectors, tripwires and recorded producers measured on the labels.
+            [--split held_out|train|all] [--agreement report.json]
+      The deterministic detectors, tripwires and recorded producers measured on the labels. Default split held_out
+      (the only one that may pass / derive enforce); train is for exploration and the label-budget rates. The
+      agreement file is `cli report` output (or {class: agreement}); a class without one cannot pass.
   mutations [--texts 50] [--out report.json]
       The synthetic mutation suites per writer (recall per class, false findings).
   sample-size [--markdown] [--rates rates.json [--budget N]]
@@ -46,6 +50,7 @@ from services.ground_truth import panel as pn
 from services.ground_truth import policy
 from services.ground_truth import sample_size as ss
 from services.ground_truth import store
+from scripts.aa1048.outpath import OutRefused, check_out
 
 
 def _read(path: str) -> str:
@@ -54,7 +59,7 @@ def _read(path: str) -> str:
 
 
 def _write(path: str, text: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    with open(check_out(path), "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -126,7 +131,23 @@ def claim_inputs(export_lines: list[dict]) -> list[det.ClaimInput]:
     the export line carries them (added by whoever exported the producers' stored verdicts)."""
     return [det.ClaimInput(e["claim_hash"], e["writer"], e["field"], e["claim_text"], e.get("source_text") or "",
                            scope_name=e.get("scope_name"), country=e.get("country"),
-                           recorded=dict(e.get("recorded") or {})) for e in export_lines]
+                           recorded=dict(e.get("recorded") or {}),
+                           split=cl.split_of(cl.split_group(e.get("refs"), e["content_sha256"])))
+            for e in export_lines]
+
+
+def agreement_map(obj: Any) -> dict[str, Optional[float]]:
+    """class -> labeller agreement from `cli report` output (whole, its result, or its agreement part) or a plain
+    {class: agreement} map."""
+    if isinstance(obj, dict) and isinstance(obj.get("result"), dict):
+        obj = obj["result"]
+    if isinstance(obj, dict) and isinstance(obj.get("agreement"), dict):
+        obj = obj["agreement"]
+    if isinstance(obj, dict) and isinstance(obj.get("classes"), dict):
+        return {k: (v.get("agreement") if isinstance(v, dict) else None) for k, v in obj["classes"].items()}
+    if isinstance(obj, dict) and all(isinstance(v, (int, float)) or v is None for v in obj.values()):
+        return {str(k): (float(v) if v is not None else None) for k, v in obj.items()}
+    raise ValueError("the agreement file is neither `cli report` output nor a {class: agreement} map")
 
 
 # ── commands ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -198,14 +219,18 @@ def cmd_detectors(a) -> dict:
     labels = {h: (f.claim_class, f.label) for h, f in finals.items() if f.label in ("violation", "ok")}
     inputs = claim_inputs([e for e in export if e["claim_hash"] in labels])
     detectors = det.by_name(a.only.split(",") if a.only else None) + det.recorded_detectors(inputs)
-    rows = det.measure(detectors, inputs, labels, label_set=a.label_set, pooled=not a.per_writer)
+    agreement = agreement_map(json.loads(_read(a.agreement))) if a.agreement else None
+    rows = det.measure(detectors, inputs, labels, label_set=a.label_set, pooled=not a.per_writer, split=a.split,
+                       agreement=agreement)
     _write(a.out, json.dumps(rows, indent=1))
     if a.thresholds:
         import yaml
 
         _write(a.thresholds, yaml.safe_dump(det.thresholds_rows(rows), sort_keys=True))
-    return {"rows": len(rows), "enforce": sorted(f"{r['detector']}:{r['class']}" for r in rows
-                                                 if r["mode"] == det.MODE_ENFORCE), "out": a.out}
+    return {"rows": len(rows), "split": a.split, "claims": sum(1 for c in inputs if a.split in ("all", c.split)),
+            "agreement_given": agreement is not None,
+            "enforce": sorted(f"{r['detector']}:{r['class']}" for r in rows if r["mode"] == det.MODE_ENFORCE),
+            "out": a.out}
 
 
 def cmd_mutations(a) -> dict:
@@ -254,6 +279,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", help="comma-separated detector names")
     p.add_argument("--label-set", default="CL-1")
     p.add_argument("--per-writer", action="store_true")
+    p.add_argument("--split", choices=det.SPLIT_CHOICES, default="held_out",
+                   help="held_out (default: the only split that may pass), train (exploration, rates) or all")
+    p.add_argument("--agreement", help="`cli report` output (labeller agreement per class); without it nothing passes")
     p = sub.add_parser("mutations")
     p.add_argument("--texts", type=int, default=mut.DEFAULT_TEXTS)
     p.add_argument("--seed", type=int, default=1048)
@@ -287,7 +315,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 finally:
                     await conn.close()
             out = asyncio.run(_go())
-    except (pn.PanelError, store.StoreRefused, ValueError) as e:
+    except (pn.PanelError, store.StoreRefused, OutRefused, ValueError) as e:
         print(json.dumps({"ok": False, "refused": str(e)}))
         return 2
     if isinstance(out, str):

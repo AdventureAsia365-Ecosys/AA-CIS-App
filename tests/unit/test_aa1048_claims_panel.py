@@ -56,6 +56,23 @@ def test_split_is_frozen_per_object_and_near_the_held_out_share():
     assert 0.27 < share < 0.33
 
 
+def test_split_group_puts_every_object_of_one_tour_on_one_side():
+    assert cl.split_group({"tour_id": "tour-7", "sample_id": "t9b-1"}, "a" * 64) == "tour_id:tour-7"
+    assert cl.split_group({"sample_id": "t9b-1", "piece_id": "p-1"}, "a" * 64) == "sample_id:t9b-1"
+    assert cl.split_group({"version_id": "v-3"}, "a" * 64) == "version_id:v-3"
+    assert cl.split_group({"tour_id": " ", "piece_id": None}, "b" * 64) == "content:" + "b" * 64
+    assert cl.split_group(None, "c" * 64) == "content:" + "c" * 64
+    # a blog, a social piece and a regenerated blog of one tour (different texts, so different content shas)
+    outputs = [OUTPUT, {**OUTPUT, "content_text": "A short social line about Velmora."},
+               {**OUTPUT, "content_text": OUTPUT["content_text"] + " Regenerated."}]
+    for tour in ("tour-1", "tour-2", "tour-3", "tour-4"):
+        sides = {ln["split"] for i, out in enumerate(outputs)
+                 for ln in pn.export_records(set_id="CL-1", writer="t9_blog", scope="tenant", tenant_id=TENANT,
+                                             refs={"piece_id": f"p-{i}", "tour_id": tour}, output=out,
+                                             source_text=SOURCE)}
+        assert len(sides) == 1, tour
+
+
 def test_sentence_spans_and_claims_of():
     text = 'One "quoted line." Then a second sentence here! Day 2\nA third line with words.'
     spans = cl.sentence_spans(text)
@@ -108,6 +125,7 @@ def test_export_records_carry_the_full_source_and_evidence():
     first = lines[0]
     assert first["source_text"] == SOURCE and first["refs"] == {"sample_id": "t9b-901"}
     assert first["stratum"] == "hard" and first["split"] in cl.SPLITS
+    assert first["split_group"] == "sample_id:t9b-901" and first["split"] == cl.split_of("sample_id:t9b-901")
     assert "fact.inclusion" in first["candidate_classes"]
     assert first["field_text"] == OUTPUT["content_text"]
     assert any("Day 2" in ev for ln in lines for ev in ln["evidence"])
@@ -191,6 +209,28 @@ def test_consolidate_states_audit_draw_and_rows():
     assert part.problems and "no judgement" in part.problems[0]
     with pytest.raises(pn.PanelError, match="bad set"):
         pn.consolidate(lines, js, set_id="CL 1", set_version="1.0.0")
+    # the split is recomputed from the group key: an export line that says otherwise refuses the import
+    other = "train" if lines[0]["split"] == "held_out" else "held_out"
+    with pytest.raises(pn.PanelError, match="split"):
+        pn.consolidate([{**lines[0], "split": other}] + lines[1:], js, set_id="CL-1", set_version="1.0.0")
+    assert {r["split"] for r in cons.rows} == {lines[0]["split"]}
+
+
+def test_text_guard_flags_claim_export_and_label_lines():
+    """The CI golden-set text guard knows the claim-label file formats (real T2 / T9 / S1 text never in this public
+    repo, review S272): an export line, a panel line and a finals line are flagged; the brief's placeholders are not."""
+    from services.golden_set import text_guard as tg
+
+    line = _export()[0]
+    assert "claim-label export marker" in tg.markers(json.dumps(line, sort_keys=True))
+    panel_line = json.dumps(_judge(line["claim_hash"], "source"))
+    assert tg.markers(panel_line) == ["claim-label line marker"]
+    finals_line = json.dumps({"claim_class": "fact.number", "claim_hash": line["claim_hash"],
+                              "claim_text": line["claim_text"], "label": "ok"})
+    assert tg.markers("header\n" + finals_line + "\n") == ["claim-label line marker"]
+    assert tg.markers('{"claim_hash": "<64 hex>", "lens": "source", "label": "ok"}') == []
+    assert tg.markers('{"claim_hash": "' + "a" * 64 + '", "label": "ok"}') == []     # a hash alone is no text
+    assert tg.markers('{"claim_hash": "' + "a" * 64 + '",\n "lens": "source"}') == []  # one line, not two
 
 
 def test_final_labels_release_evidence_agreement_and_contradictions():

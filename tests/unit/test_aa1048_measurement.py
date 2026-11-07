@@ -62,9 +62,9 @@ def test_label_budget_and_budget_rows():
 # ── detectors ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def _claim(text, field="body", writer="t9_blog", scope=None, recorded=None, h=None):
+def _claim(text, field="body", writer="t9_blog", scope=None, recorded=None, h=None, split="held_out"):
     return det.ClaimInput(h or f"h-{abs(hash((text, field)))}", writer, field, text, SOURCE, scope_name=scope,
-                          recorded=recorded or {})
+                          recorded=recorded or {}, split=split)
 
 
 @pytest.mark.parametrize("name,positive,negative", [
@@ -98,29 +98,72 @@ def _stub(name, fired, kind="rule", classes=("fact.number",)):
     return det.Detector(name, classes, kind, lambda c: c.claim_hash in fired)
 
 
+AGREE = {"fact.number": 0.8, "fact.name": 0.8}
+
+
 def test_measure_rows_precision_recall_mode_and_errors():
     claims = [_claim(f"claim {i}", h=f"c{i}") for i in range(40)]
     labels = {f"c{i}": ("fact.number", "violation" if i < 20 else "ok") for i in range(40)}
-    labels["c39"] = ("fact.name", "ok")                                   # another class: not counted
+    labels["c39"] = ("fact.name", "ok")                                   # another class, never fired on
     good = _stub("good", {f"c{i}" for i in range(19)})                    # 19 tp, 0 fp
     noisy = _stub("noisy", {f"c{i}" for i in range(10)} | {f"c{i}" for i in range(20, 30)}, kind="tripwire")
 
     def boom(c):
         raise RuntimeError("x")
     broken = det.Detector("broken", ("fact.number",), "rule", boom)
-    rows = {r["detector"]: r for r in det.measure((good, noisy, broken), claims, labels, label_set="CL-1@1.0.0")}
+    rows = {r["detector"]: r for r in det.measure((good, noisy, broken), claims, labels, label_set="CL-1@1.0.0",
+                                                  agreement=AGREE)}
     g = rows["good"]
-    assert (g["tp"], g["fp"], g["fn"], g["n_pos"], g["n_labelled"]) == (19, 0, 1, 20, 39)
+    assert (g["tp"], g["fp"], g["fn"], g["n_pos"], g["n_labelled"]) == (19, 0, 1, 20, 40)
     assert g["precision"] == 1.0 and g["recall"] == 0.95 and g["passes"] and g["mode"] == det.MODE_ENFORCE
+    assert g["split"] == "held_out" and g["agreement"] == 0.8 and g["fire_rate"] == round(19 / 40, 4)
     n = rows["noisy"]
     assert n["precision"] == 0.5 and not n["passes"] and n["mode"] == det.MODE_ROUTE
     assert rows["broken"]["errors"] == 40 and rows["broken"]["n_labelled"] == 0
-    per_writer = det.measure((good,), claims, labels, label_set="x", pooled=False)
+    per_writer = det.measure((good,), claims, labels, label_set="x", pooled=False, agreement=AGREE)
     assert per_writer[0]["writers"] == "t9_blog"
     th = det.thresholds_rows(list(rows.values()))
     entry = th["thresholds"]["det.good.fact.number"]
     assert entry["value"] == "enforce" and entry["calibration"]["calibrated"] is True
+    assert entry["calibration"]["split"] == "held_out" and entry["calibration"]["agreement"] == 0.8
     assert th["thresholds"]["det.noisy.fact.number"]["calibration"]["calibrated"] is False
+    with pytest.raises(ValueError, match="split"):
+        det.measure((good,), claims, labels, label_set="x", split="dev")
+
+
+def test_fires_on_claims_of_other_classes_count_against_precision():
+    """A gate in enforce mode holds on ANY fire: a fire on an ok claim of another class, or on a violation of an
+    unrelated class, is a false positive of the detector (review S272)."""
+    claims = [_claim(f"claim {i}", h=f"c{i}") for i in range(30)]
+    labels = {f"c{i}": ("fact.number", "violation") for i in range(20)}
+    labels.update({f"c{i}": ("fact.inclusion", "ok") for i in range(20, 25)})
+    labels.update({f"c{i}": ("fact.name", "violation") for i in range(25, 30)})
+    d = _stub("d", {f"c{i}" for i in range(30)})
+    (row,) = det.measure((d,), claims, labels, label_set="x", agreement=AGREE)
+    assert (row["fired"], row["tp"], row["fp_ok"], row["fp_other_class"], row["fp"]) == (30, 20, 5, 5, 10)
+    assert row["precision"] == round(20 / 30, 4) and row["recall"] == 1.0 and not row["passes"]
+    assert row["n_labelled"] == 30 and row["fire_rate"] == 1.0 and row["violation_rate"] == round(20 / 30, 4)
+    multi = det.Detector("m", ("fact.number", "fact.name"), "rule", lambda c: True)
+    rows = {r["class"]: r for r in det.measure((multi,), claims, labels, label_set="x", agreement=AGREE)}
+    assert rows["fact.name"]["tp"] == 25 and rows["fact.name"]["tp_class"] == 5 and rows["fact.name"]["n_pos"] == 5
+    assert rows["fact.number"]["fp"] == 5                                    # only the ok claims are false here
+
+
+def test_only_a_held_out_measurement_with_known_agreement_passes():
+    claims = [_claim(f"claim {i}", h=f"c{i}", split="train" if i % 2 else "held_out") for i in range(80)]
+    labels = {f"c{i}": ("fact.number", "violation" if i < 40 else "ok") for i in range(80)}
+    d = _stub("d", {f"c{i}" for i in range(40)})
+    held = det.measure((d,), claims, labels, label_set="x", agreement=AGREE)[0]
+    assert held["n_labelled"] == 40 and held["passes"] and held["mode"] == det.MODE_ENFORCE
+    for split in ("train", "all"):
+        row = det.measure((d,), claims, labels, label_set="x", split=split, agreement=AGREE)[0]
+        assert row["meets_bar"] and not row["passes"] and row["mode"] == det.MODE_WARN, split
+    for agreement in (None, {"fact.number": 0.69}, {"fact.number": None}):
+        row = det.measure((d,), claims, labels, label_set="x", agreement=agreement)[0]
+        assert not row["meets_bar"] and not row["passes"] and row["mode"] == det.MODE_WARN, agreement
+    _llm, deterministic = ss.BARS
+    assert deterministic.agreement == 0.7
+    assert ss.passes(20, 20, 20, deterministic) is False and ss.passes(20, 20, 20, deterministic, agreement=0.7)
 
 
 def test_recorded_producers_are_measured_on_their_records_only():

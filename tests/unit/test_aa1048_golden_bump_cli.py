@@ -103,12 +103,52 @@ def test_export_fixture_rederive_and_detectors(tmp_path):
     rows_out, th = tmp_path / "rows.json", tmp_path / "rows.yaml"
     a = cli.build_parser().parse_args(["detectors", "--export", str(export), "--finals", str(fin), "--out",
                                        str(rows_out), "--thresholds", str(th), "--only",
-                                       "novel_numbers,F1_grounding"])
+                                       "novel_numbers,F1_grounding", "--split", "all"])
     res = cli.cmd_detectors(a)
     rows = json.loads(rows_out.read_text())
     assert res["rows"] == 2 and {r["detector"] for r in rows} == {"novel_numbers", "F1_grounding"}
-    assert all(r["tp"] == 1 for r in rows)
+    assert all(r["tp"] == 1 and r["split"] == "all" for r in rows)
+    assert not any(r["passes"] for r in rows) and res["enforce"] == []      # a pooled split never passes
     assert "det.novel_numbers.fact.number" in th.read_text()
+    # the default split is held_out: only the claims whose group key hashes there are measured
+    held = cli.cmd_detectors(cli.build_parser().parse_args(
+        ["detectors", "--export", str(export), "--finals", str(fin), "--out", str(rows_out), "--only",
+         "novel_numbers"]))
+    assert held["split"] == "held_out"
+    assert held["claims"] == sum(1 for ln in lines if ln["split"] == "held_out")
+
+
+def test_agreement_map_reads_report_output_or_a_plain_map():
+    report = {"ok": True, "result": {"agreement": {"classes": {"fact.number": {"claims": 4, "agreement": 0.75}},
+                                                   "audit": {}}}}
+    assert cli.agreement_map(report) == {"fact.number": 0.75}
+    assert cli.agreement_map(report["result"]["agreement"]) == {"fact.number": 0.75}
+    assert cli.agreement_map({"fact.name": 0.9, "fact.number": None}) == {"fact.name": 0.9, "fact.number": None}
+    with pytest.raises(ValueError):
+        cli.agreement_map({"fact.name": "high"})
+
+
+def test_outputs_are_refused_inside_a_work_tree_unless_ignored(tmp_path):
+    import subprocess
+
+    from scripts.aa1048 import outpath
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("scratch/\n")
+    with pytest.raises(outpath.OutRefused, match="not ignored"):
+        outpath.check_out(str(repo / "claims.jsonl"))
+    with pytest.raises(outpath.OutRefused):
+        outpath.check_out(str(repo / "new" / "deeper" / "rows.json"))        # a folder that does not exist yet
+    assert outpath.check_out(str(repo / "scratch" / "claims.jsonl")).endswith("claims.jsonl")
+    outside = tmp_path / "plain"
+    outside.mkdir()
+    assert outpath.check_out(str(outside / "claims.jsonl")) == str(outside / "claims.jsonl")
+    fx = tmp_path / "fx.json"
+    fx.write_text(json.dumps(_fixture()))
+    assert cli.main(["export-fixture", str(fx), "--set", "CL-1", "--out", str(repo / "claims.jsonl")]) == 2
+    assert not (repo / "claims.jsonl").exists()
 
 
 def test_mutations_and_sample_size_commands(tmp_path, capsys):

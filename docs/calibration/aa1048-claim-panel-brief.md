@@ -23,8 +23,12 @@ Size each set from the sample-size table (`aa1048-sample-size.md`), not from a f
 
 Strata: `hard` (held or known-failure objects), `representative` (random under the current writer), `mutants`
 (code-injected defects, `services/ground_truth/mutations.py`), `traps`. Split: `held_out` for about 30% of the
-objects, frozen by a hash of the object (every claim of one object on the same side); measurements that decide a gate
-read the held-out side.
+groups, frozen by a hash of the object's group key: its tour (`refs.tour_id`), else its item (`sample_id`,
+`piece_id`, `version_id`), else its content sha. Every object of one tour (Master versions, tenant versions, the blog
+and social piece) is on the same side, so shared sentences never leak from train into held-out. The import recomputes
+the split and refuses a line whose `split` disagrees. Measurements that decide a gate (a detector's `passes` / mode
+`enforce`, an R1 instrument's passing classes and recommendation) read the held-out side only; the train side is for
+exploration and the label-budget rates.
 
 ## The three lenses
 
@@ -95,9 +99,11 @@ Export (input, one JSON object per line, from `cli export-fixture` or an equival
 
 ```json
 {"claim_hash": "<64 hex>", "set_id": "CL-1", "writer": "t9_blog", "scope": "tenant", "tenant_id": "<uuid>",
- "refs": {"sample_id": "t9b-001"}, "content_sha256": "<64 hex>", "field": "content_text", "span": [120, 188],
+ "refs": {"sample_id": "t9b-001", "tour_id": "<id>"}, "content_sha256": "<64 hex>", "field": "content_text",
+ "span": [120, 188],
  "claim_text": "...", "context": {"before": "...", "after": "..."}, "field_text": "...", "source_text": "...",
- "evidence": ["...", "..."], "candidate_classes": ["fact.inclusion", "..."], "stratum": "hard", "split": "train"}
+ "evidence": ["...", "..."], "candidate_classes": ["fact.inclusion", "..."], "stratum": "hard",
+ "split_group": "tour_id:<id>", "split": "train"}
 ```
 
 Panel output (one line per claim and lens; the claim hash is the key):
@@ -121,12 +127,16 @@ second judgement of the same claim by the same lens.
 ## Orchestrator steps
 
 All commands run with the repo on `PYTHONPATH`; DB commands as `cis_app` (`DATABASE_URL`), DRY RUN unless `--apply`.
+`S` below is the scratch folder `/home/nghiep/projects/AA-Ecosys/.tmp-session/aa1048` (ignored by the root repo).
+Every `--out` / `--thresholds` path is refused inside a git work tree unless git ignores it there, and CI's
+golden-set text guard fails on any tracked claim-export or claim-label line.
 
 1. Export: `python -m scripts.aa1048.cli export-fixture <fixture.json> --set CL-1 --writers t9_blog,t9_social --out
-   claims.jsonl` (other objects: the same line format from the DB).
-2. Panel: three agents, one per lens, each with this brief and `claims.jsonl`; concatenate their outputs into
-   `panel.jsonl`.
-3. Import: `cli import panel.jsonl --export claims.jsonl --set CL-1 --version 1.0.0` (DRY RUN), then `--apply`.
+   $S/claims.jsonl` (other objects: the same line format from the DB, with `refs.tour_id` set).
+2. Panel: three agents, one per lens, each with this brief and `$S/claims.jsonl`; concatenate their outputs into
+   `$S/panel.jsonl`.
+3. Import: `cli import $S/panel.jsonl --export $S/claims.jsonl --set CL-1 --version 1.0.0` (DRY RUN), then
+   `--apply`.
    The import consolidates: `agreed` (3 lenses, one class, one label, none unsure), `disputed` (anything else), and a
    reproducible random 20% of the agreed claims drawn as `audit` (critic F14).
 4. Queue: `cli enqueue --set CL-1 --version 1.0.0 --apply` puts every disputed and audit claim into the disagreement
@@ -136,11 +146,13 @@ All commands run with the repo on `PYTHONPATH`; DB commands as `cis_app` (`DATAB
 6. Report: `cli report --set CL-1 --version 1.0.0`: agreement per class, the panel error rate on the audit draw,
    contradictions (the bar is 0). Fix contradictions with tech-lead rows before any measurement.
 7. Manifest: `cli manifest ...` into the root repo (ids, counts, digest).
-8. Measure: `cli finals ... --out finals.jsonl` (tech-lead labels; add `--audit-ok` only after the audit draw is
-   adjudicated and its error rate accepted), then `cli detectors --export claims.jsonl --finals finals.jsonl --out
-   rows.json --thresholds rows.yaml`, `cli rederive <fixture.json> --finals finals.jsonl` (every golden label that
-   flips under the policy) and, after its own yes, the R1 run (`scripts/aa1048/r1_calibrate.py`, DRY RUN first,
-   cap 2 USD).
+8. Measure: `cli finals ... --out $S/finals.jsonl` (tech-lead labels; add `--audit-ok` only after the audit draw
+   is adjudicated and its error rate accepted). Save `cli report` output as `$S/report.json`, then
+   `cli detectors --export $S/claims.jsonl --finals $S/finals.jsonl --agreement $S/report.json --split train --out
+   $S/rows-train.json` (exploration, label-budget rates) and the same with `--split held_out --out
+   $S/rows.json --thresholds $S/rows.yaml` (the record that may pass), `cli rederive <fixture.json> --finals
+   $S/finals.jsonl` (every golden label that flips under the policy) and, after its own yes, the R1 run
+   (`scripts/aa1048/r1_calibrate.py`, held-out split, DRY RUN first, cap 2 USD, `--out $S/r1-report.json`).
 
 Labels with panel-only provenance never count as release evidence (critic F14): a gate's measurement record cites
 tech-lead labels, or agreed panel labels of a set whose audit was adjudicated.

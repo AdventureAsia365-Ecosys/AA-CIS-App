@@ -10,6 +10,11 @@ Each call is made VOTES times on the pinned model and connection (temperature 0,
 MAX_TOKENS >= 8192, migration 382); the verdict is the majority, and the votes give test-retest agreement. A reply from
 another model or connection is not a vote (D7: "a miss is unverified").
 
+Split. Only a held-out measurement may set passing classes or a recommendation (audit "30% frozen held-out split";
+the panel brief: "measurements that decide a gate read the held-out side"). `items_from` keeps one split (default
+held_out; the split comes from claims.split_group of the export line); a train or pooled run is exploration and its
+record says so (split, passing_classes empty, recommended None).
+
 Cost. DRY RUN is the default: `plan` counts the calls and estimates the cost from the catalog prices below (expected
 reply size and the worst case at MAX_TOKENS). A live run needs an explicit flag and a cap <= HARD_CAP_USD; it stops
 before a call when the spend so far plus twice that call's expected cost would pass the cap. Every reply goes through
@@ -127,16 +132,31 @@ class Item:
     field_text: str
     source_text: str
     evidence: tuple[str, ...] = ()
+    split: str = "train"
 
     @property
     def object_key(self) -> str:
         return f"{self.content_sha256}:{self.field}"
 
 
-def items_from(export_lines: list[dict], finals: dict[str, Any]) -> list[Item]:
-    """Items for every exported claim that has a final violation / ok label (FinalLabel objects or dicts)."""
+SPLIT_CHOICES = ("held_out", "train", "all")
+
+
+def split_of_line(e: dict) -> str:
+    """The split of an export line, recomputed from its group key (never trusted from the file)."""
+    return cl.split_of(cl.split_group(e.get("refs"), e["content_sha256"]))
+
+
+def items_from(export_lines: list[dict], finals: dict[str, Any], *, split: str = "held_out") -> list[Item]:
+    """Items for every exported claim of `split` ("all" pools both: exploration only) that has a final violation /
+    ok label (FinalLabel objects or dicts)."""
+    if split not in SPLIT_CHOICES:
+        raise R1Refused(f"split must be one of {SPLIT_CHOICES}, got {split!r}")
     out = []
     for e in export_lines:
+        line_split = split_of_line(e)
+        if split != "all" and line_split != split:
+            continue
         f = finals.get(e["claim_hash"])
         if f is None:
             continue
@@ -147,7 +167,8 @@ def items_from(export_lines: list[dict], finals: dict[str, Any]) -> list[Item]:
         out.append(Item(e["claim_hash"], e["writer"], cls, label, e.get("stratum") or "representative",
                         e["content_sha256"], e["field"], e["claim_text"], e.get("field_text") or e["claim_text"],
                         e.get("source_text") or "",
-                        tuple(e.get("evidence") or cl.align(e["claim_text"], e.get("source_text") or ""))))
+                        tuple(e.get("evidence") or cl.align(e["claim_text"], e.get("source_text") or "")),
+                        line_split))
     return out
 
 
@@ -208,6 +229,7 @@ def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap:
     total = round(sum(r["expected_usd"] for r in rows), 4)
     by_class = Counter((i.claim_class, i.label) for i in items)
     return {"stage": STAGE, "role": ROLE, "votes": votes, "max_tokens": MAX_TOKENS, "items": len(items),
+            "split": _split_name(items), "splits": dict(Counter(i.split for i in items)),
             "objects": len({i.object_key for i in items}),
             "labels": {f"{c}:{lab}": n for (c, lab), n in sorted(by_class.items())},
             "instruments": rows, "expected_total_usd": total, "cap_usd": cap,
@@ -356,9 +378,16 @@ def majority(votes: list) -> Optional[bool]:
     return c[True] > c[False]
 
 
+def _split_name(items: list[Item]) -> str:
+    names = {i.split for i in items}
+    return names.pop() if len(names) == 1 else "mixed"
+
+
 def measure(items: list[Item], votes: dict[str, list]) -> dict:
     """The measurement record of one instrument: per class precision / Wilson lower bound / recall / n_pos and the
-    bar, test-retest agreement, hard-subset recall, ok-cleared rate and the unverified count."""
+    bar, test-retest agreement, hard-subset recall, ok-cleared rate and the unverified count. `split` names the
+    items' split; only a held-out record lists passing classes (a train or mixed one is exploration: the bar columns
+    still show, `passing_classes` stays empty)."""
     per_class: dict[str, Counter] = defaultdict(Counter)
     retest_n = retest_same = unverified = 0
     hard_pos = hard_hit = ok_n = ok_cleared = 0
@@ -400,21 +429,25 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
     passing = sorted(k for k, v in classes.items() if v["passes_bar"])
     instrument_ok = (retest is not None and retest >= RETEST_BAR and ok_rate is not None and ok_rate >= OK_CLEARED_BAR
                      and hard["passes"])
-    return {"classes": classes, "retest": retest, "ok_cleared": ok_rate, "hard_subset": hard,
-            "unverified": unverified, "passing_classes": passing if instrument_ok else [],
+    split = _split_name(items)
+    return {"split": split, "classes": classes, "retest": retest, "ok_cleared": ok_rate, "hard_subset": hard,
+            "unverified": unverified,
+            "passing_classes": passing if instrument_ok and split == "held_out" else [],
             "instrument_conditions_met": instrument_ok}
 
 
 def report(items: list[Item], run_result: dict, insts: list[Instrument]) -> dict:
-    """One measurement record per instrument and the recommendation (the instrument with the most passing classes,
-    then the lower spend); the tech lead pins it (D7), this code never does."""
+    """One measurement record per instrument and the recommendation (the instrument with the most passing classes on
+    the held-out split, then the id); the tech lead pins it (D7), this code never does. A train or mixed run
+    recommends nothing."""
     records = {i.id: measure(items, run_result["votes"].get(i.id) or {}) for i in insts}
     best = sorted(records.items(), key=lambda kv: (-len(kv[1]["passing_classes"]), kv[0]))
     rec = best[0][0] if best and best[0][1]["passing_classes"] else None
-    return {"records": records, "recommended": rec, "spent_usd": run_result.get("spent_usd"),
+    return {"split": _split_name(items), "records": records, "recommended": rec,
+            "spent_usd": run_result.get("spent_usd"),
             "stopped": run_result.get("stopped"), "identity_mismatches": run_result.get("identity_mismatches")}
 
 
 __all__ = ["DEFAULT_CANDIDATES", "ENTAILMENT_SYSTEM", "EXTRACTION_SYSTEM", "HARD_CAP_USD", "Instrument", "Item",
-           "MAX_TOKENS", "MODES", "PRICES", "R1Refused", "STAGE", "VOTES", "calls", "flags_from_reply",
-           "instruments", "items_from", "majority", "measure", "plan", "report", "run"]
+           "MAX_TOKENS", "MODES", "PRICES", "R1Refused", "SPLIT_CHOICES", "STAGE", "VOTES", "calls", "flags_from_reply",
+           "instruments", "items_from", "majority", "measure", "plan", "report", "run", "split_of_line"]

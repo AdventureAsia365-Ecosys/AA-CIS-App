@@ -20,8 +20,16 @@ def _items(n_bad=2, n_ok=2, hard=False):
               ("Arrive in Velmora for dinner.", "fact.number", "ok")]
     for i, (text, cls, lab) in enumerate(claims[:n_bad] + claims[2:2 + n_ok]):
         out.append(r1.Item(f"{i:064x}", "t9_blog", cls, lab, "hard" if hard else "representative", "a" * 64,
-                           "content_text", text, FIELD, SOURCE, ("Day 2: Walk 12 km to Ostrin Valley.",)))
+                           "content_text", text, FIELD, SOURCE, ("Day 2: Walk 12 km to Ostrin Valley.",),
+                           "held_out"))
     return out
+
+
+def _tour_in(split):
+    """An invented tour id whose group key hashes to `split`."""
+    from services.ground_truth import claims as cl
+
+    return next(f"tour-{n}" for n in range(1000) if cl.split_of(f"tour_id:tour-{n}") == split)
 
 
 def _resp(content, model="gpt-6-luna-openai", conn="openai-direct", cost=0.0004):
@@ -56,17 +64,26 @@ def test_instruments_and_plan():
         r1.instruments(modes=["vibes"])
 
 
-def test_items_from_keeps_violation_and_ok_only():
+def test_items_from_keeps_violation_and_ok_only_of_the_split():
+    held, train = {"tour_id": _tour_in("held_out")}, {"tour_id": _tour_in("train")}
     export = [{"claim_hash": "h1", "writer": "t9_blog", "content_sha256": "a" * 64, "field": "content_text",
-               "claim_text": "Walk 40 km.", "field_text": FIELD, "source_text": SOURCE},
+               "claim_text": "Walk 40 km.", "field_text": FIELD, "source_text": SOURCE, "refs": held},
               {"claim_hash": "h2", "writer": "t9_blog", "content_sha256": "a" * 64, "field": "content_text",
-               "claim_text": "Unsure one.", "source_text": SOURCE},
+               "claim_text": "Unsure one.", "source_text": SOURCE, "refs": held},
               {"claim_hash": "h3", "writer": "t9_blog", "content_sha256": "a" * 64, "field": "content_text",
-               "claim_text": "Not labelled.", "source_text": SOURCE}]
+               "claim_text": "Not labelled.", "source_text": SOURCE, "refs": held},
+              {"claim_hash": "h4", "writer": "t9_blog", "content_sha256": "b" * 64, "field": "content_text",
+               "claim_text": "Walk 40 km again.", "source_text": SOURCE, "refs": train, "split": "held_out"}]
     finals = {"h1": {"claim_class": "fact.number", "label": "violation"},
-              "h2": {"claim_class": "fact.number", "label": "unsure"}}
+              "h2": {"claim_class": "fact.number", "label": "unsure"},
+              "h4": {"claim_class": "fact.number", "label": "violation"}}
     items = r1.items_from(export, finals)
-    assert [i.claim_hash for i in items] == ["h1"] and items[0].evidence
+    assert [i.claim_hash for i in items] == ["h1"] and items[0].evidence and items[0].split == "held_out"
+    # the split is recomputed from the group key, never read from the line (h4 says held_out, its tour is train)
+    assert [i.claim_hash for i in r1.items_from(export, finals, split="train")] == ["h4"]
+    assert [i.claim_hash for i in r1.items_from(export, finals, split="all")] == ["h1", "h4"]
+    with pytest.raises(r1.R1Refused, match="split"):
+        r1.items_from(export, finals, split="gate")
 
 
 def _run(items, insts, replies, cap=2.0, votes=3):
@@ -126,17 +143,28 @@ def test_measure_bar_and_recommendation():
     for i in range(60):
         lab = "violation" if i < 30 else "ok"
         items.append(r1.Item(f"{i:064x}", "t9_blog", "fact.number", lab, "hard" if i < 12 else "representative",
-                             "a" * 64, "content_text", f"claim {i}", "", ""))
+                             "a" * 64, "content_text", f"claim {i}", "", "", (), "held_out"))
     votes = {it.claim_hash: [it.label == "violation"] * 3 for it in items}
     rec = r1.measure(items, votes)
     assert rec["classes"]["fact.number"]["passes_bar"] and rec["instrument_conditions_met"]
+    assert rec["split"] == "held_out"
     assert rec["passing_classes"] == ["fact.number"] and rec["hard_subset"] == {"positives": 12, "caught": 12,
                                                                                 "passes": True}
     noisy = {**votes, items[40].claim_hash: [True, False, True]}
     assert r1.measure(items, noisy)["retest"] < 1.0
     assert r1.majority([None, None, True]) is None and r1.majority([True, False, None]) is False
     rep = r1.report(items, {"votes": {LUNA.id: votes, LUNA_X.id: {}}}, [LUNA, LUNA_X])
-    assert rep["recommended"] == LUNA.id
+    assert rep["recommended"] == LUNA.id and rep["split"] == "held_out"
+    # the same numbers on the train side (or pooled) are exploration: no passing class, no recommendation
+    import dataclasses
+
+    for other in ("train", "mixed"):
+        moved = [dataclasses.replace(it, split="train") if other == "train" or n % 2 else it
+                 for n, it in enumerate(items)]
+        rec = r1.measure(moved, votes)
+        assert rec["split"] == other and rec["classes"]["fact.number"]["passes_bar"]
+        assert rec["passing_classes"] == [] and r1.report(moved, {"votes": {LUNA.id: votes}}, [LUNA])[
+            "recommended"] is None
 
 
 def test_live_logging_passes_billed_fields(monkeypatch):
@@ -166,7 +194,7 @@ def test_script_dry_run_makes_no_call_and_refuses_live_without_confirm(tmp_path,
     finals = tmp_path / "finals.jsonl"
     rows = [{"claim_hash": it.claim_hash, "writer": it.writer, "content_sha256": it.content_sha256,
              "field": it.field, "claim_text": it.claim_text, "field_text": it.field_text,
-             "source_text": it.source_text} for it in _items()]
+             "source_text": it.source_text, "refs": {"tour_id": _tour_in("held_out")}} for it in _items()]
     export.write_text("".join(json.dumps(r) + "\n" for r in rows))
     finals.write_text("".join(json.dumps({"claim_hash": it.claim_hash, "claim_class": it.claim_class,
                                           "label": it.label}) + "\n" for it in _items()))
@@ -181,6 +209,9 @@ def test_script_dry_run_makes_no_call_and_refuses_live_without_confirm(tmp_path,
         llm_guard.install = monkey
     out = json.loads(capsys.readouterr().out)
     assert out["mode"] == "dry_run" and out["plan"]["items"] == 4 and undo == ["aa1048_r1_dry_run"]
+    assert out["plan"]["split"] == "held_out"
+    assert r1_calibrate.main(["--export", str(export), "--finals", str(finals), "--split", "train"]) == 2
+    assert "no labelled" in json.loads(capsys.readouterr().out)["refused"]
     with pytest.raises(SystemExit):
         r1_calibrate.main(["--export", str(export), "--finals", str(finals), "--live"])
     assert r1_calibrate.main(["--export", str(export), "--finals", str(finals), "--candidates", "bad"]) == 2

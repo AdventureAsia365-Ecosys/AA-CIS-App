@@ -16,8 +16,24 @@ it ships.
   importer's canonical-JSON sha of the output. Same text = same claim on any object (two golden items with identical
   outputs share their claims; `cli export-fixture` exports them once and `cli rederive` maps labels back to every item
   by content sha).
-- **Split by object**, not by claim: `held_out` when `sha256("aa1048-cl:<content sha>")` falls in the first 30% of the
-  hash space. Frozen, and every claim of one object is on the same side (no train/test leak inside a blog).
+- **Split by group, not by claim or text** (review fix, S272): `held_out` when `sha256("aa1048-cl:<group key>")`
+  falls in the first 30% of the hash space. The group key is the object's tour (`refs.tour_id`), else its item
+  (`sample_id`, `piece_id`, `version_id`), else its content sha. Tour first, not sample first as the audit sketch
+  wrote ("hash(sample_id)"): S1 Master versions, T2 tenant versions and the T9 blog and social piece of one tour share
+  source and sentences, so they must sit on one side; a regenerated object keeps its side. `consolidate` recomputes
+  the split and refuses an export line whose `split` disagrees.
+- **Only the held-out side decides** (review fix): `detectors.measure(split=...)`, `r1.items_from(split=...)` and the
+  CLI `--split` default to `held_out`. A train or pooled record is exploration: detector rows keep `meets_bar` but
+  `passes` is false and the mode never `enforce`; R1 records list no passing class and recommend nothing. The split
+  is written in every row, record and thresholds calibration block. Train is for the label-budget rates.
+- **Detector precision is the detector's, over every fire** (review fix): a gate in enforce mode holds on any fire,
+  so tp = fires on violations of one of the detector's classes, fp = every other fire (`fp_ok`, and
+  `fp_other_class` for violations of an unrelated class). Recall stays per class (`tp_class / n_pos`). `fire_rate`
+  and `violation_rate` are over all labelled claims, so `sample_size.label_budget` returns claims to label of any
+  class (a claim's class is only known once labelled).
+- **Labeller agreement is part of the deterministic bar** (README "Gate honesty": agreement >= 0.7):
+  `sample_size.Bar.agreement`, `detectors.measure(agreement=...)`, CLI `--agreement <cli report output>`. Unknown
+  agreement does not pass.
 - **Classes come from the taxonomy on main** through one seam, `services/ground_truth/policy.py::_load()`. The DB
   CHECK on `claim_class` is a shape (`^[a-z]+\.[a-z0-9_]{1,40}$`), not a closed list, so the W1 `writing_policy.yaml`
   (#1368) can replace the taxonomy without a migration; the import validates the class against the seam.
@@ -64,7 +80,12 @@ it ships.
 - `services/ground_truth/` (new): `policy.py`, `claims.py`, `panel.py`, `store.py`, `sample_size.py`,
   `detectors.py`, `mutations.py`, `r1.py`.
 - `scripts/aa1048/cli.py` (export-fixture, import, report, manifest, enqueue, pull-resolutions, finals, rederive,
-  detectors, mutations, sample-size) and `scripts/aa1048/r1_calibrate.py`.
+  detectors, mutations, sample-size), `scripts/aa1048/r1_calibrate.py` and `scripts/aa1048/outpath.py`. `scripts/`
+  is gitignored in this repo: these files are force-added (`git add -f`), like `scripts/aa729/`.
+- Leak guards for real claim text (review fix): `outpath.check_out` refuses an `--out` / `--thresholds` path inside a
+  git work tree unless git ignores it there; `.gitignore` ignores `*.jsonl`; the CI golden-set text guard
+  (`services/golden_set/text_guard.py`) gains two markers: the claim-export schema value, and a line with a 64-hex
+  `claim_hash` next to `claim_text` / `lens` / `labeller_kind` / `reason` (panel, tech-lead and finals lines).
 - `scripts/aa729/labels.py`: `revoke` + `is_stub_label`.
 - `services/writing_memory/disagreements.py` docstring and `frontend/lib/writingMemory.ts` (`Disagreement.source`
   union): the new source.
@@ -104,8 +125,11 @@ claim instrument. S1 / T2 have no deterministic optional-as-fixed check (the T9 
   Apply (class contract) -> this code PR. No readiness raise: nothing on a live path reads the table.
 - **Seam to W1**: when #1368 (writing_policy.yaml v1) merges, change `services/ground_truth/policy.py::_load()` only
   (classes, severities and the sha from writing_policy); set `POLICY_SOURCE = "writing_policy"`.
-- **Real text never in the repo**: export, panel, finals, rows and R1 report files are scratch-only; the root repo
-  gets `cli manifest` output (ids, counts, digest).
+- **Real text never in the repo**: export, panel, finals, rows and R1 report files are scratch-only
+  (`/home/nghiep/projects/AA-Ecosys/.tmp-session/aa1048/`); the tools refuse a non-ignored path in a work tree and
+  CI's text guard flags the formats. The root repo gets `cli manifest` output (ids, counts, digest).
+- **A DB export of T2 / T9 / S1 objects must set `refs.tour_id`**: without it the split falls back to the item id
+  and two objects of one tour can land on opposite sides.
 - **The live R1 run is not made here.** Estimated (synthetic sizes: 6,000-character blog, 8,000-character source):
   60 labelled claims on 18 objects = 468 calls, about 0.24 USD expected for both candidates and both modes (worst
   case at 8,192 output tokens: 2.95 USD, never reached in practice: the guard counts the real cost); 700 claims =

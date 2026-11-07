@@ -3,11 +3,12 @@ claims").
 
 A promotion bar is stated in the metric it measures (root audit README "Gate honesty"):
   LLM instrument          precision >= 0.90, Wilson-95 lower bound >= 0.80, n_pos >= 20
-  deterministic detector  precision >= 0.90, Wilson-95 lower bound >= 0.75, n_pos >= 15
-Precision and its lower bound are measured on the FLAGGED claims (the detector's fires), recall on n_pos (the
-labelled violations of the class). So a class needs (a) enough labelled fires for the lower bound at the precision
-it shows and (b) enough labelled violations for recall. `min_flagged` answers (a); `label_budget` turns (a) and (b)
-into a number of claims to label from the fire rate and violation rate a first panel pass measures.
+  deterministic detector  precision >= 0.90, Wilson-95 lower bound >= 0.75, n_pos >= 15, labeller agreement >= 0.7
+Precision and its lower bound are measured on the FLAGGED claims (every fire of the detector, on a claim of any
+class), recall on n_pos (the labelled violations of the class). So a class needs (a) enough labelled fires for the
+lower bound at the precision it shows and (b) enough labelled violations for recall. `min_flagged` answers (a);
+`label_budget` turns (a) and (b) into a number of claims to label (of any class: a claim's class is only known once
+it is labelled) from the fire rate and violation rate a first panel pass measures over all its labelled claims.
 
 Pure: standard library only.
 """
@@ -27,9 +28,10 @@ class Bar:
     precision: float
     lower_bound: float
     n_pos: int
+    agreement: Optional[float] = None       # labeller agreement of the class the bar needs (None: not part of it)
 
 
-BARS = (Bar("llm_instrument", 0.90, 0.80, 20), Bar("deterministic", 0.90, 0.75, 15))
+BARS = (Bar("llm_instrument", 0.90, 0.80, 20), Bar("deterministic", 0.90, 0.75, 15, agreement=0.7))
 # Observed precisions the table is printed for.
 OBSERVED = (0.90, 0.92, 0.95, 0.98, 1.00)
 
@@ -47,9 +49,12 @@ def wilson_lower(successes: int, n: int, z: float = Z95) -> Optional[float]:
     return max(0.0, (centre - margin) / (1 + z2 / n))
 
 
-def passes(tp: int, fired: int, n_pos: int, bar: Bar) -> bool:
-    """The bar on measured counts: precision, its lower bound and the number of labelled violations."""
+def passes(tp: int, fired: int, n_pos: int, bar: Bar, agreement: Optional[float] = None) -> bool:
+    """The bar on measured counts: precision, its lower bound, the number of labelled violations and, when the bar
+    has one, the labeller agreement of the class (unknown agreement does not pass)."""
     if fired <= 0:
+        return False
+    if bar.agreement is not None and (agreement is None or agreement < bar.agreement):
         return False
     lb = wilson_lower(tp, fired)
     return tp / fired >= bar.precision and lb is not None and lb >= bar.lower_bound and n_pos >= bar.n_pos
@@ -80,10 +85,10 @@ def table(bars: Iterable[Bar] = BARS, observed: Iterable[float] = OBSERVED) -> l
 
 
 def label_budget(*, fire_rate: float, violation_rate: float, observed_precision: float, bar: Bar) -> Optional[int]:
-    """Claims of a class to label so that (a) the detector's fires reach `min_flagged` and (b) the labelled violations
-    reach the bar's n_pos, given the share of labelled claims the detector fires on and the share that are
-    violations (both from a first panel pass). None when the bar is out of reach (precision under the bar, or a rate
-    of 0)."""
+    """Claims to label (of any class) so that (a) the detector's fires reach `min_flagged` and (b) the labelled
+    violations of the class reach the bar's n_pos, given the share of ALL labelled claims the detector fires on and
+    the share that are violations of the class (both from a first panel pass, detectors.measure on the train split).
+    None when the bar is out of reach (precision under the bar, or a rate of 0)."""
     need = min_flagged(observed_precision, bar)
     if need is None or fire_rate <= 0 or violation_rate <= 0:
         return None
