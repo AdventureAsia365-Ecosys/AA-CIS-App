@@ -1,5 +1,10 @@
 """AA-1049 W3 (root ADR 0020 S5) — stable keys of a T9 attempt's blocking failures.
 
+Opt-in only: the regression guard reads these keys when T9_REGRESSION_GUARD_MODE=stable_keys (service.guard_decision);
+the default `gate_names` is main's gate-name rule. Two review findings stay open on this mode (a style-only key weighs
+as much as a hold-class key; F14_social_shape is one whole-gate key for an under-floor and a far-over block): see
+docs/implementation-notes/AA-1049-l13-t9.md "Known limits".
+
 The AA-528 regression guard and the stop rule used to compare GATE NAMES between two attempts: a rewrite that fixed
 three F9 claims and added one F17 finding counted as "one new failing gate, not fewer gates" and was reverted, while a
 rewrite that swapped one F9 claim for a different one counted as "no change". A stable key names WHAT failed, read

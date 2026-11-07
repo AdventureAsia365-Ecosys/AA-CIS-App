@@ -129,8 +129,10 @@ def last_attempt_mode() -> str:
     return raw if raw in (STOP_AND_LABEL, LEGACY_LAST_ATTEMPT) else STOP_AND_LABEL
 
 
-# AA-1049 W3 (root ADR 0020 S5) — the AA-528 regression guard compares STABLE KEYS (what failed: the gate and the
-# quoted sentence, stable_keys.py) instead of gate names; `gate_names` rolls back to the S271 comparison.
+# AA-1049 W3 (root ADR 0020 S5) — the AA-528 regression guard. Default `gate_names`: main's comparison of failing
+# gate names, unchanged. `stable_keys` (opt-in, not on until W2 data) compares stable keys instead (what failed: the
+# gate and the quoted sentence, stable_keys.py); two review findings on it are still open (docs/implementation-notes/
+# AA-1049-l13-t9.md, "Known limits"), so it stays off by default.
 REGRESSION_GUARD_ENV = "T9_REGRESSION_GUARD_MODE"
 GUARD_STABLE_KEYS = "stable_keys"
 GUARD_GATE_NAMES = "gate_names"
@@ -138,7 +140,20 @@ GUARD_GATE_NAMES = "gate_names"
 
 def regression_guard_mode() -> str:
     raw = (os.environ.get(REGRESSION_GUARD_ENV) or "").strip().lower()
-    return raw if raw in (GUARD_STABLE_KEYS, GUARD_GATE_NAMES) else GUARD_STABLE_KEYS
+    return raw if raw in (GUARD_STABLE_KEYS, GUARD_GATE_NAMES) else GUARD_GATE_NAMES
+
+
+# AA-1049 W3 (root ADR 0020 S3) — code-first SEO fields (seo_builder.py). Default `off`: _fit_seo_meta runs exactly as
+# on main (the fit call and its one retry). `on` (opt-in) first tries a whole-sentence / separator prefix of the
+# writer's own value through the same acceptance tests, and drops the retry call.
+SEO_BUILDER_ENV = "T9_SEO_BUILDER"
+SEO_BUILDER_ON = "on"
+SEO_BUILDER_OFF = "off"
+
+
+def seo_builder_mode() -> str:
+    raw = (os.environ.get(SEO_BUILDER_ENV) or "").strip().lower()
+    return raw if raw in (SEO_BUILDER_ON, SEO_BUILDER_OFF) else SEO_BUILDER_OFF
 
 # AA-499/AA-484 — the ONE similarity threshold Nghiệp confirmed (Q6=B, 25/07/2026, AA-332
 # origin, cited in AA-484's Linear comment), for BOTH the within-tenant `within_tenant_reuse`
@@ -663,6 +678,20 @@ def _regression_failures(gate_ledger: list) -> set:
             and not seed_adjudicate.tier2_only_failure(g)}
 
 
+def guard_decision(prev_ledger: list, cur_ledger: list) -> tuple[set, bool, set, set]:
+    """AA-528 (+ AA-1049 W3) — the regression guard's decision for one pair of attempts, before the AA-780 floor-only
+    exception the call site applies: (new regressions, revert-if-new, prev failing gates, cur failing gates).
+
+    Default (`gate_names`, main): a gate failing now that did not before is a regression, reverted unless the rewrite
+    has fewer failing gates. `stable_keys` (opt-in): stable_keys.regressed decides and names the gates of its new keys.
+    The call site reverts when both the new set and `revert` are truthy (the offline replay calls this function)."""
+    prev_fail, cur_fail = _regression_failures(prev_ledger), _regression_failures(cur_ledger)
+    if regression_guard_mode() == GUARD_STABLE_KEYS:
+        new_keys, key_revert = stable_keys.regressed(prev_ledger, cur_ledger)
+        return {gate for gate, _ in new_keys}, key_revert, prev_fail, cur_fail
+    return cur_fail - prev_fail, len(cur_fail) >= len(prev_fail), prev_fail, cur_fail
+
+
 def _floor_only_failure(blocking_fails: list) -> bool:
     """AA-780 review — the attempt's blocking failures are all gates that never hold, one of them the
     under-floor F14 block (the AA-528 guard does not revert a rewrite of such an attempt that is repairable)."""
@@ -1032,14 +1061,16 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
-    # AA-1049 W3 (ADR 0020 S3, D5) — code first: a failing field becomes the first whole-sentence (meta) or
-    # separator (title) prefix of the writer's own value that passes the SAME title_ok / meta_ok; no model call when
-    # both fields then pass. Nothing is invented, so nothing the fit would refuse is accepted.
-    seo_meta, built_log = seo_builder.build_seo(seo_meta, title_ok=title_ok, meta_ok=meta_ok)
-    if built_log:
-        logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=built_log)
-    if seo_builder.fields_ok(seo_meta, title_ok=title_ok, meta_ok=meta_ok):
-        return seo_meta, 0.0
+    # AA-1049 W3 (ADR 0020 S3, D5) — T9_SEO_BUILDER=on only (default off = main): code first, a failing field becomes
+    # the first whole-sentence (meta) or separator (title) prefix of the writer's own value that passes the SAME
+    # title_ok / meta_ok; no model call when both fields then pass.
+    code_first = seo_builder_mode() == SEO_BUILDER_ON
+    if code_first:
+        seo_meta, built_log = seo_builder.build_seo(seo_meta, title_ok=title_ok, meta_ok=meta_ok)
+        if built_log:
+            logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=built_log)
+        if seo_builder.fields_ok(seo_meta, title_ok=title_ok, meta_ok=meta_ok):
+            return seo_meta, 0.0
     audience = context.get("brand_audience") or {}
     forbidden = sorted({p for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
@@ -1073,15 +1104,30 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         return out
 
     out = merge(seo_meta, fitted)
-    # AA-1049 W3 — the fitted value gets the same code shortening (a fitted meta one sentence too long is the common
-    # miss: lesson S233, models overshoot a character target); the second fit call per attempt is gone (the next
-    # attempt re-runs this fit; F4 reports what is left, as on main).
-    shortened, fit_log = seo_builder.build_seo(
-        {**out, **{k: fitted[k] for k in ("seo_title", "meta_description") if fitted.get(k)}},
-        title_ok=title_ok, meta_ok=meta_ok)
-    out = merge(out, shortened)
-    if fit_log:
-        logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=fit_log, after="fit")
+    if code_first:
+        # AA-1049 W3 (opt-in) — the fitted value gets the same code shortening (a fitted meta one sentence too long is
+        # the common miss: lesson S233, models overshoot a character target); the second fit call per attempt is gone
+        # (the next attempt re-runs this fit; F4 reports what is left, as on main).
+        shortened, fit_log = seo_builder.build_seo(
+            {**out, **{k: fitted[k] for k in ("seo_title", "meta_description") if fitted.get(k)}},
+            title_ok=title_ok, meta_ok=meta_ok)
+        out = merge(out, shortened)
+        if fit_log:
+            logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=fit_log, after="fit")
+    elif not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
+        # LLMs miscount characters: one more try, told exactly how far off the current values are.
+        try:
+            again, cost2 = await asyncio.to_thread(
+                fit_seo_fields, body=body,
+                seo_title=fitted.get("seo_title") or out.get("seo_title"),
+                meta_description=fitted.get("meta_description") or out.get("meta_description"),
+                keyword=keyword, brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
+                angle_gate_request_id=str(request_id), **extra,
+            )
+            cost += cost2
+            out = merge(out, again)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("t9_seo_fit_retry_failed", request_id=str(request_id), error=str(e)[:200])
     if title_taken(out.get("seo_title"), taken):
         variant = _title_variant(out.get("seo_title"), audience.get("brand_name"), taken)
         if variant and _seo_title_ok(variant, keyword):
@@ -2546,23 +2592,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 prev_ledger = prev_snapshot["gate_ledger"]
                 # AA-924 — keyed by source on the legacy views (_blocking_failures)
                 # AA-1000 review — a result failed only by a tier-2 finding is left out (_regression_failures)
-                prev_blocking_fail = _regression_failures(prev_ledger)
-                cur_blocking_fail = _regression_failures(gate_ledger)
-                new_regressions = cur_blocking_fail - prev_blocking_fail
-                # AA-1049 W3 — by default the guard reads stable keys (stable_keys.regressed): a rewrite that swaps
-                # one F9 claim for another is a regression, one that fixes three claims and adds one F17 finding is
-                # not, and one that clears a whole failing gate is never reverted (main's gate-count rule stays a
-                # condition). `new_regressions` then names the gates of the new keys.
-                guard_keys = regression_guard_mode() == GUARD_STABLE_KEYS
-                if guard_keys:
-                    new_keys, key_revert = stable_keys.regressed(prev_ledger, gate_ledger)
-                    new_regressions = {gate for gate, _ in new_keys}
+                # AA-1049 W3 — one function (guard_decision) decides, so the offline replay runs the same code;
+                # default mode = main's gate-name rule.
+                new_regressions, revert, prev_blocking_fail, cur_blocking_fail = guard_decision(
+                    prev_ledger, gate_ledger)
                 # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
                 # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
                 # this rewrite to trade against: reverting would ship the short post the rewrite was for (the
                 # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
                 # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
-                # text is the full-length, truth-clean one.)
+                # text is the full-length, truth-clean one. AA-1049: true in the default gate_names mode; the opt-in
+                # stable_keys mode can keep a rewrite that trades 2 F15 keys for 1 F1 key, a known limit.)
                 prev_fail = [g for g in expand_ledger(prev_ledger) if g.get("blocking", True) and not g["passed"]]
                 if (new_regressions and attempt < paid_attempts and _floor_only_failure(prev_fail)
                         and first_failure["repairable"]
@@ -2570,7 +2610,6 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     logger.info("t9_gate_regression_kept_after_floor_rewrite", request_id=str(request_id),
                                 attempt=attempt, regressed_gates=sorted(new_regressions))
                     new_regressions = set()
-                revert = (key_revert if guard_keys else len(cur_blocking_fail) >= len(prev_blocking_fail))
                 if new_regressions and revert:
                     logger.info(
                         "t9_gate_regression_reverted", request_id=str(request_id), attempt=attempt,

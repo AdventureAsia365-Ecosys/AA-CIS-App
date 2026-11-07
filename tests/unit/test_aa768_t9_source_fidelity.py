@@ -262,9 +262,7 @@ def test_writer_forbids_invented_contrasts():
     assert "contrast claims" in SYSTEM_PROMPT and "not by X but by Y" in SYSTEM_PROMPT
 
 
-def test_seo_fit_calls_once_and_f4_reports_what_is_left():
-    """AA-1049 W3 (declared diff): the second fit call per attempt is gone; an out-of-band fit keeps the writer's own
-    value (F4 reports it, the next attempt refits), as the S233 rule for a failed fit."""
+def test_seo_fit_retries_once_when_still_out_of_band():
     long_meta = "y" * 170 + "."
     ok_meta = "Visit Thimphu's weekend craft bazaar in Bhutan, where weavers sell kira cloth and the " \
               "Textile Museum explains every pattern you will see there."  # AA-1047: 143, in the 140-155 band
@@ -274,29 +272,45 @@ def test_seo_fit_calls_once_and_f4_reports_what_is_left():
         out, cost = asyncio.run(service._fit_seo_meta(
             {"seo_title": TestSeoFit.TITLE_OK, "meta_description": long_meta}, None, body="b", context={},
             request_id=uuid4()))
+    assert m.call_count == 2 and out["meta_description"] == ok_meta and cost == 0.02
+
+
+# AA-1049 W3 — opt-in T9_SEO_BUILDER=on only (the default `off` is main's flow above: the fit and its one retry).
+_OK_META = ("Visit Thimphu's weekend craft bazaar in Bhutan, where weavers sell kira cloth and the "
+            "Textile Museum explains every pattern you will see there.")
+
+
+def test_opt_in_seo_builder_calls_the_fit_once_and_f4_reports_what_is_left(monkeypatch):
+    monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
+    long_meta = "y" * 170 + "."
+    with patch.object(service, "fit_seo_fields",
+                      return_value=({"seo_title": None, "meta_description": long_meta}, 0.01)) as m:
+        out, cost = asyncio.run(service._fit_seo_meta(
+            {"seo_title": TestSeoFit.TITLE_OK, "meta_description": long_meta}, None, body="b", context={},
+            request_id=uuid4()))
     assert m.call_count == 1 and out["meta_description"] == long_meta and cost == 0.01
 
 
-def test_seo_fit_shortens_a_fitted_meta_one_sentence_too_long_in_code():
-    """AA-1049 W3 — a fitted meta whose first sentence is in the band and whose tail overshoots is cut at the
-    sentence boundary in code (no second call)."""
-    ok_meta = "Visit Thimphu's weekend craft bazaar in Bhutan, where weavers sell kira cloth and the " \
-              "Textile Museum explains every pattern you will see there."
-    with patch.object(service, "fit_seo_fields",
-                      return_value=({"seo_title": None, "meta_description": ok_meta + " Book your place early this season."}, 0.01)) as m:
+def test_opt_in_seo_builder_shortens_a_fitted_meta_one_sentence_too_long(monkeypatch):
+    monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
+    fitted = {"seo_title": None, "meta_description": _OK_META + " Book your place early this season."}
+    with patch.object(service, "fit_seo_fields", return_value=(fitted, 0.01)) as m:
         out, cost = asyncio.run(service._fit_seo_meta(
             {"seo_title": TestSeoFit.TITLE_OK, "meta_description": "y" * 170 + "."}, None, body="b", context={},
             request_id=uuid4()))
-    assert m.call_count == 1 and out["meta_description"] == ok_meta and cost == 0.01
+    assert m.call_count == 1 and out["meta_description"] == _OK_META and cost == 0.01
 
 
-def test_seo_fit_not_called_when_the_writer_meta_has_an_in_band_first_sentence():
-    """AA-1049 W3 — code first: the writer's own meta, cut after its first whole sentence, passes: no model call."""
-    ok_meta = "Visit Thimphu's weekend craft bazaar in Bhutan, where weavers sell kira cloth and the " \
-              "Textile Museum explains every pattern you will see there."
-    with patch.object(service, "fit_seo_fields") as m:
+@pytest.mark.parametrize("mode, calls", [("on", 0), (None, 1)])
+def test_a_writer_meta_with_an_in_band_first_sentence(monkeypatch, mode, calls):
+    """Opt-in: the first whole sentence ships with no model call. Default: main's fit call."""
+    if mode is None:
+        monkeypatch.delenv(service.SEO_BUILDER_ENV, raising=False)
+    else:
+        monkeypatch.setenv(service.SEO_BUILDER_ENV, mode)
+    with patch.object(service, "fit_seo_fields", side_effect=RuntimeError("fit outage")) as m:
         out, cost = asyncio.run(service._fit_seo_meta(
-            {"seo_title": TestSeoFit.TITLE_OK, "meta_description": ok_meta + " Then walk on to the dzong."}, None,
+            {"seo_title": TestSeoFit.TITLE_OK, "meta_description": _OK_META + " Then walk on to the dzong."}, None,
             body="b", context={}, request_id=uuid4()))
-    m.assert_not_called()
-    assert out["meta_description"] == ok_meta and cost == 0.0
+    assert m.call_count == calls and cost == 0.0
+    assert out["meta_description"] == (_OK_META if calls == 0 else _OK_META + " Then walk on to the dzong.")

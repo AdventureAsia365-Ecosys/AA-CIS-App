@@ -267,8 +267,7 @@ async def test_seo_fit_runs_for_an_out_of_scope_title_and_rejects_a_fit_that_kee
         out, cost = await service._fit_seo_meta(seo, None, body="b", context={}, request_id="r", hyg=hyg)
     assert calls and calls[0]["forbidden_words"] == ["Gobi"]
     assert out["seo_title"] == seo["seo_title"]  # the fitted title still names Gobi → rejected
-    # AA-1049 W3 (declared diff) — one fit call per attempt (was 2); F4 reports what is left, the next attempt refits
-    assert len(calls) == 1 and cost == pytest.approx(0.003)
+    assert len(calls) == 2 and cost == pytest.approx(0.006)
 
 
 @pytest.mark.asyncio
