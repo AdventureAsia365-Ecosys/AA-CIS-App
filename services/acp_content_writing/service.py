@@ -86,6 +86,7 @@ from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.acp_content_writing import route_table  # AA-1049 (the one T9 route table)
+from services.acp_content_writing import seo_builder  # AA-1049 (code-composed SEO fields)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
@@ -1013,6 +1014,14 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
+    # AA-1049 W3 (ADR 0020 S3, D5) — code first: a failing field becomes the first whole-sentence (meta) or
+    # separator (title) prefix of the writer's own value that passes the SAME title_ok / meta_ok; no model call when
+    # both fields then pass. Nothing is invented, so nothing the fit would refuse is accepted.
+    seo_meta, built_log = seo_builder.build_seo(seo_meta, title_ok=title_ok, meta_ok=meta_ok)
+    if built_log:
+        logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=built_log)
+    if seo_builder.fields_ok(seo_meta, title_ok=title_ok, meta_ok=meta_ok):
+        return seo_meta, 0.0
     audience = context.get("brand_audience") or {}
     forbidden = sorted({p for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
@@ -1046,20 +1055,15 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         return out
 
     out = merge(seo_meta, fitted)
-    if not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
-        # LLMs miscount characters: one more try, told exactly how far off the current values are.
-        try:
-            again, cost2 = await asyncio.to_thread(
-                fit_seo_fields, body=body,
-                seo_title=fitted.get("seo_title") or out.get("seo_title"),
-                meta_description=fitted.get("meta_description") or out.get("meta_description"),
-                keyword=keyword, brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
-                angle_gate_request_id=str(request_id), **extra,
-            )
-            cost += cost2
-            out = merge(out, again)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("t9_seo_fit_retry_failed", request_id=str(request_id), error=str(e)[:200])
+    # AA-1049 W3 — the fitted value gets the same code shortening (a fitted meta one sentence too long is the common
+    # miss: lesson S233, models overshoot a character target); the second fit call per attempt is gone (the next
+    # attempt re-runs this fit; F4 reports what is left, as on main).
+    shortened, fit_log = seo_builder.build_seo(
+        {**out, **{k: fitted[k] for k in ("seo_title", "meta_description") if fitted.get(k)}},
+        title_ok=title_ok, meta_ok=meta_ok)
+    out = merge(out, shortened)
+    if fit_log:
+        logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=fit_log, after="fit")
     if title_taken(out.get("seo_title"), taken):
         variant = _title_variant(out.get("seo_title"), audience.get("brand_name"), taken)
         if variant and _seo_title_ok(variant, keyword):
