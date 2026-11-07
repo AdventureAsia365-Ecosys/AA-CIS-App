@@ -87,6 +87,7 @@ from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.acp_content_writing import route_table  # AA-1049 (the one T9 route table)
 from services.acp_content_writing import seo_builder  # AA-1049 (code-composed SEO fields)
+from services.acp_content_writing import stable_keys  # AA-1049 (stable-key regression guard + stop rule)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
@@ -124,6 +125,18 @@ LEGACY_LAST_ATTEMPT = "legacy"
 def last_attempt_mode() -> str:
     raw = (os.environ.get(LAST_ATTEMPT_MODE_ENV) or "").strip().lower()
     return raw if raw in (STOP_AND_LABEL, LEGACY_LAST_ATTEMPT) else STOP_AND_LABEL
+
+
+# AA-1049 W3 (root ADR 0020 S5) — the AA-528 regression guard compares STABLE KEYS (what failed: the gate and the
+# quoted sentence, stable_keys.py) instead of gate names; `gate_names` rolls back to the S271 comparison.
+REGRESSION_GUARD_ENV = "T9_REGRESSION_GUARD_MODE"
+GUARD_STABLE_KEYS = "stable_keys"
+GUARD_GATE_NAMES = "gate_names"
+
+
+def regression_guard_mode() -> str:
+    raw = (os.environ.get(REGRESSION_GUARD_ENV) or "").strip().lower()
+    return raw if raw in (GUARD_STABLE_KEYS, GUARD_GATE_NAMES) else GUARD_STABLE_KEYS
 
 # AA-499/AA-484 — the ONE similarity threshold Nghiệp confirmed (Q6=B, 25/07/2026, AA-332
 # origin, cited in AA-484's Linear comment), for BOTH the within-tenant `within_tenant_reuse`
@@ -2525,6 +2538,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 prev_blocking_fail = _regression_failures(prev_ledger)
                 cur_blocking_fail = _regression_failures(gate_ledger)
                 new_regressions = cur_blocking_fail - prev_blocking_fail
+                # AA-1049 W3 — by default the guard reads stable keys (stable_keys.regressed): a rewrite that swaps
+                # one F9 claim for another is a regression, one that fixes three claims and adds one F17 finding is
+                # not. `new_regressions` then names the gates of the new keys.
+                guard_keys = regression_guard_mode() == GUARD_STABLE_KEYS
+                if guard_keys:
+                    new_keys, key_revert = stable_keys.regressed(prev_ledger, gate_ledger)
+                    new_regressions = {gate for gate, _ in new_keys}
                 # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
                 # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
                 # this rewrite to trade against: reverting would ship the short post the rewrite was for (the
@@ -2538,12 +2558,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     logger.info("t9_gate_regression_kept_after_floor_rewrite", request_id=str(request_id),
                                 attempt=attempt, regressed_gates=sorted(new_regressions))
                     new_regressions = set()
-                if new_regressions and len(cur_blocking_fail) >= len(prev_blocking_fail):
+                revert = (key_revert if guard_keys else len(cur_blocking_fail) >= len(prev_blocking_fail))
+                if new_regressions and revert:
                     logger.info(
                         "t9_gate_regression_reverted", request_id=str(request_id), attempt=attempt,
                         regressed_gates=sorted(new_regressions),
                         prev_blocking_fail=sorted(prev_blocking_fail),
-                        cur_blocking_fail=sorted(cur_blocking_fail),
+                        cur_blocking_fail=sorted(cur_blocking_fail), guard=regression_guard_mode(),
                     )
                     # AA-570 — capture THIS attempt's just-generated rewrite before it's
                     # overwritten below by the revert. In this specific branch, attempt 1 (not
