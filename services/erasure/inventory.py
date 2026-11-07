@@ -81,6 +81,9 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("acp_shared.tour_retirement_policy", "the tenant's notice period (the platform row has no tenant)"),
     _d("acp_shared.debate_brand_fit_cache", "brand-fit cache of the tenant"),
     _d("acp_shared.facts", "tenant-scope facts (platform facts have no tenant)"),
+    # AA-1047 (386): the FactSheets of the tenant's T2 / T9 writes (tour text, agency facts and brand lines,
+    # pii:free_text); generated_content / tenant_tour_versions name them by fs_id with no FK
+    _d("acp_shared.fact_sheet", "FactSheets of the tenant's T2 / T9 writes"),
     _d("acp_shared.publish_log", "tenant publish history (channels)"),
     _d("acp_shared.quarter_plan", "quarter plans (versions follow through the FK)"),
     _d("acp_shared.subject", "tenant subjects (T7 slate)"),
