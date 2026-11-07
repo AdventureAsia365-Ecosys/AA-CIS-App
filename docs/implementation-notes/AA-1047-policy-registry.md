@@ -9,7 +9,7 @@ exit paths.
 
 Two PRs, in merge order:
 
-1. **CIS migration 387** (migration-only, contract): registers the six prompt versions the registry moves. Joins
+1. **CIS migration 387** (migration-only, contract): registers the sixteen prompt versions the registry moves. Joins
    lane l2's migration-only PR (one CIS migration PR per wave: 386-387).
 2. **CIS code PR**: the registry, compiler, lint, consumers, contradiction suite. Its branch carries the 387 commit
    (identical bytes) so the prompt registry gate passes locally; after the migration PR merges, that file is no
@@ -78,8 +78,21 @@ Two PRs, in merge order:
 - **Eval judge (W1 item 2).** No 16000/9000 clipping: R2 and the judge comparison script read
   `eval_judge.evidence_view` (uncut SOURCE + labelled OUTPUT + their sha); an item over the cap raises
   `InputOverCap` before any model call and is a counted error at $0. The verdict carries `evidence_sha`.
-- **Prompt registry.** A prompt whose hashed symbols read the policy (`_wp.`) also hashes the compiled `policy_sha`
-  (`prompt_registry.prompt_hash_of`), so a policy edit is a prompt edit and needs a version bump + migration.
+- **Prompt registry.** A prompt whose source FILE reads the policy (`prompt_registry.reads_policy`: it imports the
+  policy module, or a constant whose value comes from it, such as `SEO_META_MIN` from seo_meta_utils or
+  `FAQ_MIN_PAIRS` from quality_gates; helper functions are not followed) also hashes the compiled `policy_sha`
+  (`prompt_registry.prompt_hash_of`), so a policy edit is a prompt edit and needs a version bump + migration. File
+  level on purpose (S272 review): the first cut looked for `_wp.` in the hashed symbols only and missed s1_generate
+  (`_BACKGROUND`), t2_generate (`_RULES_3_TO_6`…), s1/t2_flag_fix (meta rules built inside `flag_fix_node`) and
+  t10_judge (`f9_user_prompt`, now also one of its hashed symbols). Sixteen stages read the policy today.
+- **Short T9 meta (S272 review, contradiction 12 inside the policy).** The T9 writer and SEO fit aim 130–145 (lesson
+  S233: a model overshoots its target), the band is 140–155. An aim under the band floor is now a documented
+  exception the schema check only accepts with `short_fix` (the deterministic step that lands a short value in the
+  band). T9: `service._fit_seo_meta` gives a complete 130–139 meta the DESTINATION tail (`seo_meta_utils.
+  extend_short_meta`, ', in <destination>.') before and after the fit call when that lands it in the band (no LLM
+  call, no word the source lacks); the fit user prompt tells a short meta "too short: must be 140–155" instead of
+  "must be 130–145". S1 keeps `fit_seo_meta_final`. The aim itself is not raised (that would be a writer-prompt change
+  needing a paid smoke, and lesson S233 says the overshoot comes back).
 - **Route rows: no migration.** The route rows are code sets compiled from the YAML; no DB row changes, so CIS 387
   only registers prompt versions.
 
@@ -97,7 +110,7 @@ fit / FAQ prompts render byte-equal to main (checked by dumping each prompt on m
 | T9 writer AI-tells rules (ai_tells.PROMPT_RULES) | so the piece closes on its last fact with the call to action worked into it. | so the piece closes on its last fact, then the call to action line. (`t9_writer.cta_close_example`) | CTA |
 | T9 writer AI-tells rules | WRITE the call to action as the piece's own sentence, worked into the last fact, with no label line before it. | WRITE the call to action line, word for word, as the piece's own last sentence, with no label line before it. (`t9_writer.cta_dont_write`) | CTA |
 | T9 sentence repair `_REPAIR_SYSTEM` (generate.py) | Use only what the SOURCE states, or widely known background about a place it names. | Use only what the SOURCE states, or short background about a place it names (what it is, its history, geography, culture or setting), never what this trip does there. (`t9_repair.background`) | background (D1) |
-| T9 SEO fit user prompt (generate.fit_seo_fields, the "must be" note) | shown when the meta is outside 120–155 | shown when outside the policy band 140–155 | meta band (D5) |
+| T9 SEO fit user prompt (generate.fit_seo_fields, the "must be" note) | shown when the meta is outside 120–155 | shown when outside the policy band 140–155; a meta under 140 reads " — too short: must be 140-155" (S272 review: "(135 chars — must be 130-145 …)" was self-contradictory) | meta band (D5) |
 
 Meals changed in code only (no prompt line). The T9 writer `WRITER_PROMPT_VERSION` moves b5978839 → cc9b4979.
 
@@ -111,16 +124,31 @@ Meals changed in code only (no prompt line). The T9 writer `WRITER_PROMPT_VERSIO
 | 4 | timing: repair vs F17 | code agrees (F17 holds every unsourced time) | tim-* |
 | 5 | severities f7 / c3 / s5 / scope | gone (taxonomy = policy, lint p6) | tim-01, faq-03/05, scp-01 |
 | 6 | FAQ filter vs dropper | gone (one topic list) | faq-* |
-| 7 | length vs background | writer-vs-writer, open until W5 | — |
+| 7 | length vs background | writer-vs-writer: moves to W5 (writer prompts, measured with the paid smoke) | — |
 | 8 | numbers (digits only, other trips) | gone (F6 frames, word numbers, own lines) | num-* |
 | 9 | scope | code agrees (F12 by policy severity; run-time mode stays warn until measured) | scp-* |
 | 10 | CTA worked-in vs ensure_cta | gone (writer lines + check) | cta-* |
-| 11 | structure rules vs retired F3/F5 | writer-vs-code, open until W5 | — |
+| 11 | structure rules vs retired F3/F5 | writer-vs-code: moves to W5 (writer prompts) | — |
 | 12 | three meta bands, slug mid-word | gone (one band, slug at a word boundary) | meta-*, tit-*, slug-* |
-| 13 | retry ownership (token_budget) | not policy: gateway lane / later wave | — |
-| 14 | effort per provider | not policy: route lane / later wave | — |
-| 15 | held vs delivered | exit contract: lane l3-w1-exits | — |
+| 13 | retry ownership (token_budget) | not policy: no owner yet — needs an issue (gateway retry ownership); see "Done-when gap" | — |
+| 14 | effort per provider | not policy: no owner yet — needs an issue (route effort per provider); see "Done-when gap" | — |
+| 15 | held vs delivered | exit contract: lane l3-w1-exits (same issue, this wave) | — |
 | 16 | release fingerprint scope | in part: `policy` component added; route-control / catalog parts are change-control work | test_contradiction_16 |
+
+### Done-when gap (S272 review)
+
+The AA-1047 done-when says the 16 listed T9 code-vs-code contradictions go to 0. This lane closes #1–#6, #8–#10, #12
+and part of #16; #7 and #11 are writer-prompt work (W5), #15 is lane l3-w1-exits, and #13 / #14 are not writing-policy
+rules and have no owner yet. Part A of AA-1047 is therefore NOT done by this lane alone. The orchestrator posts the
+comment below on AA-1047 (this lane does not write to Linear) and gets the tech lead's agreement before part A is
+marked done; #13 and #14 need an issue (asked first, per the Linear rule):
+
+> AA-1047 part A (policy registry, S272 W1) closes T9 contradictions #1–#6, #8–#10, #12 and part of #16 (proof: the
+> contradiction suite, 103 synthetic twins, each owning detector checked on its own). Open and moved: #7 (length vs
+> background) and #11 (structure rules vs retired F3/F5) to W5, the writer-prompt wave, measured with the paid smoke;
+> #15 (held vs delivered) to lane l3-w1-exits of this wave; #13 (retry ownership on token_budget) and #14 (effort per
+> provider) are gateway / route rules, not writing policy: proposed as one new issue in the AI gateway project. #16
+> keeps its route-control / catalog parts for change-control work. Part A stays open until this is agreed.
 
 ## Tradeoffs
 
@@ -136,9 +164,13 @@ Meals changed in code only (no prompt line). The T9 writer `WRITER_PROMPT_VERSIO
 
 ## Should know
 
-- Contradiction suite: 101 synthetic examples, 100% as the policy expects (each topic has fire and no-fire twins:
-  background, timing, numbers 11; rarity, scope, meta band, slug, FAQ 8; CTA 7; meals 6; title band, day count 5;
-  hypothetical 3, reflection 2).
+- Contradiction suite: 103 synthetic examples, 100% as the policy expects (each topic has fire and no-fire twins:
+  background, timing, numbers 11; meta band 10; rarity, scope, slug, FAQ 8; CTA 7; meals 6; title band, day count 5;
+  hypothetical 3, reflection 2). Every body example carries a claim row, and every body fire twin lists its owning
+  detectors (`all:`), each of which must reach `expect` on its own (S272 review: `combined` hid a lax detector).
+  Not an owner by design: apply_rules for a time or a digit outside place background (F17 / F1 own them; with a cited
+  trip_fact row it passes), check_replacement for scope. The admin sentence check (`check_replacement`) runs in the
+  harness and keeps each gate's own `blocking` flag (a background year warns there as in the pipeline).
 - Pins: `tests/unit/snapshots/aa919_release0_prompts.json` regenerated; only the 40 T9 system prompts (blog + social)
   moved, every A1 / T2 prompt and all 80 user prompts kept their pins. `WRITER_PROMPT_VERSION` tests assert both the
   new value and the pre-AA-1047 one through `pre_aa1047`.
@@ -150,8 +182,10 @@ Meals changed in code only (no prompt line). The T9 writer `WRITER_PROMPT_VERSIO
   sentence". `ensure_cta` keeps it. Left for W5 (channel shapes).
 - Behaviour changes on Dev after deploy (T9 gates, no paid call): F4 meta band 120–158 → 140–155; F1 holds only trip
   numbers; F18 place rarity warns; the FAQ filter drops source-less topics; T2 meal lines copied from the source day
-  pass; slugs cut at a word boundary. Prompt versions move (t9_write v4, t9_repair v2, writing_memory_eval v3,
-  s1/t2_brand_audit v2, a3_place_card v2) — CIS 387 registers them.
+  pass; slugs cut at a word boundary. Prompt versions move (t9_write v4, writing_memory_eval v3, v2 of t9_repair,
+  s1/t2_brand_audit, a3_place_card, a3_place_card_check, s1/t2_generate, s1/t2_judge, s1/t2_flag_fix,
+  t9_faq_answer_fit, t10_claims, t10_judge) — CIS 387 registers all sixteen. A T9 meta of 130–139 that the
+  destination tail lands in the band no longer costs a fit call or an F4 hold.
 - The paid 3-piece writer smoke (critic fix F9, ~$0.50) was NOT run here: it is a live step of the code PR.
 - Not in this lane: critic fix F10 (A3 input check, unanchored-atom share) is the W1 input measurements item; F13
   (review capacity for A1 rows) is a decision for the tech lead; both stay on AA-1047.

@@ -6,8 +6,8 @@ Two halves, one hash:
   prompt versions in order, each with the source file and the symbols that hold the prompt (module-level constants
   and functions, as listed in ``docs/llm/prompt-register.md``) and ``prompt_sha256``. The hash is ``prompt_hash_of``:
   sha256 over the exact source text of those symbols (read with ``ast``, never imported), so editing other code in
-  the file does not change it, and editing the prompt does (AA-1047: a prompt whose symbols read the writing policy,
-  `_wp.`, also hashes the compiled policy_sha, so a policy edit is a prompt edit). The CI gate
+  the file does not change it, and editing the prompt does (AA-1047: a prompt whose source FILE reads the writing
+  policy, ``reads_policy``, also hashes the compiled policy_sha, so a policy edit is a prompt edit). The CI gate
   ``tests/unit/test_aa900_prompt_registry_gate.py`` (``scripts/prompt_registry_check.py``) fails when the newest
   version of a stage no longer matches its source: a prompt change needs a version bump
   (``scripts/prompt_registry_check.py --bump``).
@@ -83,15 +83,117 @@ def prompt_hash_of(source_path: str, symbols: list[str], root: Path = REPO_ROOT)
     if missing:
         raise PromptSourceError(f"{source_path}: no module-level symbol {', '.join(missing)}")
     joined = _SEPARATOR.join(sources[s] for s in symbols)
-    if POLICY_REF in joined:
-        # AA-1047: a prompt rendered from the writing policy (`_wp.fill` / `_wp.fragment`) changes when the policy
-        # does, so the policy_sha is part of its hash (a policy edit needs a version bump like a code edit).
+    if POLICY_REF in joined or reads_policy(source_path, root):
+        # AA-1047: a prompt rendered from the writing policy (`_wp.fill` / `_wp.fragment`, a policy band constant)
+        # changes when the policy does, so the policy_sha is part of its hash (a policy edit needs a version bump
+        # like a code edit).
         joined += _SEPARATOR + "writing_policy:" + _policy_sha(root)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 POLICY_REF = "_wp."
+POLICY_MODULE = "services.quality.writing_policy"
 POLICY_COMPILED = "services/quality/writing_policy.compiled.json"
+_IMPORT_DEPTH = 3
+
+
+def _module_file(module: Optional[str], root: Path) -> Optional[Path]:
+    if not module:
+        return None
+    base = root / module.replace(".", "/")
+    for path in (base.with_suffix(".py"), base / "__init__.py"):
+        if path.is_file():
+            return path
+    return None
+
+
+def _module_names(path: Path, root: Path) -> tuple[dict[str, ast.AST], set[str], dict[str, tuple[str, str]]]:
+    """(module-level definitions by name, local names bound to the writing policy, other imports
+    {local: (module, name)}) of one file. Imports anywhere in the file count (a function-level import too)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    defs: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defs[node.name] = node
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:  # `SEO_META_MIN, SEO_META_MAX = _wp.band("meta")` binds both names
+                for n in ast.walk(target):
+                    if isinstance(n, ast.Name):
+                        defs[n.id] = node
+    policy: set[str] = set()
+    imports: dict[str, tuple[str, str]] = {}
+    package = list(path.resolve().relative_to(root.resolve()).with_suffix("").parts)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            policy.update(a.asname or a.name.split(".")[0] for a in node.names if a.name == POLICY_MODULE)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                module = ".".join(package[:-node.level] + ([node.module] if node.module else []))
+            for a in node.names:
+                local = a.asname or a.name
+                if module == POLICY_MODULE or (module == "services.quality" and a.name == "writing_policy"):
+                    policy.add(local)
+                else:
+                    imports[local] = (module, a.name)
+    return defs, policy, imports
+
+
+def _name_reads_policy(path: Path, name: str, root: Path, depth: int, seen: set) -> bool:
+    """True when the module-level `name` of `path` reaches the writing policy through the names its definition uses
+    (same file), or through a CONSTANT it imports from another repository module (up to `_IMPORT_DEPTH` hops)."""
+    defs, policy, imports = _module_names(path, root)
+    stack = [name]
+    while stack:
+        n = stack.pop()
+        if (path, n) in seen:
+            continue
+        seen.add((path, n))
+        if n in policy:
+            return True
+        if n in defs:
+            stack.extend(x.id for x in ast.walk(defs[n]) if isinstance(x, ast.Name))
+        elif n in imports and depth < _IMPORT_DEPTH:
+            module, orig = imports[n]
+            other = _module_file(module, root)
+            if other is None:
+                continue
+            target = _module_names(other, root)[0].get(orig)
+            if target is None or isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue  # a helper's output is behaviour, not prompt text; only imported constants are followed
+            if _name_reads_policy(other, orig, root, depth + 1, seen):
+                return True
+    return False
+
+
+def reads_policy(source_path: str, root: Path = REPO_ROOT) -> bool:
+    """AA-1047 (S272 review): True when the prompt source FILE reads the writing policy: it imports the policy module
+    (or a name from it), or it imports a constant whose value comes from the policy (SEO_META_MIN from
+    seo_meta_utils, FAQ_MIN_PAIRS from quality_gates). File level on purpose: a stage's prompt is often rendered from
+    module constants and helpers the manifest does not list (`_BACKGROUND` in s1_writer_v2, the S1 flag-fix meta rules
+    inside flag_fix_node), so a test on the hashed symbols' text alone missed four stages. A policy edit then bumps
+    every such stage, the honest over-approximation (scripts/prompt_registry_check.py --bump, one migration)."""
+    path = (root / source_path).resolve()
+    try:
+        _defs, policy, imports = _module_names(path, root)
+    except (OSError, SyntaxError, ValueError):
+        return False
+    if policy:
+        return True
+    seen: set = set()
+    for local, (module, orig) in imports.items():
+        other = _module_file(module, root)
+        if other is None or other.resolve() == path:
+            continue
+        try:
+            target = _module_names(other, root)[0].get(orig)
+            if target is not None and not isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                    and _name_reads_policy(other, orig, root, 1, seen):
+                return True
+        except (OSError, SyntaxError, ValueError):
+            continue
+    return False
 
 
 def _policy_sha(root: Path) -> str:
