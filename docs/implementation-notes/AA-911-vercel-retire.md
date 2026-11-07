@@ -60,3 +60,9 @@ the shared ALB and the ECS service `aa-cis-dev-admin` serves it. Root notes: `do
   `preview-signin`, the label `preview-signin`.
 - `.claude/CLAUDE.md` still says the admin runs on Vercel; agents do not edit that file, so it is listed as a
   follow-up for the tech lead.
+- **No pre-merge signed-in check for the CIS admin after this PR.** The fixed Preview host (`alias_only_url` dispatch,
+  label `preview-signin`, viewer-capped E2E user) was the only way to see unmerged CIS code signed in. `Visual (next
+  start)` covers the public pages and the kit gallery only (no session, no mocked API), and the A10b `admin-evidence`
+  project signs in on the production host, so it captures deployed code. Staff pages are verified signed in after
+  merge only (`smoke-production` / `visual-production` in `Deploy Admin Dev`). A mocked-API staff run in CIS Visual,
+  like Booking's, is the follow-up that would close the gap.
