@@ -22,8 +22,10 @@
 --      lenses differ: the tech lead decides) or audit (an agreed claim drawn into the random 20% audit, critic F14).
 --      Rows are grouped in a label set and its version (set_id CL-1 / L2 / t2@2, set_version x.y.z); a version is
 --      immutable (no UPDATE grant): a relabel is a new version. split (train | held_out) is frozen by a hash of the
---      object's content sha, so every claim of one object falls on the same side; stratum (hard | representative |
---      mutants | traps) is the audit's sampling stratum. policy_sha (nullable) is the sha of the policy text the
+--      object's group key (its tour_id, else sample_id, piece_id or version_id, else its content sha), so every
+--      object of one tour (master versions, tenant versions, blog and social pieces) falls on the same side and a
+--      regenerated object keeps its side; stratum (hard | representative | mutants | traps) is the audit's sampling
+--      stratum. policy_sha (nullable) is the sha of the policy text the
 --      label was made under.
 --   2. The disagreement queue (shared.writing_memory_disagreement, CIS 314) accepts source 'golden_claim': a disputed
 --      or audit-drawn claim (source_ref = the label_id of its first panel row) waiting for the tech lead's one-click
@@ -150,7 +152,8 @@ COMMENT ON COLUMN shared.eval_claim_label.claim_hash IS
     'AA-1048 (388): sha256 hex of "<content_sha256>:<field>:<normalised span text>" '
     '(services/ground_truth/claims.py); the key of the panel export / import JSONL.';
 COMMENT ON COLUMN shared.eval_claim_label.split IS
-    'AA-1048 (388): train | held_out, frozen by a hash of content_sha256 (every claim of one object on one side).';
+    'AA-1048 (388): train | held_out, frozen by a hash of the object''s group key (tour_id, else sample_id, '
+    'piece_id or version_id, else content_sha256): every object of one tour on one side.';
 COMMENT ON COLUMN shared.eval_claim_label.adjudication IS
     'AA-1048 (388): on panel rows the claim''s state after the panel (agreed | disputed | audit: drawn into the '
     'random 20% audit of agreed claims); final on a tech-lead row, which wins over the panel.';
