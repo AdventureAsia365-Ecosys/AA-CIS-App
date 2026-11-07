@@ -86,4 +86,3 @@ def regressed(prev_ledger: Optional[list], cur_ledger: Optional[list]) -> tuple[
     prev, cur = blocking_keys(prev_ledger), blocking_keys(cur_ledger)
     new = cur - prev
     return frozenset(new), bool(new) and len(cur) >= len(prev)
-

@@ -87,7 +87,8 @@ from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.acp_content_writing import route_table  # AA-1049 (the one T9 route table)
 from services.acp_content_writing import seo_builder  # AA-1049 (code-composed SEO fields)
-from services.acp_content_writing import stable_keys  # AA-1049 (stable-key regression guard + stop rule)
+from services.acp_content_writing import stable_keys  # AA-1049 (stable-key regression guard)
+from services.acp_content_writing import piece_store  # AA-1049 R0b (the store seam a replay swaps for a dry store)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
@@ -2875,6 +2876,16 @@ async def _finalize_piece(
     writer_input: Optional[dict] = None,
     final_contract: Optional[dict] = None,
 ) -> dict:
+    # AA-1049 R0b — the PieceStore seam: inside piece_store.use_store(DryStore()) (an offline replay) the row is
+    # recorded with its stored sha and stamped contract, and no database is touched. Production never sets a store.
+    dry = piece_store.active()
+    if dry is not None:
+        return await dry.finalize(
+            pool, piece_id=piece_id, attempt_number=attempt_number, content_text=content_text, status=status,
+            held_reason=held_reason, gate_ledger=gate_ledger, repair_log=repair_log, flags=flags, seo_title=seo_title,
+            meta_description=meta_description, slug=slug, content_summary=content_summary,
+            content_embedding=content_embedding, discarded_attempts=discarded_attempts, writer_input=writer_input,
+            final_contract=final_contract)
     # AA-514 — seo_title/meta_description/slug default None (the exception handler's own
     # "failed" finalize call above never has a real seo_meta to pass, and every non-blog piece
     # is None either way) — same "NULL means never populated/not applicable" convention every

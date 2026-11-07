@@ -22,8 +22,8 @@ and what is left after the repair budget: ``cut`` (a `truth` row's item may be c
 `cut_finding` row's item only when its finding says to cut) or ``hold`` (`quality_gates.hold_failure`, never for a
 `style_only` row; the F9 classes by `F9_CLASS_ACTIONS`).
 
-Pure: reads the compiled policy, `route_table.yaml` and the registry, imports nothing from the content-writing modules (quality_gates
-and sentence_repair import it). The derived sets are byte-equal to the S271 hand-written ones
+Pure: reads the compiled policy, `route_table.yaml` and the registry, imports nothing from the content-writing modules
+(quality_gates and sentence_repair import it). The derived sets are byte-equal to the S271 hand-written ones
 (tests/unit/test_aa926_equivalence.py replays every routing decision unchanged; tests/unit/quality/
 test_aa1049_route_table.py is the coverage lint: exactly one row per T10 gate id).
 """
@@ -155,7 +155,8 @@ def schema_errors(doc: Optional[dict] = None, policy_rows: Optional[list[dict]] 
     _need(len(gates) == len(set(gates)), "route_table.yaml: exactly one row per gate", e)
     by_gate = {r["gate"]: r for r in policy_rows}
     _need(set(gates) == set(by_gate), "route_table.yaml and writing_policy route_rows must route the same gates "
-          f"(only here: {sorted(set(gates) - set(by_gate))}, only in the policy: {sorted(set(by_gate) - set(gates))})", e)
+          f"(only here: {sorted(set(gates) - set(by_gate))}, "
+          f"only in the policy: {sorted(set(by_gate) - set(gates))})", e)
     for r in rows:
         e.extend(row_errors(r, by_gate.get(r.get("gate"))))
     channels = (doc.get("truth_cut") or {}).get("cut_not_hold_channels")
@@ -232,8 +233,8 @@ def coverage_errors() -> list[str]:
     rows = [r.get("gate") for r in mechanics().get("rows") or []]
     for g in sorted(live - set(rows)):
         out.append(f"T10 gate {g!r} has no route row")
-    for g in sorted({g for g in rows if rows.count(g) > 1}):
-        out.append(f"gate {g!r} has {rows.count(g)} route rows")
+    for dup in sorted({g for g in rows if rows.count(g) > 1}):
+        out.append(f"gate {dup!r} has {rows.count(dup)} route rows")
     known = set(qr.GATE_CONSTANTS.values())
     for g in rows:
         if g not in known:
