@@ -2668,7 +2668,7 @@ def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
 
 _REVIEW_MAX_PAGE_SIZE = 200
 _MANUAL_CHECK_REVIEW_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK", "UNSUPPORTED_NUMBER",
-                              "UNSUPPORTED_CLAIM", "POLICY_ELEPHANT_RIDING"}
+                              "UNSUPPORTED_CLAIM"}
 
 
 def _review_block(score, codes: list, failures: list, brand_audit_status) -> dict:
@@ -2681,8 +2681,7 @@ def _review_block(score, codes: list, failures: list, brand_audit_status) -> dic
     cs = set(codes or [])
     manual = sorted(cs & _MANUAL_CHECK_REVIEW_CODES)
     if manual or brand_audit_status == "manual_check":
-        why = {"FACT_CHECK_MANUAL_CHECK": "fact check",
-               "POLICY_ELEPHANT_RIDING": "elephant riding (policy: kept as it is for a person)",
+        why = {"FACT_CHECK_MANUAL_CHECK": "fact check (e.g. elephant riding)",
                "PRODUCT_TRUTH_RISK": "product-truth risk",
                "UNSUPPORTED_NUMBER": "number not in the source",
                "UNSUPPORTED_CLAIM": "claim not in the source"}

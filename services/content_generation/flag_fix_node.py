@@ -494,11 +494,10 @@ def flag_fix_node(state: dict) -> dict:
         }
     # S271 W0 (root ADR 0020 D8): an elephant-riding tour is kept as it is for a human; a whole-field rewrite here
     # (source-blind) could take the ride out, which the policy forbids. No LLM edit; the tour stays manual_check.
-    # The detector must hit the page or the source too (AA-1047: the policy has its own code; LEGACY_CODE kept for a
-    # state that still carries the pre-split one).
+    # The code is shared with the LLM audit's other fact checks, so the detector must hit the page or the source too.
     from services.quality import elephant_policy as _ep
-    _ep_codes = set(state.get("brand_audit_codes") or [])
-    if {_ep.POLICY_CODE, _ep.LEGACY_CODE} & _ep_codes and _ep.scan(state.get("generated"), state.get("tour")):
+    if _ep.POLICY_CODE in (state.get("brand_audit_codes") or []) and _ep.scan(state.get("generated"),
+                                                                              state.get("tour")):
         logger.info("flag_fix_skipped_policy_keep", reason="elephant_riding")
         return {
             **state,

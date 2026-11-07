@@ -79,15 +79,14 @@ def test_s1_grounding_not_run_or_stale_is_a_review():
 def test_s1_elephant_riding_alone_is_a_policy_hold():
     page = _content(highlights=["An elephant ride along the river"])
     c = fc.check_s1(_s1(content=page, brand_audit_status="manual_check",
-                        brand_audit_codes=["POLICY_ELEPHANT_RIDING"]), exit="hitl", actual="hitl")
+                        brand_audit_codes=["FACT_CHECK_MANUAL_CHECK"]), exit="hitl", actual="hitl")
     assert c.verdict == fc.POLICY_HOLD and c.agrees is True
 
 
 def test_s1_elephant_with_another_manual_check_is_a_review():
     page = _content(highlights=["An elephant ride along the river"])
     c = fc.check_s1(_s1(content=page, brand_audit_status="manual_check",
-                        brand_audit_codes=["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"],
-                        brand_audit_issues=["A rare marsh cat is named in a valley it does not live in."]),
+                        brand_audit_codes=["FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK"]),
                     exit="done", actual="hitl")
     assert c.verdict == fc.REVIEW and "MANUAL_CHECK" in c.codes()
 
@@ -114,7 +113,7 @@ def test_s1_input_from_row_reads_a_stored_version():
            "aa_description": "", "aa_highlights": json.dumps(["The gorge"]), "aa_itineraries": PAGE_ITIN,
            "seo_title": "Karsh Gorge Walk", "seo_meta": META, "src_itineraries": SRC_ITIN, "duration": "4 days",
            "failure_codes": "[]", "brand_audit_status": "pass", "brand_audit_codes": "[]",
-           "brand_audit_issues": "[]", "fix_pass_applied": False, "human_edited": False, "score_overall": 9.0,
+           "fix_pass_applied": False, "human_edited": False, "score_overall": 9.0,
            "metadata": json.dumps({"writer_version": "v2", "grounding": {"violations": []}}), "status": "approved"}
     rec = store.s1_record_from_row(row, "auto_publish")
     assert rec["verdict"] == fc.PUBLISH and rec["actual"] == "approved" and rec["agrees"] is True

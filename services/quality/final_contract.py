@@ -59,6 +59,10 @@ HELD = "held"
 # The verdict that lets the object out as a clean pass, per workflow (the rest keep it for a human or a label).
 PASS_VERDICT = {S1: PUBLISH, T2: AI_GENERATED, T9: APPROVED}
 
+# The contract's own finding for an elephant-riding detector hit (``elephant_policy.POLICY_HOLD``). Not a brand-audit
+# code: the brand audit records the policy as FACT_CHECK_MANUAL_CHECK (``elephant_policy.POLICY_CODE``).
+ELEPHANT_RIDING = "ELEPHANT_RIDING"
+
 # Severity of one finding: ``block`` decides the verdict (in enforce mode it would hold), ``warn`` is recorded only.
 BLOCK, WARN = "block", "warn"
 
@@ -351,7 +355,6 @@ class S1Input:
     failure_codes: list = field(default_factory=list)
     brand_audit_status: Optional[str] = None
     brand_audit_codes: list = field(default_factory=list)
-    brand_audit_issues: list = field(default_factory=list)
     fix_pass_applied: bool = False
     writer_version: Optional[str] = None
     grounding_ran: bool = False
@@ -374,7 +377,6 @@ def s1_input_from_state(state: dict) -> S1Input:
         failure_codes=list(state.get("failure_codes") or []),
         brand_audit_status=state.get("brand_audit_status"),
         brand_audit_codes=list(state.get("brand_audit_codes") or []),
-        brand_audit_issues=list(state.get("brand_audit_issues") or []),
         fix_pass_applied=bool(state.get("fix_pass_applied")),
         writer_version=state.get("writer_version"),
         grounding_ran=bool(state.get("grounding_ran")),
@@ -419,7 +421,6 @@ def s1_input_from_row(row: Any) -> S1Input:
         failure_codes=[str(c) for c in _json(_get(row, "failure_codes"), [])],
         brand_audit_status=_get(row, "brand_audit_status"),
         brand_audit_codes=[str(c) for c in _json(_get(row, "brand_audit_codes"), [])],
-        brand_audit_issues=list(_json(_get(row, "brand_audit_issues"), [])),
         fix_pass_applied=bool(_get(row, "fix_pass_applied")),
         writer_version=metadata.get("writer_version"),
         grounding_ran=grounding is not None,
@@ -505,14 +506,14 @@ def check_s1(inp: S1Input, *, exit: str, actual: Optional[str] = None) -> Contra
 
     # the brand audit (deterministic pre-audit codes + the product-truth codes) and the elephant-riding policy
     policy_hits = elephant_policy.scan(content, source)
-    policy_only = elephant_policy.is_policy_only_hold(inp.brand_audit_status, inp.brand_audit_codes, content, source,
-                                                      issues=inp.brand_audit_issues)
+    policy_only = elephant_policy.is_policy_only_hold(inp.brand_audit_status, inp.brand_audit_codes, content, source)
     if policy_hits:
-        found.append(finding("POLICY_ELEPHANT_RIDING", BLOCK, class_id="policy.elephant_riding",
+        found.append(finding(ELEPHANT_RIDING, BLOCK, class_id="policy.elephant_riding",
                              detail=f"{policy_hits[0]['where']} {policy_hits[0]['field']}"))
     if inp.brand_audit_status == "manual_check" and not policy_only:
-        codes = [c for c in inp.brand_audit_codes if c != elephant_policy.POLICY_CODE]
-        found.append(finding("MANUAL_CHECK", BLOCK, class_id="gate.brand_audit", detail=", ".join(codes)))
+        # the policy shares FACT_CHECK_MANUAL_CHECK with the LLM audit's other fact checks: every code is listed
+        found.append(finding("MANUAL_CHECK", BLOCK, class_id="gate.brand_audit",
+                             detail=", ".join(inp.brand_audit_codes)))
     elif inp.brand_audit_status == "flagged" and not inp.fix_pass_applied:
         found.append(finding("BRAND_FLAGGED_UNFIXED", BLOCK, class_id="gate.brand_audit",
                              detail=", ".join(inp.brand_audit_codes)))
@@ -593,7 +594,7 @@ def check_t2(inp: T2Input, *, exit: str, actual: Optional[str] = None) -> Contra
         found.append(finding("FALLBACK_WRITER", BLOCK, class_id="contract.degraded"))
     hits = elephant_policy.scan(content, {**(inp.raw_source or {}), **{"country": master.get("country")}})
     if inp.policy_hold or hits:
-        found.append(finding("POLICY_ELEPHANT_RIDING", BLOCK, class_id="policy.elephant_riding",
+        found.append(finding(ELEPHANT_RIDING, BLOCK, class_id="policy.elephant_riding",
                              detail=(f"{hits[0]['where']} {hits[0]['field']}" if hits else "policy_hold")))
     if any("—" in str(_field_value(content.get(k))) for k in ("subtitle", "summary", "highlights",
                                                                    "itineraries", "seo_title", "seo_meta")):

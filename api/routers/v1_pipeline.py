@@ -507,7 +507,6 @@ _APPROVE_GATE_SQL = """
     SELECT gc.id::text AS generated_content_id, COALESCE(gc.human_edited, false) AS human_edited,
            gc.fix_pass_applied, gc.metadata,
            qs.score_overall::float AS score_overall, qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes,
-           qs.brand_audit_issues,
            gc.aa_name, gc.aa_subtitle, gc.aa_summary, gc.aa_description, gc.aa_highlights::text AS aa_highlights,
            gc.aa_itineraries, gc.seo_title, gc.seo_meta,
            rt.country, rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
@@ -517,7 +516,7 @@ _APPROVE_GATE_SQL = """
     JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
     LEFT JOIN LATERAL (
-        SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes, q.brand_audit_issues
+        SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes
         FROM silver_aa_internal.quality_scores q
         WHERE q.generated_content_id = gc.id
         ORDER BY q.evaluated_at DESC

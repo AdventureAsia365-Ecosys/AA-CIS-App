@@ -37,7 +37,6 @@ S1_ROW_COLUMNS = """
     gc.aa_name, gc.aa_subtitle, gc.aa_summary, gc.aa_description, gc.aa_highlights::text AS aa_highlights,
     gc.aa_itineraries, gc.seo_title, gc.seo_meta,
     qs.score_overall::float AS score_overall, qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes,
-    qs.brand_audit_issues,
     rt.country, rt.duration, rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
     rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
     rt.activities::text AS activities, rt.price_raw
@@ -46,7 +45,7 @@ S1_ROW_FROM = """
     FROM silver_aa_internal.generated_content gc
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
     LEFT JOIN LATERAL (
-        SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes, q.brand_audit_issues
+        SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes
         FROM silver_aa_internal.quality_scores q
         WHERE q.generated_content_id = gc.id
         ORDER BY q.evaluated_at DESC, q.id DESC

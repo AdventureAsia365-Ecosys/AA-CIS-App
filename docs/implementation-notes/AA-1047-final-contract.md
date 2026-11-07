@@ -46,108 +46,10 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
 - **Policy values through one interface.** `final_contract.policy_value()` (meta band, title max, FAQ counts, CTA
   count) holds the decision-page values. **l1 merge note:** point `policy_value` at the policy registry
   (`writing_policy.yaml`) instead of `_W1_DEFAULTS`; no check changes.
-- **Elephant code split (follow-up 6).** The detector now emits `POLICY_ELEPHANT_RIDING` (in
-  `brand_audit_node._MANUAL_CHECK_CODES`, taxonomy `a1_codes`, the review label and the review-model product-truth set);
-  `FACT_CHECK_MANUAL_CHECK` stays the LLM audit's own code. `is_policy_only_hold` keeps a hold when any other manual-check
-  reason is present. Fix pass (review findings): the audit issues are read per issue, not per word "elephant".
-  `names_riding` = the issue names elephant RIDING (the detector's phrases; a bare "elephant safari" only with a ride
-  cue), so "wild elephant sightings" or "an elephant sanctuary" is not the policy. Fix pass 2 (two reviews: the
-  first fix used an allow-list of concern words and failed OPEN, "Day 4 adds a hot-air balloon flight" next to a ride
-  issue was a keep): the rule is inverted and fails CLOSED. `other_product_truth_issues` = every non-empty issue that
-  is not accounted for: an issue about the ride is split into clauses (`;`, `.`, `,`, "and (also)", "but" ...) and its
-  clauses that do not name the ride are judged alone (review boilerplate such as "needs a manual check" is dropped);
-  any other issue counts unless `is_voice_issue` (a narrow voice / SEO / format term: meta / title / subtitle /
-  characters / hype / tone / calm / more specific ..., AND no product-truth term from a broad denylist). Rules: policy
-  code alone = keep; policy code + the LLM's `FACT_CHECK_MANUAL_CHECK` = keep only with at least one riding issue and
-  no unaccounted issue (an unexplained fact check holds); a pre-split `FACT_CHECK_MANUAL_CHECK` alone = keep only with
-  no unaccounted issue. Kept on purpose: a legacy row with NO issue text stays a keep (the S271 rule, the detector hit
-  is the policy). Changed on purpose (fail safe): a legacy judge-path row whose judge praise names a product-truth
-  word ("the 4-day duration reads well", "faithful to the source") now holds; the reviewer edits + re-validates
-  (which re-audits and emits `POLICY_ELEPHANT_RIDING`) or overrides with a reason. `issues` given as a bare string or
-  dict is one issue. The approve gate SQL reads `quality_scores.brand_audit_issues`. Not changed:
-  `brand_standards.py` still tells the LLM "Elephant riding: always FACT_CHECK_MANUAL_CHECK" (a prompt change moves
-  every A1 audit and needs its own regression run, and a detector miss would then lose the LLM's fail-safe hold on
-  the ride); once it stops, POLICY + FACT_CHECK can simply hold. Fix pass 3 (probing the usual LLM wordings): the
-  review-boilerplate list also takes relative links ("which", "that"), verification verbs ("must be manually
-  verified") and bare locators ("(Day 3)", "in the highlights"), so "Itinerary includes elephant riding (Day 3), which
-  must be manually verified" is the policy, while "..., which is not in the source" still holds ("not" / "source"
-  are not filler).
-  Fix pass 4 (review findings 3-5). (3) Locators were filler everywhere and digits were dropped, so "Elephant
-  riding on Day 2. Day 5 must be verified." or "..., verify the summary." was a keep. Now digits are words, a "day N"
-  is boilerplate only for the ride's own day, and a locator / field name (day, highlights, itinerary, summary,
-  description) is boilerplate only in a clause ATTACHED to the ride (a parenthetical right after it, or a "which /
-  that" relative). (4) The riding clause was dropped whole, so "Elephant riding with a free spa massage the source
-  does not list" or "Elephant riding on Day 3 is not in the source" was a keep. Now the ride is masked and the rest is
-  judged: a source / truth negation (source, not listed / in / mentioned, lacks, unsupported, invented, "cannot
-  confirm" ...) or a joiner (with, including, followed by, to, where, plus ...) followed by a non-filler word holds.
-  "is included on Day 2" and "requires a manual fact check" stay keeps. (5) `codes == {POLICY_ELEPHANT_RIDING}` is
-  still a keep without reading issues, because `brand_audit_node.with_model_manual_code` now adds
-  `FACT_CHECK_MANUAL_CHECK` to a model "manual_check" verdict that carries no manual-check code (also on a v2 draft,
-  where the model's other codes are report-only), so the LLM's issues are always read in the {POLICY, FC} branch.
-  Rows with the policy code alone come from the deterministic paths (judge feedback, no tenant brand), whose issue
-  text is not a fact-check verdict (reading it would hold every judged elephant tour on praise).
-  Fix pass 5 (review of 1f281a8c, blocking): that premise was false. `status` is optional in the audit schema (Luna
-  drops it), the model may answer "flagged", and on a v2 draft every model code outside the manual-check set is
-  report-only, so the LLM audit could store the policy code alone with an unrelated issue ("the Day 4 balloon flight
-  is not in the source") and the approve gate dropped it. Now (a) `codes == {POLICY_ELEPHANT_RIDING}` reads the
-  issues by the same rule (empty issues stay a keep; the judge path's praise that names a content word holds, one
-  click); (b) `brand_audit_node.with_policy_fact_check` adds `FACT_CHECK_MANUAL_CHECK` on an elephant tour when the
-  model emits any code outside a known voice-code list (`_VOICE_MODEL_CODES`; an unknown code fails closed), so a
-  product-truth code with no issue text holds; (c) HIGHLIGHTS_WILDLIFE_UNVERIFIED, SUBTITLE_TRIP_TYPE_MISMATCH,
-  SEO_TITLE_WRONG_ACTIVITY and ITINERARY_MEAL_TIME_INVENTED are no longer report-only on a v2 draft (they gate as
-  `flagged`, for every tour, not only elephant ones). Findings 5 and 6: both issue rules are allowlists. The riding
-  clause, the ride masked, is the policy only when every remaining word is review filler, a ride locator, "with",
-  "camp" or a digit ("was added by the writer", "is hallucinated", "after a private helicopter transfer" hold; a
-  named camp holds too, an accepted false hold); "&" and "/" split clauses. A voice issue may hold only field names,
-  voice / SEO / format vocabulary, quoted hype words and function words (`_VOICE_ALLOWED_WORDS`); "the meta
-  description is too long and features a private yacht" holds.
-- **F9 claim span (follow-up 3).** `f9_policy.claim_span` picks the clause of the quoted sentence that holds the
-  judge's claim (most shared words), with the sentence's trip subject in front when the clause continues its verb
-  phrase ("you visit the market and taste the tea") or, fix pass, when it names a service, a time or a view (a
-  relative / attached clause: "..., where dinner is served on the terrace", "Day 3 is a free day, with a cooking
-  class"). Fix pass 2 (review: the span alone dropped ACTIVITY promises in attached / list clauses to warn, "You
-  stay in the village, where a kayak excursion awaits", "You visit the market, the temple and the floating
-  village"): `claim_kinds` fails safe. The claim's clause is demoted to warn ONLY when `_is_place_background` proves
-  it: no trip subject / service / inclusion / activity verb or noun / offer verb ("awaits", "points out") / clock
-  time, and a place-describing clause (a relative with a background marker: built, founded, "for 900 years", famed,
-  "was paved"; a relative right after a locative clause "near the fort, which ..."; or a locative clause). A view /
-  time word is allowed there only under a marker or a locative antecedent ("near the temple famed for its views",
-  "where monks have chanted at dawn for centuries"). Otherwise the span's kinds, and when the span names none, the
-  whole sentence's kinds. The trip subject is not put in front of a background clause. `claim_span` takes the
-  lexicon (place names masked: 'Camp Road'), and a claim-word tie goes to the clause with the claim's verb-like words
-  ("Camp Road was paved" -> "which was paved in 1990"). A claim with no word in common with the sentence
-  (paraphrase, placeholder) falls back to the whole sentence (fail safe, the pre-W1 behaviour).
-  Fix pass 3: `INCLUSION_RE` "built in" no longer matches a date ("which was built in 1200" is place history; "time
-  to swim is built in" is still an inclusion); a relative after a locative antecedent with a time word and no
-  background marker ("near the old fort, which comes alive with a lantern parade each evening") is not proven
-  background; event nouns (parade, festival, concert, fireworks, procession, dance) count as activity nouns.
-  Fix pass 4 (review finding 1, blocking regression from pass 3, and finding 2). The background marker had a
-  catch-all passive ("was / were / had been" + participle), so "You stay at the Bay Lodge, which was chosen for its
-  sunset views" was background and warned. Now: no catch-all (history verbs only; "named" only with after / by / in
-  a year); a relative clause whose antecedent head noun is the trip's stay / vehicle / table (lodge, camp, hotel,
-  junk, boat, room ..., or a SERVICE_RE noun) is never background; a view word with room / deck / balcony / terrace /
-  every / private, or a view / time word after "with", is never background. Finding 2 (fail-open on main too): a
-  service noun is a promise on its own (no subject needed); a present passive promise ("is served / reached /
-  explored / watched / cruised") and the reader or the group as the object of a doing verb ("teach you", "takes the
-  group") count as the trip subject and as an activity; a highlight / list line or a bullet is about the trip; the
-  service lexicon takes cruise, balloon (flight), tuk-tuk, boat, junk, kayak, bicycle, naturalist, ranger, mahout ...
-  Fix pass 5 (review of 1f281a8c). Finding 1 (blocking): the fame markers (famous, renowned, known for, once,
-  legend, said to) matched inside a relative clause whose verb is an offer ("where a family famous for its noodles
-  cooks a feast"), so the clause was background and the whole-sentence fallback never ran. The markers are now three
-  kinds: history (past / perfect / dated, always a marker), stative (sits, stands, lies, is perched ...), and fame,
-  which counts only as a copula predicate ("which is famous for its noodles") or, in a locative clause, as an
-  adjective that ends it ("near the temple famed for its views"). A locative clause with no marker is background only
-  when it is a bare place phrase (six words at most, no view / time). Finding 2 (blocking): a relative clause after
-  a clause where the trip stays on / boards a NAMED place ("You board the Jasmine", "You overnight at Ondra Retreat")
-  is never background, whatever the head noun; and after any trip-subject clause a view / time / stay-amenity word
-  (sundeck, pool, yoga ...) in the relative holds unless the marker is history. Finding 3 (major, pre-existing):
-  the passive takes any one word between auxiliary and participle and the perfect ("has / have / had been
-  arranged"); TRIP_SUBJECT takes "visitors" and a bare "everyone"; SERVICE takes feast, banquet, barbecue, drinks,
-  cocktail, massage, spa, sail, demo and any compound "-boat"; an offer verb (awaits, rounds off, ends with, takes
-  in, whisks, performs, plays, demonstrates, leads ...) or an event / offer noun (demo, blessing, music, band,
-  massage, session, viewing, cruise, tour ...) is an activity when there is a trip subject or no proven background
-  marker. The offer guard uses a narrower noun list than the background check (no walk / ride / visit, which double
-  as plain verbs: "Pilgrims walk the circuit at dawn" stays quiet).
+- **Follow-ups 3 and 6: reverted (S272 tech lead decision).** "F9 classifies the claim span" and "split the
+  elephant code from FACT_CHECK_MANUAL_CHECK" went through three adversarial review rounds without converging:
+  each fix was a heuristic regex over free judge / LLM-audit text, and each round found a new fail-open wording.
+  Both are back to main behaviour (see Changed) and deferred to W2.
 - **/stats (follow-up 1).** The F9_cta_fact gate rows count in `failed` / `blocking_failed` only the entries with a
   content class; `failed_judge_unavailable` / `failed_text_integrity` count the rest; `f9_classes` sums the classes per
   channel (stored `f9_policy.classes`, else parsed).
@@ -161,35 +63,46 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
 - `api/routers/admin_pipeline.py`, `api/routers/v1_pipeline.py`, `services/export/handler.py`,
   `services/jobs/t2_rewrite_job.py`, `services/acp_content_writing/service.py`, `api/routers/admin_content_quality.py`,
   `api/routers/v1_tours.py`: the exits above.
-- Follow-ups: `f9_policy.py` (claim span), `gate_eval.ledger_snapshot(..., lexicon)` (service passes `hyg.lexicon`),
+- Follow-ups kept: `gate_eval.ledger_snapshot(..., lexicon)` (service passes `hyg.lexicon`),
   `writing_memory/replay.stored_failures` skips `repair_mode in ('stop_and_label', 'label')`,
-  `scripts/quality/replay_aa900_w0.py` maps writer_input `seed` / `trip`, `/stats` split, the elephant code split.
+  `scripts/quality/replay_aa900_w0.py` maps writer_input `seed` / `trip`, `/stats` split.
 - New: `scripts/quality/final_contract_report.py` (read-only report), `tests/unit/test_aa1047_final_contract.py`,
   `tests/unit/test_aa1047_final_contract_topology.py`, `tests/unit/test_aa1047_w0_followups.py`,
   `tests/integration/test_aa1047_final_contract_store.py`; chain-order and a few existing tests updated for the
-  intended changes (process_export's `contract_exit`, the new elephant code, the normalizer).
+  intended changes (process_export's `contract_exit`, the normalizer).
 
 - Resume after the S272 machine crash: `scripts/quality/final_contract_report.py` is force-added (`scripts/` is in
   `.gitignore`; the other tracked scripts were added the same way), the store integration test uses a listed country
-  (`raw_tours.country` is constrained), the AA-986 approve-race export stub forwards `contract_exit`, and the AA-739
-  review-block test follows the elephant label split.
+  (`raw_tours.country` is constrained), and the AA-986 approve-race export stub forwards `contract_exit`.
+
+- **Follow-ups #3 and #6 reverted to main behaviour, deferred to W2** (S272 tech lead decision: three adversarial
+  rounds did not converge; heuristic regexes over free text kept failing open). W2 does them on claim-level ground
+  truth with a calibrated instrument (root ADR 0020), not by more regexes. Restored from `origin/main`:
+  `services/acp_content_writing/f9_policy.py` (no `claim_span` / `claim_kinds`: the whole quoted sentence is
+  classified, as in W0), `services/quality/elephant_policy.py` (`POLICY_CODE` is `FACT_CHECK_MANUAL_CHECK` again,
+  `is_policy_only_hold` = manual_check + that code alone + a detector hit, no issue reading),
+  `services/content_generation/brand_audit_node.py` (no `with_model_manual_code` / `with_policy_fact_check` /
+  `_PRODUCT_TRUTH_MODEL_CODES`: as model codes, HIGHLIGHTS_WILDLIFE_UNVERIFIED, SUBTITLE_TRIP_TYPE_MISMATCH,
+  SEO_TITLE_WRONG_ACTIVITY and ITINERARY_MEAL_TIME_INVENTED are report-only again on a v2 draft, as on main), `services/quality/approve_gate.py`,
+  `services/quality/taxonomy.yaml` (no `POLICY_ELEPHANT_RIDING` row), `services/content_generation/flag_fix_node.py`,
+  `scripts/aa645/wave_report.py`, `frontend/app/admin/review/reviewModel.ts` and their tests
+  (`tests/test_brand_audit_node.py`, `test_aa739_review_queue.py`, `test_aa645_review_round.py`,
+  `test_s218_audit_quick_fixes.py`). Partly reverted: the re-validation gate (`graph.human_edit_gate_node`) and the
+  approve gate SQL (`v1_pipeline._APPROVE_GATE_SQL`, no `brand_audit_issues`), the review block codes / labels in
+  `admin_pipeline`. Adapted kept code: the final contract calls main's `is_policy_only_hold` (no `issues`), lists
+  every brand code in its MANUAL_CHECK detail (the policy shares FACT_CHECK_MANUAL_CHECK with the LLM's other fact
+  checks), its S1 input and `final_contract_store.S1_ROW_SQL` no longer read `brand_audit_issues`, and its own
+  detector-hit finding is `ELEPHANT_RIDING` (a contract finding, not a brand-audit code). The claim-span and elephant
+  tests are removed from `tests/unit/test_aa1047_w0_followups.py` (and the approve-gate `brand_audit_issues`
+  integration test); their counter-example sentences are kept, not asserted, in
+  `tests/fixtures/aa1047_w2_claim_span_cases.json` (F9 claims with the reviewers' hold / warn label, elephant issue
+  lists with keep / hold, riding and voice-only issue texts) as W2 input.
 
 ## Tradeoffs
 
 - The publish record is written after the publish (last step of `process_export`): a contract read can never delay
   or fail a publish, and it records what was actually published. A refused publish records nothing (the refusal is
   logged by its own path).
-- Elephant issue rule (fix pass 2/3): the voice / SEO / format test and the review-boilerplate list are heuristics
-  over free LLM text, so the rule fails CLOSED: an issue is accounted for only when it is about the ride (mixed issues
-  split, every other clause judged alone) or a narrow voice / SEO / format issue with no product-truth word. The cost
-  is over-holding (a voice issue that happens to name "itinerary" holds; a reviewer clicks or edits), never a false
-  keep. The pre-split `FACT_CHECK_MANUAL_CHECK`-alone rows keep the pre-split keep on empty issues on purpose: the
-  detector added that code with no issue text, so requiring a riding issue there would turn every stored elephant
-  tour into a plain manual check.
-- F9 fix pass 4 broadens what holds (any service noun, present passives, object "you"): more false holds on
-  subjectless background that names a boat or a lunch ("fishing boats line the harbour"). Accepted by the rule "when
-  unsure, hold": a false hold costs a click, a false keep ships a promise. The counter-example tests use invented
-  place names (the file's golden-set text guard convention); the sentence shapes are the reviewer's.
 - The day-oracle codes are `block` in the contract while the oracle is still shadow in validate: the report must show
   what enforcing them would move (that is the W1 proof); precision is read on the flip list before any W3 enforce.
 - The sha "assert" is a recorded `sha_match` + an error log, not an exception: report mode never fails a write. The
@@ -209,6 +122,5 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   a reason).
 - The legacy validation handler (`services/validation/handler.py`) can set a version `approved` and is not wired; it
   has no live caller (listed in `NOT_EXITS`).
-- l1 / l2 merge: this lane touches `services/quality/taxonomy.yaml` (one `a1_codes` row) and
-  `services/acp_content_writing/f9_policy.py` (claim span); if l1 regenerates either from the policy registry, carry
-  `POLICY_ELEPHANT_RIDING` and `claim_span` over.
+- l1 / l2 merge: after the revert this lane no longer changes `services/quality/taxonomy.yaml`,
+  `services/acp_content_writing/f9_policy.py` or the elephant policy files; there is nothing to carry over there.

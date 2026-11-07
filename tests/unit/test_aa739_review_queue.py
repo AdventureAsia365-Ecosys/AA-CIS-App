@@ -7,11 +7,7 @@ from api.routers import admin_pipeline as ap
 
 def test_block_needs_human_for_fact_check_even_with_high_score():
     b = ap._review_block(8.0, ["FACT_CHECK_MANUAL_CHECK"], [], "manual_check")
-    assert b["kind"] == "needs_human" and "fact check" in b["label"]
-    # AA-1047 follow-up 6: the elephant rule has its own code, so an unrelated fact check no longer reads as it.
-    assert "elephant" not in b["label"]
-    e = ap._review_block(8.0, ["POLICY_ELEPHANT_RIDING"], [], "manual_check")
-    assert e["kind"] == "needs_human" and "elephant" in e["label"]
+    assert b["kind"] == "needs_human" and "elephant" in b["label"]
 
 
 def test_block_hard_code_names_the_field():

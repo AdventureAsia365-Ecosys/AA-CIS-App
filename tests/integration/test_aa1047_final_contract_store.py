@@ -4,8 +4,7 @@ runs in one transaction that is rolled back).
   * final_contract_store.S1_ROW_SQL prepares on the real schema and record_s1_exit writes metadata.final_contract and
     appends to metadata.final_contract_log (two exits -> two entries);
   * the report script's Master read (scripts/quality/final_contract_report.masters_sql) lists a live v2 Master whose
-    page lost days against the stated duration in the publish-flip set, and leaves a clean one out;
-  * the approve gate query reads quality_scores.brand_audit_issues (the elephant rule's issue check).
+    page lost days against the stated duration in the publish-flip set, and leaves a clean one out.
 
 Invented tours and places only (the country is a real one: raw_tours.country must be a listed country name).
 """
@@ -104,12 +103,3 @@ async def test_the_report_lists_a_day_loss_master_in_the_flip_set(conn):
     assert flip["tour_id"] == lost_tour and "DAY_COUNT_VS_DURATION" in flip["block_codes"]
     assert out["day_loss"] == [{"tour_id": lost_tour, "country": "Thailand", "page_days": 2, "duration_days": 12}]
     assert "Karsh" not in json.dumps(out)       # ids and counts only, never page text
-
-
-@pytest.mark.asyncio
-async def test_the_approve_gate_query_reads_the_brand_audit_issues(conn):
-    from shared.tour_liveness import live_source_exists_sql
-    from api.routers.v1_pipeline import _APPROVE_GATE_SQL
-    sql = _APPROVE_GATE_SQL.format(live=live_source_exists_sql("rq.tour_id"))
-    stmt = await conn.prepare(sql)
-    assert "brand_audit_issues" in [a.name for a in stmt.get_attributes()]

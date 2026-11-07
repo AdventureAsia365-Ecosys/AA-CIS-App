@@ -66,8 +66,7 @@ def test_pre_audit_catches_elephant_riding():
     generated = {"name": "Thailand Adventure", "subtitle": "A jungle journey",
                  "seo_meta": "Great tour.", "highlights": ["Elephant back ride through the jungle"]}
     codes = pre_audit_checks(generated)
-    # AA-1047: the policy has its own code (services/quality/elephant_policy.POLICY_CODE)
-    assert "POLICY_ELEPHANT_RIDING" in codes and "FACT_CHECK_MANUAL_CHECK" not in codes
+    assert "FACT_CHECK_MANUAL_CHECK" in codes
 
 
 def test_pre_audit_clean_content_returns_no_codes():
