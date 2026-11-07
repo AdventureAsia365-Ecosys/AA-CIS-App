@@ -14,7 +14,8 @@
 #                   node_modules is a failure instead of a skip. A missing Python tool (flake8 + flake8-bugbear,
 #                   pytest) is a failure in every mode.
 #   --integration   AA-1024 l22 (G6): run the integration test files the diff touches (changed tests/integration/test_*.py,
-#                   the tests that name a changed migration or import a changed integration helper) on a throwaway
+#                   the tests that name a changed migration or import a changed integration helper, and a fixed smoke
+#                   file when conftest.py or a helper it imports changed) on a throwaway
 #                   Postgres: the port in CIS_TEST_DB_PORT when set (never 5432), else a cluster made with initdb under
 #                   $TMPDIR and removed after. A pass on a clean tree writes a stamp for this code; the hook (every mode
 #                   but --ci) then blocks a push whose changed integration tests have no stamp. Skip once, visibly:
@@ -66,6 +67,10 @@ TEST_DIRS=(tests/unit tests/acp)
 # --integration: above this many matched integration test files only the changed ones run (each pytest session replays
 # every migration once; the cap keeps a run short on a low-RAM machine).
 MAX_INTEGRATION_FILES=${AA_PREPUSH_MAX_INTEGRATION_FILES:-12}
+# A changed tests/integration/conftest.py, or an integration helper conftest imports (_replay_guard.py, _constants.py),
+# changes every integration session (the schema replay and its guards) but no test file names it: the stamp then
+# covers this fixed smoke set (one cheap DB test; its session runs the whole replay). CI's shards run the rest.
+SMOKE_INTEGRATION=(tests/integration/test_aa1024_replay_smoke.py)
 
 # --- decision logic (pure: file names in, check ids out; used by --self-test) -------------------------------------
 
@@ -206,19 +211,22 @@ unit_targets() {
 # integration_targets FILE...: the integration test files a diff touches (--integration runs them, the hook asks for
 # their stamp):
 #   - a changed tests/integration/test_*.py (still present): itself;
-#   - a changed integration helper (tests/integration/_*.py): the test files that import it;
+#   - a changed integration helper (tests/integration/_*.py): the test files that import it, plus SMOKE_INTEGRATION
+#     when conftest.py imports it;
 #   - a changed api/migrations/NNN_name.sql: the test files that name it (NNN_name) and test_*migration_NNN*.py;
-#   - a changed tests/integration/conftest.py prints "WARN <reason>" (every file depends on it; CI's shards cover it).
-# Prints "OVER <n>" first when more than MAX_INTEGRATION_FILES matched; then only the changed test files are listed.
+#   - a changed tests/integration/conftest.py: SMOKE_INTEGRATION (every file depends on it; CI's shards run them all).
+# Prints "OVER <n>" first when more than MAX_INTEGRATION_FILES matched; then only the changed test files and the smoke
+# set are listed (the cap never drops them).
 integration_targets() {
   local f name stem leaf num direct=() hits=()
   for f in "$@"; do
     name=${f##*/}
     case $f in
-      tests/integration/conftest.py) echo "WARN $f changed: every integration test depends on it (CI's shards run them all)" ;;
+      tests/integration/conftest.py) direct+=("${SMOKE_INTEGRATION[@]}") ;;
       tests/integration/test_*.py) [[ -f $f ]] && direct+=("$f") ;;
       tests/integration/_*.py)
         leaf=${name%.py}
+        grep -qE "^[[:space:]]*(import|from) ${leaf}\b" tests/integration/conftest.py 2>/dev/null && direct+=("${SMOKE_INTEGRATION[@]}")
         mapfile -t -O "${#hits[@]}" hits < <(grep -rlE --include='test_*.py' "(import|from) ${leaf}\b" tests/integration 2>/dev/null) ;;
       api/migrations/[0-9][0-9][0-9]_*.sql)
         stem=${name%.sql}; num=${name:0:3}
@@ -355,7 +363,12 @@ self_test() {
   r=0; [[ $got == *tests/integration/test_aa919_migration_284.py* && $got != *test_aa1002_* ]] || r=1
   verdict "integration targets: a helper maps to its importers only" "$got" "$r"
   got=$(integration_targets tests/integration/conftest.py | tr '\n' ' ')
-  r=0; [[ $got == WARN* ]] || r=1; verdict "integration conftest: WARN, not a quiet skip" "$got" "$r"
+  r=0; [[ $got == "${SMOKE_INTEGRATION[*]} " && -f ${SMOKE_INTEGRATION[0]} ]] || r=1
+  verdict "integration conftest: the smoke set needs a stamp, not a WARN" "$got" "$r"
+  got=$(integration_targets tests/integration/_replay_guard.py | tr '\n' ' ')
+  r=0; [[ $got == *"${SMOKE_INTEGRATION[0]}"* ]] || r=1; verdict "a helper conftest imports: the smoke set too" "$got" "$r"
+  got=$(MAX_INTEGRATION_FILES=1000 integration_targets tests/integration/_rls_fixture_helpers.py | tr '\n' ' ')
+  r=0; [[ $got != *"${SMOKE_INTEGRATION[0]}"* ]] || r=1; verdict "a helper conftest does not import: no smoke set" "$got" "$r"
   got=$(MAX_INTEGRATION_FILES=0 integration_targets tests/integration/test_aa1002_migration_304.py | head -1)
   r=0; [[ $got == OVER* ]] || r=1; verdict "integration targets over the cap: OVER first" "$got" "$r"
   # The stamp key: same code = same key, a code change = another key, a docs-only change = the same key.
