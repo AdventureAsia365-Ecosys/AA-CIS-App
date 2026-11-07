@@ -2822,8 +2822,14 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `frontend/app/_kit/core/brandTheme.ts` (tokens profile, import-free; root ADR 0016 amendment): a tenant theme becomes
   one CSS block over the accent family of `--aa-*` (light: every accent token that passes the WCAG pairs, the label
   colour picked for contrast; dark: the accent only when it keeps 3:1 on the dark card), checked by
-  `lib/kitBrandTheme.test.mjs`. Still no Tenant 360 editor for the theme or the lead route (set by a reviewed
-  `run-script` on Dev until it ships).
+  `lib/kitBrandTheme.test.mjs`. The lead route has a Tenant 360 editor (S272 follow-up): Subscription tab › TripPlanner
+  lead route, `GET` / `PUT /admin/tenants/{id}/tripplanner-site/lead-route` (read: the Subscription tab's rule; write:
+  tenant.write, admin; audited `tenant.tripplanner_lead_route_changed`; `services/tenant_account/tripplanner_site.py`).
+  The PUT refuses (422 with the field) a webhook URL that is not https, not the 390 CHECK's shape, or names a host that
+  cannot be public: an IP literal outside global unicast (IPv4 / IPv6, mapped / NAT64 / 6to4 unwrapped, legacy IPv4
+  spellings) or an internal name (one label, `localhost`, `*.local`, `*.internal` ...). No DNS lookup in CIS:
+  TripPlanner checks the resolved addresses again before storing a lead and before each POST. Still no editor for the
+  theme (set by a reviewed `run-script` on Dev until it ships).
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).

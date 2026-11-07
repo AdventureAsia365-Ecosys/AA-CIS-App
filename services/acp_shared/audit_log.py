@@ -129,6 +129,10 @@ class AdminTenantAuditAction:
     # feature key, before / after, whether it applies, the resolved value; services/tenant_account/subscription.py)
     ENTITLEMENT_OVERRIDE_SET = "tenant.entitlement_override_set"
     ENTITLEMENT_OVERRIDE_REMOVED = "tenant.entitlement_override_removed"
+    # AA-1038 R5 slice 3 follow-up (S272) — Tenant 360 › Subscription: the lead route of the tenant's TripPlanner site
+    # (CIS 390 columns; services/tenant_account/tripplanner_site.py). details: before / after of the channel and its
+    # targets (the agency's business URL / address, never a traveller's).
+    TRIPPLANNER_LEAD_ROUTE_CHANGED = "tenant.tripplanner_lead_route_changed"
     # AA-1035 R2 (CIS 364, root ADR 0019 d4) — who looks after the tenant: a staff assignment set (added or its kind
     # changed) / removed (details: the staff id, the kind before / after; no name, no e-mail).
     ASSIGNMENT_SET = "tenant.assignment_set"
