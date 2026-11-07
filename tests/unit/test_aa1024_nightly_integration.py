@@ -101,7 +101,7 @@ def _report(tmp_path: Path, result: str, open_issue: str = "") -> tuple[str, str
 def test_report_job_writes_issues_only_and_runs_after_every_finished_night():
     wf = yaml.safe_load(NIGHTLY.read_text(encoding="utf-8"))
     job = wf["jobs"]["report"]
-    assert job["needs"] == "random-order" and job["if"] == "${{ !cancelled() }}"
+    assert job["needs"] == "random-order" and job["if"] == "${{ !cancelled() && github.ref == 'refs/heads/main' }}"
     assert job["permissions"] == {"issues": "write"}
     assert not any("uses" in s for s in job["steps"]), "the report job runs no action and checks nothing out"
     assert wf["jobs"]["random-order"]["outputs"]["seed"] == "${{ steps.suite.outputs.seed }}"

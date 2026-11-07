@@ -123,7 +123,8 @@ jobs:
   report:
     name: Report the result (issue nightly-red)
     needs: random-order
-    if: ${{ !cancelled() }}
+    # Only a run of main speaks for main: a manual replay from a feature branch must not open or close the issue.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
