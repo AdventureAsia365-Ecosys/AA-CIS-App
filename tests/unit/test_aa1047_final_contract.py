@@ -301,3 +301,60 @@ def test_report_counts_a_bad_row_and_goes_on():
     with patch.object(store, "s1_record_from_row", side_effect=ValueError("bad")):
         out = report.summarize([{"country": None, "generated_content_id": "g-3"}])
     assert out["errors"] == 1 and out["masters"] == 0
+
+
+# ── the S1 store sites (regression: a local `_fc` in these functions once shadowed the module alias) ──────────────
+
+def test_execute_run_tour_stores_the_contract_with_the_version(monkeypatch):
+    from contextlib import ExitStack
+    from api.routers import admin_pipeline
+    from services.content_generation import graph
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
+    st = graph.final_contract_node(_state(generated=_content()))
+    result = {"status": "success", "quality_score": 9.0, "model_used": "writer-x", "generated": st["generated"],
+              "failure_codes": [], "brand_audit_status": "pass", "writer_version": "v2",
+              "final_contract": st["final_contract"], "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0}
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"src_name": "Karsh", "src_subtitle": "", "src_summary": "", "src_description": "",
+                                  "src_highlights": [], "src_itineraries": SRC_ITIN, "country": "Zembla",
+                                  "duration": "4 days", "price_raw": "", "inclusions": "", "exclusions": "",
+                                  "source_status": None, "activities": None}
+    conn.fetch.return_value = []
+    conn.fetchval.return_value = "11111111-1111-1111-1111-111111111111"
+    with ExitStack() as stack:
+        stack.enter_context(patch("api.routers.admin_pipeline.asyncpg.connect", AsyncMock(return_value=conn)))
+        stack.enter_context(patch("api.routers.admin_pipeline._resolve_brand_rule", AsyncMock(return_value=None)))
+        stack.enter_context(patch("api.routers.admin_pipeline._rewrite_tour", AsyncMock(return_value=result)))
+        stack.enter_context(patch("services.seo_intelligence.handler.process_seo",
+                                  AsyncMock(return_value={"data": {}, "status": "skipped"})))
+        stack.enter_context(patch("services.seo_intelligence.seed_builder.build_seed",
+                                  MagicMock(return_value="Zembla tours")))
+        export = stack.enter_context(patch("services.export.handler.process_export", AsyncMock()))
+        asyncio.run(admin_pipeline._execute_run_tour(admin_pipeline.TourRunRequest(
+            tour_id="11111111-1111-1111-1111-111111111111", batch_id="b-1", tenant_id="aa_internal")))
+    [insert] = [c for c in conn.fetchval.await_args_list if "INSERT INTO silver_aa_internal.generated_content"
+                in c.args[0]]
+    metadata = json.loads(insert.args[15])
+    rec = metadata["final_contract"]
+    assert rec["sha_match"] is True and rec["actual"] == "approved" and rec["exit"] == "done"
+    assert [e["exit"] for e in metadata["final_contract_log"]] == ["done"]
+    export.assert_awaited_once()
+    assert export.await_args.kwargs == {"contract_exit": "auto_publish"}
+
+
+def test_revalidate_tour_attaches_the_graph_contract(monkeypatch):
+    from tests.unit import test_aa983_revalidate_keeps_quality_score_id as h
+    from api.routers import admin_pipeline
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
+    conn = h._Recorder()
+    rec = fc.check_s1(_s1(content={"name": "T"}), exit="revalidation").record()
+    graph_mock = MagicMock()
+    graph_mock.invoke.return_value = {**h._graph_result(), "final_contract": rec}
+    with patch("api.routers.admin_pipeline.asyncpg.connect", AsyncMock(return_value=conn)), \
+         patch("api.routers.admin_pipeline._resolve_brand_rule", AsyncMock(return_value=None)), \
+         patch("services.content_generation.graph.build_revalidation_graph", MagicMock(return_value=graph_mock)):
+        out = asyncio.run(admin_pipeline._revalidate_tour(h.CONTENT_ID))
+    assert out["revalidate_passed"] is True
+    [upd] = [c for c in conn.calls if c[0] == "execute" and "final_contract_log" in c[1]]
+    stored = json.loads(upd[2][1])
+    assert stored["exit"] == "revalidation" and stored["actual"] == "approved" and "sha_match" in stored

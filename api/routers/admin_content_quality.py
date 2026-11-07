@@ -1359,7 +1359,8 @@ _VERSION_UPDATE_SQL = """
     UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $3::jsonb,
         -- AA-1047 W1: the REPORT-mode final contract of this exit (admin-only; NULL $5 keeps the old record)
         judge_breakdown = CASE WHEN $5::jsonb IS NULL THEN judge_breakdown
-                               ELSE COALESCE(judge_breakdown, '{}'::jsonb) || jsonb_build_object('final_contract', $5::jsonb)
+                               ELSE COALESCE(judge_breakdown, '{}'::jsonb)
+                                    || jsonb_build_object('final_contract', $5::jsonb)
                           END
     WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])
 """

@@ -497,8 +497,8 @@ def flag_fix_node(state: dict) -> dict:
     # The detector must hit the page or the source too (AA-1047: the policy has its own code; LEGACY_CODE kept for a
     # state that still carries the pre-split one).
     from services.quality import elephant_policy as _ep
-    if {_ep.POLICY_CODE, _ep.LEGACY_CODE} & set(state.get("brand_audit_codes") or []) and _ep.scan(state.get("generated"),
-                                                                              state.get("tour")):
+    _ep_codes = set(state.get("brand_audit_codes") or [])
+    if {_ep.POLICY_CODE, _ep.LEGACY_CODE} & _ep_codes and _ep.scan(state.get("generated"), state.get("tour")):
         logger.info("flag_fix_skipped_policy_keep", reason="elephant_riding")
         return {
             **state,

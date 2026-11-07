@@ -37,7 +37,7 @@ from shared.tour_liveness import (
     source_state,
 )
 from services.quality.registry import threshold
-from services.quality import final_contract as _fc  # AA-1047 W1 (REPORT-mode exit contract)
+from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
 from services.quality import final_contract_store as _fc_store  # AA-1047 W1
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 from shared.validators.prompt_sanitize import (
@@ -418,8 +418,8 @@ def _final_contract_at_store(result: dict, generated: dict, status: str) -> Opti
         return None
     stored = {**generated, "name": (generated.get("name") or "")[:500],
               "subtitle": (generated.get("subtitle") or "")[:500]}
-    out = _fc.stamp_stored(record, _fc.tour_text_sha(stored), actual=status)
-    _fc.log_record(out, tour_id=result.get("tour_id"))
+    out = _fcon.stamp_stored(record, _fcon.tour_text_sha(stored), actual=status)
+    _fcon.log_record(out, tour_id=result.get("tour_id"))
     return out
 
 
@@ -869,7 +869,7 @@ async def _execute_run_tour(
             _fc_record = _final_contract_at_store(result, generated, status)
             if _fc_record is not None:
                 _metadata["final_contract"] = _fc_record
-                _metadata["final_contract_log"] = [_fc.compact(_fc_record)]
+                _metadata["final_contract_log"] = [_fcon.compact(_fc_record)]
             metadata_val = json.dumps(_metadata, default=str)
             _itin = generated.get("itineraries", "")
             if not isinstance(_itin, str):
@@ -1391,7 +1391,7 @@ async def _revalidate_tour(content_id: str) -> dict:
         # (passed = approvable) and the stored text's sha; best-effort, never fails the re-validation.
         _reval_fc = result.get("final_contract")
         if isinstance(_reval_fc, dict):
-            _reval_fc = _fc.stamp_stored(_reval_fc, _fc.tour_text_sha(initial_state.get("generated") or {}),
+            _reval_fc = _fcon.stamp_stored(_reval_fc, _fcon.tour_text_sha(initial_state.get("generated") or {}),
                                          actual="approved" if passed else "hitl")
             await _fc_store.attach_s1(conn, content_id, _reval_fc)
 

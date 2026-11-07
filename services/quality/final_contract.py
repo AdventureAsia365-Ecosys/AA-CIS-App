@@ -345,8 +345,9 @@ class S1Input:
     """What the S1 contract reads, from a graph state (``s1_input_from_state``) or a stored row
     (``s1_input_from_row``): the page text, the raw source, and the current gates' own outputs."""
     content: dict
-    source: dict                       # name, subtitle, summary, description, highlights, itineraries, inclusions,
-                                       # activities, price, country, duration
+    # source: name, subtitle, summary, description, highlights, itineraries, inclusions, activities, price, country,
+    # duration
+    source: dict
     failure_codes: list = field(default_factory=list)
     brand_audit_status: Optional[str] = None
     brand_audit_codes: list = field(default_factory=list)

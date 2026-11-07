@@ -1540,7 +1540,8 @@ def _wire_exit(graph: StateGraph, last: str, entry: str) -> None:
 
 def _wire_checks_tail(graph: StateGraph, *, hitl_from: Optional[str] = None, entry: str = ENTRY_LIVE) -> None:
     """The tail every A1 / T2 entry shares (S271 W0: one exit chain): brand_audit → grounding → flag_fix (skipped
-    on a hitl draft) → revalidate → final_contract → END (AA-1047 W1; ``entry`` names the exit it records). The ``hitl`` exit reaches it through hitl_exit (the should_retry branch
+    on a hitl draft) → revalidate → final_contract → END (AA-1047 W1; ``entry`` names the exit it records). The
+    ``hitl`` exit reaches it through hitl_exit (the should_retry branch
     targets it directly, or ``hitl_from`` — T2's restore_best — leads to it)."""
     graph.add_node("hitl_exit", hitl_exit_node)
     if hitl_from:
