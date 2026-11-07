@@ -95,6 +95,8 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
     T2: {
         "services/jobs/t2_rewrite_job.py::_rewrite_and_save": ("done",),
         "services/jobs/t2_rewrite_job.py::_save_policy_hold": ("policy_hold",),
+        # AA-1049 W3: the store step of the opt-in linear orchestrator (T2_ORCHESTRATOR=linear)
+        "services/content_generation/t2_orchestrator.py::save_version": ("done",),
         # a tenant's own inline edit / approve (tenant-owned text, BYO: recorded in the log only, never stored)
         "api/routers/v1_tours.py::_apply_version_action": ("tenant_edit", "tenant_approve"),
         "api/routers/admin_content_quality.py::apply_tour_sentence": ("admin_sentence_apply",),

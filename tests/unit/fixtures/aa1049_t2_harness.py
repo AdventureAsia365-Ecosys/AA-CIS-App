@@ -19,6 +19,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import re
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -156,6 +157,11 @@ class Conn:
         return []
 
 
+# Every env switch of the T2 path (config_fp.MODE_FLAGS["t2"] plus the ones the run reads); cleared before a run.
+T2_SWITCHES = ("T2_JUDGE_GATE", "T2_JUDGE_REPEAT", "T2_JUDGE_ANCHORS", "T2_BRAND_CLAIM_CHECK", "T2_FACTS",
+               "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM", "T2_ORCHESTRATOR")
+
+
 def pool(conn: Conn):
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -223,8 +229,10 @@ SCENARIOS: dict[str, dict] = {
 }
 
 
-def run(name: str, *, env: Optional[dict] = None, monkeypatch=None, extra: Optional[Callable] = None) -> dict:
-    """Run one scenario through the production ``_rewrite_and_save`` and return its trace."""
+def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = None,
+        conn: Optional["Conn"] = None) -> dict:
+    """Run one scenario through the production ``_rewrite_and_save`` and return its trace. ``env``: the switches
+    set for the run (every T2 switch is cleared first, so an unset switch is its default)."""
     from services.content_generation import flag_fix_node
     from services.jobs import t2_rewrite_job as job
     from shared.llm_client import call_log
@@ -233,9 +241,11 @@ def run(name: str, *, env: Optional[dict] = None, monkeypatch=None, extra: Optio
     sc = SCENARIOS[name]
     row = {**MASTER_ROW, **(sc.get("row") or {})}
     llm = ScriptedLLM(copy.deepcopy(sc.get("script") or {}))
-    conn = Conn()
+    conn = conn if conn is not None else Conn()
     tour_dict = job.source_tour_dict(row)
+    clean_env = {k: v for k, v in os.environ.items() if k not in T2_SWITCHES}
     with ExitStack() as st:
+        st.enter_context(patch.dict(os.environ, {**clean_env, **(env or {})}, clear=True))
         st.enter_context(patch.object(LLMClient, "__init__", lambda self, *a, **k: None))
         st.enter_context(patch.object(LLMClient, "generate", lambda self, req: llm.generate(req)))
         st.enter_context(patch.object(call_log, "record_call", AsyncMock(return_value=None)))

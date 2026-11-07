@@ -53,3 +53,27 @@ rows:
 # so a change here (hold vs cut) is versioned by git only, as the Python literal it replaced; the lint pins {linkedin}.
 truth_cut:
   cut_not_hold_channels: [linkedin]
+# AA-1049 W3 (T2 train) — the T2 linear orchestrator's rows (opt-in T2_ORCHESTRATOR=linear; the default T2 path is the
+# LangGraph + T3 loop of main and reads none of this). One row per enforce code the T2 verifier
+# (services/content_generation/t2_orchestrator.py verify) can raise: the T3 hard codes (graph._HARD_BLOCK_CODES, as
+# T3 filters them), the T3 grounding finding and the Master day-slot check. Same action vocabulary as the T9 rows:
+#   repair_sentence     one local sentence repair (tenant_pipeline._t3_sentence_repair + repair_contract);
+#   regenerate_section  seo_fields: the meta-only regenerate (tenant_pipeline._t3_meta_regenerate + repair_contract);
+#   rewrite             one field-scoped writer call with the deterministic feedback (writer budget);
+#   hold                no repair can clear it (an outage): kept for review.
+# Mechanics only: the status rule (any enforce finding left = needs_review) does not read this table, so no row can
+# make a version pass. A code with no row routes to `default` (fail closed: still an enforce finding).
+t2:
+  version: t2-route-table-v1
+  default: rewrite
+  rows:
+    - {code: T3_grounding, action: repair_sentence, parse: t3_grounding}
+    - {code: SEO_META_TOO_LONG, action: regenerate_section, section: seo_fields}
+    - {code: META_TOO_SHORT, action: regenerate_section, section: seo_fields}
+    - {code: META_INCOMPLETE_SENTENCE, action: regenerate_section, section: seo_fields}
+    - {code: BRAND_SEO_META_VIOLATION, action: regenerate_section, section: seo_fields}
+    - {code: SEO_TITLE_TOO_LONG, action: rewrite}
+    - {code: FORBIDDEN_WORD, action: rewrite}
+    - {code: MISSING_FIELD, action: rewrite}
+    - {code: T2_DAY_COUNT_VS_MASTER, action: rewrite}
+    - {code: DEGRADED_DETECTOR, action: hold}
