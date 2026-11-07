@@ -85,6 +85,11 @@ from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_t
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
+from services.acp_content_writing import route_table  # AA-1049 (the one T9 route table)
+from services.acp_content_writing import seo_builder  # AA-1049 (code-composed SEO fields)
+from services.acp_content_writing import stable_keys  # AA-1049 (stable-key regression guard)
+from services.acp_content_writing import piece_store  # AA-1049 R0b (the store seam a replay swaps for a dry store)
+from services.acp_content_writing import prespend  # AA-1049 (pre-spend angle tripwires, report mode)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
@@ -122,6 +127,33 @@ LEGACY_LAST_ATTEMPT = "legacy"
 def last_attempt_mode() -> str:
     raw = (os.environ.get(LAST_ATTEMPT_MODE_ENV) or "").strip().lower()
     return raw if raw in (STOP_AND_LABEL, LEGACY_LAST_ATTEMPT) else STOP_AND_LABEL
+
+
+# AA-1049 W3 (root ADR 0020 S5) — the AA-528 regression guard. Default `gate_names`: main's comparison of failing
+# gate names, unchanged. `stable_keys` (opt-in, not on until W2 data) compares stable keys instead (what failed: the
+# gate and the quoted sentence, stable_keys.py); two review findings on it are still open (docs/implementation-notes/
+# AA-1049-l13-t9.md, "Known limits"), so it stays off by default.
+REGRESSION_GUARD_ENV = "T9_REGRESSION_GUARD_MODE"
+GUARD_STABLE_KEYS = "stable_keys"
+GUARD_GATE_NAMES = "gate_names"
+
+
+def regression_guard_mode() -> str:
+    raw = (os.environ.get(REGRESSION_GUARD_ENV) or "").strip().lower()
+    return raw if raw in (GUARD_STABLE_KEYS, GUARD_GATE_NAMES) else GUARD_GATE_NAMES
+
+
+# AA-1049 W3 (root ADR 0020 S3) — code-first SEO fields (seo_builder.py). Default `off`: _fit_seo_meta runs exactly as
+# on main (the fit call and its one retry). `on` (opt-in) first tries a whole-sentence / separator prefix of the
+# writer's own value through the same acceptance tests, and drops the retry call.
+SEO_BUILDER_ENV = "T9_SEO_BUILDER"
+SEO_BUILDER_ON = "on"
+SEO_BUILDER_OFF = "off"
+
+
+def seo_builder_mode() -> str:
+    raw = (os.environ.get(SEO_BUILDER_ENV) or "").strip().lower()
+    return raw if raw in (SEO_BUILDER_ON, SEO_BUILDER_OFF) else SEO_BUILDER_OFF
 
 # AA-499/AA-484 — the ONE similarity threshold Nghiệp confirmed (Q6=B, 25/07/2026, AA-332
 # origin, cited in AA-484's Linear comment), for BOTH the within-tenant `within_tenant_reuse`
@@ -496,17 +528,20 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
 # tenant always receives content"): the F9 entry is waived only when EVERY flagged sentence was cut;
 # anything left keeps F9 blocking, so the piece is labelled held for the admin. AA-777 extends the cut
 # to the blog on its attempt 3 only (BLOG_TRUTH_CUT_ATTEMPT), never under the blog's minimum length.
-F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
+# AA-1049: read from route_table.yaml `truth_cut.cut_not_hold_channels` (loop mechanics), NOT from the `truth_cut` row
+# of writing_policy.yaml (D6, policy_sha). Versioned by git only (as the Python literal it replaced on main); the lint
+# test_aa1049_route_table.py pins it to {linkedin}.
+F9_CUT_NOT_HOLD_CHANNELS = route_table.CUT_NOT_HOLD_CHANNELS
 # AA-777 — the blog attempt where an F1/F9 truth item that survived one sentence repair is cut, not
 # repaired again (attempt 2 stays the sentence repair). S233+S234: sentence repair fixes F9 49%, a full
 # rewrite 0/6, and a second repair adds new blocking fails the regression guard then reverts (16×).
 BLOG_TRUTH_CUT_ATTEMPT = MAX_ATTEMPTS
-TRUTH_CUT_GATES = frozenset({qr.F1_GROUNDING, qr.F9_CTA_FACT})
+TRUTH_CUT_GATES = route_table.TRUTH_CUT_GATES  # AA-1049: the route table's `cut: truth` rows
 # AA-777 (r6 fix 6) — an F17_trip_fact item the blog's attempt 3 cuts too, when F17 was already sent to a
 # sentence repair once: deterministic findings whose own instruction is to cut (a time / position / pace /
 # background base the source lacks, an optional activity sold as fixed, an interpreted thin-moment coda).
 # Never the family caveat ('add ONE', never a cut) or a played-down hazard ('keep the hazard').
-F17_CUT_GATE = qr.F17_TRIP_FACT
+(F17_CUT_GATE,) = route_table.CUT_FINDING_GATES  # AA-1049: the one `cut: cut_finding` row
 _F17_CUT_RE = re.compile(r"\bcut it\b|cut the added clause")
 
 
@@ -641,6 +676,20 @@ def _regression_failures(gate_ledger: list) -> set:
     fixed a product-truth failure (it would keep that failure); the finding still gets its sentence repair."""
     return {g["gate"] for g in expand_ledger(gate_ledger) if g.get("blocking", True) and not g["passed"]
             and not seed_adjudicate.tier2_only_failure(g)}
+
+
+def guard_decision(prev_ledger: list, cur_ledger: list) -> tuple[set, bool, set, set]:
+    """AA-528 (+ AA-1049 W3) — the regression guard's decision for one pair of attempts, before the AA-780 floor-only
+    exception the call site applies: (new regressions, revert-if-new, prev failing gates, cur failing gates).
+
+    Default (`gate_names`, main): a gate failing now that did not before is a regression, reverted unless the rewrite
+    has fewer failing gates. `stable_keys` (opt-in): stable_keys.regressed decides and names the gates of its new keys.
+    The call site reverts when both the new set and `revert` are truthy (the offline replay calls this function)."""
+    prev_fail, cur_fail = _regression_failures(prev_ledger), _regression_failures(cur_ledger)
+    if regression_guard_mode() == GUARD_STABLE_KEYS:
+        new_keys, key_revert = stable_keys.regressed(prev_ledger, cur_ledger)
+        return {gate for gate, _ in new_keys}, key_revert, prev_fail, cur_fail
+    return cur_fail - prev_fail, len(cur_fail) >= len(prev_fail), prev_fail, cur_fail
 
 
 def _floor_only_failure(blocking_fails: list) -> bool:
@@ -1012,6 +1061,16 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
+    # AA-1049 W3 (ADR 0020 S3, D5) — T9_SEO_BUILDER=on only (default off = main): code first, a failing field becomes
+    # the first whole-sentence (meta) or separator (title) prefix of the writer's own value that passes the SAME
+    # title_ok / meta_ok; no model call when both fields then pass.
+    code_first = seo_builder_mode() == SEO_BUILDER_ON
+    if code_first:
+        seo_meta, built_log = seo_builder.build_seo(seo_meta, title_ok=title_ok, meta_ok=meta_ok)
+        if built_log:
+            logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=built_log)
+        if seo_builder.fields_ok(seo_meta, title_ok=title_ok, meta_ok=meta_ok):
+            return seo_meta, 0.0
     audience = context.get("brand_audience") or {}
     forbidden = sorted({p for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
@@ -1045,7 +1104,17 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         return out
 
     out = merge(seo_meta, fitted)
-    if not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
+    if code_first:
+        # AA-1049 W3 (opt-in) — the fitted value gets the same code shortening (a fitted meta one sentence too long is
+        # the common miss: lesson S233, models overshoot a character target); the second fit call per attempt is gone
+        # (the next attempt re-runs this fit; F4 reports what is left, as on main).
+        shortened, fit_log = seo_builder.build_seo(
+            {**out, **{k: fitted[k] for k in ("seo_title", "meta_description") if fitted.get(k)}},
+            title_ok=title_ok, meta_ok=meta_ok)
+        out = merge(out, shortened)
+        if fit_log:
+            logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=fit_log, after="fit")
+    elif not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
         # LLMs miscount characters: one more try, told exactly how far off the current values are.
         try:
             again, cost2 = await asyncio.to_thread(
@@ -2050,6 +2119,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     fact_sheet = _grounding_sheet(context)
     grounding_text = fact_sheet.render()  # AA-768 — + audience/trip lines
     await _store_fact_sheet(pool, fact_sheet, context)
+    # AA-1049 W3 (ADR 0020 "Plan", D2) — pre-spend angle tripwires against the FactSheet, REPORT mode only (recorded
+    # in writer_input.prespend, never a reject or a re-pick until W2 measures them on briefs)
+    try:
+        context["prespend"] = prespend.angle_tripwires(context.get("chosen"), grounding_text)
+    except Exception as e:  # noqa: BLE001 — a report never fails the write
+        logger.warning("t9_prespend_report_failed", request_id=str(request_id), error=str(e)[:200])
     # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
     # JSON job payload).
     # AA-771 (S234) — the channel spec (LinkedIn) caps the hashtags, moves them to the last line and
@@ -2517,15 +2592,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 prev_ledger = prev_snapshot["gate_ledger"]
                 # AA-924 — keyed by source on the legacy views (_blocking_failures)
                 # AA-1000 review — a result failed only by a tier-2 finding is left out (_regression_failures)
-                prev_blocking_fail = _regression_failures(prev_ledger)
-                cur_blocking_fail = _regression_failures(gate_ledger)
-                new_regressions = cur_blocking_fail - prev_blocking_fail
+                # AA-1049 W3 — one function (guard_decision) decides, so the offline replay runs the same code;
+                # default mode = main's gate-name rule.
+                new_regressions, revert, prev_blocking_fail, cur_blocking_fail = guard_decision(
+                    prev_ledger, gate_ledger)
                 # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
                 # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
                 # this rewrite to trade against: reverting would ship the short post the rewrite was for (the
                 # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
                 # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
-                # text is the full-length, truth-clean one.)
+                # text is the full-length, truth-clean one. AA-1049: true in the default gate_names mode; the opt-in
+                # stable_keys mode can keep a rewrite that trades 2 F15 keys for 1 F1 key, a known limit.)
                 prev_fail = [g for g in expand_ledger(prev_ledger) if g.get("blocking", True) and not g["passed"]]
                 if (new_regressions and attempt < paid_attempts and _floor_only_failure(prev_fail)
                         and first_failure["repairable"]
@@ -2533,12 +2610,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     logger.info("t9_gate_regression_kept_after_floor_rewrite", request_id=str(request_id),
                                 attempt=attempt, regressed_gates=sorted(new_regressions))
                     new_regressions = set()
-                if new_regressions and len(cur_blocking_fail) >= len(prev_blocking_fail):
+                if new_regressions and revert:
                     logger.info(
                         "t9_gate_regression_reverted", request_id=str(request_id), attempt=attempt,
                         regressed_gates=sorted(new_regressions),
                         prev_blocking_fail=sorted(prev_blocking_fail),
-                        cur_blocking_fail=sorted(cur_blocking_fail),
+                        cur_blocking_fail=sorted(cur_blocking_fail), guard=regression_guard_mode(),
                     )
                     # AA-570 — capture THIS attempt's just-generated rewrite before it's
                     # overwritten below by the revert. In this specific branch, attempt 1 (not
@@ -2818,6 +2895,8 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
         # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.
         **({"faq_answer_fit": context["faq_answer_fit"]} if context.get("faq_answer_fit") else {}),
+        # AA-1049 W3 — the pre-spend angle tripwire report (admin-only, report mode)
+        **({"prespend": context["prespend"]} if context.get("prespend") else {}),
         # AA-789 tier 1 — seed alignment per attempt (modes, candidates, nlp version); absent when every class is off.
         **({"seed_align": context["seed_align"]} if context.get("seed_align") else {}),
         # AA-918 (WM-16) — the learned lexicon rules this piece got (and the ones skipped, with why); absent when no
@@ -2849,6 +2928,16 @@ async def _finalize_piece(
     writer_input: Optional[dict] = None,
     final_contract: Optional[dict] = None,
 ) -> dict:
+    # AA-1049 R0b — the PieceStore seam: inside piece_store.use_store(DryStore()) (an offline replay) the row is
+    # recorded with its stored sha and stamped contract, and no database is touched. Production never sets a store.
+    dry = piece_store.active()
+    if dry is not None:
+        return await dry.finalize(
+            pool, piece_id=piece_id, attempt_number=attempt_number, content_text=content_text, status=status,
+            held_reason=held_reason, gate_ledger=gate_ledger, repair_log=repair_log, flags=flags, seo_title=seo_title,
+            meta_description=meta_description, slug=slug, content_summary=content_summary,
+            content_embedding=content_embedding, discarded_attempts=discarded_attempts, writer_input=writer_input,
+            final_contract=final_contract)
     # AA-514 — seo_title/meta_description/slug default None (the exception handler's own
     # "failed" finalize call above never has a real seo_meta to pass, and every non-blog piece
     # is None either way) — same "NULL means never populated/not applicable" convention every
