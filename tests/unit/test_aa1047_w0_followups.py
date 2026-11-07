@@ -81,6 +81,55 @@ def test_a_trip_term_span_with_its_subject_after_falls_back_to_the_sentence():
     assert fp.claim_kinds(sentence, "served on the terrace each evening") != ()
 
 
+# W1 fix pass 2 (review 1, blocking): an ACTIVITY promise in a relative / attached / list clause still holds — the
+# span classifies as none, so the whole sentence decides (fail safe).
+@pytest.mark.parametrize("sentence,claim", [
+    ("You stay in the Ondra village, where a kayak excursion on the lake awaits.",
+     "a kayak excursion on the lake awaits"),
+    ("You spend day 3 at the lake, with a kayak excursion to the island.", "a kayak excursion to the island"),
+    ("You visit the old market, the Ondra temple and the floating village.", "the floating village"),
+    ("We stop at the Ondra market, then the hot springs.", "the hot springs"),
+    ("You visit the old market, the Ondra temple, the floating village.", "the floating village"),
+    ("You meet Ana, a local weaver who teaches you to dye silk.", "teaches you to dye silk"),
+    ("You stay in the Ondra village, where weaving lessons are held for guests.",
+     "weaving lessons are held for guests"),
+    ("You overnight in Ondra, including a sunrise hike up the volcano.", "a sunrise hike up the volcano"),
+    ("You cross the river, before a short climb to the Tarvo caves.", "a short climb to the Tarvo caves"),
+    ("You board the boat, while a naturalist points out the birds.", "a naturalist points out the birds"),
+])
+def test_an_activity_promise_in_an_attached_or_list_clause_holds(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) != ()
+    out = fp.apply_policy(_f9(_claim(sentence, claim)), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is True and out["f9_policy"]["classes"] == {fp.TRIP_PROMISE: 1}
+
+
+# W1 fix pass 2 (review 1, minor): place background warns even when it names a view or a time word, and the trip
+# subject is not put in front of it; a claim-word tie goes to the clause with the claim's verb.
+@pytest.mark.parametrize("sentence,claim", [
+    ("You dine at the lodge, near the Tarvo fort, which looks out over the valley.",
+     "the fort looks out over the valley"),
+    ("You dine at the lodge, near the temple, where monks have chanted at dawn for centuries.",
+     "monks have chanted at dawn for centuries"),
+    ("You dine at the lodge, near the temple famed for its views.", "the temple famed for its views"),
+    ("You stay at the lodge, on Camp Road, which was paved in 1990.", "Camp Road was paved"),
+])
+def test_place_background_with_a_view_or_time_word_warns(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) == ()
+    out = fp.apply_policy(_f9(_claim(sentence, claim)), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is False and out["f9_policy"]["classes"] == {fp.UNSUPPORTED_OTHER: 1}
+
+
+def test_a_claim_word_tie_goes_to_the_clause_with_the_claims_verb():
+    assert fp.claim_span("You stay at the lodge, on Camp Road, which was paved in 1990.", "Camp Road was paved") \
+        == "which was paved in 1990."
+
+
+def test_claim_span_takes_the_lexicon():
+    """The scope lexicon is passed through (signature): a None lexicon keeps the unmasked text."""
+    s = "You reach the Tarvo ridge, which looks out over the valley at sunset."
+    assert fp.claim_span(s, "looks out over the valley at sunset", None).startswith("You ")
+
+
 def test_a_paraphrased_or_empty_claim_falls_back_to_the_sentence():
     assert fp.claim_span("You board a boat at dawn.", "x") == "You board a boat at dawn."
     assert fp.claim_span("You board a boat at dawn.", "") == "You board a boat at dawn."
@@ -195,6 +244,66 @@ def test_policy_only_hold_reads_the_issues(codes, issues, keep):
 ])
 def test_names_riding_is_about_the_ride_not_the_animal(text, riding):
     assert ep.names_riding(text) is riding
+
+
+# W1 fix pass 2 (reviews 1 + 2): the issue rule fails CLOSED. Any issue that is not about the ride and not a narrow
+# voice / SEO / format issue keeps the hold, however it is worded; a mixed riding issue is split into clauses.
+POLICY_FC = ["POLICY_ELEPHANT_RIDING", "FACT_CHECK_MANUAL_CHECK"]
+LEGACY = ["FACT_CHECK_MANUAL_CHECK"]
+PRIVATE_BOAT = "Highlights promise a private boat to the islands; the itinerary only lists a shared ferry."
+LEOPARD = "Elephant riding on day 2 and a rare clouded leopard sighting the source does not support need a fact check."
+BALLOON_MIXED = "Fact check: elephant ride on Day 2; also the Day 4 hot-air balloon is not in the source."
+
+
+@pytest.mark.parametrize("codes,issues", [
+    # review 1
+    (POLICY_FC, [RIDE_ISSUE, "The hotel on day 3 is a different property."]),
+    (POLICY_FC, [RIDE_ISSUE, "Day 4 adds a hot-air balloon flight."]),
+    (POLICY_FC, [RIDE_ISSUE, "A balloon flight at sunrise is promised."]),
+    (POLICY_FC, ["Elephant riding is offered on day 2, and the hotel on day 3 is not in the source."]),
+    # review 2: unknown wordings
+    (POLICY_FC, [RIDE_ISSUE, PRIVATE_BOAT]),
+    (LEGACY, [PRIVATE_BOAT]),
+    (POLICY_FC, [RIDE_ISSUE, "The Day 3 cooking class is not listed in the itinerary."]),
+    (POLICY_FC, [RIDE_ISSUE, "Cannot confirm the tour includes a visit to the Royal Palace."]),
+    (POLICY_FC, [RIDE_ISSUE, "Sunrise at Mount Popa is mentioned in the summary but absent from the itinerary."]),
+    (POLICY_FC, [RIDE_ISSUE,
+                 "The hot-air balloon flight is presented as included but is an optional extra at additional cost."]),
+    # review 2: several concerns in one riding issue
+    (POLICY_FC, [LEOPARD]),
+    (LEGACY, [LEOPARD]),
+    (POLICY_FC, [BALLOON_MIXED]),
+    (LEGACY, [BALLOON_MIXED]),
+    # review 2 (minor): legacy judge praise naming a product-truth word now holds (fail safe, documented)
+    (LEGACY, ["Calm voice; the 4-day duration reads well."]),
+    (LEGACY, ["Faithful to the source and precise on location; calm voice."]),
+    # review 2 (minor): a bare string is one issue, not a list of letters
+    (LEGACY, "Tiger sighting not in the source"),
+])
+def test_an_unaccounted_issue_keeps_the_hold(codes, issues):
+    assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=issues) is False
+
+
+@pytest.mark.parametrize("codes,issues", [
+    (POLICY_FC, "Elephant riding offered"),
+    (POLICY_FC, ["Per policy, elephant riding stays as is and needs a human review."]),
+    (POLICY_FC, ["FACT_CHECK_MANUAL_CHECK: elephant riding on day 2 must be manually checked."]),
+    (POLICY_FC, ["Elephant riding is offered on day 2; the SEO meta is 162 characters."]),
+    (LEGACY, []),
+    (LEGACY, None),
+])
+def test_a_riding_or_voice_only_issue_list_is_the_policy(codes, issues):
+    assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=issues) is True
+
+
+@pytest.mark.parametrize("text,voice", [
+    ("SEO meta is 162 characters; keep it between 140 and 155.", True),
+    ("The subtitle reads as a list of towns.", True),
+    ("The meta promises a private boat to the islands.", False),
+    ("Day 4 adds a hot-air balloon flight.", False),
+])
+def test_is_voice_issue_is_narrow(text, voice):
+    assert ep.is_voice_issue(text) is voice
 
 
 def test_no_ride_is_never_a_policy_keep():

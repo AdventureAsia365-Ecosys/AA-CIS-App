@@ -129,11 +129,14 @@ def trip_promise_kinds(sentence: Optional[str], lexicon=None) -> tuple[str, ...]
 # ---------------------------------------------------------------------------------------------- claim span
 
 # Clause breaks inside a sentence: punctuation, a dash, and a coordinating / relative link that starts a new clause.
-_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:[,;:()\u2014\u2013]|\s-\s)\s*|\s+(?=(?:and|but|while|whereas|where|which|"
+_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:[,;:()—–]|\s-\s)\s*|\s+(?=(?:and|but|while|whereas|where|which|"
                               r"before|after|then)\b)", re.I)
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _SPAN_STOPWORDS = frozenset({"the", "a", "an", "of", "and", "to", "in", "on", "at", "for", "with", "is", "are", "its",
                              "it", "this", "that", "by", "from", "as"})
+# A verb-like word of the claim (an auxiliary, a past / -ing / 3rd-person form): a claim-word tie between two clauses
+# goes to the clause that holds the claim's verb ("Camp Road was paved": "which was paved in 1990", not "on Camp Road").
+_VERBISH_RE = re.compile(r"^(?:was|were|is|are|be|been|has|have|had|will|can|could|may|might|\w{3,}(?:ed|ing|en|es))$")
 
 
 def _words(text: str) -> set[str]:
@@ -144,40 +147,53 @@ def _clauses(sentence: str) -> list[str]:
     return [c for c in _CLAUSE_SPLIT_RE.split(sentence or "") if c and c.strip()]
 
 
+def _masked(text: str, lexicon=None) -> str:
+    return mask_names(text, lexicon=lexicon) if lexicon is not None else text
+
+
 def _names_trip_term(text: str, lexicon=None) -> bool:
     """The text names a service, a time or a view (with or without a trip subject of its own)."""
-    masked = mask_names(text, lexicon=lexicon) if lexicon is not None else text
+    masked = _masked(text, lexicon)
     return bool(SERVICE_RE.search(masked) or TIME_RE.search(masked) or VIEW_RE.search(masked))
 
 
-def claim_span(sentence: Optional[str], claim: Optional[str]) -> str:
-    """The part of ``sentence`` the judge's ``claim`` is about: the clause that holds the claim's words (most overlap,
-    first on a tie). When that clause has no trip subject of its own, the sentence's trip subject is put in front
-    when the clause continues the subject's verb phrase ("and" / "then") or names a service, a time or a view ("You
-    stay at a lodge, where dinner is served on the terrace"; "Day 3 is a free day, with a cooking class"): a promise
-    in a relative or attached clause is still the trip's. A clause with none of those stays as it is ("You dine at
-    the lodge, near the fort, which has guarded the valley for 900 years": the fort clause is background). A claim
-    with no word in common with the sentence (a paraphrase, a placeholder) or an empty one falls back to the whole
-    sentence (the pre-W1 behaviour: fail safe, a missed promise is worse than a warned background)."""
+def _claim_clause(sentence: str, claim: str) -> tuple[Optional[str], Optional[str]]:
+    """(the clause of ``sentence`` that holds the claim's words, the clause before it): most claim words, a tie to
+    the clause with more of the claim's verb-like words, then the first. (None, None) when no clause shares a word."""
+    cw = _words(claim)
+    clauses = _clauses(sentence)
+    if not cw or not clauses:
+        return None, None
+    best, best_key, prev = None, (0, 0), None
+    for i, c in enumerate(clauses):
+        shared = cw & _words(c)
+        key = (len(shared), sum(1 for w in shared if _VERBISH_RE.match(w)))
+        if key[0] and key > best_key:
+            best, best_key, prev = c, key, (clauses[i - 1] if i else None)
+    return best, prev
+
+
+def claim_span(sentence: Optional[str], claim: Optional[str], lexicon=None) -> str:
+    """The part of ``sentence`` the judge's ``claim`` is about: the clause that holds the claim's words (most overlap;
+    a tie goes to the clause with the claim's verb, then the first). When that clause has no trip subject of its own
+    and is not place background (``_is_place_background``), the sentence's trip subject is put in front when the
+    clause continues the subject's verb phrase ("and" / "then") or names a service, a time or a view ("You stay at a
+    lodge, where dinner is served on the terrace"; "Day 3 is a free day, with a cooking class"): a promise in a
+    relative or attached clause is still the trip's. A claim with no word in common with the sentence (a paraphrase,
+    a placeholder) or an empty one falls back to the whole sentence (the pre-W1 behaviour: fail safe, a missed
+    promise is worse than a warned background). ``lexicon`` masks the scope's place names ('Camp Road')."""
     sentence = sentence or ""
     claim = (claim or "").strip()
     if not claim:
         return sentence
-    cw = _words(claim)
-    clauses = _clauses(sentence)
-    if not cw or not clauses:
-        return sentence
-    best, best_n = None, 0
-    for c in clauses:
-        n = len(cw & _words(c))
-        if n > best_n:
-            best, best_n = c, n
+    best, prev = _claim_clause(sentence, claim)
     if best is None:
         return sentence
-    if not TRIP_SUBJECT_RE.search(best):
+    if not TRIP_SUBJECT_RE.search(_masked(best, lexicon)) and not _is_place_background(best, prev, lexicon):
         at = sentence.find(best)
         subjects = [m for m in TRIP_SUBJECT_RE.finditer(sentence) if m.end() <= at]
-        if subjects and (_same_clause_chain(sentence, best, subjects[-1].group(0)) or _names_trip_term(best)):
+        if subjects and (_same_clause_chain(sentence, best, subjects[-1].group(0))
+                         or _names_trip_term(best, lexicon)):
             return f"{subjects[-1].group(0)} {_CHAIN_LEAD_RE.sub('', best).strip()}"
     return best
 
@@ -191,13 +207,75 @@ def _same_clause_chain(sentence: str, clause: str, subject: str) -> bool:
     return bool(_CHAIN_LEAD_RE.match(clause)) and subject.lower() in sentence[:sentence.find(clause)].lower()
 
 
+# ---------------------------------------------------------------------------------------------- place background
+
+# AA-1047 W1 fix pass 2 (review: the span alone dropped activity promises in attached clauses to warn). A claim
+# clause is demoted to warn only when it is POSITIVELY place background; anything else that leaves the span with no
+# trip kind is decided by the whole sentence (fail closed: a false hold costs a click, a false keep ships a promise).
+#
+# A clause describing a place opens with a relative pronoun ("which / whose / where ...") or a locative preposition
+# ("near / beside / opposite ...").
+_PLACE_RELATIVE_RE = re.compile(r"^\s*(?:which|whose|where)\b", re.I)
+_LOCATIVE_RE = re.compile(r"^\s*(?:near|beside|next to|close to|opposite|across from|behind|below|above|outside|"
+                          r"inside|alongside|just off|off|along)\b", re.I)
+# What makes it background and not an offer: its history, its standing, its fame, its fixed setting.
+_BACKGROUND_MARKER_RE = re.compile(
+    r"\b(?:built|founded|erected|constructed|carved|restored|rebuilt|destroyed|paved|named|dates?\s+(?:back|from)|"
+    r"dating|(?:has|have|had)\s+(?:stood|guarded|watched|served\s+as|been)|stood|for\s+(?:centuries|generations|"
+    r"decades|ages|\d+\s+years|hundreds\s+of\s+years|over\s+\d+\s+years)|since\s+(?:the\s+)?\d"
+    r"|in\s+(?:the\s+)?\d{3,4}s?"
+    r"\b|\d{1,2}(?:st|nd|rd|th)[-\s]century|centur(?:y|ies)\s+old|famed|famous|renowned|known\s+for|home\s+to|once|"
+    r"legend|said\s+to|sits|stands|lies|is\s+(?:located|set|perched|nestled)|perched|nestled|(?:was|were|had\s+been)"
+    r"\s+\w+(?:ed|en|t))\b", re.I)
+# A thing a visitor does or is given, named as a noun ("a kayak excursion awaits", "weaving lessons are held").
+ACTIVITY_NOUN_RE = re.compile(
+    r"\b(?:excursions?|outings?|tours?|trips?|hikes?|hiking|treks?|trekking|walks?|walking|rides?|riding|cruises?|"
+    r"kayak\w*|canoe\w*|raft\w*|paddl\w*|climbs?|climbing|swims?|swimming|snorkel\w*|div(?:e|es|ing)|cycl\w*|"
+    r"bik(?:e|es|ing)|"
+    r"lessons?|class(?:es)?|workshops?|demonstrations?|performances?|shows?|ceremon(?:y|ies)|sessions?|visits?|"
+    r"flights?|safaris?|picnics?|tastings?|cooking|weaving|naturalists?|experts?|hosts?|instructors?|"
+    r"activit(?:y|ies))\b", re.I)
+# A clause that hands something to the visitor ("awaits", "offers", "is served") is never background.
+_OFFER_RE = re.compile(r"\b(?:await\w*|offer\w*|provid\w*|serv(?:e|es|ed|ing)|host\w*|welcom\w*|invit\w*|"
+                       r"gives?|show(?:s|n)?\s+(?:you|guests)|points?\s+out|teach\w*|lead\w*|led)\b", re.I)
+_CLOCK_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?!\w)|\b\d{1,2}:\d{2}\b|\bo'clock\b", re.I)
+
+
+def _is_place_background(clause: Optional[str], prev: Optional[str] = None, lexicon=None) -> bool:
+    """The claim's clause is positively place background (warn): no trip subject, no service / inclusion, no
+    activity verb or noun, no offer, no clock time; and it describes a place: a relative clause with a background
+    marker ("which has guarded the valley for 900 years", "which was built by the salt traders") or right after a
+    locative clause (its antecedent is that place: "..., near the Tarvo fort, which looks out over the valley"), or
+    a locative clause ("near the temple famed for its views"). A view or time word is allowed only under a
+    background marker or a locative antecedent; anything less is not proven background."""
+    if not clause or not clause.strip():
+        return False
+    m = _masked(clause, lexicon)
+    if (TRIP_SUBJECT_RE.search(m) or SERVICE_RE.search(m) or INCLUSION_RE.search(m) or ACTIVITY_RE.search(m)
+            or ACTIVITY_NOUN_RE.search(m) or _OFFER_RE.search(m) or _CLOCK_RE.search(m)):
+        return False
+    marker = bool(_BACKGROUND_MARKER_RE.search(m))
+    if _PLACE_RELATIVE_RE.match(m):
+        return marker or bool(prev and _LOCATIVE_RE.match(_masked(prev, lexicon)))
+    if _LOCATIVE_RE.match(m):
+        return marker or not (TIME_RE.search(m) or VIEW_RE.search(m))
+    return False
+
+
 def claim_kinds(sentence: Optional[str], claim: Optional[str], lexicon=None) -> tuple[str, ...]:
-    """The trip promise kinds of one judged claim: those of its span (``claim_span``), and when the span names none
-    but still names a service, a time or a view (its trip subject sits elsewhere in the sentence), those of the
-    whole sentence (fail safe: a missed promise is worse than a warned background)."""
-    span = claim_span(sentence, claim)
+    """The trip promise kinds of one judged claim. Its clause positively place background (``_is_place_background``):
+    () (warn). Otherwise the kinds of its span (``claim_span``), and when the span names none, those of the whole
+    sentence (fail safe: "You stay in the village, where a kayak excursion awaits", "You visit the market, the temple
+    and the floating village", "..., while a naturalist points out the birds" are the trip's)."""
+    sentence = sentence or ""
+    claim_text = (claim or "").strip()
+    if claim_text:
+        clause, prev = _claim_clause(sentence, claim_text)
+        if clause is not None and _is_place_background(clause, prev, lexicon):
+            return ()
+    span = claim_span(sentence, claim, lexicon)
     kinds = trip_promise_kinds(span, lexicon)
-    if not kinds and span != (sentence or "") and _names_trip_term(span, lexicon):
+    if not kinds and span != sentence:
         kinds = trip_promise_kinds(sentence, lexicon)
     return kinds
 
@@ -319,6 +397,7 @@ __all__ = [
     "POLICY_VERSION", "F9_POLICY_MODE_ENV", "INTERIM_MODE", "LEGACY_MODE", "F9_CLAIM_RE", "CLAIMS_MARK",
     "NO_REASON_MARK", "TRIP_PROMISE", "UNSUPPORTED_OTHER", "FACT_CHECK_UNQUOTED", "SEO_FIELD_CLAIM",
     "CTA_NOT_REFLECTED", "TEXT_INTEGRITY", "JUDGE_UNAVAILABLE", "REASONLESS", "OTHER", "FIDELITY_CLASSES",
-    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "trip_promise_kinds", "claim_span", "claim_kinds", "parse_claims",
+    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "ACTIVITY_NOUN_RE", "trip_promise_kinds", "claim_span", "claim_kinds",
+    "parse_claims",
     "violation_items", "violation_classes", "entry_classes", "policy_mode", "apply_policy",
 ]

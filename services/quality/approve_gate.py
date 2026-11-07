@@ -9,12 +9,14 @@ score below the floor. The admin page hides the Approve button for most of these
 ``blockers(row)`` applies the auto-publish checks (``admin_pipeline._is_publishable`` + grounding) to the stored
 version and returns why it cannot be approved unedited ([] = it can). One exemption is policy: a tour held only by
 the elephant-riding rule (root ADR 0020 D8) is approved as ``policy_keep`` — the human review the policy asks for is
-this approve. "Held only by the rule" is ``elephant_policy.is_policy_only_hold``: manual_check with
-``FACT_CHECK_MANUAL_CHECK`` as the only brand code AND the detector hitting the stored version text or its raw
-source. The code alone is not enough: the LLM brand audit also emits it for other fact checks (rare wildlife +
-location mismatch, an uncertain claim), and those stay blocked. Any other blocker can be overridden only with an
-explicit reason (recorded on the review row); the usual path is Edit → Re-validate → Approve (an edited elephant
-tour passes the re-validation gate, graph.human_edit_gate_node).
+this approve. "Held only by the rule" is ``elephant_policy.is_policy_only_hold``: manual_check, the detector
+hitting the stored version text or its raw source, and the policy's own code ``POLICY_ELEPHANT_RIDING`` (AA-1047)
+as the only brand code, or next to the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` (or the pre-AA-1047
+``FACT_CHECK_MANUAL_CHECK`` alone) only when every audit issue is about the ride or a narrow voice / SEO / format
+issue. Any other issue keeps the block (fail closed): the LLM audit also emits that code for other fact checks
+(rare wildlife + location mismatch, an uncertain claim), and those stay blocked. Any other blocker can be overridden
+only with an explicit reason (recorded on the review row); the usual path is Edit → Re-validate → Approve (an
+edited elephant tour passes the re-validation gate, graph.human_edit_gate_node).
 
 ``row`` is the stored version as ``v1_pipeline._APPROVE_GATE_SQL`` reads it: score_overall, failure_codes,
 brand_audit_status, brand_audit_codes (quality_scores, latest row), fix_pass_applied, metadata and the aa_* / seo_*
@@ -79,9 +81,10 @@ def stored_result(row: Any) -> dict:
 
 
 def is_policy_keep(result: dict) -> bool:
-    """Held only by the elephant-riding policy (``elephant_policy.is_policy_only_hold``): manual_check, the policy
-    code its only brand code, and the detector hits the stored text or the raw source. A FACT_CHECK_MANUAL_CHECK the
-    LLM audit raised for another fact check (no elephant riding anywhere) is not a policy keep."""
+    """Held only by the elephant-riding policy (``elephant_policy.is_policy_only_hold``): manual_check, the detector
+    hits the stored text or the raw source, and the brand codes are the policy code alone, or the policy code (or the
+    legacy FACT_CHECK_MANUAL_CHECK) with issues that are all about the ride or voice / SEO / format. A
+    FACT_CHECK_MANUAL_CHECK the LLM audit raised for any other fact check is not a policy keep."""
     return elephant_policy.is_policy_only_hold(result.get("brand_audit_status"), result.get("brand_audit_codes"),
                                                result.get("content"), result.get("source"),
                                                issues=result.get("brand_audit_issues"))

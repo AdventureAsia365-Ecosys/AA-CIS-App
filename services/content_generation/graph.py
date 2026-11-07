@@ -1430,10 +1430,11 @@ def human_edit_gate_node(state: ContentState) -> ContentState:
     On fail the reviewer must fix and re-validate again before approve is allowed.
 
     S271 W0 (root ADR 0020 D8, AA-900 l16): a manual_check held ONLY by the elephant-riding policy
-    (``elephant_policy.is_policy_only_hold``: its code is the only brand code and the detector hits the edited text
-    or the source) does not fail the gate: the policy asks for a human review, and this edit is it. Before, an
-    edited elephant tour could never pass (the detector re-hits the source on every re-validation), so the only way
-    out was an API-only override. Any other manual_check still fails.
+    (``elephant_policy.is_policy_only_hold``: the detector hits the edited text or the source, and the policy code is
+    the only brand code or every other audit issue is about the ride or voice / SEO / format) does not fail the
+    gate: the policy asks for a human review, and this edit is it. Before, an edited elephant tour could never pass
+    (the detector re-hits the source on every re-validation), so the only way out was an API-only override. Any
+    other manual_check still fails.
     """
     from services.quality import elephant_policy
     score = state.get("quality_score", 0.0)

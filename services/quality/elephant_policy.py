@@ -39,9 +39,11 @@ AA-1047 W1 (follow-up of the W0 review, #1355): the detector has its own code, `
 elephant riding AND an unrelated LLM fact check (a rare-wildlife / location mismatch) carried one code and was read
 as held by the policy alone (``policy_keep``), so the other check was approved away. A gate that exempts the policy
 reads ``is_policy_only_hold`` (the policy code AND a detector hit; any other manual-check code keeps the hold),
-never the code alone. Next to the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` it reads the audit's issues: an issue
-about the ride (``names_riding``: riding, not the animal) is the policy, an issue naming another product-truth
-concern keeps the hold, a voice / SEO / format issue is neither.
+never the code alone. Next to the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` it reads the audit's issues and fails
+CLOSED (W1 fix pass 2): an issue about the ride (``names_riding``: riding, not the animal) is the policy, a narrow
+voice / SEO / format issue (``is_voice_issue``) is neither, and ANY other issue keeps the hold, however it is worded.
+A mixed issue ("elephant riding on day 2; also the balloon flight is not in the source") is split into clauses and
+its non-riding clauses are judged on their own.
 
 Pure: no DB, no LLM, no I/O.
 """
@@ -55,18 +57,45 @@ from typing import Any, Iterable, Optional
 # code; LEGACY_CODE is what a hit added before (stored versions written up to S271 carry it).
 POLICY_CODE = "POLICY_ELEPHANT_RIDING"
 LEGACY_CODE = "FACT_CHECK_MANUAL_CHECK"
-# An LLM brand-audit issue that names some other product-truth concern (a claim the source does not support, a
-# mismatch, a wrong place / duration ...). A voice / SEO / format issue ("meta 162 chars", a city-list subtitle, hype)
-# names none of these and does not count: on a v2 draft those codes are report-only, but their issue text stays in
-# brand_audit_issues (is_policy_only_hold).
+# AA-1047 W1 fix pass 2: the issue rule fails CLOSED. An LLM brand-audit issue is accounted for by the policy only
+# when it is about the ride or is a narrow voice / SEO / format issue; any other wording (a hotel swap, a balloon
+# flight, "cannot confirm ...") keeps the hold. A voice / SEO / format issue names a term below AND no product-truth
+# term (_PRODUCT_TRUTH_ISSUE_RE, a denylist: "the meta promises a private boat" is not voice). On a v2 draft the voice
+# codes are report-only, but their issue text stays in brand_audit_issues (is_policy_only_hold).
+_VOICE_ISSUE_RE = re.compile(
+    r"\b(?:seo|meta(?:\s+description)?|(?:seo\s+)?title|subtitle|characters?|chars|word\s+count|too\s+(?:long|short)"
+    r"|hype\w*|tone|voice|calm|clich\w*|wordy|repetit\w*|formatting|bullets?|capitali[sz]\w*|punctuation|grammar"
+    r"|typos?|spelling|reads?\s+(?:as|like)\s+a\s+list|list\s+of\s+(?:towns|cities|places|stops)"
+    r"|more\s+(?:specific|concrete|precise|vivid)|precise|vague|generic|keywords?|superlatives?|exclamation\w*"
+    r"|(?:marketing|promotional|salesy)\s+(?:language|tone)|brand\s+(?:voice|fit))\b",
+    re.IGNORECASE,
+)
 _PRODUCT_TRUTH_ISSUE_RE = re.compile(
     r"\b(?:source|sources|sourced|unsupported|unverified|verif\w*|claim\w*|mismatch\w*|invent\w*|fabricat\w*"
     r"|inaccura\w*|incorrect\w*|wrong\w*|contradict\w*|inconsisten\w*|mislead\w*|fact\w*|product[-\s]truth"
-    r"|(?:does|do|did)\s+not\s+(?:match|mention|state|include|offer|support)|doesn['’]?t\s+(?:match|mention|state"
-    r"|include|offer|support)|not\s+(?:mentioned|stated|included|offered|supported)\b"
-    r"|sightings?|guarantee\w*|location|duration|misplac\w*|rare|endangered)",
+    r"|(?:does|do|did)\s+not|doesn['’]?t|don['’]?t|not\s+(?:mentioned|stated|included|offered|supported|listed|in"
+    r"|part|confirmed|found)|unlisted|absent|missing|omit\w*|promis\w*|offer\w*|includ\w*|optional|extra"
+    r"|additional|cost\w*|pric\w*|confirm\w*|cannot|can['’]?t|differ\w*|instead|replac\w*|swap\w*|adds?|added"
+    r"|sightings?|guarantee\w*|location|duration|misplac\w*|rare|endangered|itinerar\w*|hotel\w*|day\s+\d+)\b",
     re.IGNORECASE,
 )
+# A riding issue is split into clauses; the clauses that do not name the ride are judged on their own.
+_ISSUE_CLAUSE_SPLIT_RE = re.compile(
+    r"\s*[.;:!?()\[\]\n\u2014\u2013]\s*|\s*,\s*|\s+-\s+"
+    r"|\s+(?:and\s+also|also|but|while|whereas|plus|as\s+well\s+as|and|however)\s+",
+    re.IGNORECASE,
+)
+_ISSUE_WORD_RE = re.compile(r"[a-z_'-]+")
+# The words of a clause that only asks for the review the policy already gives ("needs a manual check", "flag for
+# human review per policy", "FACT_CHECK_MANUAL_CHECK").
+_REVIEW_FILLER = frozenset({
+    "a", "an", "the", "this", "it", "is", "be", "should", "must", "needs", "need", "requires", "require", "required",
+    "requiring", "for", "per", "by", "to", "so", "please", "as", "under", "our", "aa", "brand", "policy", "rule",
+    "standards", "standard", "always", "mandatory", "human", "manual", "manually", "review", "reviewed", "reviewer",
+    "check", "checked", "checks", "fact", "fact-check", "fact-checked", "flag", "flagged", "flags", "keep", "kept",
+    "as-is", "stays", "stay", "content", "fact_check_manual_check", "manual_check", "policy_elephant_riding",
+    "before", "publishing", "publication", "here", "triggers", "trigger", "applies", "hold", "held",
+})
 # The policy-hold reason a T2 version and its review row carry (D8).
 POLICY_HOLD = "elephant_riding"
 
@@ -260,41 +289,88 @@ def names_riding(text: Optional[str]) -> bool:
     return False
 
 
-def other_product_truth_issues(issues: Optional[Iterable[Any]]) -> list[str]:
-    """The audit issues that name a product-truth concern other than elephant riding (an issue that names the
-    ride is the policy's; a voice / SEO / format issue names no concern)."""
-    texts = [_as_text(i) for i in (issues or ()) if _as_text(i).strip()]
-    return [t for t in texts if not names_riding(t) and _PRODUCT_TRUTH_ISSUE_RE.search(t)]
+def _issue_list(issues: Any) -> list:
+    """``issues`` as a list: a bare string or dict is ONE issue (iterating a string would read it letter by letter)."""
+    if issues is None:
+        return []
+    if isinstance(issues, (str, bytes, dict)):
+        return [issues]
+    try:
+        return list(issues)
+    except TypeError:
+        return [issues]
+
+
+def _issue_clauses(text: str) -> list[str]:
+    return [c.strip() for c in _ISSUE_CLAUSE_SPLIT_RE.split(text or "") if c and c.strip()]
+
+
+def is_voice_issue(text: Optional[str]) -> bool:
+    """An issue that is only about voice / SEO / format: it names a voice-format term (``_VOICE_ISSUE_RE``) and no
+    product-truth term (``_PRODUCT_TRUTH_ISSUE_RE``). Narrow on purpose: anything else is an unknown issue."""
+    text = text or ""
+    return bool(_VOICE_ISSUE_RE.search(text)) and not _PRODUCT_TRUTH_ISSUE_RE.search(text)
+
+
+def _is_review_boilerplate(clause: str) -> bool:
+    """A clause that only asks for the review itself ("needs a manual check", "flag for human review per policy")."""
+    words = _ISSUE_WORD_RE.findall((clause or "").lower())
+    return bool(words) and all(w in _REVIEW_FILLER for w in words)
+
+
+def _riding_issue_rest(text: str) -> list[str]:
+    """The clauses of a riding issue that are NOT about the ride and not review boilerplate ("Elephant riding on day
+    2; also the Day 4 balloon flight is not in the source" -> ["the Day 4 balloon flight is not in the source"])."""
+    return [c for c in _issue_clauses(text) if not names_riding(c) and not _is_review_boilerplate(c)]
+
+
+def other_product_truth_issues(issues: Any) -> list[str]:
+    """The audit issue text that is NOT accounted for by the policy (fail closed, AA-1047 W1 fix pass 2): every
+    non-empty issue counts unless it is a voice / SEO / format issue (``is_voice_issue``) or about the ride. An issue
+    that names the ride is split into clauses; a clause that does not name the ride and is not review boilerplate
+    is judged on its own by the same rule (several concerns in one issue: the other one still holds)."""
+    out: list[str] = []
+    for t in (_as_text(i) for i in _issue_list(issues)):
+        if not t.strip():
+            continue
+        if names_riding(t):
+            out += [c for c in _riding_issue_rest(t) if not is_voice_issue(c)]
+        elif not is_voice_issue(t):
+            out.append(t)
+    return out
 
 
 def is_policy_only_hold(brand_audit_status: Optional[str], brand_audit_codes: Iterable[str],
                         generated: Optional[dict] = None, source: Optional[dict] = None, *,
-                        issues: Optional[Iterable[Any]] = None) -> bool:
+                        issues: Any = None) -> bool:
     """A version held ONLY by this policy: brand audit manual_check, the detector hits the version text or its
     source, and no other manual-check reason is on it. Read by the approve gate (an unedited approve = the policy's
     human review), the re-validation gate (a human edit of an elephant tour is that review too) and the final
     contract. By codes:
 
     - ``POLICY_CODE`` alone: the policy.
-    - ``POLICY_CODE`` + the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` (since the split only the LLM emits that code):
-      the policy only when the audit explained its fact check as the ride (at least one issue that names elephant
-      riding, ``names_riding``) and no issue names another product-truth concern (``other_product_truth_issues``:
-      "wild elephant sightings are not in the source" is another concern, "meta 162 chars" is none). An unexplained
-      fact check (no riding issue) keeps the hold.
-    - ``LEGACY_CODE`` alone (a version stored before AA-1047, when the detector added that code with no issue text):
-      the pre-split rule, a detector hit is the policy, unless an issue names another product-truth concern.
+    - ``POLICY_CODE`` + the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` (since the split only the LLM emits that code;
+      brand_standards still tells it to for the ride): the policy only when at least one issue names elephant riding
+      (``names_riding``) and EVERY non-empty issue is accounted for (``other_product_truth_issues`` is empty): about
+      the ride (a mixed issue is split; its other clauses are judged alone) or a narrow voice / SEO / format issue.
+      Any other issue, phrased however, keeps the hold (fail closed).
+    - ``LEGACY_CODE`` alone (a version stored before AA-1047, when the detector added that code): the same issue
+      rule, without the riding-issue requirement. A legacy row with NO issue text stays a keep (the S271 rule: the
+      detector hit is the policy). A legacy judge-path row carries the judge's feedback as its one issue: praise
+      that names a product-truth word ("the 4-day duration reads well") now holds — fail safe, the reviewer edits
+      and re-validates (which re-audits and emits ``POLICY_CODE``) or overrides with a reason.
     - anything else: not the policy alone.
     """
     if brand_audit_status != "manual_check" or not scan(generated, source):
         return False
     codes = set(brand_audit_codes or ())
+    items = _issue_list(issues)
     if codes == {POLICY_CODE}:
         return True
     if codes == {POLICY_CODE, LEGACY_CODE}:
-        texts = [_as_text(i) for i in (issues or ())]
-        return any(names_riding(t) for t in texts) and not other_product_truth_issues(issues)
+        return any(names_riding(_as_text(i)) for i in items) and not other_product_truth_issues(items)
     if codes == {LEGACY_CODE}:
-        return not other_product_truth_issues(issues)
+        return not other_product_truth_issues(items)
     return False
 
 

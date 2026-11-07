@@ -528,7 +528,7 @@ def _is_v2_draft(state: dict) -> bool:
 
 # AA-645 step 0 (d02): on an A1 draft of the S1 writer v2 the AA voice rubric of the LLM audit is report-only, like
 # brand fit in the judge. What still gates: the deterministic pre-audit codes (editorial format, meal/clock-time
-# claims, elephant riding = FACT_CHECK_MANUAL_CHECK), the product-truth codes (_MANUAL_CHECK_CODES) and a model
+# claims, elephant riding = POLICY_ELEPHANT_RIDING), the product-truth codes (_MANUAL_CHECK_CODES) and a model
 # "manual_check" verdict (a human must look: product truth, not voice). FORBIDDEN_WORD is validate's hard code and is
 # not touched here. The other LLM codes and a bare publish_ready=false / "flagged" go to quality_shadow.
 V2_BRAND_AUDIT_DETECTOR = "s1_writer_v2_brand_audit"

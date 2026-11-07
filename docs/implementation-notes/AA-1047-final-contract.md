@@ -51,21 +51,38 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   `FACT_CHECK_MANUAL_CHECK` stays the LLM audit's own code. `is_policy_only_hold` keeps a hold when any other manual-check
   reason is present. Fix pass (review findings): the audit issues are read per issue, not per word "elephant".
   `names_riding` = the issue names elephant RIDING (the detector's phrases; a bare "elephant safari" only with a ride
-  cue), so "wild elephant sightings" or "an elephant sanctuary" is not the policy. `other_product_truth_issues` = a
-  non-riding issue that names a product-truth concern (source, claim, mismatch, wrong, location, sighting, rare ...);
-  voice / SEO / format issues ("meta 162 chars", city-list subtitle, hype) and the judge feedback name none and are
-  ignored. Rules: policy code alone = keep; policy code + the LLM's `FACT_CHECK_MANUAL_CHECK` = keep only with at least
-  one riding issue and no other product-truth issue (an unexplained fact check holds, no fail-open on empty issues);
-  a pre-split `FACT_CHECK_MANUAL_CHECK` alone = the pre-split rule (detector hit = keep) unless an issue names another
-  product-truth concern. The approve gate SQL reads `quality_scores.brand_audit_issues`.
+  cue), so "wild elephant sightings" or "an elephant sanctuary" is not the policy. Fix pass 2 (two reviews: the
+  first fix used an allow-list of concern words and failed OPEN, "Day 4 adds a hot-air balloon flight" next to a ride
+  issue was a keep): the rule is inverted and fails CLOSED. `other_product_truth_issues` = every non-empty issue that
+  is not accounted for: an issue about the ride is split into clauses (`;`, `.`, `,`, "and (also)", "but" ...) and its
+  clauses that do not name the ride are judged alone (review boilerplate such as "needs a manual check" is dropped);
+  any other issue counts unless `is_voice_issue` (a narrow voice / SEO / format term: meta / title / subtitle /
+  characters / hype / tone / calm / more specific ..., AND no product-truth term from a broad denylist). Rules: policy
+  code alone = keep; policy code + the LLM's `FACT_CHECK_MANUAL_CHECK` = keep only with at least one riding issue and
+  no unaccounted issue (an unexplained fact check holds); a pre-split `FACT_CHECK_MANUAL_CHECK` alone = keep only with
+  no unaccounted issue. Kept on purpose: a legacy row with NO issue text stays a keep (the S271 rule, the detector hit
+  is the policy). Changed on purpose (fail safe): a legacy judge-path row whose judge praise names a product-truth
+  word ("the 4-day duration reads well", "faithful to the source") now holds; the reviewer edits + re-validates
+  (which re-audits and emits `POLICY_ELEPHANT_RIDING`) or overrides with a reason. `issues` given as a bare string or
+  dict is one issue. The approve gate SQL reads `quality_scores.brand_audit_issues`. Not changed:
+  `brand_standards.py` still tells the LLM "Elephant riding: always FACT_CHECK_MANUAL_CHECK" (a prompt change moves
+  every A1 audit and needs its own regression run); once it stops, POLICY + FACT_CHECK can simply hold.
 - **F9 claim span (follow-up 3).** `f9_policy.claim_span` picks the clause of the quoted sentence that holds the
   judge's claim (most shared words), with the sentence's trip subject in front when the clause continues its verb
   phrase ("you visit the market and taste the tea") or, fix pass, when it names a service, a time or a view (a
   relative / attached clause: "..., where dinner is served on the terrace", "Day 3 is a free day, with a cooking
-  class"). `claim_kinds` (used by `violation_items`) falls back to the whole sentence when the span names a service /
-  time / view but still classifies as none (its subject sits after it). A plain background clause ("which has guarded
-  the valley for 900 years") stays background. A claim with no word in common with the sentence (paraphrase,
-  placeholder) falls back to the whole sentence (fail safe, the pre-W1 behaviour).
+  class"). Fix pass 2 (review: the span alone dropped ACTIVITY promises in attached / list clauses to warn, "You
+  stay in the village, where a kayak excursion awaits", "You visit the market, the temple and the floating
+  village"): `claim_kinds` fails safe. The claim's clause is demoted to warn ONLY when `_is_place_background` proves
+  it: no trip subject / service / inclusion / activity verb or noun / offer verb ("awaits", "points out") / clock
+  time, and a place-describing clause (a relative with a background marker: built, founded, "for 900 years", famed,
+  "was paved"; a relative right after a locative clause "near the fort, which ..."; or a locative clause). A view /
+  time word is allowed there only under a marker or a locative antecedent ("near the temple famed for its views",
+  "where monks have chanted at dawn for centuries"). Otherwise the span's kinds, and when the span names none, the
+  whole sentence's kinds. The trip subject is not put in front of a background clause. `claim_span` takes the
+  lexicon (place names masked: 'Camp Road'), and a claim-word tie goes to the clause with the claim's verb-like words
+  ("Camp Road was paved" -> "which was paved in 1990"). A claim with no word in common with the sentence
+  (paraphrase, placeholder) falls back to the whole sentence (fail safe, the pre-W1 behaviour).
 - **/stats (follow-up 1).** The F9_cta_fact gate rows count in `failed` / `blocking_failed` only the entries with a
   content class; `failed_judge_unavailable` / `failed_text_integrity` count the rest; `f9_classes` sums the classes per
   channel (stored `f9_policy.classes`, else parsed).
