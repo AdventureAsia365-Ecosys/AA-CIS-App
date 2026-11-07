@@ -3,8 +3,10 @@
 A renumbered migration keeps its name, so the tests and docs that still name ``316_name`` after the file became
 ``314_name.sql`` are refused, on the lines the PR adds only; so is a reference to a file the PR removes. Another
 owner's file, a fixture name and a line marked ``old-mig-ok`` pass. ``migration_preflight.main()`` refuses them too
-(run on a throw-away git repository). The file is identical in AA-CIS-App, AA-Booking and AA-Partner; so is this
-test (AA-TripPlanner-Web has the same script with a unittest copy of these cases)."""
+(run on a throw-away git repository), also on a PR that touches no migration, and the CI step that runs it has no
+``if:`` (the scope step only skips the Infra tools and the classify replay). The file is identical in AA-CIS-App,
+AA-Booking and AA-Partner; so is this test (AA-TripPlanner-Web has the same script with a unittest copy of these
+cases)."""
 
 from __future__ import annotations
 
@@ -141,6 +143,22 @@ def test_preflight_refuses_a_reference_left_behind_by_a_renumber(repo: Path) -> 
     assert "dangling migration reference: notes.md:2: `004_widget_gate.sql`" in md
 
 
+def test_a_non_utf8_added_line_does_not_crash_the_check(repo: Path) -> None:
+    """A Latin-1 byte in an added line (a fixture, a legacy export) used to raise UnicodeDecodeError in git()'s strict
+    decode and crash the preflight; the line is read with U+FFFD and the tokens on it are still checked."""
+    (repo / "migrations" / "002_widget_gate.sql").write_text("BEGIN;\nCOMMIT;\n", encoding="utf-8")
+    (repo / "notes.md").write_bytes(b"history\ncaf\xe9 note: the gate is in 004_widget_gate.sql\n")
+    (repo / "legacy.csv").write_bytes(b"name\nM\xfcller\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "a Latin-1 line next to a stale reference")
+    base = _git(repo, "rev-list", "--max-parents=0", "HEAD")
+    errors = mr.check("migrations", base)
+    assert len(errors) == 1 and errors[0].startswith("notes.md:2: `004_widget_gate.sql`")
+    code, md, refs = _preflight(repo)
+    assert code == 1 and refs == 1
+    assert "dangling migration reference: notes.md:2: `004_widget_gate.sql`" in md
+
+
 def test_preflight_passes_once_the_reference_follows_the_file(repo: Path) -> None:
     (repo / "migrations" / "002_widget_gate.sql").write_text("BEGIN;\nCOMMIT;\n", encoding="utf-8")
     (repo / "notes.md").write_text("history\nthe gate is in 002_widget_gate.sql\n", encoding="utf-8")
@@ -149,3 +167,54 @@ def test_preflight_passes_once_the_reference_follows_the_file(repo: Path) -> Non
     code, md, refs = _preflight(repo)
     assert code == 0 and refs == 0
     assert "dangling" not in md
+
+
+def test_a_pr_that_touches_no_migration_is_still_checked(repo: Path) -> None:
+    """The renumber merged earlier (002_widget_gate.sql is on the base); a later PR changes only a doc and names the
+    old number. No migration and no readiness key in the diff, and the preflight still refuses it."""
+    (repo / "migrations" / "002_widget_gate.sql").write_text("BEGIN;\nCOMMIT;\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "the renumbered file, merged")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "notes.md").write_text("history\nthe gate is in 004_widget_gate.sql\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "a doc-only PR with the old number")
+    assert _git(repo, "diff", "--name-only", base, "HEAD", "--", "migrations", "db.py") == ""
+    summary = repo / "summary.md"
+    argv = ["--app", "booking", "--migrations-dir", "migrations", "--readiness-file", "db.py", "--base", base]
+    assert mp.main([*argv, "--summary", str(summary)]) == 1
+    assert "dangling migration reference: notes.md:2: `004_widget_gate.sql`" in summary.read_text(encoding="utf-8")
+
+
+def _job_block(text: str, job: str) -> str:
+    lines = text.splitlines()
+    start = lines.index(f"  {job}:")
+    end = next(
+        (
+            i
+            for i in range(start + 1, len(lines))
+            if lines[i].startswith("  ")
+            and not lines[i].startswith("   ")
+            and lines[i].rstrip().endswith(":")
+            and not lines[i].lstrip().startswith("#")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def test_the_preflight_verdict_step_runs_on_every_pr() -> None:
+    """The scope step's "relevant" output skips the Infra tools and the classify replay only: the verdict step (which
+    runs migration_refs) has no ``if:``, and the job has no path filter, so a doc-only PR is checked too."""
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = _job_block(ci, "migration-preflight")
+    head, _, steps = job.partition("    steps:")
+    assert [ln.strip() for ln in head.splitlines() if ln.strip().startswith("if:")] == [
+        "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+    ]
+    verdict = steps[steps.index("- name: Preflight verdict") :]
+    nxt = verdict.find("\n      - ", 1)
+    verdict = verdict if nxt < 0 else verdict[:nxt]
+    assert not any(ln.strip().startswith("if:") for ln in verdict.splitlines()), "the verdict step must always run"
+    assert "python3 .github/scripts/migration_preflight.py" in verdict
+    on = ci[ci.index("\non:") : ci.index("\njobs:")]
+    assert "paths:" not in on and "paths-ignore:" not in on

@@ -161,3 +161,46 @@ def test_throwaway_cluster_is_stopped_and_removed(repo: Path):
 def test_ci_mode_never_asks_for_the_stamp():
     p = subprocess.run(["bash", str(SCRIPT), "--self-test"], cwd=REPO, capture_output=True, text=True, timeout=120)
     assert "ok   --ci, docs only: never skips by diff" in p.stdout
+
+
+SMOKE = "tests/integration/test_aa1024_replay_smoke.py"
+
+
+@pytest.mark.parametrize("changed, body", [
+    ("conftest.py", "from _replay_guard import first_line\n"),
+    ("_replay_guard.py", "def first_line(e):\n    return str(e)\n"),
+])
+def test_conftest_or_its_helper_needs_the_smoke_stamp(tmp_path: Path, changed: str, body: str):
+    """A change to tests/integration/conftest.py, or to a helper conftest imports, used to print only a WARN (no test
+    file names them): the hook now asks for a stamp of the fixed smoke file, and --integration runs exactly it."""
+    r = tmp_path / "r"
+    (r / "scripts").mkdir(parents=True)
+    (r / ".githooks").mkdir()
+    (r / "tests" / "integration").mkdir(parents=True)
+    shutil.copy(SCRIPT, r / "scripts" / "pre-push.sh")
+    shutil.copy(HOOK, r / ".githooks" / "pre-push")
+    (r / "tests" / "integration" / "conftest.py").write_text("from _replay_guard import first_line\n")
+    (r / "tests" / "integration" / "_replay_guard.py").write_text("def first_line(e):\n    return ''\n")
+    (r / SMOKE).write_text("def test_smoke(db_conn):\n    assert db_conn\n")
+    (r / "tests" / "integration" / "test_other_db.py").write_text("def test_b():\n    assert True\n")
+    _git(r, "init", "-q", "-b", "main", ".")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-q", "-m", "base")
+    _git(r, "tag", "base")
+    (r / "tests" / "integration" / changed).write_text(body + "# changed\n")
+    _git(r, "commit", "-qam", f"change {changed}")
+    fake = tmp_path / "fake-python"
+    fake.write_text(FAKE_PY)
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    p = _run(r, "--only", "integration")
+    assert p.returncode == 1, p.stdout
+    assert "have not passed locally" in p.stdout and SMOKE in p.stdout
+    assert "WARN" not in p.stdout
+
+    p = _run(r, "--integration", CIS_TEST_DB_PORT="55998")
+    assert p.returncode == 0 and "stamp" in p.stdout, p.stdout
+    ran = (tmp_path / "fake.log").read_text()
+    assert SMOKE in ran and "test_other_db.py" not in ran
+    p = _run(r, "--only", "integration")
+    assert p.returncode == 0 and "passed locally" in p.stdout, p.stdout

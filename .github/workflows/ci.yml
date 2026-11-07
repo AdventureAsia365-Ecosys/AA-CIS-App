@@ -498,8 +498,11 @@ jobs:
   # contradicts. Tools: AA-CIS-Infra db/run_migration.py --inspect, db/check_migration_ownership.py and
   # db/expand_check.py --classify at the pinned INFRA_TOOLS_SHA (public repo, anonymous clone; bump the pin when the
   # Infra runner changes). The Infra copy PR's required "Expand classify" and Migration Apply's re-classify stay the
-  # authority. Runs on pull_request and merge_group (the queue re-checks the number on the latest main); exits at once
-  # when the PR touches no migration and no readiness key. Logic: .github/scripts/migration_preflight.py.
+  # authority. Runs on pull_request and merge_group (the queue re-checks the number on the latest main). A PR that
+  # touches no migration and no readiness key skips the Infra tools and the classify replay, but "Preflight verdict"
+  # always runs (no `if:`): its dangling-reference check (migration_refs.py) reads the added lines of EVERY PR, so a
+  # PR that only adds a doc / test line naming a renumbered migration's old number is refused too (AA-1024; pinned by
+  # test_migration_refs.py). Logic: .github/scripts/migration_preflight.py.
   # Same steps in AA-CIS-App, AA-Booking and AA-Partner; only the env block differs.
   migration-preflight:
     name: Migration preflight

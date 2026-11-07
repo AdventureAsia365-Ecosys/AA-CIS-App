@@ -7,6 +7,14 @@ opened a DB connection without the env CI provides (aa324 ×2, aa652).
 """
 import os
 
+# S272 incident: under a git hook (pre-push) git exports GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE. A unit test that runs
+# `git init` / `git config` / `git commit` in tmp_path with the inherited env then rewrites the REAL clone (core.bare,
+# user identity, fake commits, origin/main). No unit test may inherit them: drop them at import, before any test runs.
+GIT_REPO_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")
+for _name in GIT_REPO_ENV:
+    os.environ.pop(_name, None)
+
 _CI_UNIT_ENV = {
     "ENVIRONMENT": "test",
     "AWS_REGION": "us-west-1",
