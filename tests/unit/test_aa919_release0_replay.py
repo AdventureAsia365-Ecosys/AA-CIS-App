@@ -13,6 +13,9 @@ Regenerated AA-789 tier 0 (S258, 29/10/2026): the route blog's "Thin moment" rul
 Regenerated AA-741 (S271 phase-1 audit, t9_write v2): every blog user prompt ends with the LENGTH AND EFFORT block
 (prompts._BLOG_LENGTH_INSTRUCTIONS) before the JSON envelope. Only the 20 T9 blog user prompts change
 (t9-blog-fake-00..19); every system prompt and the other 60 user prompts keep their pins.
+Regenerated AA-1047 (S272 W1, writing policy registry): the T9 system prompt carries the policy's background and CTA
+lines (tests/unit/aa1047_prompt_lines.py). Only the 40 T9 system prompts change (blog and social); every A1 / T2 prompt
+and all 80 user prompts keep their pins.
 """
 from __future__ import annotations
 
