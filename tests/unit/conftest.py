@@ -31,6 +31,9 @@ _CI_UNIT_ENV = {
     "BRONZE_BUCKET": "aa-cis-bronze-test",
     # AA-902: satellite account IDs come from the task environment (shared/llm_client/bedrock_satellite.py).
     "BEDROCK_ACCT_PRIMARY": "acc3-test-account",
+    # AA-1024 G3 (c): the deploy gate's ECS exec heartbeat list (shared/jobs/exec_heartbeat.py) reads S3; off here,
+    # tests/unit/test_aa1024_exec_heartbeat_gate.py tests it with a fake client.
+    "DEPLOY_GATE_ECSX": "off",
 }
 for _k, _v in _CI_UNIT_ENV.items():
     os.environ.setdefault(_k, _v)
@@ -168,6 +171,18 @@ def _llm_cassette_off(request, monkeypatch):
         monkeypatch.delenv(cassette.SWITCH_ENV, raising=False)
     yield
     cassette.reset_stats()
+
+
+@pytest.fixture(autouse=True)
+def _factsheet_store_off(request, monkeypatch):
+    """AA-1047 (Quality W1): the writers store a FactSheet per write and stamp its fs_id (best-effort DB writes on the
+    pool or connection they already hold). Unit tests have no database: off (FACTSHEET_PERSIST=off) unless a test
+    opts in with the marker `real_factsheet_store` and gives the store a fake connection."""
+    if "real_factsheet_store" not in request.keywords:
+        monkeypatch.setenv("FACTSHEET_PERSIST", "off")
+    else:
+        monkeypatch.delenv("FACTSHEET_PERSIST", raising=False)
+    yield
 
 
 @pytest.fixture(autouse=True)

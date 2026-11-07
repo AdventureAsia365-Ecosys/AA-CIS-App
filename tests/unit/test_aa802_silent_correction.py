@@ -175,7 +175,7 @@ async def test_apply_cut_updates_the_tenants_row_in_place_and_audits():
     # the write names the tenant's row explicitly: id AND tenant_id AND a still-editable status
     assert "WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])" in upd_sql
     # silent: only the content changes — no status / edit_source / edited_at / version_number write
-    assert "SET rewritten_content = $3::jsonb\n" in upd_sql and "edited_at" not in upd_sql
+    assert "SET rewritten_content = $3::jsonb," in upd_sql and "edited_at" not in upd_sql
     assert args[0] == VERSION_ID and args[1] == str(TENANT_ID) and args[3] == ["ai_generated", "needs_review"]
     new_rc = json.loads(args[2])
     assert new_rc["summary"] == ("Walk the old town of Luang Prabang with a local guide. "

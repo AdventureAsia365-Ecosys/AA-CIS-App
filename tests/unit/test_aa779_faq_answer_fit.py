@@ -7,6 +7,7 @@ reply writes one llm_call_log row on stage t9_faq_answer_fit, role validate (AA-
 """
 import asyncio
 import json
+import inspect
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -308,8 +309,8 @@ def test_writer_input_carries_the_fit_record_only_when_present():
 
 
 def test_run_write_background_calls_the_step_after_the_tag_strip_and_before_final_integrity():
-    src = Path(svc.__file__).read_text()
-    i_strip = src.index("content_text = strip_citation_tags(content_text)\n        gate_ledger = deep_strip")
+    src = inspect.getsource(svc._normalize_final_text)   # AA-1047 W1: the post-loop steps live in the normalizer
+    i_strip = src.index("content_text = strip_citation_tags(content_text)\n    gate_ledger = deep_strip")
     i_fit = src.index("await _apply_faq_answer_fit(")
     i_final = src.index("content_text, gate_ledger, flags, status, held_reason = _final_integrity(")
     assert i_strip < i_fit < i_final

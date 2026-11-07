@@ -37,6 +37,8 @@ from shared.tour_liveness import (
     source_state,
 )
 from services.quality.registry import threshold
+from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
+from services.quality import final_contract_store as _fc_store  # AA-1047 W1
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -407,6 +409,20 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
     return metadata
 
 
+def _final_contract_at_store(result: dict, generated: dict, status: str) -> Optional[dict]:
+    """AA-1047 W1: the run's final-contract record as the version INSERT stores it (``metadata.final_contract``):
+    the current gate's status and the stored text's sha stamped on it, one ``final_contract`` log event. None when
+    the run has no record (a T2 result, a graph that failed before its last node)."""
+    record = result.get("final_contract")
+    if not isinstance(record, dict):
+        return None
+    stored = {**generated, "name": (generated.get("name") or "")[:500],
+              "subtitle": (generated.get("subtitle") or "")[:500]}
+    out = _fcon.stamp_stored(record, _fcon.tour_text_sha(stored), actual=status)
+    _fcon.log_record(out, tour_id=result.get("tour_id"))
+    return out
+
+
 def _extract_judge_score(metadata):
     """AA-220 (H1): pull metadata.judge.judge_score from a generated_content metadata blob.
 
@@ -541,6 +557,23 @@ async def _resolve_brand_rule(conn, tenant_uuid, brand_identity_id, brand_name):
         " LIMIT 1",
         tenant_uuid,
     )
+
+
+async def _stamp_fact_sheet(conn, row, tenant_uuid, version_id) -> Optional[str]:
+    """AA-1047 — store the S1 FactSheet of `row` (the raw_tours row) and set generated_content.fs_id; the fs_id or
+    None (switched off, or the best-effort write failed)."""
+    from services.quality import factsheet_store
+    if not factsheet_store.enabled() or row is None:
+        return None
+    try:
+        fs_id = await factsheet_store.save_tour_sheet(conn, row, tenant_id=tenant_uuid, workflow="s1",
+                                                      tour_id=row.get("tour_id"))
+        if fs_id:
+            await factsheet_store.stamp_generated_content(conn, version_id, fs_id)
+        return fs_id
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the rewrite
+        logger.warning("s1_factsheet_store_failed", version_id=str(version_id), error=str(e)[:200])
+        return None
 
 
 async def _version_of_job(conn, tour_id: str, job_id: str) -> Optional[str]:
@@ -848,6 +881,12 @@ async def _execute_run_tour(
                 # AA-993 G2: ties the version to its job, so a resume finds it even when the release fell between the
                 # INSERT and its checkpoint write.
                 _metadata[_ckpt.JOB_MARKER_KEY] = checkpoint.job_id
+            # AA-1047 W1 (root ADR 0020 invariant 4): the graph's REPORT-mode final contract, with the status the
+            # gate above gave and the sha of the text stored below (stored == gated, else POST_GATE_EDIT).
+            _fc_record = _final_contract_at_store(result, generated, status)
+            if _fc_record is not None:
+                _metadata["final_contract"] = _fc_record
+                _metadata["final_contract_log"] = [_fcon.compact(_fc_record)]
             metadata_val = json.dumps(_metadata, default=str)
             _itin = generated.get("itineraries", "")
             if not isinstance(_itin, str):
@@ -921,6 +960,9 @@ async def _execute_run_tour(
                 raise
             if version_id:
                 await _ckpt.mark(checkpoint, "content_inserted", version_id=str(version_id))
+                # AA-1047 (Quality W1): the FactSheet of the raw source the writer read (tour builder;
+                # acp_shared.fact_sheet, CIS 386), stamped on the version. Best-effort: a failure changes nothing.
+                await _stamp_fact_sheet(conn, row, tenant_uuid, version_id)
 
         # AA-993 G2: one score row per version — quality_scores has no unique key on generated_content_id (the old
         # ON CONFLICT DO NOTHING never fired), so the insert skips a version that already has its row.
@@ -1000,7 +1042,7 @@ async def _execute_run_tour(
         if _route and status == "approved":
             from services.export.handler import process_export
             try:
-                await process_export(str(version_id))
+                await process_export(str(version_id), contract_exit="auto_publish")
             except SourceNotLiveError as _dead:
                 # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
                 # (no Sentry event): process_export already moved the version approved → hitl; file the
@@ -1365,6 +1407,13 @@ async def _revalidate_tour(content_id: str) -> dict:
             await conn.execute(
                 "UPDATE silver_aa_internal.generated_content SET revalidate_passed = $1 WHERE id = $2::uuid",
                 passed, content_id)
+        # AA-1047 W1: the re-validation graph's REPORT-mode final contract (its last node), with the gate's outcome
+        # (passed = approvable) and the stored text's sha; best-effort, never fails the re-validation.
+        _reval_fc = result.get("final_contract")
+        if isinstance(_reval_fc, dict):
+            _reval_fc = _fcon.stamp_stored(_reval_fc, _fcon.tour_text_sha(initial_state.get("generated") or {}),
+                                         actual="approved" if passed else "hitl")
+            await _fc_store.attach_s1(conn, content_id, _reval_fc)
 
         published_repointed = _rowcount(repointed)
         logger.info("revalidate_tour_done", content_id=content_id,
@@ -3188,7 +3237,7 @@ async def promote_tour_version(
     from services.tour_lifecycle import LifecycleError
     try:
         exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
-                                        atomize_created_by="admin:promote_version")
+                                        atomize_created_by="admin:promote_version", contract_exit="promote")
     except SourceNotLiveError as e:   # the source was retired between the check and the (locked) publish
         raise HTTPException(status_code=409, detail=source_not_live_message(e.state, "promote this version"),
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})
@@ -4267,6 +4316,10 @@ async def update_generated_content_fields(
             )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
+    # AA-1047 W1: the edited text through the REPORT-mode final contract (it needs a re-validation before an approve;
+    # recorded, never blocks). Best-effort: its own connection, after the edit committed.
+    async with pool.acquire() as conn:
+        await _fc_store.record_s1_exit(conn, content_id, "human_edit")
     return {"content_id": content_id, "updated": fields, "human_edited": True,
             "revalidate_required": True}
 

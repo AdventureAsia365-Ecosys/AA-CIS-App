@@ -39,6 +39,8 @@ ALLOWED = {
     ("services/content_generation/grounding.py", EXPR): 1,
     ("services/content_generation/s1_writer_v2_live.py", EXPR): 1,
     ("services/content_generation/source_facts.py", EXPR): 1,
+    # AA-1048 R1 calibration: each candidate model is pinned on purpose (adhoc_aa1048), like the R2 eval judge.
+    ("services/ground_truth/r1.py", EXPR): 1,
     # Eval / adhoc scripts (they compare models on purpose; logged under adhoc_* stages).
     ("scripts/aa645/s1_screen.py", EXPR): 1,
     ("scripts/aa645/shadow.py", "model_tier='sonnet'"): 1,

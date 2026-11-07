@@ -304,6 +304,10 @@ async def test_docx_export_file_has_the_ai_properties():
     body = b"".join([chunk async for chunk in resp.body_iterator])
     props = Document(io.BytesIO(body)).core_properties
     assert props.keywords == "ai-generated" and "generator=Adventure Asia Content studio" in props.comments
+    # S272: the DOCX download carries the X-AI-* headers too (the studio BFF passes them to the browser).
+    assert resp.headers["x-ai-generated"] == "true"
+    assert resp.headers["x-ai-generator"] == "Adventure Asia Content studio"
+    assert resp.headers["content-disposition"].startswith("attachment; filename=tour_")
 
 
 # ── 6. the A-series Master catalog text (review fix) ──────────────────────────────────────────────────────────

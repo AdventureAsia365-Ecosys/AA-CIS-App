@@ -19,6 +19,10 @@ host in a public repo); ``info.version`` fixed to ``unreleased`` (the release wo
 it attaches to the GitHub release, so a release PR, which only bumps ``api/version.py``, never makes this file
 stale); ``info.x-generated-by`` names this script. FastAPI and Pydantic are pinned in ``requirements.txt`` because
 another version can change the output; ``--check`` prints the versions it ran with.
+
+AA-1024 G6 (lessons log, CI family: openapi.json built with a local FastAPI 0.110 went red on CI): both modes
+refuse (exit 2) when the installed FastAPI or Pydantic is not the ``==`` pin of requirements.txt, before importing the
+app. Run it in a venv made from requirements.txt; ``--allow-unpinned`` only shows a diff, never commit its output.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ import argparse
 import difflib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -34,6 +39,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = REPO_ROOT / "docs" / "api" / "openapi.json"
 GENERATED_BY = "scripts/export_openapi.py (AA-899) - generated, do not edit"
 UNRELEASED = "unreleased"
+REQUIREMENTS = REPO_ROOT / "requirements.txt"
+PINNED_PACKAGES = ("fastapi", "pydantic")  # their versions change the generated document
 
 # Same dummies as tests/unit/conftest.py (_CI_UNIT_ENV); applied only when unset.
 STUB_ENV = {
@@ -108,6 +115,42 @@ def versions() -> str:
     return f"fastapi {fastapi.__version__}, pydantic {pydantic.VERSION}"
 
 
+def pinned_versions(path: Path = REQUIREMENTS) -> dict[str, str]:
+    """The ``name==version`` pins of PINNED_PACKAGES in requirements.txt."""
+    out = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"\s*([A-Za-z0-9_.-]+)\s*==\s*([^\s;#]+)", line)
+        if m and m.group(1).lower() in PINNED_PACKAGES:
+            out[m.group(1).lower()] = m.group(2)
+    return out
+
+
+def installed_versions() -> dict[str, str | None]:
+    from importlib import metadata
+
+    out: dict[str, str | None] = {}
+    for name in PINNED_PACKAGES:
+        try:
+            out[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            out[name] = None
+    return out
+
+
+def pin_problems(pins: dict[str, str] | None = None, have: dict[str, str | None] | None = None) -> list[str]:
+    """Why this interpreter cannot produce the committed document; empty when every pin matches."""
+    pins = pinned_versions() if pins is None else pins
+    have = installed_versions() if have is None else have
+    problems = []
+    for name in PINNED_PACKAGES:
+        want = pins.get(name)
+        if want is None:
+            problems.append(f"requirements.txt has no '{name}==<version>' pin")
+        elif have.get(name) != want:
+            problems.append(f"{name} {have.get(name) or 'not installed'} here, requirements.txt pins {want}")
+    return problems
+
+
 def check(expected: str, path: Path = OUTPUT) -> list[str]:
     """Empty when ``path`` holds exactly ``expected``; else a short unified diff (at most 40 lines)."""
     current = path.read_text(encoding="utf-8") if path.is_file() else ""
@@ -122,7 +165,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="fail when the committed file is stale")
     parser.add_argument("--output", type=Path, default=OUTPUT, help="file to write or check (default: %(default)s)")
+    parser.add_argument("--allow-unpinned", action="store_true",
+                        help="run with other FastAPI / Pydantic versions (to read a diff only; never commit it)")
     args = parser.parse_args(argv)
+    problems = pin_problems()
+    if problems:
+        print("::error::export_openapi: " + "; ".join(problems) + ". Another version changes the document, and CI "
+              "builds it with the pins: python3 -m venv /tmp/oa && /tmp/oa/bin/pip install -r requirements.txt, "
+              "then run this script with /tmp/oa/bin/python.")
+        if not args.allow_unpinned:
+            return 2
+        print("warning: --allow-unpinned: do not commit this output")
     offline_environment()
     text = render(build_spec())
     if args.check:

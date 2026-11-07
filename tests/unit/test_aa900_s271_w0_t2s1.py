@@ -419,7 +419,7 @@ def test_an_unedited_approve_of_a_policy_keep_tour_publishes():
     conn.execute = AsyncMock(return_value="UPDATE 1")
     out, export = _approve(conn)
     assert out["status"] == "approved" and out["policy_keep"] is True and out["override_blockers"] == []
-    export.assert_awaited_once_with(GCID)
+    export.assert_awaited_once_with(GCID, contract_exit="approve")
 
 
 def test_an_override_reason_approves_and_is_recorded():
@@ -436,7 +436,7 @@ def test_an_override_reason_approves_and_is_recorded():
     assert out["status"] == "approved" and out["override_blockers"] == ["grounding_not_run"]
     note = [c.args for c in conn.execute.await_args_list if "reviewer_notes" in c.args[0]]
     assert note and "Checked against the supplier sheet by hand" in note[0][2] and "grounding_not_run" in note[0][2]
-    export.assert_awaited_once_with(GCID)
+    export.assert_awaited_once_with(GCID, contract_exit="approve")
 
 
 def test_a_human_edited_version_keeps_the_revalidation_gate_only():
