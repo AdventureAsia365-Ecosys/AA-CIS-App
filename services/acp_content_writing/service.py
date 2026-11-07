@@ -86,6 +86,7 @@ from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.quality import degraded  # AA-925
+from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
 from services.quality import registry as qr
@@ -883,25 +884,20 @@ def grounding_from_writer_input(writer_input: dict) -> str:
 
 def grounding_text_from(*, seed: str, facts_text: Optional[str], brand_audience: Optional[dict],
                         trip_name: Optional[str], destination: Optional[str]) -> str:
-    """The one implementation behind _grounding_text() and grounding_from_writer_input()."""
-    parts = [seed, facts_text or ""]
-    audience = brand_audience or {}
-    if audience.get("brand_name"):
-        parts.append(f"BRAND: {audience['brand_name']}")
-    # AA-771 — the brand describing itself in its own words is a source, not an invented claim
-    # (S232: 4 F9 flags on the brand's own stated approach were over-strict).
-    if audience.get("core_idea"):
-        parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
-    if audience.get("customer_segment"):
-        # S234 (C11) — kept for F1 (the brand's own '7–16'), labelled so the F9 judge stops taking
-        # the segment as trip truth (S233: FAQ age answers passed on it).
-        parts.append(f"AUDIENCE (who the brand writes for — not a fact about this trip): "
-                     f"{audience['customer_segment']}")
-    if trip_name:
-        parts.append(f"TRIP: {trip_name}")
-    if destination:
-        parts.append(f"DESTINATION: {destination}")
-    return "\n\n".join(p for p in parts if p)
+    """The one implementation behind _grounding_text() and grounding_from_writer_input().
+
+    AA-1047 (Quality W1): the text is the render of the T9 FactSheet (services/quality/factsheet.py, route builder),
+    byte-equal to the pre-W1 join (parity test tests/unit/quality/test_aa1047_factsheet.py)."""
+    return grounding_factsheet(seed=seed, facts_text=facts_text, brand_audience=brand_audience,
+                               trip_name=trip_name, destination=destination).render()
+
+
+def grounding_factsheet(*, seed: str, facts_text: Optional[str], brand_audience: Optional[dict],
+                        trip_name: Optional[str], destination: Optional[str], **extra) -> factsheet.FactSheet:
+    """AA-1047 — the T9 FactSheet behind grounding_text_from (typed, numbered lines with provenance). `extra` passes
+    the builder's optional inputs (fact_scopes, excluded_facts, block_anchored, meta)."""
+    return factsheet.build_route_factsheet(seed=seed, facts_text=facts_text, brand_audience=brand_audience,
+                                           trip_name=trip_name, destination=destination, **extra)
 
 
 def _seo_title_ok(title, keyword: Optional[str]) -> bool:
