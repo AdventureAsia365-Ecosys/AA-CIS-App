@@ -31,8 +31,7 @@ export function smokeRole(): string {
   }
 }
 
-/** AA-878 — viewer mode: the smoke session is the read-only `viewer` (since AA-816 S2 path: the Cognito E2E user on
- * the fixed Preview host, where the API caps every session at viewer). */
+/** AA-878 — viewer mode: the smoke session is the read-only `viewer` (a Cognito E2E user holding the viewer role). */
 export function isViewerRun(): boolean {
   return smokeRole() === 'viewer';
 }
@@ -43,9 +42,8 @@ export function isAdminRun(): boolean {
   return smokeRole() === 'admin';
 }
 
-/** AA-816 S2 path — the two hosts that are Cognito callbacks (the only hosts a staff smoke can sign in on). */
+/** AA-816 S2 path — the Cognito callback host (the only host a staff smoke can sign in on). */
 export const PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
-export const PREVIEW_SIGNIN_ORIGIN = 'https://aa-cis-preview.lumiguides.it.com';
 
 /**
  * May the smoke role open this page? Read from the frontend's own page matrix (frontend/lib/rbac.ts PAGE_RULES,

@@ -7,8 +7,15 @@ name: Deploy Admin Dev
 # revision with only the image swapped (env, secrets and size come from that revision, so a Terraform change reaches
 # the task on the next deploy) -> update the service -> wait stable -> check the running task has this image -> verify.
 #
-# Runs next to vercel-deploy.yml until the cut-over (root runbook docs/ops/runbooks/staff-web-ecs-cutover.md): Vercel
-# keeps serving aa-cis.lumiguides.it.com until the DNS moves to the ALB; this workflow keeps the ECS copy current.
+# The only deploy of the CIS admin since the Vercel retirement (AA-911, S272; root runbook
+# docs/ops/runbooks/staff-web-ecs-cutover.md section 4): aa-cis.lumiguides.it.com points at the shared ALB.
+#
+# After a verified deploy from main (AA-816 S2 path and AA-1008, moved here from the retired vercel-deploy.yml):
+#   smoke-production   ui-smoke.yml on https://aa-cis.lumiguides.it.com: the public specs and the signed-in specs as the
+#                      Cognito E2E user (a reviewer: read-only checks; mailbox role, environment e2e).
+#   visual-production  visual.yml job `deployed` on the pages the push changed (github.event.before...sha), signed in.
+#                      Report-only.
+# Per-PR checks need no deployment: Visual (next start) is the required per-PR UI check (root ADR 0019 d23 R7).
 #
 # Configuration (GitHub environment `dev`):
 #   secrets.AWS_ROLE_ARN    the CIS deploy role (shared with Deploy Dev; AA-CIS-Infra cicd_split.tf
@@ -208,6 +215,41 @@ jobs:
           CODE=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" "https://${PUBLIC_HOST}/login")
           [ "$CODE" = "200" ] || { echo "::error::/login answered $CODE"; exit 1; }
           echo "ECS serves ${PUBLIC_HOST}: healthz on ${GITHUB_SHA::7}, /login 200"
+
+  # AA-816 S2 path — after a verified deploy from main: public + signed-in smoke on the production host as the Cognito
+  # E2E user. GitHub validates nested-job permissions at startup even for skipped jobs, so this job grants everything
+  # ui-smoke.yml's jobs ask for (S247 startup_failure).
+  smoke-production:
+    name: UI smoke (production, signed in)
+    needs: verify
+    if: needs.verify.result == 'success' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/ui-smoke.yml
+    with:
+      base_url: https://aa-cis.lumiguides.it.com
+      sha: ${{ github.sha }}
+      staff_session: true
+    secrets: inherit
+
+  # AA-1008 (root ADR 0016 decision 9) — after the smoke: the visual run (visual.yml job `deployed`) of the pages the
+  # push changed, signed in as the Cognito E2E user. Report-only: the `result` verdict does not wait on it.
+  visual-production:
+    name: Visual (production, signed in)
+    needs: [verify, smoke-production]
+    if: always() && needs.verify.result == 'success' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/visual.yml
+    with:
+      base_url: https://aa-cis.lumiguides.it.com
+      sha: ${{ github.sha }}
+      base_sha: ${{ github.event_name == 'push' && github.event.before || '' }}
+    secrets: inherit
 
   result:
     name: Deploy Admin Dev result

@@ -3,14 +3,13 @@
 // persists storageState to tests/e2e/.auth/admin-state.json, so every authenticated smoke test (tag @staff) runs
 // independently from that state. AA-878: it also records the session's role (tests/e2e/.auth/admin-role.json); a
 // non-admin role runs the specs in that role's mode (viewer mode for the read-only viewer). It is matched only by
-// the `smoke-setup` project and listed as a dependency of the `smoke` project — the `smoke-public` project (the
-// per-PR preview run) and the legacy `chromium` project never run it.
+// the `smoke-setup` project and listed as a dependency of the `smoke` project — the `smoke-public` project and the
+// legacy `chromium` project never run it.
 //
 // AA-816 S2 path — Cognito only (E2ECOGNITO=1, set only by the staff job of .github/workflows/ui-smoke.yml, which
 // also assumes the read-only mailbox role): the E2E staff user "E2E Cognito" signs in with an email code
-// (helpers/cognitoSignIn.ts) on one of the two hosts that are registered callbacks: the production host (cis-admin
-// client; the user is a reviewer) or the fixed Preview host (cis-admin-preview client; the API caps every session
-// there at viewer, so the setup FAILS unless the role is viewer — that is the cap's live evidence).
+// (helpers/cognitoSignIn.ts) on the registered callback host: the production host (cis-admin client; the user is a
+// reviewer). The fixed Preview host and its viewer-capped client were retired with Vercel (AA-911, S272).
 // The legacy password mode is gone (AA-816 S2: the API refuses every HS256 session on /auth/verify-admin). Without
 // E2ECOGNITO=1 (a local run has no mailbox access) the setup fails with a clear message: run `smoke-public` locally.
 //
@@ -19,7 +18,7 @@ import { test as setup, type Browser } from '@playwright/test';
 import { STAFF_AUTH_HOST, signInByEmailCode } from '../helpers/cognitoSignIn';
 import fs from 'fs';
 import {
-  ADMIN_STATE, PREVIEW_SIGNIN_ORIGIN, PROD_ORIGIN, ROLE_FILE, baseOrigin, baseUrl, ensureAuthDir, installBypassRoute,
+  ADMIN_STATE, PROD_ORIGIN, ROLE_FILE, baseOrigin, baseUrl, ensureAuthDir, installBypassRoute,
 } from './smoke-helpers';
 
 /** The display cookie the BFF sets from the /auth/verify-admin answer at the end of a sign-in (frontend/lib/cognito.ts). */
@@ -27,9 +26,9 @@ const ROLE_COOKIE = 'cis_role';
 
 async function cognitoSignIn(browser: Browser): Promise<string> {
   const origin = baseOrigin();
-  // Only the two registered callback hosts; anything else fails before any navigation.
-  if (origin !== PROD_ORIGIN && origin !== PREVIEW_SIGNIN_ORIGIN) {
-    throw new Error(`E2ECOGNITO=1 needs BASE_URL ${PROD_ORIGIN} or ${PREVIEW_SIGNIN_ORIGIN} (got ${origin})`);
+  // Only the registered callback host; anything else fails before any navigation.
+  if (origin !== PROD_ORIGIN) {
+    throw new Error(`E2ECOGNITO=1 needs BASE_URL ${PROD_ORIGIN} (got ${origin})`);
   }
   const context = await browser.newContext({ baseURL: baseUrl() });
   await installBypassRoute(context);
@@ -39,8 +38,7 @@ async function cognitoSignIn(browser: Browser): Promise<string> {
     const companyEmail = page.getByRole('link', { name: /sign in with company email/i });
     const offered = await companyEmail.waitFor({ state: 'visible', timeout: 15000 }).then(() => true, () => false);
     if (!offered) {
-      // On the Preview host this means the preview build has no client secret (Vercel Preview
-      // COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET) or the host points at a build made before it was set.
+      // The task has no client secret (AA-CIS-Infra aa-cis/dev/admin-web, tools/identity/staff_web_secret.py).
       throw new Error(`${origin}/login offers no "Sign in with company email" (Cognito sign-in unavailable on this host)`);
     }
     await companyEmail.click();
@@ -55,10 +53,6 @@ async function cognitoSignIn(browser: Browser): Promise<string> {
     // The role the server verified (the BFF writes cis_role from /auth/verify-admin, never from the browser).
     const role = cookies.find((c) => c.name === ROLE_COOKIE)?.value ?? '';
     if (!role) throw new Error('Cognito sign-in set no cis_role display cookie');
-    if (origin === PREVIEW_SIGNIN_ORIGIN && role !== 'viewer') {
-      // AA-911 D-1: every cis-admin-preview session must be the viewer. Anything else is a broken cap: stop here.
-      throw new Error(`Preview host session has role "${role}", expected "viewer" (the Preview client cap)`);
-    }
     await context.storageState({ path: ADMIN_STATE });
     return role;
   } finally {
