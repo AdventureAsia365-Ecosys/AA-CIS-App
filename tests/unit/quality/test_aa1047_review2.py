@@ -292,8 +292,8 @@ def test_cross_border_route_never_puts_hanoi_in_laos():
 
 def test_route_segments_are_read_too():
     """A route segment in another country (passed as context route_segments) also stops the tail."""
-    seed = ph._seed(wp.load_source()["example_seeds"]["monastery"])
-    other = ph._seed(wp.load_source()["example_seeds"]["harbour"])
+    seed = ph._seed(wp.load_source()["example_seeds"]["monastery_card"])
+    other = ph._seed(wp.load_source()["example_seeds"]["harbour_card"])
     assert smu.place_country_tail("Velmora", seed) == "Velmora"
     assert smu.place_country_tail("Velmora", seed, other) is None
     assert smu.place_country_tail("Velmora", seed, seed) == "Velmora"
@@ -302,3 +302,126 @@ def test_route_segments_are_read_too():
 def test_a_location_line_without_a_country_part_means_no_tail():
     seed = HALONG_SEED + "\n\nCat Ba — boat\nLocation: Cat Ba (do not place it in any other town, region or country)"
     assert smu.place_country_tail("Vietnam", seed) is None
+
+
+# ---------------------------------------------------------------- review 4: card-backed Location lines only
+
+
+HANOI_SHORT = ("Wander the lantern-lit lanes of Hanoi's Old Quarter on a guided walk past tube houses, street food "
+               "stalls and quiet temple courtyards.")
+
+
+def test_card_less_fallback_line_never_puts_hanoi_in_laos():
+    """S272 review 4 reproduction: an atom with no place card gets the fallback 'Location: <place>, <raw_tours.country>'
+    line, and raw_tours.country is the DESTINATION itself; the tail compared the destination with itself and wrote
+    ', in Laos.' after a meta about Hanoi. Only a card's Location line counts."""
+    from services.acp_shared.atom_seed import compose_seed
+    seed = compose_seed("Stroll the lanes of Hanoi's Old Quarter", None, None, None, [], place="Hanoi Old Quarter",
+                        country="Laos", card=None)
+    assert "(do not name any other country or region for it)" in seed
+    lo, _ = wp.band("meta")
+    assert len(HANOI_SHORT) < lo
+    assert smu.place_country_tail("Laos", seed) is None
+    out, cost = _fit(HANOI_SHORT, seed, "Laos", "Mekong Discovery")
+    assert cost == 0.0 and out["meta_description"] == HANOI_SHORT and "Laos" not in out["meta_description"]
+
+
+def test_card_line_with_the_place_country_still_composes():
+    from services.acp_shared.atom_seed import compose_seed
+    card = {"display_name": "Hanoi Old Quarter", "country": "Vietnam", "status": "verified", "locality": "Hanoi"}
+    seed = compose_seed("Hanoi Old Quarter — walk", "Walk the Hanoi Old Quarter lanes.", None, None, [],
+                        place="Hanoi Old Quarter", country="Laos", card=card)
+    assert smu.place_country_tail("Laos", seed) is None
+    assert smu.place_country_tail("Vietnam", seed) == "Vietnam"
+
+
+def test_a_label_only_route_block_means_no_tail():
+    """route_moment_seeds keeps a label-only block for an atom whose seed cannot be read: no Location line in that
+    block, so the route's country is unknown and no tail is written (fail closed)."""
+    seed = HALONG_SEED + "\n\nHa Long Bay overnight cruise"
+    assert smu.place_country_tail("Vietnam", HALONG_SEED) == "Vietnam"
+    assert smu.place_country_tail("Vietnam", seed) is None
+    assert smu.place_country_tail("Vietnam", HALONG_SEED, "Ha Long Bay overnight cruise") is None
+
+
+def test_halong_and_angkor_with_cards_keep_their_own_country():
+    assert smu.place_country_tail("Laos", HALONG_SEED) is None
+    assert smu.place_country_tail("Thailand", ANGKOR_SEED) is None
+    assert smu.place_country_tail("Cambodia", ANGKOR_SEED, HALONG_SEED) is None
+
+
+# ---------------------------------------------------------------- review 4: the signal is bound to each number
+
+
+LAKE_LINES = ("Lake Orvine — ferry crossing", "Day 3 of the trip",
+              "Source itinerary: Cross Lake Orvine by ferry to Brecca village and walk the shore path to the "
+              "guesthouse.")
+MONASTERY_LINES = ("Corran Monastery — visit", "Day 2 of the trip",
+                   "Source itinerary: Walk up to Corran Monastery above Orvine and visit its library hall with a local "
+                   "guide.")
+
+
+@pytest.mark.parametrize("lines,text,frame", [
+    (MONASTERY_LINES, "Built in 1388, the monastery gate is reached by 1,200 stone steps.", True),
+    (MONASTERY_LINES, "Rising 900 metres above the lake, the monastery gate is reached in four stages.", True),
+    (LAKE_LINES, "The shore path to Brecca is 6 km long.", True),
+    (LAKE_LINES, "Brecca is 9 km across the water from Orvine.", True),
+    (LAKE_LINES, "Brecca sits 9 km across the water from Orvine.", True),
+    (MONASTERY_LINES, "The path to the monastery gate rises 400 metres from Orvine.", True),
+    (MONASTERY_LINES, "Corran Monastery stands 900 metres above Orvine.", True),
+    (LAKE_LINES, "The old sea wall is 2 km long.", False),
+    (MONASTERY_LINES, "Built in 1388, the monastery gate stands 30 metres high.", False),
+    (MONASTERY_LINES, "The monastery stands 900 metres above the lake.", False),
+    (LAKE_LINES, "Lake Orvine is 40 km long.", False),
+    (LAKE_LINES, "Lake Orvine is 9 km across.", False),
+])
+def test_number_frame_is_per_number(lines, text, frame):
+    from services.acp_content_writing import claim_rules as cr
+    assert cr.trip_number_frame(text, lines) is frame
+
+
+def test_a_year_never_launders_a_count():
+    from services.acp_content_writing import claim_rules as cr
+    text = "Built in 1388, the monastery gate is reached by 1,200 stone steps."
+    assert cr.number_has_background_signal(text, "1388")
+    assert not cr.number_has_background_signal(text, "1200")
+    assert cr.trip_number_frame(text, (), novel=["1388"]) is True   # 'steps' is a route noun: the trip
+    plain = "Built in 1388, the monastery gate holds 1,200 old icons."
+    assert cr.trip_number_frame(plain, (), novel=["1388", "1200"]) is False
+    assert cr.trip_number_frame("Built in 1388, the gate is 1200 paces from the square.", (),
+                                novel=["1388", "1200"]) is True
+    assert not cr.number_has_background_signal("The gate is reached by 1200 steps.", "1200")
+
+
+@pytest.mark.parametrize("lines,text", [
+    (LAKE_LINES, "The shore path to Brecca has no real equivalent anywhere on earth."),
+    (LAKE_LINES, "Arrival at Brecca by water is unmatched in Velmora."),
+    (LAKE_LINES, "An evening at the Brecca inn is unique in the world."),
+    (MONASTERY_LINES, "The way up to Corran Monastery is unmatched anywhere on earth."),
+    (MONASTERY_LINES, "The approach to Corran Monastery is unparalleled in Asia."),
+    (MONASTERY_LINES, "The welcome at Corran Monastery is unmatched in Velmora."),
+])
+def test_route_stay_and_experience_are_the_trip(lines, text):
+    from services.acp_content_writing import claim_rules as cr
+    assert cr.trip_attached(text, lines)
+
+
+@pytest.mark.parametrize("lines,text", [
+    (MONASTERY_LINES, "Corran Monastery is one of the last walled monasteries in the world."),
+    (MONASTERY_LINES, "The library hall is unparalleled in Velmora."),
+    (LAKE_LINES, "Lake Orvine has no real equivalent anywhere on earth."),
+])
+def test_a_place_or_its_feature_is_not_the_trip(lines, text):
+    from services.acp_content_writing import claim_rules as cr
+    assert not cr.trip_attached(text, lines)
+
+
+def test_own_line_route_object_ties_a_sentence_to_the_trip():
+    from services.acp_content_writing import claim_rules as cr
+    harbour = ("Source itinerary: Ride a fishing boat around Dunmere Harbour and walk the old sea wall.",)
+    assert cr._own_route_objects(harbour) == {"boat", "wall"}
+    assert cr.trip_attached("The sea wall is unmatched anywhere on earth.", harbour)
+    # a place the trip walks or hikes stays a place: its background (an age, a height) still warns
+    assert cr._own_route_objects(("Walk the old town of Luang Prabang.", "Hike the extinct volcano.")) == set()
+    assert not cr.trip_attached("The town keeps 30 temples.", ("Walk the old town of Luang Prabang.",))
+    assert not cr.trip_attached("The volcano went quiet nine thousand years ago.", ("Hike the extinct volcano.",))

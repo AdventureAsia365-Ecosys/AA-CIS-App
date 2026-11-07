@@ -266,6 +266,31 @@ example_seeds:
     place: "Dunmere Harbour"
     country: "Tesselmoor"
     day: 6
+  # S272 review 4: the T9 short-meta tail reads only a place CARD's Location line (the card-less fallback line carries
+  # raw_tours.country, the DESTINATION itself); these seeds give the moment a verified card with its own country
+  monastery_card:
+    label: "Corran Monastery — visit"
+    evidence: "Walk up to Corran Monastery above Orvine and visit its library hall with a local guide."
+    place: "Corran Monastery"
+    country: "Velmora"
+    day: 2
+    card: {display_name: "Corran Monastery", country: "Velmora", status: verified}
+  lake_card:
+    label: "Lake Orvine — ferry crossing"
+    evidence: "Cross Lake Orvine by ferry to Brecca village and walk the shore path to the guesthouse."
+    place: "Lake Orvine"
+    country: "Velmora"
+    day: 3
+    card: {display_name: "Lake Orvine", country: "Velmora", status: verified}
+  harbour_card:
+    label: "Dunmere Harbour — boat ride"
+    evidence: "Ride a fishing boat around Dunmere Harbour and walk the old sea wall."
+    place: "Dunmere Harbour"
+    country: "Tesselmoor"
+    day: 6
+    card: {display_name: "Dunmere Harbour", country: "Tesselmoor", status: verified}
+  lake_label_only:   # a route block whose seed could not be read: the label alone, no Location line
+    label: "Lake Orvine — ferry crossing"
 
 examples:
   # ---- background (D1): about a place the source names = pass; a number or year = warn; this trip's
@@ -308,6 +333,14 @@ examples:
   - {id: rar-15, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Corran's library hall tour is unique in the world.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: rar-16, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Walking up to Corran Monastery is an experience unmatched in Asia.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: rar-17, topic: rarity, seed: lake, expect: warn, all: [F18_rarity, apply_rules, check_replacement], text: "Lake Orvine is unparalleled anywhere on earth.", claim: {type: place_background, places: [Lake Orvine]}}
+  # S272 review 4: the route, stay and experience of the trip (the way up, the approach, the shore path it walks, its
+  # arrival by water, an evening at its inn, the welcome it gets) are the trip: a rarity claim on them blocks everywhere
+  - {id: rar-18, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The way up to Corran Monastery is unmatched anywhere on earth.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-19, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The approach to Corran Monastery is unparalleled in Asia.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: rar-20, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The shore path to Brecca has no real equivalent anywhere on earth.", claim: {type: place_background, places: [Brecca]}}
+  - {id: rar-21, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "Arrival at Brecca by water is unmatched in Velmora.", claim: {type: place_background, places: [Brecca, Velmora]}}
+  - {id: rar-22, topic: rarity, seed: lake, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "An evening at the Brecca inn is unique in the world.", claim: {type: place_background, places: [Brecca]}}
+  - {id: rar-23, topic: rarity, expect: block, all: [F18_rarity, apply_rules, check_replacement], text: "The welcome at Corran Monastery is unmatched in Velmora.", claim: {type: place_background, places: [Corran Monastery, Velmora]}}
   # ---- timing (D4, D15): a time, part of day or ordinal day the source does not give = block
   - {id: tim-01, topic: timing, seed: lake, expect: block, all: [F17_trip_fact, check_replacement], text: "You cross Lake Orvine at dawn.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry", places: [Lake Orvine]}}
   - {id: tim-02, topic: timing, seed: lake, expect: pass, text: "The ferry crosses Lake Orvine to Brecca village.", claim: {type: trip_fact, ref: S3, quote: "Cross Lake Orvine by ferry to Brecca village", places: [Lake Orvine, Brecca]}}
@@ -363,6 +396,18 @@ examples:
   - {id: num-28, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "2 hours are set aside in the library hall.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: num-29, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The library hall keeps 4 places for each group.", claim: {type: place_background, places: [Corran Monastery]}}
   - {id: num-30, topic: numbers, seed: lake, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca has been a fishing village since 1820.", claim: {type: place_background, places: [Brecca]}}
+  # S272 review 4: the background signal is bound to each novel number: a year or a height elsewhere in the sentence
+  # never launders a count, a stage or a distance of the trip; route nouns ('the shore path', 'the path to') and a
+  # distance between two places the moment's own itinerary line connects are the trip's leg; '9 km across the water
+  # from Orvine' reads like 'lies 9 km from Orvine'. A sentence whose every novel number has its own signal still warns.
+  - {id: num-31, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The shore path to Brecca is 6 km long.", claim: {type: place_background, places: [Brecca]}}
+  - {id: num-32, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca is 9 km across the water from Orvine.", claim: {type: place_background, places: [Brecca, Orvine]}}
+  - {id: num-33, topic: numbers, seed: lake, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Brecca sits 9 km across the water from Orvine.", claim: {type: place_background, places: [Brecca, Orvine]}}
+  - {id: num-34, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "The path to the monastery gate rises 400 metres from Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
+  - {id: num-35, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Built in 1388, the monastery gate is reached by 1,200 stone steps.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-36, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Rising 900 metres above the lake, the monastery gate is reached in four stages.", claim: {type: place_background, places: [Corran Monastery]}}
+  - {id: num-37, topic: numbers, expect: block, all: [F1_grounding, apply_rules, check_replacement], text: "Corran Monastery stands 900 metres above Orvine.", claim: {type: place_background, places: [Corran Monastery, Orvine]}}
+  - {id: num-38, topic: numbers, expect: warn, all: [F1_grounding, apply_rules, check_replacement], text: "Built in 1388, the monastery gate stands 30 metres high.", claim: {type: place_background, places: [Corran Monastery]}}
   # ---- scope: a place only other trips visit = block (F12, block class)
   - {id: scp-01, topic: scope, trip_places: [Tesselmoor], expect: block, all: [F12_scope, apply_rules], text: "From Tesselmoor a road climbs to the monastery.", claim: {type: location, places: [Tesselmoor]}}
   - {id: scp-02, topic: scope, trip_places: [Tesselmoor], expect: pass, text: "From Orvine a road climbs to the monastery.", claim: {type: location, places: [Orvine]}}
@@ -384,23 +429,27 @@ examples:
   - {id: meta-01, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the lake shore."}
   - {id: meta-02, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the bay."}
   - {id: meta-03, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the quieter lake shore."}
-  - {id: meta-04, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrim trails to the lake."}
+  - {id: meta-04, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrim trails to the lake."}
   - {id: meta-05, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the quieter lake shores."}
-  - {id: meta-06, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old trails to the lake."}
+  - {id: meta-06, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old trails to the lake."}
   - {id: meta-07, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the greenest lake shores."}
   - {id: meta-08, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and walk back down to the lakeshore."}
   # inside the T9 writer aim (130-145) but under the band: the gate holds the raw value, code composes it into the band
-  - {id: meta-09, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
-  - {id: meta-10, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrims path to the lake."}
+  - {id: meta-09, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-10, topic: meta_band, field: meta, seed: monastery_card, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrims path to the lake."}
   # S272 review 2: the T9 tail names the DESTINATION only when it is the place's own seed Location country (a place
   # keeps its own country): a cross-border trip (destination Tesselmoor, place in Velmora) gets no tail, and a meta that
   # already names the country gets none either; both stay held for the fit call / F4
-  - {id: meta-11, topic: meta_band, field: meta, destination: Tesselmoor, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-11, topic: meta_band, field: meta, seed: monastery_card, destination: Tesselmoor, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
   # S272 review 3: every Location line of the seed counts — a route piece (monastery in Velmora, then Dunmere Harbour in
   # Tesselmoor) never gets ', in Velmora.' after a meta about the harbour; a route wholly in the destination still does
-  - {id: meta-13, topic: meta_band, field: meta, route: [harbour], tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Ride a fishing boat around Dunmere Harbour, walk the old sea wall past the net sheds and watch the boats come back in at the end of day."}
-  - {id: meta-14, topic: meta_band, field: meta, route: [lake], expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, then cross Lake Orvine by ferry to Brecca village and walk the shore path to the guesthouse."}
-  - {id: meta-12, topic: meta_band, field: meta, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery in Velmora, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-13, topic: meta_band, field: meta, seed: monastery_card, route: [harbour_card], tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Ride a fishing boat around Dunmere Harbour, walk the old sea wall past the net sheds and watch the boats come back in at the end of day."}
+  - {id: meta-14, topic: meta_band, field: meta, seed: monastery_card, route: [lake_card], expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, then cross Lake Orvine by ferry to Brecca village and walk the shore path to the guesthouse."}
+  # S272 review 4: a moment with no place card (the fallback Location line is the tour country, the DESTINATION
+  # itself) and a route block with no Location line at all (a label-only block) get no tail: fail closed
+  - {id: meta-15, topic: meta_band, field: meta, seed: monastery, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-16, topic: meta_band, field: meta, seed: monastery_card, route: [lake_label_only], tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-12, topic: meta_band, field: meta, seed: monastery_card, tail: none, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery in Velmora, see the library hall the monks still keep open and follow the steep path down to the lake."}
   # ---- title band: 45-60 in the T9 gate, the 60 cap in S1
   - {id: tit-01, topic: title_band, field: title, expect: pass, all: [F4_seo_surface, s1_title_cap], text: "Corran Monastery: The Library Hall Above Orvine"}
   - {id: tit-02, topic: title_band, field: title, expect: pass, all: [F4_seo_surface, s1_title_cap], text: "Corran Monastery and Its Library Hall: A Walk Above the Lake"}

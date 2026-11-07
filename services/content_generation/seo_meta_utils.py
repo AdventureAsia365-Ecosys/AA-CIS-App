@@ -359,17 +359,38 @@ def same_country(a: Optional[str], b: Optional[str]) -> bool:
     return a.strip().casefold() == b.strip().casefold()
 
 
+# The card form of a seed Location line (atom_seed._location_lines with a place card): its last comma part is the
+# card's own country. The fallback form ('(do not name any other country or region for it)') is written from
+# raw_tours.country, the trip's DESTINATION itself, so it never says where the place is (S272 review 4).
+CARD_LOCATION_SUFFIX = "(do not place it in any other town, region or country)"
+
+
+def card_location_countries(block: Optional[str]) -> list[Optional[str]]:
+    """The country of every CARD-backed 'Location:' line of one seed block (CARD_LOCATION_SUFFIX), in order; None
+    for a card line with no comma-separated last part. A fallback Location line is skipped (it carries the tour
+    country, never the place's own)."""
+    lines = [ln for ln in (block or "").splitlines()
+             if ln.startswith("Location:") and ln.rstrip().endswith(CARD_LOCATION_SUFFIX)]
+    return location_countries("\n".join(lines))
+
+
 def place_country_tail(destination: Optional[str], *seed_texts: Optional[str]) -> Optional[str]:
-    """The country a T9 short-meta tail may name: the DESTINATION only when EVERY 'Location:' line of every seed text
-    (the piece's own seed and each route segment) names that same country; None — no country tail — when there is no
-    Location line, a line has no country part, or any line names another country (a cross-border trip or route:
-    ', in Laos.' after a meta about Ha Long Bay, or about Hanoi on a route that starts in Luang Prabang). Fail closed:
-    when unsure, no tail (S272 review 3: the first Location line alone put Hanoi in Laos)."""
+    """The country a T9 short-meta tail may name: the DESTINATION only when EVERY moment block (blank-line separated)
+    of every seed text (the piece's own seed and each route segment) has a CARD-backed 'Location:' line and every
+    such line names that same country. None — no country tail — when a block has no card Location line (a moment with
+    no place card: its fallback line is written from raw_tours.country, the DESTINATION itself, so comparing it with
+    the DESTINATION proves nothing; a label-only route block), a card line has no country part, or any line names
+    another country (a cross-border trip or route: ', in Laos.' after a meta about Ha Long Bay or Hanoi). Fail closed:
+    when unsure, no tail (S272 review 3 + 4)."""
     if not (destination and destination.strip()):
         return None
-    found = [c for text in seed_texts for c in location_countries(text)]
-    if not found or not all(same_country(destination, c) for c in found):
+    blocks = [b for text in seed_texts for b in re.split(r"\n\s*\n", text or "") if b.strip()]
+    if not blocks:
         return None
+    for block in blocks:
+        found = card_location_countries(block)
+        if not found or not all(same_country(destination, c) for c in found):
+            return None
     return destination.strip()
 
 

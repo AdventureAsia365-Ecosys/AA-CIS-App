@@ -26,17 +26,19 @@ SEEDS = SOURCE["example_seeds"]
 # S271 T9 contradiction number -> the examples that show the code now agrees with itself and the policy.
 CODE_VS_CODE = {
     1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-07", "bg-08", "bg-11", "bg-12", "bg-13", "rar-01", "rar-04", "rar-07",
-        "rar-09", "rar-10", "rar-11", "rar-12", "rar-13", "rar-14", "rar-15", "rar-16", "rar-17"],  # D1, D13
+        "rar-09", "rar-10", "rar-11", "rar-12", "rar-13", "rar-14", "rar-15", "rar-16", "rar-17", "rar-18", "rar-19",
+        "rar-20", "rar-21", "rar-22", "rar-23"],                                        # D1, D13
     4: ["tim-01", "tim-03", "tim-05", "tim-02", "tim-04"],                              # timing: repair vs F17
     5: ["tim-01", "faq-03", "faq-05", "scp-01"],                                        # severity of f7 / s5 / scope
     6: ["faq-02", "faq-03", "faq-04", "faq-06"],                                        # FAQ topics: filter vs dropper
     8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08", "num-09", "num-10", "num-11", "num-12", "num-13",
         "num-14", "num-15", "num-16", "num-17", "num-18", "num-19", "num-20", "num-21", "num-22", "num-23", "num-24",
-        "num-25", "num-26", "num-27", "num-28", "num-29", "num-30"],                  # numbers: one trip frame
+        "num-25", "num-26", "num-27", "num-28", "num-29", "num-30", "num-31", "num-32", "num-33", "num-34", "num-35",
+        "num-36", "num-37", "num-38"],                                                  # numbers: one trip frame
     9: ["scp-01", "scp-02", "scp-03", "scp-05", "scp-07"],                              # scope
     10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05", "cta-09"],                   # CTA literal line
     12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "meta-09", "meta-10", "meta-11", "meta-12",
-         "meta-13", "meta-14",
+         "meta-13", "meta-14", "meta-15", "meta-16",
          "tit-03", "tit-04",
          "slug-01", "slug-03"],                                                     # SEO bands, slug boundary
 }
@@ -117,7 +119,10 @@ def test_examples_are_synthetic():
     invented = {"Corran Monastery", "Orvine", "Lake Orvine", "Velmora", "Brecca", "Tesselmoor", "Northpine Travel",
                 "Dunmere Harbour"}
     for seed in SEEDS.values():
-        assert seed["place"] in invented and seed["country"] in invented
+        for key in ("place", "country"):
+            assert seed.get(key) is None or seed[key] in invented, seed
+        card = seed.get("card") or {}
+        assert not card or (card["display_name"] in invented and card["country"] in invented)
 
 
 def test_policy_sha_ignores_the_fixtures():

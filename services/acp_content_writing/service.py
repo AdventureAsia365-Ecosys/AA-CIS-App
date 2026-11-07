@@ -988,6 +988,8 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         # own seed Location country (a place keeps its own country), and the trip name runs the AA-794 check
         # S272 review 3: every Location line counts — a route piece's seed is one block per moment, and the route
         # segments are read too — so a cross-border route never names one country for all its places
+        # S272 review 4: only a place CARD's Location line says where a place is (the fallback line is written from
+        # raw_tours.country, the DESTINATION itself); a block without one gets no tail
         country = seo_meta_utils.place_country_tail(
             context.get("destination"), hygiene.split_seed(seed)[0],
             *(hygiene.split_seed(t)[0] for _a, t in (context.get("route_segments") or [])))

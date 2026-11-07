@@ -274,3 +274,63 @@ Should know
   num-21, num-30; place rarity: rar-01, rar-04, rar-07, rar-17). Every review counter-example blocks.
 - No policy key changed (examples only): policy_sha stays 56729ec18379581c, the prompt registry check reports 0
   problems, migration 387's manifest is unchanged.
+
+## S272 adversarial review 4 (fixes on PR #1368)
+
+Decisions
+- The background signal is bound to each novel number, never to the sentence. `claim_rules.trip_number_frame(sentence,
+  own_trip_lines, novel=...)` is True when the sentence is `trip_attached` OR ANY novel number lacks its own signal
+  (`number_has_background_signal`): the number is itself a year form (a year preposition or building verb right
+  before it, a decade, 'AD', '14th century'; never a count such as 'by 1200 steps'), sits next to a dimension unit
+  with its dimension word, is a share or population, a place's age ('600 years ago') or the count of a place-holding
+  phrase that is not people or beds. A year or a height elsewhere in the sentence no longer launders a count, a stage
+  or a distance ('Built in 1388, … reached by 1,200 stone steps' blocks). Each per-number signal is narrower than
+  review 3's sentence-level one ('at 900 metres', 'stands 900 metres', '600 years old' and a bare '(1637–38)' keep
+  blocking), so no sentence review 3 held now warns.
+- F1 and apply_rules compute the novel numbers against the trip source first (AUDIENCE / BRAND for an age only), pass
+  them to the frame, and fall back to the wider source only when every one of them is background. check_replacement
+  runs F1, so it shares the predicate.
+- A distance between two places the moment's own itinerary line names ('Brecca … Orvine' on the ferry line, 'Corran
+  Monastery … Orvine' on the walk line) is the trip's leg: no dimension signal for it ('Corran Monastery stands 900
+  metres above Orvine' blocks: it is the walk's ascent).
+- `trip_attached` adds route, stay and experience nouns (path, trail, track, route, way up / down / to, approach,
+  steps, stairs, stages, legs, arrival, by water / boat / road, on foot, guesthouse, inn, lodge, homestay, hotel,
+  hostel, campsite, an evening / night / morning at, the welcome) and the route objects of the moment's own itinerary
+  lines: the object of a traversal verb (walk, hike, climb, cross, follow, ride, …) whose head is a way or a vehicle
+  ('walk the shore path' → path, 'walk the old sea wall' → wall, 'Ride a fishing boat' → boat). A place the trip walks
+  or hikes ('Hike the extinct volcano', 'Walk the old town') stays a place, so its age or height still warns
+  (test_aa768's 'nine thousand years ago' volcano twin). Place names and visited features (the library hall) stay
+  place background: D1 allows background about a named place, and rar-01 / rar-07 / bg-06 stay warn.
+- `_LEG_RE` excludes only a bare width ('Lake Orvine is 9 km across.'); '9 km across the water from Orvine' reads like
+  'lies 9 km from Orvine'.
+- The rule table's rarity check runs F18's own finder (`trip_facts.rarity_claims`: the rarity lexicon, access rarity,
+  superlative scope, quantifiers) and F18's hold test (`rarity_blocks`), plus `trip_attached` on the full sentence
+  (F18's quote is capped at 300 characters). check_replacement already runs F17 / F18 (review 2).
+- T9 short-meta tail (`seo_meta_utils.place_country_tail`): only a place CARD's Location line counts (the line ending
+  '(do not place it in any other town, region or country)'). The card-less fallback line ('Location: <place>,
+  <raw_tours.country> (do not name any other country or region for it)') carries the tour country, which is the
+  DESTINATION itself, so it proves nothing: no tail. The check runs per moment block (blank-line separated) of the
+  own seed and of each route segment; a block with no card Location line (a label-only route block) means no tail.
+
+Changed
+- New twins: num-31..38 (route nouns, the crossing distance with 'across the water', the walk's ascent, a year or a
+  height next to a count / stage, the two-place distance; num-38 'Built in 1388, … stands 30 metres high' warns:
+  both numbers have their own signal), rar-18..23 (way up, approach, the shore path, arrival by water, an evening at
+  the inn, the welcome: block in F18, apply_rules and check_replacement), meta-15 (card-less seed: no tail) and
+  meta-16 (a label-only route block: no tail). New synthetic seeds with verified cards (`monastery_card`,
+  `lake_card`, `harbour_card`) and `lake_label_only`; the composed / cross-border meta twins use the card seeds.
+- Unit tests (test_aa1047_review2.py): the reviewer's card-less Hanoi / Laos reproduction through `_fit_seo_meta`, a
+  card line with the place country, a label-only route block, Ha Long / Laos and Angkor / Thailand, per-number frame
+  cases, route / stay / experience nouns, own-line route objects. test_aa1047_policy_registry's composed-tail seed
+  now has the card form of the Location line.
+
+Should know
+- Compared with origin/main (code extracted from 7c48053b) on every body example plus extra probes, per detector
+  (apply_rules, F1, F17, F18, check_replacement): the only cases main blocks and this branch warns on are the D1 / D13
+  warn twins (bg-02, bg-06, num-01, num-05, num-09, num-10, num-21, num-30, num-38, rar-01, rar-04, rar-07, rar-17) and
+  two pure-background probes ('Built in 1388, the gate holds 1,200 icons.', 'Lake Orvine is 9 km across.'). Every
+  review 4 counter-example blocks in every owning detector.
+- A T9 piece whose moments have no place card no longer gets the deterministic tail: its 130-139 meta goes to the fit
+  call (as before AA-1047) or F4 holds it. Fail closed by design.
+- No policy key changed (examples and seeds only): policy_sha stays 56729ec18379581c, the prompt registry check
+  reports 0 problems, migration 387's manifest is unchanged.

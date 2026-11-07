@@ -277,10 +277,14 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
     audience = _cr.audience_number_text(raw_own)
     hold = False
     for sent in _SENT_SPLIT_RE.split(content_text or ""):
-        in_frame = _cr.trip_number_frame(strip_citation_tags(sent), trip_lines)
-        if in_frame or _NUMBER_POLICY.get("digits_and_words"):
-            novel = (_cr.novel_trip_numbers(sent, [own_trip], [audience]) if in_frame
-                     else _cr.novel_trip_numbers(sent, [own]))
+        # S272 review 4: the frame reads each novel number (trip source, AUDIENCE / BRAND for an age only): one
+        # without its own background signal keeps the sentence in the trip frame, whatever else the sentence says
+        strict = _cr.novel_trip_numbers(sent, [own_trip], [audience])
+        in_frame = bool(strict) and _cr.trip_number_frame(strip_citation_tags(sent), trip_lines, novel=strict)
+        if in_frame:
+            novel = strict
+        elif _NUMBER_POLICY.get("digits_and_words"):
+            novel = _cr.novel_trip_numbers(sent, [own])
         else:
             novel = find_novel_numeric_claims(sent, [own], year_forms=True)
         if novel:
@@ -297,11 +301,11 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
 _NUMBER_POLICY = _wp.claim("numbers")
 
 
-def number_in_trip_frame(sentence: str, own_trip_lines=()) -> bool:
+def number_in_trip_frame(sentence: str, own_trip_lines=(), novel=None) -> bool:
     """AA-1047 (F6): is a number in this sentence a trip attribute? claim_rules.trip_number_frame — the one predicate
-    F1, the rule table and the admin sentence check share (S272 review 2)."""
+    F1, the rule table and the admin sentence check share (S272 review 2; per novel number, review 4)."""
     from services.acp_content_writing.claim_rules import trip_number_frame
-    return trip_number_frame(strip_citation_tags(sentence or ""), own_trip_lines)
+    return trip_number_frame(strip_citation_tags(sentence or ""), own_trip_lines, novel=novel)
 
 
 # ---------------------------------------------------------------- F2-adjusted (banned patterns)

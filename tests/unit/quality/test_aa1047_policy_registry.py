@@ -321,8 +321,9 @@ def test_t9_short_meta_gets_the_destination_tail_without_a_fit_call():
             "the steep path down to the lake.")
     title = "Corran Monastery: The Library Hall Above Orvine"
     lo, hi = wp.band("meta")
-    seed = ("Corran Monastery — visit\nLocation: Corran Monastery, Velmora\n"
-            "Source itinerary: Walk up to Corran Monastery.")
+    # S272 review 4: a place CARD's Location line (the card-less fallback line carries the tour country)
+    seed = ("Corran Monastery — visit\nLocation: Corran Monastery, Velmora (do not place it in any other town, region "
+            "or country)\nSource itinerary: Walk up to Corran Monastery.")
     assert wp.writer_aim("t9")[0] <= len(meta) < lo
     with patch.object(svc, "fit_seo_fields", side_effect=AssertionError("no fit call")) as fit:
         out, cost = asyncio.run(svc._fit_seo_meta({"seo_title": title, "meta_description": meta}, None, body="b",
