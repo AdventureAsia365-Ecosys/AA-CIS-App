@@ -6,7 +6,8 @@ Two halves, one hash:
   prompt versions in order, each with the source file and the symbols that hold the prompt (module-level constants
   and functions, as listed in ``docs/llm/prompt-register.md``) and ``prompt_sha256``. The hash is ``prompt_hash_of``:
   sha256 over the exact source text of those symbols (read with ``ast``, never imported), so editing other code in
-  the file does not change it, and editing the prompt does. The CI gate
+  the file does not change it, and editing the prompt does (AA-1047: a prompt whose symbols read the writing policy,
+  `_wp.`, also hashes the compiled policy_sha, so a policy edit is a prompt edit). The CI gate
   ``tests/unit/test_aa900_prompt_registry_gate.py`` (``scripts/prompt_registry_check.py``) fails when the newest
   version of a stage no longer matches its source: a prompt change needs a version bump
   (``scripts/prompt_registry_check.py --bump``).
@@ -81,7 +82,24 @@ def prompt_hash_of(source_path: str, symbols: list[str], root: Path = REPO_ROOT)
     missing = [s for s in symbols if s not in sources]
     if missing:
         raise PromptSourceError(f"{source_path}: no module-level symbol {', '.join(missing)}")
-    return hashlib.sha256(_SEPARATOR.join(sources[s] for s in symbols).encode("utf-8")).hexdigest()
+    joined = _SEPARATOR.join(sources[s] for s in symbols)
+    if POLICY_REF in joined:
+        # AA-1047: a prompt rendered from the writing policy (`_wp.fill` / `_wp.fragment`) changes when the policy
+        # does, so the policy_sha is part of its hash (a policy edit needs a version bump like a code edit).
+        joined += _SEPARATOR + "writing_policy:" + _policy_sha(root)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+POLICY_REF = "_wp."
+POLICY_COMPILED = "services/quality/writing_policy.compiled.json"
+
+
+def _policy_sha(root: Path) -> str:
+    """The compiled writing policy's policy_sha (read as data, never imported)."""
+    path = root / POLICY_COMPILED
+    if not path.is_file():
+        raise PromptSourceError(f"{POLICY_COMPILED}: missing (a prompt names the writing policy)")
+    return str(json.loads(path.read_text(encoding="utf-8"))["policy_sha"])
 
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, list[dict]]:

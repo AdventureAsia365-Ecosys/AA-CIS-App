@@ -35,6 +35,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from services.quality import writing_policy as _wp
 from services.acp_content_writing.hygiene import (
     SIBLING_HEADER,
     SOCIAL_PROOF_RE,
@@ -262,7 +263,9 @@ _NUMWORD = rf"(?:{_NUMTOK})(?:(?:[- ]|\s+and\s+(?=(?:{_TENS}|one|two|three|four|
 _WORDNUM_RE = re.compile(rf"\b({_NUMWORD})\b(?:[- ](?:US |U\.S\. )?({_UNITS})\b)?", re.I)
 # A range only with 'to' ('thirty to forty-five'); 'day two or three' is rhetoric, not a figure.
 _RANGE_RE = re.compile(rf"\b({_NUMWORD})\s+to\s+({_NUMWORD})\b", re.I)
-_DAY_INDEX_RE = re.compile(r"\b(?:day|days|week|stage|part|chapter)\s+$", re.I)
+# AA-1047: the far end of a day range ('days three to fourteen') is a day index too, not a figure.
+_DAY_INDEX_RE = re.compile(r"\b(?:day|days|week|stage|part|chapter)\s+(?:[\w-]+\s+(?:to|and|through|or|-|–)\s+)?$",
+                           re.I)
 _DIGITS_RE = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 
 
@@ -441,12 +444,21 @@ class Verdict:
     ref: str = ""
 
 
+_POLICY_RULES = _wp.rules_config()
+
+
 @dataclass(frozen=True)
 class RulesConfig:
-    """The two open product decisions (design f9-v2 G2 and 'uncited background'), as flags the
-    replay measures. 'warn' passes the sentence with a non-blocking note; 'fail' blocks it."""
-    hypothetical: str = "warn"
-    uncited_background: str = "warn"
+    """The rule table's policy choices, compiled from the writing policy (AA-1047, services/quality/writing_policy.yaml
+    `rules_config`; S271 decisions D1 and D4): 'pass' passes the sentence, 'warn' passes it with a non-blocking note,
+    'fail' blocks it. `hypothetical` (D4): an imagined scene with no concrete trip detail. `uncited_background` (D1):
+    background with no cited line about a place the SOURCE names (allowed). `background_numbers` (D1): the same with a
+    number or year (warns). Before AA-1047 an uncited background sentence FAILED whenever any place had a card (S271
+    T9 contradiction 1)."""
+    hypothetical: str = _POLICY_RULES["hypothetical"]
+    uncited_background: str = _POLICY_RULES["uncited_background"]
+    background_numbers: str = _POLICY_RULES["background_numbers"]
+    policy_sha: str = _wp.policy_sha()
 
 
 def parse_rows(data: Optional[dict], sentences: list[PieceSentence]) -> tuple[dict[str, ClaimRow], list[str]]:
@@ -503,27 +515,6 @@ def _in_scope(name: str, lexicon: ScopeLexicon) -> bool:
     return all(t in allowed or near(t) for t in toks)
 
 
-def _places_with_background(source_lines: list[SourceLine]) -> list[set[str]]:
-    """Token sets of the places that have P lines."""
-    out = []
-    for place in dict.fromkeys(ln.place for ln in source_lines if ln.kind == KIND_PLACE and ln.place):
-        out.append(set(phrase_tokens(place)))
-    return out
-
-
-def _has_background(row_places: tuple, source_lines: list[SourceLine]) -> bool:
-    with_bg = _places_with_background(source_lines)
-    if not with_bg:
-        return False
-    if not row_places:
-        return True  # some place has a card; an uncited background sentence should cite it
-    for name in row_places:
-        toks = set(phrase_tokens(name))
-        if any(toks & bg for bg in with_bg):
-            return True
-    return False
-
-
 @dataclass(frozen=True)
 class _Ctx:
     by_id: dict
@@ -562,6 +553,25 @@ def _trip_level(masked: str) -> Optional[str]:
     return None
 
 
+_NUMBERS = _wp.claim("numbers")
+
+
+def _trip_subject(text: str) -> bool:
+    """The sentence makes the trip, the reader, the group or a day its subject (f9_policy.TRIP_SUBJECT_RE; imported
+    here lazily: f9_policy imports this module)."""
+    from services.acp_content_writing.f9_policy import TRIP_SUBJECT_RE
+    return bool(TRIP_SUBJECT_RE.search(text or ""))
+
+
+def _config_verdict(t: str, mode: str, note: str, fail_note: Optional[str] = None) -> tuple[str, str, str]:
+    """(type, verdict, problem) for a policy-configured case: pass | warn | fail (AA-1047 RulesConfig)."""
+    if mode == "pass":
+        return t, PASS, ""
+    if mode == "warn":
+        return t, WARN, note
+    return t, FAIL, fail_note or note
+
+
 def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
     """(applied type, pass|warn|fail, problem) for one sentence — the rule table."""
     t = row.type
@@ -581,7 +591,11 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
         problem = f"states {', '.join(novel)}, which the SOURCE does not give"
         if quoted and _DIGITS_RE.search(line.text):
             return "number", WARN, f"{problem} — check it against {ref}"  # a paraphrase of a cited figure
-        return "number", FAIL, problem
+        # AA-1047 (writing policy claims.numbers, D1 + F6): a novel number holds only as a trip attribute; outside a
+        # trip frame (a place's height, a year) it warns — the same rule as F1 (quality_gates.number_in_trip_frame)
+        if _NUMBERS["elsewhere"] == "enforce" or trip in ("concrete", "framed") or _trip_subject(masked):
+            return "number", FAIL, problem
+        return "number", WARN, f"{problem} — background number, check it"
     if "social" in hits:  # whatever the model typed (design f9-v2): never in the SOURCE
         return "social_proof", FAIL, ("social proof or rarity claim — what other travellers or itineraries do "
                                       "is never in the SOURCE")
@@ -591,9 +605,8 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
             # is still a promise; G2 covers imagined scenes only
             if trip == "concrete" and not itinerary_cited:
                 return uncited_trip
-            if c.config.hypothetical == "warn":
-                return t, WARN, "imagined scene — check it stays plausible"
-            return t, FAIL, "imagined scene the SOURCE does not give"
+            return _config_verdict(t, c.config.hypothetical, "imagined scene — check it stays plausible",
+                                   "imagined scene the SOURCE does not give")
         t = "scene_detail"
 
     if t == "trip_fact":
@@ -610,12 +623,23 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
             return t, PASS, ""
         if line is not None and line.kind in (KIND_OTHER_TRIP, KIND_AUDIENCE):
             return t, FAIL, problem
-        has_card = _has_background(row.places, c.source_lines)
-        if c.config.uncited_background == "warn" and not has_card \
-                and not ({"number", "regulatory", "scene", "trip"} & hits):
-            return t, WARN, "uncited background about a place with no place card — check it"
-        return t, FAIL, ("background not in the place background — cite a P line or cut it" if has_card else
-                         "background with a number, a rule or a scene detail the SOURCE does not give")
+        # AA-1047 (D1): background about a place the SOURCE names is allowed, cited or not; it never makes this
+        # trip's activity, service, time or view (a promise), never names a place outside the SOURCE, never states a
+        # rule or fee (a practical fact); a number or year in it warns.
+        if trip in ("concrete", "framed"):
+            return uncited_trip
+        outside = [n for n in row.places if not places_named(c.lexicon, n) and not _in_scope(n, c.lexicon)]
+        if outside:
+            return t, FAIL, (f"background about {', '.join(repr(n) for n in outside)}, a place the SOURCE never "
+                             "names")
+        if "regulatory" in hits:
+            return t, FAIL, "a rule, fee or opening time the SOURCE does not give — background cannot state it"
+        if "number" in hits:
+            return _config_verdict(t, c.config.background_numbers,
+                                   "background with a number or year the SOURCE does not give — check it")
+        if "scene" in hits:
+            return t, WARN, "background with a scene detail — check it describes the place, not this trip's visit"
+        return _config_verdict(t, c.config.uncited_background, "uncited background about a place the SOURCE names")
     if t in ("scene_detail", "comparison"):
         problem = _cited_problem(line, ref, quoted, (KIND_TRIP, KIND_PLACE, KIND_FACT))
         label = "scene detail" if t == "scene_detail" else "comparison"

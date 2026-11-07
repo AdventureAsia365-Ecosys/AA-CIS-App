@@ -30,6 +30,7 @@ from services.acp_content_writing.hygiene import (
     COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
 )
 from services.acp_shared.citation_tags import TAG, trailing_tags
+from services.quality import writing_policy as _wp  # AA-1047: D13 rarity (trip vs place)
 from services.acp_shared.offered import (LOOSE_MARK_RE, OFFERED, activity_text, decide, is_status_line,
                                          status_of_line, strip_status_lines)
 
@@ -647,6 +648,7 @@ RARITY_CLAIM_RE = re.compile(
     r"|\bthe\s+(?:last|only)\s+(?:remaining\s+|surviving\s+)?\w+(?:[- ]\w+)?\s+(?:of its kind|in the world|on earth)\b"
     r"|\bunparalleled\b|\bunmatched\b|\bunrivall?ed\b|\bincomparable\b"
     r"|\bunique\s+(?:in|on|to)\s+(?:the world|earth|asia|central asia)\b", re.I)
+RARITY_PROBLEM_PREFIX = "makes a rarity claim the source does not"
 # 'one of the last' ≈ 'among the last'; 'on earth' ≈ 'in the world'
 _RARITY_EQUIV = (("among the", "one of the"), ("on earth", "in the world"), ("’s", "'s"))
 # 'one of the world's most distinctive living cultures' — supported only when the seed has a
@@ -689,14 +691,14 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
         problem = None
         for m in RARITY_CLAIM_RE.finditer(sentence):
             if _norm_rarity(m.group(0)) not in src:
-                problem = f"makes a rarity claim the source does not ('{m.group(0)}') — keep to what the source says"
+                problem = f"{RARITY_PROBLEM_PREFIX} ('{m.group(0)}') — keep to what the source says"
                 break
         if problem is None:
             for m in _SUPERLATIVE_RE.finditer(sentence):
                 scope = fold((m.group(1) or m.group(2) or "").strip())
                 if scope not in seed_scopes and not (not scope and seed_scopes):
-                    problem = (f"makes a rarity claim the source does not ('{m.group(0).strip()[:60]}') — keep to "
-                               "what the source says")
+                    problem = (f"{RARITY_PROBLEM_PREFIX} ('{m.group(0).strip()[:60]}') — keep to what the source "
+                               "says")
                     break
         if problem is None:
             for m in _QUANT_RE.finditer(sentence):
@@ -716,6 +718,23 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
         if problem:
             out.append(prefix + _quoted(problem, sentence))
     return out
+
+
+_QUOTED_SENTENCE_RE = re.compile(r": '(.*)'$", re.S)
+
+
+def rarity_blocks(violation: str) -> bool:
+    """AA-1047 (writing policy D13): does this F18 finding hold? A rarity / uniqueness claim attached to the trip
+    (the sentence makes the trip, the reader or the group its subject: 'this tour is the only …') is a promise and
+    blocks; one about a place follows D1 (background) and only warns. A quantifier or generalisation finding ('most
+    travellers …', a stronger quantifier than the source's) always blocks: it is social proof, not background."""
+    if RARITY_PROBLEM_PREFIX not in str(violation or ""):
+        return True
+    from services.acp_content_writing.f9_policy import TRIP_SUBJECT_RE
+    m = _QUOTED_SENTENCE_RE.search(str(violation))
+    sentence = m.group(1) if m else str(violation)
+    place_mode = _wp.claim("rarity").get("place", "warn")
+    return bool(TRIP_SUBJECT_RE.search(sentence)) or place_mode == "enforce"
 
 
 # ---------------------------------------------------------------- date authority
@@ -2336,6 +2355,6 @@ __all__ = [
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
     "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
-    "pace_claims", "parse_moments", "rarity_claims", "role_claim", "timing_claims", "with_date_spans",
+    "pace_claims", "parse_moments", "rarity_blocks", "rarity_claims", "role_claim", "timing_claims", "with_date_spans",
     "service_claims",
 ]

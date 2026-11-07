@@ -125,10 +125,16 @@ def test_a_meal_or_word_the_source_day_does_not_list_is_still_flagged(source, it
     assert MEAL in codes
 
 
-def test_tenant_rewrite_keeps_the_old_path():
+def test_tenant_rewrite_takes_the_same_source_backed_shortcut():
+    """AA-1047 (writing policy meals.source_day_line = allowed_all_writers, declared diff): a T2 page that copies the
+    source day's own meal line is source-backed like an A1 page (before: the shortcut was A1-only and the claim
+    went to Jev, which had no verdict for it, so it stayed flagged)."""
     itin = "Day 1 — Chiang Mai\nAn easy ride along the Ping River. Meals: breakfast, lunch."
     codes, _ = _codes(itin, NORTHERN_HEIGHTS, tenant_id="t1", is_tenant_rewrite=True)
-    assert MEAL in codes      # no source-backed shortcut on T2: the short claim gets no Jev verdict, so it stays
+    assert MEAL not in codes
+    wrong = "Day 1 — Chiang Mai\nAn easy ride along the Ping River. Meals: buffet breakfast, lunch."
+    codes, _ = _codes(wrong, NORTHERN_HEIGHTS, tenant_id="t1", is_tenant_rewrite=True)
+    assert MEAL in codes      # a word the source day does not list still goes to Jev on T2 too
 
 
 def test_unmarked_source_counts_for_a_one_day_page_only():

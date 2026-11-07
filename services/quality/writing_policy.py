@@ -22,8 +22,8 @@ What is compiled, and who reads it:
 - **fragments**: prompt lines rendered with `<<token>>` values.
 - **severities**: the class severities the policy owns (taxonomy.yaml must agree; the lint checks).
 
-`policy_sha` = sha256 (16 hex) of the canonical JSON of the YAML without its `examples` (synthetic fixtures change
-no behaviour). It is part of the release fingerprint (writing_memory.config_fp component `policy`) and of the eval
+`policy_sha` = sha256 (16 hex) of the canonical JSON of the YAML without its `examples` / `example_seeds` (synthetic
+fixtures change no behaviour). It is part of the release fingerprint (writing_memory.config_fp component `policy`) and of the eval
 judge version.
 
 Pure: standard library + PyYAML (the CI Lint job runs the lint with only PyYAML installed). Accessors read the
@@ -54,6 +54,8 @@ SEVERITIES = ("hard", "block", "warn")
 ROUTE_REPAIRS = ("cheap", "fix_step", "default")
 F9_ACTIONS = ("hold", "warn")
 EXAMPLE_EXPECT = ("block", "warn", "pass")
+EXAMPLE_FIELDS = ("body", "meta", "title", "slug", "cta", "faq", "itinerary")
+FIXTURE_KEYS = ("examples", "example_seeds")    # synthetic fixtures: no behaviour, not part of policy_sha
 
 
 class PolicyError(ValueError):
@@ -75,8 +77,8 @@ def _canon(value: Any) -> str:
 
 
 def sha_of(source: dict) -> str:
-    """policy_sha of a loaded policy (examples left out)."""
-    body = {k: v for k, v in source.items() if k != "examples"}
+    """policy_sha of a loaded policy (the synthetic examples and their seeds left out)."""
+    body = {k: v for k, v in source.items() if k not in FIXTURE_KEYS}
     return hashlib.sha256(_canon(body).encode("utf-8")).hexdigest()[:16]
 
 
@@ -183,6 +185,10 @@ def schema_errors(source: dict) -> list[str]:
         _need(isinstance(ex.get("id"), str) and isinstance(ex.get("topic"), str), f"{where} needs id and topic", e)
         _need(ex.get("expect") in EXAMPLE_EXPECT, f"{where}: expect must be one of {EXAMPLE_EXPECT}", e)
         _need(isinstance(ex.get("text"), str), f"{where} needs a text", e)
+        _need(ex.get("field", "body") in EXAMPLE_FIELDS, f"{where}: field must be one of {EXAMPLE_FIELDS}", e)
+        _need(ex.get("seed", "monastery") in (source.get("example_seeds") or {}), f"{where}: unknown seed", e)
+        _need(ex.get("field") != "itinerary" or isinstance(ex.get("source_itinerary"), str),
+              f"{where}: an itinerary example needs source_itinerary", e)
     ids = [ex.get("id") for ex in source.get("examples") or [] if isinstance(ex, dict)]
     _need(len(ids) == len(set(ids)), "examples: ids must be unique", e)
     return e

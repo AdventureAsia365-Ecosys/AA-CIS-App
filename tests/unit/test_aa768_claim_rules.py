@@ -285,10 +285,13 @@ def test_location_in_title_is_left_to_f12_scope():
     assert v.ok and v.sid == "T"
 
 
-def test_uncited_background_warns_only_without_a_card_and_without_numbers():
+def test_uncited_background_follows_d1():
+    """AA-1047 (writing policy D1, declared diff): background about a place the SOURCE names passes cited or not
+    (before: it failed whenever a place had a card, and warned otherwise); a number or year in it warns; a rule or
+    fee fails; the config can still make it fail."""
     v, _ = _run("Sod Camp sits in a region long used by herders.",
                 {"type": "place_background", "places": ("Sod Camp",)})
-    assert v.ok and not v.blocking and "uncited background" in v.problem
+    assert v.ok and not v.blocking and v.problem == ""
     v, _ = _run("Sod Camp sits in a region long used by herders.",
                 {"type": "place_background", "places": ("Sod Camp",)}, config=RulesConfig(uncited_background="fail"))
     assert not v.ok
@@ -296,11 +299,15 @@ def test_uncited_background_warns_only_without_a_card_and_without_numbers():
     assert not v.ok  # regulatory word
     v, _ = _run("The monastery was rebuilt by monks.", {"type": "place_background", "places": ("Erdene Zuu",)},
                 seed=_seed_with_card())
-    assert not v.ok and "cite a P line" in v.problem  # the place has a card: cite it
+    assert v.ok and not v.problem  # D1: a card no longer makes uncited background fail
+    v, _ = _run("The monastery was rebuilt by monks in 1586.", {"type": "place_background", "places": ("Erdene Zuu",)},
+                seed=_seed_with_card())
+    assert v.ok and not v.blocking and "number or year" in v.problem  # D1: numbers and years warn
     v, _ = _run("Much of it was lost in the 1937 purges.",
                 {"type": "place_background", "ref": "P2", "quote": "destroyed in the 1937 purges",
                  "places": ("Erdene Zuu",)}, seed=_seed_with_card())
     assert v.ok
+    assert RulesConfig().policy_sha and RulesConfig().uncited_background == "pass"
 
 
 def test_hypothetical_policy_flag():
@@ -370,7 +377,11 @@ def test_novel_number_with_a_verified_digit_citation_warns():
                 {"type": "place_background", "ref": "S3", "quote": "extinct volcano, last active 8,000 years ago"},
                 seed=seed)
     assert v.ok and not v.blocking and v.type == "number" and "check it against S3" in v.problem
+    # AA-1047 (writing policy claims.numbers, D1 + F6): a novel number in place background warns; as a trip
+    # attribute (the reader is the subject) it fails, as in F1
     v, _ = _run("The volcano went quiet nine thousand years ago.", {"type": "place_background"}, seed=seed)
+    assert v.ok and not v.blocking and v.type == "number" and "background number" in v.problem
+    v, _ = _run("You hike for nine thousand metres of climbing.", {"type": "place_background"}, seed=seed)
     assert not v.ok and v.type == "number"
 
 
@@ -461,4 +472,7 @@ def test_hashtags_do_not_count_for_cta():
 # ---------------------------------------------------------------- not wired (S234)
 
 def test_claim_rules_is_not_wired_into_run_quality_gates_yet():
-    assert "claim_rules" not in inspect.getsource(quality_gates)
+    """AA-1047: F1 now reads two pure helpers (find_novel_word_numbers, the trip level) under the writing policy's
+    number rule; the rule table itself (apply_rules) is still not part of the live gates."""
+    src = inspect.getsource(quality_gates)
+    assert "apply_rules" not in src and "number_source_lines" not in src

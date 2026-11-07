@@ -34,7 +34,8 @@ from typing import Optional, Sequence
 import structlog
 
 from services.acp_content_writing.hygiene import fold, names_place
-from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
+from services.acp_content_writing.quality_gates import (PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope,
+                                                       unanswerable_faq_topics)
 from services.acp_shared.token_budget import (T9_FAQ_FILTER_MAX_TOKENS, ReplyStillCut,
                                               generate_with_budget_retry)
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
@@ -334,7 +335,12 @@ async def select_faq_questions(questions, *, own_seed: str, facts_text: Optional
         logger.warning("t9_faq_filter_fallback", mode=mode, error=f"{type(e).__name__}: {str(e)[:200]}",
                        request_id=str(request_id) if request_id else None)
         return deterministic, record | {"fallback": True, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    # AA-1047 (writing policy faq.topics_need_source): a question the model keeps on a topic that needs a source line
+    # the moment's own seed and Facts do not have is dropped here, as paa_for_scope and drop_unanswerable_faq drop it
+    # (before, the writer answered it and the dropper then removed the pair, starving F16_faq).
+    policy_dropped = [q for q in outcome.kept if unanswerable_faq_topics(q, own_seed, facts_text)]
+    kept = [q for q in outcome.kept if q not in policy_dropped]
     record |= {"fallback": False, "model": outcome.model, "cost_usd": round(outcome.cost_usd, 6),
                "llm_kept": outcome.kept, "gazetteer_dropped": outcome.gazetteer_dropped,
-               "verdicts": outcome.verdicts}
-    return (outcome.kept if mode == MODE_ON else deterministic), record
+               "policy_dropped": policy_dropped, "verdicts": outcome.verdicts}
+    return (kept if mode == MODE_ON else deterministic), record

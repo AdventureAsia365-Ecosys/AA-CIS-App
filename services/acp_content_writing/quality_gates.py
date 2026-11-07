@@ -55,7 +55,8 @@ from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContex
                                                   names_place, near_verbatim, phrase_tokens, proper_nouns,
                                                   sentence_spans, sibling_templates, template_lines,
                                                   unsupported_ages, unsupported_reasons)
-from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues
+from services.acp_content_writing.hygiene import split_seed as hygiene_split_seed
+from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues, rarity_blocks
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
@@ -261,8 +262,18 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
     number); T3/A1/source_facts keep the plain reading. The violation format is unchanged —
     sentence_repair._F1_QUOTE_RE parses it."""
     violations: list[str] = []
+    # AA-1047 (writing policy `claims.numbers`, D1 + critic fix F6): the lines of OTHER trips never support a number
+    # (S271 T9 contradiction 8: they did), a spelled-out number counts like digits (claim_rules.find_novel_word_numbers,
+    # before only in the unwired F9 v2), and a novel number holds only inside a trip frame (the sentence makes the
+    # trip, the reader or a day its subject, or names a trip service); elsewhere (place background: a year, a height)
+    # it warns. The violation text is unchanged (sentence_repair._F1_QUOTE_RE parses it).
+    own = hygiene_split_seed(atom_text)[0] if _NUMBER_POLICY["other_trip_lines_support"] is False else atom_text
+    hold = False
     for sent in _SENT_SPLIT_RE.split(content_text or ""):
-        novel = find_novel_numeric_claims(sent, [atom_text], year_forms=True)
+        novel = find_novel_numeric_claims(sent, [own], year_forms=True)
+        if _NUMBER_POLICY.get("digits_and_words"):
+            from services.acp_content_writing.claim_rules import find_novel_word_numbers
+            novel = list(novel) + [w for w in find_novel_word_numbers(sent, [own]) if w not in novel]
         if novel:
             # AA-452: strip_citation_tags() here too, not just at the final output boundary —
             # for channel='blog' `sent` may carry a [R:atom_id] tag; deep_strip_citation_tags()
@@ -270,7 +281,20 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
             # this specific violation string is never tagged in the first place.
             quoted = strip_citation_tags(sent.strip())[:100]
             violations.append(f"sentence states {novel} not present in the content seed: '{quoted}'")
-    return _result(qr.F1_GROUNDING, violations)
+            hold = hold or _NUMBER_POLICY["elsewhere"] == "enforce" or number_in_trip_frame(sent)
+    return _result(qr.F1_GROUNDING, violations, blocking=hold or not violations)
+
+
+_NUMBER_POLICY = _wp.claim("numbers")
+
+
+def number_in_trip_frame(sentence: str) -> bool:
+    """AA-1047 (F6): is a number in this sentence a trip attribute? The trip, the reader, the group or a day is the
+    sentence's subject (f9_policy.TRIP_SUBJECT_RE), or it names a concrete trip service / a promise frame
+    (claim_rules' trip level 'concrete' or 'framed')."""
+    from services.acp_content_writing.claim_rules import _trip_level
+    text = strip_citation_tags(sentence or "")
+    return bool(f9_policy.TRIP_SUBJECT_RE.search(text)) or _trip_level(text) in ("concrete", "framed")
 
 
 # ---------------------------------------------------------------- F2-adjusted (banned patterns)
@@ -1579,6 +1603,12 @@ _FAQ_TOPICS = {
                   r"(?:^Season:|\b(?:seasons?|summer|winter|spring|autumn|monsoon|weather|climate|temperatures?"
                   r"|cold|warm|rain)\b)"),
 }
+# AA-1047: which topics need a source line is the writing policy's (faq.topics_need_source); the regexes above are
+# the detector. The deterministic PAA selection, the LLM question filter (faq_filter.select_faq_questions) and the FAQ
+# dropper all read this one list (S271 T9 contradiction 6: the LLM filter kept questions the dropper then removed).
+FAQ_TOPICS_NEED_SOURCE = _wp.faq_topics_need_source()
+if set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS):  # pragma: no cover — a policy topic with no detector
+    raise RuntimeError(f"writing policy FAQ topics without a detector: {set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS)}")
 _FAQ_Q_RE = re.compile(r"\*\*Q: (.*?)\*\*", re.DOTALL)
 
 
@@ -1586,7 +1616,7 @@ def unanswerable_faq_topics(question: str, own_seed_text: str, facts_text: Optio
     """The topics `question` asks about that neither the seed's own lines nor FACTS support."""
     support = f"{own_seed_text or ''}\n{facts_text or ''}"
     q = question.lower()
-    return [topic for topic, (ask, ok) in _FAQ_TOPICS.items()
+    return [topic for topic in FAQ_TOPICS_NEED_SOURCE for ask, ok in [_FAQ_TOPICS[topic]]
             if re.search(ask, q) and not re.search(ok, support, re.I | re.M)]
 
 
@@ -2204,10 +2234,13 @@ def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_
         # a title / meta finding alone never holds a piece: service._fit_seo_meta already refused that
         # meta and asked for a new one; what is left is a warning for the admin
         return flag and any(not v.startswith(("title ", "meta ")) for v in vs)
+    # AA-1047 (writing policy D13): a rarity claim about a place follows D1 (background) and only warns; one
+    # attached to the trip, and every quantifier / generalisation finding, still blocks (trip_facts.rarity_blocks).
+    rarity_hold = [v for v in found["rarity"] if rarity_blocks(v)]
     return [_result(F17_GATE, found["trip_fact"], repairable=True,
                     blocking=body_blocking(found["trip_fact"], F17_BLOCKING) if found["trip_fact"] else F17_BLOCKING),
             _result(F18_GATE, found["rarity"], repairable=True,
-                    blocking=body_blocking(found["rarity"], F18_BLOCKING) if found["rarity"] else F18_BLOCKING)]
+                    blocking=body_blocking(rarity_hold, F18_BLOCKING) if found["rarity"] else F18_BLOCKING)]
 
 
 # ---------------------------------------------------------------- F14 / F15 (AA-771, S234)

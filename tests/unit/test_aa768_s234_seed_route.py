@@ -274,7 +274,7 @@ async def test_seo_fit_runs_for_an_out_of_scope_title_and_rejects_a_fit_that_kee
 async def test_seo_fit_not_called_without_scope_problem():
     seo = {"seo_title": "Sod Camp Family Guide: A Night by Lake Khövsgöl",
            "meta_description": "A family guide to Sod Camp on the shore of Lake Khövsgöl in northern Mongolia, "
-                               "with what each part of the stay holds for you.", "slug": "s"}
+                               "with what each part of the two-night stay holds for you and your children.", "slug": "s"}
     with patch.object(service, "fit_seo_fields") as fit:
         await service._fit_seo_meta(seo, None, body="b", context={}, request_id="r", hyg=h.HygieneContext(seed=SEED))
     fit.assert_not_called()

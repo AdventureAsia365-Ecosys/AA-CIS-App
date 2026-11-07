@@ -32,6 +32,7 @@ from typing import Iterable, Optional
 
 from services.acp_content_writing.claim_rules import mask_names
 from services.quality import registry as qr
+from services.quality import writing_policy as _wp
 
 POLICY_VERSION = "f9-interim-v1"
 F9_POLICY_MODE_ENV = "T10_F9_POLICY_MODE"
@@ -62,7 +63,8 @@ OTHER = "other"
 
 FIDELITY_CLASSES = frozenset({TRIP_PROMISE, UNSUPPORTED_OTHER, FACT_CHECK_UNQUOTED, SEO_FIELD_CLAIM})
 INFRASTRUCTURE_CLASSES = frozenset({JUDGE_UNAVAILABLE})
-HOLD_CLASSES = frozenset({TRIP_PROMISE})
+# AA-1047: the classes that may hold are the writing policy's F9 route rows (writing_policy.yaml f9_class_rows).
+HOLD_CLASSES = _wp.f9_hold_classes()
 
 # ---------------------------------------------------------------------------------------------- trip promise
 

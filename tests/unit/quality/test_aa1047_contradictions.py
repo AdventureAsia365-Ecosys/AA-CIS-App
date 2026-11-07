@@ -1,0 +1,81 @@
+"""AA-1047 (root ADR 0020, W1) — the contradiction suite.
+
+Every example of services/quality/writing_policy.yaml (`examples`: synthetic fire / no-fire twins per topic) runs
+through every fixer, gate and rule that reads its field (services/quality/policy_harness.py). The system's verdict is
+the most severe detector verdict; it must be what the policy expects for 100% of the examples, each detector named in
+the example's `all` must agree on its own, and every fixer's output must satisfy the policy.
+
+The S271 audit listed 16 T9 contradictions (root docs/audits/2026-11-06-S271-writing-quality-audit, data/
+blog-pipeline-audit.json plan.contradictions). CODE_VS_CODE maps each code-vs-code one to the examples that prove it
+is gone; the writer-vs-code ones stay open until W5 (implementation notes AA-1047-policy-registry.md).
+"""
+from __future__ import annotations
+
+from collections import Counter
+
+import pytest
+
+from services.quality import policy_harness as ph
+from services.quality import writing_policy as wp
+
+SOURCE = wp.load_source()
+EXAMPLES = SOURCE["examples"]
+SEEDS = SOURCE["example_seeds"]
+
+# S271 T9 contradiction number -> the examples that show the code now agrees with itself and the policy.
+CODE_VS_CODE = {
+    1: ["bg-01", "bg-02", "bg-03", "bg-05", "bg-08", "rar-01", "rar-04", "rar-07"],   # background widths (D1, D13)
+    4: ["tim-01", "tim-03", "tim-05", "tim-02", "tim-04"],                              # timing: repair vs F17
+    5: ["tim-01", "faq-03", "faq-05", "scp-01"],                                        # severity of f7 / s5 / scope
+    6: ["faq-02", "faq-03", "faq-04", "faq-06"],                                        # FAQ topics: filter vs dropper
+    8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08"],                    # numbers: words, other trips
+    9: ["scp-01", "scp-02", "scp-03"],                                                  # scope
+    10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05"],                             # CTA literal line
+    12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "tit-03", "tit-04", "slug-01",
+         "slug-03"],                                                                    # SEO bands, slug boundary
+}
+
+
+def _outcome(ex: dict) -> ph.Outcome:
+    return ph.run_example(ex, SEEDS)
+
+
+@pytest.mark.parametrize("ex", EXAMPLES, ids=[e["id"] for e in EXAMPLES])
+def test_example_is_decided_as_the_policy_expects(ex):
+    o = _outcome(ex)
+    assert o.combined == ex["expect"], (o.verdicts, o.notes)
+    for detector in ex.get("all") or []:
+        assert o.verdicts.get(detector) == ex["expect"], (detector, o.verdicts, o.notes)
+    assert all(o.fixed.values()), o.fixed
+
+
+def test_every_topic_has_fire_and_no_fire_twins():
+    by_topic: dict[str, Counter] = {}
+    for ex in EXAMPLES:
+        by_topic.setdefault(ex["topic"], Counter())[ex["expect"] == "pass"] += 1
+    required = {"background", "timing", "rarity", "cta", "faq", "numbers", "scope", "meta_band", "slug_boundary",
+                "meals", "day_count"}
+    assert required <= set(by_topic)
+    for topic, counts in by_topic.items():
+        assert counts[True] >= 1 and counts[False] >= 1, f"{topic} needs a fire and a no-fire example"
+
+
+def test_the_code_vs_code_contradictions_are_proved_gone():
+    ids = {e["id"]: e for e in EXAMPLES}
+    for number, names in CODE_VS_CODE.items():
+        for name in names:
+            assert name in ids, (number, name)
+            o = _outcome(ids[name])
+            assert o.ok, (number, name, o.verdicts, o.notes)
+
+
+def test_examples_are_synthetic():
+    """Public repo: invented places only (CI golden-set text guard). The seeds name only the invented world."""
+    invented = {"Corran Monastery", "Orvine", "Lake Orvine", "Velmora", "Brecca", "Tesselmoor", "Northpine Travel"}
+    for seed in SEEDS.values():
+        assert seed["place"] in invented and seed["country"] in invented
+
+
+def test_policy_sha_ignores_the_fixtures():
+    changed = {**SOURCE, "examples": EXAMPLES[:1]}
+    assert wp.sha_of(changed) == wp.sha_of(SOURCE) == wp.policy_sha()

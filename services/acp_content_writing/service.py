@@ -88,6 +88,7 @@ from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates p
 from services.quality import degraded  # AA-925
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
+from services.quality import writing_policy as _wp  # AA-1047: the slug cap at a word boundary
 from services.quality import registry as qr
 from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
@@ -915,11 +916,12 @@ def _meta_ok(meta, keyword: Optional[str]) -> bool:
 
 
 def _ascii_slug(slug: Optional[str]) -> Optional[str]:
-    """S233 — a slug with accents ("…-khövsgöl") failed F4 lowercase-kebab; fold it to ASCII."""
+    """S233 — a slug with accents ("…-khövsgöl") failed F4 lowercase-kebab; fold it to ASCII. AA-1047 (writing
+    policy bands.slug, D5): over the cap it is cut at a hyphen, never mid-word (S271 T9 contradiction 12)."""
     if not isinstance(slug, str) or not slug:
         return slug
     folded = re.sub(r"[^a-z0-9]+", "-", _fold_kw(slug)).strip("-")
-    return folded[:60].rstrip("-") or slug
+    return _wp.slug_at_boundary(folded) or slug
 
 
 def _title_variant(title: Optional[str], brand: Optional[str], taken: list[str]) -> Optional[str]:

@@ -11,6 +11,9 @@ from shared.llm_client.call_log import billed_fields, record_call_sync, record_u
 from services.content_generation.brand_fit import itinerary_digest
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
 from .seo_meta_utils import SEO_META_MAX, SEO_META_MIN, SEO_TITLE_MAX  # AA-1047: the policy bands
+from services.quality import writing_policy as _wp
+
+_MEAL_LINE_ALL_WRITERS = _wp.meals().get("source_day_line") == "allowed_all_writers"
 
 logger = structlog.get_logger()
 
@@ -124,8 +127,10 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     claims = [u for u in itinerary_claim_sentences(itin_text) if ITIN_MEAL_INVENTED.search(u["sentence"])]
     if not claims:
         return False
-    if not is_tenant_rewrite:
+    if not is_tenant_rewrite or _MEAL_LINE_ALL_WRITERS:
         # AA-645 (S249): an A1 meal line that copies the same source day's own meal codes is not a claim to check.
+        # AA-1047 (writing policy `meals.source_day_line`): the same for a T2 rewrite (S271 tour contradiction "meals":
+        # the exemption was A1-only, so a T2 page carrying the Master's source-backed meal line went to Jev).
         blocks = source_day_meal_blocks(tour, itin_text)
         claims = [c for c in claims if not source_backed_meal_line(c["sentence"], blocks.get(c["day"]))]
         if not claims:

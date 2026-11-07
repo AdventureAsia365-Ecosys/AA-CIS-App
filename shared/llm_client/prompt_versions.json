@@ -375,6 +375,73 @@
         "judge_version"
       ],
       "prompt_sha256": "1bb1732339d7785be23edb2f1024e2900860a15b289ead0eacb7205ac502eb99"
+    },
+    {
+      "stage": "s1_brand_audit",
+      "version": "v2",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "d494df4d4ea490cb24337ed7e72d6ffd2e4241d5a3a8f85724a340693bde439c"
+    },
+    {
+      "stage": "t2_brand_audit",
+      "version": "v2",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "d494df4d4ea490cb24337ed7e72d6ffd2e4241d5a3a8f85724a340693bde439c"
+    },
+    {
+      "stage": "a3_place_card",
+      "version": "v2",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CARD_SYSTEM"
+      ],
+      "prompt_sha256": "82d27101b850d1ad8f9d04b57f66da9f2f91976758d0ee42ac84504c7efc673e"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v4",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE"
+      ],
+      "prompt_sha256": "bd13593e1261dc9e590e909e974334abcedfe724213cf9f59c38b092336081dd"
+    },
+    {
+      "stage": "t9_repair",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/generate.py",
+      "symbols": [
+        "_REPAIR_SYSTEM",
+        "_SEO_FIT_SYSTEM",
+        "_FAQ_SYSTEM"
+      ],
+      "prompt_sha256": "0e213fd78d37a119837083b0a38c06007be5598bcaf5120051ef783f6d51d5c0"
+    },
+    {
+      "stage": "writing_memory_eval",
+      "version": "v3",
+      "source_path": "services/writing_memory/eval_judge.py",
+      "symbols": [
+        "system_prompt",
+        "build_user_prompt",
+        "judge_version"
+      ],
+      "prompt_sha256": "311e443af3224a47ec4490e0d3ab3e6298688087d175389d0302447c886cc8a0"
     }
   ]
 }
