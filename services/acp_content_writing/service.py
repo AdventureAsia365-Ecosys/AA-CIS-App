@@ -85,6 +85,7 @@ from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_t
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
+from services.acp_content_writing import route_table  # AA-1049 (the one T9 route table)
 from services.quality import degraded  # AA-925
 from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
 from services.quality import factsheet_store  # AA-1047 (CIS 386)
@@ -496,17 +497,17 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
 # tenant always receives content"): the F9 entry is waived only when EVERY flagged sentence was cut;
 # anything left keeps F9 blocking, so the piece is labelled held for the admin. AA-777 extends the cut
 # to the blog on its attempt 3 only (BLOG_TRUTH_CUT_ATTEMPT), never under the blog's minimum length.
-F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
+F9_CUT_NOT_HOLD_CHANNELS = route_table.CUT_NOT_HOLD_CHANNELS  # AA-1049: writing_policy truth_cut
 # AA-777 — the blog attempt where an F1/F9 truth item that survived one sentence repair is cut, not
 # repaired again (attempt 2 stays the sentence repair). S233+S234: sentence repair fixes F9 49%, a full
 # rewrite 0/6, and a second repair adds new blocking fails the regression guard then reverts (16×).
 BLOG_TRUTH_CUT_ATTEMPT = MAX_ATTEMPTS
-TRUTH_CUT_GATES = frozenset({qr.F1_GROUNDING, qr.F9_CTA_FACT})
+TRUTH_CUT_GATES = route_table.TRUTH_CUT_GATES  # AA-1049: the route table's `cut: truth` rows
 # AA-777 (r6 fix 6) — an F17_trip_fact item the blog's attempt 3 cuts too, when F17 was already sent to a
 # sentence repair once: deterministic findings whose own instruction is to cut (a time / position / pace /
 # background base the source lacks, an optional activity sold as fixed, an interpreted thin-moment coda).
 # Never the family caveat ('add ONE', never a cut) or a played-down hazard ('keep the hazard').
-F17_CUT_GATE = qr.F17_TRIP_FACT
+(F17_CUT_GATE,) = route_table.CUT_FINDING_GATES  # AA-1049: the one `cut: cut_finding` row
 _F17_CUT_RE = re.compile(r"\bcut it\b|cut the added clause")
 
 

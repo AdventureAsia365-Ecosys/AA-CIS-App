@@ -67,6 +67,7 @@ from services.acp_shared.real_questions import is_off_meaning, single_word_place
 from shared.llm_client.call_log import BILLED_FIELD_KEYS, record_billed_failure_sync, record_call_sync
 from services.quality import registry as qr
 from services.quality import writing_policy as _wp  # AA-1047: bands, FAQ pairs, route rows
+from services.acp_content_writing import route_table as _route_table  # AA-1049: the one T9 route table
 from services.acp_content_writing.seed_align import modes as seed_align
 from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate
 
@@ -2239,18 +2240,18 @@ F15_WARN_GATE = qr.F15_VOICE_WARN
 # AA-800: a second stock superlative (F2_superlatives) is style too.
 # AA-788: F9_brand_style too (off-brand voice / generic AI wording; it blocks only in its `repair` mode, attempt 1).
 # AA-1047: the three gate sets below are the policy's route rows (writing_policy.yaml route_rows), equal to the S271
-# hand-written sets (a test pins them).
-STYLE_ONLY_GATES = _wp.style_only_gates()
+# hand-written sets (a test pins them). AA-1049: read through the one T9 route table (route_table.py).
+STYLE_ONLY_GATES = _route_table.STYLE_ONLY_GATES
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage route when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
 # AA-800 — the F2 word layers too: the repair swaps or cuts one word.
 # AA-788 — F9_brand_style too: the repair rewrites the flagged sentence in the brand's voice or cuts it.
-CHEAP_REPAIR_GATES = _wp.gates_with_repair("cheap")
+CHEAP_REPAIR_GATES = _route_table.CHEAP_REPAIR_GATES
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
-OWNED_BY_FIX_STEP = _wp.gates_with_repair("fix_step")
+OWNED_BY_FIX_STEP = _route_table.OWNED_BY_FIX_STEP
 _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
 OPENER_REPEAT_JACCARD = 0.6
 
