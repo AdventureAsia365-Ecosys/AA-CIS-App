@@ -2,7 +2,8 @@
 
 Parity first: the route builder renders byte for byte what service.grounding_text_from joined before W1 (the frozen
 copy below is that code, unchanged), over hand fixtures and a generated grid of inputs; the tour builder renders the
-S1 writer v2 FACT SHEET. Then the lines (ids, kinds, provenance, anchors, pointers) and the recorded exclusions. Fixtures use invented places and names only. Pure: no DB, no LLM."""
+S1 writer v2 FACT SHEET. Then the lines (ids, kinds, provenance, anchors, pointers), the recorded exclusions and the
+declared budget diff. Fixtures use invented places and names only. Pure: no DB, no LLM."""
 from __future__ import annotations
 
 import itertools
@@ -196,6 +197,50 @@ def test_excluded_facts_are_recorded_with_a_reason_and_the_render_is_unchanged()
                                "chars": len("Deal") + len("Ten percent off in May.")},)
 
 
+# ------------------------------------------------------------------ budget (declared diff)
+
+def test_budget_under_the_cap_returns_the_render_unchanged():
+    sheet = _route(SEED_ONE, FACTS, BRAND, "Zemlia Loop", "Zemlia")
+    assert sheet.render_budgeted(10_000) == (sheet.render(), [])
+
+
+def test_budget_drops_other_trips_and_audience_first_then_place_background_never_trip_lines():
+    sheet = _route(SEED_ONE + "\n\n" + SEED_TWO, FACTS, BRAND, "Zemlia Loop", "Zemlia")
+    full = sheet.render()
+    o_and_a = sum(len(ln.text) + 3 for ln in sheet.lines if ln.kind in ("O", "A"))
+    text, excluded = sheet.render_budgeted(len(full) - o_and_a // 2)
+    gone = {e["id"] for e in excluded}
+    assert gone and gone <= {ln.id for ln in sheet.lines if ln.kind in ("O", "A")}
+    assert all(e["reason"] == fs.EXCLUDED_READER_BUDGET for e in excluded)
+    # every kept line is still there, verbatim
+    kept_ids = {ln.id for ln in sheet.lines} - gone
+    for ln in sheet.lines:
+        if ln.id in kept_ids and ln.kind in ("S", "L", "P"):
+            assert ln.text in text
+    text2, excluded2 = sheet.render_budgeted(200)
+    kinds = {e["kind"] for e in excluded2 if e["kind"]}
+    assert kinds == {"O", "A", "P"}
+    assert excluded2[-1]["reason"] == "over_cap"
+    for ln in sheet.lines:
+        if ln.kind in ("S", "F", "T", "L", "B"):
+            assert ln.text.split(" Source:")[0][:40] in text2.replace("\n", " ")
+    # a header whose bullets all went goes with them
+    assert "Place background" not in text2 and "Other trips that include" not in text2
+
+
+def test_budget_text_still_parses_into_the_kept_lines():
+    sheet = _route(SEED_ONE + "\n\n" + SEED_TWO, FACTS, BRAND, "Zemlia Loop", "Zemlia")
+    text, excluded = sheet.render_budgeted(len(sheet.render()) - 60)
+    gone = {e["id"] for e in excluded}
+    reparsed = [(sl.kind, sl.text) for sl in number_source_lines(text)]
+    assert reparsed == [(ln.kind, ln.text) for ln in sheet.lines if ln.id not in gone]
+
+
+def test_tour_sheet_is_never_budgeted():
+    sheet = fs.build_tour_factsheet(TOUR_DAYS)
+    assert sheet.render_budgeted(10) == (sheet.render(), [])
+
+
 # ------------------------------------------------------------------ tour lines
 
 def test_tour_lines_point_into_the_source_and_verify():
@@ -279,3 +324,65 @@ def test_raw_source_tour_reads_a_row_and_parses_json_highlights():
     assert "Group size: 2-12" in fs.raw_source_text(tour, agency)
     tour2, _ = fs.raw_source_tour({**row, "src_highlights": "not json ["})
     assert tour2["highlights"] == "not json ["
+
+
+# ------------------------------------------------------------------ T9: the facts budget is recorded
+
+def _fact(i: int, scope: str = "tenant") -> dict:
+    return {"fact_id": f"fact_{scope[0]}{i:03d}", "scope": scope, "tenant_id": None, "kind": "price",
+            "title": f"Varn fact {i:03d}", "body": "b" * 1200, "provenance": "Varn board", "country": None,
+            "stated_on": None, "valid_until": None, "updated_at": None}
+
+
+def _pool_returning(rows):
+    from unittest.mock import AsyncMock, MagicMock
+
+    conn = AsyncMock()
+    conn.fetch.return_value = rows
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=ctx)
+    return pool
+
+
+def test_fetch_facts_hands_back_what_the_budget_left_out():
+    import asyncio
+    import uuid
+
+    from services.acp_content_writing import facts as writer_facts
+
+    rows = [_fact(i) for i in range(30)]
+    left: list = []
+    kept = asyncio.run(writer_facts.fetch_facts_for_writing(uuid.uuid4(), _pool_returning(rows), excluded_out=left))
+    assert kept and left and len(kept) + len(left) == 30
+    assert {f["fact_id"] for f in kept}.isdisjoint({f["fact_id"] for f in left})
+    # without excluded_out the kept list is the same
+    again = asyncio.run(writer_facts.fetch_facts_for_writing(uuid.uuid4(), _pool_returning(rows)))
+    assert [f["fact_id"] for f in again] == [f["fact_id"] for f in kept]
+    refs = fs.excluded_fact_refs(left)
+    assert refs[0] == {"fact_id": left[0]["fact_id"], "scope": "tenant", "chars": len(left[0]["title"]) + 1200}
+    sheet = _route("", "", None, None, None, excluded_facts=refs)
+    assert len(sheet.excluded) == len(left) and {e["reason"] for e in sheet.excluded} == {fs.EXCLUDED_FACTS_BUDGET}
+
+
+def test_resolve_facts_records_the_exclusions_and_the_fact_owners():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from services.acp_content_writing import service
+
+    kept = [_fact(1, "platform"), _fact(2, "tenant")]
+
+    async def fake_fetch(tenant_id, pool, country=None, excluded_out=None):
+        excluded_out.append(_fact(3, "tenant"))
+        return kept
+
+    ctx = {"facts_pending": True, "tenant_id": "00000000-0000-0000-0000-0000000000aa", "atom_text": "seed",
+           "destination": "Zemlia"}
+    with patch.object(service, "fetch_facts_for_writing", new=fake_fetch), \
+            patch.object(service, "_reread_seed", new=AsyncMock(return_value=None)):
+        asyncio.run(service.resolve_facts("r", ctx, object()))
+    assert ctx["facts_excluded"] == [{"fact_id": "fact_t003", "scope": "tenant", "chars": len("Varn fact 003") + 1200}]
+    assert ctx["fact_scopes"] == {"fact_p001": "platform", "fact_t002": "tenant"}

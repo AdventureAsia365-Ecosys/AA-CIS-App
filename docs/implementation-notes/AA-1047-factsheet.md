@@ -33,10 +33,22 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
   `facts_budget`. Tour: figures beyond `MAX_FIGURES` that the FACT SHEET never shows -> reason `figures_cap`. Neither
   changes the text.
 
+- **Budget order (declared diff, W1 item 2), separate commit.** `FactSheet.render_budgeted(max_chars)` is the text
+  for a reader with a size cap: over the cap it drops whole lines, never cuts one, in a fixed order (other trips O
+  and audience A first, then place background P; last line first inside a tier) and records each with reason
+  `reader_budget`; S, F, T, L and B are never dropped (an `over_cap` entry says the text is still too long). A
+  header left with no bullet goes with them. Tour sheets are never budgeted (their reader, the S1 writer, has no cap).
+  This is the order of the design ("S,F,T,L > P > O"); B (the brand's own words) is kept with the first tier because
+  F1 reads the brand's numbers there. No live reader passes a cap yet: the eval judge's 16000-character cut is the
+  intended first one (policy lane, `evidence_view`). The T9 facts budget itself is unchanged (same kept facts, same
+  order); what it leaves out is now handed back (`fetch_facts_for_writing(excluded_out=)`), kept on the context
+  (`facts_excluded`, compact: id, scope, chars) and recorded in the piece's FactSheet with reason `facts_budget`.
+
 ## Changed
 
 - `services/acp_content_writing/service.py`: `grounding_text_from` = `grounding_factsheet(...).render()`;
-  `grounding_factsheet` exposes the sheet.
+  `grounding_factsheet` exposes the sheet; `resolve_facts` stores `facts_excluded` and `fact_scopes` on the context.
+- `services/acp_content_writing/facts.py`: `fetch_facts_for_writing(..., excluded_out=None)`.
 
 ## Tradeoffs
 

@@ -29,7 +29,9 @@ Lines carry:
 * ``field`` / ``quote`` (tour lines): the verbatim pointer into the source field (``s1_facts.verify_pointers``).
 
 Exclusions are recorded, never silent: ``excluded`` lists what the builder's inputs offered and the sheet left out
-(the T9 facts budget, the S1 figures cap), each with a reason.
+(the T9 facts budget, the S1 figures cap), each with a reason. ``render_budgeted`` (the declared diff of W1 item 2)
+drops whole lines in a fixed priority order when a reader has a size cap, and records each one: the eval judge's
+16000-character cut is the reader this replaces.
 
 Pure: no DB, no LLM, no I/O. Persistence: ``services.quality.factsheet_store``.
 """
@@ -59,6 +61,7 @@ PROVENANCES = (SOURCE_RAW, HUMAN_VERIFIED, TENANT_ASSERTED, LLM_DERIVED, EXTERNA
 # Exclusion reasons (FactSheet.excluded[].reason).
 EXCLUDED_FACTS_BUDGET = "facts_budget"        # acp_content_writing.facts.budget_facts left the fact out of the seed
 EXCLUDED_FIGURES_CAP = "figures_cap"          # s1_writer_v2.figures stops at MAX_FIGURES
+EXCLUDED_READER_BUDGET = "reader_budget"      # render_budgeted dropped the line for a reader's size cap
 
 # The anchor rule (critic fix F10, design "S0 FactSheet(route builder)"): an atom is anchored when its evidence (the
 # "Source itinerary" text, else the atom label) is a substring of its tour's raw source, or when at least
@@ -119,6 +122,28 @@ class FactSheet:
     def unanchored(self) -> list[FactLine]:
         return [ln for ln in self.lines if ln.anchored is False]
 
+    def render_budgeted(self, max_chars: int) -> tuple[str, list[dict]]:
+        """The declared diff of W1 item 2: the text for a reader with a size cap. Over the cap, whole lines go in a
+        fixed order (lowest tier first, last line first within a tier) and each one is recorded with reason
+        ``reader_budget``; a line is never cut. Route sheets: tier 2 = other trips (O) and audience (A), tier 1 =
+        place background (P); S, F, T, L and B are never dropped (if the text is still over the cap the result says
+        so with ``over_cap``). Tour sheets are returned whole (their reader, the S1 writer, has no cap)."""
+        text = self.text
+        if len(text) <= max_chars or self.builder != BUILDER_ROUTE:
+            return text, []
+        order = [ln for tier in _DROP_TIERS for ln in reversed([x for x in self.lines if x.kind in tier])]
+        dropped: list[FactLine] = []
+        for ln in order:
+            if len(text) <= max_chars:
+                break
+            dropped.append(ln)
+            text = _route_text_without(self.text, dropped)
+        excluded = [{"id": ln.id, "kind": ln.kind, "reason": EXCLUDED_READER_BUDGET, "chars": len(ln.text)}
+                    for ln in dropped]
+        if len(text) > max_chars:
+            excluded.append({"id": None, "kind": None, "reason": "over_cap", "chars": len(text) - max_chars})
+        return text, excluded
+
 
 # ------------------------------------------------------------------ anchors
 
@@ -150,6 +175,8 @@ def anchor_check(evidence: Optional[str], label: Optional[str], raw_text: Option
 # claim_rules kind -> provenance for the lines of a route sheet. F lines are resolved per entry (agency / platform).
 _ROUTE_PROVENANCE = {"S": LLM_DERIVED, "L": LLM_DERIVED, "P": LLM_DERIVED, "O": LLM_DERIVED,
                      "B": TENANT_ASSERTED, "A": TENANT_ASSERTED}
+# render_budgeted drop order: the first tier goes first.
+_DROP_TIERS = (("O", "A"), ("P",))
 
 
 def route_parts(*, seed: str, facts_text: Optional[str], brand_audience: Optional[dict], trip_name: Optional[str],
@@ -196,6 +223,17 @@ def _fact_provenance(fact_id: Optional[str], owners: dict[str, str], scopes: dic
     return HUMAN_VERIFIED if scope == "platform" else TENANT_ASSERTED
 
 
+def _fact_chars(fact: dict) -> int:
+    if fact.get("chars") is not None:
+        return int(fact["chars"])
+    return len(str(fact.get("title") or "")) + len(str(fact.get("body") or ""))
+
+
+def excluded_fact_refs(facts: Sequence[dict]) -> list[dict]:
+    """The compact, JSON-safe form of facts rows the budget left out (what a T9 context carries)."""
+    return [{"fact_id": str(f.get("fact_id")), "scope": f.get("scope"), "chars": _fact_chars(f)} for f in facts]
+
+
 def _trip_line_provenance(text: str) -> str:
     # DESTINATION is the tour's country (raw_tours.country); TRIP is the Master's trip name (S1 output); SCOPE is code
     # built from the atoms.
@@ -237,9 +275,69 @@ def build_route_factsheet(*, seed: str, facts_text: Optional[str], brand_audienc
         lines.append(FactLine(id=sl.id, kind=sl.kind, text=sl.text, provenance=prov, anchored=anchored,
                               ref=sl.fact_id, block=sl.block, place=sl.place))
     excluded = tuple({"id": f"fact:{f.get('fact_id')}", "kind": "F", "reason": EXCLUDED_FACTS_BUDGET,
-                      "scope": f.get("scope"), "chars": len(str(f.get("title") or "")) + len(str(f.get("body") or ""))}
-                     for f in excluded_facts)
+                      "scope": f.get("scope"), "chars": _fact_chars(f)} for f in excluded_facts)
     return FactSheet(builder=BUILDER_ROUTE, lines=tuple(lines), excluded=excluded, meta=dict(meta or {}), text=text)
+
+
+def _route_text_without(text: str, dropped: Iterable[FactLine]) -> str:
+    """``text`` with the dropped lines removed, read the way claim_rules.number_source_lines numbers them: an
+    AUDIENCE paragraph goes whole; a P / O bullet goes from its own seed block, and a header left with no bullet goes
+    with it."""
+    drop = list(dropped)
+    drop_top = {ln.text for ln in drop if ln.kind == "A"}
+    drop_bullets: dict[int, list[str]] = {}
+    for ln in drop:
+        if ln.kind in ("P", "O"):
+            drop_bullets.setdefault(ln.block, []).append(ln.text)
+    from services.acp_content_writing.claim_rules import _FACT_HEAD_RE, _TOP_PREFIXES
+
+    pieces = re.split(r"(\n\s*\n)", text)
+    out: list[str] = []
+    block = 0
+    for i in range(0, len(pieces), 2):
+        para = pieces[i]
+        sep = pieces[i + 1] if i + 1 < len(pieces) else ""
+        lines = [ln.rstrip() for ln in para.strip("\n").split("\n") if ln.strip()]
+        if not lines:
+            out.append(para + sep)
+            continue
+        if _FACT_HEAD_RE.match(lines[0].strip()):
+            out.append(para + sep)
+            continue
+        if any(lines[0].startswith(p) for p, _k in _TOP_PREFIXES):
+            joined = " ".join(ln.strip() for ln in lines)
+            if joined in drop_top:
+                continue
+            out.append(para + sep)
+            continue
+        block += 1
+        gone = list(drop_bullets.get(block, ()))
+        if not gone:
+            out.append(para + sep)
+            continue
+        kept: list[str] = []
+        for raw in para.split("\n"):
+            s = raw.rstrip()
+            if s.startswith("- ") and s[2:].strip() in gone:
+                gone.remove(s[2:].strip())
+                continue
+            kept.append(raw)
+        out.append("\n".join(_drop_empty_headers(kept)) + sep)
+    return re.sub(r"(\n\s*\n)+$", "", "".join(out))
+
+
+def _drop_empty_headers(lines: list[str]) -> list[str]:
+    from services.acp_content_writing.hygiene import SIBLING_HEADER
+
+    headers = ("Place background", SIBLING_HEADER, "Other itineraries with the same moment")
+    out: list[str] = []
+    for i, raw in enumerate(lines):
+        if raw.startswith(headers):
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            if not nxt.startswith("- "):
+                continue
+        out.append(raw)
+    return out
 
 
 # ------------------------------------------------------------------ tour builder (S1, T2)
@@ -327,7 +425,7 @@ def raw_source_text(tour: dict, agency: Optional[dict] = None) -> str:
 
 __all__ = [
     "ANCHOR_MIN_SHARE", "ANCHOR_MIN_WORDS", "BUILDERS", "BUILDER_ROUTE", "BUILDER_TOUR", "BUILDER_VERSION",
-    "EXCLUDED_FACTS_BUDGET", "EXCLUDED_FIGURES_CAP", "EXTERNAL", "FactLine", "FactSheet",
+    "EXCLUDED_FACTS_BUDGET", "EXCLUDED_FIGURES_CAP", "EXCLUDED_READER_BUDGET", "EXTERNAL", "FactLine", "FactSheet",
     "HUMAN_VERIFIED", "LLM_DERIVED", "PROVENANCES", "SCHEMA", "SOURCE_RAW", "TENANT_ASSERTED", "anchor_check",
-    "build_route_factsheet", "build_tour_factsheet", "raw_source_text", "raw_source_tour", "route_parts",
+    "build_route_factsheet", "build_tour_factsheet", "excluded_fact_refs", "raw_source_text", "raw_source_tour", "route_parts",
 ]

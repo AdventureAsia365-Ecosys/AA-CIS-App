@@ -1854,8 +1854,13 @@ async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
         await _reread_seed(context, tenant_id, pool)
     except Exception as e:  # noqa: BLE001 — the seed built at start_write still works
         logger.warning("t9_seed_reread_failed", request_id=str(request_id), error=str(e)[:200])
-    facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"))
+    left_out: list = []
+    facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"), excluded_out=left_out)
     context["facts_text"] = format_facts_block(facts)
+    # AA-1047 (Quality W1): what the facts budget left out, recorded in the piece's FactSheet (reason facts_budget)
+    context["facts_excluded"] = factsheet.excluded_fact_refs(left_out)
+    # ... and each kept fact's owner, so its FactSheet line carries the right provenance
+    context["fact_scopes"] = {str(f.get("fact_id")): f.get("scope") for f in facts if f.get("scope")}
     context["facts_pending"] = False
     # AA-814 review: the facts block size per write, to trace T9 input cost in shared.llm_call_log back to facts
     # (budgeted by facts.budget_facts).
