@@ -78,6 +78,11 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   `tests/integration/test_aa1047_final_contract_store.py`; chain-order and a few existing tests updated for the
   intended changes (process_export's `contract_exit`, the new elephant code, the normalizer).
 
+- Resume after the S272 machine crash: `scripts/quality/final_contract_report.py` is force-added (`scripts/` is in
+  `.gitignore`; the other tracked scripts were added the same way), the store integration test uses a listed country
+  (`raw_tours.country` is constrained), the AA-986 approve-race export stub forwards `contract_exit`, and the AA-739
+  review-block test follows the elephant label split.
+
 ## Tradeoffs
 
 - The publish record is written after the publish (last step of `process_export`): a contract read can never delay
@@ -95,6 +100,8 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   container `DATABASE_URL`, read-only transaction). Output = aggregates + ids, no page or source text. The audit's
   named cases (a 12-day page cut to 4 days, a 15-day page cut to 10) appear under `day_loss` / `flips` when they are
   still live; a fix since S252 may have removed them, which the report then shows as absent.
+- `process_export` now takes `contract_exit=`: any test double that replaces it must accept keyword arguments
+  (the AA-986 approve-race stub broke on it and was only caught by its integration test).
 - `EXITS` is the single list of exits; `tests/unit/test_aa1047_final_contract_topology.py` scans `api/` and `services/`
   for any function that writes stored AI text or publishes, and fails on one not listed (or listed in `NOT_EXITS` with
   a reason).
