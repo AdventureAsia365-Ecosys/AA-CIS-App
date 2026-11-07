@@ -85,7 +85,12 @@ Design: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (README W1, `d
 - `services/quality/factsheet_store.py` (new); `api/routers/admin_pipeline.py`, `services/jobs/t2_rewrite_job.py`,
   `services/acp_content_writing/service.py` call it.
 - `scripts/quality/aa1047_input_measure.py` (new; shipped by the root ECS exec tool, imports the deployed code at
-  /app).
+  /app). `scripts/` is gitignored, so the file is force-added (`git add -f`) like its scripts/quality neighbours
+  (review fix: the first commit left it untracked and the unit test would not import on a clean checkout).
+- `api/routers/_tenant_projection.py`: `fs_id` in `TENANT_HIDDEN_VERSION_FIELDS` and, as a whole key, in
+  `TENANT_FORBIDDEN_KEY_RE` (review fix). The tenant version detail selects `ttv.*`, and the tenant pool
+  `aa_app_user` has a table-level grant on `tenant_tour_versions`, so the projection is what keeps the admin
+  FactSheet id out of `/v1/tours/versions/{id}`; the AA-796 poison rows now carry `fs_id`.
 - `api/migrations/386_fact_sheet.sql` (migration-only PR), `services/erasure/inventory.py`,
   `tests/integration/conftest.py` (386's FORCE RLS table in the post-244 / post-245 lists).
 
