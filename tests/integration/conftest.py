@@ -44,6 +44,8 @@ os.environ.setdefault("WRITING_MEMORY_R1_GATE", "off")
 # AA-900: the gateway's cassette recorder is off for integration tests (they script replies and count ledger rows);
 # tests/integration/test_aa900_cassette_db.py turns it on around its own calls.
 os.environ.setdefault("LLM_CASSETTE", "off")
+# AA-1024 G3 (c): the deploy gate's ECS exec heartbeat list reads S3 (no AWS here); unit-tested with a fake client.
+os.environ.setdefault("DEPLOY_GATE_ECSX", "off")
 
 _SCHEMA_APPLIED = False
 

@@ -170,7 +170,8 @@ async def test_deploy_gate_safe_when_idle():
                       "exempt_kinds": ["ai_usage_rollup", "llm_connection_probe", "llm_model_lifecycle_sync",
                                        "llm_route_watch", "quality_funnel_watch"],
                       "open_waves": 0, "blocking_kinds": result["blocking_kinds"], "blocking_running": {},
-                      "blocking_due": {}, "blocked_by": []}
+                      # + AA-1024 G3 (c): ECS exec scripts running (heartbeat list off in the unit conftest)
+                      "blocking_due": {}, "exec_scripts": [], "blocked_by": []}
 
 
 def test_the_deploy_blocking_kinds_are_the_ones_not_safe_to_rerun():

@@ -31,6 +31,9 @@ _CI_UNIT_ENV = {
     "BRONZE_BUCKET": "aa-cis-bronze-test",
     # AA-902: satellite account IDs come from the task environment (shared/llm_client/bedrock_satellite.py).
     "BEDROCK_ACCT_PRIMARY": "acc3-test-account",
+    # AA-1024 G3 (c): the deploy gate's ECS exec heartbeat list (shared/jobs/exec_heartbeat.py) reads S3; off here,
+    # tests/unit/test_aa1024_exec_heartbeat_gate.py tests it with a fake client.
+    "DEPLOY_GATE_ECSX": "off",
 }
 for _k, _v in _CI_UNIT_ENV.items():
     os.environ.setdefault(_k, _v)

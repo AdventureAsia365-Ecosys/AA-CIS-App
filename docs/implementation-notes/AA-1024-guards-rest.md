@@ -34,10 +34,20 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
   workspace copy `.tmp-session/gitleaks-8301/gitleaks` found by walking up from the checkout. A missing or
   other-version binary blocks; `AA_SKIP_GITLEAKS=1` skips once with a WARN (same switch as the PR opener).
 
+- G3 (c) deploy gate reads the ecsx heartbeat (review fix pass): `shared.jobs.worker.deploy_gate_status` (the
+  `/admin/job-runner/deploy-gate` answer the CI guard reads, and the Platform Apps card) lists `scripts/out/` on the
+  bronze bucket and adds a `blocked_by` line per `<run>.txt.running` younger than 120 s with no `.done` next to it
+  (`exec_scripts` in the answer; `shared/jobs/exec_heartbeat.py`). The API reads it, not CI: the task role already has
+  `s3:ListBucket` (AA-CIS-Infra `modules/ecs` ecs_task_policy), so no Infra grant and no AWS step in the deploy
+  workflow are needed. A failed list raises (the gate fails closed); `DEPLOY_GATE_ECSX=off` turns it off (both test
+  conftests set it).
+
 ## Tradeoffs
 
 - The wave start runs the code checks of every tour of the previous wave (both versions) in a worker thread: a few
   seconds for a country wave, once per wave start. Cheaper than a stored report that could go stale.
+- Heartbeat age 120 s = four missed beats: a script killed by OOM stops blocking two minutes later; a live script whose
+  S3 put fails four times in a row would not block (accepted: the put is the same call that writes its result).
 - A gate that cannot compute refuses (fail closed) instead of passing: the override is the way through.
 - A wave with no A1 version and no active job is "not applicable" (else `not_clearly_better` is true on an empty
   table and every wave after an atomize-only wave would be refused).

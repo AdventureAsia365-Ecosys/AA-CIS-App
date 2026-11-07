@@ -552,6 +552,8 @@ async def deploy_gate_status(pool) -> dict:
       - a job of a `deploy_blocking` kind is RUNNING (`blocking_running`, per kind): such a job is not safe to re-run
         after a release, or QUEUED and due within `queue.DEPLOY_BLOCKING_HORIZON_S` (`blocking_due`): the guard runs
         before the image build and the old task would claim it before its SIGTERM.
+      - an ECS exec script is running in the api or worker container (AA-1024 G3 c: a fresh ecsx heartbeat on the
+        bronze bucket, `exec_scripts`; shared/jobs/exec_heartbeat.py): the roll would kill it (lesson S234).
     Queued and running rows of every other kind no longer block: the worker drains on SIGTERM and releases a job still
     running after its grace window (G1-G4), and a queued row is claimed by whichever image is live. They stay in the
     answer as information (`active`, `by_status`, `scheduled_later`; `deploy_gate_exempt` kinds not counted there).
@@ -562,6 +564,8 @@ async def deploy_gate_status(pool) -> dict:
     blocking = sorted(k.name for k in kinds().values() if k.deploy_blocking)
     counts = await queue.active_count(pool, exempt_kinds=exempt)
     blockers = await queue.deploy_blockers(pool, blocking_kinds=blocking)
+    from shared.jobs.exec_heartbeat import running_exec_scripts
+    exec_scripts = await asyncio.to_thread(running_exec_scripts)
     open_waves, running, due = blockers["open_waves"], blockers["blocking_running"], blockers["blocking_due"]
     blocked_by = []
     if open_waves:
@@ -570,8 +574,10 @@ async def deploy_gate_status(pool) -> dict:
         blocked_by.append(f"{n} {kind} job(s) running (deploy-blocking kind)")
     for kind, n in due.items():
         blocked_by.append(f"{n} {kind} job(s) due (deploy-blocking kind, queued to start within 15 min)")
+    for script in exec_scripts:
+        blocked_by.append(f"ECS exec script {script['run_id']} running (heartbeat {script['age_s']} s ago)")
     return {**counts, "exempt_kinds": exempt, "open_waves": open_waves, "blocking_kinds": blocking,
-            "blocking_running": running, "blocking_due": due, "blocked_by": blocked_by,
+            "blocking_running": running, "blocking_due": due, "exec_scripts": exec_scripts, "blocked_by": blocked_by,
             "safe_to_deploy": not blocked_by}
 
 
