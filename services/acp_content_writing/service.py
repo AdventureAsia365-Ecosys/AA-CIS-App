@@ -86,11 +86,11 @@ from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.quality import degraded  # AA-925
-from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
-from services.quality import final_contract as _fc  # (the name _finalize_piece's parameter shadows)
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
 from services.quality import registry as qr
+from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
+from services.quality import final_contract as _fc  # (the name _finalize_piece's parameter shadows)
 from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
 from services.writing_memory import signals as wm_signals  # AA-916
