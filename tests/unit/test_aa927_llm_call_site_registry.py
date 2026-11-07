@@ -114,6 +114,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     # AA-919 WM-19: the R2 judge; judge_output writes the row (or the billed_unusable row) after the call.
     ("services/writing_memory/eval_judge.py", "_generate_sync"): (
         ("services/writing_memory/eval_judge.py", "judge_output"),),
+    # AA-1048: the R1 claim-instrument calibration (stage adhoc_aa1048); run() passes every reply to _log, which writes
+    # the row (record_call_sync **billed_fields) or the billed_unusable row (record_unusable_sync).
+    ("services/ground_truth/r1.py", "gateway_call"): (("services/ground_truth/r1.py", "_log"),),
     ("services/jobs/place_dedupe_job.py", "_generate_sync"): (
         ("services/jobs/place_dedupe_job.py", "make_models.call"),),
     # AA-835: the supply content draft (job supply_content_draft); its row right after generate(), the billed
