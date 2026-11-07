@@ -11,6 +11,7 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import GOALS
 from services.acp_content_writing import brief_grounding as bg
 from services.acp_content_writing import prompts, service
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 
 SEED = ("Riverside Monastery — visit the prayer hall\nLocation: Riverside Monastery, Valley Town, Example Province\n"
         "Day 2 of the trip\nSource itinerary: Walk 3 kilometres along the river to the monastery and join the "
@@ -84,7 +85,9 @@ def test_explicit_off_beats_the_env(monkeypatch):
 
 def test_system_prompt_and_writer_version_unchanged():
     """Round 9 never touches SYSTEM_PROMPT, so writer_prompt_version stays the round-6 hash."""
-    assert service.WRITER_PROMPT_VERSION == "b5978839"
+    # AA-1047: cc9b4979 = b5978839 plus the writing policy lines (pre_aa1047 puts them back)
+    assert service.WRITER_PROMPT_VERSION == "cc9b4979"
+    assert service.prompt_version_of(pre_aa1047(prompts.SYSTEM_PROMPT)) == "b5978839"
 
 
 def test_ground_angle_off_returns_the_same_object(monkeypatch):

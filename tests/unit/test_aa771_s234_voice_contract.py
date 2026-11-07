@@ -19,6 +19,7 @@ from services.acp_angle_gate.route_digest import angle_anchor, render_digest, ro
 from services.acp_content_writing import hygiene, quality_gates as qg, sentence_repair
 from services.acp_content_writing import service as writing_service
 from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 from services.acp_shared.channel_spec import (CONSUMER_SOCIAL, EDITORIAL, OBSERVATIONAL, WARM_PRACTICAL,
                                               brand_register, channel_spec, linkedin_spec, post_words,
                                               sanitize_best_final_style)
@@ -505,7 +506,8 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
+        # AA-1047: byte-identical apart from the writing policy lines (tests/unit/aa1047_prompt_lines.py)
+        assert sha(pre_aa1047(SYSTEM_PROMPT)) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
         assert sha(single) == "d6be250786c6f276036fe183be959b8f75fb64b54801b0bbcd2dd80d4c1c5636"
         assert sha(route) == "7b62bcc7b7dab960089ebeb3642dbdd827f35cc063797c1131a714a6be273bb9"
 
