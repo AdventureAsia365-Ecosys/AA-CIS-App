@@ -16,7 +16,8 @@ Detectors per field (no model call, no I/O; `meals` stubs the Jev fallback as fa
   example has one), F1 gate_grounding, F17 / F18 gate_trip_facts, F12 gate_scope (the scope lexicon), and the admin
   sentence check sentence_repair.check_replacement (the edit / suggest path of /admin/content-quality)
 - meta / title / slug: F4 gate_seo_surface (that field only), the S1 band checks (s1_checks.check_meta,
-  SEO_TITLE_MAX), the slug fold (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
+  SEO_TITLE_MAX), the T9 acceptance (service._meta_ok) and the T9 short-meta tail (a meta inside the T9 writer aim
+  but under the band must be composed into the band: seo_meta_utils.extend_short_meta), the slug fold (service._ascii_slug) and the publish slug (idempotency.blog_slug) as fixers
 - cta: claim_rules.check_cta; fixer hygiene.ensure_cta
 - faq: drop_unanswerable_faq (topic needs a source line), F16 gate_faq_contract
 - itinerary: S1 day oracle (s1_checks.check_days) for day counts; the brand audit meal-line check for meals
@@ -140,6 +141,15 @@ def _seo(ex: dict, out: Outcome) -> None:
         lo, hi = wp.band("meta")
         new = fit_seo_meta_final(meta, {"duration": "2 days", "country": "Velmora", "name": "Velmora Highlands Walk"})
         out.fixed["meta_fit_band"] = lo <= len(new) <= hi or new == meta
+        # the T9 acceptance of a writer / fit meta (service._meta_ok: the same band as F4)
+        out.verdicts["t9_meta_ok"] = "pass" if svc._meta_ok(meta, None) else "block"
+        # S272 review: the T9 writer aims under the band floor (writer_aims.meta.t9), so a complete meta inside that
+        # aim but under the band must be composed into the band by code (its short_fix), never left to F4
+        aim_lo, _aim_hi = wp.writer_aim("t9")
+        if aim_lo <= len(meta) < lo:
+            from services.content_generation.seo_meta_utils import extend_short_meta
+            tail = extend_short_meta(meta, {"country": "Velmora"})
+            out.fixed["t9_short_meta_composed"] = tail is not None and svc._meta_ok(tail, None)
     if fld == "title":
         out.verdicts["s1_title_cap"] = "block" if len(title) > SEO_TITLE_MAX else "pass"
     if fld == "slug":

@@ -139,6 +139,11 @@ def schema_errors(source: dict) -> list[str]:
         ok = isinstance(aim, dict) and isinstance(aim.get("min"), int) and isinstance(aim.get("max"), int)
         _need(ok and aim["min"] < aim["max"] <= meta.get("max", 0),
               f"writer_aims.meta.{writer} must be min < max <= the meta band max", e)
+        # S272 review: an aim under the band floor is a documented exception (lesson S233: models overshoot), never
+        # silent: it names the deterministic step that lands a short value in the band (D5 "code composes")
+        _need(not ok or aim["min"] >= meta.get("min", 0) or (isinstance(aim.get("short_fix"), str)
+                                                             and ":" in aim["short_fix"]),
+              f"writer_aims.meta.{writer} aims under the band min: it needs short_fix '<module>:<function>'", e)
     pairs = (source.get("faq") or {}).get("pairs") or {}
     _need(all(isinstance(pairs.get(k), int) for k in ("min", "max", "regenerate"))
           and pairs.get("min", 0) <= pairs.get("regenerate", -1) <= pairs.get("max", -1),

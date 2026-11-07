@@ -310,6 +310,18 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
     return None
 
 
+def extend_short_meta(meta: Optional[str], facts: Optional[dict] = None, tenant_forbidden=None) -> Optional[str]:
+    """AA-1047 (writing policy D5 "code composes"; writer_aims short_fix): a complete meta under the band floor with
+    one tail built only from source fields (days, country: `_extend_short_meta`) when that lands it in the band;
+    else None. The T9 blog uses it with its DESTINATION line (service._fit_seo_meta): the writer aims below the band
+    (lesson S233), so a value it leaves at 130-139 is composed into the band instead of failing F4."""
+    t = (meta or "").strip()
+    if not t or len(t) >= SEO_META_MIN or not meta_complete_sentence(t):
+        return None
+    forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
+    return _extend_short_meta(t, facts or {}, forbidden)
+
+
 def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden=None) -> str:
     """AA-740: land seo_meta in [SEO_META_MIN, SEO_META_MAX] as a complete sentence, without an LLM.
     1) already in band → unchanged; 2) AA-641 salvage (complete-sentence prefix); 3) too long →

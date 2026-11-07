@@ -32,8 +32,8 @@ CODE_VS_CODE = {
     8: ["num-01", "num-02", "num-05", "num-06", "num-07", "num-08", "num-09", "num-10", "num-11"],  # numbers
     9: ["scp-01", "scp-02", "scp-03", "scp-05", "scp-07"],                              # scope
     10: ["cta-01", "cta-02", "cta-03", "cta-04", "cta-05", "cta-09"],                   # CTA literal line
-    12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "tit-03", "tit-04", "slug-01",
-         "slug-03"],                                                                    # SEO bands, slug boundary
+    12: ["meta-01", "meta-04", "meta-05", "meta-06", "meta-07", "meta-08", "meta-09", "meta-10", "tit-03", "tit-04",
+         "slug-01", "slug-03"],                                                                    # SEO bands, slug boundary
 }
 
 

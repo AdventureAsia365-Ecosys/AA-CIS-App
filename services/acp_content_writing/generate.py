@@ -392,6 +392,9 @@ Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}""")
 
 _TITLE_MUST = _wp.fill(" — must be <<title.min>>-<<title.max>>")
 _META_MUST = _wp.fill(" — must be <<aim.t9.meta.min>>-<<aim.t9.meta.max>>, never over <<meta.max>>")
+# S272 review: a meta under the band floor was told "must be 130-145" (a 135-char meta read as on target and as wrong
+# at once); a short one is told the band it must reach instead
+_META_SHORT = _wp.fill(" — too short: must be <<meta.min>>-<<meta.max>>")
 
 # S234 (C12) — the SEO fit is a short rewrite whose lengths are checked in code and whose failure
 # keeps the writer's value, so it runs on the cheap repair route (Haiku, Sonnet fallback):
@@ -426,7 +429,8 @@ def fit_seo_fields(
     t_lo, t_hi = _wp.band("title")
     m_lo, m_hi = _wp.band("meta")
     parts.append(f"CURRENT TITLE ({tl} chars{'' if t_lo <= tl <= t_hi else _TITLE_MUST}): {seo_title or '(none)'}")
-    parts.append(f"CURRENT META ({ml} chars{'' if m_lo <= ml <= m_hi else _META_MUST}): "
+    meta_note = "" if m_lo <= ml <= m_hi else (_META_SHORT if ml < m_lo else _META_MUST)
+    parts.append(f"CURRENT META ({ml} chars{meta_note}): "
                  f"{meta_description or '(none)'}")
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),

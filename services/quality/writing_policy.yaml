@@ -46,10 +46,12 @@ bands:
   meta: {min: 140, max: 155}
   title: {min: 45, max: 60}
   slug: {max: 60, cut: word_boundary}
+# An aim under the band floor is an exception the schema check only accepts with `short_fix`: the deterministic step
+# that lands a value the writer left under the floor in the band (a tail built from source fields, no LLM).
 writer_aims:
   meta:
-    t9: {min: 130, max: 145}        # T9 blog writer and the SEO fit call
-    s1: {min: 130, max: 148}        # S1 writer v2 meta call
+    t9: {min: 130, max: 145, short_fix: "services.content_generation.seo_meta_utils:extend_short_meta"}  # T9 writer + SEO fit
+    s1: {min: 130, max: 148, short_fix: "services.content_generation.seo_meta_utils:fit_seo_meta_final"}  # S1 writer v2
     t2: {min: 145, max: 152}        # S1 v1 / T2 rewrite prompt ("aim ..., hard band <meta band>")
 
 # ------------------------------------------------------------------------------------------------- contract fields
@@ -330,14 +332,17 @@ examples:
   - {id: cta-07, topic: cta, field: cta, expect: pass, text: "The library hall holds the monastery books.\n\nThe path climbs from Orvine.\n\nAsk Northpine Travel to plan your days in Orvine."}
   - {id: cta-09, topic: cta, field: cta, expect: pass, text: "Corran Monastery keeps a working library. Ask Northpine Travel to plan your days in Orvine."}
   # ---- meta band (D5): one band, 140-155, for the T9 gate and the S1 check alike
-  - {id: meta-01, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the lake shore."}
-  - {id: meta-02, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the bay."}
-  - {id: meta-03, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the quieter lake shore."}
-  - {id: meta-04, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrim trails to the lake."}
-  - {id: meta-05, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the quieter lake shores."}
-  - {id: meta-06, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old trails to the lake."}
-  - {id: meta-07, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the greenest lake shores."}
-  - {id: meta-08, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and walk back down to the lakeshore."}
+  - {id: meta-01, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the lake shore."}
+  - {id: meta-02, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the bay."}
+  - {id: meta-03, topic: meta_band, field: meta, expect: pass, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the quieter lake shore."}
+  - {id: meta-04, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrim trails to the lake."}
+  - {id: meta-05, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the quieter lake shores."}
+  - {id: meta-06, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old trails to the lake."}
+  - {id: meta-07, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the old pilgrim path to the greenest lake shores."}
+  - {id: meta-08, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and walk back down to the lakeshore."}
+  # inside the T9 writer aim (130-145) but under the band: the gate holds the raw value, code composes it into the band
+  - {id: meta-09, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and follow the steep path down to the lake."}
+  - {id: meta-10, topic: meta_band, field: meta, expect: block, all: [F4_seo_surface, s1_meta_band, t9_meta_ok], text: "Walk up to Corran Monastery above Orvine, see the library hall the monks still keep open and come back down the pilgrims path to the lake."}
   # ---- title band: 45-60 in the T9 gate, the 60 cap in S1
   - {id: tit-01, topic: title_band, field: title, expect: pass, all: [F4_seo_surface, s1_title_cap], text: "Corran Monastery: The Library Hall Above Orvine"}
   - {id: tit-02, topic: title_band, field: title, expect: pass, all: [F4_seo_surface, s1_title_cap], text: "Corran Monastery and Its Library Hall: A Walk Above the Lake"}
