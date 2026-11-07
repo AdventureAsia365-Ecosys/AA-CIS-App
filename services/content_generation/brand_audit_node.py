@@ -520,6 +520,40 @@ def with_model_manual_code(model_codes: list[str], model_status) -> list[str]:
     return codes
 
 
+# AA-1047 W1 fix pass 5 (review finding 4): the brand-audit model codes that are only about voice / SEO / format.
+# A model code outside this set (and outside _MANUAL_CHECK_CODES) on an elephant-riding tour is a product-truth
+# concern the policy does not cover: ``with_policy_fact_check`` adds FACT_CHECK_MANUAL_CHECK so the policy keep reads
+# it (an unknown code fails closed).
+_VOICE_MODEL_CODES = frozenset({
+    "SUBTITLE_CITY_LIST", "SUBTITLE_WAYPOINT_FORMAT", "SUBTITLE_GENERIC", "SUMMARY_OFF_BRAND",
+    "SUMMARY_HONEYMOON_LANGUAGE", "SUMMARY_SELF_REFERENTIAL", "GENERIC_AI_WORDING", "HIGHLIGHTS_TOO_GENERIC",
+    "HIGHLIGHTS_ORDERING_WRONG", "HIGHLIGHTS_OPTIONAL_LANGUAGE", "HIGHLIGHTS_TOO_FEW", "HIGHLIGHTS_NOT_LIST",
+    "ITINERARY_STRUCTURE_WEAK", "ITINERARY_DAY_TITLE_GENERIC", "SEO_TITLE_WEAK", "SEO_TITLE_TOO_LONG",
+    "SEO_META_TOO_LONG", "META_TOO_SHORT", "META_INCOMPLETE_SENTENCE", "META_OPENER_ROBOTIC", "META_PACKAGE_WORD",
+    "META_DFS_VERBATIM", "DFS_INTENT_UNDERUSED", "KEYWORD_STUFFING_RISK", "NAME_ALL_CAPS", "NAME_SUPERLATIVE",
+    "PORTFOLIO_NAME_COLLISION", "BRAND_TONE_HYPE", "BRAND_SEO_META_VIOLATION",
+})
+# The model codes that name a product-truth concern (not voice): never report-only on a v2 draft.
+_PRODUCT_TRUTH_MODEL_CODES = frozenset({
+    "HIGHLIGHTS_WILDLIFE_UNVERIFIED", "SUBTITLE_TRIP_TYPE_MISMATCH", "SEO_TITLE_WRONG_ACTIVITY",
+    "ITINERARY_MEAL_TIME_INVENTED",
+})
+
+
+def with_policy_fact_check(model_codes: list[str], pre_codes: list[str]) -> list[str]:
+    """AA-1047 W1 fix pass 5 (review finding 4, blocking): on an elephant-riding tour (``POLICY_ELEPHANT_RIDING`` in
+    the pre-audit codes), a model code that is neither a known voice code nor a manual-check code gets
+    ``FACT_CHECK_MANUAL_CHECK``, whatever the model status and on a v2 draft too (where that code would otherwise be
+    report-only and the row stored with the policy code alone). ``elephant_policy.is_policy_only_hold`` then keeps
+    the policy only when an issue names the ride and every issue is accounted for."""
+    codes = list(model_codes or [])
+    if "POLICY_ELEPHANT_RIDING" not in (pre_codes or []) or set(codes) & _MANUAL_CHECK_CODES:
+        return codes
+    if any(c not in _VOICE_MODEL_CODES for c in codes):
+        codes.append(MODEL_MANUAL_CHECK_CODE)
+    return codes
+
+
 def derive_status(failure_codes: list[str], publish_ready, model_status=None) -> str:
     """AA-714: compute brand_audit status from the evidence, not from a key the model may omit.
 
@@ -544,15 +578,17 @@ def _is_v2_draft(state: dict) -> bool:
 
 # AA-645 step 0 (d02): on an A1 draft of the S1 writer v2 the AA voice rubric of the LLM audit is report-only, like
 # brand fit in the judge. What still gates: the deterministic pre-audit codes (editorial format, meal/clock-time
-# claims, elephant riding = POLICY_ELEPHANT_RIDING), the product-truth codes (_MANUAL_CHECK_CODES) and a model
-# "manual_check" verdict (a human must look: product truth, not voice). FORBIDDEN_WORD is validate's hard code and is
-# not touched here. The other LLM codes and a bare publish_ready=false / "flagged" go to quality_shadow.
+# claims, elephant riding = POLICY_ELEPHANT_RIDING), the product-truth codes (_MANUAL_CHECK_CODES and, since AA-1047
+# W1 fix pass 5, _PRODUCT_TRUTH_MODEL_CODES) and a model "manual_check" verdict (a human must look: product truth,
+# not voice). FORBIDDEN_WORD is validate's hard code and is not touched here. The other LLM codes and a bare
+# publish_ready=false / "flagged" go to quality_shadow.
 V2_BRAND_AUDIT_DETECTOR = "s1_writer_v2_brand_audit"
 
 
 def _v2_report_only_voice(all_codes: list[str], pre_codes: list[str], model_status,
                           publish_ready=None) -> tuple[list, str, list]:
-    hard = [c for c in all_codes if c in pre_codes or c in _MANUAL_CHECK_CODES]
+    # AA-1047 W1 fix pass 5: the product-truth model codes gate too (they are not voice).
+    hard = [c for c in all_codes if c in pre_codes or c in _MANUAL_CHECK_CODES or c in _PRODUCT_TRUTH_MODEL_CODES]
     voice = [c for c in all_codes if c not in hard]
     status = derive_status(hard, None, "manual_check" if model_status == "manual_check" else None)
     report = [{"code": c, "detector": V2_BRAND_AUDIT_DETECTOR, "mode": "report",
@@ -722,7 +758,8 @@ Return JSON only per schema."""
 
         # Merge deterministic pre-codes into LLM codes
         model_status = result.get("status")
-        all_codes = list(dict.fromkeys(with_model_manual_code(result["failure_codes"], model_status) + pre_codes))
+        model_codes = with_policy_fact_check(with_model_manual_code(result["failure_codes"], model_status), pre_codes)
+        all_codes = list(dict.fromkeys(model_codes + pre_codes))
         # AA-714: derive status ourselves (do not depend on the model emitting it — Luna drops it).
         status = derive_status(all_codes, result.get("publish_ready"), model_status)
         voice_report: list[dict] = []

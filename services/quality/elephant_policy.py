@@ -51,6 +51,14 @@ judged: "Elephant riding with a free spa massage", "Elephant riding on Day 3 is 
 "verify the summary" standing on its own holds; and a model manual_check verdict always carries a manual-check code
 (``brand_audit_node``), so its issues are always read.
 
+W1 fix pass 5 (review of 1f281a8c): both issue rules are ALLOWLISTS now. The riding clause, the ride masked, is the
+policy only when every remaining word is review filler, a locator of the ride or a digit (``_riding_clause_concern``:
+"... was added by the writer", "... after a private helicopter transfer", "... & a balloon flight" hold); a voice
+issue may hold only voice / SEO / format vocabulary, field names and function words (``is_voice_issue``: "the meta
+description is too long and features a private yacht" holds). The policy code alone no longer skips the issues
+(the LLM audit can store it alone: a missing or "flagged" model status, or a v2 draft whose other model codes are
+report-only), so every row is read by the same rule.
+
 Pure: no DB, no LLM, no I/O.
 """
 from __future__ import annotations
@@ -65,9 +73,10 @@ POLICY_CODE = "POLICY_ELEPHANT_RIDING"
 LEGACY_CODE = "FACT_CHECK_MANUAL_CHECK"
 # AA-1047 W1 fix pass 2: the issue rule fails CLOSED. An LLM brand-audit issue is accounted for by the policy only
 # when it is about the ride or is a narrow voice / SEO / format issue; any other wording (a hotel swap, a balloon
-# flight, "cannot confirm ...") keeps the hold. A voice / SEO / format issue names a term below AND no product-truth
-# term (_PRODUCT_TRUTH_ISSUE_RE, a denylist: "the meta promises a private boat" is not voice). On a v2 draft the voice
-# codes are report-only, but their issue text stays in brand_audit_issues (is_policy_only_hold).
+# flight, "cannot confirm ...") keeps the hold. A voice / SEO / format issue names a term below, no product-truth
+# term (_PRODUCT_TRUTH_ISSUE_RE: "the meta promises a private boat" is not voice) and, since fix pass 5, NO word
+# outside _VOICE_ALLOWED_WORDS (an allowlist: "the SEO title mentions a sunset helicopter flight" holds). On a v2
+# draft the voice codes are report-only, but their issue text stays in brand_audit_issues (is_policy_only_hold).
 _VOICE_ISSUE_RE = re.compile(
     r"\b(?:seo|meta(?:\s+description)?|(?:seo\s+)?title|subtitle|characters?|chars|word\s+count|too\s+(?:long|short)"
     r"|hype\w*|tone|voice|calm|clich\w*|wordy|repetit\w*|formatting|bullets?|capitali[sz]\w*|punctuation|grammar"
@@ -85,9 +94,10 @@ _PRODUCT_TRUTH_ISSUE_RE = re.compile(
     r"|sightings?|guarantee\w*|location|duration|misplac\w*|rare|endangered|itinerar\w*|hotel\w*|day\s+\d+)\b",
     re.IGNORECASE,
 )
-# A riding issue is split into clauses; the clauses that do not name the ride are judged on their own.
+# A riding issue is split into clauses; the clauses that do not name the ride are judged on their own. Fix pass 5:
+# "&" and "/" split too ("Elephant riding & a sunrise balloon flight", "Elephant riding/bamboo rafting").
 _ISSUE_CLAUSE_SPLIT_RE = re.compile(
-    r"\s*[.;:!?()\[\]\n\u2014\u2013]\s*|\s*,\s*|\s+-\s+"
+    r"\s*[.;:!?()\[\]\n\u2014\u2013&/]\s*|\s*,\s*|\s+-\s+"
     r"|\s+(?:and\s+also|also|but|while|whereas|plus|as\s+well\s+as|and|however)\s+",
     re.IGNORECASE,
 )
@@ -118,24 +128,52 @@ _LOCATOR_WORDS = frozenset({
 })
 _DAY_NUM_RE = re.compile(r"\bday\s+(\d+)\b", re.IGNORECASE)
 _RELATIVE_LEAD_RE = re.compile(r"^(?:which|that|where\s+it)\b", re.IGNORECASE)
-# Inside the riding clause (the ride masked): a source / truth negation ...
-_RIDE_TRUTH_NEGATION_RE = re.compile(
-    r"\b(?:sources?|sourced|unsupported|invent\w*|fabricat\w*|lacks?|lacking|missing|absent|unlisted"
-    r"|contradict\w*|inconsisten\w*|mismatch\w*|inaccura\w*|incorrect\w*|wrong\w*|mislead\w*"
-    r"|not\s+(?:in|listed|mentioned|included|offered|supported|stated|part|confirmed|found|backed|provided)"
-    r"|(?:does|do|did)\s+not\s+(?:appear|mention|list|include|offer|support|match|exist|state|say)\w*"
-    r"|(?:doesn|don|didn)['’]?t\s+(?:appear|mention|list|include|offer|support|match|exist|state|say)\w*"
-    r"|(?:cannot|can['’]?t|could\s+not|unable\s+to)\s+(?:be\s+)?(?:confirm|verif|find|found|locat|match)\w*"
-    r"|no\s+(?:mention|evidence|support|record))\b",
-    re.IGNORECASE,
-)
-# ... or a joiner to another offer followed by words that are not filler ("with a free spa massage", "followed by a
-# night safari", "to the floating market", "where guests get a balloon flight").
-_RIDE_JOINER_RE = re.compile(
-    r"\b(?:with|including|includes|included|plus|followed\s+by|then|to|where|along\s+with|together\s+with"
-    r"|combined\s+with|featuring)\b",
-    re.IGNORECASE,
-)
+# AA-1047 W1 fix pass 5 (review finding 5): inside the riding clause, the ride masked, every remaining word must be
+# one of these (or a digit): review filler, a locator of the ride, "with" ("with a manual check") and the generic
+# place of a ride ("at the camp"). Anything else is another concern and holds: a source negation in any wording ("was
+# added by the writer", "has no basis in the supplier itinerary", "is unconfirmed by the operator"), another offer
+# ("after a private helicopter transfer", "in the 5-star jungle lodge grounds"). A named camp ("at Maesa Elephant
+# Camp") holds too: an accepted false hold (one click).
+_RIDE_CLAUSE_WORDS = _REVIEW_FILLER | _LOCATOR_WORDS | frozenset({"with", "camp", "camps", "elephant", "elephants"})
+# The voice / SEO / format allowlist (fix pass 5, review finding 6): field names, the voice / format vocabulary, the
+# hype words a voice issue quotes, and function words. Any other content word (an activity, a vehicle, a venue, a
+# service: "helicopter", "yacht", "balloon") makes the issue unknown, and it holds.
+_VOICE_ALLOWED_WORDS = frozenset({
+    # fields
+    "seo", "meta", "metas", "title", "titles", "subtitle", "subtitles", "summary", "summaries", "description",
+    "descriptions", "highlight", "highlights", "name", "names", "heading", "headline", "headings", "h1", "intro",
+    "opener", "opening", "openers", "sentence", "sentences", "paragraph", "paragraphs", "field", "fields", "line",
+    "lines", "bullet", "bullets", "copy", "text", "page", "tag", "tags",
+    # voice / SEO / format vocabulary
+    "character", "characters", "char", "chars", "length", "long", "longer", "short", "shorter", "limit", "limits",
+    "max", "maximum", "min", "minimum", "word", "words", "count", "hype", "hyped", "hypey", "tone", "voice", "calm",
+    "calmer", "cliche", "cliches", "cliché", "clichés", "clichéd", "cliched", "wordy", "repetitive", "repetition",
+    "repeated", "repeats", "repeat", "formatting", "format", "formatted", "capitalisation", "capitalization",
+    "capitalised", "capitalized", "caps", "uppercase", "lowercase", "punctuation", "grammar", "grammatical", "typo",
+    "typos", "spelling", "list", "towns", "cities", "places", "stops", "waypoint", "waypoints", "specific",
+    "concrete", "precise", "vivid", "vague", "generic", "keyword", "keywords", "superlative", "superlatives",
+    "exclamation", "exclamations", "marketing", "promotional", "salesy", "language", "brand", "fit", "style",
+    "phrasing", "wording", "worded", "awkward", "clunky", "flow", "flows", "readability", "readable", "robotic",
+    "filler", "fluff", "redundant", "duplicate", "duplicated", "stuffing", "stuffed", "period", "full", "stop",
+    "ends", "end", "ending", "sounding", "ai", "self", "referential", "dfs", "verbatim", "intent", "underused",
+    "ordering", "order", "structure", "weak", "robotically", "case", "adjective", "adjectives", "aa", "rubric",
+    # hype words a voice issue quotes
+    "unforgettable", "breathtaking", "stunning", "amazing", "incredible", "magical", "ultimate", "spectacular",
+    "iconic", "epic", "jaw", "dropping", "hidden", "gem", "gems", "paradise", "exotic", "lifetime", "bucket",
+    # function words and generic verbs of a voice note
+    "a", "an", "the", "this", "that", "these", "those", "it", "its", "is", "are", "was", "were", "be", "been",
+    "being", "has", "have", "had", "and", "or", "but", "so", "too", "very", "quite", "rather", "overly", "slightly",
+    "bit", "more", "less", "most", "least", "than", "of", "in", "on", "at", "to", "for", "from", "by", "with", "as",
+    "into", "between", "within", "under", "over", "above", "below", "about", "around", "like", "such", "could",
+    "would", "should", "must", "can", "may", "might", "needs", "need", "needed", "uses", "use", "using", "used",
+    "leans", "lean", "reads", "read", "feels", "feel", "sounds", "sound", "seems", "seem", "keep", "kept", "make",
+    "makes", "trim", "trimmed", "shorten", "shortened", "tighten", "rewrite", "reword", "fix", "adjust", "overall",
+    "first", "second", "third", "fourth", "fifth", "last", "one", "two", "three", "some", "several", "each", "every",
+    "all", "also", "still", "only", "just", "which", "there", "here", "then", "exceeds", "exceed", "exceeding",
+    "range", "target", "recommended", "ideal", "approximately", "per", "rule", "guideline", "guidelines", "standard",
+    "standards", "please", "consider", "better", "good", "well", "somewhat", "little",
+})
+_VOICE_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 # The policy-hold reason a T2 version and its review row carry (D8).
 POLICY_HOLD = "elephant_riding"
 
@@ -360,10 +398,14 @@ def _issue_clauses(text: str) -> list[tuple[str, str]]:
 
 
 def is_voice_issue(text: Optional[str]) -> bool:
-    """An issue that is only about voice / SEO / format: it names a voice-format term (``_VOICE_ISSUE_RE``) and no
-    product-truth term (``_PRODUCT_TRUTH_ISSUE_RE``). Narrow on purpose: anything else is an unknown issue."""
+    """An issue that is only about voice / SEO / format: it names a voice-format term (``_VOICE_ISSUE_RE``), no
+    product-truth term (``_PRODUCT_TRUTH_ISSUE_RE``) and no word outside ``_VOICE_ALLOWED_WORDS`` but digits (AA-1047
+    W1 fix pass 5: an allowlist; "the meta description is too long and features a private yacht" is not voice).
+    Narrow on purpose: anything else is an unknown issue."""
     text = text or ""
-    return bool(_VOICE_ISSUE_RE.search(text)) and not _PRODUCT_TRUTH_ISSUE_RE.search(text)
+    if not _VOICE_ISSUE_RE.search(text) or _PRODUCT_TRUTH_ISSUE_RE.search(text):
+        return False
+    return all(w in _VOICE_ALLOWED_WORDS or w.isdigit() for w in _VOICE_WORD_RE.findall(text.lower()))
 
 
 def _is_review_boilerplate(clause: str, ride_days: frozenset = frozenset()) -> bool:
@@ -394,17 +436,12 @@ def _is_ride_locator(clause: str) -> bool:
 
 def _riding_clause_concern(clause: str) -> bool:
     """The riding clause, the ride itself masked, still carries another concern (AA-1047 W1 fix pass 4, review
-    finding 4): a source / truth negation ("Elephant riding on Day 3 is not in the source") or a joiner to another
-    offer followed by words that are not filler ("Elephant riding with a free spa massage", "Riding an elephant to
-    the floating market with lunch included"). "is included on Day 2" and "requires a manual fact check" are not."""
+    finding 4; an allowlist since fix pass 5): any remaining word that is not review filler, a locator of the ride,
+    "with" / "camp" or a digit (``_RIDE_CLAUSE_WORDS``). "is included on Day 2" and "requires a manual fact check"
+    are the policy; "is not in the source", "was added by the writer", "is hallucinated", "with a free spa massage",
+    "after a private helicopter transfer" are not."""
     rest = ELEPHANT_RIDING_RE.sub(" ", clause or "")
-    if _RIDE_TRUTH_NEGATION_RE.search(rest):
-        return True
-    for m in _RIDE_JOINER_RE.finditer(rest):
-        words = _ISSUE_WORD_RE.findall(rest[m.end():].lower())
-        if any(not (w in _REVIEW_FILLER or w in _LOCATOR_WORDS or w.isdigit()) for w in words):
-            return True
-    return False
+    return any(not (w in _RIDE_CLAUSE_WORDS or w.isdigit()) for w in _ISSUE_WORD_RE.findall(rest.lower()))
 
 
 def _riding_issue_rest(text: str) -> list[str]:
@@ -462,12 +499,14 @@ def is_policy_only_hold(brand_audit_status: Optional[str], brand_audit_codes: It
     human review), the re-validation gate (a human edit of an elephant tour is that review too) and the final
     contract. By codes:
 
-    - ``POLICY_CODE`` alone: the policy. This holds because the LLM audit can no longer leave a manual_check verdict
-      without a code (AA-1047 W1 fix pass 4, review finding 5): ``brand_audit_node.with_model_manual_code`` adds
-      ``FACT_CHECK_MANUAL_CHECK`` when the model says manual_check and emits no manual-check code, so its issues are
-      read in the branch below (also on a v2 draft, where the other model codes are report-only). The rows left with
-      the policy code alone come from the deterministic paths (judge feedback, no tenant brand): their issue text is
-      not a fact-check verdict.
+    - ``POLICY_CODE`` alone: the policy only when EVERY non-empty issue is accounted for (``other_product_truth_issues``
+      is empty); no issue at all is a keep. AA-1047 W1 fix pass 5 (review finding 4, blocking): the LLM audit CAN
+      store the policy code alone (``status`` is optional and Luna drops it; a "flagged" model verdict; on a v2 draft
+      every model code outside the manual-check / product-truth set is report-only), so the issues are read here
+      too. The judge path (``_audit_from_judge``) stores its feedback as the one issue: praise that names a content
+      word now holds (fail closed: one click). ``brand_audit_node.with_policy_fact_check`` also adds
+      ``FACT_CHECK_MANUAL_CHECK`` when the model emitted a code that is not a known voice code, so a product-truth
+      code with no issue text holds in the branch below.
     - ``POLICY_CODE`` + the LLM audit's ``FACT_CHECK_MANUAL_CHECK`` (since the split only the LLM emits that code;
       brand_standards still tells it to for the ride): the policy only when at least one issue names elephant riding
       (``names_riding``) and EVERY non-empty issue is accounted for (``other_product_truth_issues`` is empty): about
@@ -485,7 +524,7 @@ def is_policy_only_hold(brand_audit_status: Optional[str], brand_audit_codes: It
     codes = set(brand_audit_codes or ())
     items = _issue_list(issues)
     if codes == {POLICY_CODE}:
-        return True
+        return not other_product_truth_issues(items)
     if codes == {POLICY_CODE, LEGACY_CODE}:
         return any(names_riding(_as_text(i)) for i in items) and not other_product_truth_issues(items)
     if codes == {LEGACY_CODE}:

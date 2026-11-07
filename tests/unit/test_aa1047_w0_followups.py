@@ -500,6 +500,186 @@ def test_approve_gate_reads_the_issues():
     assert [b["code"] for b in approve_gate.blockers(row)] == ["manual_check"]
 
 
+
+# ── W1 fix pass 5 (review of 1f281a8c) ───────────────────────────────────────────────────────────────────────────
+
+def _holds(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) != (), sentence
+    out = fp.apply_policy(_f9(_claim(sentence, claim, why="not in source")), mode=fp.INTERIM_MODE)
+    assert out["blocking"] is True and out["f9_policy"]["classes"] == {fp.TRIP_PROMISE: 1}
+
+
+# Finding 1 (blocking): a fame adjective is a background marker only as a copula predicate; a relative clause with
+# another present verb ("cooks", "bless", "throws", "demonstrates") is not proven background and holds.
+@pytest.mark.parametrize("sentence,claim", [
+    ("You stop in Tarvo, where a family famous for its noodles cooks a feast.", "a family cooks a feast"),
+    ("You visit Wat Ondra, where monks famous for their chanting bless every visitor with a red string.",
+     "monks bless every visitor with a red string"),
+    ("You visit Bat Trang, where a potter renowned across Vietnam throws a vase for the visitors.",
+     "a potter throws a vase for the visitors"),
+    ("You head to Tarvo village, where a famous master demonstrates calligraphy.",
+     "a famous master demonstrates calligraphy"),
+])
+def test_a_fame_marker_with_another_verb_holds(sentence, claim):
+    _holds(sentence, claim)
+
+
+@pytest.mark.parametrize("sentence,claim", [
+    ("You stop in Tarvo, which is famous for its noodles.", "Tarvo is famous for its noodles"),
+    ("You visit Wat Ondra, which is renowned for its carved gables.", "renowned for its carved gables"),
+    ("You walk to the Ondra bridge, which was once a royal crossing.", "once a royal crossing"),
+    ("You visit Tarvo, near the temple famed for its murals.", "the temple famed for its murals"),
+])
+def test_a_fame_marker_in_a_copula_or_locative_frame_still_warns(sentence, claim):
+    assert fp.claim_kinds(sentence, claim) == ()
+
+
+# Finding 2 (blocking): a named stay / vessel is the trip's own, whatever its head noun; a view / time / amenity word
+# in a relative clause after a trip-subject clause holds unless the marker is history.
+@pytest.mark.parametrize("sentence,claim", [
+    ("You board the Jasmine, which is renowned for its sundeck views at sunset.", "sundeck views at sunset"),
+    ("You spend two nights at the Mekong Riverside, which is famous for its sunset views from the infinity pool.",
+     "sunset views from the infinity pool"),
+    ("You spend the night aboard the Ondra Queen, which is renowned for its candlelit sundeck at sunset.",
+     "candlelit sundeck at sunset"),
+    ("You overnight at Ondra Retreat, which is known for its sunrise yoga overlooking the paddies.",
+     "sunrise yoga overlooking the paddies"),
+])
+def test_a_named_stay_or_vessel_view_holds(sentence, claim):
+    _holds(sentence, claim)
+
+
+@pytest.mark.parametrize("prev,named", [
+    ("You board the Jasmine", True),
+    ("You spend two nights at the Mekong Riverside", True),
+    ("You spend the night aboard the Ondra Queen", True),
+    ("You overnight at Ondra Retreat", True),
+    ("You stay in a village near the old Tarvo fort", False),
+    ("You walk to the Ondra bridge", False),
+])
+def test_named_stay_antecedent(prev, named):
+    assert fp._antecedent_is_named_stay(prev) is named
+
+
+# Finding 3 (major, pre-existing): passives with any adverb / perfect, "while" / "before" actors, compound boats,
+# event and offer nouns, "visitors", a performer with no trip subject.
+@pytest.mark.parametrize("sentence,claim", [
+    ("The caves are then explored by torchlight.", "caves explored by torchlight"),
+    ("The summit is then reached at dawn.", "summit reached at dawn"),
+    ("A private viewing of the royal collection has been arranged.", "a private viewing of the royal collection"),
+    ("You relax in the village while locals prepare a seafood feast.", "locals prepare a seafood feast"),
+    ("The morning starts at the market before a speedboat whisks everyone to Koh Rong.",
+     "a speedboat whisks everyone to Koh Rong"),
+    ("The day takes in the floating market, the cave temple and a cookery demo.", "a cookery demo"),
+    ("The evening ends with a sunset sail around the islands.", "a sunset sail around the islands"),
+    ("A welcome cocktail awaits on arrival.", "a welcome cocktail awaits on arrival"),
+    ("A traditional massage rounds off the day.", "a traditional massage rounds off the day"),
+    ("Inside the temple, which dates from 1100, a monk performs a private blessing for visitors.",
+     "a monk performs a private blessing for visitors"),
+    ("Outside the cave a local band plays traditional music.", "a local band plays traditional music"),
+    ("Mr Sok, a former monk, leads a meditation session at dawn.", "Mr Sok leads a meditation session at dawn"),
+])
+def test_review_finding_3_promises_hold(sentence, claim):
+    _holds(sentence, claim)
+    assert fp.trip_promise_kinds(sentence) != ()
+
+
+# Finding 4 (blocking): the policy code alone no longer skips the issues; the brand audit adds FACT_CHECK_MANUAL_CHECK
+# for a non-voice model code on an elephant tour, whatever the model status, v2 or not.
+BALLOON_DAY4 = "The Day 4 hot-air balloon flight is not in the source."
+
+
+def test_the_policy_code_alone_reads_the_issues():
+    assert ep.is_policy_only_hold("manual_check", [ep.POLICY_CODE], RIDE, None, issues=[BALLOON_DAY4]) is False
+    assert ep.is_policy_only_hold("manual_check", [ep.POLICY_CODE], RIDE, None, issues=[]) is True
+    assert ep.is_policy_only_hold("manual_check", [ep.POLICY_CODE], RIDE, None, issues=None) is True
+    assert ep.is_policy_only_hold("manual_check", [ep.POLICY_CODE], RIDE, None, issues=[RIDE_ISSUE, *VOICE_SEO])
+
+
+@pytest.mark.parametrize("status,codes,v2", [
+    (None, [], False),
+    ("flagged", [], False),
+    (None, ["HIGHLIGHTS_VAGUE"], True),
+    ("flagged", ["TRIP_TYPE_MISMATCH"], True),
+    (None, ["HIGHLIGHTS_WILDLIFE_UNVERIFIED"], True),
+    ("flagged", ["SEO_TITLE_WRONG_ACTIVITY"], False),
+])
+def test_brand_audit_node_never_stores_an_unrelated_issue_as_the_policy(status, codes, v2, monkeypatch):
+    from services.content_generation import brand_audit_node as ba
+    monkeypatch.setenv("S1_JUDGE_LIVE", "on")
+    audit = {"publish_ready": False, "fields_to_fix": [], "failure_codes": codes, "issues": [BALLOON_DAY4],
+             "scores": {"brand_fit": 1, "human_read": 1, "seo_fit": 1, "trip_type_accuracy": 1,
+                        "publish_readiness": 0},
+             "notes": "", "lessons_extracted": []}
+    if status is not None:
+        audit["status"] = status
+    resp = MagicMock(content=json.dumps({"brand_audit": audit}), input_tokens=10, output_tokens=5, cost_usd=0.001,
+                     stop_reason="end_turn", model_used="m", satellite_account=None, fallback_used=False,
+                     provider="bedrock")
+    client = MagicMock()
+    client.generate.return_value = resp
+    generated = {"name": "Tarvo Valleys", "subtitle": "Rivers and a slow pace", "summary": "s",
+                 "highlights": ["An elephant ride at dawn"], "itineraries": "Day 1 — Tarvo\nWalk.",
+                 "seo_title": "t", "seo_meta": "m"}
+    state = {"generated": generated, "tour": {"itineraries": "Day 1: Tarvo"}, "is_tenant_rewrite": False,
+             **({"writer_version": "v2"} if v2 else {})}
+    with patch.object(ba, "LLMClient", return_value=client), patch.object(ba, "record_call_sync"):
+        out = ba.brand_audit_node(state)
+    assert out["brand_audit_status"] == "manual_check"
+    assert ep.is_policy_only_hold(out["brand_audit_status"], out["brand_audit_codes"], generated, None,
+                                  issues=out["brand_audit_issues"]) is False
+
+
+def test_with_policy_fact_check_and_v2_product_truth_codes():
+    from services.content_generation import brand_audit_node as ba
+    pre = [ep.POLICY_CODE]
+    assert ba.with_policy_fact_check(["TRIP_TYPE_MISMATCH"], pre) == ["TRIP_TYPE_MISMATCH", "FACT_CHECK_MANUAL_CHECK"]
+    assert ba.with_policy_fact_check(["SEO_TITLE_WEAK"], pre) == ["SEO_TITLE_WEAK"]
+    assert ba.with_policy_fact_check(["TRIP_TYPE_MISMATCH"], []) == ["TRIP_TYPE_MISMATCH"]
+    assert ba.with_policy_fact_check(["PRODUCT_TRUTH_RISK"], pre) == ["PRODUCT_TRUTH_RISK"]
+    for code in ("HIGHLIGHTS_WILDLIFE_UNVERIFIED", "SUBTITLE_TRIP_TYPE_MISMATCH", "SEO_TITLE_WRONG_ACTIVITY",
+                 "ITINERARY_MEAL_TIME_INVENTED"):
+        hard, status, report = ba._v2_report_only_voice([code], [], None)
+        assert hard == [code] and status == "flagged" and report == []
+
+
+# Finding 5 (major): the riding clause is an allowlist; "&" and "/" split clauses.
+@pytest.mark.parametrize("issue", [
+    "Elephant riding & a sunrise hot-air balloon flight on Day 2",
+    "Elephant riding/bamboo rafting on Day 2 needs a manual check",
+    "Elephant riding after a private helicopter transfer",
+    "Elephant riding in the 5-star jungle lodge grounds on Day 2",
+    "Elephant riding on Day 3 was added by the writer.",
+    "Elephant riding on Day 3 has no basis in the supplier itinerary.",
+    "Elephant riding appears nowhere in the raw itinerary.",
+    "Elephant riding on Day 3 is hallucinated.",
+    "Elephant riding on Day 3 is unverifiable.",
+    "Elephant riding on Day 3 is unconfirmed by the operator.",
+    # accepted false hold: a named camp next to the ride
+    "Elephant riding at Maesa Elephant Camp on Day 2 needs review.",
+])
+@pytest.mark.parametrize("codes", [POLICY_FC, LEGACY, [ep.POLICY_CODE]])
+def test_an_unknown_word_in_the_riding_clause_holds(codes, issue):
+    assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=[issue]) is False
+    assert ep.other_product_truth_issues([issue]) != []
+
+
+# Finding 6 (major): the voice rule is an allowlist; a content noun in a voice issue makes it unknown.
+@pytest.mark.parametrize("issues", [
+    ["Elephant riding on Day 2 needs review.", "The SEO title mentions a sunset helicopter flight over the gorge."],
+    ["Elephant riding on Day 2 needs review.", "The meta description is too long and features a private yacht."],
+])
+@pytest.mark.parametrize("codes", [POLICY_FC, LEGACY, [ep.POLICY_CODE]])
+def test_a_content_noun_in_a_voice_issue_holds(codes, issues):
+    assert ep.is_policy_only_hold("manual_check", codes, RIDE, None, issues=issues) is False
+    assert not ep.is_voice_issue(issues[1])
+
+
+@pytest.mark.parametrize("text", [*VOICE_SEO, *JUDGE_FEEDBACK, "Highlights are too generic.",
+                                  "The SEO title is 68 characters; trim it to 60."])
+def test_plain_voice_issues_stay_voice(text):
+    assert ep.is_voice_issue(text)
+
 # ── T2 / T9 contract records ─────────────────────────────────────────────────────────────────────────────────────
 
 def test_t2_final_contract_record_flags_a_code_fix_after_t3():

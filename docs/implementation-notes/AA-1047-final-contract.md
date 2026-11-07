@@ -86,6 +86,21 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   where the model's other codes are report-only), so the LLM's issues are always read in the {POLICY, FC} branch.
   Rows with the policy code alone come from the deterministic paths (judge feedback, no tenant brand), whose issue
   text is not a fact-check verdict (reading it would hold every judged elephant tour on praise).
+  Fix pass 5 (review of 1f281a8c, blocking): that premise was false. `status` is optional in the audit schema (Luna
+  drops it), the model may answer "flagged", and on a v2 draft every model code outside the manual-check set is
+  report-only, so the LLM audit could store the policy code alone with an unrelated issue ("the Day 4 balloon flight
+  is not in the source") and the approve gate dropped it. Now (a) `codes == {POLICY_ELEPHANT_RIDING}` reads the
+  issues by the same rule (empty issues stay a keep; the judge path's praise that names a content word holds, one
+  click); (b) `brand_audit_node.with_policy_fact_check` adds `FACT_CHECK_MANUAL_CHECK` on an elephant tour when the
+  model emits any code outside a known voice-code list (`_VOICE_MODEL_CODES`; an unknown code fails closed), so a
+  product-truth code with no issue text holds; (c) HIGHLIGHTS_WILDLIFE_UNVERIFIED, SUBTITLE_TRIP_TYPE_MISMATCH,
+  SEO_TITLE_WRONG_ACTIVITY and ITINERARY_MEAL_TIME_INVENTED are no longer report-only on a v2 draft (they gate as
+  `flagged`, for every tour, not only elephant ones). Findings 5 and 6: both issue rules are allowlists. The riding
+  clause, the ride masked, is the policy only when every remaining word is review filler, a ride locator, "with",
+  "camp" or a digit ("was added by the writer", "is hallucinated", "after a private helicopter transfer" hold; a
+  named camp holds too, an accepted false hold); "&" and "/" split clauses. A voice issue may hold only field names,
+  voice / SEO / format vocabulary, quoted hype words and function words (`_VOICE_ALLOWED_WORDS`); "the meta
+  description is too long and features a private yacht" holds.
 - **F9 claim span (follow-up 3).** `f9_policy.claim_span` picks the clause of the quoted sentence that holds the
   judge's claim (most shared words), with the sentence's trip subject in front when the clause continues its verb
   phrase ("you visit the market and taste the tea") or, fix pass, when it names a service, a time or a view (a
@@ -116,6 +131,23 @@ rubric, rules, eval) and l2-w1-factsheet (FactSheet, CIS migration 386). No migr
   explored / watched / cruised") and the reader or the group as the object of a doing verb ("teach you", "takes the
   group") count as the trip subject and as an activity; a highlight / list line or a bullet is about the trip; the
   service lexicon takes cruise, balloon (flight), tuk-tuk, boat, junk, kayak, bicycle, naturalist, ranger, mahout ...
+  Fix pass 5 (review of 1f281a8c). Finding 1 (blocking): the fame markers (famous, renowned, known for, once,
+  legend, said to) matched inside a relative clause whose verb is an offer ("where a family famous for its noodles
+  cooks a feast"), so the clause was background and the whole-sentence fallback never ran. The markers are now three
+  kinds: history (past / perfect / dated, always a marker), stative (sits, stands, lies, is perched ...), and fame,
+  which counts only as a copula predicate ("which is famous for its noodles") or, in a locative clause, as an
+  adjective that ends it ("near the temple famed for its views"). A locative clause with no marker is background only
+  when it is a bare place phrase (six words at most, no view / time). Finding 2 (blocking): a relative clause after
+  a clause where the trip stays on / boards a NAMED place ("You board the Jasmine", "You overnight at Ondra Retreat")
+  is never background, whatever the head noun; and after any trip-subject clause a view / time / stay-amenity word
+  (sundeck, pool, yoga ...) in the relative holds unless the marker is history. Finding 3 (major, pre-existing):
+  the passive takes any one word between auxiliary and participle and the perfect ("has / have / had been
+  arranged"); TRIP_SUBJECT takes "visitors" and a bare "everyone"; SERVICE takes feast, banquet, barbecue, drinks,
+  cocktail, massage, spa, sail, demo and any compound "-boat"; an offer verb (awaits, rounds off, ends with, takes
+  in, whisks, performs, plays, demonstrates, leads ...) or an event / offer noun (demo, blessing, music, band,
+  massage, session, viewing, cruise, tour ...) is an activity when there is a trip subject or no proven background
+  marker. The offer guard uses a narrower noun list than the background check (no walk / ride / visit, which double
+  as plain verbs: "Pilgrims walk the circuit at dawn" stays quiet).
 - **/stats (follow-up 1).** The F9_cta_fact gate rows count in `failed` / `blocking_failed` only the entries with a
   content class; `failed_judge_unavailable` / `failed_text_integrity` count the rest; `f9_classes` sums the classes per
   channel (stored `f9_policy.classes`, else parsed).

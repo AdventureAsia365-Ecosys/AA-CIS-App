@@ -68,8 +68,11 @@ HOLD_CLASSES = frozenset({TRIP_PROMISE})
 
 _NUM = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|a few|a couple of|half an?)"
 # Who the sentence makes the trip happen to: the reader, the operator, the group, the trip itself, a day of it.
+# AA-1047 W1 fix pass 5 (review finding 3): "visitors" and a bare "everyone" are the trip too ("a monk performs a
+# blessing for visitors", "a speedboat whisks everyone to the island").
 TRIP_SUBJECT_RE = re.compile(
-    r"\b(?:you|your|yourself|we|our|us|travell?ers?|guests?|participants|everyone on (?:the|this) (?:trip|tour)"
+    r"\b(?:you|your|yourself|we|our|us|travell?ers?|guests?|visitors?|participants|everyone(?: on (?:the|this) "
+    r"(?:trip|tour))?"
     r"|(?:the|your|our|each|every) group|(?:this|the) (?:trip|tour|journey|itinerary|route|holiday|walk|day)"
     r"|(?:on|by) day " + _NUM + r"|day \d+)\b", re.I)
 # A service or inclusion the trip provides. AA-1047 W1 fix pass 4 (review finding 2): a service noun is a trip
@@ -79,15 +82,21 @@ TRIP_SUBJECT_RE = re.compile(
 SERVICE_RE = re.compile(
     r"\b(?:guides?|guided|guiding|transfers?|drivers?|porters?|hotels?|lodges?|camps?|tents?|homestays?|"
     r"guesthouses?|breakfasts?|lunch(?:es)?|dinners?|meals?|picnics?|tastings?|tickets?|permits?|visas?|"
-    r"(?:entry|entrance) fees?|boats?|boat (?:ride|trip)s?|jeeps?|safaris?|(?:cooking|craft) (?:class|lesson)(?:es|s)?|"
+    r"(?:entry|entrance) fees?|boat (?:ride|trip)s?|jeeps?|safaris?|(?:cooking|craft) (?:class|lesson)(?:es|s)?|"
     r"workshops?|briefings?|cruises?|(?:hot[- ]air )?balloons?(?: (?:flight|ride)s?)?|tuk[- ]?tuks?|junks?|"
     r"sampans?|ferr(?:y|ies)|kayaks?|canoes?|bicycles?|cyclos?|rickshaws?|minibus(?:es)?|naturalists?|rangers?|"
-    r"mahouts?|instructors?|chefs?)\b", re.I)
+    r"mahouts?|instructors?|chefs?|feasts?|banquets?|barbecues?|bbqs?|drinks|cocktails?|massages?|spas?|sails?|"
+    r"demos?)\b"
+    # a compound boat (speedboat, longtail boat, houseboat), with no leading word boundary (review finding 3)
+    r"|\w*boats?\b", re.I)
 # A passive (or "get") promise with no subject: the trip is the agent ("The caves are explored by torchlight",
-# "Sunrise is watched from the hill", "Bicycles are provided"). Present / future only: a past passive ("was built",
-# "was visited by a king") is the place's history.
+# "Sunrise is watched from the hill", "Bicycles are provided"). Present / future / perfect: a simple past passive
+# ("was built", "was visited by a king") is the place's history. AA-1047 W1 fix pass 5 (review finding 3): any one
+# word may sit between the auxiliary and the participle ("are then explored", "is then reached"), and a perfect
+# passive is a promise too ("a private viewing has been arranged"; fail closed: "had been" as well).
 PASSIVE_PROMISE_RE = re.compile(
-    r"\b(?:is|are|will\s+be|can\s+be|gets?|getting)\s+(?:\w+ly\s+)?(?:served|provided|reached|explored|watched|"
+    r"\b(?:is|are|will\s+be|can\s+be|(?:has|have|had)\s+been|gets?|getting)\s+(?:\w+\s+)?"
+    r"(?:served|provided|reached|explored|watched|"
     r"enjoyed|cruised|visited|toured|hiked|trekked|climbed|kayaked|paddled|sailed|crossed|spotted|viewed|tasted|"
     r"sampled|offered|hosted|arranged|organi[sz]ed|included|laid\s+on|led|guided|taught|followed|admired|spent|"
     r"taken|picked\s+up|dropped\s+off|transferred|driven|flown|met|greeted|welcomed|shown)\b", re.I)
@@ -139,7 +148,8 @@ def trip_promise_kinds(sentence: Optional[str], lexicon=None) -> tuple[str, ...]
     The trip is the subject when the sentence names the reader / operator / group / trip / a day, makes the reader or
     the group the object of a doing verb (``OBJECT_TRIP_RE``), uses a present passive promise with no subject
     (``PASSIVE_PROMISE_RE``: "the caves are explored by torchlight") or is a highlight / list line
-    (``LIST_LINE_RE``). A service noun is a promise on its own (fail closed, AA-1047 W1 fix pass 4)."""
+    (``LIST_LINE_RE``). A service noun is a promise on its own (fail closed, AA-1047 W1 fix pass 4); so is an
+    activity / event noun or an offer verb with a trip subject or no background marker (fix pass 5)."""
     text = (sentence or "").translate(_QUOTES).strip()
     if not text or text.rstrip(" *\"')").endswith("?"):
         return ()
@@ -154,7 +164,12 @@ def trip_promise_kinds(sentence: Optional[str], lexicon=None) -> tuple[str, ...]
         kinds.append("time")
     if subject and VIEW_RE.search(masked):
         kinds.append("view")
-    if ACTIVITY_RE.search(masked) or passive or object_trip:
+    # AA-1047 W1 fix pass 5 (review finding 3): an activity / event noun or an offer verb with no positive background
+    # marker is the trip's too ("The day takes in ... a cookery demo", "A welcome cocktail awaits on arrival", "Outside
+    # the cave a local band plays traditional music", "Mr Sok leads a meditation session at dawn").
+    offered = bool(_OFFERED_NOUN_RE.search(masked) or _OFFER_RE.search(masked)) and (
+        subject or not _background_marker(masked, locative=True))
+    if ACTIVITY_RE.search(masked) or passive or object_trip or offered:
         kinds.append("activity")
     return tuple(kinds)
 
@@ -254,14 +269,35 @@ _LOCATIVE_RE = re.compile(r"^\s*(?:near|beside|next to|close to|opposite|across 
 # What makes it background and not an offer: its history, its standing, its fame, its fixed setting. AA-1047 W1 fix
 # pass 4 (review finding 1, blocking): no catch-all passive ("was upgraded / chosen / named for ..." made a lodge's
 # view promise read as history); only the history verbs, and "named" only after / by / in a year.
-_BACKGROUND_MARKER_RE = re.compile(
+#
+# AA-1047 W1 fix pass 5 (review finding 1, blocking): the markers come in three kinds.
+# - HISTORY (past / perfect / dated): always a marker ("was built", "has stood since", "for 900 years").
+_HISTORY_MARKER_RE = re.compile(
     r"\b(?:built|founded|erected|constructed|carved|restored|rebuilt|destroyed|paved|named\s+(?:after|by|in\s+\d)|"
     r"dates?\s+(?:back|from)|"
-    r"dating|(?:has|have|had)\s+(?:stood|guarded|watched|served\s+as|been)|stood|for\s+(?:centuries|generations|"
+    r"dating|(?:has|have|had)\s+(?:stood|guarded|watched|served\s+as)|stood|for\s+(?:centuries|generations|"
     r"decades|ages|\d+\s+years|hundreds\s+of\s+years|over\s+\d+\s+years)|since\s+(?:the\s+)?\d"
     r"|in\s+(?:the\s+)?\d{3,4}s?"
-    r"\b|\d{1,2}(?:st|nd|rd|th)[-\s]century|centur(?:y|ies)\s+old|famed|famous|renowned|known\s+for|home\s+to|once|"
-    r"legend|said\s+to|sits|stands|lies|is\s+(?:located|set|perched|nestled)|perched|nestled)\b", re.I)
+    r"\b|\d{1,2}(?:st|nd|rd|th)[-\s]century|centur(?:y|ies)\s+old|(?:was|were)\s+once|once\s+\w+ed)\b", re.I)
+# - STATIVE (the place's fixed setting is the clause's verb): "which sits above the rapids", "is perched on".
+_STATIVE_MARKER_RE = re.compile(
+    r"\b(?:sits|stands|lies|is\s+(?:located|set|perched|nestled)|perched|nestled)\b", re.I)
+# - FAME (famous / renowned / known for / once / legend / said to): a marker ONLY as the predicate of a copula ("which
+#   is famous for its noodles", "which is home to gibbons", "is said to be haunted") or, in a locative clause, as an
+#   adjective that ends the clause ("near the temple famed for its views"). "where a family famous for its noodles
+#   cooks a feast" / "where a famous master demonstrates calligraphy" carry another verb: not proven background.
+_FAME_WORDS = r"(?:famed|famous|renowned|celebrated|known|legendary|home\s+to|said\s+to\s+(?:be|have)|once)"
+_COPULA = r"(?:is|are|was|were|remains?|remained|becomes?|became|(?:has|have|had)\s+(?:long\s+)?been)"
+_FAME_COPULA_RE = re.compile(
+    rf"\b{_COPULA}\s+(?:(?:also|still|long|widely|rightly|justly|best|perhaps|now|locally)\s+)*{_FAME_WORDS}\b", re.I)
+_FAME_TAIL_RE = re.compile(
+    r"\b(?:famed|famous|renowned|celebrated|known|legendary)\s+(?:for|as)\s+(?:[\w'-]+\s+){0,3}[\w'-]+\W*$", re.I)
+def _background_marker(masked_clause: str, *, locative: bool = False) -> bool:
+    """The clause carries a PROVEN background marker: history, a stative verb, or fame in a copula frame (or, in a
+    locative clause, a fame adjective that ends it)."""
+    return bool(_HISTORY_MARKER_RE.search(masked_clause) or _STATIVE_MARKER_RE.search(masked_clause)
+                or _FAME_COPULA_RE.search(masked_clause)
+                or (locative and _FAME_TAIL_RE.search(masked_clause)))
 # The head noun of a relative clause's antecedent that is the trip's own stay / vehicle / table: a relative clause
 # about it ("You stay at the Bay Lodge, which ...") describes what the trip provides, never place background.
 _TRIP_ANTECEDENT_RE = re.compile(
@@ -270,10 +306,24 @@ _TRIP_ANTECEDENT_RE = re.compile(
     r"sampans?|rafts?|houseboats?|barges?|trains?|carriages?|buses|bus|vans?|coaches?|jeeps?|cars?|restaurants?|"
     r"cafes?|kitchens?|decks?|terraces?|balcon(?:y|ies)|verandas?|stilt-?houses?|farmstays?|ger|gers|yurts?)$", re.I)
 _LAST_WORD_RE = re.compile(r"([A-Za-z][A-Za-z'-]*)\W*$")
+# AA-1047 W1 fix pass 5 (review finding 2, blocking): a stay / vehicle with a proper name ("You board the Jasmine",
+# "You spend two nights at the Mekong Riverside", "You overnight at Ondra Retreat") is the trip's own, whatever its
+# head noun: a trip subject, a stay / board verb, then (counts, "the night", one preposition) a capitalised name that
+# ends the clause.
+_STAY_VERB_RE = re.compile(
+    r"\b(?:stay(?:s|ed|ing)?|spend(?:s|ing)?|spent|overnight(?:s|ed|ing)?|sleep(?:s|ing)?|slept|board(?:s|ed|ing)?|"
+    r"sail(?:s|ed|ing)?\s+aboard|cruis(?:e|es|ed|ing)\s+aboard|check(?:s|ed|ing)?\s+in(?:to)?|lodg(?:e|es|ed|ing)|"
+    r"bed\s+down)\b", re.I)
+_NAMED_STAY_TAIL_RE = re.compile(
+    r"^(?:\s+(?:the|a|an|\d+|one|two|three|four|five|six|seven|several|few|couple|of|night|nights|evening))*"
+    r"(?:\s+(?:at|aboard|on|onboard|in|into|onto))?(?:\s+(?:the|a|an))?(?:\s+[A-Z][\w'&-]*)+\W*$")
+# A view / time word in a relative clause after a trip-subject clause is the trip's, unless the marker is history.
+_STAY_AMENITY_RE = re.compile(r"\b(?:sundecks?|sun\s+decks?|pools?|infinity|yoga|spa|hammocks?|jacuzzis?|"
+                              r"hot\s+tubs?|cabins?|candlelit)\b", re.I)
 # A view the guest gets FROM the stay ("every room overlooking the rapids", "views from the private deck") or a
 # view / time attached with "with" ("restored in 2010 with a rooftop bar overlooking the river at sunset").
-_GUEST_VIEW_RE = re.compile(r"\b(?:rooms?|suites?|decks?|balcon(?:y|ies)|terraces?|verandas?|rooftop|every|each|"
-                            r"private|your)\b", re.I)
+_GUEST_VIEW_RE = re.compile(r"\b(?:rooms?|suites?|decks?|sundecks?|balcon(?:y|ies)|terraces?|verandas?|rooftop|"
+                            r"pools?|infinity|yoga|every|each|private|your)\b", re.I)
 _WITH_RE = re.compile(r"\bwith\b", re.I)
 
 
@@ -285,6 +335,16 @@ def _antecedent_is_trip_service(prev: Optional[str]) -> bool:
         return False
     head = m.group(1)
     return bool(_TRIP_ANTECEDENT_RE.match(head) or SERVICE_RE.fullmatch(head))
+
+
+def _antecedent_is_named_stay(prev: Optional[str]) -> bool:
+    """The clause before a relative clause is the trip staying on / boarding a named place or vessel ("You board the
+    Jasmine", "You spend two nights at the Mekong Riverside"): its antecedent is the trip's own stay or vehicle."""
+    text = (prev or "").translate(_QUOTES)
+    if not TRIP_SUBJECT_RE.search(text):
+        return False
+    verbs = list(_STAY_VERB_RE.finditer(text))
+    return bool(verbs and _NAMED_STAY_TAIL_RE.match(text[verbs[-1].end():]))
 
 
 def _guest_view(masked_clause: str) -> bool:
@@ -301,10 +361,22 @@ ACTIVITY_NOUN_RE = re.compile(
     r"bik(?:e|es|ing)|"
     r"lessons?|class(?:es)?|workshops?|demonstrations?|performances?|shows?|ceremon(?:y|ies)|sessions?|visits?|"
     r"flights?|safaris?|picnics?|tastings?|cooking|weaving|naturalists?|experts?|hosts?|instructors?|"
-    r"parades?|festivals?|concerts?|fireworks|processions?|dances?|activit(?:y|ies))\b", re.I)
+    r"parades?|festivals?|concerts?|fireworks|processions?|dances?|activit(?:y|ies)|demos?|blessings?|music|"
+    r"bands?|massages?|meditation|viewings?)\b", re.I)
+# The activity / event nouns that never double as a plain verb ("Pilgrims walk the circuit" is not a walk offer): the
+# offer guard of ``trip_promise_kinds`` reads these, the background check the wider ``ACTIVITY_NOUN_RE``.
+_OFFERED_NOUN_RE = re.compile(
+    r"\b(?:excursions?|outings?|lessons?|class(?:es)?|workshops?|demonstrations?|demos?|performances?|"
+    r"ceremon(?:y|ies)|sessions?|flights?|picnics?|tastings?|parades?|festivals?|concerts?|fireworks|processions?|"
+    r"blessings?|music|bands?|massages?|meditation|viewings?|activit(?:y|ies)|cookery|tours?|trips?|cruises?|"
+    r"safaris?)\b", re.I)
 # A clause that hands something to the visitor ("awaits", "offers", "is served") is never background.
+# AA-1047 W1 fix pass 5 (review finding 3): + the day-shape verbs ("rounds off", "ends with", "takes in", "whisks")
+# and a performance ("performs a blessing", "plays traditional music", "demonstrates").
 _OFFER_RE = re.compile(r"\b(?:await\w*|offer\w*|provid\w*|serv(?:e|es|ed|ing)|host\w*|welcom\w*|invit\w*|"
-                       r"gives?|show(?:s|n)?\s+(?:you|guests)|points?\s+out|teach\w*|lead\w*|led)\b", re.I)
+                       r"gives?|show(?:s|n)?\s+(?:you|guests)|points?\s+out|teach\w*|lead\w*|led|"
+                       r"rounds?\s+off|ends?\s+with|takes?\s+in|whisk\w*|perform\w*|plays?|playing|"
+                       r"demonstrat\w*)\b", re.I)
 _CLOCK_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?!\w)|\b\d{1,2}:\d{2}\b|\bo'clock\b", re.I)
 
 
@@ -329,16 +401,26 @@ def _is_place_background(clause: Optional[str], prev: Optional[str] = None, lexi
             or ACTIVITY_NOUN_RE.search(m) or _OFFER_RE.search(m) or _CLOCK_RE.search(m)
             or PASSIVE_PROMISE_RE.search(m) or OBJECT_TRIP_RE.search(m) or _guest_view(m)):
         return False
-    marker = bool(_BACKGROUND_MARKER_RE.search(m))
     if _PLACE_RELATIVE_RE.match(m):
-        if _antecedent_is_trip_service(prev):
+        if _antecedent_is_trip_service(prev) or _antecedent_is_named_stay(prev):
+            return False
+        prev_m = _masked(prev or "", lexicon)
+        # AA-1047 W1 fix pass 5 (review finding 2): after a trip-subject clause, a view / time / stay-amenity word is
+        # the trip's ("You board the Jasmine, which is renowned for its sundeck views at sunset") unless the marker is
+        # history ("You take a sunset cruise past the fort, which has guarded the river for 900 years").
+        if (TRIP_SUBJECT_RE.search(prev_m) and (VIEW_RE.search(m) or TIME_RE.search(m) or _STAY_AMENITY_RE.search(m))
+                and not _HISTORY_MARKER_RE.search(m)):
             return False
         # After a locative antecedent a view word is the place's ("which looks out over the valley"), but a time
         # word with no background marker reads as an event the visitor attends ("which comes alive with lanterns
         # each evening"): not proven background.
-        return marker or bool(prev and _LOCATIVE_RE.match(_masked(prev, lexicon)) and not TIME_RE.search(m))
+        return _background_marker(m) or bool(prev and _LOCATIVE_RE.match(prev_m) and not TIME_RE.search(m))
     if _LOCATIVE_RE.match(m):
-        return marker or not (TIME_RE.search(m) or VIEW_RE.search(m))
+        if _background_marker(m, locative=True):
+            return True
+        # AA-1047 W1 fix pass 5: with no marker, only a bare place phrase ("near the old Tarvo fort") is background;
+        # a longer locative clause may carry its own verb ("behind the temple monks bless every visitor").
+        return not (TIME_RE.search(m) or VIEW_RE.search(m)) and len(_WORD_RE.findall(m.lower())) <= 6
     return False
 
 
