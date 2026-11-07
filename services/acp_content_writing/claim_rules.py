@@ -593,8 +593,8 @@ _POSITION_KINDS = (KIND_TRIP, KIND_LOCATION, KIND_PLACE)
 # hikers', 'at most 8 hikers share', 'capped at 25 walkers'); or it shares an activity word with the moment's own
 # itinerary lines ('crossing' ← 'Cross Lake Orvine').
 #
-# A positive background signal (`number_has_background_signal`, per novel number): a year form ('in 1388', 'the 1630s', 'the 14th
-# century'), a founding / building verb ('founded', 'built', 'dates from', 'since'), a height, depth, length or area
+# A positive background signal (`number_has_background_signal`, per novel number): a year form ('in 1388', 'the
+# 1630s', 'the 14th century', 'founded in', 'built in', 'since'), a height, depth, length or area
 # unit with its dimension word ('900 metres above', '40 km long'), a share ('0.4%'), a population ('home to') or a
 # count a place holds that is not people or beds ('holds 900 handwritten books'). Only then does a novel number warn
 # (writing policy claims.numbers, D1: background numbers and years warn). Review 2's frame was an allow-list of trip
