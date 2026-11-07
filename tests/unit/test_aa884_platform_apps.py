@@ -63,6 +63,19 @@ def _booking_transport(health=(200, {"status": "ok", "git_sha": "b" * 40}),
 
 
 @pytest.mark.asyncio
+async def test_cis_card_keeps_the_gate_and_names_an_unreadable_exec_heartbeat(monkeypatch):
+    # AA-1024 G3 (c), S272 review: an S3 list error no longer blanks the whole deploy_gate card
+    monkeypatch.setattr("shared.jobs.queue.worker_health", AsyncMock(return_value=_workers(SHA)))
+    err = "ECS exec heartbeat unreadable (scripts/out/ list failed)"
+    monkeypatch.setattr("shared.jobs.worker.deploy_gate_status", AsyncMock(return_value={
+        "active": 2, "open_waves": 1, "safe_to_deploy": False, "exec_scripts": None, "exec_scripts_error": err,
+        "blocked_by": ["1 rerun wave(s) open", err]}))
+    card = await pa._cis_card(_pool())
+    assert card["deploy_gate"]["open_waves"] == 1 and card["deploy_gate"]["active"] == 2
+    assert err in card["problems"] and card["status"] == "degraded"
+
+
+@pytest.mark.asyncio
 async def test_cis_parity_true_when_every_live_worker_runs_the_api_sha(monkeypatch):
     monkeypatch.setattr("shared.jobs.queue.worker_health", AsyncMock(return_value=_workers(SHA, SHA)))
     card = await pa._cis_card(_pool())

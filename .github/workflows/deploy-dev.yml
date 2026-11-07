@@ -201,6 +201,15 @@ jobs:
             --task-definition "$NEW_ARN" --region "$AWS_REGION" >/dev/null
           SH
           chmod +x /tmp/deploy_family.sh
+      # AA-1024 G3 (c), S272 review: the preflight ran in parallel with the image build, minutes before this roll.
+      # Ask the gate again right before update-service: an ECS exec script (ecsx heartbeat) or a deploy-blocking job
+      # started during the build would be killed by the roll (lesson S234). Same script, same override.
+      - name: Re-check the deploy gate just before the roll
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          OVERRIDE: ${{ inputs.override_running_jobs }}
+          GATE_URL: https://api-cis.lumiguides.it.com/admin/job-runner/deploy-gate
+        run: bash .github/scripts/deploy_job_guard.sh
       - name: Deploy api
         run: /tmp/deploy_family.sh "${{ env.ECS_SERVICE }}" "${{ env.ECS_SERVICE }}"
       # AA-651 — the worker family/service is created by AA-CIS-Infra. Until that applies, skip

@@ -296,8 +296,10 @@ async def _seed_learned_writing(pools, tid: str) -> str:
     """AA-923 WM-33: one row in every learned-writing store a tenant leaves behind (ADR 0010 decision 11, tenant text
     only in deletable tables): a preference summary (writing_rule kind preference_summary, AA-921), a masked voice
     example pinned in a rules draft (writing_exemplar + writing_memory_release + writing_memory_release_exemplar), a
-    shadow output of a release run, a keep decision, a disagreement-queue item and a human label on a T2 version
-    (acp_shared.content_label, CIS 315). Returns a marker shared by the rows for the after-check."""
+    shadow output of a release run, a keep decision, a disagreement-queue item, a human label on a T2 version
+    (acp_shared.content_label, CIS 315) and a claim label of a T9 piece (shared.eval_claim_label, CIS 388; AA-1048),
+    plus one platform (A1) claim label that must stay (reason "<marker>-a1"). Returns a marker shared by the tenant
+    rows for the after-check."""
     from services.writing_memory import exemplars as ex
     admin, _ = pools
     mark = f"zz923-{tid[:8]}"
@@ -346,6 +348,16 @@ async def _seed_learned_writing(pools, tid: str) -> str:
         await c.execute(
             "INSERT INTO acp_shared.content_label (subject_type, subject_id, tenant_id, labelled_by, label, reason) "
             "VALUES ('t2_version', $1, $2::uuid, 'admin:pytest', 'light', $3)", version, tid, mark)
+        claim = "Fictional Valeport walks stay slow and small."
+        for scope, tenant, writer, reason in (("tenant", tid, "t9_blog", mark), ("platform", None, "a1", f"{mark}-a1")):
+            await c.execute(
+                "INSERT INTO shared.eval_claim_label (set_id, set_version, writer, scope, tenant_id, sample_id, "
+                "piece_id, content_sha256, field, span_start, span_end, claim_text, claim_hash, claim_class, label, "
+                "labeller_kind, labeller, lens, reason, split, adjudication) VALUES ('ZZ-839', '1.0.0', $1, $2, "
+                "$3::uuid, $4, CASE WHEN $2 = 'tenant' THEN gen_random_uuid() END, $5, 'content_text', 0, $6, $7, "
+                "encode(sha256(convert_to($4 || $8, 'UTF8')), 'hex'), 'fact.number', 'ok', 'agent_panel', "
+                "'pytest', 'source', $8, 'train', 'agreed')",
+                writer, scope, tenant, f"zz839-{writer.replace('_', '-')}", sha, len(claim), claim, reason)
     return mark
 
 
@@ -363,7 +375,10 @@ LEARNED_WRITING = {
     "shared.writing_memory_keep": "SELECT count(*) FROM shared.writing_memory_keep WHERE reason = $1",
     "shared.writing_memory_disagreement": "SELECT count(*) FROM shared.writing_memory_disagreement WHERE note = $1",
     "acp_shared.content_label": "SELECT count(*) FROM acp_shared.content_label WHERE reason = $1",
+    "shared.eval_claim_label": "SELECT count(*) FROM shared.eval_claim_label WHERE reason = $1",
 }
+# AA-1048: the platform (A1) claim label seeded next to the tenant's; an offboarding never deletes it.
+PLATFORM_CLAIM = "SELECT count(*) FROM shared.eval_claim_label WHERE reason = $1 || '-a1' AND scope = 'platform'"
 
 
 async def _learned_counts(admin, mark: str) -> dict:
@@ -824,3 +839,4 @@ async def test_offboarding_erases_every_learned_writing_store_and_no_other_tenan
     assert res["mode"] == "apply" and res["verified"] is True, res.get("verified_left")
     assert await _learned_counts(admin, mine) == {t: 0 for t in LEARNED_WRITING}
     assert await _learned_counts(admin, theirs) == {t: 1 for t in LEARNED_WRITING}   # the other tenant: untouched
+    assert await admin.fetchval(PLATFORM_CLAIM, mine) == 1               # AA-1048: platform claim labels stay

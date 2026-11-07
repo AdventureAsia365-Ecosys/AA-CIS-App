@@ -54,6 +54,11 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      # the read-only mailbox role of the E2E sign-in (deploy-admin-dev.yml passes `secrets: inherit`; declared so the called
+      # workflow names every secret it reads, actionlint G15)
+      E2E_MAIL_ROLE_ARN:
+        required: false
   workflow_dispatch:
     inputs:
       base_url:

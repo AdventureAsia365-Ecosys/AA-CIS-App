@@ -407,9 +407,11 @@ _T9_SQL = """
     SELECT cp.piece_id::text AS piece_id, cp.tenant_id::text AS tenant_id, t.slug AS tenant_slug,
            cp.angle_gate_request_id::text AS request_id, cp.channel, cp.status, cp.held_reason,
            cp.content_text, cp.seo_title, cp.meta_description, cp.slug, cp.gate_ledger, cp.flags,
-           cp.writer_input, cp.job_id::text AS job_id, cp.route_hub_name
+           cp.writer_input, cp.job_id::text AS job_id, cp.route_hub_name,
+           agr.trip_id::text AS tour_id
     FROM acp_shared.content_piece cp
     JOIN shared.tenants t ON t.tenant_id = cp.tenant_id
+    LEFT JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
     WHERE cp.channel = ANY($1::text[]) AND cp.status IN ('approved', 'held')
       AND cp.writer_input IS NOT NULL AND length(cp.content_text) > 0
 """
@@ -540,8 +542,10 @@ async def freeze_t9(pool, c: Candidate, shared: dict) -> dict:
     ctx, source = await t9_context(pool, r, wi)
     return {
         "kind": "t9", "channel": r["channel"], "country": wi.get("destination") or "unknown",
+        # AA-1048 (review S272): the tour (the angle request's trip) is the claim split's group key: a blog and a
+        # social piece of one tour, and its S1 / T2 versions, stay on one side.
         "refs": {"piece_id": r["piece_id"], "request_id": r["request_id"], "tenant_id": r["tenant_id"],
-                 "tenant_slug": r["tenant_slug"], "job_id": r["job_id"]},
+                 "tenant_slug": r["tenant_slug"], "job_id": r["job_id"], "tour_id": r.get("tour_id")},
         "input": {"context": ctx, "context_source": source, "request_id": r["request_id"],
                   "piece_id": r["piece_id"], "tenant_id": r["tenant_id"]},
         "output": {"content_text": r["content_text"], "seo_title": r["seo_title"],
