@@ -13,6 +13,9 @@ contract. Cause: the slot check read days with ``day_parse.source_day_markers`` 
 2. Parity: over the full-chain T2 harness scenarios (the parity golden's), on the linear path and on main's, the
    contract records T2_DAY_COUNT_VS_MASTER exactly when the orchestrator's slot check fails on the stored text, and
    the linear path stores the itinerary in main's shape.
+3. validate_node's day gap (review fix): on a T2 tenant rewrite it reads the written days with the same reader
+   (``day_parse.written_day_word_counts``), so the dash-fixed text T3 and the linear orchestrator validate gets no
+   phantom ITINERARY_DAY_COUNT_MISMATCH, and the linear path stores main's score on the harness scenarios.
 
 Invented tours and places only. No DB, no LLM, no network.
 """
@@ -189,3 +192,83 @@ def test_linear_stores_the_itinerary_in_mains_shape(traces, name):
     assert isinstance(main_itin, str) and isinstance(lin_itin, str)
     assert _marker_forms(lin_itin) == _marker_forms(main_itin) == {":"}
     assert o.day_slots(lin_itin) == o.day_slots(main_itin)
+
+
+# ── 3. validate_node's day gap reads the T2 text with the same reader ──────────────────────────────
+
+
+@pytest.mark.parametrize("label,value,want", SHAPES, ids=[s[0] for s in SHAPES])
+def test_the_word_count_reader_covers_the_same_days(label, value, want):
+    assert set(dp.written_day_word_counts(value)) == set(want) == set(dp.written_day_numbers(value))
+
+
+@pytest.mark.parametrize("label,value,want", [s for s in SHAPES if s[0].startswith("canonical")
+                                               or s[0] == "duplicate_day"],
+                         ids=lambda v: v if isinstance(v, str) and " " not in v else None)
+def test_word_counts_equal_the_canonical_reader_and_survive_the_dash_fix(label, value, want):
+    from services.content_generation.itinerary_utils import generated_day_word_counts
+    canonical = generated_day_word_counts(value)
+    assert dp.written_day_word_counts(value) == canonical
+    fixed, _ = fix_t2_dashes({"itineraries": value}, {"name": "Brellin Mill Walk", "itineraries": value})
+    assert dp.written_day_word_counts(fixed["itineraries"]) == canonical
+
+
+def _validate(itineraries: str, *, tenant: bool) -> dict:
+    from services.content_generation.graph import validate_node
+    from services.jobs import t2_rewrite_job as job
+    tour = job.source_tour_dict(h.MASTER_ROW)
+    gen = {**h.writer_draft(), "itineraries": itineraries}
+    state = {"generated": gen, "tour": tour, "is_tenant_rewrite": tenant, "retry_count": 0}
+    return validate_node(state)
+
+
+def _day_codes(out: dict) -> set[str]:
+    return {c for c in out.get("failure_codes") or [] if c.startswith("ITINERARY_")}
+
+
+def test_validate_on_the_dash_fixed_master_has_no_phantom_day_mismatch():
+    """The reviewer's case: the Master itinerary itself, dash-fixed as T3 / the linear verify sees it. Before the
+    fix: missing=[1, 2, 3], ITINERARY_DAY_COUNT_MISMATCH, structure -1 (linear stored 9.75 where main stored 10.0)."""
+    from services.content_generation.graph import itinerary_day_gap
+    master = h.MASTER_ROW["aa_itineraries"]
+    fixed, _ = fix_t2_dashes({"itineraries": master}, {"name": "Velmora", "itineraries": master})
+    assert "—" not in fixed["itineraries"]
+    tour = {"itineraries": master, "duration": "3 days"}
+    assert itinerary_day_gap(tour, fixed["itineraries"], any_form=True)["missing"] == []
+    assert itinerary_day_gap(tour, fixed["itineraries"], any_form=True)["generated_day_words"] == \
+        itinerary_day_gap(tour, master)["generated_day_words"]
+    canon, dashed = _validate(master, tenant=True), _validate(fixed["itineraries"], tenant=True)
+    assert "ITINERARY_DAY_COUNT_MISMATCH" not in dashed["failure_codes"]
+    assert _day_codes(dashed) == _day_codes(canon)
+    assert dashed["quality_score"] == canon["quality_score"]
+
+
+def test_validate_still_finds_a_dropped_day_in_the_dash_fixed_form():
+    master = h.MASTER_ROW["aa_itineraries"]
+    two_days = master.split("\nDay 3 —")[0]
+    fixed, _ = fix_t2_dashes({"itineraries": two_days}, {"name": "Velmora", "itineraries": master})
+    out = _validate(fixed["itineraries"], tenant=True)
+    assert "ITINERARY_DAY_COUNT_MISMATCH" in out["failure_codes"]
+    assert "day 3" in out["feedback"]
+
+
+def test_s1_keeps_the_canonical_reader():
+    """S1 / A1 (the code is hard on writer v2) reads only the canonical storage form: a non-canonical S1 page is a
+    page with no day blocks, as before."""
+    master = h.MASTER_ROW["aa_itineraries"]
+    fixed, _ = fix_t2_dashes({"itineraries": master}, {"name": "Velmora", "itineraries": master})
+    assert "ITINERARY_DAY_COUNT_MISMATCH" in _validate(fixed["itineraries"], tenant=False)["failure_codes"]
+    assert "ITINERARY_DAY_COUNT_MISMATCH" not in _validate(master, tenant=False)["failure_codes"]
+
+
+def _stored_score(trace: dict):
+    [save] = [args for sql, args in trace["sql"] if "SET rewritten_content" in sql]
+    return save[2]
+
+
+@pytest.mark.parametrize("name", ["clean", "forbidden_and_meta", "grounding_repair", "grounding_unrepaired",
+                                  "writer_retry", "day_dropped", "missing_summary"])
+def test_linear_stores_mains_score(traces, name):
+    """Not just 'never above': with the phantom day deduction gone the linear path stores main's validate score
+    (the S273 trial's 9.75 on a clean 12-day version was that deduction)."""
+    assert _stored_score(traces["linear"][name]) == _stored_score(traces["main"][name]), name

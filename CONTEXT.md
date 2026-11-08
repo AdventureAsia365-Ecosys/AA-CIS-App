@@ -4001,7 +4001,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   "Day N — Title" heading (S1's storage contract and its SQL twin); `written_day_numbers` reads any written form (the
   dash-fixed T2 "Day N: Title" / "Day N · Title", markdown or bold headings, a writer-JSON day list) and is the ONE
   reader of the T2 final contract, the T2 orchestrator's Master slot check and the repair contract's days_kept, so
-  those day-count checks can never disagree.
+  those day-count checks can never disagree. Its per-day twin `written_day_word_counts` (same day set) is the written
+  side of `graph.itinerary_day_gap` when validate_node checks a T2 tenant rewrite (T3 and the linear orchestrator
+  validate the dash-fixed text); S1 / A1 and `final_day_guard` keep the canonical reader. The day oracle
+  (`day_oracle.check`, shadow-only on a tenant rewrite) still reads `output_days`.
   `validate_node` runs the deterministic day oracle
   (`services/quality/day_oracle.py`: sub-day split, duplicate / out-of-order / skipped / extra day, departure
   mid-trip, count vs duration, `SOURCE_DAY_CONTRADICTION` — a source fault, never charged to the writer —

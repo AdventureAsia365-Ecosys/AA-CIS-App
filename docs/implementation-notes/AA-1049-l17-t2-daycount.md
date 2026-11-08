@@ -38,6 +38,20 @@ strict xfail for it). The contract also `str()`-ed a non-string itinerary (a wri
   has the store seam): its two affected `contract_verdict` values (v-clean -> ai_generated, v-elephant ->
   policy_hold) were updated in place and `recorded_on` says so; every other field is as recorded.
 
+- **Review fix (S273): validate_node's day gap on a T2 tenant rewrite reads the same way.** `validate_node` gets the
+  written days from `graph.itinerary_day_gap`, which read only the canonical heading
+  (`itinerary_utils.generated_day_word_counts`). T3 on main (interim profile: the dash fix runs before
+  `_t3_structural_issues`) and the linear orchestrator (`_check`: normalize, then `verify` -> `validate_score`)
+  validate the dash-fixed text, so every multi-day T2 candidate got a phantom `ITINERARY_DAY_COUNT_MISMATCH`
+  (structure -1, 10.0 -> 9.75 in the harness; `ITINERARY_STILL_COMPRESSED` skipped because no day was "present").
+  The S273 trial's stored 9.75 is that deduction. Now `itinerary_day_gap(..., any_form=True)` (set by validate_node
+  when `is_tenant_rewrite`) reads the written side with `day_parse.written_day_word_counts`: the same day set as
+  `written_day_numbers` by construction, each day with its block's body word count (lines after the marker line up
+  to the next marker, title not counted, a range gives each day the block's count, a repeated day keeps its last
+  block). On a canonical text it equals `generated_day_word_counts` (test). S1 / A1 (the code is hard on writer
+  v2), `final_day_guard` (skips tenant rewrites) and the S1 contract's `_s1_day_findings` keep the canonical reader:
+  it is S1's storage contract.
+
 ## Changed
 
 - `services/content_generation/day_parse.py`: `written_itinerary_text`, `written_day_numbers` (+ module docstring).
@@ -47,6 +61,14 @@ strict xfail for it). The contract also `str()`-ed a non-string itinerary (a wri
   12-day trial shape, the harness parity: contract day finding iff the slot check fails on both paths, linear stores
   main's shape); `test_d8_contract_verdict_is_policy_hold` is no longer xfail; golden + replay base updated.
 - CONTEXT.md (day_parse paragraph).
+- Review fix: `day_parse.written_day_word_counts`; `graph.itinerary_day_gap(..., any_form=False)` keyword and
+  validate_node passes `any_form=is_tenant_rewrite`. Tests (section 3 of `test_aa1049_t2_day_reader.py`): same day
+  set as `written_day_numbers` on every shape, equal to the canonical counts on canonical text and after the dash
+  fix, validate_node on the dash-fixed Master has no day mismatch and the canonical score, a dropped day is still
+  found, S1 still reads canonical only, and the linear path stores main's score on 7 harness scenarios (was 9.75 vs
+  10.0 on 5 of them). The replay base `quality_score` of v-clean and v-number updated in place 9.75 -> 10.0 (the
+  replay feeds the stored "Day N: Title" text back as the writer reply, so main's graph validate hit the phantom
+  deduction); `recorded_on` says so.
 
 ## Tradeoffs
 
@@ -57,6 +79,14 @@ strict xfail for it). The contract also `str()`-ed a non-string itinerary (a wri
   catch order and duplicates).
 
 ## Should know
+
+- Review fix scope on the default path: the parity golden is byte-for-byte unchanged (main's graph validates the
+  canonical text; T3's structural check keeps only hard codes, and the day code is soft on a tenant rewrite). A stored
+  default-path score moves only when a tenant-rewrite validate sees non-canonical day headings, e.g. a writer reply
+  whose itinerary is a string already in "Day N:" form (the replay case): it loses the phantom -1 structure point, so
+  in a rare case a version at 6.x could cross the 7.0 needs_review line. That is the intended fix.
+- The day oracle (`day_oracle.check`) still reads `output_days`: on a dash-fixed T2 text it files shadow findings
+  only (never scored or enforced on a tenant rewrite). Follow-up, not in this slice.
 
 - No migration, no prompt change, no paid call. Default T2 status/score/qa unchanged; only the admin-only REPORT
   record changes (fewer false `needs_review` verdicts, so the W2 measurement of the contract on T2 becomes usable).

@@ -1,6 +1,6 @@
 {
  "flags": {},
- "recorded_on": "CIS origin/main dd07872be52b (git archive export, PYTHONPATH=<export>, this branch's replay script over aa1049_t2_harness.replay_versions()); contract_verdict of v-clean and v-elephant re-derived on CIS AA-1049 S273 (the T2 final contract reads days with day_parse.written_day_numbers), every other field as recorded",
+ "recorded_on": "CIS origin/main dd07872be52b (git archive export, PYTHONPATH=<export>, this branch's replay script over aa1049_t2_harness.replay_versions()); contract_verdict of v-clean and v-elephant re-derived on CIS AA-1049 S273 (the T2 final contract reads days with day_parse.written_day_numbers); quality_score of v-clean and v-number re-derived on CIS AA-1049 S273 review fix (validate_node's day gap on a tenant rewrite reads the replayed 'Day N: Title' text with day_parse.written_day_word_counts: the phantom ITINERARY_DAY_COUNT_MISMATCH structure deduction, 9.75 -> 10.0, is gone), every other field as recorded",
  "schema": "aa1049-t2-replay/1",
  "versions": {
   "v-clean": {
@@ -22,7 +22,7 @@
    "policy_hold": false,
    "qa_repair_count": 0,
    "qa_status": "passed",
-   "quality_score": 9.75,
+   "quality_score": 10.0,
    "reviews": [],
    "status": "ai_generated",
    "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d"
@@ -126,7 +126,7 @@
    "policy_hold": false,
    "qa_repair_count": 0,
    "qa_status": "escalated",
-   "quality_score": 9.75,
+   "quality_score": 10.0,
    "reviews": [
     "grounding:novel_numeric_claim"
    ],

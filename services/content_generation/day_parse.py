@@ -23,6 +23,10 @@ one function).
   a code step leaves (see below): the ONE day reader of every day-COUNT check on written text that is not S1's
   canonical page (T2 final contract, the T2 orchestrator's slot check, the repair contract's days_kept).
   `written_itinerary_text(value)` is its value -> text step (a writer-JSON day list becomes canonical blocks).
+* `written_day_word_counts(value)` → `{day: body_word_count}` — the same days as `written_day_numbers` (one entry
+  per day, a repeated day keeps its last block), each with its block's body word count: the written side of the
+  day gap check (`graph.itinerary_day_gap`) on a T2 tenant rewrite, whose text T3 / the linear orchestrator check
+  after the dash fix.
 
 AA-1049 (S273) — why two written-day readers. `output_days` / `canonical_blocks` read ONLY the canonical "Day N —
 Title" heading: that is S1's storage contract (the SQL twin reads the same form), so an S1 page in any other form is
@@ -333,3 +337,30 @@ def written_day_numbers(value) -> list[int]:
     seen = set(days)
     days += [d for d, _title, _first in output_days(t) if d not in seen]
     return days
+
+
+def written_day_word_counts(value) -> dict[int, int]:
+    """AA-1049 (S273 review): {day: body word count} of a written itinerary in any written form — the days
+    ``written_day_numbers`` reads (the same set, by construction), each with the word count of its block's body: the
+    lines after the "Day N" marker line up to the next marker (the heading's own title is not counted, as
+    ``itinerary_utils.generated_day_word_counts`` counts a canonical block), then any canonical block
+    (``canonical_blocks``) the line reader missed. A ranged marker gives each day it covers the block's count; a
+    repeated day keeps its LAST block (dict semantics, as ``parse_canonical_itinerary_days``). On a canonical text
+    whose bodies hold no line-initial "Day N" it equals ``generated_day_word_counts``.
+
+    The written side of ``graph.itinerary_day_gap`` on a T2 tenant rewrite: T3 (main) and the linear orchestrator run
+    validate on the dash-fixed "Day N: Title" text, which the canonical reader reads as no day at all (a phantom
+    ITINERARY_DAY_COUNT_MISMATCH, ITINERARY_STILL_COMPRESSED skipped)."""
+    t = written_itinerary_text(value)
+    lines = t.splitlines()
+    markers = source_day_markers(t)
+    out: dict[int, int] = {}
+    for i, (first, last, idx) in enumerate(markers):
+        end = markers[i + 1][2] if i + 1 < len(markers) else len(lines)
+        words = len(" ".join(lines[idx + 1:end]).split())
+        for d in range(first, last + 1):
+            out[d] = words
+    for b in canonical_blocks(t):
+        for d in b.days:
+            out.setdefault(d, len(b.body.split()))
+    return out
