@@ -83,6 +83,7 @@ from api.routers.admin_crm_console import router as admin_crm_console_router  # 
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
 from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.admin_writing_memory import router as admin_writing_memory_router  # AA-917
+from api.routers.admin_claim_labels import router as admin_claim_labels_router  # AA-1048 W2
 from api.routers.admin_facts import router as admin_facts_router  # AA-814
 from api.routers.admin_reports import router as admin_reports_router  # AA-1003
 from api.routers.admin_quality_funnel import router as admin_quality_funnel_router  # AA-900 W0
@@ -361,6 +362,7 @@ app.include_router(admin_crm_console_router)  # AA-941 — /admin/platform/crm/*
 app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-memory (no include prefix)
+app.include_router(admin_claim_labels_router)  # AA-1048 W2 — /admin/writing-memory/claim-labels (no include prefix)
 app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
 app.include_router(admin_reports_router)  # AA-1003 — /admin/reports (report register, runs; no include prefix)
 app.include_router(admin_quality_funnel_router)  # AA-900 W0 — GET /admin/quality/funnel (CIS-08 snapshot, $0)

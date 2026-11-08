@@ -127,14 +127,24 @@ second judgement of the same claim by the same lens.
 ## Orchestrator steps
 
 All commands run with the repo on `PYTHONPATH`; DB commands as `cis_app` (`DATABASE_URL`), DRY RUN unless `--apply`.
+On Dev nobody holds a `cis_app` login outside the container and `scripts/` is not in the image, so the DB steps go
+through the staff API (S273, `api/routers/admin_claim_labels.py`; the `cli` DB commands stay for a local test DB):
+`A=https://api-cis.lumiguides.it.com/admin/writing-memory/claim-labels` and the headers `X-Admin-Secret` (secret
+`aa-cis/dev/admin-secret`), `x-admin-role: admin`, `content-type: application/json`. Every write is DRY RUN unless the
+body says `"dry_run": false`; answers carry counts and ids only, except `finals`.
 `S` below is the scratch folder `/home/nghiep/projects/AA-Ecosys/.tmp-session/aa1048` (ignored by the root repo).
 Every `--out` / `--thresholds` path inside a git work tree is refused unless it sits in that tree's ignored
 `.tmp-session/` folder and is not tracked (an ignored path elsewhere in a checkout, such as `scripts/` or `*.jsonl` in
 this repo, is refused too), and CI's golden-set text guard fails on any tracked claim-export or claim-label line or
 pretty-printed / YAML claim file.
 
-1. Export: `python -m scripts.aa1048.cli export-fixture <fixture.json> --set CL-1 --writers t9_blog,t9_social --out
-   $S/claims.jsonl` (other objects: the same line format from the DB, with `refs.tour_id` set). Every T2 / T9 line
+1. Export: `python -m scripts.aa1048.cli export-fixture <fixture.json> --set CL-1 --out $S/claims.jsonl` (every
+   writer: a T9-only export of fixture 1.3.0 put 24 of 1,602 claims on the held-out side, every writer 1,289 of
+   6,173; `--split held_out` keeps the held-out lines only). `cli split-plan --export $S/claims.jsonl --live
+   $S/split-plan.json --ids-out $S/heldout-ids.json` (the live file: `curl $A/split-plan`) prints the held-out claims
+   per writer against the R1 target and lists the existing T9 pieces / T2 versions of held-out tours to freeze next
+   (`scripts/aa729/select_samples.py --ids <that list> --base-version 1.3.0`, then export the addendum the same way)
+   with the writer cost of what is still missing (other objects: the same line format from the DB, with `refs.tour_id` set). Every T2 / T9 line
    carries its tour; a sample without one is refused. A fixture frozen before S272 (T9 refs without `tour_id`)
    needs `--tour-map $S/tours.json`: `{piece_id: tour_id}` from a read-only query (`acp_shared.content_piece` joined
    to `acp_shared.angle_gate_request.trip_id`). A recorded producer's verdicts go on the line as `recorded`
@@ -142,19 +152,21 @@ pretty-printed / YAML claim file.
    is measured for exploration only, never enforce.
 2. Panel: three agents, one per lens, each with this brief and `$S/claims.jsonl`; concatenate their outputs into
    `$S/panel.jsonl`.
-3. Import: `cli import $S/panel.jsonl --export $S/claims.jsonl --set CL-1 --version 1.0.0` (DRY RUN), then
-   `--apply`.
+3. Import: `cli payload $S/panel.jsonl --export $S/claims.jsonl --set CL-1 --version 1.0.0 --out $S/payload.json`
+   (validated locally; `--apply` makes a write payload), then `curl -X POST $A/import --data-binary @$S/payload.json`
+   with the headers above. Run the dry payload first; a second identical write answers `unchanged`, a changed label
+   in the same version is refused (409). Local test DB: `cli import ... [--apply]`.
    The import consolidates: `agreed` (3 lenses, one class, one label, none unsure), `disputed` (anything else), and a
    reproducible random 20% of the agreed claims drawn as `audit` (critic F14).
-4. Queue: `cli enqueue --set CL-1 --version 1.0.0 --apply` puts every disputed and audit claim into the disagreement
+4. Queue: `curl -X POST $A/CL-1/1.0.0/enqueue -d '{"dry_run": false}'` (or `cli enqueue ... --apply`) puts every disputed and audit claim into the disagreement
    queue (source `golden_claim`, admin Writing memory page). The tech lead resolves each: `judge_right` (the panel's
    common label stands), `human_right` (it flips), `unclear` (stays unsure); or imports a tech-lead file (step 3 format).
-5. Pull: `cli pull-resolutions --set CL-1 --version 1.0.0 --apply` writes the resolutions as tech-lead rows.
-6. Report: `cli report --set CL-1 --version 1.0.0`: agreement per class, the panel error rate on the audit draw,
+5. Pull: `curl -X POST $A/CL-1/1.0.0/pull-resolutions -d '{"dry_run": false}'` (or `cli pull-resolutions`) writes the resolutions as tech-lead rows.
+6. Report: `curl $A/CL-1/1.0.0/report` (or `cli report`): counts per label / labeller / lens / state / split, agreement per class, the panel error rate on the audit draw,
    contradictions (the bar is 0). Fix contradictions with tech-lead rows before any measurement.
-7. Manifest: `cli manifest ...` into the root repo (ids, counts, digest).
-8. Measure: `cli finals ... --out $S/finals.jsonl` (tech-lead labels; add `--audit-ok` only after the audit draw
-   is adjudicated and its error rate accepted). Save `cli report` output as `$S/report.json`, then
+7. Manifest: the `manifest` part of the report (or `cli manifest ...`) into the root repo (ids, counts, digest).
+8. Measure: `curl "$A/CL-1/1.0.0/finals" | jq -c '.finals[]' > $S/finals.jsonl` (or `cli finals ... --out`; tech-lead labels; add `--audit-ok` only after the audit draw
+   is adjudicated and its error rate accepted: `?audit_ok=true`). Save `cli report` output as `$S/report.json`, then
    `cli detectors --export $S/claims.jsonl --finals $S/finals.jsonl --agreement $S/report.json --split train --out
    $S/rows-train.json` (exploration, label-budget rates) and the same with `--split held_out --out
    $S/rows.json --thresholds $S/rows.yaml` (the record that may pass), `cli rederive <fixture.json> --finals
