@@ -8,8 +8,10 @@ the store step a free offline replay can swap for a dry one. Same seam as the T9
   replay builds its input here, never with a copy of a builder.
 - the store step: the linear orchestrator's ``save_version`` (``T2_ORCHESTRATOR=linear``). In production it writes the
   row; inside ``use_store(DryStore())`` it hands the row to the dry store instead, which stamps the final contract with
-  the sha of the text it would store (``final_contract.stamp_stored``) and touches no database. The default T2 path
-  (main's ``_rewrite_and_save``) is NOT routed through the seam: it stays byte-equal to main.
+  the sha of the text it would store (``final_contract.stamp_stored``) and writes nothing to the database: the resume
+  checkpoints (``save_checkpoint`` / ``load_checkpoint``) and the review row go to the dry store too. The inputs a run
+  reads (SEO, writing memory) still come from the pool the caller passes (a replay passes an in-memory one). The
+  default T2 path (main's ``_rewrite_and_save``) is NOT routed through the seam: it stays byte-equal to main.
 
 The active store is a ContextVar: a replay sets it for its own task only; production never sets it.
 """
@@ -51,11 +53,13 @@ def production_input(row: Any) -> dict:
 
 class DryStore:
     """Records what the store step would write (no DB). ``rows[i]`` = the save fields + ``stored_sha`` + the stamped
-    ``final_contract`` record (``sha_match``: stored text == gated text); ``reviews`` = the review rows it would add."""
+    ``final_contract`` record (``sha_match``: stored text == gated text); ``reviews`` = the review rows it would add;
+    ``checkpoints[version_id]`` = the last resume checkpoint (budget + best candidate) the run would persist."""
 
     def __init__(self) -> None:
         self.rows: list[dict] = []
         self.reviews: list[dict] = []
+        self.checkpoints: dict[str, dict] = {}
 
     def save(self, row: dict) -> dict:
         stored_sha = _fc.tour_text_sha(row.get("rewritten"))

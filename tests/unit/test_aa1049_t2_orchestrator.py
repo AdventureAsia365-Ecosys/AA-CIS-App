@@ -12,7 +12,8 @@ and the offline T2 replay.
    simulated job retry; the status is never more permissive than main's rule; bad repair outputs are reverted.
 3. **D8 (elephant riding).** Already on main (S271 W0): the missing tests (both modes, the stored text verbatim, the
    contract verdict).
-4. **T2 dry store + replay.** production_input / DryStore, and the declared-diff replay over a synthetic version set.
+4. **T2 dry store + replay.** production_input / DryStore, and the declared-diff replay over a synthetic version set,
+   diffed against the replay of the same set RECORDED ON CIS MAIN (aa1049_t2_replay_main_base.json).
 
 Invented tours and places only. No DB, no LLM, no network.
 """
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -124,10 +125,18 @@ def test_linear_writer_calls_stay_within_the_budget(linear_traces):
 
 
 def test_linear_is_never_more_permissive_than_main(linear_traces):
+    """Status, stored score and qa_status: never looser than main's for the same scenario."""
     for name, t in linear_traces.items():
         status = "needs_review" if name == "elephant" else _save(t)[1]
         if status == "ai_generated":
             assert _MAIN_STATUS[name] == "ai_generated", name
+        if name == "elephant":
+            assert t == GOLDEN[name]
+            continue
+        lin, main = _save(t), _save(GOLDEN[name])
+        assert lin[2] is None or (main[2] is not None and lin[2] <= main[2]), (name, lin[2], main[2])
+        if main[3] == "escalated":
+            assert lin[3] == "escalated", name
 
 
 def test_linear_scripted_paths(linear_traces):
@@ -162,6 +171,120 @@ def test_the_voice_judge_is_report_only():
     assert "t2_judge" not in _stages(err)
 
 
+def test_the_voice_judge_runs_off_the_event_loop():
+    import threading
+    seen = []
+
+    def spy(st):
+        from services.content_generation import judge_node as jn
+        real = jn.judge_node
+
+        def wrapped(state):
+            seen.append(threading.current_thread() is threading.main_thread())
+            return real(state)
+        st.enter_context(patch.object(jn, "judge_node", wrapped))
+    t = h.run("clean", env=LINEAR, extra=spy)
+    assert seen == [False] and _save(t)[7]["t2_orchestrator"]["budget"]["voice"] == 1
+
+
+def test_the_meta_regenerate_counts_its_real_attempts_and_cost():
+    """T3's meta regenerate may bill up to META_ATTEMPTS t2_flag_fix calls (flag_fix's loop) without reporting them:
+    the budget counts the calls really billed and their cost, and never lets it run past the repair cap."""
+    from services.content_generation import t2_orchestrator as o
+    assert o.META_ATTEMPTS == 3
+    short = "Velmora walks."                                  # never lands in band: every attempt is billed
+    sc = {"script": {"t2_generate": [h.writer_draft(seo_meta="Too short.")], "t2_judge": [h.judge_reply()],
+                     "t2_flag_fix": [{"seo_meta": short}]}}
+    seen = []
+
+    def spy(st):
+        real = o.plan
+
+        def p(codes):
+            out = real(codes)
+            seen.append(out)
+            return out
+        st.enter_context(patch.object(o, "plan", p))
+        st.enter_context(patch.object(o, "normalize", lambda gen, bundle: 0))   # keep the short meta short
+    with patch.dict(h.SCENARIOS, {"meta_short": sc}):
+        t = h.run("meta_short", env=LINEAR, extra=spy)
+    assert any("regenerate_section" in p for p in seen), seen
+    rec = _save(t)[7]["t2_orchestrator"]
+    flag_fix = _stages(t).count("t2_flag_fix")
+    assert rec["meta_attempts"] == 3 and flag_fix >= 3
+    assert rec["budget"]["repair"] == flag_fix <= 3          # the meta's 3 calls used the whole repair budget
+    # writer + 3 meta attempts (+ the judge) were charged
+    assert rec["budget"]["usd"] == pytest.approx(0.001 * (rec["budget"]["writer"] + flag_fix + rec["budget"]["voice"]))
+
+
+def test_a_meta_regenerate_that_lands_first_time_refunds_the_unused_attempts():
+    import asyncio
+
+    from services.content_generation import t2_orchestrator as o
+    from shared.llm_client.call_log import record_call_sync
+
+    class TP:
+        @staticmethod
+        def _t3_meta_regenerate(*_a):
+            record_call_sync(stage="t2_flag_fix", role="writer", model="m", cost_usd=0.002)
+            return "new meta", None
+    from types import SimpleNamespace
+    run = o.Run(bundle=SimpleNamespace(tour_dict={}, brand_rules={}, tenant_id="t", source_texts=[]),
+                budget=o.VersionBudget())
+    with patch("shared.llm_client.call_log.record_call", AsyncMock(return_value=None)):
+        out = asyncio.run(o._meta_regenerate(run, TP, {}))
+    assert out == ("new meta", None)
+    assert run.budget.repair == 1 and run.meta_attempts == 1 and run.budget.usd == pytest.approx(0.002)
+
+
+def test_the_contract_compares_the_stored_text_with_the_gated_text():
+    """The contract's gated sha is the selected draft exactly as verify checked it: a code step that edits the text
+    AFTER verify is a POST_GATE_EDIT finding (the clean scenario has none)."""
+    from services.content_generation import t2_orchestrator as o
+
+    def tamper(st):
+        real = o.brand_report
+
+        def edit_after_gate(chosen, bundle):
+            chosen["generated"]["summary"] += " Edited after the gate."
+            return real(chosen, bundle)
+        st.enter_context(patch.object(o, "brand_report", edit_after_gate))
+    clean = _save(h.run("clean", env=LINEAR))[8]["final_contract"]
+    assert "POST_GATE_EDIT" not in json.dumps(clean) and clean["sha_match"] is True
+    edited = _save(h.run("clean", env=LINEAR, extra=tamper))[8]["final_contract"]
+    assert "POST_GATE_EDIT" in json.dumps(edited)
+
+
+def test_the_store_step_stamps_the_sha_of_the_text_it_writes():
+    """sha_match compares the text the contract checked with the text save_version writes, not a text with itself."""
+    import asyncio
+
+    from services.content_generation import t2_orchestrator as o
+    from services.jobs import t2_rewrite_job as job
+    td = job.source_tour_dict(h.MASTER_ROW)
+    checked = o.stored_text(h.writer_draft(), td)
+    qa = {"passed": True, "attempts": 0, "structural_issues": [], "grounding_issues": []}
+    contract = job.final_contract_record(checked, td, h.MASTER_ROW, exit="done", actual="ai_generated", qa=qa,
+                                         score=9.0, gated=checked)
+    assert contract["sha_match"] is True
+    for text, want in ((checked, True), ({**checked, "summary": "Changed after the contract."}, False)):
+        conn = h.Conn()
+        asyncio.run(o.save_version(h.pool(conn), h.VERSION, rewritten=text, status="ai_generated", quality_score=9.0,
+                                   qa=qa, generation_meta=None, judge_breakdown={"final_contract": contract},
+                                   final_contract=contract))
+        [args] = [a for sql, a in conn.executed if "SET rewritten_content" in sql]
+        assert json.loads(args[8])["final_contract"]["sha_match"] is want
+
+
+def test_config_fp_records_the_switch_only_when_it_changes_the_path():
+    from services.writing_memory import config_fp
+    for env in ({"T2_ORCHESTRATOR": "graph"}, {"T2_ORCHESTRATOR": "on"}, {"T2_ORCHESTRATOR": " linear2"},
+                {"T2_ORCHESTRATOR": "linear", "T2_INTERIM": "off"}):
+        assert "T2_ORCHESTRATOR" not in config_fp.mode_flags("t2", env), env
+    assert config_fp.mode_flags("t2", {"T2_ORCHESTRATOR": "linear"}) == {"T2_ORCHESTRATOR": "linear"}
+    assert config_fp.mode_flags("t2", {"T2_ORCHESTRATOR": "graph", "T2_FACTS": "on"}) == {"T2_FACTS": "on"}
+
+
 def test_a_held_fallback_writer_is_needs_review_in_linear_only():
     def held(st):
         st.enter_context(patch("services.quality.route_guard.t2_mark", return_value={"held": True, "entries": []}))
@@ -181,18 +304,107 @@ def test_a_job_retry_resumes_from_the_stored_best_candidate():
     first = FailingSave()
     with pytest.raises(RuntimeError, match="db gone"):
         h.run("clean", env=LINEAR, conn=first)
-    [cp] = [args for sql, args in first.executed if "SET generation_meta" in sql]
-    meta = cp[0]
+    meta = _last_checkpoint(first)
+    # the voice call was counted before it was sent: the retry pays neither the writer nor the judge again
+    assert meta["t2_orchestrator"]["checkpoint"]["budget"]["voice"] == 1
 
-    class Resume(h.Conn):
-        async def fetchval(self, sql, *args):
-            self.executed.append((sql, args))
-            return meta if "generation_meta" in sql else None
-
-    second = h.run("clean", env=LINEAR, conn=Resume())
-    assert "t2_generate" not in _stages(second)
+    second = h.run("clean", env=LINEAR, conn=_Resume(meta))
+    assert "t2_generate" not in _stages(second) and "t2_judge" not in _stages(second)
     rec = _save(second)[7]["t2_orchestrator"]
     assert rec["resumed"] is True and rec["budget"]["writer"] == 1 and _save(second)[1] == "ai_generated"
+
+
+def _last_checkpoint(conn) -> dict:
+    cps = [args for sql, args in conn.executed if "SET generation_meta" in sql and "rewritten_content" not in sql]
+    assert cps, "no checkpoint was persisted"
+    return json.loads(cps[-1][0])
+
+
+class _Resume(h.Conn):
+    def __init__(self, meta: dict):
+        super().__init__()
+        self.meta = json.dumps(meta)
+
+    async def fetchval(self, sql, *args):
+        self.executed.append((sql, args))
+        return self.meta if "generation_meta" in sql else None
+
+
+def test_a_billed_call_is_persisted_before_it_is_sent():
+    """Every billed call is counted on the pending version BEFORE the request: the first checkpoint precedes the
+    first writer request (no candidate yet, so it carries the budget only)."""
+    class Spy(h.Conn):
+        pass
+    conn = Spy()
+    calls_at_first_cp = []
+
+    def spy(st):
+        from services.content_generation import t2_orchestrator as o
+        real = o.save_checkpoint
+
+        async def wrapped(pool, vid, budget, best):
+            if not calls_at_first_cp:
+                calls_at_first_cp.append((budget.writer, best))
+            return await real(pool, vid, budget, best)
+        st.enter_context(patch.object(o, "save_checkpoint", wrapped))
+    t = h.run("clean", env=LINEAR, conn=conn, extra=spy)
+    assert calls_at_first_cp == [(1, None)]
+    assert _stages(t) == ["t2_generate", "t2_judge"]
+
+
+def test_two_empty_writes_then_a_job_retry_make_no_new_writer_call():
+    """The first write returns nothing usable twice: the run raises (the job retries). The budget was persisted before
+    each call, so the retry starts with writer=2 and makes NO writer call: at most 2 t2_generate over both attempts."""
+    sc = {"script": {"t2_generate": ["not json at all"], "t2_judge": [h.judge_reply()]}}
+    from services.content_generation import t2_orchestrator as o
+    writes: list[int] = []
+
+    def count(st):
+        real = o.write
+
+        def spy(*a, **k):
+            writes.append(1)
+            return real(*a, **k)
+        st.enter_context(patch.object(o, "write", spy))
+    first = h.Conn()
+    with patch.dict(h.SCENARIOS, {"empty_twice": sc}):
+        with pytest.raises(RuntimeError, match="no usable draft"):
+            h.run("empty_twice", env=LINEAR, conn=first, extra=count)
+        assert len(writes) == 2
+        meta = _last_checkpoint(first)
+        cp = meta["t2_orchestrator"]["checkpoint"]
+        assert cp["budget"]["writer"] == 2 and "best" not in cp
+        retry = _Resume(meta)
+        with pytest.raises(RuntimeError, match="no usable draft"):
+            h.run("empty_twice", env=LINEAR, conn=retry, extra=count)
+    assert len(writes) == 2                       # the retry made no writer call
+    assert not [s for s, _ in retry.executed if "SET rewritten_content" in s]
+
+
+def test_the_writer_call_is_checkpointed_before_verify():
+    """A crash in verify (Jev, validate, T3 checks) right after the writer returned: the checkpoint already holds the
+    spent call AND its cost, so the retry neither writes again nor under-counts the spend."""
+    from services.content_generation import t2_orchestrator as o
+
+    def crash(st):
+        st.enter_context(patch.object(o, "verify", side_effect=RuntimeError("verify crashed")))
+    conn = h.Conn()
+    with pytest.raises(RuntimeError, match="verify crashed"):
+        h.run("clean", env=LINEAR, conn=conn, extra=crash)
+    budget = _last_checkpoint(conn)["t2_orchestrator"]["checkpoint"]["budget"]
+    assert budget["writer"] == 1 and budget["usd"] == pytest.approx(0.001)
+
+
+def test_a_budget_only_checkpoint_loads_and_resumes_without_a_best():
+    import asyncio
+
+    from services.content_generation import t2_orchestrator as o
+    conn = _Resume({"t2_orchestrator": {"version": o.RECORD_VERSION,
+                                        "checkpoint": {"budget": {"writer": 1, "repair": 0, "voice": 0}}}})
+    cp = asyncio.run(o.load_checkpoint(h.pool(conn), "00000000-0000-0000-0000-000000000001"))
+    assert cp == {"budget": {"writer": 1, "repair": 0, "voice": 0}}
+    bad = _Resume({"t2_orchestrator": {"checkpoint": {"best": "x"}}})
+    assert asyncio.run(o.load_checkpoint(h.pool(bad), "00000000-0000-0000-0000-000000000001")) is None
 
 
 def test_a_resumed_run_with_the_writer_budget_spent_never_writes_again():
@@ -317,11 +529,30 @@ def test_the_dry_store_records_the_linear_save_and_touches_no_table():
     def dry(st):
         st.enter_context(t2_store.use_store(store))
     t = h.run("grounding_unrepaired", env=LINEAR, extra=dry)
-    assert not [s for s, _ in t["sql"] if "SET rewritten_content" in s or "review_queue" in s]
+    # nothing is written and no checkpoint is read or written on the pool (only the input lookups read it)
+    assert not [s for s, _ in t["sql"] if s.split(" ")[0] in ("UPDATE", "INSERT", "DELETE")]
+    assert not [s for s, _ in t["sql"] if "generation_meta" in s or "review_queue" in s]
     [row] = store.rows
     assert row["status"] == "needs_review" and row["final_contract"]["sha_match"] is True
     assert row["stored_sha"] == row["final_contract"]["stored_sha"]
     assert store.reviews and t2_store.active() is None
+    # the checkpoint went to the dry store
+    [cp] = store.checkpoints.values()
+    assert cp["budget"]["writer"] == 1 and cp["best"]["via"] in ("initial", "sentence_repair")
+
+
+def test_a_dry_checkpoint_never_reaches_a_real_pending_version():
+    """A dry run against a pool must not leave a checkpoint the next real job would resume from."""
+    from services.content_generation import t2_store
+    store = t2_store.DryStore()
+    real = h.Conn()
+
+    def dry(st):
+        st.enter_context(t2_store.use_store(store))
+    h.run("clean", env=LINEAR, extra=dry, conn=real)
+    assert not [s for s, _ in real.executed if "generation_meta" in s]
+    after = h.run("clean", env=LINEAR)
+    assert _stages(after)[0] == "t2_generate"        # the next real job writes; nothing to resume from
 
 
 def test_production_input_uses_the_production_builders():
@@ -334,39 +565,44 @@ def test_production_input_uses_the_production_builders():
     assert ele["policy_hold_hits"][0]["where"] == "source"
 
 
-def _stored(d: dict) -> dict:
-    d = dict(d)
-    d["itineraries"] = "\n\n".join(f"Day {x['day']}: {x['title']}\n{x['body']}" for x in d["itineraries"])
-    d.pop("seo_keywords_used", None)
-    return {**d, "status": "done"}
-
-
 def _versions() -> list[dict]:
-    jb = {"brand_fit": 8.0, "cross_brand_distinct": 8.0, "mission_present": True, "feedback": "ok"}
-    out = []
-    for name, over in (("clean", {}), ("number", {"summary": h._SUMMARY_412}),
-                       ("days", {"itineraries": h.writer_draft()["itineraries"][:2]}), ("missing", {"summary": ""})):
-        out.append({"id": f"v-{name}", "tenant_id": h.TENANT, "status": "ai_generated", "quality_score": 9.0,
-                    "qa_status": "passed", "qa_repair_count": 0, "rewritten_content": _stored(h.writer_draft(**over)),
-                    "judge_breakdown": jb if name != "missing" else None, "pt": dict(h.MASTER_ROW),
-                    "brand_rules": h.BRAND_RULES})
-    out.append({"id": "v-elephant", "tenant_id": h.TENANT, "rewritten_content": {}, "brand_rules": h.BRAND_RULES,
-                "pt": {**h.MASTER_ROW, "src_itineraries": "Day 2: elephant riding"}})
-    return out
+    return h.replay_versions()
+
+
+MAIN_BASE = json.loads((Path(__file__).parent / "fixtures" / "aa1049_t2_replay_main_base.json")
+                       .read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def replay_runs():
+    """The branch's replays (defaults and linear) over the synthetic version set, and the replay of the same set
+    RECORDED ON CIS MAIN (aa1049_t2_replay_main_base.json: the script run with PYTHONPATH=<a git-archive export of
+    origin/main>, which has no orchestrator and no T2 store seam). Re-record it, like the parity golden, only on a
+    commit where main's T2 behaviour changes on purpose:
+    ``PYTHONPATH=<main export> python <branch>/scripts/quality/replay_aa1049_t2.py --versions <replay_versions() as
+    aa1049-t2-versions/1 JSON> --out <base>``."""
     from scripts.quality import replay_aa1049_t2 as rp
     vs = _versions()
-    return rp, rp.run(vs), rp.run(vs), rp.run(vs, {"T2_ORCHESTRATOR": "linear"})
+    return rp, MAIN_BASE, rp.run(vs), rp.run(vs, {"T2_ORCHESTRATOR": "linear"})
 
 
-def test_replay_defaults_show_zero_diffs(replay_runs):
+def test_the_main_base_was_recorded_without_the_branch_code():
+    assert MAIN_BASE["recorded_on"].startswith("CIS origin/main")
+    assert MAIN_BASE["flags"] == {}
+    # main has no T2 store seam: the replay's input builder fell back to the job's builders (no FactSheet sha)
+    assert all(v["input"]["fs_sha"] is None for v in MAIN_BASE["versions"].values())
+    assert set(MAIN_BASE["versions"]) == {v["id"] for v in _versions()}
+
+
+def test_replay_defaults_equal_main(replay_runs):
+    """The branch with every switch at its default against the replay recorded on main: 0 declared, 0 undeclared,
+    0 MISS, 0 missing (the misses are the same cassette gaps on both sides, counted, never a pass)."""
     rp, base, branch, _ = replay_runs
     d = rp.diff(base, branch, opt_in=False)
-    assert d["declared"] == {} and d["undeclared"] == [] and d["missing"] == []
-    assert d["misses"] == {"t2_flag_fix": 1, "t2_judge": 3, "t2_brand_audit": 1}   # counted, never a pass
+    assert d["declared"] == {} and d["undeclared"] == [] and d["missing"] == [] and d["miss"] == []
+    assert rp.exit_code(d) == 0
+    assert d["misses"] == d["base_misses"] == {"t2_flag_fix": 1, "t2_judge": 3, "t2_brand_audit": 1}
+    assert d["cassette_hits"] == d["base_cassette_hits"] > 0
     # the same defaults with --opt-in still allow no declared id (the switch is off)
     assert rp.diff(base, branch, opt_in=True)["declared"] == {}
 
@@ -375,32 +611,67 @@ def test_replay_classifies_opt_in_diffs_only_under_opt_in(replay_runs):
     rp, base, _, linear = replay_runs
     d = rp.diff(base, linear, opt_in=True)
     assert d["undeclared"] == [], d["undeclared"]
-    assert d["declared"]["D-t2-status"] == 2          # the number and the dropped day: ai_generated -> needs_review
+    assert d["declared"]["D-t2-status"] == 1          # the dropped day: ai_generated -> needs_review
     assert set(d["declared"]) <= set(rp.DECLARED)
+    # a version whose difference may come from a cassette miss is MISS (re-record), never declared: the number
+    # (linear's sentence repair missed) and the missing summary (main's brand-audit fix missed)
+    assert {m["id"] for m in d["miss"]} == {"v-number", "v-missing"}
+    assert rp.exit_code(d) == 3
     no = rp.diff(base, linear, opt_in=False)
     assert no["declared"] == {} and no["undeclared"]
     assert all(u.get("why") == "opt-in diff without --opt-in" for u in no["undeclared"])
 
 
-def test_replay_never_declares_a_more_permissive_status(replay_runs):
+def test_replay_never_declares_a_more_permissive_outcome(replay_runs):
+    """A looser status, a score above main's or where main stored none, a QA pass main did not give, a review row
+    with fewer findings: never declared, and never hidden in the MISS bucket."""
     rp, base, _, linear = replay_runs
     bad = json.loads(json.dumps(linear))
-    bad["versions"]["v-missing"]["status"] = "ai_generated"
-    bad["versions"]["v-missing"]["qa_status"] = "passed"
+    bad["versions"]["v-missing"].update(status="ai_generated", qa_status="passed")     # a MISS version
+    bad["versions"]["v-number"].update(reviews=[])                                    # a MISS version
+    bad["versions"]["v-days"].update(quality_score=99.0)
+    assert base["versions"]["v-number"]["reviews"]
     d = rp.diff(base, bad, opt_in=True)
-    assert {(u["id"], u["field"]) for u in d["undeclared"]} == {("v-missing", "status"), ("v-missing", "qa_status")}
+    got = {(u["id"], u["field"]) for u in d["undeclared"]}
+    assert {("v-missing", "status"), ("v-missing", "qa_status"), ("v-days", "quality_score"),
+            ("v-number", "reviews")} <= got
+    assert rp.exit_code(d) == 1
+
+
+def test_replay_never_declares_a_score_where_main_stored_none():
+    from scripts.quality import replay_aa1049_t2 as rp
+    assert rp.more_permissive("quality_score", {"quality_score": None}, {"quality_score": 7.5})
+    assert not rp.more_permissive("quality_score", {"quality_score": 9.0}, {"quality_score": None})
+    assert rp._declared("quality_score", {"quality_score": None}, {"quality_score": 7.5}) is None
+    assert rp._declared("qa_status", {"qa_status": "escalated"}, {"qa_status": "passed"}) is None
+    assert rp._declared("reviews", {"reviews": ["a"]}, {"reviews": ["a", "b"]}) == "D-t2-review"
+    assert rp._declared("reviews", {"reviews": ["a", "b"]}, {"reviews": ["a"]}) is None
+
+
+def test_a_miss_on_a_report_only_judge_does_not_make_a_miss_row():
+    from scripts.quality import replay_aa1049_t2 as rp
+    v = {"status": "ai_generated", "misses": {"t2_judge": 1}}
+    base = {"flags": {}, "versions": {"x": {**v, "llm_stages": {"t2_judge": 3}}}}
+    branch = {"flags": {"T2_ORCHESTRATOR": "linear"}, "versions": {"x": {**v, "llm_stages": {"t2_judge": 1}}}}
+    assert rp.diff(base, branch, opt_in=True)["miss"] == []
+    off = {"flags": {"T2_INTERIM": "off"}, "versions": base["versions"]}
+    assert rp.diff(off, branch, opt_in=True)["miss"]      # the judge gates the status then: a miss row
 
 
 def test_replay_cli_exit_codes(tmp_path):
     from scripts.quality import replay_aa1049_t2 as rp
     vf = tmp_path / "v.json"
-    vf.write_text(json.dumps({"schema": rp.VERSIONS_SCHEMA, "versions": _versions()[:2]}, default=str))
+    vf.write_text(json.dumps({"schema": rp.VERSIONS_SCHEMA, "versions": _versions()[:3]}, default=str))
     base, br, rep = tmp_path / "b.json", tmp_path / "r.json", tmp_path / "r.md"
     assert rp.main(["--versions", str(vf), "--out", str(base)]) == 0
     assert rp.main(["--versions", str(vf), "--out", str(br), "--base", str(base), "--report", str(rep)]) == 0
     assert "undeclared: 0" in rep.read_text()
     assert rp.main(["--versions", str(vf), "--out", str(br), "--base", str(base), "--linear"]) == 1
-    assert rp.main(["--versions", str(vf), "--out", str(br), "--base", str(base), "--linear", "--opt-in"]) == 0
+    # with --opt-in the dropped day is declared and the only row left is a MISS (v-number: a sentence-repair cassette
+    # miss): exit 3
+    assert rp.main(["--versions", str(vf), "--out", str(br), "--base", str(base), "--linear", "--opt-in",
+                    "--report", str(rep)]) == 3
+    assert "MISS v-number" in rep.read_text()
 
 
 def test_replay_runs_without_the_seam_on_a_main_checkout(monkeypatch):

@@ -25,13 +25,16 @@ Two runs make the diff: one on a main checkout (``--out base.json``), one on the
     PYTHONPATH=<branch>        python <branch>/scripts/quality/replay_aa1049_t2.py --versions v.json \\
         --base base.json --out branch.json --report report.md [--opt-in]
 
-Every difference is a DECLARED diff (one id per change the T2 train makes on purpose, checked against its shape) or
-UNDECLARED. Exit 1 when any difference is undeclared or a version is missing on one side. Defaults vs opt-in (S272):
+Every difference is a DECLARED diff (one id per change the T2 train makes on purpose, checked against its shape),
+UNDECLARED, or MISS (the version met an outcome-moving cassette miss on either side: the difference may be the
+cassette's; re-record it). Exit 1 when any difference is undeclared or a version is missing on one side, 3 when the
+only non-equal rows are MISS rows, 0 otherwise. Defaults vs opt-in (S272):
 with every AA-1049 switch at its default (``T2_ORCHESTRATOR`` unset = main's graph path) the branch must equal main:
 0 declared and 0 undeclared diffs. The declared ids belong to ``T2_ORCHESTRATOR=linear`` only, and a diff is labelled
 with one only when the run was started with ``--opt-in`` AND the switch is on in the run (recorded under "flags").
-A branch status MORE permissive than the base (base needs_review, branch ai_generated) is never declared: it is the
-"no gate more permissive" invariant.
+A branch status MORE permissive than the base (base needs_review, branch ai_generated), a stored score above the
+base's (or where the base stored none), a QA pass the base did not give and a review row with fewer findings are never
+declared: the "no gate more permissive" invariant.
 
 EXPORT (one JSON object, read-only SQL by the orchestrator; never committed: tour text): ``{"schema":
 "aa1049-t2-versions/1", "versions": [{"id", "tenant_id", "status", "quality_score", "qa_status", "qa_repair_count",
@@ -97,7 +100,7 @@ def _json(v: Any, default):
 
 
 class Cassette:
-    """``LLMClient.generate`` answered from one stored version."""
+    """``LLMClient.generate`` answered from one stored version (``answer``)."""
 
     def __init__(self, version: dict):
         self.writer = _writer_reply(_json(version.get("rewritten_content"), {}))
@@ -108,7 +111,8 @@ class Cassette:
         self.calls: list[str] = []
         self.misses: list[str] = []
 
-    def generate(self, request) -> SimpleNamespace:
+    def answer(self, request) -> SimpleNamespace:
+        """The reply ``LLMClient.generate`` returns in the replay (no model call, nothing billed)."""
         stage = getattr(request, "stage", None) or "?"
         self.calls.append(stage)
         if stage == "t2_generate":
@@ -202,7 +206,7 @@ def replay_version(version: dict, env: dict) -> dict:
     with ExitStack() as st:
         st.enter_context(patch.dict(os.environ, {**clean_env, **env}, clear=True))
         st.enter_context(patch.object(LLMClient, "__init__", lambda self, *a, **k: None))
-        st.enter_context(patch.object(LLMClient, "generate", lambda self, req: tape.generate(req)))
+        st.enter_context(patch.object(LLMClient, "generate", lambda self, req: tape.answer(req)))
         st.enter_context(patch.object(call_log, "record_call", AsyncMock(return_value=None)))
         st.enter_context(patch.object(call_log, "record_calls", AsyncMock(return_value=None)))
         st.enter_context(patch.object(flag_fix_node, "_write_lessons_safe", lambda *a, **k: None))
@@ -236,6 +240,7 @@ def replay_version(version: dict, env: dict) -> dict:
     out["reviews"] = sorted({str(d.get("check_id")) for r in reviews for d in (_json(r[4], []) or [])})
     out["llm_stages"] = dict(Counter(tape.calls))
     out["misses"] = dict(Counter(tape.misses))
+    out["cassette_hits"] = len(tape.calls) - len(tape.misses)
     out["judge_miss"] = tape.judge is None
     return out
 
@@ -250,8 +255,26 @@ def run(versions: list[dict], env: Optional[dict] = None) -> dict:
 # ── the diff ────────────────────────────────────────────────────────────────────────────────────
 
 
+def more_permissive(field: str, b: dict, r: dict) -> bool:
+    """The branch is looser than the base on this field: a status the base did not give (ai_generated), a stored score
+    above the base's or where the base stored none, a QA pass the base did not give, a review row with fewer
+    findings. Never declared, and never hidden in the MISS bucket."""
+    bv, rv = b.get(field), r.get(field)
+    if field == "status":
+        return rv == "ai_generated" and bv != "ai_generated"
+    if field == "quality_score":
+        return rv is not None and (bv is None or rv > bv)
+    if field == "qa_status":
+        return rv == "passed" and bv != "passed"
+    if field == "reviews":
+        return not set(rv or []) >= set(bv or [])
+    return False
+
+
 def _declared(field: str, b: dict, r: dict) -> Optional[str]:
     """The declared id of one field difference, None when its shape is not a declared one."""
+    if more_permissive(field, b, r):
+        return None
     if field == "status":
         return "D-t2-status" if (b.get("status"), r.get("status")) == ("ai_generated", "needs_review") else None
     if field == "llm_stages":
@@ -260,22 +283,42 @@ def _declared(field: str, b: dict, r: dict) -> Optional[str]:
               and rs.get("t2_brand_audit", 0) == 0 and rs.get("t2_flag_fix", 0) <= max(3, bs.get("t2_flag_fix", 0)))
         return "D-t2-calls" if ok else None
     if field in ("stored_sha", "qa_repair_count", "quality_score", "qa_status"):
-        if field == "quality_score" and None not in (b.get(field), r.get(field)) and r[field] > b[field]:
-            return None   # a score above main's is never declared
-        if field == "qa_status" and (b.get(field), r.get(field)) == ("escalated", "passed"):
-            return None   # a QA pass main did not give is never declared
         return "D-t2-select"
     if field == "reviews":
-        return "D-t2-review"
+        return "D-t2-review"   # more enforce findings than main's (fewer is more_permissive)
     if field == "contract_verdict":
         return "D-t2-contract"
     return None
 
 
+# Stages whose cassette miss cannot move a stored outcome: the T2 interim judge is report-only (its verdict never feeds
+# the status, the score, qa or the stored text), so its miss is counted but does not make a diff a MISS. Only while the
+# interim profile is on in the run (T2_INTERIM unset or on).
+NEUTRAL_MISS_STAGES = ("t2_judge",)
+
+
+def _interim_on(flags: dict) -> bool:
+    return str((flags or {}).get("T2_INTERIM", "")).strip().lower() not in ("0", "false", "off", "no")
+
+
+def _outcome_misses(v: dict, flags: dict) -> dict:
+    neutral = NEUTRAL_MISS_STAGES if _interim_on(flags) else ()
+    return {k: n for k, n in (v.get("misses") or {}).items() if k not in neutral and n}
+
+
+def _sum(side: dict, key: str) -> dict:
+    return dict(sum((Counter(v.get(key) or {}) for v in side["versions"].values()), Counter()))
+
+
 def diff(base: dict, branch: dict, *, opt_in: bool) -> dict:
+    """Every field difference is DECLARED, UNDECLARED or MISS. MISS: the version met a cassette miss that can move its
+    outcome (any stage but a report-only one, ``NEUTRAL_MISS_STAGES``) on EITHER side, so the difference may be the
+    cassette's, not the code's: it needs a re-recorded cassette and is counted in neither the declared nor the equal
+    numbers (a non-pass bucket: exit 3). An input difference is always undeclared (it reads no cassette)."""
     linear_on = (branch.get("flags") or {}).get(FLAG, "").strip().lower() == "linear"
     declared: Counter = Counter()
     undeclared: list[dict] = []
+    miss_rows: list[dict] = []
     missing = sorted(set(base["versions"]) ^ set(branch["versions"]))
     for vid in sorted(set(base["versions"]) & set(branch["versions"])):
         b, r = base["versions"][vid], branch["versions"][vid]
@@ -284,24 +327,40 @@ def diff(base: dict, branch: dict, *, opt_in: bool) -> dict:
             keys = [k for k in ("source_sha", "grounding_sha", "policy_hold") if b["input"].get(k) != r["input"].get(k)]
             if keys:
                 undeclared.append({"id": vid, "field": "input", "keys": keys})
-        if b.get("error") != r.get("error"):
-            undeclared.append({"id": vid, "field": "error", "base": b.get("error"), "branch": r.get("error")})
-        for f in COMPARED:
-            if b.get(f) == r.get(f):
-                continue
-            did = _declared(f, b, r) if (opt_in and linear_on) else None
+        fields = [f for f in ("error",) + COMPARED if b.get(f) != r.get(f)]
+        bm, rm = _outcome_misses(b, base.get("flags") or {}), _outcome_misses(r, branch.get("flags") or {})
+        if fields and (bm or rm):
+            looser = [f for f in fields if more_permissive(f, b, r)]
+            for f in looser:   # a looser outcome is never hidden by a miss
+                undeclared.append({"id": vid, "field": f, "base": b.get(f), "branch": r.get(f),
+                                   "why": "more permissive than the base (a cassette miss does not excuse it)"})
+            rest = [f for f in fields if f not in looser]
+            if rest:
+                miss_rows.append({"id": vid, "fields": rest, "base_misses": bm, "branch_misses": rm})
+            continue
+        for f in fields:
+            did = _declared(f, b, r) if (opt_in and linear_on and f != "error") else None
             if did:
                 declared[did] += 1
             else:
                 undeclared.append({"id": vid, "field": f, "base": b.get(f), "branch": r.get(f),
                                    **({} if opt_in and linear_on else {"why": "opt-in diff without --opt-in"
                                        if linear_on else "the default must equal main"})})
-    return {"declared": dict(declared), "undeclared": undeclared, "missing": missing,
+    return {"declared": dict(declared), "undeclared": undeclared, "missing": missing, "miss": miss_rows,
             "versions": len(branch["versions"]), "opt_in": opt_in, "flags": branch.get("flags") or {},
-            "misses": dict(sum((Counter(v.get("misses") or {}) for v in branch["versions"].values()), Counter())),
+            "misses": _sum(branch, "misses"), "base_misses": _sum(base, "misses"),
+            "cassette_hits": sum(v.get("cassette_hits") or 0 for v in branch["versions"].values()),
+            "base_cassette_hits": sum(v.get("cassette_hits") or 0 for v in base["versions"].values()),
             "judge_misses": sum(1 for v in branch["versions"].values() if v.get("judge_miss")),
             "status": dict(Counter(v.get("status") for v in branch["versions"].values())),
             "base_status": dict(Counter(v.get("status") for v in base["versions"].values()))}
+
+
+def exit_code(d: dict) -> int:
+    """0 pass; 1 an undeclared difference or a missing version; 3 only MISS rows (re-record the cassette)."""
+    if d["undeclared"] or d["missing"]:
+        return 1
+    return 3 if d["miss"] else 0
 
 
 def report_md(d: dict) -> str:
@@ -309,8 +368,14 @@ def report_md(d: dict) -> str:
              f"- flags: `{json.dumps(d['flags'], sort_keys=True)}`, --opt-in: {d['opt_in']}",
              f"- status base -> branch: {d['base_status']} -> {d['status']}",
              f"- declared: {d['declared'] or 0}", f"- undeclared: {len(d['undeclared'])}",
-             f"- missing: {len(d['missing'])}", f"- cassette misses (never a pass): {d['misses'] or 0}; "
-             f"judge misses: {d['judge_misses']}", ""]
+             f"- missing: {len(d['missing'])}",
+             f"- MISS (a difference on a version with an outcome-moving cassette miss; re-record, never a pass): "
+             f"{len(d['miss'])}",
+             f"- cassette hits base / branch: {d['base_cassette_hits']} / {d['cassette_hits']}",
+             f"- cassette misses base: {d['base_misses'] or 0}; branch: {d['misses'] or 0}; "
+             f"judge misses (no stored verdict): {d['judge_misses']}", ""]
+    for m in d["miss"][:50]:
+        lines.append(f"- MISS {m['id']} {','.join(m['fields'])}: base {m['base_misses']}, branch {m['branch_misses']}")
     for u in d["undeclared"][:50]:
         lines.append(f"- UNDECLARED {u['id']} {u['field']}: {json.dumps({k: u.get(k) for k in ('base', 'branch', 'why', 'keys') if k in u}, default=str)[:300]}")  # noqa: E501
     lines += ["", "Declared ids:"] + [f"- {k}: {v}" for k, v in DECLARED.items()]
@@ -342,7 +407,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.report:
         Path(a.report).write_text(text, encoding="utf-8")
     print(text)
-    return 1 if d["undeclared"] or d["missing"] else 0
+    return exit_code(d)
 
 
 if __name__ == "__main__":

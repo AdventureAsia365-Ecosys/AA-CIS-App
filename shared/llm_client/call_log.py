@@ -396,6 +396,35 @@ def bind_eval_stage(stage: str, run_id: str) -> Iterator[None]:
         _eval_label.reset(token)
 
 
+# AA-1049 W3 (T2 train): an observation-only meter of the billed calls a caller's step records through the sync
+# writers (``record_call_sync`` and ``record_unusable_sync``), so a per-version budget can count a step whose own
+# function does not return its attempts or cost (T3's meta regenerate: up to 3 t2_flag_fix calls). Unset (every
+# caller but the opt-in T2 orchestrator), it does nothing; set, it only appends (stage, cost_usd): the row written is
+# unchanged. Same propagation as ``_current_job_id`` (asyncio.to_thread copies the context).
+_call_meter: ContextVar[Optional[list]] = ContextVar("llm_call_log_meter", default=None)
+
+
+@contextmanager
+def meter_calls() -> Iterator[list]:
+    """Yield a list that receives (stage, cost_usd) for every billed call recorded in this context."""
+    sink: list = []
+    token = _call_meter.set(sink)
+    try:
+        yield sink
+    finally:
+        _call_meter.reset(token)
+
+
+def _meter(stage, cost_usd) -> None:
+    sink = _call_meter.get()
+    if sink is None:
+        return
+    try:
+        sink.append((str(stage), float(cost_usd or 0.0)))
+    except (TypeError, ValueError):
+        sink.append((str(stage), 0.0))
+
+
 def _relabel(stage: str, tenant_id, quality_signal: Optional[dict], content_piece_id, angle_gate_request_id):
     """(stage, row tenant, quality_signal, piece, request) as the INSERT sends them: unchanged without an eval
     label; relabelled to the eval stage (tenant / piece / request NULL) with one."""
@@ -667,6 +696,7 @@ def record_call_sync(**kwargs) -> None:
     caller's loop with no reference kept: an unreferenced task can be garbage-collected, and the
     caller's `asyncio.run()` cancels every pending task when its loop closes, so the row of an
     already-billed call was lost. The common path (no running loop) is unchanged."""
+    _meter(kwargs.get("stage"), kwargs.get("cost_usd"))
     if _loop_running():
         _in_background(record_call, kwargs)
         return
@@ -939,6 +969,7 @@ def record_unusable_sync(resp, *, stage: str, role: str, error, quality_signal_e
     call itself failed, nothing to write. `ids` = tenant_id / content_piece_id / angle_gate_request_id."""
     if resp is None:
         return
+    _meter(stage, getattr(resp, "cost_usd", None))
     record_billed_failure_sync(stage=stage, role=role, billed=[billed_record(resp)], error=str(error),
                                quality_signal_extra=quality_signal_extra, **ids)
 

@@ -2,7 +2,8 @@
 (``save_checkpoint`` / ``load_checkpoint`` on ``generation_meta`` of the still-pending version) and the store step
 (``save_version``: main's column set).
 
-  - a checkpoint is written on a pending version and read back (best candidate + budget);
+  - a checkpoint is written on a pending version and read back (best candidate + budget), also one with the budget
+    only (calls counted before the first candidate existed);
   - a checkpoint never touches a version that is no longer pending (the save already ran);
   - the store step writes the text, status, score, QA columns, generation_meta and judge_breakdown;
   - a version with no checkpoint (main's generation_meta shape, or NULL) reads as "no checkpoint".
@@ -98,6 +99,17 @@ async def test_a_checkpoint_round_trips_on_a_pending_version(conn):
     cp = await o.load_checkpoint(pool, vid)
     assert cp["best"]["generated"] == _BEST["generated"] and cp["best"]["score"] == 9.5
     assert o.VersionBudget.from_dict(cp["budget"]).writer == 1
+
+
+@pytest.mark.asyncio
+async def test_a_budget_only_checkpoint_round_trips(conn):
+    """The budget is persisted before the first candidate exists (each billed call counted before it is sent): a
+    checkpoint with no best candidate reads back with its budget, so a retry does not pay those calls again."""
+    vid = await _version(conn)
+    pool = _Pool(conn)
+    await o.save_checkpoint(pool, vid, o.VersionBudget(writer=2, usd=0.01), None)
+    cp = await o.load_checkpoint(pool, vid)
+    assert "best" not in cp and o.VersionBudget.from_dict(cp["budget"]).writer == 2
 
 
 @pytest.mark.asyncio

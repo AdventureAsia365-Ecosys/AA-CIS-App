@@ -269,6 +269,30 @@ def run_all(**kw) -> dict:
     return {name: run(name, **kw) for name in SCENARIOS}
 
 
+def _stored(d: dict) -> dict:
+    d = dict(d)
+    d["itineraries"] = "\n\n".join(f"Day {x['day']}: {x['title']}\n{x['body']}" for x in d["itineraries"])
+    d.pop("seo_keywords_used", None)
+    return {**d, "status": "done"}
+
+
+def replay_versions() -> list[dict]:
+    """The synthetic stored-version set of the offline T2 replay test (schema aa1049-t2-versions/1 rows; invented
+    tours). Its main-recorded replay is tests/unit/fixtures/aa1049_t2_replay_main_base.json: change this set only
+    together with a re-record of that file (see test_aa1049_t2_orchestrator.py, section 4)."""
+    jb = {"brand_fit": 8.0, "cross_brand_distinct": 8.0, "mission_present": True, "feedback": "ok"}
+    out = []
+    for name, over in (("clean", {}), ("number", {"summary": _SUMMARY_412}),
+                       ("days", {"itineraries": writer_draft()["itineraries"][:2]}), ("missing", {"summary": ""})):
+        out.append({"id": f"v-{name}", "tenant_id": TENANT, "status": "ai_generated", "quality_score": 9.0,
+                    "qa_status": "passed", "qa_repair_count": 0, "rewritten_content": _stored(writer_draft(**over)),
+                    "judge_breakdown": jb if name != "missing" else None, "pt": dict(MASTER_ROW),
+                    "brand_rules": BRAND_RULES})
+    out.append({"id": "v-elephant", "tenant_id": TENANT, "rewritten_content": {}, "brand_rules": BRAND_RULES,
+                "pt": {**MASTER_ROW, "src_itineraries": "Day 2: elephant riding"}})
+    return out
+
+
 if __name__ == "__main__":   # record the golden: python -m tests.unit.fixtures.aa1049_t2_harness <out.json>
     import sys
     with open(sys.argv[1], "w", encoding="utf-8") as fh:

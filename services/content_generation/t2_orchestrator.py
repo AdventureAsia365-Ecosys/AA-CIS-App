@@ -30,8 +30,10 @@ scripts/quality/replay_aa1049_t2.py):
 - L1 status: ``ai_generated`` only when validate's score clears the line AND no enforce finding is left (T3 hard
   codes, T3 grounding, a Master day-slot break) AND no held fallback writer. Main's rule (score + T3 hard codes) is a
   subset: the opt-in rule can only move a version to ``needs_review``, never the other way.
-- L2 writer calls: at most 2 per version (``VersionBudget``), counted across a job retry; main's graph may write up to
-  3 times (a validate retry loop), then T3.
+- L2 writer calls: at most 2 per version (``VersionBudget``), counted across a job retry: each billed call is counted
+  and persisted on the pending version BEFORE it is sent, and its cost right after it returns (before verify), so a
+  retry never re-spends a call the failed attempt made; main's graph may write up to 3 times (a validate retry loop),
+  then T3. The meta regenerate counts its real t2_flag_fix attempts (up to 3) and their cost.
 - L3 one judge call per version (on the selected draft, report-only), not one per draft.
 - L4 no brand-audit LLM fix (flag_fix) and no itinerary-day revise of the graph tail; the deterministic brand
   pre-audit codes are recorded (report).
@@ -65,6 +67,14 @@ RECORD_VERSION = "t2-linear-1"
 STAGE = "t2_generate"
 
 
+def _meta_attempts_max() -> int:
+    from services.content_generation.flag_fix_node import _META_REREPAIR_MAX_ATTEMPTS
+    return int(_META_REREPAIR_MAX_ATTEMPTS)
+
+
+META_ATTEMPTS = _meta_attempts_max()   # the t2_flag_fix calls one meta regenerate may bill (flag_fix's loop bound)
+
+
 def mode() -> str:
     """The T2 path of this process: ``linear`` only when the env says exactly that (case / spaces ignored) and the
     T2 interim profile is on; anything else (unset, ``graph``, a typo, ``on``) is main's ``graph`` path."""
@@ -84,8 +94,9 @@ def mode() -> str:
 @dataclass
 class VersionBudget:
     """The model requests one version may spend, counted across a job retry (persisted in the checkpoint).
-    ``writer`` = t2_generate calls (first write + field regen), ``repair`` = t2_flag_fix calls (sentence repair,
-    meta regenerate), ``voice`` = the report-only judge call, ``usd`` = the billed cost the calls reported."""
+    ``writer`` = t2_generate calls (first write + field regen), ``repair`` = t2_flag_fix calls (a sentence repair is
+    one, a meta regenerate its real attempts: up to ``META_ATTEMPTS``), ``voice`` = the report-only judge call,
+    ``usd`` = the billed cost the calls reported."""
     writer_max: int = 2
     repair_max: int = 3
     voice_max: int = 1
@@ -98,9 +109,19 @@ class VersionBudget:
     def can(self, kind: str) -> bool:
         return getattr(self, kind) < getattr(self, f"{kind}_max") and self.usd < self.usd_max
 
-    def spend(self, kind: str, usd: float = 0.0) -> None:
-        setattr(self, kind, getattr(self, kind) + 1)
-        self.usd = round(self.usd + float(usd or 0.0), 6)
+    def spend(self, kind: str, usd: float = 0.0, n: int = 1) -> None:
+        setattr(self, kind, getattr(self, kind) + int(n))
+        self.charge(usd)
+
+    def left(self, kind: str) -> int:
+        return max(0, getattr(self, f"{kind}_max") - getattr(self, kind))
+
+    def charge(self, usd: Any) -> None:
+        """Add the billed cost a call reported (after the call; its count was spent before it)."""
+        try:
+            self.usd = round(self.usd + float(usd or 0.0), 6)
+        except (TypeError, ValueError):
+            pass
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -301,24 +322,42 @@ def linear_status(score: float, codes: list[str], fallback_held: bool) -> str:
 
 
 async def load_checkpoint(pool, version_id: str) -> Optional[dict]:
+    """The checkpoint of a pending version: ``{"budget": {...}, "best": {...}?}``. A checkpoint without ``best`` (the
+    budget was spent before any candidate existed) still carries the budget, so a retry does not re-spend it. Inside
+    ``t2_store.use_store`` it reads the dry store's checkpoints, never the pool."""
+    store = active()
+    if store is not None:
+        cp = store.checkpoints.get(str(version_id))
+        return json.loads(json.dumps(cp)) if cp else None
     try:
         async with pool.acquire() as conn:
             raw = await conn.fetchval(
                 "SELECT generation_meta FROM gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
         meta = json.loads(raw) if isinstance(raw, str) else (raw or {})
         cp = (meta.get("t2_orchestrator") or {}).get("checkpoint") if isinstance(meta, dict) else None
-        return cp if isinstance(cp, dict) and isinstance(cp.get("best"), dict) else None
+        if not isinstance(cp, dict) or not isinstance(cp.get("budget"), dict):
+            return None
+        return cp if isinstance(cp.get("best"), dict) or cp.get("best") is None else {"budget": cp["budget"]}
     except Exception as e:  # noqa: BLE001 — no checkpoint = a fresh write (the budget then starts at 0)
         logger.warning("t2_orchestrator_checkpoint_unreadable", error=str(e)[:200])
         return None
 
 
-async def save_checkpoint(pool, version_id: str, budget: VersionBudget, best: dict) -> None:
-    """The best candidate so far + the budget used, on the still-pending version (admin-only generation_meta), so a
-    job retry resumes from it instead of paying the writer again. Best effort."""
-    cp = {"t2_orchestrator": {"version": RECORD_VERSION, "checkpoint": {
-        "budget": budget.as_dict(), "best": {k: best[k] for k in ("attempt", "via", "generated", "prompt_version",
-                                                                   "model_used", "fallback_used", "score")}}}}
+_BEST_KEYS = ("attempt", "via", "generated", "prompt_version", "model_used", "fallback_used", "score")
+
+
+async def save_checkpoint(pool, version_id: str, budget: VersionBudget, best: Optional[dict]) -> None:
+    """The budget used + the best candidate so far (none before the first candidate), on the still-pending version
+    (admin-only generation_meta), so a job retry neither pays a call twice nor writes again. Best effort. Inside
+    ``t2_store.use_store`` it goes to the dry store, never the pool."""
+    point: dict = {"budget": budget.as_dict()}
+    if best is not None:
+        point["best"] = {k: best[k] for k in _BEST_KEYS}
+    store = active()
+    if store is not None:
+        store.checkpoints[str(version_id)] = json.loads(json.dumps(point, default=str))
+        return
+    cp = {"t2_orchestrator": {"version": RECORD_VERSION, "checkpoint": point}}
     try:
         async with pool.acquire() as conn:
             await conn.execute(
@@ -335,12 +374,15 @@ async def save_checkpoint(pool, version_id: str, budget: VersionBudget, best: di
 class Run:
     bundle: Bundle
     budget: VersionBudget
+    pool: Any = None
+    version_id: Optional[str] = None
     candidates: list = field(default_factory=list)
     steps: list = field(default_factory=list)
     degraded: list = field(default_factory=list)
     em_dash_fixes: int = 0
     sentence_repairs: int = 0
     meta_tried: set = field(default_factory=set)
+    meta_attempts: int = 0
     resumed: bool = False
 
 
@@ -356,7 +398,9 @@ async def _check(run: Run, result: dict, *, attempt: int, via: str, repaired: bo
     run.em_dash_fixes += normalize(gen, run.bundle)
     f = await verify(gen, run.bundle, run.degraded)
     f["score"] = min(x for x in (f["score"], pre, parent_score) if x is not None)
-    cand = {**f, "result": result, "attempt": attempt, "via": via, "repaired": repaired,
+    # the text exactly as verify() checked it: the final contract compares the stored text with this copy
+    gated = json.loads(json.dumps(gen, default=str))
+    cand = {**f, "result": result, "attempt": attempt, "via": via, "repaired": repaired, "gated": gated,
             "codes": enforce_codes(f), "generated": gen, "prompt_version": result.get("prompt_version", ""),
             "model_used": result.get("model_used", ""), "fallback_used": bool(result.get("fallback_used"))}
     run.candidates.append(cand)
@@ -365,12 +409,39 @@ async def _check(run: Run, result: dict, *, attempt: int, via: str, repaired: bo
     return cand
 
 
+async def _persist(run: Run) -> None:
+    """Persist the budget (and the best candidate so far) of a run that has a version to write to."""
+    if run.pool is not None and run.version_id:
+        best = max(run.candidates, key=best_key) if run.candidates else None
+        await save_checkpoint(run.pool, run.version_id, run.budget, best)
+
+
+async def _reserve(run: Run, kind: str) -> None:
+    """Count one billed call of ``kind`` and persist the count BEFORE the call is sent (pessimistic: a call that
+    raises, or a crash right after it, is still counted when the job retries)."""
+    run.budget.spend(kind)
+    await _persist(run)
+
+
+async def _reserve_n(run: Run, kind: str, n: int) -> None:
+    run.budget.spend(kind, n=n)
+    await _persist(run)
+
+
+async def _settle(run: Run, usd: Any) -> None:
+    """Add the cost a billed call reported and persist it right after the call returns (before its candidate is
+    verified: a crash in verify / Jev / validate never loses a spent call)."""
+    run.budget.charge(usd)
+    await _persist(run)
+
+
 async def _first_write(run: Run) -> dict:
     """The first candidate: one write, a second only when the first returned nothing usable (JSON parse failure:
     main's graph retries it too)."""
     while run.budget.can("writer"):
+        await _reserve(run, "writer")
         res = await asyncio.to_thread(write, run.bundle)
-        run.budget.spend("writer", res.get("cost_usd"))
+        await _settle(run, res.get("cost_usd"))
         run.degraded.extend(res.get("degraded") or [])
         if res.get("generated"):
             return res
@@ -383,7 +454,11 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
     from services.acp_produce import tenant_pipeline as tp
     from services.quality import degraded
 
-    if resume:
+    if pool is not None:
+        run.pool = pool
+    if version_id:
+        run.version_id = version_id
+    if resume and isinstance(resume.get("best"), dict):
         best = resume["best"]
         result = {"generated": dict(best.get("generated") or {}), "prompt_version": best.get("prompt_version"),
                   "model_used": best.get("model_used"), "fallback_used": best.get("fallback_used"), "cost_usd": 0.0}
@@ -395,21 +470,17 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
     attempt = current["attempt"]
     while True:
         best = max(run.candidates, key=best_key)
-        if pool is not None and version_id:
-            await save_checkpoint(pool, version_id, run.budget, best)
+        await _persist(run)
         if not best["codes"]:
             return best
         p = plan(best["codes"])
         nxt = None
         meta = best["generated"].get("seo_meta")
         if (p.get("regenerate_section") and isinstance(meta, str) and meta not in run.meta_tried
-                and run.budget.can("repair")):
+                and run.budget.can("repair") and run.budget.left("repair") >= META_ATTEMPTS):
             run.meta_tried.add(meta)
-            run.budget.spend("repair")
             gen = dict(best["generated"])
-            new_meta, violated = await asyncio.to_thread(tp._t3_meta_regenerate, gen, run.bundle.tour_dict,
-                                                         run.bundle.brand_rules, run.bundle.tenant_id,
-                                                         run.bundle.source_texts)
+            new_meta, violated = await _meta_regenerate(run, tp, gen)
             if violated:
                 run.degraded = degraded.add(run.degraded, degraded.REPAIR_CONTRACT, detector="t3_meta_regenerate",
                                             detail=", ".join(violated["invariants"]))
@@ -418,7 +489,7 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
                 nxt = ({**best["result"], "generated": {**gen, "seo_meta": new_meta}}, "meta_regenerate", False)
         if nxt is None and p.get("repair_sentence") and not best["repaired"] and run.budget.can("repair"):
             best["repaired"] = True   # one sentence repair per draft
-            run.budget.spend("repair")
+            await _reserve(run, "repair")
             base = {"result": {**best["result"], "generated": best["generated"]}, "grounding": best["grounding"],
                     "attempt": best["attempt"]}
             repaired = await asyncio.to_thread(tp._t3_sentence_repair, base, run.bundle.tour_dict,
@@ -434,8 +505,9 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
                 nxt = (repaired, "sentence_repair", True)
         if nxt is None and p.get("rewrite") and run.budget.can("writer"):
             feedback = tp.t3_repair_feedback(best["structural"] + best["slots"], best["grounding"])
+            await _reserve(run, "writer")
             res = await asyncio.to_thread(write, run.bundle, feedback=feedback, previous_draft=best["generated"])
-            run.budget.spend("writer", res.get("cost_usd"))
+            await _settle(run, res.get("cost_usd"))
             run.degraded.extend(res.get("degraded") or [])
             if res.get("generated"):
                 nxt = (res, "field_regen", False)
@@ -445,6 +517,25 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
         attempt += 1
         await _check(run, nxt[0], attempt=attempt, via=nxt[1], repaired=nxt[2],
                      parent_score=best["score"] if nxt[1] != "field_regen" else None)
+
+
+async def _meta_regenerate(run: Run, tp, gen: dict) -> tuple:
+    """T3's meta regenerate (``_t3_meta_regenerate``: flag_fix's bounded ``_rerepair_meta`` loop, up to
+    ``META_ATTEMPTS`` t2_flag_fix calls that the function does not report). Pessimistic: all its attempts are counted
+    and persisted before it runs (the caller checks they fit the repair budget), then the count is set to the calls it
+    really billed and their cost (``call_log.meter_calls``), and persisted again."""
+    from shared.llm_client.call_log import meter_calls
+    await _reserve_n(run, "repair", META_ATTEMPTS)
+    with meter_calls() as calls:
+        try:
+            out = await asyncio.to_thread(tp._t3_meta_regenerate, gen, run.bundle.tour_dict, run.bundle.brand_rules,
+                                          run.bundle.tenant_id, run.bundle.source_texts)
+        finally:
+            billed = [c for c in calls if c[0] == "t2_flag_fix"]
+            run.budget.repair -= META_ATTEMPTS - min(len(billed), META_ATTEMPTS)
+            run.meta_attempts += len(billed)
+            await _settle(run, sum(c[1] for c in billed))
+    return out
 
 
 def _float(v: Any) -> Optional[float]:
@@ -459,16 +550,18 @@ def _background() -> bool:
     return background_facts_enabled()
 
 
-def voice_report(run: Run, chosen: dict) -> dict:
+async def voice_report(run: Run, chosen: dict) -> dict:
     """L3: ONE judge call on the selected draft (report-only under the T2 interim profile; main's ``judge_node``,
-    which writes its own llm_call_log rows with the billed fields). Returns the judge_* keys for judge_breakdown."""
+    which writes its own llm_call_log rows with the billed fields). Returns the judge_* keys for judge_breakdown.
+    The call is counted and persisted before it is sent: a retry after a failed save does not pay it again (the
+    voice report is then absent: report-only)."""
     if not run.budget.can("voice"):
         return {}
     from services.content_generation.judge_node import judge_node
-    run.budget.spend("voice")
+    await _reserve(run, "voice")
     state = {**_graph_state(run.bundle), "generated": chosen["generated"], "quality_score": chosen["score"]}
-    out = judge_node(state)
-    run.budget.usd = round(run.budget.usd + float(out.get("cost_usd") or 0.0), 6)
+    out = await asyncio.to_thread(judge_node, state)   # a sync model call: off the job worker's event loop
+    await _settle(run, out.get("cost_usd"))
     run.degraded.extend(e for e in (out.get("degraded") or []) if e not in run.degraded)
     return {k: out.get(k) for k in ("judge_brand_fit", "judge_cross_brand_distinct", "judge_mission_present",
                                     "judge_feedback", "judge_score", "judge_t2_axes") if k in out}
@@ -485,6 +578,17 @@ def brand_report(chosen: dict, bundle: Bundle) -> list[str]:
         return []
 
 
+def stored_text(gen: dict, tour_dict: dict) -> dict:
+    """The ``rewritten_content`` shape of a candidate (main's save builds the same keys)."""
+    return {
+        "name": gen.get("name", tour_dict["name"]), "subtitle": gen.get("subtitle", ""),
+        "summary": gen.get("summary", ""), "highlights": gen.get("highlights", []),
+        "itineraries": gen.get("itineraries", tour_dict.get("itineraries", "")),
+        "seo_title": gen.get("seo_title", ""), "seo_meta": gen.get("seo_meta", ""),
+        "trip_type": gen.get("trip_type", ""), "status": "done",
+    }
+
+
 def record(run: Run, chosen: dict, status: str, brand_codes: list[str]) -> dict:
     """The admin-only replay record of a linear version (generation_meta.t2_orchestrator)."""
     from services.acp_content_writing import route_table as rt
@@ -493,7 +597,8 @@ def record(run: Run, chosen: dict, status: str, brand_codes: list[str]) -> dict:
             "slots": run.bundle.slots, "budget": run.budget.as_dict(), "resumed": run.resumed,
             "steps": run.steps, "chosen": {"attempt": chosen["attempt"], "via": chosen["via"],
                                            "codes": chosen["codes"], "score": chosen["score"]},
-            "status": status, "brand_precheck": brand_codes, "em_dash_fixes": run.em_dash_fixes}
+            "status": status, "brand_precheck": brand_codes, "em_dash_fixes": run.em_dash_fixes,
+            "meta_attempts": run.meta_attempts}
 
 
 async def run_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str, version_id: str,
@@ -512,27 +617,21 @@ async def run_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: 
         diag["writing_release"] = _wm_stamp(writing_memory)
     bundle = build_bundle(pt, tour_dict, brand_rules, seo_data, writing_memory, tenant_id)
     resume = await load_checkpoint(pool, version_id)
-    run = Run(bundle=bundle, budget=VersionBudget.from_dict((resume or {}).get("budget")))
+    run = Run(bundle=bundle, budget=VersionBudget.from_dict((resume or {}).get("budget")), pool=pool,
+              version_id=version_id)
     fb_scope = ExitStack()
     fb_notes = fb_scope.enter_context(route_guard.collect_output())
     try:
         chosen = await orchestrate(run, resume, pool=pool, version_id=version_id)
         progress_step("check")
-        judge = voice_report(run, chosen)
+        judge = await voice_report(run, chosen)
         brand_codes = brand_report(chosen, bundle)
         fb_mark = route_guard.t2_mark(fb_notes)
         status = linear_status(chosen["score"], chosen["codes"], bool((fb_mark or {}).get("held")))
         result = {**chosen["result"], **judge, "generated": chosen["generated"], "quality_score": chosen["score"],
                   "prompt_version": chosen["prompt_version"], "model_used": chosen["model_used"],
                   "fallback_used": chosen["fallback_used"]}
-        gen = chosen["generated"]
-        rewritten = {
-            "name": gen.get("name", tour_dict["name"]), "subtitle": gen.get("subtitle", ""),
-            "summary": gen.get("summary", ""), "highlights": gen.get("highlights", []),
-            "itineraries": gen.get("itineraries", tour_dict.get("itineraries", "")),
-            "seo_title": gen.get("seo_title", ""), "seo_meta": gen.get("seo_meta", ""),
-            "trip_type": gen.get("trip_type", ""), "status": "done",
-        }
+        rewritten = stored_text(chosen["generated"], tour_dict)
         passed = not chosen["codes"]
         qa = {"passed": passed, "attempts": len(run.candidates) - 1,
               "structural_issues": [] if passed else list(chosen["structural"]) + list(chosen["slots"]),
@@ -550,7 +649,7 @@ async def run_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: 
             diag["route_degraded"] = inst_mark
         contract = job.final_contract_record(rewritten, tour_dict, pt, exit="done", actual=status, qa=qa,
                                              fallback_held=bool((fb_mark or {}).get("held")), score=chosen["score"],
-                                             gated=rewritten)
+                                             gated=stored_text(chosen["gated"], tour_dict))
         if contract is not None:
             judge_breakdown = {**(judge_breakdown or {}), "final_contract": contract}
             diag["final_contract"] = {k: contract.get(k) for k in ("verdict", "agrees", "flip", "sha_match")}
@@ -595,9 +694,20 @@ def active():
 async def save_version(pool, version_id: str, *, rewritten: dict, status: str, quality_score, qa: dict,
                        generation_meta: Optional[dict], judge_breakdown: Optional[dict],
                        final_contract: Optional[dict]) -> dict:
-    """The linear exit's store step (final_contract.EXITS T2): the same columns as main's save. Inside
-    ``t2_store.use_store(DryStore())`` it hands the row to the dry store instead (no DB)."""
+    """The linear path's one store step: the same columns as main's save. Not itself a final-contract exit
+    (``final_contract.EXITS`` lists its caller ``run_and_save``, which runs the contract on the text and passes the
+    record in; the topology test lists this function in NOT_EXITS). Inside ``t2_store.use_store(DryStore())`` it hands
+    the row to the dry store instead (no DB).
+
+    It stamps the contract with the sha of the text it writes (``final_contract.stamp_stored``): ``sha_match`` is then
+    the text the contract checked against the text stored, so an edit between the contract and the write shows
+    (``POST_GATE_EDIT``); an edit between verify and the contract shows as the contract's own POST_GATE_EDIT finding
+    (``gated_sha`` = the selected draft exactly as verify checked it)."""
+    from services.quality import final_contract as fc
     store = active()
+    if final_contract is not None:
+        final_contract = fc.stamp_stored(final_contract, fc.tour_text_sha(rewritten))
+        judge_breakdown = {**(judge_breakdown or {}), "final_contract": final_contract}
     row = {"version_id": str(version_id), "rewritten": rewritten, "status": status, "quality_score": quality_score,
            "qa_status": "passed" if qa["passed"] else "escalated", "qa_repair_count": qa["attempts"],
            "qa_auto_passed": not qa["passed"], "generation_meta": generation_meta,
