@@ -37,7 +37,7 @@ from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
     clamp_distance, nudge_itinerary_day, nudge_voice_hint, generated_day_word_counts,
 )
-from .day_parse import CANONICAL_HEAD_NC, day_range
+from .day_parse import CANONICAL_HEAD_NC, day_range, written_day_word_counts
 
 logger = structlog.get_logger()
 
@@ -245,12 +245,18 @@ V2_HARD_BLOCK_CODES = frozenset({"ITINERARY_DAY_COUNT_MISMATCH"})
 DAY_COUNT_CODE = "ITINERARY_DAY_COUNT_MISMATCH"
 
 
-def itinerary_day_gap(tour: dict, itinerary) -> Optional[dict]:
+def itinerary_day_gap(tour: dict, itinerary, *, any_form: bool = False) -> Optional[dict]:
     """AA-329a, the one source-vs-output day check (validate_node and final_day_guard): the source itinerary's
     "Day N" blocks (``parse_source_day_word_counts``, the splitter the writer v2 day plan and the day oracle read)
     against the written itinerary's canonical "Day N — Title" blocks. None when the source has no reliable day
     markers (the splitter fell back to an even split): nothing trustworthy to compare. Otherwise
-    {"source_day_words", "generated_day_words", "missing": sorted source days absent from the output}."""
+    {"source_day_words", "generated_day_words", "missing": sorted source days absent from the output}.
+
+    AA-1049 (S273 review): ``any_form=True`` (validate_node on a T2 tenant rewrite) reads the written side with
+    ``day_parse.written_day_word_counts`` — the shared written-day reader of the T2 final contract and the T2 slot
+    check — because T3 and the linear orchestrator validate the dash-fixed "Day N: Title" text, which the canonical
+    reader read as no day (a phantom ITINERARY_DAY_COUNT_MISMATCH on every multi-day T2 candidate). S1 / A1 (where
+    the code is hard on writer v2) and the final day guard stay on the canonical reader: it is S1's storage contract."""
     src_raw = (tour or {}).get('itineraries') or (tour or {}).get('itinerary') or ""
     parsed = parse_source_day_word_counts(src_raw, (tour or {}).get('duration'))
     if parsed["used_fallback"]:
@@ -264,7 +270,11 @@ def itinerary_day_gap(tour: dict, itinerary) -> Optional[dict]:
     # this is a hard block on writer v2, and "Day 3 - 5 temples of Hue" in a 3-day source is day 3, not days 3-5.
     source_days = sorted({d for first, last in (parsed.get("day_ranges") or {}).items()
                           for d in range(first, last + 1)} | set(source_day_words))
-    generated_day_words = generated_day_word_counts(itinerary if isinstance(itinerary, str) else str(itinerary or ""))
+    if any_form:
+        generated_day_words = written_day_word_counts(itinerary)
+    else:
+        generated_day_words = generated_day_word_counts(
+            itinerary if isinstance(itinerary, str) else str(itinerary or ""))
     missing = sorted(set(source_days) - set(generated_day_words))
     return {"source_day_words": source_day_words, "source_days": source_days,
             "generated_day_words": generated_day_words, "missing": missing}
@@ -1133,7 +1143,9 @@ def validate_node(state: ContentState) -> ContentState:
     _src_raw = tour.get('itineraries') or tour.get('itinerary') or ""
     # AA-990 N3: one function for this check and the final day guard (final_day_guard), which re-runs it on the
     # text that is persisted after every later edit.
-    _gap = itinerary_day_gap(tour, itinerary)
+    # AA-1049 (S273 review): a T2 tenant rewrite is validated on its dash-fixed text too (T3 on main, the linear
+    # orchestrator's verify), so its written days are read in any form, by the reader the T2 contract uses.
+    _gap = itinerary_day_gap(tour, itinerary, any_form=bool(state.get("is_tenant_rewrite")))
     if _gap is not None:
         _source_day_words = _gap["source_day_words"]
         _source_days = set(_source_day_words)

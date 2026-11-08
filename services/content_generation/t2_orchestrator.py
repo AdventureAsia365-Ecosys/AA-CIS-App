@@ -174,12 +174,13 @@ class Bundle:
 
 
 def day_slots(itineraries: Any) -> list[int]:
-    """The day numbers of an itinerary in order, duplicates kept, from its "Day N" marker lines in either written form
-    ("Day N — Title" as the Master stores it, "Day N: Title" after the AA-778 dash fix); a range marker gives every
-    day it covers. ``final_contract._day_numbers`` (``output_days``) reads only the dash form, so it does not see the
-    days of a dash-fixed T2 text (follow-up in docs/implementation-notes/AA-1049-l15-t2.md)."""
-    from services.content_generation.day_parse import source_day_markers
-    return [d for first, last, _ in source_day_markers(str(itineraries or "")) for d in range(first, last + 1)]
+    """The day numbers of an itinerary in order, duplicates kept, in any written form ("Day N — Title" as the Master
+    stores it, "Day N: Title" / "Day N · Title" after the AA-778 dash fix, a writer-JSON day list); a range marker
+    gives every day it covers. AA-1049 (S273): ``day_parse.written_day_numbers``, the same reader as the final
+    contract (``final_contract._day_numbers``) and the repair contract, so a candidate that passes this slot check
+    never records T2_DAY_COUNT_VS_MASTER at the exit."""
+    from services.content_generation.day_parse import written_day_numbers
+    return written_day_numbers(itineraries)
 
 
 def compose_slots(tour_dict: dict) -> dict:

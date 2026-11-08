@@ -8,10 +8,10 @@
     "fixed_in_t3": 1
    },
    "final_contract": {
-    "agrees": false,
-    "flip": "unpublish",
+    "agrees": true,
+    "flip": null,
     "sha_match": true,
-    "verdict": "needs_review"
+    "verdict": "ai_generated"
    },
    "judge": {
     "binding": "brand_fit",
@@ -111,19 +111,10 @@
       "feedback": "Warm and plain.",
       "final_contract": {
        "actual": "ai_generated",
-       "agrees": false,
+       "agrees": true,
        "exit": "done",
-       "findings": [
-        {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        }
-       ],
-       "flip": "unpublish",
+       "findings": [],
+       "flip": null,
        "lineage": {
         "policy_sha": "pinned-by-harness",
         "route_config_version": null,
@@ -133,7 +124,7 @@
        "sha_match": true,
        "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
        "text_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
-       "verdict": "needs_review",
+       "verdict": "ai_generated",
        "version": "fc-w1-report-1",
        "workflow": "t2"
       },
@@ -277,7 +268,7 @@
          "class_id": "struct.day_structure",
          "code": "T2_DAY_COUNT_VS_MASTER",
          "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
+         "detail": "2 day(s) for a 3-day Master (missing 3)",
          "field": "itineraries",
          "severity": "block"
         }
@@ -364,14 +355,6 @@
        "exit": "policy_hold",
        "findings": [
         {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        },
-        {
          "class_id": "policy.elephant_riding",
          "code": "ELEPHANT_RIDING",
          "count": 1,
@@ -389,7 +372,7 @@
        "sha_match": true,
        "stored_sha": "4eecb4fad16b73e72dc675cd6dc9d45aa6290b15d817aa829901fdefccdc9b09",
        "text_sha": "4eecb4fad16b73e72dc675cd6dc9d45aa6290b15d817aa829901fdefccdc9b09",
-       "verdict": "needs_review",
+       "verdict": "policy_hold",
        "version": "fc-w1-report-1",
        "workflow": "t2"
       },
@@ -444,10 +427,10 @@
     "fixed_in_t3": 1
    },
    "final_contract": {
-    "agrees": false,
-    "flip": "unpublish",
+    "agrees": true,
+    "flip": null,
     "sha_match": true,
-    "verdict": "needs_review"
+    "verdict": "ai_generated"
    },
    "judge": {
     "binding": "brand_fit",
@@ -547,19 +530,10 @@
       "feedback": "Warm and plain.",
       "final_contract": {
        "actual": "ai_generated",
-       "agrees": false,
+       "agrees": true,
        "exit": "done",
-       "findings": [
-        {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        }
-       ],
-       "flip": "unpublish",
+       "findings": [],
+       "flip": null,
        "lineage": {
         "policy_sha": "pinned-by-harness",
         "route_config_version": null,
@@ -569,7 +543,7 @@
        "sha_match": true,
        "stored_sha": "4e40aa55f6087017cb9defec6717080d9aa619f8b7d575dea7513d1d9588434c",
        "text_sha": "4e40aa55f6087017cb9defec6717080d9aa619f8b7d575dea7513d1d9588434c",
-       "verdict": "needs_review",
+       "verdict": "ai_generated",
        "version": "fc-w1-report-1",
        "workflow": "t2"
       },
@@ -603,10 +577,10 @@
     "fixed_in_t3": 1
    },
    "final_contract": {
-    "agrees": false,
-    "flip": "unpublish",
+    "agrees": true,
+    "flip": null,
     "sha_match": true,
-    "verdict": "needs_review"
+    "verdict": "ai_generated"
    },
    "judge": {
     "binding": "brand_fit",
@@ -719,19 +693,10 @@
       "feedback": "Warm and plain.",
       "final_contract": {
        "actual": "ai_generated",
-       "agrees": false,
+       "agrees": true,
        "exit": "done",
-       "findings": [
-        {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        }
-       ],
-       "flip": "unpublish",
+       "findings": [],
+       "flip": null,
        "lineage": {
         "policy_sha": "pinned-by-harness",
         "route_config_version": null,
@@ -741,7 +706,7 @@
        "sha_match": true,
        "stored_sha": "2783619a13d5a3501e29a0608e6e11fc1f1795cb87a3f5d5a59240488e41e62d",
        "text_sha": "2783619a13d5a3501e29a0608e6e11fc1f1795cb87a3f5d5a59240488e41e62d",
-       "verdict": "needs_review",
+       "verdict": "ai_generated",
        "version": "fc-w1-report-1",
        "workflow": "t2"
       },
@@ -885,14 +850,6 @@
        "agrees": false,
        "exit": "done",
        "findings": [
-        {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        },
         {
          "class_id": "fact.grounding",
          "code": "T3_GROUNDING",
@@ -1104,14 +1061,6 @@
          "severity": "block"
         },
         {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        },
-        {
          "class_id": "gate.t3",
          "code": "T3_STRUCTURAL",
          "count": 1,
@@ -1188,10 +1137,10 @@
     "fixed_in_t3": 1
    },
    "final_contract": {
-    "agrees": false,
-    "flip": "unpublish",
+    "agrees": true,
+    "flip": null,
     "sha_match": true,
-    "verdict": "needs_review"
+    "verdict": "ai_generated"
    },
    "judge": {
     "binding": "brand_fit",
@@ -1301,19 +1250,10 @@
       "feedback": "Warm and plain.",
       "final_contract": {
        "actual": "ai_generated",
-       "agrees": false,
+       "agrees": true,
        "exit": "done",
-       "findings": [
-        {
-         "class_id": "struct.day_structure",
-         "code": "T2_DAY_COUNT_VS_MASTER",
-         "count": 1,
-         "detail": "0 day(s) for a 3-day Master (missing 1/2/3)",
-         "field": "itineraries",
-         "severity": "block"
-        }
-       ],
-       "flip": "unpublish",
+       "findings": [],
+       "flip": null,
        "lineage": {
         "policy_sha": "pinned-by-harness",
         "route_config_version": null,
@@ -1323,7 +1263,7 @@
        "sha_match": true,
        "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
        "text_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
-       "verdict": "needs_review",
+       "verdict": "ai_generated",
        "version": "fc-w1-report-1",
        "workflow": "t2"
       },
