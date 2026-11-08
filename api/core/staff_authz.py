@@ -737,6 +737,14 @@ POLICY: dict[tuple[str, str], Any] = {
     # AA-1039 R6 slice 3: the Writing Lab stage read (ids, labels, counts, hashes; no text). AA-1035 R2: Writing Lab R
     # without tenant text, like the release reads (content_lead, tenant_qa, ai_ops, admin)
     ("GET", "/admin/writing-memory/lab/{writer}"): _LAB_READ,
+    # AA-1048 W2 (S273): the claim-level ground truth (api/routers/admin_claim_labels.py). Writes ai.admin; the counts
+    # and the split plan carry no text (Writing Lab R); the finals carry claim text (Lab text read, logged).
+    ("POST", "/admin/writing-memory/claim-labels/import"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/claim-labels/split-plan"): _LAB_READ,
+    ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report"): _LAB_READ,
+    ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals"): _LAB_TEXT_READ,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.

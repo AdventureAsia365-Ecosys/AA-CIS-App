@@ -2,7 +2,8 @@
 """AA-1048 (Quality W2) — the claim-label tooling, $0. Every DB write is DRY RUN unless --apply; no model is called
 (the gateway entry points are refused for the whole process, services/golden_set/llm_guard).
 
-  export-fixture FIXTURE --set CL-1 --out <scratch>/claims.jsonl [--writers t9_blog,t9_social] [--tour-map MAP]
+  export-fixture FIXTURE --set CL-1 --out <scratch>/cl1.jsonl [--writers t9_blog,t9_social] [--tour-map MAP]
+                 [--split held_out|train|all]
       Claim lines (JSONL keyed by claim hash) of the frozen outputs of an AA-729 golden fixture, for the 3-lens panel
       (docs/calibration/aa1048-claim-panel-brief.md). Every T2 / T9 line carries its tour (refs.tour_id, the split
       group: a blog and a social piece of one tour stay on one side); a T2 / T9 sample without one is refused. A
@@ -10,6 +11,22 @@
       version_id | sample_id: tour_id} (read-only query: acp_shared.content_piece -> angle_gate_request.trip_id).
       Real text: every --out / --thresholds path is refused inside a git work tree unless it is in the ignored
       scratch folder .tmp-session/ (scripts/aa1048/outpath.py); use the workspace .tmp-session/.
+      One set per writer surface (AA-1048 Scope): --set CL-<n> is the T9 set (t9_blog, t9_social), --set L<n> the S1
+      set (a1), --set t2@<n> the T2 set (t2). Without --writers a named set exports the writers of its surface; a
+      writer of another surface is refused (any other set id: every writer, one surface only). Both splits by
+      default; --split held_out keeps the held-out lines only (the side a gate decision reads). Fixture 1.3.0 has
+      held-out claims T9 24 (blog 0), t2 173, a1 1,092: the T9 gap is closed by the split-plan picks (held-out
+      pieces frozen next) or new held-out pieces, not by exporting more writers into CL-1.
+  split-plan --export cl1.jsonl [--export l2.jsonl --export t2.jsonl] [--live split-plan.json] [--ids-out ids.json]
+             [--violation-rate 0.06] [--observed-precision 0.92] [--per-tour-cap 6]
+      Held-out claims per writer of the exports, the target (R1 bar on one writer surface) and, with --live (the answer
+      of GET /admin/writing-memory/claim-labels/split-plan), the existing T9 pieces / T2 versions of held-out tours
+      to freeze next (scripts/aa729/select_samples.py --ids <ids-out> --base-version <fixture>) and the writer cost
+      of what is still missing. Ids, counts and dollars only (services/ground_truth/split_plan.py).
+  payload PANEL.jsonl --export claims.jsonl --set CL-1 --version 1.0.0 --out <scratch>/payload.json [--apply]
+      The body of POST /admin/writing-memory/claim-labels/import (the staff API path of `import`: no DB login,
+      services/ground_truth/importer.py): the judgement lines and the slim export lines of the claims they judge,
+      validated locally first. dry_run unless --apply. Scratch path only (the payload holds claim text).
   import PANEL.jsonl --export claims.jsonl --set CL-1 --version 1.0.0 [--apply]
       Validate the panel (or tech-lead) lines against the export, consolidate the lenses, draw the 20% audit and
       write shared.eval_claim_label (CIS 388).
@@ -49,10 +66,12 @@ from typing import Any, Iterable, Optional
 
 from services.ground_truth import claims as cl
 from services.ground_truth import detectors as det
+from services.ground_truth import importer
 from services.ground_truth import mutations as mut
 from services.ground_truth import panel as pn
 from services.ground_truth import policy
 from services.ground_truth import sample_size as ss
+from services.ground_truth import split_plan as sp
 from services.ground_truth import store
 from scripts.aa1048.outpath import OutRefused, check_out
 
@@ -114,13 +133,23 @@ def export_fixture(fixture: dict, *, set_id: str, writers: Optional[Iterable[str
                    tour_map: Optional[dict] = None) -> list[dict]:
     """Export lines for the non-trap samples of an AA-729 golden fixture (their frozen outputs, as the AA-729 panel
     sees them: no gate ledger or flags), each with the full writer source (labels._source_text, never cut) and its
-    tour in refs.tour_id (tour_key; ValueError for a T2 / T9 sample without one). A claim is exported once: a second
+    tour in refs.tour_id (tour_key; ValueError for a T2 / T9 sample without one). Without `writers` a named set
+    exports the writers of its surface (claims.set_writers: CL-<n> T9, L<n> S1, t2@<n> T2; any other set id every
+    writer); a writer outside that surface, or writers of two surfaces in one set, is a ValueError (a set never
+    pools surfaces, AA-1048 Scope). A claim is exported once: a second
     item with the same text (same claim hash) adds no line (`cli rederive` maps labels back to every item by content
     sha)."""
     from scripts.aa729.labels import _source_text, panel_output
     from services.golden_set.derive import FixtureError, writer_and_channel
 
-    wanted = set(writers) if writers else None
+    if writers:
+        problems = cl.set_writer_problems(set_id, writers)
+        if problems:
+            raise ValueError(problems[0])
+        wanted: Optional[set] = set(writers)
+    else:
+        named = cl.set_writers(set_id)
+        wanted = set(named) if named is not None else None
     lines: list[dict] = []
     seen: set[str] = set()
     for s in fixture.get("samples") or []:
@@ -151,9 +180,7 @@ def export_fixture(fixture: dict, *, set_id: str, writers: Optional[Iterable[str
 
 
 def _finals_to_jsonl(finals: dict[str, pn.FinalLabel]) -> list[dict]:
-    return [{"claim_hash": f.claim_hash, "claim_class": f.claim_class, "label": f.label, "source": f.source,
-             "writer": f.writer, "sample_id": f.sample_id, "stratum": f.stratum, "split": f.split,
-             "content_sha256": f.content_sha256, "claim_text": f.claim_text} for f in finals.values()]
+    return importer.finals_rows(finals)
 
 
 def _finals_from_jsonl(rows: list[dict]) -> dict[str, pn.FinalLabel]:
@@ -201,13 +228,61 @@ def cmd_export_fixture(a) -> dict:
         raise ValueError("--tour-map is a JSON object {piece_id | request_id | version_id | sample_id: tour_id}")
     lines = export_fixture(fixture, set_id=a.set, writers=a.writers.split(",") if a.writers else None,
                            tour_map=tour_map)
+    if a.split != "all":
+        lines = [ln for ln in lines if ln["split"] == a.split]
     _write(a.out, _jsonl(lines))
     return {"claims": len(lines), "objects": len({ln["content_sha256"] for ln in lines}), "out": a.out,
-            "by_writer": {w: sum(1 for ln in lines if ln["writer"] == w) for w in cl.WRITERS}}
+            "split": a.split, "by_writer": {w: sum(1 for ln in lines if ln["writer"] == w) for w in cl.WRITERS},
+            "held_out_by_writer": {w: sum(1 for ln in lines if ln["writer"] == w and ln["split"] == "held_out")
+                                   for w in cl.WRITERS}}
+
+
+def cmd_payload(a) -> dict:
+    export = pn.read_jsonl(_read(a.export))
+    panel = pn.read_jsonl(_read(a.panel))
+    body = importer.build_payload(export, panel, set_id=a.set, set_version=a.version, dry_run=not a.apply)
+    cons = importer.consolidate_payload(body["export"], body["judgements"], set_id=a.set, set_version=a.version)
+    _write(a.out, json.dumps(body, ensure_ascii=False, sort_keys=True))
+    return {"out": a.out, "claims": len(body["export"]), "judgements": len(body["judgements"]),
+            "dry_run": body["dry_run"], "refs_dropped": body["refs_dropped"], "bytes": os.path.getsize(a.out),
+            **importer.counts(cons.rows),
+            "states": {s: sum(1 for v in cons.states.values() if v == s) for s in ("agreed", "disputed", "audit")}}
+
+
+def live_from_json(obj: Any) -> list[sp.Candidate]:
+    """Candidates from the answer of GET /admin/writing-memory/claim-labels/split-plan (or its `candidates` list)."""
+    rows = obj.get("candidates") if isinstance(obj, dict) else obj
+    if not isinstance(rows, list):
+        raise ValueError("--live is the split-plan answer (an object with `candidates`) or its candidate list")
+    return [sp.Candidate(str(r["id"]), str(r["writer"]), r.get("tour_id"), str(r.get("status") or ""))
+            for r in rows]
+
+
+def cmd_split_plan(a) -> dict:
+    stats = sp.export_stats([ln for path in a.export for ln in pn.read_jsonl(_read(path))])
+    target = sp.target_held_out_claims(violation_rate=a.violation_rate, observed_precision=a.observed_precision)
+    if target is None:
+        raise ValueError("the R1 bar is out of reach at this precision / violation rate")
+    have = {w: row["held_out_claims"] for w, row in stats["writers"].items()}
+    out: dict[str, Any] = {"export": stats["writers"], "target_held_out_claims_per_writer": target,
+                           "violation_rate": a.violation_rate, "observed_precision": a.observed_precision,
+                           "export_gap": {w: max(0, target - have.get(w, 0)) for w in cl.WRITERS}}
+    if a.live:
+        result = sp.plan(live_from_json(json.loads(_read(a.live))), target_claims=target, have=have,
+                         exclude=stats["ids"], per_tour_cap=a.per_tour_cap)
+        out["plan"] = result
+        if a.ids_out:
+            ids = sp.ids_file(result)
+            _write(a.ids_out, json.dumps(ids, indent=1))
+            out["ids_out"] = {"path": a.ids_out, "ids": len(ids)}
+    return out
 
 
 async def cmd_import(a, conn) -> dict:
     export = pn.read_jsonl(_read(a.export))
+    problems = cl.set_writer_problems(a.set, (e.get("writer") for e in export))
+    if problems:
+        raise ValueError(problems[0])
     judgements = pn.parse_judgements(pn.read_jsonl(_read(a.panel)),
                                      export_by_hash={e["claim_hash"]: e for e in export})
     cons = pn.consolidate(export, judgements, set_id=a.set, set_version=a.version, policy_sha=policy.policy_sha())
@@ -301,6 +376,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--writers")
     p.add_argument("--tour-map", help="JSON {piece_id | request_id | version_id | sample_id: tour_id}")
+    p.add_argument("--split", choices=("all", "held_out", "train"), default="all",
+                   help="keep only the lines of one side of the frozen split (default: all)")
+    p = sub.add_parser("payload")
+    p.add_argument("panel")
+    p.add_argument("--export", required=True)
+    p.add_argument("--set", required=True)
+    p.add_argument("--version", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--apply", action="store_true", help="the payload asks the API to write (default: DRY RUN)")
+    p = sub.add_parser("split-plan")
+    p.add_argument("--export", required=True, action="append",
+                   help="a claim export; repeat it for the exports of every set (CL-<n>, L<n>, t2@<n>)")
+    p.add_argument("--live", help="the answer of GET /admin/writing-memory/claim-labels/split-plan")
+    p.add_argument("--ids-out", help="write the picks as a select_samples --ids list (needs --live)")
+    p.add_argument("--violation-rate", type=float, default=sp.PANEL1_VIOLATION_RATE)
+    p.add_argument("--observed-precision", type=float, default=sp.DEFAULT_OBSERVED_PRECISION)
+    p.add_argument("--per-tour-cap", type=int, default=sp.DEFAULT_PER_TOUR_CAP)
     for name in ("import", "report", "manifest", "enqueue", "pull-resolutions", "finals"):
         p = sub.add_parser(name)
         if name == "import":
@@ -342,14 +434,24 @@ def build_parser() -> argparse.ArgumentParser:
 DB_COMMANDS = {"import": cmd_import, "report": cmd_report, "manifest": cmd_manifest, "enqueue": cmd_enqueue,
                "pull-resolutions": cmd_pull, "finals": cmd_finals}
 LOCAL_COMMANDS = {"export-fixture": cmd_export_fixture, "rederive": cmd_rederive, "detectors": cmd_detectors,
-                  "mutations": cmd_mutations, "sample-size": cmd_sample_size}
+                  "mutations": cmd_mutations, "sample-size": cmd_sample_size, "payload": cmd_payload,
+                  "split-plan": cmd_split_plan}
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     a = build_parser().parse_args(argv)
     from services.golden_set import llm_guard
 
-    llm_guard.install("aa1048_ground_truth")
+    # The guard holds for the whole command; undo on return so an in-process caller (a unit test calling main())
+    # does not leave the gateway refused for every later test in the same worker (S273: CI shard failures).
+    undo_guard = llm_guard.install("aa1048_ground_truth")
+    try:
+        return _run(a)
+    finally:
+        undo_guard()
+
+
+def _run(a) -> int:
     try:
         if a.cmd in LOCAL_COMMANDS:
             out = LOCAL_COMMANDS[a.cmd](a)

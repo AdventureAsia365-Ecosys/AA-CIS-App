@@ -64,6 +64,15 @@ async def read_rows(conn, set_id: str, set_version: str) -> list[dict]:
     return [dict(r) for r in await conn.fetch(_READ_SQL, set_id, set_version)]
 
 
+async def existing_judgements(conn, set_id: str, set_version: str) -> dict[tuple, tuple[str, str]]:
+    """(claim_hash, labeller_kind, lens) -> (claim_class, label) of the rows a version already holds (the import's
+    idempotency check, services/ground_truth/importer.py). Labels and keys only: no text is read."""
+    rows = await conn.fetch(
+        "SELECT claim_hash, labeller_kind, lens, claim_class, label FROM shared.eval_claim_label "
+        "WHERE set_id = $1 AND set_version = $2", set_id, set_version)
+    return {(r["claim_hash"], r["labeller_kind"], r["lens"]): (r["claim_class"], r["label"]) for r in rows}
+
+
 def week_start(today: date) -> date:
     return today - timedelta(days=today.weekday())
 
@@ -152,5 +161,5 @@ async def pull_resolutions(conn, set_id: str, set_version: str, *, apply: bool,
     return summary
 
 
-__all__ = ["COLUMNS", "QUEUE_SOURCE", "StoreRefused", "enqueue", "insert_rows", "panel_rows_exist",
-           "pull_resolutions", "queue_candidates", "read_rows", "resolution_label", "week_start"]
+__all__ = ["COLUMNS", "QUEUE_SOURCE", "StoreRefused", "enqueue", "existing_judgements", "insert_rows",
+           "panel_rows_exist", "pull_resolutions", "queue_candidates", "read_rows", "resolution_label", "week_start"]

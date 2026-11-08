@@ -91,6 +91,8 @@ SAMPLES = [
     ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/activate", None),      # AA-918
     ("admin_writing_memory", "POST", "/admin/writing-memory/releases/{release_id}/activate", None),      # AA-919
     ("admin_writing_memory", "GET", "/admin/writing-memory/releases/active", None),
+    ("admin_claim_labels", "POST", "/admin/writing-memory/claim-labels/import", {}),                 # AA-1048 W2
+    ("admin_claim_labels", "GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report", None),
     ("admin_reports", "GET", "/admin/reports", None),      # AA-1003
     ("admin_reports", "POST", "/admin/reports/{report_id}/run", {}),
     ("admin_quality_funnel", "GET", "/admin/quality/funnel", None),   # AA-900 W0 (ops.read or lab.read)

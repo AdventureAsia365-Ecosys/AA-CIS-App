@@ -2983,6 +2983,18 @@
         "title": "DraftBody",
         "type": "object"
       },
+      "DryRunBody": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "DryRunBody",
+        "type": "object"
+      },
       "EmbeddingReembedRunRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3614,6 +3626,72 @@
           "git_sha"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "ImportBody": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "export": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Export",
+            "type": "array"
+          },
+          "judgements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 15000,
+            "minItems": 1,
+            "title": "Judgements",
+            "type": "array"
+          },
+          "refs_dropped": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Refs Dropped",
+            "type": "integer"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema"
+          },
+          "set_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9@._-]{0,31}$",
+            "title": "Set Id",
+            "type": "string"
+          },
+          "set_version": {
+            "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$",
+            "title": "Set Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "set_id",
+          "set_version",
+          "export",
+          "judgements"
+        ],
+        "title": "ImportBody",
         "type": "object"
       },
       "IngestS3Request": {
@@ -44614,6 +44692,549 @@
         "summary": "Rollback Rule",
         "tags": [
           "admin-writing-memory"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/import": {
+      "post": {
+        "operationId": "import_labels_admin_writing_memory_claim_labels_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Labels",
+        "tags": [
+          "admin-claim-labels"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/split-plan": {
+      "get": {
+        "operationId": "split_plan_admin_writing_memory_claim_labels_split_plan_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "violation_rate",
+            "required": false,
+            "schema": {
+              "default": 0.06,
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "title": "Violation Rate",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observed_precision",
+            "required": false,
+            "schema": {
+              "default": 0.92,
+              "maximum": 1,
+              "minimum": 0.9,
+              "title": "Observed Precision",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_tour_cap",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Per Tour Cap",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Split Plan",
+        "tags": [
+          "admin-claim-labels"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue": {
+      "post": {
+        "operationId": "enqueue_admin_writing_memory_claim_labels__set_id___set_version__enqueue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "set_id",
+            "required": true,
+            "schema": {
+              "title": "Set Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "set_version",
+            "required": true,
+            "schema": {
+              "title": "Set Version",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue",
+        "tags": [
+          "admin-claim-labels"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals": {
+      "get": {
+        "description": "The labels that count as release evidence (tech lead; agreed panel labels too with audit_ok), in the\n`cli finals` file shape: the orchestrator saves the answer to the gitignored scratch folder for `cli detectors`\nand `r1_calibrate`.",
+        "operationId": "finals_admin_writing_memory_claim_labels__set_id___set_version__finals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "set_id",
+            "required": true,
+            "schema": {
+              "title": "Set Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "set_version",
+            "required": true,
+            "schema": {
+              "title": "Set Version",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "audit_ok",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Audit Ok",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Finals",
+        "tags": [
+          "admin-claim-labels"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions": {
+      "post": {
+        "operationId": "pull_resolutions_admin_writing_memory_claim_labels__set_id___set_version__pull_resolutions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "set_id",
+            "required": true,
+            "schema": {
+              "title": "Set Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "set_version",
+            "required": true,
+            "schema": {
+              "title": "Set Version",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pull Resolutions",
+        "tags": [
+          "admin-claim-labels"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report": {
+      "get": {
+        "operationId": "report_admin_writing_memory_claim_labels__set_id___set_version__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "set_id",
+            "required": true,
+            "schema": {
+              "title": "Set Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "set_version",
+            "required": true,
+            "schema": {
+              "title": "Set Version",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report",
+        "tags": [
+          "admin-claim-labels"
         ]
       }
     },

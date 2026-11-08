@@ -875,6 +875,18 @@
     "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/claim-labels/split-plan": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "GET /admin/writing-memory/claim-labels/{set_id}/{set_version}/finals": {
+    "capability": "tenant_content.read|lab.tenant_text.read",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "GET /admin/writing-memory/claim-labels/{set_id}/{set_version}/report": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_claim_labels"
+  },
   "GET /admin/writing-memory/disagreements": {
     "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
@@ -1614,6 +1626,18 @@
   "POST /admin/writing-memory/candidates/{rule_id}/rollback": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/claim-labels/import": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "POST /admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "POST /admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
   },
   "POST /admin/writing-memory/disagreements/{item_id}/resolve": {
     "capability": "ai.admin",
