@@ -507,6 +507,11 @@ def _tagged(sid, meta, body=TAGGED_BLOG, atom="atom_dun1"):
     return s
 
 
+def rp_band():
+    from services.quality import writing_policy
+    return writing_policy.band("meta")
+
+
 def test_s273_a_band_stated_fit_request_is_d_seo_4_only_with_opt_in(tmp_path, monkeypatch):
     _env(monkeypatch)
     fx = _fixture(tmp_path, [_blog("t9-b4", TITLE_OK, SHORT_META)])
@@ -518,11 +523,6 @@ def test_s273_a_band_stated_fit_request_is_d_seo_4_only_with_opt_in(tmp_path, mo
     base, out = tmp_path / "base.json", tmp_path / "cur.json"
     monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
     assert rp.main(["--golden", fx, "--base", str(base), "--out", str(out)]) == 1
-
-
-def rp_band():
-    from services.quality import writing_policy
-    return writing_policy.band("meta")
 
 
 def test_s273_a_band_that_is_not_the_policy_band_is_undeclared(tmp_path, monkeypatch):

@@ -18,6 +18,7 @@ import pytest
 from services.acp_content_writing import generate, service
 from services.acp_content_writing import seo_builder as sb
 from services.acp_content_writing.quality_gates import gate_seo_surface
+from services.quality import registry as qr
 from services.quality import writing_policy as wp
 
 META_LO, META_HI = wp.band("meta")
@@ -200,7 +201,7 @@ def test_switch_on_still_short_after_the_fit_holds_on_f4_with_a_reason(monkeypat
     assert fit.call_count == 1 and out["meta_description"] == SHORT_121           # no second call per attempt
     event, kw = warn.call_args.args[0], warn.call_args.kwargs
     assert event == "t9_seo_meta_outside_band" and kw["chars"] == len(SHORT_121) and kw["band_stated"] is True
-    assert kw["band"] == [META_LO, META_HI] and "F4_seo_surface holds it" in kw["reason"]
+    assert kw["band"] == [META_LO, META_HI] and f"{qr.F4_SEO_SURFACE} holds it" in kw["reason"]
     f4 = gate_seo_surface(out["seo_title"], out["meta_description"], "orvine-lake-walk", KEYWORD)
     assert not f4["passed"] and any(f"meta description is {len(SHORT_121)} characters" in v for v in f4["violations"])
 

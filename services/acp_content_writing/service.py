@@ -1125,15 +1125,14 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         out = merge(out, shortened)
         if fit_log:
             logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=fit_log, after="fit")
-        meta_left = out.get("meta_description")
+        meta_left, meta_fitted = out.get("meta_description"), fitted.get("meta_description")
         if not meta_ok(meta_left):
             # S273: the reason F4_seo_surface holds the piece, in one place (code, then one band-stated fit call)
             logger.warning("t9_seo_meta_outside_band", request_id=str(request_id), chars=len(meta_left or ""),
-                           band=[_META_MIN_CHARS, _META_MAX_CHARS], fitted_chars=len(fitted.get("meta_description")
-                                                                                     or ""),
+                           band=[_META_MIN_CHARS, _META_MAX_CHARS], fitted_chars=len(meta_fitted or ""),
                            band_stated=bool(band_kw), cited_sentences=len(meta_sources),
                            reason="no whole-sentence prefix or cited-sentence completion of the writer's or the "
-                                  "fitted meta passed the acceptance tests; F4_seo_surface holds it")
+                                  f"fitted meta passed the acceptance tests; {qr.F4_SEO_SURFACE} holds it")
     elif not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
         # LLMs miscount characters: one more try, told exactly how far off the current values are.
         try:
