@@ -51,12 +51,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 import structlog
+
+from services.quality import trial_flags
 
 logger = structlog.get_logger()
 
@@ -79,7 +80,8 @@ META_ATTEMPTS = _meta_attempts_max()   # the t2_flag_fix calls one meta regenera
 def mode() -> str:
     """The T2 path of this process: ``linear`` only when the env says exactly that (case / spaces ignored) and the
     T2 interim profile is on; anything else (unset, ``graph``, a typo, ``on``) is main's ``graph`` path."""
-    raw = (os.environ.get(ORCHESTRATOR_ENV) or "").strip().lower()
+    # AA-1049: an audit-tenant trial job may set it for itself (trial_flags); else the process env, as before.
+    raw = (trial_flags.get(ORCHESTRATOR_ENV) or "").strip().lower()
     if raw != LINEAR:
         return GRAPH
     from services.content_generation import t2_interim

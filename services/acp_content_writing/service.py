@@ -56,6 +56,7 @@ from services.acp_content_writing.quality_gates import (
     keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
+from services.quality import trial_flags  # AA-1049: per-job opt-in of the W3 switches (audit tenants)
 from services.acp_content_writing import (ai_tells, authenticity, faq_answer_fit, faq_filter, hygiene, length_trim,
                                           sentence_repair, text_integrity, trip_facts)
 from services.acp_shared.signature_vocabulary import signature_words
@@ -139,7 +140,7 @@ GUARD_GATE_NAMES = "gate_names"
 
 
 def regression_guard_mode() -> str:
-    raw = (os.environ.get(REGRESSION_GUARD_ENV) or "").strip().lower()
+    raw = (trial_flags.get(REGRESSION_GUARD_ENV) or "").strip().lower()   # AA-1049: a trial job may set it
     return raw if raw in (GUARD_STABLE_KEYS, GUARD_GATE_NAMES) else GUARD_GATE_NAMES
 
 
@@ -152,7 +153,7 @@ SEO_BUILDER_OFF = "off"
 
 
 def seo_builder_mode() -> str:
-    raw = (os.environ.get(SEO_BUILDER_ENV) or "").strip().lower()
+    raw = (trial_flags.get(SEO_BUILDER_ENV) or "").strip().lower()   # AA-1049: a trial job may set it
     return raw if raw in (SEO_BUILDER_ON, SEO_BUILDER_OFF) else SEO_BUILDER_OFF
 
 # AA-499/AA-484 — the ONE similarity threshold Nghiệp confirmed (Q6=B, 25/07/2026, AA-332

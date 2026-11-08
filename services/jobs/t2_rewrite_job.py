@@ -660,10 +660,14 @@ async def run(ctx: JobContext) -> dict:
     progress.step("research")
     await ctx.progress(phase="writing", version_id=version_id)
     on_hold = False
+    # AA-1049 W3: a paid trial may switch T2_ORCHESTRATOR on for THIS job only (payload trial_flags, audit tenants
+    # only; services/quality/trial_flags.py). No payload key = main's path, no extra read.
+    from services.quality import trial_flags
     try:
-        with stream_sink.bind(progress):
-            diag = await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
-                                           published_tour_id)
+        async with trial_flags.scope(pool, KIND, p, tenant_id) as trial:
+            with stream_sink.bind(progress):
+                diag = await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
+                                               published_tour_id)
     except Exception as e:
         progress.fail()
         # AA-1016: waits for staff approval; AA-642 A1: waits for its stage to be switched on (then re-queued).
@@ -684,4 +688,4 @@ async def run(ctx: JobContext) -> dict:
     await ctx.progress(phase="done")
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
             "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag,
-            **({"fs_id": fs_id} if fs_id else {}), **(diag or {})}
+            **({"fs_id": fs_id} if fs_id else {}), **({"trial_flags": trial} if trial else {}), **(diag or {})}
