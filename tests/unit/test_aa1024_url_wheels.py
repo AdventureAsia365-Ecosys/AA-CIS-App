@@ -313,3 +313,49 @@ def test_the_seed_directory_is_tracked_but_never_holds_a_committed_wheel():
     tracked = subprocess.run(["git", "-C", str(REPO), "ls-files", ".url-wheels"], capture_output=True, text=True)
     if tracked.returncode == 0 and tracked.stdout:
         assert not [f for f in tracked.stdout.split() if f.endswith(".whl")]
+
+
+# S273: GitHub throttled unauthenticated release downloads; a release asset is fetched through `gh` with the job token.
+GH_URL = (
+    "https://github.com/invented-org/invented-models/releases/download/demo-1.0.0/"
+    "demo_model-1.0.0-py3-none-any.whl"
+)
+
+
+def _fake_gh(calls):
+    def run(argv, check, timeout, capture_output):
+        calls.append(argv)
+        out = Path(argv[argv.index("--dir") + 1]) / argv[argv.index("--pattern") + 1]
+        out.write_bytes(WHEEL)
+    return run
+
+
+def test_release_asset_goes_through_authenticated_gh(tmp_path, monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "job-token")
+    monkeypatch.setattr(uw.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None)
+    calls = []
+    dest = tmp_path / "demo_model-1.0.0-py3-none-any.whl"
+    assert uw._gh_release_download(GH_URL, dest, 30, run=_fake_gh(calls)) is True
+    assert dest.read_bytes() == WHEEL
+    assert calls[0][:6] == ["gh", "release", "download", "demo-1.0.0", "--repo", "invented-org/invented-models"]
+    assert not list(tmp_path.glob(".gh-*"))
+
+
+def test_no_token_or_no_gh_or_other_host_skips_gh(tmp_path, monkeypatch):
+    calls = []
+    dest = tmp_path / "x.whl"
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(uw.shutil, "which", lambda name: "/usr/bin/gh")
+    assert uw._gh_release_download(GH_URL, dest, 30, run=_fake_gh(calls)) is False
+    monkeypatch.setenv("GH_TOKEN", "job-token")
+    assert uw._gh_release_download(URL, dest, 30, run=_fake_gh(calls)) is False
+    monkeypatch.setattr(uw.shutil, "which", lambda name: None)
+    assert uw._gh_release_download(GH_URL, dest, 30, run=_fake_gh(calls)) is False
+    assert calls == []
+
+
+def test_action_passes_the_job_token_to_the_fetch_step():
+    action = yaml.safe_load(ACTION.read_text())
+    fetch = next(s for s in action["runs"]["steps"] if s.get("id") == "fetch")
+    assert fetch["env"]["GH_TOKEN"] == "${{ github.token }}"

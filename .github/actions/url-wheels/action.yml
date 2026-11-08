@@ -48,6 +48,8 @@ runs:
       env:
         REQ: ${{ inputs.requirements }}
         COPY_TO: ${{ inputs.copy-to }}
+        # S273: an authenticated `gh release download` first (GitHub throttled unauthenticated release downloads).
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         OUT="$RUNNER_TEMP/url-wheels-requirements/$(basename "$REQ")"
