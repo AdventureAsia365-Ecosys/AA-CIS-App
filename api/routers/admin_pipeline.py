@@ -38,6 +38,7 @@ from shared.tour_liveness import (
 )
 from services.quality.registry import threshold
 from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
+from services.quality import lineage as _lineage  # AA-1052 W6 (writer-time lineage stamp)
 from services.quality import final_contract_store as _fc_store  # AA-1047 W1
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 from shared.validators.prompt_sanitize import (
@@ -887,6 +888,9 @@ async def _execute_run_tour(
             if _fc_record is not None:
                 _metadata["final_contract"] = _fc_record
                 _metadata["final_contract_log"] = [_fcon.compact(_fc_record)]
+            # AA-1052 W6: the writer-time lineage (policy_sha, route version), next to the contract; a later exit
+            # (re-validation, human edit, approve, publish) replaces only metadata.final_contract, never this key.
+            _metadata[_lineage.KEY] = _lineage.writer_lineage(_fc_record)
             metadata_val = json.dumps(_metadata, default=str)
             _itin = generated.get("itineraries", "")
             if not isinstance(_itin, str):

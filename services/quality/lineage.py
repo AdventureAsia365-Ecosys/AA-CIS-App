@@ -12,24 +12,30 @@ Four lineage fields per object:
 * ``route_config_version``  the route config version in force (``shared.llm_route_settings.current_version``) at
                             the exit, plus the versions the ledger trigger stamped on the object's calls.
 
-Where each lives (no migration: existing columns and jsonb):
+Where each lives (no migration: existing columns and jsonb). The writer-time stamp is a ``lineage`` key NEXT TO the
+final contract record, written once by the writer's store step; a later exit (re-validation, human edit, approve,
+publish, an admin sentence apply) replaces only the ``final_contract`` key, so the writer's stamp survives it:
 
 ========  =====================================================================================================
-S1        ``silver_aa_internal.generated_content``: ``fs_id``; ``metadata.prompt_version``;
-          ``metadata.final_contract.lineage`` (``policy_sha``, ``route_config_version``); ledger rows by the run's
-          job (``metadata.s1_job_id``), else by the tour in the hours before the version
+S1        ``silver_aa_internal.generated_content``: ``fs_id``; ``metadata.prompt_version``; ``metadata.lineage``
+          (``policy_sha``, ``route_config_version``); ledger rows by the run's job (``metadata.s1_job_id``), else
+          by the tour in the hours before the version
 T2        ``gold_aa_internal.tenant_tour_versions``: ``fs_id``; ``generation_meta.writer_prompt_version``;
-          ``judge_breakdown.final_contract.lineage``; ledger rows by ``job_id``
-T9        ``acp_shared.content_piece``: ``writer_input.fs_id`` / ``writer_prompt_version`` /
-          ``final_contract.lineage``; ledger rows by ``content_piece_id`` (or the piece's job)
+          ``judge_breakdown.lineage``; ledger rows by ``job_id``
+T9        ``acp_shared.content_piece``: ``writer_input.fs_id`` / ``writer_prompt_version`` / ``lineage``; ledger
+          rows by ``content_piece_id`` (or the piece's job)
 eval      ``shared.eval_item_result``: ``judge_version``; its run's fingerprint (``prompt_eval_runs.fingerprint
           .config_fp``: ``parts.policy`` and ``route_config_version``); ledger rows by ``quality_signal.run_id`` /
           ``item_id``. An eval item has no FactSheet (the golden item is its input): ``fs_id`` is not expected.
 ========  =====================================================================================================
 
-``stamp()`` is what the final contract's store step (``final_contract.stamp_stored``) writes under ``lineage`` on
-every S1 / T2 / T9 exit: pure, no I/O (the route version is the one the gateway last read in this process,
-``route_settings.cached_version``; None before any model call of the process).
+``stamp()`` (pure, no I/O) is what the final contract's store step (``final_contract.stamp_stored``) writes under
+``final_contract.lineage`` on every S1 / T2 / T9 exit, so each exit record (and its ``final_contract_log`` entry)
+says what was in force at THAT exit. The route version is the one the gateway last read in this process
+(``route_settings.cached_version``); it is stamped only at a writer exit (``WRITER_EXITS``), where the writer's own
+calls have just refreshed it. A later exit runs where no route was resolved for the text (often the API process),
+so its stamp carries ``route_config_version: null`` rather than a stale number. ``writer_lineage(record)`` is the
+stamp a writer store step puts in the ``lineage`` key next to the contract.
 
 ``assemble`` (pure) builds one object's lineage from its row and ledger rows; ``coverage_from_row`` (pure) the share
 of recent objects that carry each field. The SQL is here too; ``api/routers/admin_quality_lineage.py`` runs it.
@@ -51,20 +57,46 @@ EXPECTED: dict[str, tuple[str, ...]] = {S1: FIELDS, T2: FIELDS, T9: FIELDS,
 COVERAGE_DAYS_MAX = 90
 
 
-def stamp() -> dict:
-    """The lineage the store step writes next to the final contract record. Never raises, no I/O."""
+# The key of the writer-time stamp, next to ``final_contract`` in each workflow's jsonb (see the table above).
+KEY = "lineage"
+# The exits at which the writer stores its text (``final_contract.EXITS``); every other exit is a later one.
+WRITER_EXITS: dict[str, frozenset[str]] = {
+    S1: frozenset({"done", "hitl", "resumed", "resumed_hitl", "batch", "batch_hitl"}),
+    T2: frozenset({"done", "policy_hold"}),
+    T9: frozenset({"done"}),
+}
+
+
+def is_writer_exit(workflow: Optional[str], exit: Optional[str]) -> bool:
+    return exit in WRITER_EXITS.get(workflow or "", frozenset())
+
+
+def stamp(*, route: bool = True) -> dict:
+    """The lineage in force now: ``policy_sha`` and, when ``route``, the route config version this process last read
+    (None before any model call of the process). Never raises, no I/O."""
     out: dict[str, Any] = {"v": LINEAGE_VERSION, "policy_sha": None, "route_config_version": None}
     try:
         from services.quality import writing_policy
         out["policy_sha"] = writing_policy.policy_sha()
     except Exception:  # noqa: BLE001 — a lineage stamp never fails the exit it rides on
         pass
-    try:
-        from shared.llm_client import route_settings
-        out["route_config_version"] = route_settings.cached_version()
-    except Exception:  # noqa: BLE001
-        pass
+    if route:
+        try:
+            from shared.llm_client import route_settings
+            out["route_config_version"] = route_settings.cached_version()
+        except Exception:  # noqa: BLE001
+            pass
     return out
+
+
+def writer_lineage(record: Optional[dict] = None) -> dict:
+    """The writer-time stamp a writer store step writes in the ``lineage`` key next to the contract: the stamp of the
+    writer exit's own contract record (same moment), else a fresh one (a run whose graph left no record still stores
+    text). Never raises."""
+    st = record.get(KEY) if isinstance(record, dict) else None
+    if isinstance(st, dict) and is_writer_exit(record.get("workflow"), record.get("exit")):
+        return dict(st)
+    return stamp()
 
 
 # ── SQL (read-only) ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -75,7 +107,7 @@ OBJECT_SQL: dict[str, str] = {
         SELECT gc.id::text AS object_id, gc.tour_id::text AS tour_id, gc.tenant_id::text AS tenant_id,
                gc.created_at, gc.status::text AS status, gc.fs_id::text AS fs_id,
                NULLIF(gc.metadata->>'prompt_version', '') AS writer_prompt_version,
-               gc.metadata->'final_contract'->'lineage' AS stamp,
+               gc.metadata->'lineage' AS stamp,
                NULLIF(gc.metadata->>'s1_job_id', '') AS job_id
           FROM silver_aa_internal.generated_content gc
          WHERE gc.id = $1::uuid""",
@@ -83,14 +115,14 @@ OBJECT_SQL: dict[str, str] = {
         SELECT ttv.id::text AS object_id, ttv.published_tour_id::text AS tour_id, ttv.tenant_id::text AS tenant_id,
                ttv.created_at, ttv.status, ttv.fs_id::text AS fs_id,
                NULLIF(ttv.generation_meta->>'writer_prompt_version', '') AS writer_prompt_version,
-               ttv.judge_breakdown->'final_contract'->'lineage' AS stamp, ttv.job_id::text AS job_id
+               ttv.judge_breakdown->'lineage' AS stamp, ttv.job_id::text AS job_id
           FROM gold_aa_internal.tenant_tour_versions ttv
          WHERE ttv.id = $1::uuid""",
     T9: """
         SELECT cp.piece_id::text AS object_id, NULL::text AS tour_id, cp.tenant_id::text AS tenant_id,
                cp.created_at, cp.status, NULLIF(cp.writer_input->>'fs_id', '') AS fs_id,
                NULLIF(cp.writer_input->>'writer_prompt_version', '') AS writer_prompt_version,
-               cp.writer_input->'final_contract'->'lineage' AS stamp, cp.job_id::text AS job_id
+               cp.writer_input->'lineage' AS stamp, cp.job_id::text AS job_id
           FROM acp_shared.content_piece cp
          WHERE cp.piece_id = $1::uuid""",
     EVAL: """
@@ -136,15 +168,15 @@ COVERAGE_SQL: dict[str, str] = {
     S1: """
         SELECT count(*)::int AS objects, count(gc.fs_id)::int AS fs_id,
                count(NULLIF(gc.metadata->>'prompt_version', ''))::int AS prompt_version,
-               count(gc.metadata->'final_contract'->'lineage'->>'policy_sha')::int AS policy_sha,
-               count(gc.metadata->'final_contract'->'lineage'->>'route_config_version')::int AS route_config_version
+               count(gc.metadata->'lineage'->>'policy_sha')::int AS policy_sha,
+               count(gc.metadata->'lineage'->>'route_config_version')::int AS route_config_version
           FROM silver_aa_internal.generated_content gc
          WHERE gc.created_at >= now() - make_interval(days => $1::int)""",
     T2: """
         SELECT count(*)::int AS objects, count(ttv.fs_id)::int AS fs_id,
                count(NULLIF(ttv.generation_meta->>'writer_prompt_version', ''))::int AS prompt_version,
-               count(ttv.judge_breakdown->'final_contract'->'lineage'->>'policy_sha')::int AS policy_sha,
-               count(ttv.judge_breakdown->'final_contract'->'lineage'->>'route_config_version')::int
+               count(ttv.judge_breakdown->'lineage'->>'policy_sha')::int AS policy_sha,
+               count(ttv.judge_breakdown->'lineage'->>'route_config_version')::int
                    AS route_config_version
           FROM gold_aa_internal.tenant_tour_versions ttv
          WHERE ttv.created_at >= now() - make_interval(days => $1::int)
@@ -152,8 +184,8 @@ COVERAGE_SQL: dict[str, str] = {
     T9: """
         SELECT count(*)::int AS objects, count(NULLIF(cp.writer_input->>'fs_id', ''))::int AS fs_id,
                count(NULLIF(cp.writer_input->>'writer_prompt_version', ''))::int AS prompt_version,
-               count(cp.writer_input->'final_contract'->'lineage'->>'policy_sha')::int AS policy_sha,
-               count(cp.writer_input->'final_contract'->'lineage'->>'route_config_version')::int
+               count(cp.writer_input->'lineage'->>'policy_sha')::int AS policy_sha,
+               count(cp.writer_input->'lineage'->>'route_config_version')::int
                    AS route_config_version
           FROM acp_shared.content_piece cp
          WHERE cp.created_at >= now() - make_interval(days => $1::int)
@@ -286,6 +318,6 @@ def coverage_from_row(workflow: str, row: Any) -> dict:
     return {"workflow": workflow, "objects": n, "fields": fields, "complete_share_floor": floor}
 
 
-__all__ = ["COVERAGE_DAYS_MAX", "COVERAGE_SQL", "EVAL", "EXPECTED", "FIELDS", "LEDGER_SQL", "LINEAGE_VERSION",
-           "OBJECT_SQL", "S1", "T2", "T9", "WORKFLOWS", "assemble", "can_read_ledger", "coverage_from_row",
-           "ledger_args", "stamp"]
+__all__ = ["COVERAGE_DAYS_MAX", "COVERAGE_SQL", "EVAL", "EXPECTED", "FIELDS", "KEY", "LEDGER_SQL", "LINEAGE_VERSION",
+           "OBJECT_SQL", "S1", "T2", "T9", "WORKFLOWS", "WRITER_EXITS", "assemble", "can_read_ledger",
+           "coverage_from_row", "is_writer_exit", "ledger_args", "stamp", "writer_lineage"]

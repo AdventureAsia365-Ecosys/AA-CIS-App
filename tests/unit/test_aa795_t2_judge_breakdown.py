@@ -293,9 +293,9 @@ def test_a_breakdown_error_saves_null_and_the_version(monkeypatch):
         raise RuntimeError("bad pattern")
     monkeypatch.setattr(t2_brand_claims, "check", boom)
     save, diag = _run_save(monkeypatch, "Two quiet days.")
-    # AA-1047 W1: the final contract is saved on its own; no breakdown key is
+    # AA-1047 W1: the final contract is saved on its own (AA-1052: with the writer-time lineage); no breakdown key is
     assert save[2] == "ai_generated" and "judge" not in diag
-    assert save[9] is None or set(json.loads(save[9])) == {"final_contract"}
+    assert save[9] is None or set(json.loads(save[9])) == {"final_contract", "lineage"}
 
 
 # ── admin-only ─────────────────────────────────────────────────────────────────────────────────

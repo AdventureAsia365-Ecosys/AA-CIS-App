@@ -141,6 +141,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 8.5,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",
@@ -295,6 +300,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 5.0,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",
@@ -382,6 +392,11 @@
        "verdict": "needs_review",
        "version": "fc-w1-report-1",
        "workflow": "t2"
+      },
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
       },
       "policy_hold": {
        "decision": "ADR 0020 D8",
@@ -562,6 +577,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 8.5,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",
@@ -729,6 +749,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 8.5,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",
@@ -893,6 +918,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 8.5,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",
@@ -1114,6 +1144,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 8.5,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",
@@ -1296,6 +1331,11 @@
       "gate": "brand_fit_mission",
       "judge_score": 8.5,
       "judged": true,
+      "lineage": {
+       "policy_sha": "pinned-by-harness",
+       "route_config_version": null,
+       "v": "lineage-v1"
+      },
       "mission_cap": 6.0,
       "mission_present": true,
       "mission_source": "tenant_core_idea",

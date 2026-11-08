@@ -718,10 +718,13 @@ async def save_version(pool, version_id: str, *, rewritten: dict, status: str, q
     (``POST_GATE_EDIT``); an edit between verify and the contract shows as the contract's own POST_GATE_EDIT finding
     (``gated_sha`` = the selected draft exactly as verify checked it)."""
     from services.quality import final_contract as fc
+    from services.quality import lineage
     store = active()
     if final_contract is not None:
         final_contract = fc.stamp_stored(final_contract, fc.tour_text_sha(rewritten))
         judge_breakdown = {**(judge_breakdown or {}), "final_contract": final_contract}
+    # AA-1052 W6: the writer-time lineage next to the contract (a later exit replaces only final_contract)
+    judge_breakdown = {**(judge_breakdown or {}), lineage.KEY: lineage.writer_lineage(final_contract)}
     row = {"version_id": str(version_id), "rewritten": rewritten, "status": status, "quality_score": quality_score,
            "qa_status": "passed" if qa["passed"] else "escalated", "qa_repair_count": qa["attempts"],
            "qa_auto_passed": not qa["passed"], "generation_meta": generation_meta,

@@ -261,7 +261,7 @@ def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = No
         st.enter_context(patch("services.writing_memory.insertion.resolve", AsyncMock(return_value=None)))
         # AA-1052: the lineage stamp the store step writes next to the final contract, pinned so the golden does not
         # move with a policy edit (the policy has its own change control) or with another test's route cache
-        st.enter_context(patch("services.quality.lineage.stamp", lambda: dict(LINEAGE_STAMP)))
+        st.enter_context(patch("services.quality.lineage.stamp", lambda **_: dict(LINEAGE_STAMP)))
         if extra is not None:
             extra(st)
         diag = asyncio.run(job._rewrite_and_save(pool(conn), row, tour_dict, copy.deepcopy(BRAND_RULES), TENANT,

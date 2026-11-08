@@ -10,9 +10,12 @@ Coverage is read before and after the inserts, so rows another test left in this
 What it proves, per workflow (S1, T2, T9, eval):
   * OBJECT_SQL, LEDGER_SQL and COVERAGE_SQL run on the replayed schema (types, JSON operators, the S1 CASE join);
   * a stamped object comes back complete, an object written before the stamp names what it lacks;
-  * the S1 stamp written by the store step (final_contract.stamp_stored + final_contract_store.append_s1) is what
-    the S1 read finds; the ledger rows of the object (and not those of another object) give its prompt and route
-    versions;
+  * the S1 writer-time stamp (``metadata.lineage``, written by the version INSERT from the writer exit's record) is
+    what the S1 read finds; the ledger rows of the object (and not those of another object) give its prompt and
+    route versions;
+  * a LATER exit under another policy and route version (S1 approve through final_contract_store.record_s1_exit's
+    append, T2 / T9 admin sentence apply through the router's own UPDATE SQL) replaces the final contract record but
+    not the writer's lineage: the read still names the writer's policy_sha and route version;
   * coverage counts each field once per object.
 """
 import json
@@ -29,9 +32,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
+from api.routers import admin_content_quality as acq  # noqa: E402
 from services.quality import final_contract as fc  # noqa: E402
 from services.quality import final_contract_store as fcs  # noqa: E402
-from services.quality import lineage  # noqa: E402
+from services.quality import lineage, writing_policy  # noqa: E402
 from shared.llm_client import route_settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -103,8 +107,13 @@ async def test_lineage_of_every_workflow(conn, monkeypatch):
         "metadata, fs_id, aa_name) VALUES ($1, $2, 1, 'approved'::content_status_enum, 0, $3::jsonb, $4, "
         "'Invented Ridge Walk') RETURNING id",
         s1_tour, TENANT, json.dumps({"prompt_version": "s1abcd01", "s1_job_id": str(job_s1)}), fs)
-    record = fc.Contract(workflow=fc.S1, exit="done", verdict=fc.PUBLISH, text_sha="x").record()
-    await fcs.append_s1(conn, str(s1), fc.stamp_stored(record, "y", actual="approved"))
+    record = fc.stamp_stored(fc.Contract(workflow=fc.S1, exit="done", verdict=fc.PUBLISH, text_sha="x").record(),
+                             "y", actual="approved")
+    # the version INSERT writes the writer exit's record and, next to it, the writer-time lineage (admin_pipeline)
+    await conn.execute(
+        "UPDATE silver_aa_internal.generated_content SET metadata = metadata || $2::jsonb WHERE id = $1",
+        s1, json.dumps({lineage.KEY: lineage.writer_lineage(record)}))
+    await fcs.append_s1(conn, str(s1), record)
     s1_old = await conn.fetchval(
         "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, status, retry_count, "
         "metadata) VALUES ($1, $2, 1, 'hitl'::content_status_enum, 0, '{\"prompt_version\": \"s1abcd00\"}'::jsonb) "
@@ -123,7 +132,7 @@ async def test_lineage_of_every_workflow(conn, monkeypatch):
         "VALUES ($1, $2, $3, 1, '{}'::jsonb, 'ai_generated', 'ai_generated', 'en', 'off', 'passed', 0, false, $4, "
         "$5::jsonb, $6::jsonb, $7)",
         t2, TENANT, uuid.uuid4(), job_t2, json.dumps({"writer_prompt_version": "t2abcd01"}),
-        json.dumps({"final_contract": {"lineage": STAMP}}), fs)
+        json.dumps({lineage.KEY: STAMP, "final_contract": {"exit": "done", "lineage": STAMP}}), fs)
     await conn.execute(
         "INSERT INTO gold_aa_internal.tenant_tour_versions (id, tenant_id, published_tour_id, version_number, "
         "rewritten_content, status, edit_source, rewrite_language, seo_mode, qa_status, qa_repair_count, "
@@ -134,7 +143,8 @@ async def test_lineage_of_every_workflow(conn, monkeypatch):
 
     # ── T9: a stamped piece; another piece of the same job must not leak into it ─────────────────────────────────
     t9, other = uuid.uuid4(), uuid.uuid4()
-    stamped = {"fs_id": str(fs), "writer_prompt_version": "t9abcd01", "final_contract": {"lineage": STAMP}}
+    stamped = {"fs_id": str(fs), "writer_prompt_version": "t9abcd01", lineage.KEY: STAMP,
+               "final_contract": {"exit": "done", "lineage": STAMP}}
     for pid, wi in ((t9, stamped), (other, {})):
         await conn.execute(
             "INSERT INTO acp_shared.content_piece (piece_id, tenant_id, angle_gate_request_id, attempt_number, "
@@ -167,6 +177,7 @@ async def test_lineage_of_every_workflow(conn, monkeypatch):
     assert got["route_config_version"] == {"stamped": 77, "ledger": [77]}
     assert got["prompt_version"] == {"writer": "s1abcd01", "stages": {"s1_generate": ["v1"]}}
     assert got["fs_id"] == str(fs) and got["policy_sha"] == lineage.stamp()["policy_sha"]
+    s1_writer_policy = got["policy_sha"]
 
     old = await _read(conn, "s1", s1_old)
     assert old["missing"] == ["policy_sha", "fs_id"]
@@ -186,6 +197,37 @@ async def test_lineage_of_every_workflow(conn, monkeypatch):
                                                          "stages": {"writing_memory_eval": ["v2"]}}
     assert got["run"]["config_fp"] == "f" * 64 and got["route_config_version"] == {"stamped": 75, "ledger": [75]}
     assert [c["model"] for c in got["calls"]] == ["zz-model"]
+
+    # ── a later exit under policy B and route version 99 keeps the writer's lineage (S1 approve, T2 / T9 apply) ──
+    monkeypatch.setattr(writing_policy, "policy_sha", lambda: "policy-b-later")
+    monkeypatch.setattr(route_settings, "_state", ("model_first", 99))
+    approve = fc.stamp_stored(fc.Contract(workflow=fc.S1, exit="approve", verdict=fc.PUBLISH, text_sha="y")
+                              .record(), "y", actual="approved")
+    assert approve["lineage"] == {"v": lineage.LINEAGE_VERSION, "policy_sha": "policy-b-later",
+                                  "route_config_version": None}     # a later exit stamps no route version
+    await fcs.append_s1(conn, str(s1), approve)
+    meta = json.loads(await conn.fetchval(
+        "SELECT metadata FROM silver_aa_internal.generated_content WHERE id = $1", s1))
+    assert meta["final_contract"]["exit"] == "approve"
+    assert [e.get("lineage", {}).get("policy_sha") for e in meta["final_contract_log"]] == [
+        s1_writer_policy, "policy-b-later"]                           # each exit's log entry keeps its own stamp
+    got = await _read(conn, "s1", s1)
+    assert got["policy_sha"] == s1_writer_policy and got["route_config_version"]["stamped"] == 77
+
+    apply_t2 = fc.stamp_stored(fc.Contract(workflow=fc.T2, exit="admin_sentence_apply", verdict=fc.AI_GENERATED,
+                                           text_sha="z").record(), "z")
+    assert await conn.execute(acq._VERSION_UPDATE_SQL, t2, TENANT, json.dumps({"name": "Invented"}),
+                              ["ai_generated"], json.dumps(apply_t2)) == "UPDATE 1"
+    got = await _read(conn, "t2", t2)
+    assert got["policy_sha"] == POLICY and got["route_config_version"]["stamped"] == 77
+
+    apply_t9 = fc.stamp_stored(fc.Contract(workflow=fc.T9, exit="admin_sentence_apply", verdict=fc.APPROVED,
+                                           text_sha="w").record(), "w")
+    await conn.execute(acq._PIECE_UPDATE_SQL, t9, "invented edited text", json.dumps(apply_t9))
+    wi = json.loads(await conn.fetchval("SELECT writer_input FROM acp_shared.content_piece WHERE piece_id = $1", t9))
+    assert wi["final_contract"]["exit"] == "admin_sentence_apply"
+    got = await _read(conn, "t9", t9)
+    assert got["policy_sha"] == POLICY and got["route_config_version"]["stamped"] == 77
 
     # ── coverage: the deltas of this transaction's rows ──────────────────────────────────────────────────────────
     after = await _coverage(conn)

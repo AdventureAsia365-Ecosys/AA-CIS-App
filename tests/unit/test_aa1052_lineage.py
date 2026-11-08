@@ -60,6 +60,51 @@ def test_every_store_step_writes_the_lineage_with_the_contract(route_version):
     assert fc.stamp_stored(None, "x") is None
 
 
+@pytest.mark.parametrize("workflow,exit", [(fc.S1, "approve"), (fc.S1, "human_edit"), (fc.S1, "revalidation"),
+                                           (fc.S1, "auto_publish"), (fc.T2, "admin_sentence_apply"),
+                                           (fc.T9, "admin_sentence_apply")])
+def test_a_later_exit_stamps_its_policy_but_no_route_version(route_version, workflow, exit):
+    """A later exit often runs in the API process, where the route cache is None or stale: no number, not a wrong one."""
+    rec = fc.Contract(workflow=workflow, exit=exit, verdict=fc.PASS_VERDICT[workflow], text_sha="s").record()
+    out = fc.stamp_stored(rec, "s")
+    assert out["lineage"] == {"v": lineage.LINEAGE_VERSION, "policy_sha": writing_policy.policy_sha(),
+                              "route_config_version": None}
+
+
+def test_every_writer_exit_is_a_contract_exit():
+    """WRITER_EXITS names only exits the final contract records (a typo would silently drop the route version)."""
+    for workflow, exits in lineage.WRITER_EXITS.items():
+        known = {e for names in fc.EXITS[workflow].values() for e in names}
+        assert exits <= known, (workflow, exits - known)
+
+
+def test_writer_lineage_is_the_writer_exits_own_stamp(route_version, monkeypatch):
+    rec = fc.stamp_stored(fc.Contract(workflow=fc.T2, exit="done", verdict=fc.AI_GENERATED, text_sha="s").record(),
+                          "s")
+    monkeypatch.setattr(writing_policy, "policy_sha", lambda: "later-policy")
+    monkeypatch.setattr(route_settings, "_state", ("model_first", 99))
+    assert lineage.writer_lineage(rec) == rec["lineage"]                # same moment as the contract, not "now"
+    assert rec["lineage"]["route_config_version"] == route_version
+    # no record (a graph that left none) or a later exit's record: a fresh stamp with the route version
+    assert lineage.writer_lineage(None) == {"v": lineage.LINEAGE_VERSION, "policy_sha": "later-policy",
+                                            "route_config_version": 99}
+    later = {**rec, "exit": "admin_sentence_apply"}
+    assert lineage.writer_lineage(later)["route_config_version"] == 99
+
+
+def test_the_exit_log_keeps_each_exits_stamp(route_version):
+    rec = fc.stamp_stored(fc.Contract(workflow=fc.S1, exit="approve", verdict=fc.PUBLISH, text_sha="s").record(),
+                          "s")
+    assert fc.compact(rec)["lineage"] == rec["lineage"]
+
+
+def test_the_object_reads_take_the_writer_time_key_not_the_contract_record():
+    """A later exit replaces final_contract (S1 append, T2 / T9 sentence apply): the lineage read must not look there."""
+    for wf in (lineage.S1, lineage.T2, lineage.T9):
+        assert "'final_contract'" not in lineage.OBJECT_SQL[wf] + lineage.COVERAGE_SQL[wf], wf
+        assert f"->'{lineage.KEY}'" in lineage.OBJECT_SQL[wf], wf
+
+
 # ── assembly ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def _row(**kw):
@@ -142,12 +187,35 @@ def test_every_workflow_has_its_sql():
 
 
 def test_the_sql_reads_where_the_writers_write():
-    """The keys the readers use are the ones the store steps write (final contract record, writer stamps)."""
-    assert "'final_contract'->'lineage'" in lineage.OBJECT_SQL["s1"]
-    assert "judge_breakdown->'final_contract'->'lineage'" in lineage.OBJECT_SQL["t2"]
-    assert "writer_input->'final_contract'->'lineage'" in lineage.OBJECT_SQL["t9"]
+    """The keys the readers use are the ones the store steps write (the writer-time lineage key, writer stamps)."""
+    assert f"gc.metadata->'{lineage.KEY}'" in lineage.OBJECT_SQL["s1"]
+    assert f"judge_breakdown->'{lineage.KEY}'" in lineage.OBJECT_SQL["t2"]
+    assert f"writer_input->'{lineage.KEY}'" in lineage.OBJECT_SQL["t9"]
     from services.content_generation.s1_checkpoint import JOB_MARKER_KEY
     assert f"metadata->>'{JOB_MARKER_KEY}'" in lineage.OBJECT_SQL["s1"]
+
+
+# Every writer store step of S1 / T2 / T9 (the function that writes the writer's text with its contract record).
+WRITER_STORE_STEPS = {
+    "api/routers/admin_pipeline.py": "_execute_run_tour",
+    "services/jobs/t2_rewrite_job.py": ("_rewrite_and_save", "_save_policy_hold"),
+    "services/content_generation/t2_orchestrator.py": "save_version",
+    "services/acp_content_writing/service.py": "_finalize_piece",
+}
+
+
+def test_every_writer_store_step_writes_the_writer_time_lineage():
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    for path, names in WRITER_STORE_STEPS.items():
+        tree = ast.parse((root / path).read_text())
+        funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for name in (names if isinstance(names, tuple) else (names,)):
+            assert name in funcs, (path, name)
+            calls = {c.func.attr for c in ast.walk(funcs[name])
+                     if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+            assert "writer_lineage" in calls, f"{path}::{name} stores writer text without the writer-time lineage"
 
 
 # ── coverage ──────────────────────────────────────────────────────────────────────────────────────────────────────
