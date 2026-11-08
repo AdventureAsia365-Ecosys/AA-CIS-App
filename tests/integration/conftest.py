@@ -125,7 +125,8 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.content_compliance_flag", "acp_shared.tenant_tour_notice",
                    "acp_shared.tour_retirement_policy",
                    "acp_shared.fact_sheet",   # 386 (AA-1047), FORCE: also X1_POST_245_FORCE_RLS
-                   "shared.eval_claim_label")  # 388 (AA-1048), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.eval_claim_label",  # 388 (AA-1048), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.claim_shadow_verdict")  # 391 (AA-1050), FORCE: also X1_POST_245_FORCE_RLS
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
 # own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
 # FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
@@ -136,7 +137,7 @@ X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared
                          "shared.writing_memory_keep", "shared.writing_memory_disagreement",
                          "acp_shared.content_label", "acp_shared.content_compliance_flag",
                          "acp_shared.tenant_tour_notice", "acp_shared.tour_retirement_policy",
-                         "acp_shared.fact_sheet", "shared.eval_claim_label")
+                         "acp_shared.fact_sheet", "shared.eval_claim_label", "shared.claim_shadow_verdict")
 
 # AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
 # missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
