@@ -34,8 +34,10 @@
       Agreement per class, the panel error rate on the audit draw, contradictions (bar: 0), label counts.
   manifest --set CL-1 --version 1.0.0
       The public manifest (ids, counts, one digest; no text) for the root repo: the Dev DB is the master copy.
-  enqueue --set CL-1 --version 1.0.0 [--apply]
-      Disputed and audit-drawn claims into the disagreement queue (source golden_claim) for the tech lead.
+  enqueue --set CL-1 --version 1.0.0 [--split held_out] [--writers t9_blog,t9_social] [--max-open 200] [--apply]
+      Disputed and audit-drawn claims into the disagreement queue (source golden_claim) for the tech lead, in
+      adjudication order (held-out first, T9 first, then by object). --max-open caps the open items of the set in the
+      queue (one batch of tech-lead work, S273 "t9-heldout-first"); run it again after a batch to top the queue up.
   pull-resolutions --set CL-1 --version 1.0.0 [--apply]
       Resolved golden_claim items -> tech-lead rows.
   finals --set CL-1 --version 1.0.0 --out finals.jsonl [--audit-ok]
@@ -310,7 +312,8 @@ async def cmd_manifest(a, conn) -> dict:
 
 async def cmd_enqueue(a, conn) -> dict:
     return await store.enqueue(conn, await store.read_rows(conn, a.set, a.version), today=date.today(),
-                               apply=a.apply)
+                               apply=a.apply, split=a.split, max_open=a.max_open,
+                               writers=a.writers.split(",") if a.writers else None)
 
 
 async def cmd_pull(a, conn) -> dict:
@@ -402,6 +405,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--version", required=True)
         if name in ("import", "enqueue", "pull-resolutions"):
             p.add_argument("--apply", action="store_true", help="write (default: DRY RUN)")
+        if name == "enqueue":
+            p.add_argument("--split", choices=store.SPLITS, help="queue the claims of this split only")
+            p.add_argument("--writers", help="comma list: queue the claims of these writers only")
+            p.add_argument("--max-open", type=int, help="cap the open items of the set in the queue (one batch)")
         if name == "finals":
             p.add_argument("--out", required=True)
             p.add_argument("--audit-ok", action="store_true",

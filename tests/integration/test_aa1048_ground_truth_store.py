@@ -117,6 +117,36 @@ async def test_import_read_enqueue_and_pull(conn):
         await tr.rollback()
 
 
+@pytest.mark.asyncio
+async def test_enqueue_in_batches_tops_up_after_resolutions(conn):
+    """S273 "t9-heldout-first": max_open caps the open items of the set; a resolved item frees room for the next
+    candidate in work order; the split filter keeps the other side out."""
+    _lines, cons = _rows()
+    tr = await _as_cis_app(conn)
+    try:
+        await store.insert_rows(conn, cons.rows, apply=True)
+        rows = await store.read_rows(conn, SET, "1.0.0")
+        side = rows[0]["split"]
+        other = "train" if side == "held_out" else "held_out"
+        order = [it["source_ref"] for it in store.queue_candidates(rows, split=side)]
+        assert order, "the fixture must give at least one disputed or audit claim"
+        assert (await store.enqueue(conn, rows, today=date(2026, 11, 7), apply=True, split=other))["added"] == 0
+        first = await store.enqueue(conn, rows, today=date(2026, 11, 7), apply=True, split=side, max_open=1)
+        assert first["added"] == 1 and first["open_after"] == 1 and first["remaining"] == len(order) - 1
+        again = await store.enqueue(conn, rows, today=date(2026, 11, 7), apply=True, split=side, max_open=1)
+        assert again["added"] == 0 and again["already_queued"] == 1
+        queued = await conn.fetchval("SELECT source_ref::text AS ref FROM shared.writing_memory_disagreement "
+                                     "WHERE source = 'golden_claim' AND source_ref = $1::uuid", order[0])
+        assert queued == order[0]                                                   # the first in work order
+        await conn.execute("UPDATE shared.writing_memory_disagreement SET status = 'resolved', resolution = "
+                           "'unclear', resolved_by = 'tech_lead', resolved_at = now() WHERE source_ref = $1::uuid",
+                           order[0])
+        top = await store.enqueue(conn, rows, today=date(2026, 11, 7), apply=True, split=side, max_open=1)
+        assert top["open_before"] == 0 and top["added"] == min(1, len(order) - 1)
+    finally:
+        await tr.rollback()
+
+
 def test_resolution_label():
     assert store.resolution_label("violation", "judge_right") == "violation"
     assert store.resolution_label("violation", "human_right") == "ok"

@@ -3078,6 +3078,69 @@
         "title": "EmbeddingReembedRunRequest",
         "type": "object"
       },
+      "EnqueueBody": {
+        "additionalProperties": false,
+        "description": "S273 (decision \"t9-heldout-first\"): one batch of adjudication work. Without the three filters every disputed\nand audit claim of the set is queued, as before.",
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "max_open": {
+            "anyOf": [
+              {
+                "maximum": 5000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Open"
+          },
+          "split": {
+            "anyOf": [
+              {
+                "enum": [
+                  "held_out",
+                  "train"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Split"
+          },
+          "writers": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "a1",
+                    "t2",
+                    "t9_blog",
+                    "t9_social"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writers"
+          }
+        },
+        "title": "EnqueueBody",
+        "type": "object"
+      },
       "ErasureRunRequest": {
         "additionalProperties": false,
         "properties": {
@@ -45113,7 +45176,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DryRunBody"
+                "$ref": "#/components/schemas/EnqueueBody"
               }
             }
           },

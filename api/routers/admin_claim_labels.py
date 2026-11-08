@@ -14,8 +14,11 @@ ECS exec (services/ground_truth/importer.py says why this path).
   GET   /admin/writing-memory/claim-labels/{set_id}/{set_version}/report   counts per label / labeller / lens /
                                                         state / split / writer, agreement per class, the panel
                                                         error rate, contradictions (claim hashes) and the manifest
-  POST  /admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue  {dry_run}: disputed and audit-drawn
-                                                        claims into the disagreement queue (source golden_claim)
+  POST  /admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue  {dry_run, split, writers, max_open}:
+                                                        disputed and audit-drawn claims into the disagreement queue
+                                                        (source golden_claim), in adjudication order (held-out, T9,
+                                                        then by object); max_open caps the open items of the set (one
+                                                        batch of tech-lead work), a later call tops it up
   POST  /admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions  {dry_run}: resolved queue
                                                         items -> tech-lead rows
   GET   /admin/writing-memory/claim-labels/{set_id}/{set_version}/finals?audit_ok=   the release-evidence labels
@@ -29,7 +32,7 @@ The router is included without an include prefix (staff_policy reads the route t
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import asyncpg
 import structlog
@@ -97,6 +100,14 @@ class DryRunBody(BaseModel):
     dry_run: bool = True
 
 
+class EnqueueBody(DryRunBody):
+    """S273 (decision "t9-heldout-first"): one batch of adjudication work. Without the three filters every disputed
+    and audit claim of the set is queued, as before."""
+    split: Optional[Literal["held_out", "train"]] = None
+    writers: Optional[list[Literal["a1", "t2", "t9_blog", "t9_social"]]] = Field(None, min_length=1, max_length=4)
+    max_open: Optional[int] = Field(None, ge=1, le=5000)
+
+
 @router.post("/import")
 async def import_labels(body: ImportBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
     payload = body.model_dump(exclude={"schema_", "refs_dropped"})
@@ -149,7 +160,7 @@ async def report(set_id: str, set_version: str, request: Request):
 
 
 @router.post("/{set_id}/{set_version}/enqueue")
-async def enqueue(set_id: str, set_version: str, body: DryRunBody, request: Request):
+async def enqueue(set_id: str, set_version: str, body: EnqueueBody, request: Request):
     from datetime import date
 
     set_id, set_version = _set(set_id, set_version)
@@ -157,10 +168,13 @@ async def enqueue(set_id: str, set_version: str, body: DryRunBody, request: Requ
         async with _pool(request).acquire() as conn:
             rows = await store.read_rows(conn, set_id, set_version)
             async with conn.transaction():
-                result = await store.enqueue(conn, rows, today=date.today(), apply=not body.dry_run)
+                result = await store.enqueue(conn, rows, today=date.today(), apply=not body.dry_run,
+                                             split=body.split, writers=body.writers, max_open=body.max_open)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    logger.info("aa1048_claim_labels_enqueue", set=f"{set_id}@{set_version}", **result)
+    logger.info("aa1048_claim_labels_enqueue", set=f"{set_id}@{set_version}", candidates=result["candidates"],
+                added=result["added"], dry_run=result["dry_run"], remaining=result.get("remaining"),
+                max_open=body.max_open, split=body.split)
     return result
 
 
