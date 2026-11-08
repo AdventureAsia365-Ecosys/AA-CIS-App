@@ -203,6 +203,46 @@ def valid_set(set_id: str, set_version: str) -> bool:
     return bool(_SET_RE.match(set_id or "")) and bool(_SEMVER_RE.match(set_version or ""))
 
 
+# The writer surface of each writer, and the label-set families of AA-1048 (Scope; CIS 388 names the set ids
+# CL-1 / L2 / t2@2): CL-<n> is the T9 set, L<n> the S1 set, t2@<n> the T2 set. One set holds one surface, so a
+# measurement of a T9 set never pools S1 or T2 claims.
+SURFACES = {"a1": "s1", "t2": "t2", "t9_blog": "t9", "t9_social": "t9"}
+SET_FAMILIES = ((re.compile(r"^CL-[0-9]+$"), "t9"), (re.compile(r"^L[0-9]+$"), "s1"),
+                (re.compile(r"^t2@[0-9]+$"), "t2"))
+
+
+def set_surface(set_id: str) -> Optional[str]:
+    """The surface a named label set holds (t9 / s1 / t2), or None for a set id outside the three families (a test or
+    exploration set: any one surface)."""
+    for rx, surface in SET_FAMILIES:
+        if rx.match(set_id or ""):
+            return surface
+    return None
+
+
+def set_writers(set_id: str) -> Optional[tuple[str, ...]]:
+    """The writers a named label set holds (None: the set id names no family)."""
+    surface = set_surface(set_id)
+    return None if surface is None else tuple(w for w in WRITERS if SURFACES[w] == surface)
+
+
+def set_writer_problems(set_id: str, writers: Iterable[str]) -> list[str]:
+    """Why these writers cannot share the label set (empty when they can): a writer outside the set's family, or
+    writers of more than one surface in one set."""
+    ws = sorted({str(w) for w in writers if w in SURFACES})
+    allowed = set_writers(set_id)
+    if allowed is not None:
+        bad = [w for w in ws if w not in allowed]
+        if bad:
+            return [f"writer(s) {', '.join(bad)} do not belong to set {set_id} (the {set_surface(set_id)} set: "
+                    f"{', '.join(allowed)}); export one set per surface (CL-<n> T9, L<n> S1, t2@<n> T2)"]
+        return []
+    surfaces = sorted({SURFACES[w] for w in ws})
+    if len(surfaces) > 1:
+        return [f"set {set_id} mixes writer surfaces ({', '.join(surfaces)}): one set holds one surface"]
+    return []
+
+
 def valid_hex64(value: Optional[str]) -> bool:
     return bool(_HEX64_RE.match(value or ""))
 

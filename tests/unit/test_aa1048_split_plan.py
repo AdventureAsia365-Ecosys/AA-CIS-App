@@ -98,6 +98,12 @@ def test_cli_split_plan_with_live_writes_the_id_list(tmp_path):
     args = ["split-plan", "--export", str(tmp_path / "claims.jsonl"), "--live", str(tmp_path / "live.json"),
             "--ids-out", str(ids)]
     assert cli.main(args) == 0
+    # one export per set: --export repeats and the stats read every file
+    (tmp_path / "more.jsonl").write_text("".join(json.dumps(x) + "\n" for x in _lines(h[1], _uuid(7002), "zz-4")))
+    two = cli.cmd_split_plan(cli.build_parser().parse_args(
+        ["split-plan", "--export", str(tmp_path / "claims.jsonl"), "--export", str(tmp_path / "more.jsonl")]))
+    one = cli.cmd_split_plan(cli.build_parser().parse_args(["split-plan", "--export", str(tmp_path / "claims.jsonl")]))
+    assert two["export"]["t9_blog"]["held_out_claims"] > one["export"]["t9_blog"]["held_out_claims"]
     picked = json.loads(ids.read_text())
     assert [x["id"] for x in picked] == [_uuid(7001)]           # the exported piece is never picked again
     with pytest.raises(ValueError):

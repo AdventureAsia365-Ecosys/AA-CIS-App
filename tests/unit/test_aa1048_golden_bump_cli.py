@@ -102,7 +102,18 @@ def test_export_fixture_rederive_and_detectors(tmp_path):
     assert len({ln["claim_hash"] for ln in lines}) == len(lines)
     assert all(ln["scope"] == "tenant" and ln["tenant_id"] == TENANT for ln in lines)
     assert "Source itinerary" in lines[0]["source_text"]
-    assert cli.export_fixture(fx, set_id="CL-1", writers=["a1"]) == []
+    # one set per writer surface (AA-1048 Scope): CL-<n> is T9, L<n> S1, t2@<n> T2
+    assert cli.export_fixture(fx, set_id="CL-1") == cli.export_fixture(fx, set_id="CL-1",
+                                                                       writers=["t9_blog", "t9_social"])
+    assert cli.export_fixture(fx, set_id="L2") == [] and cli.export_fixture(fx, set_id="t2@2") == []
+    with pytest.raises(ValueError, match="do not belong to set CL-1"):
+        cli.export_fixture(fx, set_id="CL-1", writers=["a1"])
+    with pytest.raises(ValueError, match="mixes writer surfaces"):
+        cli.export_fixture(fx, set_id="ZZ-FREE", writers=["t9_blog", "t2"])
+    (tmp_path / "fx.json").write_text(json.dumps(fx))
+    assert cli.main(["export-fixture", str(tmp_path / "fx.json"), "--set", "L2", "--writers", "t9_blog",
+                     "--out", str(tmp_path / "x.jsonl")]) == 2
+    assert not (tmp_path / "x.jsonl").exists()
     export = tmp_path / "claims.jsonl"
     export.write_text(cli._jsonl(lines))
     bad = next(ln for ln in lines if "40 km" in ln["claim_text"])

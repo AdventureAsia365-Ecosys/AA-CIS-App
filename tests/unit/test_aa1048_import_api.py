@@ -106,6 +106,64 @@ def test_consolidate_payload_refuses_the_whole_file():
         importer.consolidate_payload(body["export"], body["judgements"], set_id=SET, set_version="1.0.0")
 
 
+# ── review S273: one label set holds one writer surface (AA-1048 Scope: CL-1 T9, L2 S1, t2@2 T2) ─────────────────
+
+
+def _a1_export(set_id):
+    out = {"summary": "Cycle 30 km along the Ostrin river on day three. Lunch is served at Velmora market. "
+                      "The ferry crosses to Harbour Island at dusk."}
+    return pn.export_records(set_id=set_id, writer="a1", scope="platform", tenant_id=None,
+                             refs={"sample_id": "zz-912", "tour_id": TOUR}, output=out, source_text=SOURCE)
+
+
+def test_set_families_name_their_writer_surface():
+    from services.ground_truth import claims as cl
+
+    assert cl.set_writers("CL-1") == ("t9_blog", "t9_social") and cl.set_writers("CL-2") == ("t9_blog", "t9_social")
+    assert cl.set_writers("L2") == ("a1",) and cl.set_writers("t2@2") == ("t2",)
+    assert cl.set_writers(SET) is None and cl.set_surface("CL-1x") is None
+    assert cl.set_writer_problems("CL-1", ["t9_blog", "t9_social"]) == []
+    assert "do not belong to set CL-1" in cl.set_writer_problems("CL-1", ["t9_blog", "a1"])[0]
+    assert "do not belong to set t2@2" in cl.set_writer_problems("t2@2", ["t9_social"])[0]
+    assert cl.set_writer_problems(SET, ["t2"]) == []
+    assert "mixes writer surfaces" in cl.set_writer_problems(SET, ["t2", "a1"])[0]
+    assert set(cl.SURFACES) == set(cl.WRITERS)
+
+
+def test_payload_refuses_a_writer_outside_the_sets_surface():
+    t9 = pn.export_records(set_id="CL-1", writer="t9_blog", scope="tenant", tenant_id=TENANT,
+                           refs={"sample_id": "zz-911", "piece_id": PIECE, "tour_id": TOUR}, output=OUTPUT,
+                           source_text=SOURCE)
+    a1 = _a1_export("CL-1")
+    ok = importer.build_payload(t9, _panel(t9), set_id="CL-1", set_version="1.0.0")
+    assert importer.consolidate_payload(ok["export"], ok["judgements"], set_id="CL-1", set_version="1.0.0").rows
+    mixed = t9 + a1
+    assert a1 and not {x["claim_hash"] for x in a1} & {x["claim_hash"] for x in t9}
+    body = importer.build_payload(mixed, _panel(mixed), set_id="CL-1", set_version="1.0.0")
+    with pytest.raises(pn.PanelError, match="do not belong to set CL-1"):
+        importer.consolidate_payload(body["export"], body["judgements"], set_id="CL-1", set_version="1.0.0")
+    only_a1 = importer.build_payload(a1, _panel(a1), set_id="L2", set_version="1.0.0")
+    assert importer.consolidate_payload(only_a1["export"], only_a1["judgements"], set_id="L2",
+                                        set_version="1.0.0").rows
+    free = importer.build_payload(mixed, _panel(mixed), set_id=SET, set_version="1.0.0")
+    with pytest.raises(pn.PanelError, match="mixes writer surfaces"):
+        importer.consolidate_payload(free["export"], free["judgements"], set_id=SET, set_version="1.0.0")
+
+
+def test_cli_import_refuses_a_mixed_set_before_any_db_call(tmp_path):
+    import argparse
+
+    from scripts.aa1048 import cli
+
+    lines = _a1_export("CL-1")
+    (tmp_path / "x.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    (tmp_path / "p.jsonl").write_text("".join(json.dumps(x) + "\n" for x in _panel(lines)))
+    ns = argparse.Namespace(export=str(tmp_path / "x.jsonl"), panel=str(tmp_path / "p.jsonl"), set="CL-1",
+                            version="1.0.0", apply=False)
+    with pytest.raises(ValueError, match="do not belong to set CL-1"):
+        asyncio.run(cli.cmd_import(ns, None))
+
+
 # ── idempotency plan ────────────────────────────────────────────────────────────────────────────────────────────────
 
 

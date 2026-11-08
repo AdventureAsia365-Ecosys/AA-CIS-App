@@ -2,7 +2,7 @@
 """AA-1048 (Quality W2) — the claim-label tooling, $0. Every DB write is DRY RUN unless --apply; no model is called
 (the gateway entry points are refused for the whole process, services/golden_set/llm_guard).
 
-  export-fixture FIXTURE --set CL-1 --out <scratch>/claims.jsonl [--writers t9_blog,t9_social] [--tour-map MAP]
+  export-fixture FIXTURE --set CL-1 --out <scratch>/cl1.jsonl [--writers t9_blog,t9_social] [--tour-map MAP]
                  [--split held_out|train|all]
       Claim lines (JSONL keyed by claim hash) of the frozen outputs of an AA-729 golden fixture, for the 3-lens panel
       (docs/calibration/aa1048-claim-panel-brief.md). Every T2 / T9 line carries its tour (refs.tour_id, the split
@@ -11,12 +11,15 @@
       version_id | sample_id: tour_id} (read-only query: acp_shared.content_piece -> angle_gate_request.trip_id).
       Real text: every --out / --thresholds path is refused inside a git work tree unless it is in the ignored
       scratch folder .tmp-session/ (scripts/aa1048/outpath.py); use the workspace .tmp-session/.
-      Default: every writer (a1, t2, t9_blog, t9_social) and both splits. --split held_out keeps the held-out lines
-      only (the side a gate decision reads; S273: the T9-only export of fixture 1.3.0 had 24 held-out claims of
-      1,602, every writer gives 1,289 of 6,173).
-  split-plan --export claims.jsonl [--live split-plan.json] [--ids-out ids.json] [--violation-rate 0.06]
-             [--observed-precision 0.92] [--per-tour-cap 6]
-      Held-out claims per writer of an export, the target (R1 bar on one writer surface) and, with --live (the answer
+      One set per writer surface (AA-1048 Scope): --set CL-<n> is the T9 set (t9_blog, t9_social), --set L<n> the S1
+      set (a1), --set t2@<n> the T2 set (t2). Without --writers a named set exports the writers of its surface; a
+      writer of another surface is refused (any other set id: every writer, one surface only). Both splits by
+      default; --split held_out keeps the held-out lines only (the side a gate decision reads). Fixture 1.3.0 has
+      held-out claims T9 24 (blog 0), t2 173, a1 1,092: the T9 gap is closed by the split-plan picks (held-out
+      pieces frozen next) or new held-out pieces, not by exporting more writers into CL-1.
+  split-plan --export cl1.jsonl [--export l2.jsonl --export t2.jsonl] [--live split-plan.json] [--ids-out ids.json]
+             [--violation-rate 0.06] [--observed-precision 0.92] [--per-tour-cap 6]
+      Held-out claims per writer of the exports, the target (R1 bar on one writer surface) and, with --live (the answer
       of GET /admin/writing-memory/claim-labels/split-plan), the existing T9 pieces / T2 versions of held-out tours
       to freeze next (scripts/aa729/select_samples.py --ids <ids-out> --base-version <fixture>) and the writer cost
       of what is still missing. Ids, counts and dollars only (services/ground_truth/split_plan.py).
@@ -130,13 +133,23 @@ def export_fixture(fixture: dict, *, set_id: str, writers: Optional[Iterable[str
                    tour_map: Optional[dict] = None) -> list[dict]:
     """Export lines for the non-trap samples of an AA-729 golden fixture (their frozen outputs, as the AA-729 panel
     sees them: no gate ledger or flags), each with the full writer source (labels._source_text, never cut) and its
-    tour in refs.tour_id (tour_key; ValueError for a T2 / T9 sample without one). A claim is exported once: a second
+    tour in refs.tour_id (tour_key; ValueError for a T2 / T9 sample without one). Without `writers` a named set
+    exports the writers of its surface (claims.set_writers: CL-<n> T9, L<n> S1, t2@<n> T2; any other set id every
+    writer); a writer outside that surface, or writers of two surfaces in one set, is a ValueError (a set never
+    pools surfaces, AA-1048 Scope). A claim is exported once: a second
     item with the same text (same claim hash) adds no line (`cli rederive` maps labels back to every item by content
     sha)."""
     from scripts.aa729.labels import _source_text, panel_output
     from services.golden_set.derive import FixtureError, writer_and_channel
 
-    wanted = set(writers) if writers else None
+    if writers:
+        problems = cl.set_writer_problems(set_id, writers)
+        if problems:
+            raise ValueError(problems[0])
+        wanted: Optional[set] = set(writers)
+    else:
+        named = cl.set_writers(set_id)
+        wanted = set(named) if named is not None else None
     lines: list[dict] = []
     seen: set[str] = set()
     for s in fixture.get("samples") or []:
@@ -246,7 +259,7 @@ def live_from_json(obj: Any) -> list[sp.Candidate]:
 
 
 def cmd_split_plan(a) -> dict:
-    stats = sp.export_stats(pn.read_jsonl(_read(a.export)))
+    stats = sp.export_stats([ln for path in a.export for ln in pn.read_jsonl(_read(path))])
     target = sp.target_held_out_claims(violation_rate=a.violation_rate, observed_precision=a.observed_precision)
     if target is None:
         raise ValueError("the R1 bar is out of reach at this precision / violation rate")
@@ -267,6 +280,9 @@ def cmd_split_plan(a) -> dict:
 
 async def cmd_import(a, conn) -> dict:
     export = pn.read_jsonl(_read(a.export))
+    problems = cl.set_writer_problems(a.set, (e.get("writer") for e in export))
+    if problems:
+        raise ValueError(problems[0])
     judgements = pn.parse_judgements(pn.read_jsonl(_read(a.panel)),
                                      export_by_hash={e["claim_hash"]: e for e in export})
     cons = pn.consolidate(export, judgements, set_id=a.set, set_version=a.version, policy_sha=policy.policy_sha())
@@ -370,7 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--apply", action="store_true", help="the payload asks the API to write (default: DRY RUN)")
     p = sub.add_parser("split-plan")
-    p.add_argument("--export", required=True)
+    p.add_argument("--export", required=True, action="append",
+                   help="a claim export; repeat it for the exports of every set (CL-<n>, L<n>, t2@<n>)")
     p.add_argument("--live", help="the answer of GET /admin/writing-memory/claim-labels/split-plan")
     p.add_argument("--ids-out", help="write the picks as a select_samples --ids list (needs --live)")
     p.add_argument("--violation-rate", type=float, default=sp.PANEL1_VIOLATION_RATE)

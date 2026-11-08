@@ -39,8 +39,14 @@ claims of 1,602.
   payload reports `refs_dropped` (4 lines of round 1).
 - **Held-out size: choose what to label, keep the split.** The split is frozen per tour, and changing the seed or the
   share would move labelled claims between sides. Instead:
-  - `export-fixture` exports every writer by default, which the CL-1 run did not do (it passed
-    `--writers t9_blog,t9_social`). It also gets `--split held_out`.
+  - One set per writer surface (review fix, S273): AA-1048 Scope names three sets, `CL-1` (T9), `L2` (S1) and
+    `t2@2` (T2), and CIS 388 uses those ids. `claims.set_writers` maps the families (`CL-<n>` / `L<n>` /
+    `t2@<n>`) to their writers. `export-fixture` without `--writers` exports the set's own surface. A writer of
+    another surface is refused by `export-fixture`, `cli import` and the payload consolidation (so the API too).
+    A set id outside the families may hold any one surface, never two. An earlier draft exported every writer into
+    `CL-1` and cited "1,289 of 6,173 held-out" as the fix; 1,092 of those were a1 and 173 t2, so T9 still had 24.
+    The T9 gap closes only with more held-out T9 objects (the split-plan picks or new pieces).
+  - `export-fixture --split held_out` keeps the held-out lines only; `split-plan` takes `--export` once per set.
   - `split_plan` lists the existing objects whose tour falls on the held-out side, so the next labelling round
     targets them.
 - **Target = the R1 bar on one writer surface**: r1.measure takes precision over every fire on a writer surface.
@@ -62,8 +68,10 @@ claims of 1,602.
 - `api/routers/admin_claim_labels.py` (new) + `api/main.py` + POLICY in `api/core/staff_authz.py`: writes need
   ai.admin; report and split-plan need lab.read (no text); finals is `_LAB_TEXT_READ` + `LAB_TEXT_LOGGED`, under
   `/admin/writing-memory/` as `test_aa1035_s2_lab_read` requires.
-- `scripts/aa1048/cli.py`: `payload`, `split-plan`, `export-fixture --split`; `_finals_to_jsonl` calls
-  `importer.finals_rows`.
+- `scripts/aa1048/cli.py`: `payload`, `split-plan` (repeatable `--export`), `export-fixture --split` and the set's
+  own surface by default; `_finals_to_jsonl` calls `importer.finals_rows`.
+- `services/ground_truth/claims.py`: `SURFACES`, `set_surface`, `set_writers`, `set_writer_problems` (one surface per
+  label set).
 - Snapshots: `docs/api/openapi.json` (FastAPI 0.161.1 / Pydantic 2.14.1, the pins),
   `tests/unit/snapshots/aa1035_role_route_matrix.json`, GD3 samples.
 - `docs/calibration/aa1048-claim-panel-brief.md`: orchestrator steps through the API.

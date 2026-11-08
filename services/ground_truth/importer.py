@@ -145,7 +145,8 @@ def build_payload(export_lines: Iterable[dict], judgements: Iterable[dict], *, s
 def consolidate_payload(export_lines: list[dict], judgements: list[dict], *, set_id: str,
                         set_version: str) -> pn.Consolidated:
     """Validate the payload and consolidate it (panel.parse_judgements + panel.consolidate, as `cli import`). Any
-    problem refuses the whole payload (PanelError), nothing is half applied."""
+    problem refuses the whole payload (PanelError), nothing is half applied; a writer outside the set's surface
+    (claims.set_writer_problems: CL-<n> T9, L<n> S1, t2@<n> T2) is one."""
     problems: list[str] = []
     by_hash: dict[str, dict] = {}
     for i, e in enumerate(export_lines, 1):
@@ -157,6 +158,7 @@ def consolidate_payload(export_lines: list[dict], judgements: list[dict], *, set
             problems.append(f"export #{i}: the same claim twice")
             continue
         by_hash[e["claim_hash"]] = slim_line(e)
+    problems += cl.set_writer_problems(set_id, (e.get("writer") for e in by_hash.values()))
     if problems:
         raise pn.PanelError("; ".join(problems[:20]) + (f" (+{len(problems) - 20} more)" if len(problems) > 20 else ""))
     js = pn.parse_judgements(judgements, export_by_hash=by_hash)

@@ -138,21 +138,28 @@ Every `--out` / `--thresholds` path inside a git work tree is refused unless it 
 this repo, is refused too), and CI's golden-set text guard fails on any tracked claim-export or claim-label line or
 pretty-printed / YAML claim file.
 
-1. Export: `python -m scripts.aa1048.cli export-fixture <fixture.json> --set CL-1 --out $S/claims.jsonl` (every
-   writer: a T9-only export of fixture 1.3.0 put 24 of 1,602 claims on the held-out side, every writer 1,289 of
-   6,173; `--split held_out` keeps the held-out lines only). `cli split-plan --export $S/claims.jsonl --live
-   $S/split-plan.json --ids-out $S/heldout-ids.json` (the live file: `curl $A/split-plan`) prints the held-out claims
-   per writer against the R1 target and lists the existing T9 pieces / T2 versions of held-out tours to freeze next
-   (`scripts/aa729/select_samples.py --ids <that list> --base-version 1.3.0`, then export the addendum the same way)
-   with the writer cost of what is still missing (other objects: the same line format from the DB, with `refs.tour_id` set). Every T2 / T9 line
-   carries its tour; a sample without one is refused. A fixture frozen before S272 (T9 refs without `tour_id`)
-   needs `--tour-map $S/tours.json`: `{piece_id: tour_id}` from a read-only query (`acp_shared.content_piece` joined
-   to `acp_shared.angle_gate_request.trip_id`). A recorded producer's verdicts go on the line as `recorded`
-   (`{producer: fired}`) with `recorded_classes` (`{producer: [class, ...]}`); without declared classes the producer
-   is measured for exploration only, never enforce.
-2. Panel: three agents, one per lens, each with this brief and `$S/claims.jsonl`; concatenate their outputs into
+1. Export one set per writer surface (the table above; a set never pools surfaces, and `export-fixture`, `payload`
+   and the import refuse a writer outside the set's surface):
+   `python -m scripts.aa1048.cli export-fixture <fixture.json> --set CL-1 --writers t9_blog,t9_social --out $S/cl1.jsonl`,
+   `... --set L2 --writers a1 --out $S/l2.jsonl` and `... --set t2@2 --writers t2 --out $S/t2.jsonl` (without
+   `--writers` a named set exports its own surface; `--split held_out` keeps the held-out lines only). Held-out claims
+   of fixture 1.3.0 per writer: T9 24 (`t9_blog` 0, `t9_social` 24), `t2` 173, `a1` 1,092. Exporting more writers
+   does not help T9: its gap is closed by freezing the held-out T9 pieces the split plan picks, or by new held-out
+   pieces. `cli split-plan --export $S/cl1.jsonl --export $S/l2.jsonl --export $S/t2.jsonl --live $S/split-plan.json
+   --ids-out $S/heldout-ids.json` (the live file: `curl $A/split-plan`) prints the held-out claims per writer against
+   the R1 target and lists the existing T9 pieces / T2 versions of held-out tours to freeze next
+   (`scripts/aa729/select_samples.py --ids <that list> --base-version 1.3.0`, then export the addendum into the same
+   set the same way) with the writer cost of what is still missing (other objects: the same line format from the DB,
+   with `refs.tour_id` set). Every T2 / T9 line carries its tour; a sample without one is refused. A fixture frozen
+   before S272 (T9 refs without `tour_id`) needs `--tour-map $S/tours.json`: `{piece_id: tour_id}` from a read-only
+   query (`acp_shared.content_piece` joined to `acp_shared.angle_gate_request.trip_id`). A recorded producer's
+   verdicts go on the line as `recorded` (`{producer: fired}`) with `recorded_classes` (`{producer: [class, ...]}`);
+   without declared classes the producer is measured for exploration only, never enforce.
+   Steps 2-8 are written for `CL-1` and its export `$S/cl1.jsonl` (T9 first, D7); run them the same way per set
+   (`L2` with `$S/l2.jsonl`, `t2@2` with `$S/t2.jsonl`).
+2. Panel: three agents, one per lens, each with this brief and `$S/cl1.jsonl`; concatenate their outputs into
    `$S/panel.jsonl`.
-3. Import: `cli payload $S/panel.jsonl --export $S/claims.jsonl --set CL-1 --version 1.0.0 --out $S/payload.json`
+3. Import: `cli payload $S/panel.jsonl --export $S/cl1.jsonl --set CL-1 --version 1.0.0 --out $S/payload.json`
    (validated locally; `--apply` makes a write payload), then `curl -X POST $A/import --data-binary @$S/payload.json`
    with the headers above. Run the dry payload first; a second identical write answers `unchanged`, a changed label
    in the same version is refused (409). Local test DB: `cli import ... [--apply]`.
@@ -167,7 +174,7 @@ pretty-printed / YAML claim file.
 7. Manifest: the `manifest` part of the report (or `cli manifest ...`) into the root repo (ids, counts, digest).
 8. Measure: `curl "$A/CL-1/1.0.0/finals" | jq -c '.finals[]' > $S/finals.jsonl` (or `cli finals ... --out`; tech-lead labels; add `--audit-ok` only after the audit draw
    is adjudicated and its error rate accepted: `?audit_ok=true`). Save `cli report` output as `$S/report.json`, then
-   `cli detectors --export $S/claims.jsonl --finals $S/finals.jsonl --agreement $S/report.json --split train --out
+   `cli detectors --export $S/cl1.jsonl --finals $S/finals.jsonl --agreement $S/report.json --split train --out
    $S/rows-train.json` (exploration, label-budget rates) and the same with `--split held_out --out
    $S/rows.json --thresholds $S/rows.yaml` (the record that may pass), `cli rederive <fixture.json> --finals
    $S/finals.jsonl` (every golden label that flips under the policy) and, after its own yes, the R1 run
