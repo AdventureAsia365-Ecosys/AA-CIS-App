@@ -3151,6 +3151,25 @@ version only at a writer exit. An eval result reads its run's fingerprint (`conf
 with `missing` / `complete`); ops.read or lab.read; ids and shas, never text.
 _Avoid_: provenance (that is a FactSheet line's source class), audit trail.
 
+**Claim shadow (AA-1050, root ADR 0020 W4, D6 / D7)**:
+The pinned claim instrument calibrated in W2 (`services/ground_truth/r1.py`, extraction mode, R1 prompts byte for byte,
+3 votes, 2 agreeing to decide) run beside a live decision without acting on it (`services/quality/claim_shadow.py`):
+after a T9 piece is finalized (baseline: its final `F9_cta_fact` entry) and after a T2 version is saved (baseline: the
+brand-claim check in `judge_breakdown.brand_claims`), and on the replay corpus (`python -m
+services.quality.claim_shadow_replay`, DRY RUN default). One row per object in `shared.claim_shadow_verdict` (CIS 391,
+no text: spans, claim hashes, classes, votes) with a typed reason, the agreement with the baseline and what the
+per-(writer, class) enforce map would do (`shadow_action`; every class warns until a class is in both
+`ENFORCE_OVERRIDES` and the instrument's passing record `CALIBRATED`, both empty). A miss, refusal, unusable reply,
+split vote, answer from another model / connection, caller error or the spend guard is `unverified`, never a pass;
+the tenant's CTA / brand name spans never count. Cache first (key = instrument + votes + prompt sha + each field's
+prompt), then a hard spend guard over the `claim_shadow` stage's ledger window (`CLAIM_SHADOW_CAP_USD`, default 0.30,
+max 0.50; `CLAIM_SHADOW_WINDOW_DAYS`, default 30; an unreadable ledger closes it). Switch `CLAIM_SHADOW=on` (default
+off: no read, no call). Calls go through the gateway on stage `claim_shadow` (platform stage, role judge,
+`{"shadow": true}`), never change a status and never raise into the job. Read side: `GET
+/admin/writing-memory/claim-shadow/summary` (Writing Lab read: counts, cells, reasons, spend vs cap, a seeded sample of
+disagreement ids). The enforce flip (holds for measured classes, truth-cut clause first) is a later, measured change.
+_Avoid_: shadow judge (the gateway's model shadow, `llm_shadow_log`, is a different thing).
+
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):
 `served` (live source version + live Master), `paused` (Master inactive, or a supersede waiting for the new

@@ -747,6 +747,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals"): _LAB_TEXT_READ,
+    # AA-1050 W4: the claim-instrument shadow summary (api/routers/admin_claim_shadow.py): counts and ids, no text.
+    ("GET", "/admin/writing-memory/claim-shadow/summary"): _LAB_READ,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.
