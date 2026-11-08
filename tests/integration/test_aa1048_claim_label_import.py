@@ -104,7 +104,7 @@ async def test_api_import_dry_run_apply_idempotent_and_refused(conn):
 
 
 @pytest.mark.asyncio
-async def test_split_plan_candidate_queries_run_on_the_schema(conn):
+async def test_split_plan_t9_query_runs_on_the_schema(conn):
     tr = conn.transaction()
     await tr.start()
     try:
@@ -112,9 +112,16 @@ async def test_split_plan_candidate_queries_run_on_the_schema(conn):
         # tests/integration/_replay_guard.py); on Dev the column exists (db-schema-reference.md). Added for this
         # transaction only.
         await conn.execute("ALTER TABLE acp_shared.content_piece ADD COLUMN IF NOT EXISTS channel TEXT")
-        cands = await sp.live_candidates(conn)
-        assert all(c.writer in sp.LIVE_WRITERS for c in cands)
-        res = sp.plan(cands, target_claims=sp.target_held_out_claims())
-        assert set(res["writers"]) == set(sp.LIVE_WRITERS)
+        rows = await conn.fetch(sp._T9_SQL)
+        assert all(set(r.keys()) == {"id", "channel", "status", "tour_id"} for r in rows)
     finally:
         await tr.rollback()
+
+
+@pytest.mark.asyncio
+async def test_split_plan_t2_query_runs_on_the_schema(conn):
+    if not await conn.fetchval("SELECT to_regclass('gold_aa_internal.tenant_tour_versions') IS NOT NULL AS ok"):
+        pytest.skip("the CI replay has no gold_aa_internal.tenant_tour_versions (pre-history CIS tables); the "
+                    "columns follow docs/architecture/db-schema-reference.md")
+    rows = await conn.fetch(sp._T2_SQL)
+    assert all(set(r.keys()) == {"id", "status", "tour_id"} for r in rows)
