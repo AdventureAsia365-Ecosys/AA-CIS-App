@@ -468,3 +468,23 @@ def test_a_default_run_equals_main_and_the_seo_prefix_is_opt_in_only(tmp_path, m
     monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
     assert rp.main(["--golden", fx, "--base", str(base), "--out", str(out)]) == 1
     assert json.loads(out.read_text())["summary"]["undeclared"] == 1
+
+
+def test_live_piece_rows_use_the_flat_writer_input_as_context(tmp_path):
+    """S273: stored pieces keep the T9 context flat in writer_input (trip, facts, cta, ...); there is no nested
+    "context" key. The loader read only writer_input["context"], so every live row replayed with an empty context
+    (the S273 export found 0 pieces with a "context" key among 169 recent T9 pieces)."""
+    flat = {"channel": "blog", "trip": {"name": "Invented River Loop"}, "cta": "Ask us", "facts": []}
+    path = tmp_path / "pieces.json"
+    path.write_text(json.dumps([{"piece_id": "p-1", "channel": "blog", "writer_input": flat, "content_text": "x"}]))
+    [p] = rp.load_pieces(str(path))
+    assert p["context"]["trip"] == {"name": "Invented River Loop"}
+    assert p["context"]["cta"] == "Ask us"
+
+
+def test_a_nested_context_still_wins(tmp_path):
+    nested = {"context": {"cta": "Nested"}, "cta": "Flat"}
+    path = tmp_path / "pieces.json"
+    path.write_text(json.dumps([{"piece_id": "p-2", "channel": "blog", "writer_input": nested}]))
+    [p] = rp.load_pieces(str(path))
+    assert p["context"] == {"cta": "Nested"}

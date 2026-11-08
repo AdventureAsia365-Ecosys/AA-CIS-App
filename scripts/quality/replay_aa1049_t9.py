@@ -134,7 +134,7 @@ def load_pieces(path: str) -> list[dict]:
     for r in _read_json(path) or []:
         wi = _json(r.get("writer_input")) or {}
         out.append({"id": str(r.get("piece_id") or r.get("id")), "channel": r.get("channel") or wi.get("channel"),
-                    "context": wi.get("context") or {}, "writer_input": wi,
+                    "context": wi.get("context") or wi, "writer_input": wi,
                     "content_text": r.get("content_text") or "", "seo_title": r.get("seo_title"),
                     "meta_description": r.get("meta_description"), "slug": r.get("slug"),
                     "gate_ledger": _json(r.get("gate_ledger")) or [], "repair_log": _json(r.get("repair_log")) or [],
