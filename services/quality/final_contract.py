@@ -578,8 +578,11 @@ class T2Input:
 
 
 def _day_numbers(itineraries: Any) -> list[int]:
-    from services.content_generation.day_parse import output_days
-    return sorted({n for n, _t, _f in output_days(str(itineraries or ""))})
+    """The distinct days a written itinerary covers. AA-1049 (S273): ``day_parse.written_day_numbers``, the reader the
+    T2 orchestrator's slot check uses, not ``output_days`` (canonical "Day N — Title" only): a stored T2 text is
+    dash-fixed to "Day N: Title" (AA-778), so every T2 version read as 0 days (T2_DAY_COUNT_VS_MASTER)."""
+    from services.content_generation.day_parse import written_day_numbers
+    return sorted(set(written_day_numbers(itineraries)))
 
 
 def check_t2(inp: T2Input, *, exit: str, actual: Optional[str] = None) -> Contract:

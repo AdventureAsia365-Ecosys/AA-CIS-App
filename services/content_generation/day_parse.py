@@ -19,6 +19,21 @@ one function).
 * `canonical_blocks(text)` → `[CanonicalBlock(first, last, title, body)]` — the canonical blocks themselves, the one
   reader every written-itinerary parser builds on (itinerary_utils, output_days, places.validity, the SQL twin
   catalog._tour_day_text from CIS 289).
+* `written_day_numbers(value)` → `[day, ...]` — the days a written itinerary's headings cover, in any form a writer or
+  a code step leaves (see below): the ONE day reader of every day-COUNT check on written text that is not S1's
+  canonical page (T2 final contract, the T2 orchestrator's slot check, the repair contract's days_kept).
+  `written_itinerary_text(value)` is its value -> text step (a writer-JSON day list becomes canonical blocks).
+
+AA-1049 (S273) — why two written-day readers. `output_days` / `canonical_blocks` read ONLY the canonical "Day N —
+Title" heading: that is S1's storage contract (the SQL twin reads the same form), so an S1 page in any other form is
+correctly a page with no day blocks. A T2 version is never in that form when stored: the AA-778 dash fix
+(t2_dashes.fix_t2_dashes) rewrites every marker to "Day N: Title" (or "Day N · Title" when a title has its own colon).
+The T2 final contract read days with `output_days` while the linear orchestrator's slot check read them with
+`source_day_markers`, so the S273 paid trial stored a 12-day version that passed the slot check (12 days) and the
+contract found 0 days (T2_DAY_COUNT_VS_MASTER, needs_review); on main every T2 version recorded that finding.
+`written_day_numbers` is now the one reader both (and the repair contract) call: every line-initial "Day N" marker
+(`source_day_markers`: the canonical em dash, ":", "·", "|", a markdown "## " or "**" prefix, spelled-out numbers,
+ranges and day lists expanded) plus any canonical block that line reader missed.
 
 AA-990 (S253) — ONE ranged-heading rule. A heading "Day A-B" (hyphen, en dash or "to"; "Day" or "Days") covers every
 day A..B when A < B <= A + 14 (`day_range`); otherwise (backwards "Day 15-12", a span over two weeks) it is the single
@@ -282,3 +297,39 @@ def output_days(text: str) -> list[tuple[int, str, str]]:
         first = _SENT_END_RE.split(b.body, maxsplit=1)[0].strip() if b.body else ""
         out.extend((n, b.title, first) for n in b.days)
     return out
+
+
+def written_itinerary_text(value) -> str:
+    """AA-1049 (S273): an itinerary value as text with its "Day N" headings. A writer-JSON list of day objects
+    ({"day", "title", "body"} from the T2/S1 writer contract, or "description" as normalize_generated reads it)
+    becomes canonical "Day N — Title\nBody" blocks; any other list or dict is its values joined by newlines (a day
+    object stringified with ``str()`` would read as no day at all); a string is returned as is."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)) and any(isinstance(v, dict) and "day" in v for v in value):
+        return "\n\n".join(
+            f"Day {v.get('day')} — {v.get('title') or ''}\n{v.get('body') or v.get('description') or ''}"
+            for v in value if isinstance(v, dict))
+    if isinstance(value, (list, tuple)):
+        return "\n".join(written_itinerary_text(v) for v in value)
+    if isinstance(value, dict):
+        return "\n".join(written_itinerary_text(v) for v in value.values())
+    return str(value)
+
+
+def written_day_numbers(value) -> list[int]:
+    """AA-1049 (S273): the days a written itinerary's "Day N" headings cover, in order, duplicates kept — THE day
+    reader of the T2 final contract (``final_contract._day_numbers``), the T2 orchestrator's Master slot check
+    (``t2_orchestrator.day_slots``) and the repair contract's days_kept (``repair_contract.day_headings``), so those
+    checks can never disagree on how many days a text has. Reads every line-initial day marker
+    (``source_day_markers``: "Day N — Title", the dash-fixed T2 forms "Day N: Title" / "Day N · Title", "**Day 3**",
+    "## Day 3", spelled-out numbers, a range or list heading "Days 11–15 — Trek" / "Day 11, 12 & 13" expanded to each
+    day), then any canonical block (``canonical_blocks``) the line reader missed. ``value`` may be a string or a
+    writer-JSON day list (``written_itinerary_text``)."""
+    t = written_itinerary_text(value)
+    days = [d for first, last, _idx in source_day_markers(t) for d in range(first, last + 1)]
+    seen = set(days)
+    days += [d for d, _title, _first in output_days(t) if d not in seen]
+    return days

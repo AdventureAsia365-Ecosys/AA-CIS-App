@@ -1,11 +1,11 @@
 {
  "flags": {},
- "recorded_on": "CIS origin/main dd07872be52b (git archive export, PYTHONPATH=<export>, this branch's replay script over aa1049_t2_harness.replay_versions())",
+ "recorded_on": "CIS origin/main dd07872be52b (git archive export, PYTHONPATH=<export>, this branch's replay script over aa1049_t2_harness.replay_versions()); contract_verdict of v-clean and v-elephant re-derived on CIS AA-1049 S273 (the T2 final contract reads days with day_parse.written_day_numbers), every other field as recorded",
  "schema": "aa1049-t2-replay/1",
  "versions": {
   "v-clean": {
    "cassette_hits": 2,
-   "contract_verdict": "needs_review",
+   "contract_verdict": "ai_generated",
    "id": "v-clean",
    "input": {
     "fs_sha": null,
@@ -53,7 +53,7 @@
   },
   "v-elephant": {
    "cassette_hits": 0,
-   "contract_verdict": "needs_review",
+   "contract_verdict": "policy_hold",
    "id": "v-elephant",
    "input": {
     "fs_sha": null,

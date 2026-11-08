@@ -545,10 +545,9 @@ def test_d8_a_negated_ride_is_not_a_hold():
     assert job.policy_hold_hits(row, job.source_tour_dict(row)) == []
 
 
-@pytest.mark.xfail(strict=True, reason="final_contract.check_t2 reads days with output_days (dash form only), so the "
-                   "dash-fixed Master text ('Day N:') of a D8 version records T2_DAY_COUNT_VS_MASTER and the verdict "
-                   "needs_review instead of policy_hold (report mode only; follow-up in AA-1049-l15-t2.md)")
 def test_d8_contract_verdict_is_policy_hold():
+    """S273 (lane l17): the contract reads the dash-fixed Master text's days with day_parse.written_day_numbers, so a
+    D8 version records policy_hold, not needs_review for a phantom T2_DAY_COUNT_VS_MASTER (was xfail)."""
     jb = _save(GOLDEN["elephant"])[1]
     assert jb["final_contract"]["verdict"] == "policy_hold"
 

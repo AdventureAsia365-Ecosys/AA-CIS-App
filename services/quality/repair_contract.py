@@ -178,27 +178,22 @@ def balanced(text: str) -> bool:
 
 
 def day_headings(text: str) -> list[int]:
-    """The days an itinerary's "Day N" headings cover, in order, duplicates kept: every line that starts with a day
-    marker (``day_parse.source_day_markers``: canonical "Day N — Title", "Day 3: Agra", "**Day 3**", spelled-out
-    numbers, and a range or list heading "Days 11–15 — Trek" / "Day 11, 12 & 13" expanded to each day), plus any
-    canonical block (``day_parse.output_days``) the line reader missed. Review fix: a page that mixes canonical blocks
-    with a loose or range heading no longer hides the loose days."""
-    from services.content_generation.day_parse import output_days, source_day_markers  # lazy: leaf module
+    """The days an itinerary's "Day N" headings cover, in order, duplicates kept. AA-1049 (S273): a thin wrapper over
+    ``day_parse.written_day_numbers``, the one written-day reader the T2 final contract and the T2 orchestrator's slot
+    check call too (every line-initial day marker — canonical "Day N — Title", "Day 3: Agra", "**Day 3**", spelled-out
+    numbers, a range or list heading expanded — plus any canonical block the line reader missed)."""
+    from services.content_generation.day_parse import written_day_numbers  # lazy: leaf module
 
-    t = text or ""
-    days = [d for first, last, _idx in source_day_markers(t) for d in range(first, last + 1)]
-    seen = set(days)
-    days += [d for d, _title, _first in output_days(t) if d not in seen]
-    return days
+    return written_day_numbers(text or "")
 
 
 def _day_text(value) -> str:
-    """An itinerary value as text with its "Day N" headings: a writer-JSON list of {"day", "title", "body"} objects
-    becomes the canonical "Day N — Title" blocks (``_as_text`` would join the bare values and lose the headings)."""
-    if isinstance(value, (list, tuple)) and any(isinstance(v, dict) and "day" in v for v in value):
-        return "\n\n".join(f"Day {v.get('day')} — {v.get('title') or ''}\n{v.get('body') or ''}"
-                           for v in value if isinstance(v, dict))
-    return _as_text(value)
+    """An itinerary value as text with its "Day N" headings (``day_parse.written_itinerary_text``): a writer-JSON list
+    of {"day", "title", "body"} objects becomes the canonical "Day N — Title" blocks (``_as_text`` would join the bare
+    values and lose the headings)."""
+    from services.content_generation.day_parse import written_itinerary_text  # lazy: leaf module
+
+    return written_itinerary_text(value)
 
 
 def days_problem(before: str, after: str) -> Optional[str]:

@@ -3997,6 +3997,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   (`itinerary_utils`, `output_days`), validate's dash normaliser, the day gap check / `final_day_guard`,
   `places/validity`, `places/days`, the T2 day markers and the SQL twin `catalog._tour_day_text` /
   `v_tour.duration_days` (CIS 289) all apply it, so a ranged day is never folded into the day before.
+  Two written-day readers, on purpose (AA-1049 S273): `output_days` / `canonical_blocks` read only the canonical
+  "Day N — Title" heading (S1's storage contract and its SQL twin); `written_day_numbers` reads any written form (the
+  dash-fixed T2 "Day N: Title" / "Day N · Title", markdown or bold headings, a writer-JSON day list) and is the ONE
+  reader of the T2 final contract, the T2 orchestrator's Master slot check and the repair contract's days_kept, so
+  those day-count checks can never disagree.
   `validate_node` runs the deterministic day oracle
   (`services/quality/day_oracle.py`: sub-day split, duplicate / out-of-order / skipped / extra day, departure
   mid-trip, count vs duration, `SOURCE_DAY_CONTRADICTION` — a source fault, never charged to the writer —
