@@ -334,7 +334,7 @@ DECLARED_SITES: dict = {
     # places.llm.make_generate(pool, stage, max_tokens): the extract job (days) and the geocode job (locate)
     "services/places/llm.py:_generate_sync": {"a3_place_days": _const_of("services.places.days", "MAX_TOKENS"),
                                               "a3_place_locate": _const_of("services.places.locate", "MAX_TOKENS")},
-    # a3_atomize re-asks a cut read itself (token_floor.NO_RETRY_STAGES) starting from _MAX_TOKENS
+    # a3_atomize: the gateway retries a cut read (AA-1053); a3 stays out of the floor (token_floor.NO_FLOOR_STAGES)
     "services/acp_contract/a3_atomize.py:_ask_atoms": {"a3_atomize": _const_of("services.acp_contract.a3_atomize",
                                                                                 "_MAX_TOKENS")},
 }
@@ -411,7 +411,7 @@ UNDER_EFFORT_FLOOR = {
     "a0_column_map@shared/llm_client/column_mapper.py:detect_column_mapping":
         "column mapping (one small JSON object); 500 bounds the non-reasoning fallback",
     "a3_atomize@services/acp_contract/a3_atomize.py:_ask_atoms":
-        "re-asks a cut read itself with _TRUNCATION_RETRY_MAX_TOKENS (no gateway retry on this stage)",
+        "first ceiling kept (token_floor.NO_FLOOR_STAGES); the gateway retries a cut read at 8192 (AA-1053)",
     "a3_place_card@services/acp_shared/place_cards.py:draft_card": "place card draft (a few short fields)",
     "a3_place_card_check@services/acp_shared/place_cards.py:check_card": "place card check verdict",
     "a3_place_days@services/places/llm.py:_generate_sync": "place day split (extraction JSON)",

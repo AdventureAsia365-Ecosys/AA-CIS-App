@@ -5,7 +5,8 @@ enclosed in double quotes: line 183"). run_a3_atomize returned status "failed", 
 "succeeded", so max_attempts=2 never applied and the day kept no atoms.
 
 * _ask_atoms: a second gateway call for a reply that raised or did not parse; a reply cut at the token ceiling
-  is re-asked with more room; every billed unusable reply gets its own llm_call_log row (AA-927).
+  is NOT re-asked (AA-1053: the gateway owns that retry); every billed unusable reply gets its own llm_call_log
+  row (AA-927).
 * run_a3_atomize: a day still failed keeps no fingerprint row, the other days are kept; the result names the day.
 * _run_a3_atomize_background(retry_failed_days=True) stops before Segment/Score/Route; the job raises the
   retryable AtomizeIncomplete on every attempt that still has a failed day (on the last one after the later steps).
@@ -109,14 +110,15 @@ async def test_a_malformed_day_is_asked_again_and_kept():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stop_reason", ["max_tokens", "length"])
-async def test_a_reply_cut_at_the_ceiling_is_retried_with_more_room(stop_reason):
-    out, gen, _, _ = await _per_day(
-        _conn(), _Resp(CUT, stop_reason=stop_reason), _Resp(_atoms("Old Quarter", "walk")),
-        _Resp(_atoms("Halong Bay", "kayak")))
-    assert out["status"] == "success"
+async def test_a_reply_still_cut_after_the_gateway_retry_fails_the_day(stop_reason):
+    """AA-1053: the gateway retried the cut read once (double the ceiling); a3 does not ask again."""
+    out, gen, _, unusable = await _per_day(
+        _conn(), _Resp(CUT, stop_reason=stop_reason), _Resp(_atoms("Halong Bay", "kayak")))
+    assert out["status"] == "failed" and out["days_failed"] == [1] and out["days_read"] == 1
     sizes = [c.args[0].max_tokens for c in gen.call_args_list]
-    assert sizes == [4096, a3_atomize._TRUNCATION_RETRY_MAX_TOKENS, 4096]
+    assert sizes == [4096, 4096]                     # one request per day, never a ceiling of a3's own
     assert all(c.args[0].stage == "a3_atomize" and c.args[0].model_tier is None for c in gen.call_args_list)
+    unusable.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -161,7 +163,7 @@ async def test_legacy_path_retries_too():
     conn = AsyncMock()
     conn.fetchval.return_value = None
     conn.execute.return_value = "UPDATE 0"
-    patches, gen, record, unusable = _run(_Resp(CUT, stop_reason="max_tokens"), _Resp(_atoms("Old Quarter", "walk")))
+    patches, gen, record, unusable = _run(_Resp("{not json"), _Resp(_atoms("Old Quarter", "walk")))
     for p in patches:
         p.start()
     try:
@@ -170,7 +172,7 @@ async def test_legacy_path_retries_too():
         for p in patches:
             p.stop()
     assert out["status"] == "success" and out["atom_count"] == 1
-    assert [c.args[0].max_tokens for c in gen.call_args_list] == [4096, a3_atomize._TRUNCATION_RETRY_MAX_TOKENS]
+    assert [c.args[0].max_tokens for c in gen.call_args_list] == [4096, 4096]
     unusable.assert_awaited_once()
     assert record.await_args.kwargs["quality_signal"]["attempt"] == 2
 
