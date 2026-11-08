@@ -395,6 +395,12 @@ _META_MUST = _wp.fill(" — must be <<aim.t9.meta.min>>-<<aim.t9.meta.max>>, nev
 # S272 review: a meta under the band floor was told "must be 130-145" (a 135-char meta read as on target and as wrong
 # at once); a short one is told the band it must reach instead
 _META_SHORT = _wp.fill(" — too short: must be <<meta.min>>-<<meta.max>>")
+# S273 (T9_SEO_BUILDER=on only, `meta_band`): the rules above aim below the band and ask for about 20 words, which
+# keeps a short meta short (trial piece held on F4 at 119 chars). For a meta under the floor the caller states the band
+# and this line overrides the aim for that call. User prompt only: the registered system prompt is unchanged.
+_META_BAND_LINE = ("META LENGTH FOR THIS POST: {lo}-{hi} characters, never under {lo}. This replaces the aim and the "
+                   "20-word guide in the rules: write one or two complete sentences, about {wlo}-{whi} words in all, "
+                   "each ending in '.', using only facts from the post.")
 
 # S234 (C12) — the SEO fit is a short rewrite whose lengths are checked in code and whose failure
 # keeps the writer's value, so it runs on the cheap repair route (Haiku, Sonnet fallback):
@@ -406,7 +412,7 @@ def fit_seo_fields(
     *, body: str, seo_title: str | None, meta_description: str | None, keyword: str | None,
     brand_name: str | None = None, tenant_id: str | None = None,
     angle_gate_request_id: str | None = None, forbidden_words: list[str] | None = None,
-    taken_titles: list[str] | None = None,
+    taken_titles: list[str] | None = None, meta_band: tuple[int, int] | None = None,
 ) -> tuple[dict, float]:
     """AA-768 (S233) — regenerate an out-of-band blog SEO title/meta with one short call instead
     of cutting the string (PR #670 cut "Bhutan's Craft Bazaar: Thimphu's Weekend Market…" at the
@@ -415,7 +421,10 @@ def fit_seo_fields(
     lengths and keeps the writer's own value when the new one is not inside the band.
 
     `forbidden_words` (S234): places outside the piece's scope that the current title/meta name
-    ('Gobi' on a Khövsgöl route) — the caller rejects a fitted value that still has one."""
+    ('Gobi' on a Khövsgöl route) — the caller rejects a fitted value that still has one.
+
+    `meta_band` (S273, T9_SEO_BUILDER=on only): the (min, max) meta band, sent for a meta under the floor; the request
+    then states it (_META_BAND_LINE). None (the default path) leaves the request exactly as before."""
     parts = [f"TARGET SEO KEYWORD: {keyword}" if keyword else "No target keyword — write naturally."]
     if forbidden_words:
         parts.append(f"NEVER USE (outside this post's scope): {', '.join(forbidden_words)}")
@@ -432,6 +441,9 @@ def fit_seo_fields(
     meta_note = "" if m_lo <= ml <= m_hi else (_META_SHORT if ml < m_lo else _META_MUST)
     parts.append(f"CURRENT META ({ml} chars{meta_note}): "
                  f"{meta_description or '(none)'}")
+    if meta_band:
+        b_lo, b_hi = meta_band
+        parts.append(_META_BAND_LINE.format(lo=b_lo, hi=b_hi, wlo=round(b_lo / 6), whi=round(b_hi / 6)))
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
                          stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)

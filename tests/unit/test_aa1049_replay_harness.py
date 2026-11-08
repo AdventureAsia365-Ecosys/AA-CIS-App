@@ -488,3 +488,78 @@ def test_a_nested_context_still_wins(tmp_path):
     path.write_text(json.dumps([{"piece_id": "p-2", "channel": "blog", "writer_input": nested}]))
     [p] = rp.load_pieces(str(path))
     assert p["context"] == {"cta": "Nested"}
+
+
+# ----------------------------------------------------------------------------- S273: a meta under the band floor
+# D-seo-4: the one fit call states the policy band (stored bodies: the only S273 diff a replay of real data can show).
+# D-seo-3: a meta completed by one cited post sentence (needs a body that still carries its citation tags).
+
+SHORT_META = "The Dunmere harbour walk follows the stone sea wall from the net sheds to the old signal station."  # 97
+FLAT = "The path stays flat at sea level along the calm water."                                              # 54
+TAGGED_BLOG = (f"Dunmere harbour wakes slowly. [R:atom_dun1]\n\n{FLAT} [R:atom_dun1]\n\n"
+               "Some say it is the best walk on the coast.\n\n" + BLOG.split("\n\n", 1)[1])
+
+
+def _tagged(sid, meta, body=TAGGED_BLOG, atom="atom_dun1"):
+    s = _blog(sid, TITLE_OK, meta)
+    s["output"]["content_text"] = body
+    s["input"]["context"]["atom_id"] = atom
+    return s
+
+
+def test_s273_a_band_stated_fit_request_is_d_seo_4_only_with_opt_in(tmp_path, monkeypatch):
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_blog("t9-b4", TITLE_OK, SHORT_META)])
+    code, doc = _base_then(tmp_path, fx, monkeypatch=monkeypatch, seo_on=True)
+    assert code == 0 and [x["declared"] for x in doc["diff"]["diffs"]] == ["D-seo-4"]
+    req = doc["rows"]["t9-b4"]["seo"]["fit_request"]
+    assert list(req["meta_band"]) == list(rp_band()) and doc["rows"]["t9-b4"]["seo"]["fit_calls"] == 1
+    # the same run without --opt-in is never declared
+    base, out = tmp_path / "base.json", tmp_path / "cur.json"
+    monkeypatch.setenv(service.SEO_BUILDER_ENV, service.SEO_BUILDER_ON)
+    assert rp.main(["--golden", fx, "--base", str(base), "--out", str(out)]) == 1
+
+
+def rp_band():
+    from services.quality import writing_policy
+    return writing_policy.band("meta")
+
+
+def test_s273_a_band_that_is_not_the_policy_band_is_undeclared(tmp_path, monkeypatch):
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_blog("t9-b5", TITLE_OK, SHORT_META)])
+    # mutation: the call site states a band that is not the policy's (and judges with it)
+    code, doc = _base_then(tmp_path, fx, patch.object(service, "_META_MIN_CHARS", 160), monkeypatch=monkeypatch,
+                           seo_on=True)
+    assert code == 1 and "UNDECLARED" in [x["declared"] for x in doc["diff"]["diffs"]]
+
+
+def test_s273_a_meta_completed_by_a_cited_sentence_is_d_seo_3(tmp_path, monkeypatch):
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_tagged("t9-c3", SHORT_META)])
+    code, doc = _base_then(tmp_path, fx)
+    assert code == 0 and doc["rows"]["t9-c3"]["seo"]["fit_calls"] == 1          # main: the fit is asked
+    code, doc = _base_then(tmp_path, fx, monkeypatch=monkeypatch, seo_on=True)
+    row = doc["rows"]["t9-c3"]["seo"]
+    assert code == 0 and [x["declared"] for x in doc["diff"]["diffs"]] == ["D-seo-3"]
+    assert row["fit_calls"] == 0 and row["meta_description"] == f"{SHORT_META} {FLAT}" and row["completion"]
+
+
+def test_s273_a_completion_by_an_uncited_sentence_is_undeclared(tmp_path, monkeypatch):
+    """Mutation: the builder accepts any post sentence (here the untagged one): the independent anchor check fails."""
+    _env(monkeypatch)
+    uncited = "The sea wall is the best walk on the coast for families."                 # 56 -> 154
+    body = TAGGED_BLOG.replace("Some say it is the best walk on the coast.", uncited)
+    fx = _fixture(tmp_path, [_tagged("t9-c4", SHORT_META, body=body.replace(f"{FLAT} [R:atom_dun1]\n\n", ""))])
+    code, doc = _base_then(tmp_path, fx,
+                           patch.object(service.seo_builder, "cited_sentences", return_value=[uncited]),
+                           monkeypatch=monkeypatch, seo_on=True)
+    assert code == 1 and [x["declared"] for x in doc["diff"]["diffs"]] == ["UNDECLARED"]
+    assert doc["rows"]["t9-c4"]["seo"]["meta_description"] == f"{SHORT_META} {uncited}"
+
+
+def test_s273_a_tag_of_another_piece_is_no_anchor(tmp_path, monkeypatch):
+    _env(monkeypatch)
+    fx = _fixture(tmp_path, [_tagged("t9-c5", SHORT_META, atom="atom_other")])
+    code, doc = _base_then(tmp_path, fx, monkeypatch=monkeypatch, seo_on=True)
+    assert code == 0 and [x["declared"] for x in doc["diff"]["diffs"]] == ["D-seo-4"]   # no completion: the fit
