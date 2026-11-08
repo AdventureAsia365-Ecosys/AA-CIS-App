@@ -118,6 +118,12 @@ jobs:
           mask-aws-account-id: true
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
+      # S273: the verified spaCy model wheel into the build context's .url-wheels/ seed (no github.com download in the
+      # image build). Runs on main, so its cache entry is readable by every PR and merge-queue run.
+      - name: URL-pinned wheels (cached, hash-checked)
+        uses: ./.github/actions/url-wheels
+        with:
+          copy-to: .url-wheels
       - name: Build, tag, push image
         id: build
         run: |

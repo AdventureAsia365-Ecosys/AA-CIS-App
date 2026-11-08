@@ -30,7 +30,7 @@ ci_scope = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ci_scope)
 
 AREAS = {"integration": ["api/migrations/", "tests/integration/"],
-         "docker": ["Dockerfile", ".dockerignore", "requirements.txt", ".trivyignore"],
+         "docker": ["Dockerfile", ".dockerignore", "requirements.txt", ".trivyignore", ".url-wheels/"],
          "frontend": ["frontend/"]}
 REQUIRED = ["Lint", "Security Audit", "Unit Tests", "Integration Tests", "Docker Build Check", "Frontend Build",
             "Frontend Lint"]

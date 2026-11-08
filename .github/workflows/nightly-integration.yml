@@ -76,9 +76,16 @@ jobs:
         with:
           enable-cache: true
 
+      # S273: same as ci.yml. A scheduled run is on main, so its cache entry is readable by every PR and queue run.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
       - name: Install dependencies
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
         run: |
-          uv pip install --system -r requirements.txt
+          uv pip install --system -r "$REQ"
           uv pip install --system -r tests/integration/requirements-integration.txt
 
       - name: Setup test DB user

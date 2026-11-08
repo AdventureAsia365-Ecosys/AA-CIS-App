@@ -1,0 +1,57 @@
+name: URL-pinned wheels (cached, hash-checked)
+description: >-
+  Serves the URL-pinned wheels of a requirements file (the spaCy model, requirements.txt) from an actions/cache copy
+  keyed on the exact URL + sha256 pins; on a cache miss it downloads them with retries and backoff. Every copy is
+  checked against the pinned sha256 (.github/scripts/url_wheels.py). Install from the `requirements` output instead of
+  the source file: same packages, same wheel bytes, no per-job download from github.com (S273: three CI runs failed on
+  that download and left the merge queue).
+inputs:
+  requirements:
+    description: The requirements file whose URL pins are served.
+    required: false
+    default: requirements.txt
+  copy-to:
+    description: Optional directory that also receives the verified wheels (the Docker build context's .url-wheels/).
+    required: false
+    default: ""
+outputs:
+  requirements:
+    description: Path of the rewritten requirements file (URL pins point at the local verified wheels).
+    value: ${{ steps.fetch.outputs.requirements }}
+  cache-hit:
+    description: "'true' when the wheels came from the cache."
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: URL wheel pins (cache key)
+      id: key
+      shell: bash
+      env:
+        REQ: ${{ inputs.requirements }}
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/url_wheels.py" key --req "$REQ" >> "$GITHUB_OUTPUT"
+
+    # One path for every job (the cache version hashes the path), so the unit, integration, audit, Docker and nightly
+    # jobs share one entry. Caches saved on main (Deploy Dev on push, the nightly schedule) are readable by every pull
+    # request and merge-queue run; a run on another ref saves its own copy on a miss.
+    - name: Restore URL wheels
+      id: cache
+      if: steps.key.outputs.key != 'none'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/url-wheels
+        key: url-wheels-v1-${{ steps.key.outputs.key }}
+
+    - name: Fetch and verify URL wheels (download only on a cache miss)
+      id: fetch
+      shell: bash
+      env:
+        REQ: ${{ inputs.requirements }}
+        COPY_TO: ${{ inputs.copy-to }}
+      run: |
+        set -euo pipefail
+        OUT="$RUNNER_TEMP/url-wheels-requirements/$(basename "$REQ")"
+        ARGS=(fetch --req "$REQ" --dest "$RUNNER_TEMP/url-wheels" --out "$OUT")
+        if [ -n "$COPY_TO" ]; then ARGS+=(--copy-to "$COPY_TO"); fi
+        python3 "$GITHUB_ACTION_PATH/../../scripts/url_wheels.py" "${ARGS[@]}"
+        echo "requirements=$OUT" >> "$GITHUB_OUTPUT"
