@@ -138,8 +138,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        if: steps.scope.outputs.run == 'true'
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       # merge_group has no github.base_ref: the queue group is diffed against its base commit.
       - name: Changed pages

@@ -22,9 +22,6 @@ concurrency:
   group: api-contract-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-env:
-  OASDIFF_VERSION: "1.33.0"
-  OASDIFF_SHA256: "43a4e328e2d13ba1552d760aa68d2485c75c5621f309f6ff64ae895188345247"
 
 jobs:
   breaking:
@@ -37,22 +34,20 @@ jobs:
         with:
           fetch-depth: 2
 
+      # S273 (AA-1024): oasdiff v1.33.0 from .github/actions/release-bin (pins.txt: version + sha256, the same as the
+      # release's checksums.txt), cached; downloaded only on a miss through an authenticated `gh release download`.
       - name: Install oasdiff (pinned, checksum checked)
-        run: |
-          set -euo pipefail
-          url="https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
-          curl -sSfL --retry 3 -o "$RUNNER_TEMP/oasdiff.tgz" "$url"
-          echo "${OASDIFF_SHA256}  $RUNNER_TEMP/oasdiff.tgz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/bin"
-          tar -xzf "$RUNNER_TEMP/oasdiff.tgz" -C "$RUNNER_TEMP/bin" oasdiff
-          "$RUNNER_TEMP/bin/oasdiff" --version
+        id: oasdiff
+        uses: ./.github/actions/release-bin
+        with:
+          tool: oasdiff
 
       - name: Base document
         run: git show HEAD^1:docs/api/openapi.json > "$RUNNER_TEMP/base-openapi.json" 2>/dev/null || true
 
       - name: Breaking changes on public paths
         env:
-          OASDIFF: ${{ runner.temp }}/bin/oasdiff
+          OASDIFF: ${{ steps.oasdiff.outputs.path }}
           BASE_SPEC: ${{ runner.temp }}/base-openapi.json
           HEAD_SPEC: docs/api/openapi.json
           INTERNAL_PATHS: "^/admin/"

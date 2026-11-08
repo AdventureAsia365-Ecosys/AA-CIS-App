@@ -42,11 +42,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # S273 (workflow_lint WL4): no pip cache here (three small pinned packages; setup-python's cache saved a copy on
+      # every pull request and merge-queue ref).
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
 
       - name: Install lint deps
         # AA-926: PyYAML for the quality registry lint, pinned to the requirements.txt version.
@@ -191,6 +192,8 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
+          # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       # S273: the URL-pinned spaCy model wheel comes from the actions cache (keyed on its URL + sha256), downloaded with
       # retries only on a miss and always checked against the pin; install from the step's rewritten requirements file.
@@ -285,6 +288,8 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
+          # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       # S273: the spaCy model wheel from the actions cache (see "Unit shard"); install from the rewritten file.
       - name: URL-pinned wheels (cached, hash-checked)
@@ -423,6 +428,8 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
+          # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       # S273: the spaCy model wheel from the actions cache (see "Unit shard"); install from the rewritten file.
       - name: URL-pinned wheels (cached, hash-checked)
@@ -715,6 +722,26 @@ jobs:
       - name: Trivy ignore entries carry a reason and an expiry
         run: python3 .github/scripts/check_trivyignore.py .trivyignore
 
+      # S273 (AA-1024): trivy from the cached, sha256-pinned release-bin action (pins.txt), not setup-trivy's
+      # download on every run; the vulnerability DB restores from the default branch's daily entry (the Cache
+      # warm workflow saves it; trivy-action's own DB cache saved a copy on every ref). A missing or stale DB
+      # is downloaded by trivy itself, as before.
+      - name: Install trivy (pinned, cached)
+        uses: ./.github/actions/release-bin
+        with:
+          tool: trivy
+
+      - name: Trivy DB cache key (UTC day)
+        id: trivy-day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore trivy DB
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.cache/trivy
+          key: trivy-db-${{ steps.trivy-day.outputs.day }}
+          restore-keys: trivy-db-
+
       - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -724,17 +751,34 @@ jobs:
           ignore-unfixed: true
           trivyignores: ".trivyignore"
           exit-code: "1"
+          cache: "false"
+          skip-setup-trivy: "true"
 
       # sbom-action auto-uploads its own GitHub Actions artifact when it detects it's running
       # in a GHA workflow (its documented default behavior) -- artifact-name below controls
       # that upload's name directly, no separate actions/upload-artifact step needed.
-      - name: Generate SBOM (syft, CycloneDX)
-        uses: anchore/sbom-action@v0.24.2
+      # S273 (AA-1024): syft from the cached, sha256-pinned release-bin action (pins.txt): anchore/sbom-action
+      # downloaded syft through an install script on every run ("The Syft installer failed", HTTP 504). Same
+      # syft version (v1.54.0), same CycloneDX JSON file, same artifact name.
+      - name: Install syft (pinned, cached)
+        uses: ./.github/actions/release-bin
         with:
-          image: "aa-cis-api:ci-${{ github.sha }}"
-          format: cyclonedx-json
-          output-file: sbom-${{ github.sha }}.cdx.json
-          artifact-name: sbom-${{ github.sha }}.cdx.json
+          tool: syft
+
+      - name: Generate SBOM (syft, CycloneDX)
+        working-directory: .
+        env:
+          IMAGE: "aa-cis-api:ci-${{ github.sha }}"
+          OUT: sbom-${{ github.sha }}.cdx.json
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+        run: syft scan "docker:${IMAGE}" --output "cyclonedx-json=${OUT}"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}.cdx.json
+          path: sbom-${{ github.sha }}.cdx.json
+          if-no-files-found: error
 
   # AA-732 — frontend ESLint (UI-kit conventions). AA-994 S1c (root ADR 0016 decision 7, plan guards G1-G9, G11): a
   # real gate now, no continue-on-error, meant to be a REQUIRED check (branch protection, plan hand step H2). Page code
@@ -768,8 +812,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install frontend dependencies
         run: npm ci
@@ -864,8 +916,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       # AA-994 S1a (root ADR 0016 decision 5): the canonical UI kit core (app/_kit/core) — MANIFEST.json current,
       # every file with the header line, imports closed (only ./ files of core and the allowed packages). Then its
