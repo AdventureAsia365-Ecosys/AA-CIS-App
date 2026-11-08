@@ -44,6 +44,11 @@ is undeclared, a piece is missing, a stored contract shows a post-gate edit, or 
 be built (the replay would then check looser predicates than production). A flipped guard decision also reports the
 piece status each side continues with (`guard_status_flips`).
 
+S273 (trial follow-up): with T9_SEO_BUILDER=on a meta under the band floor is completed in code by one cited post
+sentence (D-seo-3) or sent to the one fit call with the band stated (D-seo-4). Stored bodies (golden fixture,
+content_piece export) have their citation tags stripped at store time, so a replay over them can show D-seo-4 only;
+D-seo-3 is covered by unit tests and by a synthetic export whose body keeps its tags.
+
 Defaults vs opt-in (S272 orchestrator decision): with every AA-1049 switch at its default (T9_REGRESSION_GUARD_MODE
 unset = gate_names, T9_SEO_BUILDER unset = off) the branch must equal main: 0 declared and 0 undeclared diffs. The
 two declared-diff families belong to opt-in switches only: D-seo-* to T9_SEO_BUILDER=on, D-guard-* to
@@ -86,6 +91,13 @@ DECLARED = {
     "D-seo-2": ("opt-in T9_SEO_BUILDER=on: at most one SEO-fit call per attempt (the retry call is gone); unit tests "
                 "only: a replayed fit call is a cassette miss that aborts before main's retry, so the replay can "
                 "never show it"),
+    "D-seo-3": ("opt-in T9_SEO_BUILDER=on (S273): a meta the writer got wrong is completed in code: the writer's meta "
+                "(or a whole-sentence prefix of it) plus ONE whole prose sentence of the post that cites a source line "
+                "of the piece ([R:]/[F:] tag of its atom, route moments or Facts, tag removed), passing main's "
+                "acceptance tests; the replay sees it only on bodies that still carry their tags (stored bodies are "
+                "stripped: unit tests)"),
+    "D-seo-4": ("opt-in T9_SEO_BUILDER=on (S273): the one SEO-fit call for a meta under the band floor states the "
+                "policy band (`meta_band` = writing_policy band 'meta'); the rest of the request is main's"),
     "D-guard-1": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys: a same-gate swap of flagged sentences (same gate "
                   "set, as many keys or more) is reverted"),
     "D-guard-2": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys: clearing more findings than it adds is kept (the "
@@ -253,7 +265,9 @@ def _seo(p: dict, taken: Optional[list[str]] = None) -> Optional[dict]:
         out, _ = asyncio.run(service._fit_seo_meta(dict(seo), keyword, body=body, context=ctx, request_id="replay",
                                                    hyg=hyg, taken_titles=taken))
     ok = _seo_predicates(ctx, keyword, body, hyg, taken)
+    cited = _cited_post_sentences(body, ctx)
     return {"fit_calls": len(calls), "miss": bool(calls), **{k: out.get(k) for k in SEO_FIELDS},
+            "completion": _completion_shape(p["meta_description"], out.get("meta_description"), cited),
             "writer": {k: p[k] for k in SEO_FIELDS}, "fit_request": calls[0] if calls else None,
             "verdict": {"writer": {k: ok[k](p[k]) for k in SEO_CHECKED}, "out": {k: ok[k](out.get(k))
                                                                             for k in SEO_CHECKED}},
@@ -373,23 +387,94 @@ def replay(pieces: list[dict]) -> dict:
 
 def _seo_prefix(writer: Optional[str], value: Optional[str]) -> bool:
     """D-seo-1's shape: the value is the writer's own value or a non-empty prefix of it (whole sentences / the part
-    before a separator: seo_builder never adds a character)."""
+    before a separator: a shortening never adds a character)."""
     return value == writer or bool(value and writer and writer.startswith(value.rstrip()))
 
 
-def _seo_fix_problem(changed: list[str], cur: dict, writer: dict, verdict: dict) -> Optional[str]:
-    """None when every changed field has D-seo-1's shape: the writer's value fails main's acceptance tests, the new
-    value is a strict prefix of it and passes them. Else the reason it does not."""
+def _source_ids(ctx: dict) -> set:
+    """The ids a citation tag of this piece may name (its atom, route moments, Facts), read from the sample context
+    here, not through seo_builder (the code under review)."""
+    import re
+    ids = {str(ctx.get("atom_id") or "").strip()}
+    ids |= {str(seg[0]).strip() for seg in ctx.get("route_segments") or () if isinstance(seg, (list, tuple)) and seg}
+    ids |= {m.group(1).strip() for m in re.finditer(r"\[Fact id=([^\]]+)\]", ctx.get("facts_text") or "")}
+    return {i for i in ids if i}
+
+
+def _cited_post_sentences(body: str, ctx: dict) -> list[str]:
+    """D-seo-3's anchor: the prose sentences of the post (outside the FAQ) whose citation tags all name a source line
+    of the piece, tags removed (hygiene.sentence_spans + citation_tags, both on main)."""
+    from services.acp_content_writing import hygiene
+    from services.acp_shared.citation_tags import TAG_RE
+    known = _source_ids(ctx)
+    out = []
+    for sp in hygiene.sentence_spans(body or ""):
+        ids = [i.strip() for t in TAG_RE.findall(sp["text"]) for i in t.split(",")]
+        if sp["kind"] == "prose" and not sp["in_faq"] and ids and known and all(i in known for i in ids):
+            out.append(sp["clean"])
+    return out
+
+
+def _completion_shape(writer: Optional[str], value: Optional[str], cited: list[str]) -> bool:
+    """D-seo-3's shape: value = B + ' ' + S where B is the writer's meta or a prefix of it ending a sentence and S is
+    one cited post sentence that B does not already hold."""
+    if not isinstance(value, str) or not isinstance(writer, str):
+        return False
+    w = " ".join(writer.split())
+    for sent in cited:
+        if value.endswith(" " + sent):
+            base = value[:-len(sent) - 1]
+            if (base and base.endswith((".", "!", "?")) and w.startswith(base) and sent.lower() not in base.lower()):
+                return True
+    return False
+
+
+def _seo_fix_problem(changed: list[str], cur: dict, writer: dict, verdict: dict) -> tuple[Optional[str], set]:
+    """(None, kinds) when every changed field has a declared shape: the writer's value fails main's acceptance tests
+    and the new value passes them, and it is a strict prefix of the writer's value (kind 'prefix', D-seo-1) or, for
+    the meta, its completion by one cited post sentence (kind 'completion', D-seo-3). Else (the reason, kinds)."""
     if not changed:
-        return "no field changed"
+        return "no field changed", set()
+    kinds: set = set()
     for k in changed:
-        if cur.get(k) == writer.get(k) or not _seo_prefix(writer.get(k), cur.get(k)):
-            return f"{k} is not a prefix of the writer's value"
+        if cur.get(k) == writer.get(k):
+            return f"{k} is not a prefix of the writer's value", kinds
+        if _seo_prefix(writer.get(k), cur.get(k)):
+            kinds.add("prefix")
+        elif k == "meta_description" and cur.get("completion"):
+            kinds.add("completion")
+        else:
+            return f"{k} is neither a prefix of the writer's value nor its completion by a cited sentence", kinds
         if verdict["writer"].get(k):
-            return f"{k}: the writer's value already passed"
+            return f"{k}: the writer's value already passed", kinds
         if not verdict["out"].get(k):
-            return f"{k}: the value kept fails main's acceptance tests"
+            return f"{k}: the value kept fails main's acceptance tests", kinds
+    return None, kinds
+
+
+def _fix_id(kinds: set) -> str:
+    return "D-seo-3" if "completion" in kinds else "D-seo-1"
+
+
+def _band_problem(kb: Optional[dict], kc: Optional[dict]) -> Optional[str]:
+    """None when the branch's `meta_band` is main's, or absent on main and D-seo-4's shape: the policy meta band,
+    sent only for a meta under its floor."""
+    bb, bc = (kb or {}).get("meta_band"), (kc or {}).get("meta_band")
+    if bc is None:
+        return None if bb is None else "fit request lost main's meta_band"
+    if bb is not None:
+        return None if list(bb) == list(bc) else "fit request meta_band changed"
+    from services.quality import writing_policy
+    band = list(writing_policy.band("meta"))
+    if list(bc) != band:
+        return f"fit request meta_band {list(bc)} is not the policy band {band}"
+    if len((kc or {}).get("meta_description") or "") >= band[0]:
+        return "fit request states the band for a meta that is not under the floor"
     return None
+
+
+def _without_band(k: Optional[dict]) -> dict:
+    return {x: y for x, y in (k or {}).items() if x != "meta_band"}
 
 
 def _fit_request_problem(kb: Optional[dict], kc: Optional[dict], cur: dict, changed: list[str]) -> Optional[str]:
@@ -398,8 +483,11 @@ def _fit_request_problem(kb: Optional[dict], kc: Optional[dict], cur: dict, chan
     list is main's or gone with a fixed title, everything else identical."""
     if not kb or not kc:
         return "no fit request recorded"
+    band = _band_problem(kb, kc)
+    if band:
+        return band
     for k in set(kb) | set(kc):
-        if k in ("seo_title", "meta_description", "forbidden_words", "taken_titles"):
+        if k in ("seo_title", "meta_description", "forbidden_words", "taken_titles", "meta_band"):
             continue
         if kb.get(k) != kc.get(k):
             return f"fit request {k} changed"
@@ -426,21 +514,28 @@ def _classify_seo(base: dict, cur: dict) -> tuple[str, str]:
     bc, cc = base.get("fit_calls", 0), cur.get("fit_calls", 0)
     if cc == 0 and bc > 0:
         changed = [k for k in SEO_CHECKED if cur.get(k) != writer.get(k)]
-        bad = _seo_fix_problem(changed, cur, writer, vc)
+        bad, kinds = _seo_fix_problem(changed, cur, writer, vc)
         if bad is None and not all(vc["out"].values()):
             bad = "0 fit calls but a delivered field fails main's acceptance tests"
         if bad:
             return "UNDECLARED", f"0 fit calls where main made one: {bad}"
-        return "D-seo-1", "fixed in code by a prefix of the writer's value, no fit call"
+        return _fix_id(kinds), "fixed in code (prefix / cited-sentence completion of the writer's value), no fit call"
     if cc > 0 and bc > 0:
         changed = [k for k in SEO_CHECKED if cur.get(k) != base.get(k)]
         kb, kc = base.get("fit_request"), cur.get("fit_request")
         if not changed and kb == kc:
             return "MISS", "SEO-fit cassette miss on both sides, same request and soft-fail fields"
-        bad = _seo_fix_problem(changed, cur, writer, vc) or _fit_request_problem(kb, kc, cur, changed)
+        if not changed:
+            band = _band_problem(kb, kc)
+            if band is None and _without_band(kb) == _without_band(kc) and (kc or {}).get("meta_band") is not None:
+                return "D-seo-4", "SEO-fit cassette miss on both sides; the branch request states the policy meta band"
+            return "UNDECLARED", f"fit outage path differs from main: {band or 'the fit request changed'}"
+        bad, kinds = _seo_fix_problem(changed, cur, writer, vc)
+        bad = bad or _fit_request_problem(kb, kc, cur, changed)
         if bad:
             return "UNDECLARED", f"fit outage path differs from main: {bad}"
-        return "D-seo-1", "fixed in code by a prefix of the writer's value; the fit is asked only about the rest"
+        return _fix_id(kinds), ("fixed in code (prefix / cited-sentence completion of the writer's value); the fit is "
+                                "asked only about the rest")
     if cc > 0 or bc > 0:
         return "UNDECLARED", "a fit call on one side only (not the D-seo-1 shape)"
     return "UNDECLARED", "different SEO fields"

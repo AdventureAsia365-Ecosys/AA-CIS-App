@@ -1066,13 +1066,22 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
     # AA-1049 W3 (ADR 0020 S3, D5) — T9_SEO_BUILDER=on only (default off = main): code first, a failing field becomes
     # the first whole-sentence (meta) or separator (title) prefix of the writer's own value that passes the SAME
     # title_ok / meta_ok; no model call when both fields then pass.
+    # S273 (trial follow-up): a meta under the band floor is completed by one cited sentence of the post
+    # (seo_builder.cited_sentences: tag ids of this piece's own source lines), and the one fit call states the band.
     code_first = seo_builder_mode() == SEO_BUILDER_ON
+    meta_sources: list[str] = []
+    band_kw: dict = {}
     if code_first:
-        seo_meta, built_log = seo_builder.build_seo(seo_meta, title_ok=title_ok, meta_ok=meta_ok)
+        meta_sources = seo_builder.cited_sentences(body, seo_builder.source_ids(context))
+        seo_meta, built_log = seo_builder.build_seo(seo_meta, title_ok=title_ok, meta_ok=meta_ok,
+                                                    meta_sources=meta_sources)
         if built_log:
             logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=built_log)
         if seo_builder.fields_ok(seo_meta, title_ok=title_ok, meta_ok=meta_ok):
             return seo_meta, 0.0
+        if not meta_ok(seo_meta.get("meta_description")) and len(seo_meta.get("meta_description") or "") \
+                < _META_MIN_CHARS:
+            band_kw = {"meta_band": (_META_MIN_CHARS, _META_MAX_CHARS)}
     audience = context.get("brand_audience") or {}
     forbidden = sorted({p for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
@@ -1092,7 +1101,7 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
             fit_seo_fields, body=body, seo_title=seo_meta.get("seo_title"),
             meta_description=seo_meta.get("meta_description"), keyword=keyword,
             brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
-            angle_gate_request_id=str(request_id), **extra,
+            angle_gate_request_id=str(request_id), **extra, **band_kw,
         )
     except Exception as e:  # soft-fail: F4 reports the writer's own values
         logger.warning("t9_seo_fit_failed", request_id=str(request_id), error=str(e)[:200])
@@ -1112,10 +1121,18 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         # (the next attempt re-runs this fit; F4 reports what is left, as on main).
         shortened, fit_log = seo_builder.build_seo(
             {**out, **{k: fitted[k] for k in ("seo_title", "meta_description") if fitted.get(k)}},
-            title_ok=title_ok, meta_ok=meta_ok)
+            title_ok=title_ok, meta_ok=meta_ok, meta_sources=meta_sources)
         out = merge(out, shortened)
         if fit_log:
             logger.info("t9_seo_built_in_code", request_id=str(request_id), changes=fit_log, after="fit")
+        meta_left, meta_fitted = out.get("meta_description"), fitted.get("meta_description")
+        if not meta_ok(meta_left):
+            # S273: the reason F4_seo_surface holds the piece, in one place (code, then one band-stated fit call)
+            logger.warning("t9_seo_meta_outside_band", request_id=str(request_id), chars=len(meta_left or ""),
+                           band=[_META_MIN_CHARS, _META_MAX_CHARS], fitted_chars=len(meta_fitted or ""),
+                           band_stated=bool(band_kw), cited_sentences=len(meta_sources),
+                           reason="no whole-sentence prefix or cited-sentence completion of the writer's or the "
+                                  f"fitted meta passed the acceptance tests; {qr.F4_SEO_SURFACE} holds it")
     elif not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
         # LLMs miscount characters: one more try, told exactly how far off the current values are.
         try:
