@@ -395,6 +395,40 @@ def test_the_writer_call_is_checkpointed_before_verify():
     assert budget["writer"] == 1 and budget["usd"] == pytest.approx(0.001)
 
 
+def test_a_sentence_repair_that_changes_nothing_still_counts_its_cost():
+    """grounding.repair bills its t2_flag_fix call and still returns no usable field: _t3_sentence_repair returns
+    None. The stored budget counts that call's cost: usd equals every billed call (t2_generate, t2_flag_fix,
+    t2_judge), not only the ones whose result was kept."""
+    t = h.run("grounding_unrepaired", env=LINEAR)
+    assert _stages(t) == ["t2_generate", "t2_flag_fix", "t2_judge"]
+    budget = _save(t)[7]["t2_orchestrator"]["budget"]
+    assert budget["repair"] == 1
+    assert budget["usd"] == pytest.approx(0.001 * len(_stages(t)))
+
+
+def test_the_sentence_repair_cost_is_checkpointed_before_verify():
+    """verify crashes on the repaired candidate (the second one): the last checkpoint already holds the repair call
+    AND its cost, so the job retry starts with both counted."""
+    from services.content_generation import t2_orchestrator as o
+    real = o.verify
+    seen = {"n": 0}
+
+    async def crash_second(*a, **k):
+        seen["n"] += 1
+        if seen["n"] == 2:
+            raise RuntimeError("verify crashed on the repaired candidate")
+        return await real(*a, **k)
+
+    def crash(st):
+        st.enter_context(patch.object(o, "verify", crash_second))
+    conn = h.Conn()
+    with pytest.raises(RuntimeError, match="repaired candidate"):
+        h.run("grounding_repair", env=LINEAR, conn=conn, extra=crash)
+    budget = _last_checkpoint(conn)["t2_orchestrator"]["checkpoint"]["budget"]
+    assert budget["writer"] == 1 and budget["repair"] == 1
+    assert budget["usd"] == pytest.approx(0.002)
+
+
 def test_a_budget_only_checkpoint_loads_and_resumes_without_a_best():
     import asyncio
 

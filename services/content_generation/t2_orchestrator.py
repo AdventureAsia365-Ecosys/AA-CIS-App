@@ -33,7 +33,8 @@ scripts/quality/replay_aa1049_t2.py):
 - L2 writer calls: at most 2 per version (``VersionBudget``), counted across a job retry: each billed call is counted
   and persisted on the pending version BEFORE it is sent, and its cost right after it returns (before verify), so a
   retry never re-spends a call the failed attempt made; main's graph may write up to 3 times (a validate retry loop),
-  then T3. The meta regenerate counts its real t2_flag_fix attempts (up to 3) and their cost.
+  then T3. The meta regenerate counts its real t2_flag_fix attempts (up to 3) and their cost; the sentence repair
+  counts its one t2_flag_fix call and that call's metered cost, also when the repair changes nothing.
 - L3 one judge call per version (on the selected draft, report-only), not one per draft.
 - L4 no brand-audit LLM fix (flag_fix) and no itinerary-day revise of the graph tail; the deterministic brand
   pre-audit codes are recorded (report).
@@ -489,15 +490,8 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
                 nxt = ({**best["result"], "generated": {**gen, "seo_meta": new_meta}}, "meta_regenerate", False)
         if nxt is None and p.get("repair_sentence") and not best["repaired"] and run.budget.can("repair"):
             best["repaired"] = True   # one sentence repair per draft
-            await _reserve(run, "repair")
-            base = {"result": {**best["result"], "generated": best["generated"]}, "grounding": best["grounding"],
-                    "attempt": best["attempt"]}
-            repaired = await asyncio.to_thread(tp._t3_sentence_repair, base, run.bundle.tour_dict,
-                                               run.bundle.source_texts, run.bundle.brand_rules,
-                                               run.bundle.tenant_id, _background())
+            repaired = await _sentence_repair(run, tp, best)
             if repaired is not None:
-                run.budget.usd = round(run.budget.usd + float(repaired.get("cost_usd") or 0)
-                                       - float(best["result"].get("cost_usd") or 0), 6)
                 if repaired.get("t3_contract_reverts"):
                     run.degraded = degraded.add(run.degraded, degraded.REPAIR_CONTRACT,
                                                 detector="t3_sentence_repair", count=repaired["t3_contract_reverts"])
@@ -517,6 +511,24 @@ async def orchestrate(run: Run, resume: Optional[dict] = None, *, pool=None, ver
         attempt += 1
         await _check(run, nxt[0], attempt=attempt, via=nxt[1], repaired=nxt[2],
                      parent_score=best["score"] if nxt[1] != "field_regen" else None)
+
+
+async def _sentence_repair(run: Run, tp, best: dict) -> Optional[dict]:
+    """T3's sentence repair (``_t3_sentence_repair``: one t2_flag_fix call). The call is counted and persisted before
+    it is sent; its cost is taken from the calls really billed (``call_log.meter_calls``) and persisted right after
+    it returns, before the repaired candidate is verified, also when the repair changes nothing (returns None: the
+    call was still billed) or raises. The repaired result's own ``cost_usd`` (draft + repair) is not used here."""
+    from shared.llm_client.call_log import meter_calls
+    await _reserve(run, "repair")
+    base = {"result": {**best["result"], "generated": best["generated"]}, "grounding": best["grounding"],
+            "attempt": best["attempt"]}
+    with meter_calls() as calls:
+        try:
+            return await asyncio.to_thread(tp._t3_sentence_repair, base, run.bundle.tour_dict,
+                                           run.bundle.source_texts, run.bundle.brand_rules,
+                                           run.bundle.tenant_id, _background())
+        finally:
+            await _settle(run, sum(c[1] for c in calls if c[0] == "t2_flag_fix"))
 
 
 async def _meta_regenerate(run: Run, tp, gen: dict) -> tuple:
