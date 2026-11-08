@@ -23,7 +23,7 @@ from tests.unit.safe_http_fakes import TARGET, response
 TOUR = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
 TARGETS = sg.AllowedTargets(
     aa_hosts=frozenset({"adventure.asia"}), trip_page_hosts=frozenset({"go-dev.lumiguides.it.com"}),
-    tripplanner_hosts=frozenset({"aa-tripplanner.vercel.app"}),
+    tripplanner_hosts=frozenset({"planner.example"}),
     tenant_pages=frozenset({"agency.example/tours/lake-walk"}), served_trip_ids=frozenset({TOUR}))
 
 
@@ -103,7 +103,7 @@ def test_sales_link_detection(url, text, sales):
 
 @pytest.mark.parametrize("url,ok", [
     ("https://www.adventure.asia/tours/lake", True),
-    ("https://aa-tripplanner.vercel.app/plan?x=1", True),
+    ("https://planner.example/plan?x=1", True),
     (f"https://go-dev.lumiguides.it.com/trip/{TOUR}", True),
     ("https://go-dev.lumiguides.it.com/trip/2c1c1c1c-2fa1-11d2-883f-0016d3cca427", False),   # not served
     ("https://agency.example/tours/lake-walk/", True),                                        # tenant page, AA tour
@@ -158,9 +158,12 @@ def test_informational_and_own_links_pass(text):
 def test_the_dev_tripplanner_domain_is_an_allowed_sales_target(monkeypatch):
     monkeypatch.delenv("TRIPPLANNER_SITE_HOSTS", raising=False)
     monkeypatch.delenv("TRIPPLANNER_REVALIDATE_URL", raising=False)
-    assert sg.DEFAULT_TRIPPLANNER_HOSTS == ("tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app")
+    assert sg.DEFAULT_TRIPPLANNER_HOSTS == ("tripplanner.lumiguides.it.com",)
     hosts = sg.tripplanner_hosts()
-    assert {"tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app"} <= hosts
+    assert hosts == {"tripplanner.lumiguides.it.com"}
+    # The retired Vercel host is no sales target any more (AA-1038: anyone can claim a deleted *.vercel.app name).
+    retired = "https://aa-tripplanner.vercel.app/plan"
+    assert not sg.allowed_sales_target(retired, sg.AllowedTargets(tripplanner_hosts=hosts))
     targets = sg.AllowedTargets(tripplanner_hosts=hosts)
     res = sg.evaluate("[Book your trip](https://tripplanner.lumiguides.it.com/trips/x)", goal="conversion",
                       cta=None, subject_ok=True, targets=targets)

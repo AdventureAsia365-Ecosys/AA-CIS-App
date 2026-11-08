@@ -93,9 +93,11 @@ DEFAULT_AA_HOSTS = ("adventure.asia",)
 # The hosts trip pages are served on (api/routers/v1_trip_page.py TRIP_PAGE_BASE_URL, the admin host and the CRM
 # client host it 307s to). Env TRIP_PAGE_HOSTS adds more.
 DEFAULT_TRIP_PAGE_HOSTS = ("aa-cis.lumiguides.it.com", "go-dev.lumiguides.it.com")
-# The TripPlanner site (one platform site today: the Dev custom domain and its Vercel host; the per-tenant white-label
-# site of ADR 0019 R5 adds the tenant's own host here). Env TRIPPLANNER_SITE_HOSTS adds more.
-DEFAULT_TRIPPLANNER_HOSTS = ("tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app")
+# The TripPlanner site (one platform site today: the Dev custom domain, served by ECS behind CloudFront; the
+# per-tenant white-label site of ADR 0019 R5 adds the tenant's own host here). Env TRIPPLANNER_SITE_HOSTS adds more.
+# The former Vercel host left with the Vercel project (AA-1038): a retired *.vercel.app name can be claimed by anyone,
+# so it must never stay an allowed sales target.
+DEFAULT_TRIPPLANNER_HOSTS = ("tripplanner.lumiguides.it.com",)
 
 _MAX_LINKS = 200
 
