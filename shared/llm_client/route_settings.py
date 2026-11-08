@@ -146,6 +146,13 @@ def current_version_sync() -> Optional[int]:
     return _state[1] if _state is not None else None
 
 
+def cached_version() -> Optional[int]:
+    """The route config version this process last read, WITHOUT a read (AA-1052 lineage stamp): None when the
+    process has not read the settings row yet or has no row. The gateway's ``watch_version`` refreshes it at the
+    start of every route resolution, so after a writer's calls it names the version they routed with."""
+    return _state[1] if _state is not None else None
+
+
 @contextmanager
 def override_order_mode(mode: Optional[str]) -> Iterator[None]:
     """For the admin preview: ``order_mode_sync`` answers ``mode`` inside the block (this context only)."""
@@ -163,5 +170,5 @@ def invalidate() -> None:
     _failed_at = 0.0
 
 
-__all__ = ["AWS_FIRST", "MODEL_FIRST", "ORDER_MODES", "current_version_sync", "env_order_mode", "invalidate",
-           "order_mode_source", "order_mode_sync", "override_order_mode", "watch_version"]
+__all__ = ["AWS_FIRST", "MODEL_FIRST", "ORDER_MODES", "cached_version", "current_version_sync", "env_order_mode",
+           "invalidate", "order_mode_source", "order_mode_sync", "override_order_mode", "watch_version"]

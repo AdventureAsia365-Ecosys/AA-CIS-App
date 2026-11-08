@@ -280,7 +280,9 @@ def text_sha(text: Optional[str]) -> str:
 
 def stamp_stored(record: Optional[dict], stored_sha: str, *, actual: Optional[str] = None) -> Optional[dict]:
     """The record as the store step writes it: ``stored_sha`` / ``sha_match`` (stored text == gated text), the
-    current gates' status when given, and a ``POST_GATE_EDIT`` block finding on a mismatch (ADR 0020 invariant 4)."""
+    current gates' status when given, a ``POST_GATE_EDIT`` block finding on a mismatch (ADR 0020 invariant 4) and
+    the ``lineage`` stamp (AA-1052 W6: policy_sha and the route config version in force at this exit;
+    ``services/quality/lineage.py``)."""
     if not isinstance(record, dict):
         return record
     c = _from_record(record)
@@ -295,7 +297,8 @@ def stamp_stored(record: Optional[dict], stored_sha: str, *, actual: Optional[st
     if not match:
         logger.error("final_contract_sha_mismatch", workflow=c.workflow, exit=c.exit, gated_sha=c.text_sha,
                      stored_sha=stored_sha)
-    return {**record, **c.record(), "stored_sha": stored_sha, "sha_match": match}
+    from services.quality import lineage   # lineage imports nothing from here; local import keeps this module light
+    return {**record, **c.record(), "stored_sha": stored_sha, "sha_match": match, "lineage": lineage.stamp()}
 
 
 # ── shared checks ─────────────────────────────────────────────────────────────────────────────────

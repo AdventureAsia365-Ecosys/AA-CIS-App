@@ -1,0 +1,35 @@
+{
+  "version": "cc-v1",
+  "components": {
+    "final_contract": {
+      "sha": "cbc194ecb7333d1c",
+      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
+      "refs": "AA-1052"
+    },
+    "gates": {
+      "sha": "44d3190d0ed6f9f3",
+      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
+      "refs": "AA-1052"
+    },
+    "prompt_registry": {
+      "sha": "e590707416bf9bec",
+      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
+      "refs": "AA-1052"
+    },
+    "route_defaults": {
+      "sha": "c7260792542e4027",
+      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
+      "refs": "AA-1052"
+    },
+    "route_table": {
+      "sha": "25cc7a28124d67b9",
+      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
+      "refs": "AA-1052"
+    },
+    "writing_policy": {
+      "sha": "739223d6cc24f1e5",
+      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
+      "refs": "AA-1052"
+    }
+  }
+}
