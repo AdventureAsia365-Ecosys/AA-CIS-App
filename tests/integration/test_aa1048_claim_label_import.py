@@ -105,7 +105,16 @@ async def test_api_import_dry_run_apply_idempotent_and_refused(conn):
 
 @pytest.mark.asyncio
 async def test_split_plan_candidate_queries_run_on_the_schema(conn):
-    cands = await sp.live_candidates(conn)
-    assert all(c.writer in sp.LIVE_WRITERS for c in cands)
-    res = sp.plan(cands, target_claims=sp.target_held_out_claims())
-    assert set(res["writers"]) == set(sp.LIVE_WRITERS)
+    tr = conn.transaction()
+    await tr.start()
+    try:
+        # CIS 124 (content_piece.channel and the reuse columns) is skipped by the CI replay (no pgvector,
+        # tests/integration/_replay_guard.py); on Dev the column exists (db-schema-reference.md). Added for this
+        # transaction only.
+        await conn.execute("ALTER TABLE acp_shared.content_piece ADD COLUMN IF NOT EXISTS channel TEXT")
+        cands = await sp.live_candidates(conn)
+        assert all(c.writer in sp.LIVE_WRITERS for c in cands)
+        res = sp.plan(cands, target_claims=sp.target_held_out_claims())
+        assert set(res["writers"]) == set(sp.LIVE_WRITERS)
+    finally:
+        await tr.rollback()
