@@ -100,8 +100,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: consumer/${{ matrix.consumer.app_dir }}/package-lock.json
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('consumer/{0}/package-lock.json', matrix.consumer.app_dir)) }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Overlay this PR's kit core
         run: bash cis/.github/scripts/kit-sync.sh "$NAME" --from-local --cis cis --dest-repo consumer

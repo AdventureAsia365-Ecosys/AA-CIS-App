@@ -485,7 +485,13 @@ def test_consumers_workflow_installs_before_checks_and_gates_on_the_install():
         assert next(s for s in steps if s["name"].startswith(prefix))["if"] == INSTALLED, prefix
     node = next(s for s in steps if "setup-node" in s.get("uses", ""))
     assert node["with"]["node-version"] == "22"
-    assert node["with"]["cache-dependency-path"] == "consumer/${{ matrix.consumer.app_dir }}/package-lock.json"
+    # S273 (AA-1024, workflow_lint WL4): no setup-node cache (it saved on every ref); the npm cache is restored only,
+    # keyed on the consumer's lock file (format(), never a nested expression), falling back to main's shared entry.
+    assert "cache" not in node["with"]
+    restore = next(s for s in steps if s.get("id") == "npm-cache")
+    assert restore["uses"].startswith("actions/cache/restore@")
+    assert "format('consumer/{0}/package-lock.json', matrix.consumer.app_dir)" in restore["with"]["key"]
+    assert names.index(restore["name"]) < install
     env = _wf(CONSUMERS_WF)["jobs"]["consumer"]["env"]
     assert env["MIGRATED"] == "${{ matrix.consumer.migrated }}"
     assert env["MIGRATES_IN"] == "${{ matrix.consumer.migrates_in }}"

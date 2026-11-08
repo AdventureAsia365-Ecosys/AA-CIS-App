@@ -112,6 +112,186 @@ class WorkflowLintRules(unittest.TestCase):
         self.assertIn("api/package-lock.json", findings[0])
         self.assertEqual(len(wl.UNCHECKED), 1)
 
+    def test_wl4_caches_save_only_on_the_default_branch(self):
+        bad = _lint("""
+            on: pull_request
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: actions/setup-python@0000000000000000000000000000000000000000 # v7.1.0
+                    with:
+                      python-version: "3.12"
+                      cache: pip
+                  - uses: actions/setup-node@v7
+                    with:
+                      node-version: 22
+                  - uses: actions/setup-node@v4
+                    with:
+                      node-version: 22
+                      cache: npm
+                  - name: Set up uv
+                    uses: astral-sh/setup-uv@0000000000000000000000000000000000000000 # v10.3.0
+                    with:
+                      enable-cache: true
+                  - uses: actions/cache@v6
+                    with:
+                      path: demo
+                      key: demo
+                  - uses: actions/cache/save@v6
+                    if: always()
+                    with:
+                      path: demo
+                      key: demo
+                  - name: Scan
+                    uses: aquasecurity/trivy-action@v0.36.0
+                    with:
+                      image-ref: demo
+                      skip-setup-trivy: "true"
+            """)
+        self.assertEqual([f.split(":WL4 ")[0] for f in bad if ":WL4 " in f], ["demo.yml:a"] * 7)
+        self.assertEqual(len(bad), 7, bad)
+        ok = _lint("""
+            on: push
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: actions/setup-python@v7
+                    with:
+                      python-version: "3.12"
+                  - uses: actions/setup-node@v7
+                    with:
+                      node-version: 22
+                      package-manager-cache: false
+                  - uses: astral-sh/setup-uv@v10
+                    with:
+                      enable-cache: true
+                      save-cache: ${{ github.ref == 'refs/heads/main' }}
+                  - uses: astral-sh/setup-uv@v10
+                    with:
+                      enable-cache: false
+                  - id: c
+                    uses: actions/cache/restore@v6
+                    with:
+                      path: demo
+                      key: demo
+                  - uses: actions/cache/save@v6
+                    if: github.ref == 'refs/heads/master' && steps.c.outputs.cache-hit != 'true'
+                    with:
+                      path: demo
+                      key: demo
+                  - uses: aquasecurity/trivy-action@v0.36.0
+                    with:
+                      cache: "false"
+                      skip-setup-trivy: "true"
+            """)
+        self.assertEqual(ok, [])
+        nested = _lint("""
+            on: pull_request
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: actions/cache/restore@v6
+                    with:
+                      path: ~/.npm
+                      key: npm-${{ hashFiles('apps/${{ matrix.app }}/package-lock.json') }}
+                  - uses: actions/cache/restore@v6
+                    with:
+                      path: ~/.npm
+                      key: npm-${{ hashFiles(format('apps/{0}/package-lock.json', matrix.app)) }}
+            """)
+        self.assertEqual(len(nested), 1)
+        self.assertIn("inside an expression", nested[0])
+        self.assertEqual(_lint("""
+            on: push
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: actions/setup-python@v7
+                    with:
+                      cache: pip
+            """, skip=frozenset({"WL4"})), [])
+
+    def test_wl5_external_downloads_need_a_cache_and_a_sha256_pin(self):
+        bad = _lint("""
+            on: pull_request
+            env:
+              DEMO_SHA: "0000000000000000000000000000000000000000000000000000000000000000"
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: anchore/sbom-action@v0.24.3
+                  - uses: aquasecurity/trivy-action@v0.36.0
+                    with:
+                      cache: "false"
+                  - name: Fetch demotool
+                    run: |
+                      curl -fsSL -o t.tgz "https://github.com/demo-org/demotool/releases/download/v1.0.0/t.tar.gz"
+                      echo "${DEMO_SHA}  t.tgz" | sha256sum -c -
+                  - name: Installer script
+                    run: curl -sSfL https://downloads.example.test/get | sh
+              b:
+                runs-on: ubuntu-24.04
+                steps:
+                  - id: c
+                    uses: actions/cache/restore@v6
+                    with:
+                      path: bin
+                      key: demo
+                  - name: Cached but unpinned
+                    run: wget -q https://downloads.example.test/demo/1.0/demo.deb
+            """)
+        wl5 = [f for f in bad if ":WL5 " in f]
+        self.assertEqual(len(wl5), 5, bad)
+        self.assertIn("anchore/sbom-action", wl5[0])
+        self.assertIn("skip-setup-trivy", wl5[1])
+        self.assertIn("(no cache)", wl5[2])  # pinned through the workflow env it names, but the job has no cache
+        self.assertIn("(no cache and no sha256 check)", wl5[3])
+        self.assertIn("(no sha256 check)", wl5[4])
+        ok = _lint("""
+            on: pull_request
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                env:
+                  DEMO_URL: https://example.test
+                steps:
+                  - uses: ./.github/actions/release-bin
+                    with:
+                      tool: demotool
+                  - name: Health checks and API calls are not downloads
+                    run: |
+                      curl -fsS http://127.0.0.1:3000/api/health -o /tmp/h.json
+                      curl -fsS "https://${PUBLIC_HOST}/sitemap.xml" -o /tmp/s.xml
+                      curl -s https://api.example.test/v1/items | jq .
+                      # curl -o x.tgz https://github.com/demo-org/demotool/releases/download/v1/x.tar.gz (a comment)
+                  - id: c
+                    uses: actions/cache/restore@v6
+                    with:
+                      path: bin
+                      key: demo
+                  - name: Cached and pinned
+                    run: |
+                      curl -fsSL -o t.tgz https://github.com/demo-org/demotool/releases/download/v1.0.0/t.tar.gz
+                      echo "0000000000000000000000000000000000000000000000000000000000000000  t.tgz" | sha256sum -c -
+            """)
+        self.assertEqual(ok, [])
+        action = textwrap.dedent("""
+            name: demo
+            runs:
+              using: composite
+              steps:
+                - shell: bash
+                  run: curl -fsSL -o x.zip https://downloads.example.test/x/1.0/x.zip
+            """)
+        self.assertEqual(len(wl.lint_action("demo", action)), 1)
+        self.assertEqual(wl.lint_action("demo", action, frozenset({"WL5"})), [])
+        self.assertEqual(wl.lint_action("demo", "name: demo\nruns:\n  using: node24\n  main: index.js\n"), [])
+
     def test_cli_skip_and_exit_codes(self):
         with tempfile.TemporaryDirectory() as tmp:
             good = os.path.join(tmp, "good.yml")
@@ -149,22 +329,38 @@ class ThisRepo(unittest.TestCase):
         wf = yaml.safe_load(text)
         on = wf.get("on", wf.get(True))
         paths = on["pull_request"]["paths"]
-        for p in (".github/workflows/**", ".github/scripts/workflow_lint.py", ".github/scripts/test_workflow_lint.py"):
+        for p in (".github/workflows/**", ".github/actions/**", ".github/scripts/workflow_lint.py",
+                  ".github/scripts/test_workflow_lint.py", ".github/scripts/release_bin.py",
+                  ".github/scripts/cache_cleanup.py"):
             self.assertIn(p, paths)
         self.assertEqual(wf["permissions"], {"contents": "read"})
         job = wf["jobs"]["workflow-lint"]
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
-        self.assertRegex(job["env"]["ACTIONLINT_VERSION"], r"^\d+\.\d+\.\d+$")
-        self.assertRegex(job["env"]["ACTIONLINT_SHA256"], r"^[0-9a-f]{64}$")
         steps = {s.get("name", ""): s for s in job["steps"]}
-        install = steps["Install actionlint (pinned, checksum verified)"]["run"]
-        self.assertLess(install.index("sha256sum -c -"), install.index("tar -xzf"))
+        # S273: actionlint comes from the cached, sha256-pinned release-bin action (pins.txt), not a bare download.
+        install = steps["Install actionlint (pinned, checksum verified)"]
+        self.assertEqual(install["uses"], "./.github/actions/release-bin")
+        self.assertEqual(install["with"], {"tool": "actionlint"})
+        pins = os.path.join(REPO_ROOT, ".github", "actions", "release-bin", "pins.txt")
+        with open(pins, encoding="utf-8") as fh:
+            self.assertRegex(fh.read(), r"(?m)^actionlint v\d+\.\d+\.\d+ x86_64 [0-9a-f]{64} https://github\.com/rhysd/")
         self.assertTrue(steps["actionlint"]["run"].startswith("actionlint "))
-        self.assertIn(".github/scripts/workflow_lint.py", steps["Repo workflow rules"]["run"])
-        self.assertIn("test_workflow_lint.py", steps["Repo workflow rules"]["run"])
+        rules = steps["Repo workflow rules"]["run"]
+        for needle in (".github/scripts/workflow_lint.py", "test_workflow_lint.py", "test_release_bin.py",
+                       "test_cache_cleanup.py"):
+            self.assertIn(needle, rules)
         self.assertIs(steps["Checkout"]["with"]["persist-credentials"], False)
         self.assertNotIn("secrets.", text)
 
+    def test_the_repo_composite_actions_are_clean(self):
+        actions = os.path.join(REPO_ROOT, ".github", "actions")
+        findings = []
+        for name in sorted(os.listdir(actions)):
+            path = os.path.join(actions, name, "action.yml")
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as fh:
+                    findings += wl.lint_action(name, fh.read())
+        self.assertEqual(findings, [])
 
 if __name__ == "__main__":
     unittest.main()

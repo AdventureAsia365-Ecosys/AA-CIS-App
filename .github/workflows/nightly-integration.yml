@@ -75,6 +75,8 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
+          # S273 (workflow_lint WL4): a scheduled run is on main, so this saves the entry every PR / queue run restores.
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       # S273: same as ci.yml. A scheduled run is on main, so its cache entry is readable by every PR and queue run.
       - name: URL-pinned wheels (cached, hash-checked)
