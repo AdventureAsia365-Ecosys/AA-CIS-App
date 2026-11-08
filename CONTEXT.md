@@ -3129,9 +3129,10 @@ TripPlanner purge (AA-987): every lifecycle event gets one `tripplanner_purge` j
 `tripplanner_purge:<event idempotency_key>`, enqueued after commit by `run_after_commit` and by the publish of
 `process_export`, plus a sweep in the api ops sampler for any event without a job, last 2 h). The job re-reads the
 event from `gold_aa_internal.tour_lifecycle_event` and POSTs it, HMAC-signed (`X-AA-Signature: t=..,v1=..`, secret
-`aa-cis/<env>/tripplanner-revalidate-hmac`, same value as TripPlanner's Vercel env `CATALOG_REVALIDATE_SECRET`), to
-`TRIPPLANNER_REVALIDATE_URL` (default `https://aa-tripplanner.vercel.app/api/revalidate/catalog`), which purges the
-TripPlanner CDN / ISR caches. 4 attempts with backoff; not configured = succeeded `skipped: not_configured`.
+`aa-cis/<env>/tripplanner-revalidate-hmac`, same value as TripPlanner's env `CATALOG_REVALIDATE_SECRET`), to
+`TRIPPLANNER_REVALIDATE_URL` (default `https://tripplanner.lumiguides.it.com/api/revalidate/catalog`, the public host
+served by the TripPlanner web ECS service behind CloudFront since AA-1038 retired its Vercel project; Infra sets the
+same value), which purges the TripPlanner ISR / CDN caches. 4 attempts with backoff; not configured = succeeded `skipped: not_configured`.
 Tenant fan-out (AA-1039 R6, root ADR 0019 d20; CIS 360): every `retired` / `restored` event also gets one
 `tour_retirement_fanout` job (`services/tour_lifecycle/fanout.py`, `services/jobs/tour_retirement_jobs.py`; same
 after-commit enqueue + 2 h sweep). `retired`: each live post of the key's tours gets a `tour_retired` row in

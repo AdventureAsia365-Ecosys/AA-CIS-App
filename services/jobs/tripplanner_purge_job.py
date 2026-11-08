@@ -1,9 +1,10 @@
 """AA-987 — job kind `tripplanner_purge`: a tour's served state changed, tell TripPlanner to drop its caches.
 
 Why. A retired tour left every CIS read at once (AA-986), but the public TripPlanner site kept it for up to 30 min:
-the browse list is cached by the Vercel CDN (`max-age=1800`) and the Next.js pages by ISR (30 min). TripPlanner has
-no scheduler that could pull the outbox every minute (Vercel Hobby crons run once a day), so CIS pushes a signed
-notice and TripPlanner purges on demand (`POST /api/revalidate/catalog` in AA-TripPlanner-Web).
+the browse list and the Next.js pages are cached for up to 30 min (ISR in the TripPlanner web task, then its CDN).
+TripPlanner has no scheduler that could pull the outbox every minute, so CIS pushes a signed notice and TripPlanner
+purges on demand (`POST /api/revalidate/catalog` in AA-TripPlanner-Web, served on the public host by the ECS service
+behind CloudFront since AA-1038; the Vercel project was retired).
 
 Outbox-driven, not fire-and-forget:
   - one job per lifecycle event, idempotency key ``tripplanner_purge:<event idempotency_key>``: shared.job is the
@@ -22,9 +23,9 @@ Outbox-driven, not fire-and-forget:
 Authenticated with an HMAC-SHA256 shared secret: header ``X-AA-Signature: t=<unix seconds>,v1=<hex>`` over
 ``f"{t}.{body}"``. TripPlanner refuses a signature older than 5 minutes. The secret lives in Secrets Manager under
 ``aa-cis/<ENVIRONMENT>/tripplanner-revalidate-hmac`` (the CIS task role may not read ``tripplanner/*``); the same
-value is the TripPlanner Vercel env ``CATALOG_REVALIDATE_SECRET``. Not configured (secret missing, URL empty) = the
-job succeeds with ``{"delivered": false, "skipped": "not_configured"}`` and one warning line, so an environment without
-the secret never piles up failed jobs.
+value is ``catalog_revalidate_secret`` of the TripPlanner web secret (its env ``CATALOG_REVALIDATE_SECRET``). Not
+configured (secret missing, URL empty) = the job succeeds with ``{"delivered": false, "skipped": "not_configured"}``
+and one warning line, so an environment without the secret never piles up failed jobs.
 
 Payload: ``{"event_key": "<tour_lifecycle_event.idempotency_key>", "trigger": "after_commit" | "publish" | "sweep"}``.
 
@@ -57,7 +58,9 @@ KEY_PREFIX = f"{KIND}:"
 MAX_ATTEMPTS = 4
 HTTP_TIMEOUT_S = 10.0
 
-DEFAULT_URL = "https://aa-tripplanner.vercel.app/api/revalidate/catalog"
+# The public TripPlanner host (ECS behind CloudFront, AA-1038). The Infra sets TRIPPLANNER_REVALIDATE_URL to the same
+# URL; this default only matters for a task started without it.
+DEFAULT_URL = "https://tripplanner.lumiguides.it.com/api/revalidate/catalog"
 SIGNATURE_HEADER = "X-AA-Signature"
 CONTRACT = "catalog.tour.lifecycle.v1"
 

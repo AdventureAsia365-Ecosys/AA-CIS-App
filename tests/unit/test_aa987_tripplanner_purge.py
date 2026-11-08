@@ -93,6 +93,10 @@ def test_secret_name_and_url_defaults(monkeypatch):
     assert tp.secret_name() == "aa-cis/dev/tripplanner-revalidate-hmac"
     assert not tp.secret_name().startswith("tripplanner/")      # the CIS task role is denied tripplanner/*
     assert tp.target_url() == tp.DEFAULT_URL
+    # AA-1038: the public host (ECS behind CloudFront), the path the TripPlanner route serves
+    # (AA-TripPlanner-Web frontend/app/api/revalidate/catalog/route.ts); never the retired Vercel host.
+    assert tp.DEFAULT_URL == "https://tripplanner.lumiguides.it.com/api/revalidate/catalog"
+    assert "vercel" not in tp.DEFAULT_URL
     monkeypatch.setenv("TRIPPLANNER_REVALIDATE_URL", "")
     assert tp.target_url() == ""                                  # explicit off switch
 
