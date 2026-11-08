@@ -124,6 +124,11 @@
         }
        ],
        "flip": "unpublish",
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",
@@ -273,6 +278,11 @@
         }
        ],
        "flip": "unpublish",
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "ad66eba2a0c7bfca6179cc1aeb055f397ec418f0b406edf9d2baa70df5b7b73b",
@@ -360,6 +370,11 @@
         }
        ],
        "flip": null,
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "4eecb4fad16b73e72dc675cd6dc9d45aa6290b15d817aa829901fdefccdc9b09",
@@ -530,6 +545,11 @@
         }
        ],
        "flip": "unpublish",
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "4e40aa55f6087017cb9defec6717080d9aa619f8b7d575dea7513d1d9588434c",
@@ -692,6 +712,11 @@
         }
        ],
        "flip": "unpublish",
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "2783619a13d5a3501e29a0608e6e11fc1f1795cb87a3f5d5a59240488e41e62d",
@@ -851,6 +876,11 @@
         }
        ],
        "flip": "unpublish",
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "f8347f5299e9df9dac2aa8f1aa80415572f8f3716e5f6b191dd57f63712338ea",
@@ -1067,6 +1097,11 @@
         }
        ],
        "flip": null,
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "04776bd8cbcb485a04767200b88ce96cd0a2a0642d4948963a2ff43484a51fe4",
@@ -1244,6 +1279,11 @@
         }
        ],
        "flip": "unpublish",
+       "lineage": {
+        "policy_sha": "pinned-by-harness",
+        "route_config_version": null,
+        "v": "lineage-v1"
+       },
        "mode": "report",
        "sha_match": true,
        "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d",

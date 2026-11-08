@@ -230,6 +230,9 @@ SCENARIOS: dict[str, dict] = {
 }
 
 
+LINEAGE_STAMP = {"v": "lineage-v1", "policy_sha": "pinned-by-harness", "route_config_version": None}
+
+
 def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = None,
         conn: Optional["Conn"] = None) -> dict:
     """Run one scenario through the production ``_rewrite_and_save`` and return its trace. ``env``: the switches
@@ -256,6 +259,9 @@ def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = No
         st.enter_context(patch("services.seo_intelligence.s1_prefetch.tenant_market_seo",
                                AsyncMock(return_value=("US", None))))
         st.enter_context(patch("services.writing_memory.insertion.resolve", AsyncMock(return_value=None)))
+        # AA-1052: the lineage stamp the store step writes next to the final contract, pinned so the golden does not
+        # move with a policy edit (the policy has its own change control) or with another test's route cache
+        st.enter_context(patch("services.quality.lineage.stamp", lambda: dict(LINEAGE_STAMP)))
         if extra is not None:
             extra(st)
         diag = asyncio.run(job._rewrite_and_save(pool(conn), row, tour_dict, copy.deepcopy(BRAND_RULES), TENANT,
