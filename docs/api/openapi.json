@@ -3722,6 +3722,50 @@
         "title": "KeepBody",
         "type": "object"
       },
+      "LeadRouteIn": {
+        "properties": {
+          "lead_channel": {
+            "enum": [
+              "none",
+              "webhook",
+              "email"
+            ],
+            "title": "Lead Channel",
+            "type": "string"
+          },
+          "lead_email": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One e-mail address of the agency",
+            "title": "Lead Email"
+          },
+          "lead_webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "https URL of the agency; public host",
+            "title": "Lead Webhook Url"
+          }
+        },
+        "required": [
+          "lead_channel"
+        ],
+        "title": "LeadRouteIn",
+        "type": "object"
+      },
       "LlmCatalogPatch": {
         "properties": {
           "enabled": {
@@ -40033,6 +40077,184 @@
           }
         },
         "summary": "A tenant's subscriptions, entitlements and overrides",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/tripplanner-site/lead-route": {
+      "get": {
+        "operationId": "get_lead_route_admin_tenants__tenant_id__tripplanner_site_lead_route_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Lead Route Admin Tenants  Tenant Id  Tripplanner Site Lead Route Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Where a tenant's TripPlanner leads go when it has no CRM add-on",
+        "tags": [
+          "admin"
+        ]
+      },
+      "put": {
+        "operationId": "put_lead_route_admin_tenants__tenant_id__tripplanner_site_lead_route_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadRouteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Lead Route Admin Tenants  Tenant Id  Tripplanner Site Lead Route Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set the TripPlanner lead route of a tenant (audited; the webhook must be a public https URL)",
         "tags": [
           "admin"
         ]

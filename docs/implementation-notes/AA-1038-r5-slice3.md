@@ -42,4 +42,56 @@ cap, the brand), AA-Partner (`crm_tp_lead_pull`), root (contracts, ADR amendment
 - 390 is the number after 389 (held by another lane of the wave); renumber per the preflight if main differs.
 - The kit sync PR to AA-TripPlanner-Web must merge before the TripPlanner code PR (it imports
   `ui/core/brandTheme.ts`; lesson "consumer PR after Kit Sync").
-- No Tenant 360 editor for theme / lead route yet: set the rows by a reviewed DB Migrate `run-script` on Dev (follow-up).
+- No Tenant 360 editor for the theme yet: set it by a reviewed DB Migrate `run-script` on Dev (follow-up). The lead
+  route has one since the S272 follow-up below.
+
+## Follow-up (S272, lane l14): the lead route editor refuses a non-public webhook URL
+
+### Decisions
+
+- **The editor did not exist yet**, so the write-time guard comes with it: Tenant 360 › Subscription › "TripPlanner
+  lead route" (`Tenant360LeadRoute.tsx`, `lib/tenantLeadRoute.ts`) over `GET` / `PUT
+  /admin/tenants/{id}/tripplanner-site/lead-route` in `admin_tenant_subscription.py` (the Subscription tab already
+  holds the TripPlanner add-on). Read: the Subscription tab's rule; write: tenant.write + `_require_tenant_admin`.
+- **The rule lives in `services/tenant_account/tripplanner_site.py`** (`webhook_url_problem`): https; an IP literal must
+  be global unicast and not multicast (TripPlanner's `public_address_check` rule), IPv6 that carries IPv4
+  (mapped, NAT64 64:ff9b::/96, 6to4, IPv4-compatible) is judged by the IPv4, and the legacy spellings a resolver reads
+  as IPv4 (`127.1`, `2130706433`, `0x7f.0.0.1`, octal) are parsed with `inet_aton` (parsing only); a host name is
+  refused when it is one label or ends in `localhost`, `local`, `internal`, `localdomain`, `home.arpa`, `lan`,
+  `intranet`, `corp`, `home`. Then the 390 CHECK shape (fullmatch, so no CHECK violation reaches Postgres as a 500).
+- **No DNS in CIS** (the task): a name can resolve differently at send time; TripPlanner resolves and checks again
+  before storing and before each POST (`webhook_target_problem` / `public_address_check`), and the test
+  `test_never_resolves_dns` pins that CIS does not.
+- **A target is checked whenever it is given**, also when the channel does not use it: it is stored and goes live the
+  moment the channel is switched.
+- **A trailing root dot is stripped before the host checks** (review fix): `127.0.0.1.`, `10.0.0.1..`, `0x7f.1.` and
+  `2130706433.` are still the IPv4 address to getaddrinfo and to WHATWG URL parsers, so they are `not_public`; a public
+  FQDN with its root dot (`hooks.example.com.`) still passes (the 390 CHECK takes it); a host that is only dots is
+  `invalid`, and `hooks.example.123.` is `invalid` like `hooks.example.123`. `[::1].` fails `urlsplit` (`invalid`).
+- **422 shape** `{detail: {detail: <code>, field, message}}` + `X-Error-Code` (the Subscription routes' shape plus
+  `field`); the form maps the code to its field (`fieldOfCode`) and shows the EN / VI message under it.
+
+### Changed
+
+- `services/tenant_account/tripplanner_site.py` (new), `api/routers/admin_tenant_subscription.py` (2 routes),
+  `api/core/staff_authz.py` (2 POLICY rows), `services/acp_shared/audit_log.py` (`TRIPPLANNER_LEAD_ROUTE_CHANGED`),
+  snapshots `aa1035_role_route_matrix.json` / `aa882_staff_route_policy.json`, `docs/api/openapi.json` (pinned
+  FastAPI / Pydantic), `CONTEXT.md`.
+- Frontend: `Tenant360LeadRoute.tsx`, `leadRoute.messages.ts`, `lib/tenantLeadRoute.ts`, mounted in
+  `Tenant360Subscription.tsx`.
+- Tests: `tests/unit/test_aa1038_lead_route_editor.py` (TripPlanner's vectors 127.0.0.1, 10.0.3.7:8443,
+  169.254.169.254, [::1], http; plus CGNAT, multicast, unspecified, IPv4-mapped / NAT64 / 6to4, legacy IPv4, internal
+  names; routes, POLICY, admin only), `tests/integration/test_aa1038_lead_route_editor_pg.py` (store / read / audit on
+  the 390 table; a URL the CHECK accepts but is not public is refused before any write; every accepted URL satisfies
+  the CHECK), `frontend/lib/tenantLeadRoute.test.mjs`.
+
+### Tradeoffs
+
+- The host-name list is "plainly internal" only. A public-looking name that resolves to a private address is
+  TripPlanner's to catch at send time (it is: 503 `lead_channel_unavailable`, nothing stored).
+- A public IPv6 literal is refused as `invalid`: the 390 CHECK takes `[A-Za-z0-9.-]` hosts only (no migration in this
+  follow-up). An agency gives a host name.
+
+### Should know
+
+- No migration. Rows written before this follow-up are not re-checked (Dev: only the demo tenant's `none` row).

@@ -190,6 +190,7 @@
     "GET /admin/tenants/{tenant_id}/quality",
     "GET /admin/tenants/{tenant_id}/rewrite-activity",
     "GET /admin/tenants/{tenant_id}/subscription",
+    "GET /admin/tenants/{tenant_id}/tripplanner-site/lead-route",
     "GET /admin/tenants/{tenant_id}/usage",
     "GET /admin/tours",
     "GET /admin/tours-ready",
@@ -429,7 +430,8 @@
     "PUT /admin/tenants/{tenant_id}/assignments/{admin_user_id}",
     "PUT /admin/tenants/{tenant_id}/brand-identity",
     "PUT /admin/tenants/{tenant_id}/config",
-    "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"
+    "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}",
+    "PUT /admin/tenants/{tenant_id}/tripplanner-site/lead-route"
   ],
   "ai_ops": [
     "DELETE /admin/ai-gateway/capacity/{connection_key}/{model_key}",
@@ -1011,6 +1013,7 @@
     "GET /admin/tenants/{tenant_id}/quality",
     "GET /admin/tenants/{tenant_id}/rewrite-activity",
     "GET /admin/tenants/{tenant_id}/subscription",
+    "GET /admin/tenants/{tenant_id}/tripplanner-site/lead-route",
     "GET /admin/tenants/{tenant_id}/usage",
     "GET /admin/view-as/sessions",
     "GET /admin/view-as/sessions/{session_id}",
@@ -1074,6 +1077,7 @@
     "GET /admin/tenants/{tenant_id}/booking-billing",
     "GET /admin/tenants/{tenant_id}/details",
     "GET /admin/tenants/{tenant_id}/subscription",
+    "GET /admin/tenants/{tenant_id}/tripplanner-site/lead-route",
     "GET /admin/tenants/{tenant_id}/usage",
     "GET /admin/usage-explorer/invoices",
     "GET /admin/usage-explorer/options",
