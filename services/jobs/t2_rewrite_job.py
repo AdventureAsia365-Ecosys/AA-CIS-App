@@ -622,6 +622,16 @@ async def mark_version_failed(pool, job_row: dict) -> None:
 
 # Live T2 rewrite ≈ 35 s (S201); 5 min means something is stuck.
 @job_kind(KIND, concurrency=4, max_attempts=2, on_terminal=mark_version_failed, expected_seconds=300)
+async def _claim_shadow(pool, **kw) -> "dict | None":
+    """AA-1050 W4: the claim-instrument shadow of the saved version (never raises; unit tests stub it)."""
+    try:
+        from services.quality import claim_shadow
+        return await claim_shadow.after_t2_version(pool, **kw)
+    except Exception as e:  # noqa: BLE001 — the version is saved: the shadow never fails the job
+        logger.warning("t2_claim_shadow_hook_failed", error_type=type(e).__name__, error=str(e)[:200])
+        return None
+
+
 async def run(ctx: JobContext) -> dict:
     p = ctx.payload
     version_id, tenant_id = p.get("version_id"), p.get("tenant_id")
@@ -691,6 +701,12 @@ async def run(ctx: JobContext) -> dict:
             "SELECT status, quality_score::float AS score, qa_status FROM "
             "gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
     await ctx.progress(phase="done")
+    # AA-1050 W4 (root ADR 0020 D7): the pinned claim instrument in shadow on the SAVED version (either T2 path), after
+    # its status is written; writes only shared.claim_shadow_verdict + the ledger, never raises, never changes the
+    # status. Off by default (CLAIM_SHADOW unset: no read, no key in the job result).
+    shadow = await _claim_shadow(pool, version_id=version_id, tenant_id=tenant_id, job_id=getattr(ctx, "job_id", None),
+                                 tour_dict=tour_dict, brand_rules=brand_rules)
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
+            **({"claim_shadow": shadow} if shadow else {}),
             "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag,
             **({"fs_id": fs_id} if fs_id else {}), **({"trial_flags": trial} if trial else {}), **(diag or {})}

@@ -117,6 +117,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     # AA-1048: the R1 claim-instrument calibration (stage adhoc_aa1048); run() passes every reply to _log, which writes
     # the row (record_call_sync **billed_fields) or the billed_unusable row (record_unusable_sync).
     ("services/ground_truth/r1.py", "gateway_call"): (("services/ground_truth/r1.py", "_log"),),
+    # AA-1050 W4: the claim-instrument shadow (stage claim_shadow); run_object passes every reply to its `log`, which is
+    # claim_shadow._log in production (record_call_with_pool **billed_fields, or record_unusable).
+    ("services/quality/claim_shadow.py", "gateway_call"): (("services/quality/claim_shadow.py", "_log"),),
     ("services/jobs/place_dedupe_job.py", "_generate_sync"): (
         ("services/jobs/place_dedupe_job.py", "make_models.call"),),
     # AA-835: the supply content draft (job supply_content_draft); its row right after generate(), the billed

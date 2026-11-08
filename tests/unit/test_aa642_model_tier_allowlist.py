@@ -41,6 +41,8 @@ ALLOWED = {
     ("services/content_generation/source_facts.py", EXPR): 1,
     # AA-1048 R1 calibration: each candidate model is pinned on purpose (adhoc_aa1048), like the R2 eval judge.
     ("services/ground_truth/r1.py", EXPR): 1,
+    # AA-1050 W4: the same pinned claim instrument in shadow (stage claim_shadow), pinned on purpose (D7: no fallback).
+    ("services/quality/claim_shadow.py", EXPR): 1,
     # Eval / adhoc scripts (they compare models on purpose; logged under adhoc_* stages).
     ("scripts/aa645/s1_screen.py", EXPR): 1,
     ("scripts/aa645/shadow.py", "model_tier='sonnet'"): 1,
