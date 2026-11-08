@@ -459,6 +459,9 @@ def _all_failed(message: str, failures: list) -> RuntimeError:
     if not cls:
         # Decided here: a mixed failure is not account-level, whatever its last cause says.
         exc.llm_error_class = THROTTLED if THROTTLED in classes else OTHER
+    # AA-1053: every attempt's error, not only the last (the cause): a caller reads whether any of them was a cut
+    # (token_floor.route_ended_on_cut) before it asks the whole route again.
+    exc.route_failures = tuple(failures)
     if failures:
         exc.__cause__ = failures[-1]
     return exc

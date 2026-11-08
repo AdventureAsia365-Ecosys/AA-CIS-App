@@ -219,8 +219,34 @@ def is_cut_failure(exc: BaseException) -> bool:
     return any(isinstance(b, dict) and is_truncated(b.get("stop_reason")) for b in _billed_records(exc))
 
 
+def route_ended_on_cut(exc: BaseException, _depth: int = 0) -> bool:
+    """AA-1053: True when a whole gateway request (``LLMClient.generate`` on a stage route) failed and at least one
+    model attempt in it ended on a cut. ``generate`` never surfaces a model's own cut error: the route wraps them in
+    ``RouteUnusableReply`` (every rung billed unusable; the billing dicts in ``logged_usage``, no cause) or in the
+    ``_all_failed`` error (a mix with an outage or a refused cut; every rung's error in ``route_failures``, only the
+    last one as cause, ``llm_error_class`` decided), and ``is_cut_failure`` reads neither. A caller that would ask
+    again uses this: the gateway already gave every cut rung its one truncation retry. Never raises."""
+    try:
+        if is_cut_failure(exc):
+            return True
+        seen: set = set()
+        cur: Optional[BaseException] = exc
+        while cur is not None and id(cur) not in seen and len(seen) < 16:
+            seen.add(id(cur))
+            if any(isinstance(b, dict) and is_truncated(b.get("stop_reason"))
+                   for b in (getattr(cur, "logged_usage", None) or ())):
+                return True
+            if _depth < 3 and any(isinstance(f, BaseException) and route_ended_on_cut(f, _depth + 1)
+                                  for f in (getattr(cur, "route_failures", None) or ())):
+                return True
+            cur = cur.__cause__ or cur.__context__
+    except Exception:  # noqa: BLE001 — an unreadable error is not a cut
+        return False
+    return False
+
+
 __all__ = ["DEFAULT_EFFORT_FLOOR", "EFFORT_FLOORS", "FLOOR_SWITCH_ENV", "NO_FLOOR_STAGES", "NO_RETRY_STAGES",
            "RETRY_BILLED_UNUSABLE_CUT", "RETRY_CUT_REPLY", "RETRY_REASONS", "RETRY_SWITCH_ENV",
            "RETRY_TRUNCATED_REFUSAL", "apply_floor", "cut_failure_cost", "cut_failure_reason", "effort_floor",
            "floor_enabled", "floored_max_tokens", "is_cut_failure", "is_cut_reply", "retry_allowed", "retry_ceiling",
-           "retry_enabled", "retry_request"]
+           "retry_enabled", "retry_request", "route_ended_on_cut"]

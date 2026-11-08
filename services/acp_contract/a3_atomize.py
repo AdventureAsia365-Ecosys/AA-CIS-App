@@ -51,7 +51,7 @@ from shared.llm_client.role_config import get_stage_config
 from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
 from shared.llm_client.decide import decide
 from shared.llm_client.errors import is_truncated
-from shared.llm_client.token_floor import is_cut_failure
+from shared.llm_client.token_floor import route_ended_on_cut
 
 logger = structlog.get_logger()
 
@@ -151,8 +151,9 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
             error = f"{type(e).__name__}: {e}"
             logger.error(f"{event}_llm_failed", **log_fields, attempt=attempt,
                          error_type=type(e).__name__, error=str(e))
-            if is_cut_failure(e):
-                # AA-1053: a cut that raised (refused or billed unusable) was already retried by the gateway.
+            if route_ended_on_cut(e):
+                # AA-1053: a rung of the route ended on a cut (refused, or billed unusable: RouteUnusableReply /
+                # the route's aggregate error); the gateway already gave it its one truncation retry.
                 return None, None, attempt, error
             continue
         try:

@@ -33,15 +33,18 @@ GATEWAY_PREFIXES = ("shared/llm_client/", "shared/aa_llm/")
 # local ``_generate*`` / ``*_generate`` wrappers call sites build around them.
 _GATEWAY_CALL = re.compile(r"^(?:_?a?generate(?:_\w+)?|\w+_a?generate|invoke_judge|call_judge)$")
 # A read of a cut: the cut predicates of the gateway and the caller-side helper.
-_CUT_PREDICATES = frozenset({"is_truncated", "is_cut", "is_cut_reply", "is_cut_failure", "still_cut"})
+_CUT_PREDICATES = frozenset({"is_truncated", "is_cut", "is_cut_reply", "is_cut_failure", "route_ended_on_cut",
+                             "still_cut"})
 _CUT_STOPS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
 
 # "<file>:<function>" -> why a loop there that calls the gateway and reads a cut is NOT a cut retry. Each entry has a
 # behaviour test. Grow only with a reason; a cut retry belongs in the gateway (token_floor.py), never here.
 CUT_AWARE_LOOPS = {
     "services/acp_contract/a3_atomize.py:_ask_atoms":
-        "a cut read ends the loop (the gateway already retried it once); only a non-cut parse failure or a non-cut "
-        "error is asked again, at the same ceiling (test_a3_atomize_never_re_asks_a_cut_read)",
+        "a cut read ends the loop (the gateway already retried it once): a cut reply, or a route error any rung of "
+        "which ended on a cut (token_floor.route_ended_on_cut); only a non-cut parse failure or a non-cut error is "
+        "asked again, at the same ceiling (test_a3_atomize_never_re_asks_a_cut_read, "
+        "test_a3_atomize_does_not_re_ask_a_route_that_ended_on_billed_cuts)",
 }
 
 
@@ -253,6 +256,54 @@ async def test_a3_atomize_never_re_asks_a_cut_read(stop_reason):
     unusable.assert_awaited_once()                 # the billed cut reply keeps its billed_unusable row
 
 
+def _route_unusable_cut(stop_reason="max_tokens"):
+    """What ``LLMClient.generate`` raises when every rung of the route answered with an unusable reply cut at its
+    ceiling (each after its gateway retry): a RouteUnusableReply with the billing dicts in ``logged_usage``, no cause
+    and no ``billed_usage`` (client._call_route)."""
+    from shared.llm_client.client import RouteUnusableReply
+
+    exc = RouteUnusableReply("All models in the route failed for stage 'a3_atomize': "
+                             "orchid-x: returned empty content; orchid-y: returned empty content")
+    exc.logged_usage = (
+        {"model": "orchid-x", "stop_reason": stop_reason, "cost_usd": 0.01},   # the cut
+        {"model": "orchid-x", "stop_reason": stop_reason, "cost_usd": 0.02},   # its gateway retry, cut again
+        {"model": "orchid-y", "stop_reason": stop_reason, "cost_usd": 0.01},
+        {"model": "orchid-y", "stop_reason": stop_reason, "cost_usd": 0.02},
+    )
+    return exc
+
+
+def _route_failed_with_refused_cut():
+    """What ``generate`` raises when one rung's provider refused to return a cut reply (nothing billed, after the
+    gateway retry) and another rung was down: the ``_all_failed`` aggregate (llm_error_class decided, only the last
+    failure as cause)."""
+    from shared.llm_client.client import _all_failed
+
+    refused = RuntimeError("Error code: 400 - Could not finish the message because max_tokens or model output limit "
+                           "was reached")
+    down = RuntimeError("Error code: 503 - upstream unavailable")
+    return _all_failed("All models in the route failed for stage 'a3_atomize'", [refused, down])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["max_tokens", "length"])
+async def test_a3_atomize_does_not_re_ask_a_route_that_ended_on_billed_cuts(stop_reason):
+    """Red before the fix: is_cut_failure read neither logged_usage nor the route's aggregate, so a3 asked the whole
+    route again and every rung billed its cut + gateway retry a second time."""
+    exc = _route_unusable_cut(stop_reason)
+    assert not token_floor.is_cut_failure(exc)          # the per-attempt predicate the gateway uses stays per attempt
+    (atoms, _, attempt, error), gen, _ = await _ask(exc, _Resp(_atoms("Brindle Cove", "walk")))
+    assert atoms is None and gen.call_count == 1 and attempt == 1 and "RouteUnusableReply" in error
+
+
+@pytest.mark.asyncio
+async def test_a3_atomize_does_not_re_ask_a_route_with_a_refused_cut():
+    exc = _route_failed_with_refused_cut()
+    assert not token_floor.is_cut_failure(exc)
+    (atoms, _, attempt, _), gen, _ = await _ask(exc, _Resp(_atoms("Brindle Cove", "walk")))
+    assert atoms is None and gen.call_count == 1 and attempt == 1
+
+
 @pytest.mark.asyncio
 async def test_a3_atomize_does_not_re_ask_a_raised_cut():
     from shared.llm_client.client import BilledUnusableReply
@@ -264,7 +315,61 @@ async def test_a3_atomize_does_not_re_ask_a_raised_cut():
 
 
 @pytest.mark.asyncio
+async def test_a3_atomize_still_re_asks_a_route_that_failed_without_a_cut():
+    """An outage or a non-cut unusable reply on every rung is still asked once more (AA-645)."""
+    from shared.llm_client.client import RouteUnusableReply, _all_failed
+
+    bad_json = RouteUnusableReply("All models in the route failed for stage 'a3_atomize'")
+    bad_json.logged_usage = ({"model": "orchid-x", "stop_reason": "end_turn", "cost_usd": 0.01},)
+    outage = _all_failed("All models in the route failed", [RuntimeError("Error code: 503 - upstream unavailable")])
+    for exc in (bad_json, outage):
+        (atoms, _, attempt, _), gen, _ = await _ask(exc, _Resp(_atoms("Brindle Cove", "walk")))
+        assert atoms and attempt == 2 and gen.call_count == 2
+
+
+def test_route_ended_on_cut_reads_every_route_error_shape():
+    from shared.llm_client.client import BilledUnusableReply, _all_failed
+
+    billed_cut = BilledUnusableReply("empty content")
+    billed_cut.billed_usage = [{"stop_reason": "length", "cost_usd": 0.01}]
+    assert token_floor.route_ended_on_cut(billed_cut)                                  # a model's own cut
+    assert token_floor.route_ended_on_cut(_route_unusable_cut())                       # every rung billed cut
+    assert token_floor.route_ended_on_cut(_route_failed_with_refused_cut())            # refused cut + outage
+    # a billed cut on an earlier rung, the outage last (the aggregate's cause is the outage)
+    mixed = _all_failed("route failed", [billed_cut, RuntimeError("Error code: 503 - upstream unavailable")])
+    assert token_floor.route_ended_on_cut(mixed)
+    # a legacy alias aggregate over a deployment aggregate keeps the inner cut visible
+    nested = _all_failed("legacy failed", [_route_failed_with_refused_cut()])
+    assert token_floor.route_ended_on_cut(nested)
+    assert not token_floor.route_ended_on_cut(_all_failed("route failed", [RuntimeError("Error code: 503")]))
+    assert not token_floor.route_ended_on_cut(RuntimeError("boom"))
+
+
+@pytest.mark.asyncio
 async def test_a3_atomize_still_re_asks_a_malformed_read_that_was_not_cut():
     (atoms, _, attempt, _), gen, _ = await _ask(_Resp("{not json"), _Resp(_atoms("Brindle Cove", "walk")))
     assert atoms and attempt == 2
     assert [c.args[0].max_tokens for c in gen.call_args_list] == [4096, 4096]
+
+
+def test_the_route_error_of_billed_cuts_is_read_as_a_cut():
+    """The real wrapper: ``LLMClient._call_route`` turns each rung's billed cut (after its gateway retry) into the
+    RouteUnusableReply ``generate`` raises; route_ended_on_cut reads it, is_cut_failure does not."""
+    from shared.llm_client import client as gw
+    from shared.llm_client.client import BilledUnusableReply, LLMClient, LLMRequest, RouteUnusableReply
+
+    def cut(*_a, **_k):
+        exc = BilledUnusableReply("returned empty content (stop_reason=max_tokens)")
+        exc.billed_usage = [{"model": "m", "stop_reason": "max_tokens", "cost_usd": 0.01}]
+        raise exc
+
+    llm = LLMClient.__new__(LLMClient)
+    req = LLMRequest(system_prompt="s", user_prompt="u", stage="a3_atomize", max_tokens=4096)
+    with patch.object(LLMClient, "_route_attempts", lambda self, r, chain: [(k, None) for k in chain]), \
+            patch.object(LLMClient, "_call_key_logged", side_effect=cut), \
+            patch.object(LLMClient, "_deadline_gate", lambda *a, **k: None), \
+            patch.object(gw, "stage_role", lambda r: None), patch.object(gw, "stage_pii_class", lambda r: None):
+        with pytest.raises(RouteUnusableReply) as raised:
+            llm._call_route(req, ["haiku", "sonnet"], "acct")
+    assert not token_floor.is_cut_failure(raised.value)
+    assert token_floor.route_ended_on_cut(raised.value)
