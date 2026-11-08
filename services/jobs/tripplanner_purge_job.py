@@ -23,9 +23,9 @@ Outbox-driven, not fire-and-forget:
 Authenticated with an HMAC-SHA256 shared secret: header ``X-AA-Signature: t=<unix seconds>,v1=<hex>`` over
 ``f"{t}.{body}"``. TripPlanner refuses a signature older than 5 minutes. The secret lives in Secrets Manager under
 ``aa-cis/<ENVIRONMENT>/tripplanner-revalidate-hmac`` (the CIS task role may not read ``tripplanner/*``); the same
-value is ``catalog_revalidate_secret`` of the TripPlanner web secret (its env ``CATALOG_REVALIDATE_SECRET``). Not configured (secret missing, URL empty) = the
-job succeeds with ``{"delivered": false, "skipped": "not_configured"}`` and one warning line, so an environment without
-the secret never piles up failed jobs.
+value is ``catalog_revalidate_secret`` of the TripPlanner web secret (its env ``CATALOG_REVALIDATE_SECRET``). Not
+configured (secret missing, URL empty) = the job succeeds with ``{"delivered": false, "skipped": "not_configured"}``
+and one warning line, so an environment without the secret never piles up failed jobs.
 
 Payload: ``{"event_key": "<tour_lifecycle_event.idempotency_key>", "trigger": "after_commit" | "publish" | "sweep"}``.
 
