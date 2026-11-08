@@ -442,7 +442,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     a = build_parser().parse_args(argv)
     from services.golden_set import llm_guard
 
-    llm_guard.install("aa1048_ground_truth")
+    # The guard holds for the whole command; undo on return so an in-process caller (a unit test calling main())
+    # does not leave the gateway refused for every later test in the same worker (S273: CI shard failures).
+    undo_guard = llm_guard.install("aa1048_ground_truth")
+    try:
+        return _run(a)
+    finally:
+        undo_guard()
+
+
+def _run(a) -> int:
     try:
         if a.cmd in LOCAL_COMMANDS:
             out = LOCAL_COMMANDS[a.cmd](a)
