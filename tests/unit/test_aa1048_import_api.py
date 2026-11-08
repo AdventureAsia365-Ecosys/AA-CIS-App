@@ -349,6 +349,35 @@ def test_route_report_and_finals(client):
     assert client.get("/admin/writing-memory/claim-labels/bad%20set/1.0.0/report", headers=_h()).status_code == 404
 
 
+def test_route_enqueue_batch_filters(client):
+    """S273 "t9-heldout-first": the enqueue body takes split / writers / max_open and answers counts only."""
+    body = _payload()
+    cons = importer.consolidate_payload(body["export"], body["judgements"], set_id=SET, set_version="1.0.0")
+    rows = [{**r, "label_id": f"00000000-0000-4000-8000-{i:012d}"} for i, r in enumerate(cons.rows)]
+
+    async def fetch(sql, *args):
+        if "SELECT label_id" in sql:
+            return rows
+        return []                                         # nothing queued yet
+
+    client.fake_conn.fetch = fetch
+    url = f"/admin/writing-memory/claim-labels/{SET}/1.0.0/enqueue"
+    every = store.queue_candidates(rows)
+    held = store.queue_candidates(rows, split="held_out", writers=["t9_blog"])
+    r = client.post(url, json={"split": "held_out", "writers": ["t9_blog"], "max_open": 1}, headers=_h())
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["dry_run"] and out["candidates"] == len(held) and out["added"] == min(1, len(held))
+    assert out["filter"] == {"split": "held_out", "writers": ["t9_blog"], "max_open": 1}
+    assert "Velmora" not in r.text and "invented reason" not in r.text
+    r = client.post(url, json={}, headers=_h())                                   # no filter: as before
+    assert r.status_code == 200 and set(r.json()) == {"candidates", "added", "week_start", "dry_run"}
+    assert r.json()["candidates"] == len(every)
+    for bad in ({"split": "pooled"}, {"writers": ["s1"]}, {"max_open": 0}, {"writers": []}, {"batch": 2}):
+        assert client.post(url, json=bad, headers=_h()).status_code == 422, bad
+    assert client.post(url, json={"max_open": 5}, headers=_h("viewer")).status_code == 403
+
+
 def test_route_split_plan_returns_ids_and_counts_only(client):
     async def fetch(sql, *args):
         if "content_piece" in sql:

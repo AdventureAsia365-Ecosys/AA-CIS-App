@@ -8,8 +8,9 @@ cis_app.
 """
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
-from typing import Optional
+from typing import Iterable, Optional
 
 COLUMNS = ("set_id", "set_version", "writer", "scope", "tenant_id", "sample_id", "piece_id", "tour_id", "version_id",
            "content_sha256", "field", "span_start", "span_end", "claim_text", "claim_hash", "claim_class", "label",
@@ -77,52 +78,106 @@ def week_start(today: date) -> date:
     return today - timedelta(days=today.weekday())
 
 
-def queue_candidates(rows: list[dict]) -> list[dict]:
+# The adjudication order (S273 tech-lead decision "t9-heldout-first"): held-out claims first (the only side a gate
+# decision reads), then the T9 surface (D7, the claim instrument's first surface), then one object at a time so the
+# tech lead reads the claims of one piece / version together.
+WRITER_ORDER = ("t9_blog", "t9_social", "t2", "a1")
+SPLITS = ("held_out", "train")
+
+
+def _queue_order(item: dict) -> tuple:
+    w = item.get("writer")
+    return (item.get("split") != "held_out", WRITER_ORDER.index(w) if w in WRITER_ORDER else len(WRITER_ORDER),
+            item.get("content_sha256") or "", item.get("span_start") or 0, item.get("claim_hash") or "")
+
+
+def queue_candidates(rows: list[dict], *, split: Optional[str] = None,
+                     writers: Optional[Iterable[str]] = None) -> list[dict]:
     """One queue item per disputed or audit-drawn claim: source_ref = its first panel row (lens order), machine_verdict
     = the panel's common label ('split' when the lenses have no majority), human_label = the panel state
-    ('disputed' | 'audit'), the tech lead's work. Claims that already have a tech-lead row are left out."""
+    ('disputed' | 'audit'), the tech lead's work. Claims that already have a tech-lead row are left out.
+
+    `split` / `writers` keep the claims of that split / those writers only (S273: held-out T9 claims first). The list
+    is in adjudication order (WRITER_ORDER above): held-out first, T9 first, then by object and position."""
     from collections import Counter, defaultdict
 
+    if split is not None and split not in SPLITS:
+        raise ValueError(f"split must be one of {SPLITS}, not {split!r}")
+    keep = None if writers is None else set(writers)
     by_hash: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_hash[r["claim_hash"]].append(r)
     out = []
-    for _h, rs in sorted(by_hash.items()):
+    for h, rs in sorted(by_hash.items()):
         if any(r["labeller_kind"] == "tech_lead" for r in rs):
             continue
         panel = sorted((r for r in rs if r["labeller_kind"] == "agent_panel"), key=lambda r: r["lens"] or "")
         if not panel or panel[0]["adjudication"] not in ("disputed", "audit"):
             continue
+        first = panel[0]
+        if split is not None and first.get("split") != split:
+            continue
+        if keep is not None and first["writer"] not in keep:
+            continue
         top = Counter(r["label"] for r in panel).most_common()
         machine = top[0][0] if len(top) == 1 or top[0][1] > top[1][1] else "split"
-        out.append({"source_ref": panel[0]["label_id"], "writer": panel[0]["writer"], "scope": panel[0]["scope"],
-                    "tenant_id": panel[0]["tenant_id"], "machine_verdict": machine,
-                    "human_label": panel[0]["adjudication"]})
-    return out
+        out.append({"source_ref": first["label_id"], "writer": first["writer"], "scope": first["scope"],
+                    "tenant_id": first["tenant_id"], "machine_verdict": machine,
+                    "human_label": first["adjudication"], "split": first.get("split"), "claim_hash": h,
+                    "content_sha256": first.get("content_sha256"), "span_start": first.get("span_start")})
+    return sorted(out, key=_queue_order)
 
 
-async def enqueue(conn, rows: list[dict], *, today: date, apply: bool) -> dict:
+_QUEUED_SQL = ("SELECT source_ref::text AS source_ref, status FROM shared.writing_memory_disagreement "
+               "WHERE source = $1 AND source_ref = ANY($2::uuid[])")
+_QUEUE_INSERT_SQL = (
+    "INSERT INTO shared.writing_memory_disagreement (source, source_ref, writer, scope, tenant_id, "
+    "machine_verdict, human_label, week_start) VALUES ($1, $2::uuid, $3, $4, $5::uuid, $6, $7, $8) "
+    "ON CONFLICT (source, source_ref) DO NOTHING RETURNING item_id::text AS item_id")
+
+
+async def enqueue(conn, rows: list[dict], *, today: date, apply: bool, split: Optional[str] = None,
+                  writers: Optional[Iterable[str]] = None, max_open: Optional[int] = None) -> dict:
     """Add the golden_claim items of a label set version to the disagreement queue (DRY RUN: count the new ones).
     An item is never added twice (unique source + source_ref). The queue's weekly cap (QUEUE_MAX of the KPI job)
-    does not apply: these are the W2 adjudication work list."""
-    items = queue_candidates(rows)
+    does not apply: these are the W2 adjudication work list.
+
+    Batches (S273, decision "t9-heldout-first"): `split` / `writers` narrow the candidates and `max_open` caps the
+    open items of this set version in the queue after the call (the batch the tech lead works through in one sitting).
+    Items are added in adjudication order (queue_candidates); a later call tops the queue up to `max_open` again
+    with the next items once the tech lead has resolved some. `remaining` = candidates still outside the queue."""
+    if max_open is not None and max_open < 1:
+        raise ValueError("max_open must be >= 1")
+    items = queue_candidates(rows, split=split, writers=writers)
+    refs = sorted({r["label_id"] for r in rows if r["labeller_kind"] == "agent_panel" and r.get("label_id")})
+    queued = {r["source_ref"]: r["status"] for r in await conn.fetch(_QUEUED_SQL, QUEUE_SOURCE, refs)} if refs else {}
+    open_before = sum(1 for s in queued.values() if s == "open")
+    room = None if max_open is None else max(0, max_open - open_before)
     week = week_start(today)
-    added = 0
+    added = already = 0
     for it in items:
-        if not apply:
-            exists = await conn.fetchval("SELECT EXISTS (SELECT 1 FROM shared.writing_memory_disagreement WHERE "
-                                         "source = $1 AND source_ref = $2::uuid) AS ok", QUEUE_SOURCE,
-                                         it["source_ref"])
-            added += 0 if exists else 1
+        if it["source_ref"] in queued:
+            already += 1
             continue
-        got = await conn.fetchval(
-            "INSERT INTO shared.writing_memory_disagreement (source, source_ref, writer, scope, tenant_id, "
-            "machine_verdict, human_label, week_start) VALUES ($1, $2::uuid, $3, $4, $5::uuid, $6, $7, $8) "
-            "ON CONFLICT (source, source_ref) DO NOTHING RETURNING item_id::text AS item_id",
-            QUEUE_SOURCE, it["source_ref"], it["writer"], it["scope"], it["tenant_id"], it["machine_verdict"],
-            it["human_label"], week)
-        added += 1 if got else 0
-    return {"candidates": len(items), "added": added, "week_start": week.isoformat(), "dry_run": not apply}
+        if room is not None and added >= room:
+            continue
+        if not apply:
+            added += 1
+            continue
+        got = await conn.fetchval(_QUEUE_INSERT_SQL, QUEUE_SOURCE, it["source_ref"], it["writer"], it["scope"],
+                                  it["tenant_id"], it["machine_verdict"], it["human_label"], week)
+        if got:
+            added += 1
+        else:                       # queued by a concurrent call since the read above
+            already += 1
+    remaining = len(items) - already - added
+    out = {"candidates": len(items), "added": added, "week_start": week.isoformat(), "dry_run": not apply}
+    if split is not None or writers is not None or max_open is not None:
+        out.update(already_queued=already, open_before=open_before, open_after=open_before + added,
+                   remaining=remaining, batches_left=(math.ceil(remaining / max_open) if max_open else None),
+                   filter={"split": split, "writers": sorted(writers) if writers is not None else None,
+                           "max_open": max_open})
+    return out
 
 
 def resolution_label(machine_verdict: str, resolution: str) -> str:
@@ -161,5 +216,6 @@ async def pull_resolutions(conn, set_id: str, set_version: str, *, apply: bool,
     return summary
 
 
-__all__ = ["COLUMNS", "QUEUE_SOURCE", "StoreRefused", "enqueue", "existing_judgements", "insert_rows",
-           "panel_rows_exist", "pull_resolutions", "queue_candidates", "read_rows", "resolution_label", "week_start"]
+__all__ = ["COLUMNS", "QUEUE_SOURCE", "SPLITS", "StoreRefused", "WRITER_ORDER", "enqueue", "existing_judgements",
+           "insert_rows", "panel_rows_exist", "pull_resolutions", "queue_candidates", "read_rows", "resolution_label",
+           "week_start"]
