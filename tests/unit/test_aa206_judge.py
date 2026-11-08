@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from services.content_generation.graph import _build_brand_diff_block, build_graph
+from services.content_generation.batch_prompt import build_brand_diff_block as _build_brand_diff_block
+from services.content_generation.graph import build_graph
 from services.content_generation.judge_node import judge_node
 from shared.llm_client.models import LLMResponse
 

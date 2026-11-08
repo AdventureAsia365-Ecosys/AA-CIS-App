@@ -30,7 +30,8 @@ from services.content_generation.batch_prompt import (
     materialize_s1_prompt,
     prompt_version_of,
 )
-from services.content_generation.graph import parse_generated_json, _build_brand_diff_block
+from services.content_generation.batch_prompt import build_brand_diff_block
+from services.content_generation.graph import parse_generated_json
 
 
 # ── manifest ──────────────────────────────────────────────────────────────────
@@ -176,10 +177,9 @@ def test_materialize_returns_stable_prompt_version():
     assert materialize_s1_prompt(_BRANDED_STATE)[2] == pv
 
 
-def test_brand_diff_block_reexport_unchanged():
-    # graph._build_brand_diff_block now delegates to batch_prompt.build_brand_diff_block — verify
-    # the graph-level name still works (existing importers/tests) and produces the profile.
-    block = _build_brand_diff_block(_BRANDED_STATE)
+def test_brand_diff_block_builds_the_profile():
+    # the single builder (batch_prompt.build_brand_diff_block; AA-1052 removed graph's re-export)
+    block = build_brand_diff_block(_BRANDED_STATE)
     assert "BRAND DIFFERENTIATION PROFILE" in block
     assert "Slow immersive highland travel" in block
 

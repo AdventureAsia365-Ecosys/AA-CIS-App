@@ -35,7 +35,6 @@ import json
 import re
 from pathlib import Path
 
-import yaml
 
 from services.quality import writing_policy as wp
 
@@ -362,11 +361,6 @@ def run_policy(root: Path, tracked: list[str]) -> tuple[list[str], dict]:
             except (OSError, UnicodeDecodeError):
                 continue
     return errors, n
-
-
-def load_yaml_source() -> dict:
-    with open(wp.POLICY_PATH, encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
 
 
 __all__ = ["ALLOWLIST", "bounds", "policy_texts", "run_policy", "scan_python", "scan_ts", "scan_yaml", "shingles",

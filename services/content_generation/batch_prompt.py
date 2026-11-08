@@ -19,38 +19,12 @@ still adds feedback exactly as before.
 from __future__ import annotations
 
 import hashlib
-from typing import TypedDict
-
 from .prompts import SYSTEM_PROMPT, build_rewrite_prompt, build_t2_base_prompt, t2_dashless
 
 
-class S1PromptInputs(TypedDict, total=False):
-    """The subset of graph ContentState fields the writer prompt is built from — all available
-    before any LLM call (tour data + resolved brand rule + SEO), none depending on graph output."""
-    tour: dict
-    seo: dict
-    few_shots: list
-    subtitle_focus: str
-    rewrite_language: str
-    brand_system_prompt: str
-    brand_style_guide: str
-    brand_forbidden_words: list
-    brand_core_idea: str
-    brand_customer_segment: str
-    brand_customer_mindset: str
-    brand_voice_examples: list
-    brand_good_examples: str
-    is_tenant_rewrite: bool   # AA-792: True → the T2 tenant-voice builders below
-    brand_name: str           # AA-792: from the AA-771 brand pack (T2 only)
-    brand_type: str
-    brand_default_cta: str
-    brand_signature_words: list  # AA-800: custom_validators.signature_words (T2 only)
-
-
 def build_brand_diff_block(state: dict) -> str:
-    """AA-202 brand-differentiation system block. Copied verbatim from graph._build_brand_diff_block
-    so materialized batch prompts are byte-identical to the synchronous path. graph._build_brand_diff_block
-    now delegates here (single source of truth)."""
+    """AA-202 brand-differentiation system block, the single source of truth (AA-606): the Bedrock Batch manifest
+    and the synchronous generate_node build the same system prompt from it (AA-1052: graph's re-export removed)."""
     core_idea    = state.get("brand_core_idea", "") or ""
     cust_segment = state.get("brand_customer_segment", "") or ""
     cust_mindset = state.get("brand_customer_mindset", "") or ""
