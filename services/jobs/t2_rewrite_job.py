@@ -620,8 +620,6 @@ async def mark_version_failed(pool, job_row: dict) -> None:
                    job_status=job_row.get("status"), error=(job_row.get("error") or "")[:300])
 
 
-# Live T2 rewrite ≈ 35 s (S201); 5 min means something is stuck.
-@job_kind(KIND, concurrency=4, max_attempts=2, on_terminal=mark_version_failed, expected_seconds=300)
 async def _claim_shadow(pool, **kw) -> "dict | None":
     """AA-1050 W4: the claim-instrument shadow of the saved version (never raises; unit tests stub it)."""
     try:
@@ -632,6 +630,8 @@ async def _claim_shadow(pool, **kw) -> "dict | None":
         return None
 
 
+# Live T2 rewrite ≈ 35 s (S201); 5 min means something is stuck.
+@job_kind(KIND, concurrency=4, max_attempts=2, on_terminal=mark_version_failed, expected_seconds=300)
 async def run(ctx: JobContext) -> dict:
     p = ctx.payload
     version_id, tenant_id = p.get("version_id"), p.get("tenant_id")

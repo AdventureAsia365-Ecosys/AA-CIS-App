@@ -36,6 +36,8 @@ def _ctx(pool, payload=PAYLOAD):
 def test_kind_is_registered_with_a_terminal_hook():
     k = registry.get_kind(t2.KIND)
     assert k is not None and k.on_terminal is t2.mark_version_failed and k.max_attempts == 2
+    # AA-1050 review: a helper inserted under the decorator once registered itself as the handler.
+    assert k.handler is t2.run
 
 
 @pytest.mark.asyncio
