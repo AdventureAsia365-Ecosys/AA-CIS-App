@@ -1787,6 +1787,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **No acc1 in runtime code (AA-998)**: `tests/unit/test_aa998_no_acc1_runtime.py` fails when `acc1`, its account
   ID, its IAM roles, its account env var or its CLI profile appears in api/ (not migrations), services/,
   shared/, worker/, scripts/ or frontend/ — comments included.
+- **Writing-path change control (AA-1052, root ADR 0020 W6 and amendment d12)**: the required **Unit Tests** job runs
+  `tests/unit/test_aa1052_change_control.py` (also `python -m services.quality.change_control`). (1) The lock
+  `services/quality/change_control.lock.json` holds the sha of each writing-path component (`writing_policy` source,
+  `gates` = taxonomy + thresholds, `prompt_registry` = every stage's registered version, `route_table`,
+  `final_contract` version + mode, `route_defaults` = `SAFE_DEFAULTS` of the gated stages) with the evidence that let
+  it change: `eval:<prompt_eval_runs id>`, `parity:<tests/...py>` (a replay / parity test: output unchanged) or
+  `break-glass:<reason>`. A PR that moves a component fails until `--accept <component> --evidence ...` records it;
+  the lock's git history is the writing path's change log. (2) A CIS migration above 390 that writes the route config
+  of a gated stage (`llm_role_config` / `stage_model_params` rows of an `s1_ t2_ t3_ t8_ t9_ t10_` or
+  `writing_memory_eval` stage; any `llm_model_deployment`, `llm_model_catalog`, `llm_route_settings`,
+  `llm_route_policy` or `writing_memory_release` write) needs `-- eval: <run uuid>` or `-- break-glass: <reason>` in
+  its leading comment block. The lint fails closed: a stage-scoped write is exempt only when every stage it selects
+  is a literal outside the gated prefixes (`stage = '<lit>'`, `stage IN (...)`, INSERT ... VALUES, a LIKE pattern
+  that cannot match a gated prefix); a write by role (as CIS 331-333 did), by subquery, regex, `<>` / `NOT`, `OR` or
+  with no stage selector counts as gated. Prompt registrations need none (they are the bump). Runtime admin edits of a gated route
+  are not gated yet (follow-up of AA-1052).
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
@@ -3118,6 +3134,22 @@ byte-equal to what each workflow read before W1. Stored once per distinct input 
 (CIS 386, `services/quality/factsheet_store.py`, best-effort) and named by `generated_content.fs_id`,
 `tenant_tour_versions.fs_id` and `content_piece.writer_input.fs_id`. The brief is never a FactSheet line.
 _Avoid_: fact pack, source bundle, grounding text (the old names of its parts).
+
+**Lineage (AA-1052, root ADR 0020 layer 3)**:
+The versions one writer output was made with, from stored fields only (`services/quality/lineage.py`): `policy_sha`,
+`fs_id` (the FactSheet), `prompt_version` (the writer's own system-prompt sha, plus the registered version of every
+stage in the object's ledger rows) and `route_config_version` (stamped at the exit, plus the versions the ledger
+trigger stamped on its calls). The writer's store step writes `lineage: {v, policy_sha, route_config_version}` ONCE,
+next to the contract record (`generated_content.metadata.lineage`, `tenant_tour_versions.judge_breakdown.lineage`,
+`content_piece.writer_input.lineage`; no I/O: the route version is the one the process's gateway last read, just
+refreshed by the writer's own calls); a later exit (approve, publish, human edit, re-validation, admin sentence apply)
+replaces only `final_contract`, so the object's lineage stays the writer's. Each exit record also carries its own
+`final_contract.lineage` (kept in the S1 `final_contract_log` entries): the policy in force at that exit, with a route
+version only at a writer exit. An eval result reads its run's fingerprint (`config_fp.parts.policy`,
+`route_config_version`) and its `judge_version`; it has no FactSheet. `GET /admin/quality/lineage/coverage?days=`
+(the share of recent objects carrying each field) and `GET /admin/quality/lineage/{s1|t2|t9|eval}/{id}` (one object,
+with `missing` / `complete`); ops.read or lab.read; ids and shas, never text.
+_Avoid_: provenance (that is a FactSheet line's source class), audit trail.
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):

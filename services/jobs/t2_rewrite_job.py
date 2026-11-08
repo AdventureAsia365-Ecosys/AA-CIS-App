@@ -303,7 +303,7 @@ async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     """S271 W0 (D8): write the policy_hold version (needs_review, so the agency still receives it as ready), its
     admin-only mark (judge_breakdown.policy_hold) and a review row. No writer, judge, T3 or Jev call."""
     import json as _j
-    from services.quality import elephant_policy
+    from services.quality import elephant_policy, lineage
     rewritten, dash_log = policy_hold_content(tour_dict, brand_rules)
     mark = {"reason": elephant_policy.POLICY_HOLD, "decision": "ADR 0020 D8", "llm_calls": 0,
             "hits": hits[:10]}
@@ -324,7 +324,8 @@ async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 qa_auto_passed = true,
                 judge_breakdown = $2::jsonb
             WHERE id = $3::uuid
-        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark, "final_contract": contract}, default=str),
+        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark, "final_contract": contract,
+                                            lineage.KEY: lineage.writer_lineage(contract)}, default=str),
             version_id)
         detail = [{"check_id": f"policy:{elephant_policy.POLICY_HOLD}", "field": h["field"],
                    "description": f"Elephant riding in the {h['where']} {h['field']}: the Master text is kept "
@@ -495,6 +496,10 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             if contract is not None:
                 judge_breakdown = {**(judge_breakdown or {}), "final_contract": contract}
                 diag["final_contract"] = {k: contract.get(k) for k in ("verdict", "agrees", "flip", "sha_match")}
+            # AA-1052 W6: the writer-time lineage next to the contract; an admin sentence apply replaces only
+            # judge_breakdown.final_contract, never this key.
+            from services.quality import lineage as _lineage
+            judge_breakdown = {**(judge_breakdown or {}), _lineage.KEY: _lineage.writer_lineage(contract)}
             # qa_status keeps its migration-107 meaning unchanged (the real QA verdict,
             # 'escalated' still means the gate did NOT actually clear) — qa_auto_passed
             # (migration 109) is the new, separate tenant-facing badge flag: true means

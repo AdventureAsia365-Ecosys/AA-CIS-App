@@ -115,10 +115,6 @@ def label_meaning(label: str) -> str:
     return f"the phrase '{value}' was removed"
 
 
-def _enough(sigs: list[dict]) -> bool:
-    return len(sigs) >= cfg.MIN_SUPPORT and len({s["source_id"] for s in sigs}) >= cfg.MIN_SUPPORT
-
-
 BASES = ("tenant", "platform_tenants", "platform_reviewers", "a1_gate_repeat")
 
 

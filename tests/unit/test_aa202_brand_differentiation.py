@@ -6,7 +6,7 @@ generation → all brands read alike. `_build_brand_diff_block` assembles a stru
 contrast rule into the system prompt. Pure string assembly — no DB/LLM/network.
 """
 
-from services.content_generation.graph import _build_brand_diff_block
+from services.content_generation.batch_prompt import build_brand_diff_block as _build_brand_diff_block
 
 
 def test_diff_block_full_profile():

@@ -3,7 +3,7 @@ per-field revert when a repair introduces a forbidden word. Mock-only (no AWS, D
 import json
 from unittest.mock import MagicMock, patch
 
-from services.content_generation.flag_fix_node import _revert_introduced_forbidden, flag_fix_node
+from services.content_generation.flag_fix_node import flag_fix_node
 from services.content_generation.forbidden_words import VALIDATE_FORBIDDEN, all_forbidden, forbidden_in
 from services.content_generation.graph import _VALIDATE_FORBIDDEN, validate_node
 from services.content_generation.seo_meta_utils import (
@@ -50,22 +50,6 @@ def test_tenant_words_count_as_forbidden_for_the_fit():
 
 
 # ── B. per-field forbidden-word revert ────────────────────────────────────────────────────────
-
-def test_repair_that_adds_a_forbidden_word_is_reverted_for_that_field_only():
-    before = {"summary": "A quiet walk.", "itineraries": "Day 1: walk to the lake.", "name": "Lake"}
-    after = {"summary": "A stunning walk.", "itineraries": "Day 1: walk to the lake at dawn.", "name": "Lake"}
-    reverted = _revert_introduced_forbidden(before, after, {"summary", "itineraries"}, VALIDATE_FORBIDDEN)
-    assert reverted == {"summary": ["stunning"]}
-    assert after["summary"] == "A quiet walk."                           # reverted
-    assert after["itineraries"] == "Day 1: walk to the lake at dawn."    # unaffected, passes through
-
-
-def test_field_that_already_had_the_word_keeps_its_repair():
-    before = {"summary": "A stunning walk, too long."}
-    after = {"summary": "A stunning walk."}
-    assert _revert_introduced_forbidden(before, after, {"summary"}, VALIDATE_FORBIDDEN) == {}
-    assert after["summary"] == "A stunning walk."
-
 
 def _llm_returning(payload: dict):
     resp = MagicMock(content=json.dumps(payload), model_used="haiku", cost_usd=0.001,

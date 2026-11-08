@@ -243,19 +243,6 @@ def classify(units: list[dict], numeric: dict[int, list[str]], verdicts: dict[in
     return {"violations": violations, "notes": notes}
 
 
-def issue_lines(violations: list[dict]) -> list[str]:
-    """The feedback flag_fix reads: each violation quoted with what to do."""
-    out = []
-    for v in violations:
-        if v["code"] == "UNSUPPORTED_NUMBER":
-            what = f"states {', '.join(v.get('novel_numbers') or [])}, which the source never gives"
-        else:
-            what = "states a fact the source does not give"
-        out.append(f"{v['code']} in {v['field']}: {json.dumps(v['sentence'])} {what}. "
-                   f"Rewrite it to say only what the SOURCE says, or remove it.")
-    return out
-
-
 async def _judge_all(units: list[dict], sources: dict[int, str],
                      tenant_id: str | None = None) -> dict[int, Any]:
     """One Jev Noul per asked unit, CONCURRENCY in flight, over a small pool opened for this tour.

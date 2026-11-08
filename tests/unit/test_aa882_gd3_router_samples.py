@@ -96,6 +96,7 @@ SAMPLES = [
     ("admin_reports", "GET", "/admin/reports", None),      # AA-1003
     ("admin_reports", "POST", "/admin/reports/{report_id}/run", {}),
     ("admin_quality_funnel", "GET", "/admin/quality/funnel", None),   # AA-900 W0 (ops.read or lab.read)
+    ("admin_quality_lineage", "GET", "/admin/quality/lineage/coverage", None),   # AA-1052 W6 (ops.read or lab.read)
     ("admin_facts", "GET", "/admin/facts", None),      # AA-814
     ("admin_facts", "PATCH", "/admin/facts/{fact_id}", {"body": "b", "expected_updated_at": "2026-10-29T08:00:00Z"}),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),

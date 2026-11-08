@@ -100,6 +100,7 @@ from services.quality import writing_policy as _wp  # AA-1047: the slug cap at a
 from services.quality import registry as qr
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.quality import final_contract as _fc  # (the name _finalize_piece's parameter shadows)
+from services.quality import lineage as _lineage  # AA-1052 W6 (writer-time lineage stamp)
 from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
 from services.writing_memory import signals as wm_signals  # AA-916
@@ -2964,6 +2965,10 @@ async def _finalize_piece(
         record = _fc.stamp_stored(final_contract, _fc.text_sha(content_text), actual=status)
         _fc.log_record(record, piece_id=str(piece_id))
         writer_input = {**writer_input, "final_contract": record}
+    if writer_input is not None:
+        # AA-1052 W6: the writer-time lineage next to the contract; an admin sentence apply replaces only
+        # writer_input.final_contract, never this key.
+        writer_input = {**writer_input, _lineage.KEY: _lineage.writer_lineage(writer_input.get("final_contract"))}
     async with pool.acquire() as conn:
         if writer_input is not None and status in ("approved", "held"):
             # AA-1040 — the machine-readable AI mark of a piece with content (ai_marking.py): the writer model of the

@@ -429,7 +429,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
 
 def _contract_revert(before: dict, after: dict, keys, forbidden, tour: dict) -> dict:
     """AA-925: the repair contract (services/quality/repair_contract.py) over the repaired fields — it wraps and
-    replaces the AA-641 revert below, keeping its behaviour: invariant 1's gate runner is the forbidden-word
+    replaces the AA-641 per-field revert, keeping its behaviour: invariant 1's gate runner is the forbidden-word
     scan, so a field whose repair ADDED a forbidden word gets its pre-repair value back. It also reverts a field
     whose repair added a figure the field and the source lack, cut its last sentence short ("...a
     20-kilometre."), broke a bracket / bold pair, or (AA-645, ``days_kept``) changed the itinerary's "Day N" blocks —
@@ -464,22 +464,6 @@ def _invariants(reverted: dict) -> list[str]:
     """The invariant names of a ``_contract_revert`` result (AA-925: the log event says which rule reverted the
     field — the AA-641 ``flag_fix_introduced_forbidden`` event only ever meant a forbidden word)."""
     return sorted({why.split(":", 1)[0] for whys in reverted.values() for why in whys})
-
-
-def _revert_introduced_forbidden(before: dict, after: dict, keys, forbidden) -> dict:
-    """AA-641: restore, per field, the pre-repair value of any field whose repair ADDED a forbidden
-    word it did not have before. AA-925: production uses ``_contract_revert`` (same rule as invariant 1);
-    this stays as the reference the AA-641 tests pin. Mutates `after`; returns {field: [words added]}. A field that
-    already contained the word keeps its repair (the repair did not make it worse)."""
-    reverted = {}
-    for k in keys:
-        if k not in after or k not in before:
-            continue
-        added = forbidden_in(after[k], forbidden) - forbidden_in(before[k], forbidden)
-        if added:
-            after[k] = before[k]
-            reverted[k] = sorted(added)
-    return reverted
 
 
 def flag_fix_node(state: dict) -> dict:

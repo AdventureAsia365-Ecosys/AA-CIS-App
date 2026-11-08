@@ -695,12 +695,8 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             # AA-1047 W1 (root ADR 0020 "one exit"): the edited piece through the REPORT-mode final contract, stored
             # with the text (writer_input.final_contract; a piece without writer_input keeps NULL)
             contract = _t9_contract_record(new_text, row, wi)
-            await conn.execute(
-                "UPDATE acp_shared.content_piece SET content_text = $2,"
-                " writer_input = CASE WHEN writer_input IS NULL OR $3::jsonb IS NULL THEN writer_input"
-                " ELSE jsonb_set(writer_input, '{final_contract}', $3::jsonb) END"
-                " WHERE piece_id = $1::uuid",
-                piece_id, new_text, json.dumps(contract, default=str) if contract is not None else None)
+            await conn.execute(_PIECE_UPDATE_SQL, piece_id, new_text,
+                               json.dumps(contract, default=str) if contract is not None else None)
             # AA-916 WM-06 — the sentence before / after as a writing signal (same transaction: it is the
             # edit's history now). A T9 piece has no Jev claim question, so fact_not_in_source is kept on the
             # signal only (fact_status fail).
@@ -1364,6 +1360,15 @@ _VERSION_UPDATE_SQL = """
                           END
     WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])
 """
+
+
+# A T9 admin sentence apply: the text and the exit's contract record (writer_input.final_contract only: the writer's
+# own keys, its lineage among them (AA-1052), stay; a piece without writer_input keeps NULL).
+_PIECE_UPDATE_SQL = (
+    "UPDATE acp_shared.content_piece SET content_text = $2,"
+    " writer_input = CASE WHEN writer_input IS NULL OR $3::jsonb IS NULL THEN writer_input"
+    " ELSE jsonb_set(writer_input, '{final_contract}', $3::jsonb) END"
+    " WHERE piece_id = $1::uuid")
 
 
 def _t2_contract_record(new_rc: dict, tour: dict, structural: list, row) -> Optional[dict]:

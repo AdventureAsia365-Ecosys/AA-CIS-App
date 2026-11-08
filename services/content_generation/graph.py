@@ -16,7 +16,7 @@ from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailabl
 from services.quality.registry import threshold
 from .prompts import parse_source_day_word_counts
 from .batch_prompt import (
-    build_brand_diff_block, build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
+    build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
 )
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
@@ -512,12 +512,6 @@ _CODE_FIELD_MAP = {
     "BRAND_SEO_META_VIOLATION":  "seo_meta",
     "DFS_INTENT_UNDERUSED":      "seo_meta",
 }
-
-def _build_brand_diff_block(state: ContentState) -> str:
-    """AA-202: brand-differentiation system block. AA-606: moved to batch_prompt.build_brand_diff_block
-    (single source of truth) so the Bedrock Batch manifest and the synchronous generate_node produce
-    byte-identical system prompts. Thin re-export kept so existing importers/tests still resolve here."""
-    return build_brand_diff_block(state)
 
 def _writer_sampling() -> dict:
     """S224 (AA-748 follow-up): the S1 writer has always run at the provider default temperature

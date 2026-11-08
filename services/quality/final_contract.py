@@ -234,7 +234,8 @@ def log_tenant_edit(workflow: str, exit: str, *, content: Any, actual: Optional[
 
 def compact(record: dict, at: Optional[str] = None) -> dict:
     """The short form kept in the per-object exit log (``final_contract_log``)."""
-    out = {k: record.get(k) for k in ("exit", "verdict", "actual", "agrees", "flip", "text_sha", "sha_match")
+    out = {k: record.get(k) for k in ("exit", "verdict", "actual", "agrees", "flip", "text_sha", "sha_match",
+                                      "lineage")
            if record.get(k) is not None}
     out["codes"] = [f.get("code") for f in record.get("findings") or [] if f.get("severity") == BLOCK][:20]
     if at:
@@ -280,7 +281,10 @@ def text_sha(text: Optional[str]) -> str:
 
 def stamp_stored(record: Optional[dict], stored_sha: str, *, actual: Optional[str] = None) -> Optional[dict]:
     """The record as the store step writes it: ``stored_sha`` / ``sha_match`` (stored text == gated text), the
-    current gates' status when given, and a ``POST_GATE_EDIT`` block finding on a mismatch (ADR 0020 invariant 4)."""
+    current gates' status when given, a ``POST_GATE_EDIT`` block finding on a mismatch (ADR 0020 invariant 4) and
+    the ``lineage`` stamp of THIS exit (AA-1052 W6: the policy_sha in force, and the route config version only at a
+    writer exit, ``lineage.WRITER_EXITS``). The object's writer-time lineage is a separate key the writer store step
+    writes once (``lineage.writer_lineage``); a later exit never replaces it (``services/quality/lineage.py``)."""
     if not isinstance(record, dict):
         return record
     c = _from_record(record)
@@ -295,7 +299,9 @@ def stamp_stored(record: Optional[dict], stored_sha: str, *, actual: Optional[st
     if not match:
         logger.error("final_contract_sha_mismatch", workflow=c.workflow, exit=c.exit, gated_sha=c.text_sha,
                      stored_sha=stored_sha)
-    return {**record, **c.record(), "stored_sha": stored_sha, "sha_match": match}
+    from services.quality import lineage   # lineage imports nothing from here; local import keeps this module light
+    return {**record, **c.record(), "stored_sha": stored_sha, "sha_match": match,
+            "lineage": lineage.stamp(route=lineage.is_writer_exit(c.workflow, c.exit))}
 
 
 # ── shared checks ─────────────────────────────────────────────────────────────────────────────────

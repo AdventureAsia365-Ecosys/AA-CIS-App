@@ -1,7 +1,7 @@
 """AA-205: post-repair seo_meta band-guard unit tests (pure, deterministic)."""
 from services.content_generation.seo_meta_utils import (
     SEO_META_MIN, SEO_META_MAX,
-    meta_complete_sentence, meta_in_band, best_meta_candidate, _trim_to_sentence,
+    meta_complete_sentence, meta_in_band, best_meta_candidate,
 )
 
 _LEAD = "Trek valleys meet weavers rest at lodge "  # 7 words + trailing space
@@ -54,12 +54,6 @@ def test_stuck_single_long_sentence_returns_post():
     post = _make(132)
     pre = _make(185)
     assert best_meta_candidate(post, pre) == post
-
-
-def test_trim_to_sentence_prefers_period():
-    s = _make(148)[:-1] + ". tail tail tail tail tail tail tail tail."
-    out = _trim_to_sentence(s, SEO_META_MAX)
-    assert out.endswith(".") and len(out) <= SEO_META_MAX
 
 
 def test_complete_sentence_rejects_bad_ending():

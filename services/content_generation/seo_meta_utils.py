@@ -140,22 +140,6 @@ def meta_in_band(meta: str, forbidden=None) -> bool:
     return True
 
 
-def _trim_to_sentence(text: str, limit: int) -> str:
-    """Trim to <= limit, preferring last sentence terminator within limit.
-    Trims DOWN only — never pads up. Local mirror of admin_pipeline trim (no cross-import)."""
-    t = (text or "").strip()
-    if len(t) <= limit:
-        return t
-    window = t[:limit]
-    cut = max(window.rfind("."), window.rfind("!"), window.rfind("?"))
-    if cut != -1:
-        return window[:cut + 1].rstrip()
-    space = window.rfind(" ")
-    if space != -1:
-        return window[:space].rstrip()
-    return window.rstrip()
-
-
 def _salvage_to_band(text: str, forbidden=None):
     """AA-239: largest complete-sentence prefix in [MIN, MAX], forbidden-free.
     Returns the prefix, or None when no sentence boundary lands in band (caller escalates).
