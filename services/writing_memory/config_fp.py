@@ -110,7 +110,9 @@ MODE_FLAGS: dict[str, tuple[str, ...]] = {
     "a1": ("S1_WRITER_V2", "S1_STRUCTURED_FACTS", "S1_PER_DAY_TARGETS", "S1_WRITER_TEMPERATURE",
            "A1_BRAND_FIT_RUBRIC", "A1_V2_BRAND_FIT_GATE", "S1_JUDGE_LIVE"),
     "t2": ("T2_JUDGE_GATE", "T2_JUDGE_REPEAT", "T2_JUDGE_ANCHORS", "T2_BRAND_CLAIM_CHECK", "T2_FACTS",
-           "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM"),
+           "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM",
+           # AA-1049 W3 (T2 train): the linear orchestrator (opt-in; unset / unknown = main's graph path)
+           "T2_ORCHESTRATOR"),
     "t9_blog": ("T9_BRIEF_GROUNDING_MODE", "T9_READER_CHECKLIST_MODE", "T9_FAQ_LLM_FILTER", "T10_F12_SCOPE_MODE",
                 "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
                 "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE", "T9_SEO_BUILDER"),
@@ -207,8 +209,21 @@ def path_stages(writer: str, stages: Iterable[str]) -> list[str]:
     return sorted({s for s in stages if on_path(writer, s)})
 
 
+def _t2_orchestrator_value(value: str, env: Mapping[str, str]) -> Optional[str]:
+    """AA-1049 W3: ``T2_ORCHESTRATOR`` changes the T2 path only as ``linear`` with the T2 interim profile on
+    (``t2_orchestrator.mode``); any other value runs main's graph path, exactly like unset, so it is not recorded."""
+    from services.content_generation.t2_interim import _OFF, T2_INTERIM_ENV
+    interim_on = (env.get(T2_INTERIM_ENV) or "").strip().lower() not in _OFF
+    return value if value == "linear" and interim_on else None
+
+
+# Switches whose set values can still mean the default path: {name: (normalised value, env) -> value or None}.
+_DEFAULT_PATH_VALUES = {"T2_ORCHESTRATOR": _t2_orchestrator_value}
+
+
 def mode_flags(writer: str, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
-    """{name: normalised value} of the output-changing env switches of `writer` that are set (unset ones omitted)."""
+    """{name: normalised value} of the output-changing env switches of `writer` that are set (unset ones omitted, and a
+    value that maps to the default path, ``_DEFAULT_PATH_VALUES``, is omitted like unset)."""
     env = os.environ if env is None else env
     names = set(MODE_FLAGS.get(writer, ())) | set(GATEWAY_FLAGS) | set(MEMORY_FLAGS)
     prefixes = MODE_FLAG_PREFIXES.get(writer, ())
@@ -216,6 +231,8 @@ def mode_flags(writer: str, env: Optional[Mapping[str, str]] = None) -> dict[str
     out = {}
     for k in sorted(names):
         v = (env.get(k) or "").strip().lower()
+        if v and k in _DEFAULT_PATH_VALUES:
+            v = _DEFAULT_PATH_VALUES[k](v, env) or ""
         if v:
             out[k] = v[:64]
     return out

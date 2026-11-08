@@ -351,6 +351,12 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     hits = policy_hold_hits(pt, tour_dict)
     if hits:
         return await _save_policy_hold(pool, pt, tour_dict, brand_rules, tenant_id, version_id, hits)
+    # AA-1049 W3 (T2 train): the linear orchestrator, OPT-IN only (T2_ORCHESTRATOR=linear with the T2 interim profile
+    # on). Unset / "graph" / any other value: main's path below, unchanged (parity: test_aa1049_t2_orchestrator.py).
+    from services.content_generation import t2_orchestrator
+    if t2_orchestrator.mode() == t2_orchestrator.LINEAR:
+        return await t2_orchestrator.run_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
+                                                  published_tour_id)
 
     from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
 

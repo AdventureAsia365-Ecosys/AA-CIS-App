@@ -1,0 +1,137 @@
+{
+ "flags": {},
+ "recorded_on": "CIS origin/main dd07872be52b (git archive export, PYTHONPATH=<export>, this branch's replay script over aa1049_t2_harness.replay_versions())",
+ "schema": "aa1049-t2-replay/1",
+ "versions": {
+  "v-clean": {
+   "cassette_hits": 2,
+   "contract_verdict": "needs_review",
+   "id": "v-clean",
+   "input": {
+    "fs_sha": null,
+    "grounding_sha": "c9fbff54389a1ac3",
+    "policy_hold": false,
+    "source_sha": "454b66170fcde7a2"
+   },
+   "judge_miss": false,
+   "llm_stages": {
+    "t2_generate": 1,
+    "t2_judge": 1
+   },
+   "misses": {},
+   "policy_hold": false,
+   "qa_repair_count": 0,
+   "qa_status": "passed",
+   "quality_score": 9.75,
+   "reviews": [],
+   "status": "ai_generated",
+   "stored_sha": "deb2ac4dac60bdef4e84d3bb60b61d4d134149435f833ed0e27e14319c5def1d"
+  },
+  "v-days": {
+   "cassette_hits": 2,
+   "contract_verdict": "needs_review",
+   "id": "v-days",
+   "input": {
+    "fs_sha": null,
+    "grounding_sha": "c9fbff54389a1ac3",
+    "policy_hold": false,
+    "source_sha": "454b66170fcde7a2"
+   },
+   "judge_miss": false,
+   "llm_stages": {
+    "t2_generate": 1,
+    "t2_judge": 1
+   },
+   "misses": {},
+   "policy_hold": false,
+   "qa_repair_count": 0,
+   "qa_status": "passed",
+   "quality_score": 9.75,
+   "reviews": [],
+   "status": "ai_generated",
+   "stored_sha": "ad66eba2a0c7bfca6179cc1aeb055f397ec418f0b406edf9d2baa70df5b7b73b"
+  },
+  "v-elephant": {
+   "cassette_hits": 0,
+   "contract_verdict": "needs_review",
+   "id": "v-elephant",
+   "input": {
+    "fs_sha": null,
+    "grounding_sha": "c9fbff54389a1ac3",
+    "policy_hold": true,
+    "source_sha": "454b66170fcde7a2"
+   },
+   "judge_miss": true,
+   "llm_stages": {},
+   "misses": {},
+   "policy_hold": true,
+   "qa_repair_count": 0,
+   "qa_status": "escalated",
+   "quality_score": null,
+   "reviews": [
+    "policy:elephant_riding"
+   ],
+   "status": "needs_review",
+   "stored_sha": "4eecb4fad16b73e72dc675cd6dc9d45aa6290b15d817aa829901fdefccdc9b09"
+  },
+  "v-missing": {
+   "cassette_hits": 3,
+   "contract_verdict": "needs_review",
+   "id": "v-missing",
+   "input": {
+    "fs_sha": null,
+    "grounding_sha": "c9fbff54389a1ac3",
+    "policy_hold": false,
+    "source_sha": "454b66170fcde7a2"
+   },
+   "judge_miss": true,
+   "llm_stages": {
+    "t2_brand_audit": 1,
+    "t2_generate": 3,
+    "t2_judge": 3
+   },
+   "misses": {
+    "t2_brand_audit": 1,
+    "t2_judge": 3
+   },
+   "policy_hold": false,
+   "qa_repair_count": 0,
+   "qa_status": "escalated",
+   "quality_score": 4.0,
+   "reviews": [
+    "structural:MISSING_FIELD"
+   ],
+   "status": "needs_review",
+   "stored_sha": "04776bd8cbcb485a04767200b88ce96cd0a2a0642d4948963a2ff43484a51fe4"
+  },
+  "v-number": {
+   "cassette_hits": 2,
+   "contract_verdict": "needs_review",
+   "id": "v-number",
+   "input": {
+    "fs_sha": null,
+    "grounding_sha": "c9fbff54389a1ac3",
+    "policy_hold": false,
+    "source_sha": "454b66170fcde7a2"
+   },
+   "judge_miss": false,
+   "llm_stages": {
+    "t2_flag_fix": 1,
+    "t2_generate": 1,
+    "t2_judge": 1
+   },
+   "misses": {
+    "t2_flag_fix": 1
+   },
+   "policy_hold": false,
+   "qa_repair_count": 0,
+   "qa_status": "escalated",
+   "quality_score": 9.75,
+   "reviews": [
+    "grounding:novel_numeric_claim"
+   ],
+   "status": "ai_generated",
+   "stored_sha": "f8347f5299e9df9dac2aa8f1aa80415572f8f3716e5f6b191dd57f63712338ea"
+  }
+ }
+}

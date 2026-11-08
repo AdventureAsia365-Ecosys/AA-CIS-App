@@ -246,3 +246,66 @@ def coverage_errors() -> list[str]:
             if s not in TABLE:
                 out.append(f"source {s!r} of merged entry {merged!r} has no route row")
     return out
+
+
+# ------------------------------------------------------------------------------- T2 (AA-1049 W3, T2 train, opt-in)
+# The T2 linear orchestrator (services/content_generation/t2_orchestrator.py, T2_ORCHESTRATOR=linear) routes its
+# enforce findings through the `t2` section of the same mechanics file. The default T2 path (LangGraph + T3, main)
+# never reads it. Rows are keyed by finding code; the status rule does not read them (no row can pass a version).
+T2_MECHANICS_VERSION = "t2-route-table-v1"
+T2_ACTIONS = (REPAIR_SENTENCE, REGENERATE_SECTION, REWRITE, HOLD)
+T2_PARSES = ("t3_grounding",)
+T2_SECTIONS = (SECTION_SEO_FIELDS,)
+
+
+@dataclass(frozen=True)
+class T2Route:
+    code: str
+    action: str                      # repair_sentence | regenerate_section | rewrite | hold
+    parse: Optional[str] = None      # repair_sentence: t3_grounding
+    section: Optional[str] = None    # regenerate_section: seo_fields
+
+
+def t2_schema_errors(doc: Optional[dict] = None) -> list[str]:
+    """Every problem of the mechanics file's `t2` section ([] = the T2 table builds)."""
+    sec = (mechanics() if doc is None else doc).get("t2") or {}
+    e: list[str] = []
+    _need(sec.get("version") == T2_MECHANICS_VERSION, f"route_table.yaml t2.version must be {T2_MECHANICS_VERSION!r}",
+          e)
+    _need(sec.get("default") in T2_ACTIONS, f"route_table.yaml t2.default must be one of {T2_ACTIONS}", e)
+    rows = sec.get("rows") or []
+    codes = [r.get("code") if isinstance(r, dict) else None for r in rows]
+    _need(all(isinstance(r, dict) for r in rows), "route_table.yaml t2.rows must be mappings", e)
+    _need(len(codes) == len(set(codes)), "route_table.yaml t2: exactly one row per code", e)
+    for r in (r for r in rows if isinstance(r, dict)):
+        where = f"route_table.yaml t2 {r.get('code')}"
+        action = r.get("action")
+        _need(bool(r.get("code")), f"{where}: a code is required", e)
+        _need(action in T2_ACTIONS, f"{where}: action must be one of {T2_ACTIONS}", e)
+        _need((action == REPAIR_SENTENCE) == (r.get("parse") is not None),
+              f"{where}: a parse is required on, and only on, a repair_sentence row", e)
+        _need(r.get("parse") is None or r["parse"] in T2_PARSES, f"{where}: parse must be one of {T2_PARSES}", e)
+        _need((action == REGENERATE_SECTION) == (r.get("section") is not None),
+              f"{where}: a section is required on, and only on, a regenerate_section row", e)
+        _need(r.get("section") is None or r["section"] in T2_SECTIONS,
+              f"{where}: section must be one of {T2_SECTIONS}", e)
+        unknown = set(r) - {"code", "action", "parse", "section"}
+        _need(not unknown, f"{where}: unknown keys {sorted(unknown)}", e)
+    return e
+
+
+def _build_t2() -> tuple[dict[str, T2Route], str]:
+    errors = t2_schema_errors()
+    if errors:
+        raise RouteTableError("; ".join(errors))
+    sec = mechanics()["t2"]
+    return ({r["code"]: T2Route(code=r["code"], action=r["action"], parse=r.get("parse"), section=r.get("section"))
+             for r in sec["rows"]}, sec["default"])
+
+
+T2_TABLE, T2_DEFAULT = _build_t2()
+
+
+def t2_route(code: Optional[str]) -> T2Route:
+    """The T2 row of a finding code; a code with no row gets the `default` action (fail closed: still enforced)."""
+    return T2_TABLE.get(code or "") or T2Route(code=code or "", action=T2_DEFAULT)

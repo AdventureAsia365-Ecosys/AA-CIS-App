@@ -30,6 +30,9 @@ NOT_EXITS = {
         "the empty 'processing' row a write starts with (no text yet)",
     "services/acp_content_writing/service.py::_finalize_piece":
         "the one T9 write; the exit is its caller run_write_background, which passes the contract in",
+    "services/content_generation/t2_orchestrator.py::save_version":
+        "the one linear T2 write (AA-1049 W3, opt-in); the exit is its caller run_and_save, which passes the "
+        "contract in",
     "api/routers/v1_tours.py::trigger_rewrite":
         "the empty 'pending' T2 version a rewrite starts with (no text yet)",
     "services/export/handler.py::_refuse_not_live":
