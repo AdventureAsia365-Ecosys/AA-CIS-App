@@ -97,7 +97,7 @@ jobs:
       BASE_URL: http://localhost:3001
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -135,7 +135,7 @@ jobs:
 
       - name: Set up Node 22
         if: steps.scope.outputs.run == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -232,7 +232,7 @@ jobs:
 
       - name: Upload screenshots and report
         if: always() && steps.scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-cis-pr-${{ github.run_id }}
           path: |
@@ -272,14 +272,14 @@ jobs:
             *) echo "::error::base_url must be https://aa-cis.lumiguides.it.com (got $URL)"; exit 1 ;;
           esac
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -349,7 +349,7 @@ jobs:
       # PNGs and the JSON report only: never the HTML report, traces or the auth state.
       - name: Upload screenshots and report
         if: always() && steps.pages.outputs.slugs != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-cis-production-${{ github.run_id }}
           path: |

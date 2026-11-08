@@ -44,7 +44,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       # S273 (AA-1024): the plugin .deb pinned by version and sha256 (.github/actions/release-bin/pins.txt) and cached,
       # instead of an unchecked download of plugin/latest on every run.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           sparse-checkout: |
