@@ -325,3 +325,17 @@ def restore_272_catalog_owner_reads(cur):
         cur.execute("SELECT to_regclass(%s)", (rel,))
         if cur.fetchone()[0] is not None:
             cur.execute(f"GRANT SELECT ON {rel} TO catalog_owner")
+
+
+def catalog_owner_grantable_by(cur, runner):
+    """AA-1024 (S273): the catalog tests (225 / 228 the RDS way) drop catalog_owner so their runner creates it again, as
+    aa_cis_admin did on Dev. Since conftest freezes the replay as a template database, the template still depends on
+    the role and DROP ROLE fails (the tests catch that), so 225 meets the role it did not create. On postgres 15 (CI and
+    RDS) CREATEROLE may grant and comment on any non-superuser role, so nothing changes. On postgres 16+ only a role
+    with ADMIN on it may: give the runner what PG16 gives a role's creator (ADMIN, no INHERIT, no SET). A no-op when the
+    runner created the role itself or the server is older than 16. DROP ROLE of the runner removes the grant."""
+    cur.execute("SELECT current_setting('server_version_num')::int >= 160000 AS pg16, "
+                "EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'catalog_owner') AS present")
+    pg16, present = cur.fetchone()
+    if pg16 and present:
+        cur.execute(f"GRANT catalog_owner TO {runner} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE")
