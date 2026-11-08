@@ -169,7 +169,7 @@ async def test_a_raw_tour_change_marks_what_was_written_from_it_and_nothing_else
     p_processing = await _piece(conn, atom=atom, at=before, status="processing")
     p_later = await _piece(conn, atom=atom, at=after)
     snapshot = await conn.fetch("SELECT id, status::text, aa_name FROM silver_aa_internal.generated_content "
-                                "WHERE tour_id = $1 ORDER BY id", tour)
+                                "WHERE tour_id = $1 ORDER BY version_num", tour)
 
     change = sf.Change(source_kind=sf.RAW_TOUR, reason="raw_tour_edited", changed_at=now, tour_id=str(tour),
                        fields=("src_summary",))
@@ -197,7 +197,7 @@ async def test_a_raw_tour_change_marks_what_was_written_from_it_and_nothing_else
 
     # nothing a writer stored was touched
     assert snapshot == await conn.fetch("SELECT id, status::text, aa_name FROM silver_aa_internal.generated_content "
-                                        "WHERE tour_id = $1 ORDER BY id", tour)
+                                        "WHERE tour_id = $1 ORDER BY version_num", tour)
     assert await conn.fetchval("SELECT status FROM acp_shared.content_piece WHERE piece_id = $1", p_req) == "approved"
 
     view = await sf.read_tour(conn, str(tour))
