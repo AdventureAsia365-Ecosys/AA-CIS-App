@@ -71,13 +71,13 @@ jobs:
       BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # The deployed commit (from deploy-admin-dev.yml); the dispatched ref otherwise.
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ui-smoke-${{ github.run_id }}
           # Only screenshots and the HTML report. Never upload tests/e2e/.auth (session cookies).
@@ -185,19 +185,19 @@ jobs:
           esac
 
       - name: Checkout the deployed commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Configure AWS credentials (OIDC, read-only mailbox role)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
           aws-region: us-west-1
           role-session-name: cis-ui-smoke-staff-${{ github.run_id }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -215,7 +215,7 @@ jobs:
       # Screenshots only. NOT the HTML/JSON reports: a `fill` step title would carry the typed sign-in code.
       - name: Upload smoke screenshots (NO report, NO auth state)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ui-smoke-staff-${{ github.run_id }}
           path: tests/e2e/results/smoke/**/*.png
