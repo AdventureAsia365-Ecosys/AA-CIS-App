@@ -648,8 +648,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
             logger.error("a3_atomize_enqueue_failed", tour_id=str(tour_id), error=str(exc))
 
         # 3b'. AA-1052 W6 — the Master text changed: re-check the writer objects written from the older Master (T2
-        # tenant versions, T9 pieces citing the tour's atoms) with the $0 `source_fanout` job (marks only). The new
-        # published_tours row is left out. Best-effort like 3b (the legacy Lambda package has no services/quality).
+        # tenant versions, T9 pieces citing the tour's atoms, written before now) with the $0 `source_fanout` job
+        # (marks only). Best-effort like 3b (the legacy Lambda package has no services/quality).
         await _source_fanout_master(conn, str(tour_id), str(catalog_id) if catalog_id else "")
 
         # 3c. AA-653 (S207) — the tour now has a live Master Content version, so any other

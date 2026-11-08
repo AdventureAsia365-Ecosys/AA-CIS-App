@@ -77,6 +77,13 @@ def test_read_open_waves_uses_the_open_status_check():
     pool = MagicMock(fetch=AsyncMock(return_value=[{"id": "w", "name": "n"}]))
     assert asyncio.run(REAL_READ_OPEN_WAVES(pool)) == [{"id": "w", "name": "n"}]
     assert pool.fetch.await_args.args[0] == edit_gate.OPEN_WAVES_SQL
+    # a pool-like object that only lends connections (the route control's test pool)
+    conn = MagicMock(fetch=AsyncMock(return_value=[]))
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=conn)
+    acquire.__aexit__ = AsyncMock(return_value=False)
+    lender = MagicMock(spec=["acquire"], acquire=MagicMock(return_value=acquire))
+    assert asyncio.run(REAL_READ_OPEN_WAVES(lender)) == [] and conn.fetch.await_count == 1
 
 
 def test_require_evidence_for_the_policy_defaults_row():

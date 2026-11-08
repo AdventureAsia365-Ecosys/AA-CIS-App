@@ -206,22 +206,21 @@ async def test_a_raw_tour_change_marks_what_was_written_from_it_and_nothing_else
 
 
 @pytest.mark.asyncio
-async def test_a_master_publish_leaves_the_new_master_and_s1_out(conn):
+async def test_a_master_publish_re_checks_the_tenant_versions_written_before_it_and_not_s1(conn):
     now = await conn.fetchval("SELECT now() AS ok")
     before = now - timedelta(days=1)
     tour = await _tour(conn)
     v1 = await _version(conn, tour, 1, at=before)
-    pt_old = await _master(conn, tour, v1)
-    pt_new = await _master(conn, tour, await _version(conn, tour, 2, at=before))
-    t2_old = await _ttv(conn, pt_old, 1, at=before)
-    await _ttv(conn, pt_new, 1, at=before)                           # already on the new Master
+    pt = await _master(conn, tour, v1)            # one published_tours row per tour: a re-publish updates it in place
+    t2_before = await _ttv(conn, pt, 1, at=before)
+    await _ttv(conn, pt, 1, at=now + timedelta(minutes=5), tenant=uuid.uuid4())   # written from the new Master
     change = sf.Change(source_kind=sf.MASTER, reason="master_published", changed_at=now, tour_id=str(tour),
-                       source_ref=str(pt_new))
+                       source_ref=str(pt))
     out = await sf.fan_out(conn, change)
-    assert {(m["object_kind"], m["object_id"]) for m in out["marked"]} == {("t2", str(t2_old))}
+    assert {(m["object_kind"], m["object_id"]) for m in out["marked"]} == {("t2", str(t2_before))}
     rows = await _marks(conn, tour_id=tour)
-    assert rows == [{"object_kind": "t2", "object_id": str(t2_old), "source_kind": "master",
-                     "source_ref": str(pt_new), "reason": "master_published", "hits": 1, "open": True}]
+    assert rows == [{"object_kind": "t2", "object_id": str(t2_before), "source_kind": "master",
+                     "source_ref": str(pt), "reason": "master_published", "hits": 1, "open": True}]
 
 
 @pytest.mark.asyncio

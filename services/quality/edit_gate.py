@@ -79,8 +79,11 @@ async def read_open_waves(pool=None) -> list[dict]:
     """The open rerun waves (id, name). ``pool`` (a pool or a connection) when the caller holds one, else a short own
     connection (the PATCH routes of admin_llm_ops write through their own connections too). Raises on a read error:
     the gate then fails closed (503)."""
-    if pool is not None:
+    if pool is not None and hasattr(pool, "fetch"):
         return [dict(r) for r in await pool.fetch(OPEN_WAVES_SQL)]
+    if pool is not None:                                  # a pool-like object that only lends connections
+        async with pool.acquire() as conn:
+            return [dict(r) for r in await conn.fetch(OPEN_WAVES_SQL)]
     import asyncpg
 
     from shared.secrets import get_database_url

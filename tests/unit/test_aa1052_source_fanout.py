@@ -168,13 +168,13 @@ def test_a_raw_tour_edit_marks_its_dependents_and_calls_no_model():
     assert all(s in (sf.S1_SQL, sf.T2_SQL, sf.T9_SQL, sf.RAW_ROW_SQL, sf.UPSERT_SQL) for s, _ in conn.calls)
 
 
-def test_a_master_publish_re_checks_t2_and_t9_and_leaves_the_new_master_out():
+def test_a_master_publish_re_checks_t2_and_t9_not_s1():
     conn = FakeConn(s1=[_s1()], t2=[_t2()], t9=[_t9()])
-    out = asyncio.run(sf.fan_out(conn, _change(sf.MASTER, "master_published", source_ref="pt-new")))
+    out = asyncio.run(sf.fan_out(conn, _change(sf.MASTER, "master_published", source_ref="pt-1")))
     assert sorted(m["object_kind"] for m in out["marked"] + out["bumped"]) == ["t2", "t9"]
     assert not any(s == sf.S1_SQL for s, _ in conn.calls)
-    t2_args = next(a for s, a in conn.calls if s == sf.T2_SQL)
-    assert t2_args[2] == "pt-new" and t2_args[3] == ["rejected", "failed"]
+    assert next(a for s, a in conn.calls if s == sf.T2_SQL) == (TOUR, NOW, ["rejected", "failed"])
+    assert conn.upserts[0][4] == "pt-1"                       # the Master's published_tours id, for the record
 
 
 def test_an_atom_edit_and_a_place_card_edit_re_check_only_the_pieces_citing_them():

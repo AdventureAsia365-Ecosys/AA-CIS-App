@@ -14,8 +14,9 @@ source      the change (the hook that enqueues the ``source_fanout``    dependen
 raw_tour    an admin edit of the raw tour (PATCH /admin/tours/{id}/raw,  S1 (the live Master version and the newest
             /country)                                                    version), T2 (each tenant's newest version
                                                                          of the tour), T9 (pieces citing its atoms)
-master      a Master publish / promote (``process_export``: the new      T2 versions of an older Master of the tour,
-            published_tours row; A3 re-atomizes after it)                T9 pieces citing its atoms
+master      a Master publish / promote (``process_export``: the tour's   T2 (each tenant's newest version of the
+            published_tours row is upserted, ON CONFLICT (tour_id), so   tour), T9 pieces citing its atoms
+            its id stays; A3 re-atomizes after it)
 atom        an admin atom edit or soft delete (PATCH /admin/atoms/{id})  T9 pieces citing that atom
 place_card  an admin edit of a card's facts / status, a card merge       T9 pieces citing an atom linked to the card
 ==========  ==========================================================  ==========================================
@@ -160,8 +161,8 @@ S1_SQL = """
                                   WHERE g2.tour_id = $1::uuid))
      ORDER BY gc.version_num"""
 
-# T2: each tenant's newest version per Master of the tour ($3 = a published_tours id to leave out: the new Master of a
-# publish; '' = none), not rejected / failed, written before $2.
+# T2: each tenant's newest version of the tour (published_tours has one row per tour: a re-publish updates it in place,
+# so every version names the same id), not rejected / failed, written before $2.
 T2_SQL = """
     SELECT * FROM (
         SELECT DISTINCT ON (ttv.tenant_id, ttv.published_tour_id)
@@ -172,10 +173,10 @@ T2_SQL = """
           FROM gold_aa_internal.tenant_tour_versions ttv
           JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
           LEFT JOIN acp_shared.fact_sheet fs ON fs.fs_id = ttv.fs_id
-         WHERE pt.tour_id = $1::uuid AND ($3::text = '' OR pt.id::text <> $3::text)
+         WHERE pt.tour_id = $1::uuid
          ORDER BY ttv.tenant_id, ttv.published_tour_id, ttv.version_number DESC
     ) v
-     WHERE v.object_created_at <= $2::timestamptz AND v.status <> ALL($4::text[])
+     WHERE v.object_created_at <= $2::timestamptz AND v.status <> ALL($3::text[])
      ORDER BY v.object_created_at, v.object_id"""
 
 # T9: the stored pieces citing an atom of the set: the tour's atoms ($1, NULL = none) or the named atom ids ($2), by
@@ -329,9 +330,8 @@ async def dependents(conn, change: Change) -> list[Dependent]:
     if S1 in kinds:
         out += [dependent_from_row(r) for r in await conn.fetch(S1_SQL, str(change.tour_id), change.changed_at)]
     if T2 in kinds:
-        skip_pt = change.source_ref if change.source_kind == MASTER else ""
         out += [dependent_from_row(r) for r in await conn.fetch(
-            T2_SQL, str(change.tour_id), change.changed_at, skip_pt or "", list(T2_SKIP_STATUSES))]
+            T2_SQL, str(change.tour_id), change.changed_at, list(T2_SKIP_STATUSES))]
     if T9 in kinds:
         tour_id, atom_ids = await _atom_scope(conn, change)
         if tour_id or atom_ids:
