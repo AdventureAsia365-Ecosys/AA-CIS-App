@@ -49,6 +49,8 @@ export interface StageConfigRow {
   degrade_mode?: string | null;
   /** AA-1039 (root ADR 0019 TL-12, CIS 373): content | pii, migration-only; null before 373 (the Routing tab shows an empty state). */
   pii_class?: string | null;
+  /** AA-1052 W6: a model / chain edit needs evidence and is refused during a rerun wave (services/quality/edit_gate). */
+  gated?: boolean;
 }
 
 // ── /admin/llm-catalog ──────────────────────────────────────────────────────
@@ -71,6 +73,9 @@ export interface CatalogRow {
   notes: string | null;
   updated_at: string | null;
   updated_by: string | null;
+  /** AA-1052 W6: the gated stages this model serves (primary or fallback); a switch then needs evidence. null =
+   * unknown (the routes could not be read; the API still checks). */
+  gated_stages?: string[] | null;
 }
 
 // ── /admin/llm-shadow/report ────────────────────────────────────────────────

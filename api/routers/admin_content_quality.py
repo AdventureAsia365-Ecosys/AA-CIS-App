@@ -1877,7 +1877,7 @@ async def set_place_card_status(card_id: str, body: PlaceCardVerdict, request: R
             SET status = $2, verified_by = $3, verified_at = CASE WHEN $2 = 'auto_checked' THEN NULL ELSE now() END,
                 updated_at = now()
             WHERE card_id = $1::uuid
-            RETURNING card_id, status, verified_by, verified_at, display_name, country
+            RETURNING card_id, status, verified_by, verified_at, display_name, country, now() AS changed_at
             """, card_id, body.status, actor)
         if row is not None:
             await write_audit_log(
@@ -1886,7 +1886,23 @@ async def set_place_card_status(card_id: str, body: PlaceCardVerdict, request: R
                 details={"status": body.status, "display_name": row["display_name"], "country": row["country"]})
     if row is None:
         raise HTTPException(status_code=404, detail="Place card not found")
-    return _row(row)
+    await _source_fanout_card(pool, card_id, "place_card_status_changed", dict(row).get("changed_at"))   # AA-1052 W6
+    out = _row(row)
+    out.pop("changed_at", None)
+    return out
+
+
+async def _source_fanout_card(pool, card_id: str, reason: str, changed_at) -> None:
+    """AA-1052 W6: a place card change re-checks the T9 pieces citing an atom linked to the card (job source_fanout,
+    $0; marks only). Best-effort after the commit: never fails the edit."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    from services.quality import source_fanout
+    if not isinstance(changed_at, _dt):
+        changed_at = _dt.now(_tz.utc)
+    await source_fanout.enqueue_safe(pool, source_fanout.Change(
+        source_kind=source_fanout.PLACE_CARD, reason=reason, changed_at=changed_at, source_ref=str(card_id)),
+        created_by="admin:place_card")
 
 
 class PlaceCardMerge(BaseModel):
@@ -1917,6 +1933,8 @@ async def merge_place_cards(keep_id: str, body: PlaceCardMerge, request: Request
         await write_audit_log(
             conn, tenant_id=None, actor=f"admin:{actor}", action=PlatformAuditAction.PLACE_CARD_MERGE,
             resource_type="place_card", resource_id=ids[0], details=out)
+        changed_at = await conn.fetchval("SELECT now() AS ok")
+    await _source_fanout_card(pool, ids[0], "place_cards_merged", changed_at)   # AA-1052 W6: atoms re-linked to it
     return out
 
 
@@ -2014,6 +2032,8 @@ async def edit_place_card_facts(card_id: str, body: PlaceCardFactsEdit, request:
                      "facts_before": len(place_cards.stored_facts(cur["facts"])), "facts_after": len(facts),
                      "changes": changes})
         row = await conn.fetchrow(_CARD_DETAIL_SQL, cid)
+        changed_at = await conn.fetchval("SELECT now() AS ok")
+    await _source_fanout_card(request.app.state.pool, cid, "place_card_facts_edited", changed_at)   # AA-1052 W6
     return _card_detail(row)
 
 

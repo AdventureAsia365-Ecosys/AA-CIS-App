@@ -117,6 +117,8 @@ export interface RoutePreview {
   diff: DiffChange[];
   needs_evidence: boolean;
   evidence_stages: string[];
+  /** AA-1052 W6: the open rerun waves that would refuse this save (409); empty or absent = none. */
+  frozen_by_waves?: { id: string; name: string | null }[];
   version: number;
   order_mode: OrderMode;
   stages: PreviewStage[];

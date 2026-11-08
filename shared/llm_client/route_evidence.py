@@ -57,8 +57,16 @@ class EvidenceRefused(ValueError):
     """The change carries no usable evidence (the router answers 422 with this text)."""
 
 
-def needs_evidence(role: Optional[str]) -> bool:
-    return role in EVIDENCE_ROLES
+def needs_evidence(role: Optional[str], stage: Optional[str] = None) -> bool:
+    """A writer / judge stage (AA-1026 D7) or, AA-1052 W6, a stage of the writing path's gated prefixes
+    (services/quality/change_control.GATED_STAGE_PREFIXES: the same prefixes as the change-control lock and the
+    route-migration lint), whatever its role."""
+    if role in EVIDENCE_ROLES:
+        return True
+    if not stage:
+        return False
+    from services.quality.change_control import is_gated_stage
+    return is_gated_stage(stage)
 
 
 def eval_run_problem(run_id: str, row: Optional[dict]) -> Optional[str]:
@@ -104,12 +112,18 @@ async def read_eval_run(run_id: str) -> Optional[dict]:
 
 
 async def require(role: Optional[str], *, eval_run_id: Optional[str], break_glass_reason: Optional[str],
-                  read_run=None) -> Optional[dict]:
+                  read_run=None, stage: Optional[str] = None, required: bool = False,
+                  what: Optional[str] = None) -> Optional[dict]:
     """The evidence of one change as stored in its audit row, or None when the stage needs none (a validate / embed
-    stage). Raises EvidenceRefused when the change needs evidence and has none usable. An eval run id, when given,
-    must be valid even next to a break-glass reason (a wrong id is never waved through)."""
-    if not needs_evidence(role):
+    stage outside the gated prefixes). Raises EvidenceRefused when the change needs evidence and has none usable. An
+    eval run id, when given, must be valid even next to a break-glass reason (a wrong id is never waved through).
+    AA-1052 W6: ``stage`` brings in the gated prefixes (``needs_evidence``); ``required`` makes the evidence
+    mandatory whatever the stage (the default route policy, a catalog row on a gated route); ``what`` names the
+    change in the refusal."""
+    if not (required or needs_evidence(role, stage)):
         return None
+    label = what or (f"{role} route change" if role in EVIDENCE_ROLES or not stage
+                     else f"route change of the gated stage {stage}")
     run_id = (eval_run_id or "").strip()
     reason = " ".join((break_glass_reason or "").split())
     evidence: dict = {}
@@ -118,7 +132,7 @@ async def require(role: Optional[str], *, eval_run_id: Optional[str], break_glas
         row = await (read_run or read_eval_run)(run_id)
         problem = eval_run_problem(run_id, row)
         if problem:
-            raise EvidenceRefused(f"{problem}: a {role} route change needs a finished, valid eval run that passed")
+            raise EvidenceRefused(f"{problem}: a {label} needs a finished, valid eval run that passed")
         evidence["eval_run_id"] = run_id
         evidence["eval_run"] = {k: row.get(k) for k in ("pipeline", "run_kind", "writer", "verdict")}
     if reason:
@@ -127,18 +141,20 @@ async def require(role: Optional[str], *, eval_run_id: Optional[str], break_glas
         evidence["break_glass_reason"] = reason[:BREAK_GLASS_MAX_CHARS]
     if not evidence:
         raise EvidenceRefused(
-            f"a {role} route change needs evidence: eval_run_id (a finished eval run of the change) or, when no eval "
+            f"a {label} needs evidence: eval_run_id (a finished eval run of the change) or, when no eval "
             f"can run, break_glass_reason (at least {BREAK_GLASS_MIN_CHARS} characters; it raises an admin alert)")
     return evidence
 
 
-async def record_break_glass(conn, *, stage: str, actor: str, evidence: Optional[dict], change: dict) -> bool:
+async def record_break_glass(conn, *, stage: str, actor: str, evidence: Optional[dict], change: dict,
+                             subject: Optional[str] = None) -> bool:
     """Inside the change's transaction: the admin bell of a break-glass change (no-op without a reason). True when a
-    bell was written."""
+    bell was written. ``subject`` (AA-1052 W6) names what changed when it is not a stage's route (a catalog row, a
+    route policy row)."""
     if not evidence or not evidence.get("break_glass_reason"):
         return False
     payload = {
-        "message": f"Route of stage {stage} changed without an eval run (break glass) by {actor}: "
+        "message": f"{subject or f'Route of stage {stage}'} changed without an eval run (break glass) by {actor}: "
                    f"{evidence['break_glass_reason']}",
         "stage": stage, "actor": actor, "reason": evidence["break_glass_reason"], "change": change,
         "eval_run_id": evidence.get("eval_run_id"),

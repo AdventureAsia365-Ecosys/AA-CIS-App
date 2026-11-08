@@ -83,6 +83,10 @@ class RouteControlConflict(RuntimeError):
     """Another change was saved since the version the caller looked at (409)."""
 
 
+class RouteControlFrozen(RouteControlConflict):
+    """AA-1052 W6: the change touches a gated stage while a rerun wave is open (409, services/quality/edit_gate.py)."""
+
+
 # ── reads ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 _SETTINGS_SQL = ("SELECT order_mode, current_version, updated_at, updated_by FROM shared.llm_route_settings "
@@ -509,8 +513,9 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
 
     # AA-1026 D7 evidence: a writer / judge stage whose chain changes, OR whose first serving model@connection changes
     # (a provider-order change, a preset or the order mode moving it to another deployment), per the $0 resolver.
+    # AA-1052 W6: and any stage of the writing path's gated prefixes (change_control.GATED_STAGE_PREFIXES).
     evidence_stages = sorted(s for s in set(changed_stages) | serving_changed
-                             if route_evidence.needs_evidence((by_stage.get(s) or {}).get("role")))
+                             if route_evidence.needs_evidence((by_stage.get(s) or {}).get("role"), s))
     return {"valid": not errors, "errors": errors, "warnings": warnings, "unchanged": not changes,
             "diff": changes, "needs_evidence": bool(evidence_stages), "evidence_stages": evidence_stages,
             "version": int(world.settings["current_version"]), "order_mode": target["order_mode"],
@@ -522,7 +527,18 @@ async def preview(pool, *, order_mode: Optional[str] = None, routes: Optional[di
                   revert_to: Optional[int] = None) -> dict:
     world, target, errors = await _proposal(pool, order_mode=order_mode, routes=routes, provider_order=provider_order,
                                             preset=preset, revert_to=revert_to)
-    return await preview_world(world, target, errors)
+    out = await preview_world(world, target, errors)
+    # AA-1052 W6: the open waves that would refuse this save (409), so the page says it before the admin saves.
+    out["frozen_by_waves"] = await _frozen_by(pool, out["evidence_stages"])
+    return out
+
+
+async def _frozen_by(pool, evidence_stages) -> list[dict]:
+    """The open rerun waves when the change touches a gated stage (edit_gate), else []. Raises on a read error."""
+    if not evidence_stages:
+        return []
+    from services.quality import edit_gate
+    return await edit_gate.read_open_waves(pool)
 
 
 async def _proposal(pool, *, order_mode=None, routes=None, provider_order=None, preset=None,
@@ -565,6 +581,10 @@ async def apply(pool, *, actor: str, action: str, expected_version: int, note: O
     if not result["valid"]:
         msgs = "; ".join(f"{e['stage'] + ': ' if e.get('stage') else ''}{e['message']}" for e in result["errors"][:8])
         raise RouteControlRefused(f"the change breaks a routing rule: {msgs}")
+    waves = await _frozen_by(pool, result["evidence_stages"])
+    if waves:
+        from services.quality import edit_gate
+        raise RouteControlFrozen(str(edit_gate.frozen_error("the route config", result["evidence_stages"], waves)))
     evidence = None
     if result["needs_evidence"]:
         try:

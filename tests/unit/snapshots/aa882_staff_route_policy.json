@@ -627,6 +627,10 @@
     "capability": "ops.read|lab.read",
     "module": "api.routers.admin_quality_lineage"
   },
+  "GET /admin/quality/lineage/fanout/{tour_id}": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_lineage"
+  },
   "GET /admin/quality/lineage/{workflow}/{object_id}": {
     "capability": "ops.read|lab.read",
     "module": "api.routers.admin_quality_lineage"
@@ -1434,6 +1438,10 @@
   "POST /admin/platform/staff/{staff_id}/sync": {
     "capability": "staff.write",
     "module": "api.routers.admin_platform"
+  },
+  "POST /admin/quality/lineage/fanout/{tour_id}/recheck": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_quality_lineage"
   },
   "POST /admin/raw-tours/{tour_id}/set-active": {
     "capability": "content.write",

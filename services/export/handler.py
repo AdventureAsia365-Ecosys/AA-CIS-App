@@ -479,6 +479,22 @@ async def mark_tour_rejected(conn, tour_id: str) -> None:
         await sync_batch_completion(conn, row["batch_id"])
 
 
+async def _source_fanout_master(conn, tour_id: str, catalog_id: str) -> Optional[dict]:
+    """AA-1052 W6: enqueue the source fan-out of a Master publish (never raises; None without services/quality)."""
+    try:
+        from services.quality import source_fanout
+    except ImportError:   # the legacy export Lambda package ships without services/quality
+        return None
+    try:
+        changed_at = await conn.fetchval("SELECT now() AS ok")
+        return await source_fanout.enqueue_safe(conn, source_fanout.Change(
+            source_kind=source_fanout.MASTER, reason="master_published", changed_at=changed_at, tour_id=tour_id,
+            source_ref=catalog_id[:source_fanout.REF_MAX]), created_by="system:a3_publish")
+    except Exception as exc:  # noqa: BLE001 — never fails the publish
+        logger.warning("source_fanout_master_failed", tour_id=tour_id, error=str(exc)[:200])
+        return None
+
+
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
                          atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish") -> dict:
     """Publish one approved version as the tour's Master Content and enqueue its A3 atomize.
@@ -630,6 +646,11 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         except Exception as exc:
             atomize_job_id = None
             logger.error("a3_atomize_enqueue_failed", tour_id=str(tour_id), error=str(exc))
+
+        # 3b'. AA-1052 W6 — the Master text changed: re-check the writer objects written from the older Master (T2
+        # tenant versions, T9 pieces citing the tour's atoms) with the $0 `source_fanout` job (marks only). The new
+        # published_tours row is left out. Best-effort like 3b (the legacy Lambda package has no services/quality).
+        await _source_fanout_master(conn, str(tour_id), str(catalog_id) if catalog_id else "")
 
         # 3c. AA-653 (S207) — the tour now has a live Master Content version, so any other
         # version of it still waiting in the review queue is noise: dismiss (soft, row kept).

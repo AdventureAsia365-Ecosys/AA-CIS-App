@@ -5,8 +5,11 @@
 // StageRouteEditor) must name the eval run that backs it, or a break-glass reason when no eval can run. The API refuses
 // the change otherwise (422) and keeps the evidence in the audit log; a break glass raises an admin bell. This block
 // sits in the confirm dialog of both editors. Kit controls only.
+// AA-1052 W6: the same block backs a catalog switch of a model that serves a gated stage (CatalogTable) and a hold
+// switch change of a gated stage's route policy (RouteAlertsCard); a gated edit is refused (409) during a rerun wave.
 
 import { Field, Input, K, Textarea, useT } from "../../_kit";
+import { isGatedStage } from "@/lib/editGate";
 import { MODELS } from "./models.messages";
 
 /** The API's minimum length of a break-glass reason (shared/llm_client/route_evidence.py BREAK_GLASS_MIN_CHARS). */
@@ -20,9 +23,11 @@ export interface ChangeEvidence {
 
 export const EMPTY_EVIDENCE: ChangeEvidence = { evalRunId: "", breakGlass: "" };
 
-/** Writer and judge stages need evidence for a model change; validate and embed stages do not. */
-export function needsEvidence(role: string): boolean {
-  return role === "writer" || role === "judge";
+/** Writer and judge stages need evidence for a model change, and every stage of the gated prefixes (AA-1052 W6);
+ * other validate and embed stages do not. The API's own `gated` flag on a stage row wins when it is sent. */
+export function needsEvidence(role: string, stage?: string, gated?: boolean | null): boolean {
+  if (typeof gated === "boolean") return gated;
+  return role === "writer" || role === "judge" || (stage !== undefined && isGatedStage(stage));
 }
 
 /** True when the evidence is enough to send (the API checks the run itself). */

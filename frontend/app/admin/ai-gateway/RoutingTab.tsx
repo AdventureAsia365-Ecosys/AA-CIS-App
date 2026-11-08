@@ -151,7 +151,7 @@ function ModelRow({ row, showAccount, domain }: {
     row.account_route_options.find((o) => o.value === v)?.label ?? accountName(v, awsAccounts, accountText);
 
   // A new primary model of a writer / judge stage needs its evidence (an account-only save does not).
-  const askEvidence = needsEvidence(row.role) && modelId !== row.model_id;
+  const askEvidence = needsEvidence(row.role, row.stage, row.gated) && modelId !== row.model_id;
 
   const mut = useMutation({
     mutationFn: (body: { model_id: string; account_route: string | null; eval_run_id?: string;

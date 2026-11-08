@@ -10,15 +10,21 @@
 // C4 live findings F3 / F4: vendor and provider share one column and the model name keeps a minimum width (it wrapped
 // over 3–4 lines); the blocked reason is a "Blocked" badge with a plain sentence under it (no session tag, no capitals)
 // and the price source leaves out code file and migration names (lib/aiGateway blockedReasonText / priceSourceText).
+// AA-1052 W6: a model that serves a writing-path (gated) stage (`gated_stages` from the API) is switched through a
+// confirm dialog with the evidence block (an eval run id or a break-glass reason); the API refuses it without one
+// (422) and while a rerun wave is open (409, shown in a toast).
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Badge, DataTable, K, Switch, apiGet, apiSend, mono, useFormat, useT, useToast, type ColumnDef,
+  Badge, ConfirmModal, DataTable, K, Switch, apiGet, apiSend, mono, useFormat, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import { blockedReasonText, priceSourceText } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
+import {
+  BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, type ChangeEvidence,
+} from "./ChangeEvidenceFields";
 import { type CatalogRow } from "./llmShared";
 import { MODELS } from "./models.messages";
 import { usePageAccess } from "./usePageAccess";
@@ -47,11 +53,19 @@ export function CatalogTable() {
     queryFn: () => apiGet<CatalogResp>("/api/admin/llm-catalog", { admin: true }),
   });
 
+  // AA-1052 W6: the switch waiting for its evidence (a model on a gated stage's route), and the evidence typed so far.
+  const [pending, setPending] = useState<{ row: CatalogRow; enabled: boolean } | null>(null);
+  const [evidence, setEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+
   const toggleMut = useMutation({
-    mutationFn: ({ model_key, enabled }: { model_key: string; enabled: boolean }) =>
-      apiSend<CatalogRow>(`/api/admin/llm-catalog/${model_key}`, { method: "PATCH", body: { enabled }, admin: true }),
+    mutationFn: ({ model_key, enabled, proof }: { model_key: string; enabled: boolean; proof?: ChangeEvidence }) =>
+      apiSend<CatalogRow>(`/api/admin/llm-catalog/${model_key}`, {
+        method: "PATCH", body: { enabled, ...(proof ? evidenceBody(proof) : {}) }, admin: true,
+      }),
     onSuccess: (_r, v) => {
       toast.success(t("toggled", v.model_key, v.enabled));
+      setEvidence(EMPTY_EVIDENCE);
       qc.invalidateQueries({ queryKey: LLM_CATALOG_KEY });
     },
     // The 422 (switching on without a price) is still shown even though the UI disables the control.
@@ -130,7 +144,9 @@ export function CatalogTable() {
               label={t("toggle", r.model_key)}
               testId={`catalog-enabled-${r.model_key}`}
               disabled={!mayToggle || !canToggle || toggleMut.isPending}
-              onChange={(next) => toggleMut.mutate({ model_key: r.model_key, enabled: next })}
+              onChange={(next) => (r.gated_stages?.length
+                ? setPending({ row: r, enabled: next })
+                : toggleMut.mutate({ model_key: r.model_key, enabled: next }))}
             />
             <span style={{ fontSize: 12, color: r.enabled ? K.ink : K.muted }}>
               {r.enabled ? t("onTitle") : t("offTitle")}
@@ -170,23 +186,52 @@ export function CatalogTable() {
     },
   ], [toggleMut, awsAccounts, accountText, t, formatDateTime, mayToggle]);
 
+  function confirmSwitch() {
+    if (!pending) return;
+    if (!evidenceReady(evidence)) {
+      setEvidenceError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
+      return;
+    }
+    toggleMut.mutate({ model_key: pending.row.model_key, enabled: pending.enabled, proof: evidence });
+    setPending(null);
+    setEvidenceError(null);
+  }
+
   return (
-    <DataTable<CatalogRow>
-      data={models}
-      columns={columns}
-      tableId="admin-llm-catalog"
-      getRowId={(r) => r.model_key}
-      loading={isLoading}
-      error={isError ? (error instanceof Error ? error.message : t("loadCatalogError")) : null}
-      onRetry={() => refetch()}
-      searchable
-      searchPlaceholder={t("searchModels")}
-      enableCsv
-      csvFilename="llm-catalog"
-      pageSize={25}
-      pageSizeOptions={[25, 50, 100]}
-      tableMinWidth={1000}
-      emptyTitle={t("noModels")}
-    />
+    <>
+      <ConfirmModal
+        open={pending !== null}
+        onClose={() => { setPending(null); setEvidenceError(null); }}
+        onConfirm={confirmSwitch}
+        title={pending ? t("catalogSwitchTitle", pending.row.model_key, pending.enabled) : ""}
+        confirmLabel={t("confirmChange")}
+        body={pending ? (
+          <div data-testid="catalog-switch-confirm">
+            <p style={{ fontSize: 12.5, color: K.muted, marginTop: 0 }}>
+              {t("catalogSwitchBody", (pending.row.gated_stages ?? []).join(", "))}
+            </p>
+            <ChangeEvidenceFields stage={`catalog-${pending.row.model_key}`} value={evidence} error={evidenceError}
+              onChange={(next) => { setEvidence(next); setEvidenceError(null); }} />
+          </div>
+        ) : null}
+      />
+      <DataTable<CatalogRow>
+        data={models}
+        columns={columns}
+        tableId="admin-llm-catalog"
+        getRowId={(r) => r.model_key}
+        loading={isLoading}
+        error={isError ? (error instanceof Error ? error.message : t("loadCatalogError")) : null}
+        onRetry={() => refetch()}
+        searchable
+        searchPlaceholder={t("searchModels")}
+        enableCsv
+        csvFilename="llm-catalog"
+        pageSize={25}
+        pageSizeOptions={[25, 50, 100]}
+        tableMinWidth={1000}
+        emptyTitle={t("noModels")}
+      />
+    </>
   );
 }

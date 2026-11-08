@@ -606,6 +606,8 @@ POLICY: dict[tuple[str, str], Any] = {
     # AA-900 (S271 W0): the CIS-08 content quality funnel snapshot (numbers only, no tenant text)
     ("GET", "/admin/quality/funnel"): any_of(OPS_READ, LAB_READ),
     ("GET", "/admin/quality/lineage/coverage"): any_of(OPS_READ, LAB_READ),            # AA-1052 W6
+    ("GET", "/admin/quality/lineage/fanout/{tour_id}"): any_of(OPS_READ, LAB_READ),        # AA-1052 W6 fan-out
+    ("POST", "/admin/quality/lineage/fanout/{tour_id}/recheck"): QUALITY_WRITE,      # $0 re-check job
     ("GET", "/admin/quality/lineage/{workflow}/{object_id}"): any_of(OPS_READ, LAB_READ),
     # ── v1_trip_page admin_router — public trip pages of AA content
     ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
