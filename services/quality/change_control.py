@@ -23,7 +23,11 @@ Two checks, both run by the required "Unit Tests" job (``tests/unit/test_aa1052_
    (``ROUTE_TABLES``) of a gated stage (``GATED_STAGE_PREFIXES``; a global table such as the deployment priorities
    or the route settings always counts) or a writing-memory release, must carry ``-- eval: <run uuid>`` or
    ``-- break-glass: <reason>`` in its leading comment block (CIS 383 is the first file that did). Prompt
-   registrations (``shared.prompt_version``) are the version bump itself and need no header.
+   registrations (``shared.prompt_version``) are the version bump itself and need no header. The lint fails
+   closed: a write to a stage-scoped table is exempt only when every stage it selects is a literal outside the
+   gated prefixes (``stage = '<lit>'``, ``stage IN ('<lit>', ...)``, an INSERT ... VALUES of literals, or a LIKE
+   pattern that cannot match a gated prefix); a write by role, by a subquery, a regex, ``<>`` / ``NOT``, ``OR``
+   or with no stage selector at all counts as gated.
 
 The components read files only (``root`` defaults to the repo), except ``route_defaults``, which imports
 ``shared.llm_client.role_config.SAFE_DEFAULTS`` (the code route a gated stage falls back to without its DB row).
@@ -67,7 +71,17 @@ GLOBAL_ROUTE_TABLES = ("llm_model_deployment", "llm_model_catalog", "llm_route_s
 ROUTE_TABLES = STAGE_ROUTE_TABLES + GLOBAL_ROUTE_TABLES
 _WRITE_RE = re.compile(r"\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?|ALTER\s+TABLE)\s+"
                        r"(?:ONLY\s+)?shared\.(" + "|".join(ROUTE_TABLES) + r")\b", re.IGNORECASE)
-_STAGE_LITERAL_RE = re.compile(r"'(" + "|".join(re.escape(p) for p in GATED_STAGE_PREFIXES) + r")[a-z0-9_]*'")
+_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+_TABLE_REF = r"(?:ONLY\s+)?shared\.(?:" + "|".join(STAGE_ROUTE_TABLES) + r")\b"
+_STAGE_WRITE_RE = re.compile(r"\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?|ALTER\s+TABLE)\s+"
+                             + _TABLE_REF, re.IGNORECASE)
+_COL = r"(?:\b\w+\.)?\bstage\b"   # the stage column, optionally qualified by an alias
+# the stage selectors the lint can read (literals masked as '#<n>')
+_STAGE_EQ_RE = re.compile(_COL + r"\s*=\s*'#(\d+)'", re.IGNORECASE)
+_STAGE_IN_RE = re.compile(_COL + r"\s+IN\s*\(\s*('#\d+'(?:\s*,\s*'#\d+')*)\s*\)", re.IGNORECASE)
+_STAGE_LIKE_RE = re.compile(_COL + r"\s+I?LIKE\s+'#(\d+)'(?:\s+ESCAPE\s+'#(\d+)')?", re.IGNORECASE)
+_STAGE_ANY_RE = re.compile(_COL, re.IGNORECASE)
+_INSERT_COLS_RE = re.compile(r"\bINSERT\s+INTO\s+" + _TABLE_REF + r"\s*(?:AS\s+\w+\s*)?\(([^)]*)\)", re.IGNORECASE)
 _EVAL_HEADER_RE = re.compile(r"^--\s*eval:\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s*$")
 _BREAK_GLASS_HEADER_RE = re.compile(r"^--\s*break-glass:\s*(\S.{11,})$")
 
@@ -242,14 +256,83 @@ def _leading_comments(sql: str) -> list[str]:
     return out
 
 
+def _like_can_match_gated(pattern: str, escape: Optional[str] = None) -> bool:
+    """Whether a LIKE pattern can match a stage that starts with a gated prefix: its fixed head (up to the first
+    wildcard) is compared with each prefix; a wildcard inside the prefix's length matches anything (conservative)."""
+    esc = escape if escape else "\\"
+    head, i = [], 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == esc and i + 1 < len(pattern):
+            head.append(pattern[i + 1])
+            i += 2
+            continue
+        if ch in "%_":
+            break
+        head.append(ch)
+        i += 1
+    fixed = "".join(head)
+    open_end = i < len(pattern)          # a wildcard follows the fixed head
+    for p in GATED_STAGE_PREFIXES:
+        if fixed.startswith(p) or (p.startswith(fixed) and (open_end or fixed == p)):
+            return True
+    return False
+
+
+def _statement_is_gated(stmt: str, *, insert: bool) -> bool:
+    """A write to a stage-scoped route table (one whole statement, ``insert`` when the write is an INSERT): True
+    unless every stage it selects is a literal outside the gated prefixes. Fails closed on anything it cannot read."""
+    literals = [m.group(0)[1:-1].replace("''", "'") for m in _LITERAL_RE.finditer(stmt)]
+    if any(is_gated_stage(v.strip().lower()) for v in literals):
+        return True
+    counter = iter(range(len(literals)))
+    masked = _LITERAL_RE.sub(lambda _m: f"'#{next(counter)}'", stmt)
+    if re.search(r"\b(?:TRUNCATE|ALTER\s+TABLE)\b", masked, re.IGNORECASE):
+        return True                                       # every stage at once
+    if re.search(r"\bOR\b|\bNOT\b|<>|!=|~|\bSIMILAR\b|\bANY\b|\bALL\b", masked, re.IGNORECASE):
+        return True                                       # a selector the lint does not read
+    selectors = 0
+    if insert:
+        cols = _INSERT_COLS_RE.search(masked)
+        if cols is None or re.search(r"\bSELECT\b", masked, re.IGNORECASE):
+            return True                                   # no column list, or rows from a query
+        if not _STAGE_ANY_RE.search(cols.group(1)):
+            return True                                   # no stage column: not a stage selector
+        selectors += 1                                    # VALUES of literals, none gated (checked above)
+        masked = masked[:cols.start()] + masked[cols.end():]
+        masked = re.sub(r"\bON\s+CONFLICT\s*\([^)]*\)", " ", masked, flags=re.IGNORECASE)   # the conflict key
+    for m in _STAGE_LIKE_RE.finditer(masked):
+        esc = literals[int(m.group(2))] if m.group(2) else None
+        if _like_can_match_gated(literals[int(m.group(1))].lower(), esc):
+            return True
+        selectors += 1
+    masked = _STAGE_LIKE_RE.sub(" ", masked)
+    selectors += len(_STAGE_EQ_RE.findall(masked)) + len(_STAGE_IN_RE.findall(masked))
+    masked = _STAGE_IN_RE.sub(" ", _STAGE_EQ_RE.sub(" ", masked))
+    if _STAGE_ANY_RE.search(masked):
+        return True                                       # the stage column in a form the lint does not read
+    return selectors == 0                                 # no stage selector: a role-wide or table-wide write
+
+
+def _statements(body: str) -> list[str]:
+    return [s for s in body.split(";") if s.strip()]
+
+
 def migration_needs_header(sql: str) -> list[str]:
-    """The route tables a migration writes for a gated stage (empty = no header needed)."""
+    """The route tables a migration writes for a gated stage (empty = no header needed). Fails closed for the
+    stage-scoped tables (see the module doc)."""
     body = _strip_comments(sql)
     tables = sorted({m.group(1).lower() for m in _WRITE_RE.finditer(body)})
     if not tables:
         return []
-    gated_literal = bool(_STAGE_LITERAL_RE.search(body))
-    return [t for t in tables if t in GLOBAL_ROUTE_TABLES or gated_literal]
+    gated = {t for t in tables if t in GLOBAL_ROUTE_TABLES}
+    for stmt in _statements(body):
+        for m in _STAGE_WRITE_RE.finditer(stmt):
+            table = re.search(r"shared\.(\w+)", m.group(0), re.IGNORECASE).group(1).lower()
+            insert = m.group(0).split(None, 1)[0].upper() == "INSERT"
+            if table not in gated and _statement_is_gated(stmt, insert=insert):
+                gated.add(table)
+    return sorted(gated)
 
 
 def has_evidence_header(sql: str) -> bool:

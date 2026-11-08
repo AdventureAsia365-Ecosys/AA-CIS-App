@@ -228,9 +228,45 @@ def test_a_header_after_the_first_statement_does_not_count(tree):
     ("SELECT stage FROM shared.llm_role_config WHERE stage = 't9_write';", False),
     ("-- UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage = 't9_write';", False),
     ("UPDATE shared.writing_memory_release SET status = 'active';", True),
+    # fails closed for the stage-scoped tables: exempt only when every selected stage is a non-gated literal
+    ("UPDATE shared.llm_role_config SET model='x' WHERE stage LIKE 't9_%';", True),
+    ("UPDATE shared.llm_role_config SET model='x' WHERE role='writer';", True),
+    ("UPDATE shared.llm_role_config r SET model_id = 'm' FROM shared.llm_model_catalog c "
+     "WHERE r.role = 'judge' AND c.model_key = 'm';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage LIKE 't%';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage LIKE 's1\\_%';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage LIKE 'w%';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage LIKE 'trip\\_%';", False),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage ~ '^trip';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage <> 'trip_narration';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage = 'trip_narration' OR role = 'writer';", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage IN "
+     "(SELECT stage FROM shared.llm_role_config WHERE role = 'writer');", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage IN ('trip_narration', 't2_generate');", True),
+    ("UPDATE shared.llm_role_config SET model_id = 'm' WHERE stage IN ('trip_narration', 'geo_label');", False),
+    ("UPDATE shared.llm_role_config r SET model_id = 'm' WHERE r.stage = 'trip_narration' AND r.role = 'writer';",
+     False),
+    ("INSERT INTO shared.llm_role_config (stage, role, model_id) VALUES ('trip_narration', 'writer', 'm') "
+     "ON CONFLICT (stage, role) DO UPDATE SET model_id = EXCLUDED.model_id;", False),
+    ("INSERT INTO shared.llm_role_config (stage, role, model_id) "
+     "SELECT stage, 'judge', 'm' FROM shared.llm_role_config WHERE role = 'writer';", True),
+    ("DELETE FROM shared.llm_role_config WHERE stage = 'trip_narration';", False),
+    ("TRUNCATE shared.stage_model_params;", True),
+    # one gated statement among exempt ones is enough
+    ("DELETE FROM shared.llm_role_config WHERE stage = 'trip_narration';\n"
+     "UPDATE shared.llm_role_config SET model_id = 'm' WHERE role = 'validate';", True),
 ])
 def test_what_needs_a_header(sql, needs):
     assert bool(cc.migration_needs_header(sql)) is needs
+
+
+@pytest.mark.parametrize("number", ["331", "332", "333"])
+def test_the_past_role_wide_route_migrations_would_need_a_header(number):
+    """CIS 331-333 moved the judge / validate routes of every stage by role (no stage literal): grandfathered by the
+    baseline, but the same file above it needs the header."""
+    [path] = sorted((cc.REPO_ROOT / cc.MIGRATIONS_DIR).glob(f"{number}_*.sql"))
+    assert "llm_role_config" in cc.migration_needs_header(path.read_text(encoding="utf-8"))
 
 
 def test_baseline_and_unnumbered_files_are_skipped(tree):

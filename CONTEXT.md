@@ -1786,7 +1786,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   of a gated stage (`llm_role_config` / `stage_model_params` rows of an `s1_ t2_ t3_ t8_ t9_ t10_` or
   `writing_memory_eval` stage; any `llm_model_deployment`, `llm_model_catalog`, `llm_route_settings`,
   `llm_route_policy` or `writing_memory_release` write) needs `-- eval: <run uuid>` or `-- break-glass: <reason>` in
-  its leading comment block. Prompt registrations need none (they are the bump). Runtime admin edits of a gated route
+  its leading comment block. The lint fails closed: a stage-scoped write is exempt only when every stage it selects
+  is a literal outside the gated prefixes (`stage = '<lit>'`, `stage IN (...)`, INSERT ... VALUES, a LIKE pattern
+  that cannot match a gated prefix); a write by role (as CIS 331-333 did), by subquery, regex, `<>` / `NOT`, `OR` or
+  with no stage selector counts as gated. Prompt registrations need none (they are the bump). Runtime admin edits of a gated route
   are not gated yet (follow-up of AA-1052).
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
@@ -3124,9 +3127,13 @@ _Avoid_: fact pack, source bundle, grounding text (the old names of its parts).
 The versions one writer output was made with, from stored fields only (`services/quality/lineage.py`): `policy_sha`,
 `fs_id` (the FactSheet), `prompt_version` (the writer's own system-prompt sha, plus the registered version of every
 stage in the object's ledger rows) and `route_config_version` (stamped at the exit, plus the versions the ledger
-trigger stamped on its calls). The final contract's store step (`final_contract.stamp_stored`) writes
-`lineage: {v, policy_sha, route_config_version}` next to every S1 / T2 / T9 contract record (no I/O: the route version
-is the one the process's gateway last read). An eval result reads its run's fingerprint (`config_fp.parts.policy`,
+trigger stamped on its calls). The writer's store step writes `lineage: {v, policy_sha, route_config_version}` ONCE,
+next to the contract record (`generated_content.metadata.lineage`, `tenant_tour_versions.judge_breakdown.lineage`,
+`content_piece.writer_input.lineage`; no I/O: the route version is the one the process's gateway last read, just
+refreshed by the writer's own calls); a later exit (approve, publish, human edit, re-validation, admin sentence apply)
+replaces only `final_contract`, so the object's lineage stays the writer's. Each exit record also carries its own
+`final_contract.lineage` (kept in the S1 `final_contract_log` entries): the policy in force at that exit, with a route
+version only at a writer exit. An eval result reads its run's fingerprint (`config_fp.parts.policy`,
 `route_config_version`) and its `judge_version`; it has no FactSheet. `GET /admin/quality/lineage/coverage?days=`
 (the share of recent objects carrying each field) and `GET /admin/quality/lineage/{s1|t2|t9|eval}/{id}` (one object,
 with `missing` / `complete`); ops.read or lab.read; ids and shas, never text.
