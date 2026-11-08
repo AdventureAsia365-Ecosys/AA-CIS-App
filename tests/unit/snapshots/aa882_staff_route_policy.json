@@ -623,6 +623,14 @@
     "capability": "ops.read|lab.read",
     "module": "api.routers.admin_quality_funnel"
   },
+  "GET /admin/quality/lineage/coverage": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_lineage"
+  },
+  "GET /admin/quality/lineage/{workflow}/{object_id}": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_lineage"
+  },
   "GET /admin/reports": {
     "capability": "ops.read",
     "module": "api.routers.admin_reports"
