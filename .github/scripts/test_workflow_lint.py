@@ -28,7 +28,8 @@ _spec.loader.exec_module(wl)
 
 
 def _lint(body: str, repo_root: str = REPO_ROOT, skip: frozenset = frozenset()) -> list[str]:
-    return wl.lint_workflow("demo.yml", textwrap.dedent(body), repo_root, skip)
+    # the WL1-WL5 fixtures name actions by tag for readability; WL6 (SHA pins) has its own test
+    return [f for f in wl.lint_workflow("demo.yml", textwrap.dedent(body), repo_root, skip) if ":WL6 " not in f]
 
 
 def _git_env() -> dict:
@@ -292,6 +293,72 @@ class WorkflowLintRules(unittest.TestCase):
         self.assertEqual(wl.lint_action("demo", action, frozenset({"WL5"})), [])
         self.assertEqual(wl.lint_action("demo", "name: demo\nruns:\n  using: node24\n  main: index.js\n"), [])
 
+    def test_wl6_every_action_is_pinned_to_a_commit_sha_with_its_tag(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        body = textwrap.dedent(f"""
+            on: pull_request
+            jobs:
+              shared:
+                uses: demo-org/demo-workflows/.github/workflows/demo.yml@main
+              local:
+                uses: ./.github/workflows/demo-local.yml
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: demo-org/demo-setup@v3
+                  - uses: "demo-org/demo-setup@v3.1.0"
+                  - uses: demo-org/demo-setup@{sha[:12]} # v3.1.0
+                  - uses: demo-org/demo-setup@{sha} # v3.1.0
+                  - uses: demo-org/demo-cache/save@{sha} # v6.1.0
+                  - uses: demo-org/demo-setup@{sha}
+                  - uses: ./.github/actions/demo-local
+                  - uses: docker://demo/image:1.0
+                  - uses: docker://demo/image@sha256:{"a" * 64}
+                  - run: |
+                      # uses: demo-org/in-a-script@v1 (a shell comment, not a use)
+                      echo ok
+            """)
+        found = [f for f in wl.lint_workflow("demo.yml", body) if ":WL6 " in f]
+        self.assertEqual(len(found), 6, found)
+        for ref in ("demo-org/demo-workflows/.github/workflows/demo.yml@main", "demo-org/demo-setup@v3 ",
+                    "demo-org/demo-setup@v3.1.0", f"demo-org/demo-setup@{sha[:12]}", "docker://demo/image:1.0"):
+            self.assertTrue(any(ref in f and "not pinned" in f for f in found), ref)
+        self.assertTrue(any(f"keep the release tag of demo-org/demo-setup@{sha} " in f for f in found), found)
+        self.assertFalse(any("in-a-script" in f or "demo-local" in f or "image@sha256" in f for f in found), found)
+        # --skip never turns WL6 off: the org setting refuses a tag pin whatever this script says
+        self.assertNotIn("WL6", wl.RULES)
+        self.assertEqual(len([f for f in wl.lint_workflow("demo.yml", body, skip=frozenset(wl.RULES))
+                              if ":WL6 " in f]), 6)
+        action = textwrap.dedent(f"""
+            name: demo
+            runs:
+              using: composite
+              steps:
+                - uses: demo-org/demo-cache/restore@v6
+                - uses: demo-org/demo-cache/save@{sha} # v6.1.0
+            """)
+        self.assertEqual(wl.lint_action("actions/demo/action.yml", action, frozenset({"WL5"})),
+                         ["actions/demo/action.yml:-:WL6 demo-org/demo-cache/restore@v6 is not pinned to a full-length "
+                          "commit SHA: use <owner>/<repo>@<40-hex sha> # vX.Y.Z (the tag's commit from gh api "
+                          "repos/<owner>/<repo>/git/ref/tags/<tag>, annotated tags dereferenced)"])
+
+    def test_wl4_reads_the_setup_node_major_from_the_pin_comment(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        tmpl = """
+            on: pull_request
+            jobs:
+              a:
+                runs-on: ubuntu-24.04
+                steps:
+                  - uses: actions/setup-node@{sha} # {tag}
+                    with:
+                      node-version: 22
+            """
+        self.assertEqual(_lint(tmpl.format(sha=sha, tag="v4.4.0")), [])
+        self.assertEqual(len(_lint(tmpl.format(sha=sha, tag="v7.1.0"))), 1)
+        self.assertEqual(wl.pin_tags(f"      - uses: actions/setup-node@{sha} # v4.4.0\n# uses: x/y@{sha} # v9\n"),
+                         {f"actions/setup-node@{sha}": "v4.4.0"})
+
     def test_cli_skip_and_exit_codes(self):
         with tempfile.TemporaryDirectory() as tmp:
             good = os.path.join(tmp, "good.yml")
@@ -351,6 +418,25 @@ class ThisRepo(unittest.TestCase):
             self.assertIn(needle, rules)
         self.assertIs(steps["Checkout"]["with"]["persist-credentials"], False)
         self.assertNotIn("secrets.", text)
+
+    def test_dependabot_bumps_the_pinned_actions_weekly_in_one_group(self):
+        with open(os.path.join(REPO_ROOT, ".github", "dependabot.yml"), encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh)
+        gha = [u for u in cfg["updates"] if u["package-ecosystem"] == "github-actions"]
+        self.assertEqual(len(gha), 1)
+        dirs = gha[0].get("directories") or [gha[0].get("directory")]
+        self.assertIn("/", dirs)
+        if os.path.isdir(os.path.join(REPO_ROOT, ".github", "actions")):
+            self.assertIn("/.github/actions/*", dirs)
+        self.assertEqual(gha[0]["schedule"]["interval"], "weekly")
+        self.assertTrue(gha[0].get("groups"), "one grouped PR for every action bump")
+        # never auto-merged: no workflow step approves or merges a Dependabot PR (comment lines may say so)
+        wf_dir = os.path.join(REPO_ROOT, ".github", "workflows")
+        for name in os.listdir(wf_dir):
+            with open(os.path.join(wf_dir, name), encoding="utf-8") as fh:
+                text = wl._strip_comments(fh.read())
+            self.assertFalse("dependabot" in text.lower() and re.search(
+                r"gh\s+pr\s+(?:merge|review)|auto-?merge|enablePullRequestAutoMerge", text, re.I), name)
 
     def test_the_repo_composite_actions_are_clean(self):
         actions = os.path.join(REPO_ROOT, ".github", "actions")

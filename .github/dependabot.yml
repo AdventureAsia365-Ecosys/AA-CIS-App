@@ -35,7 +35,8 @@ updates:
   # same setup as AA-CIS-Infra). Dependabot keeps a SHA pin and its "# vX.Y.Z" comment in step when it bumps one. Like
   # the PRs above, these get no repository secrets.
   - package-ecosystem: github-actions
-    directory: "/"
+    # "/" reads .github/workflows; the composite actions in .github/actions/<name>/action.yml are read too (AA-1024)
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
       day: monday

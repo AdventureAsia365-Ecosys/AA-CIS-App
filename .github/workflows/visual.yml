@@ -97,7 +97,7 @@ jobs:
       BASE_URL: http://localhost:3001
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -135,7 +135,7 @@ jobs:
 
       - name: Set up Node 22
         if: steps.scope.outputs.run == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -232,7 +232,7 @@ jobs:
 
       - name: Upload screenshots and report
         if: always() && steps.scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: visual-cis-pr-${{ github.run_id }}
           path: |
@@ -272,14 +272,14 @@ jobs:
             *) echo "::error::base_url must be https://aa-cis.lumiguides.it.com (got $URL)"; exit 1 ;;
           esac
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -302,7 +302,7 @@ jobs:
 
       - name: Configure AWS credentials (OIDC, read-only mailbox role)
         if: steps.pages.outputs.slugs != ''
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
           aws-region: us-west-1
@@ -349,7 +349,7 @@ jobs:
       # PNGs and the JSON report only: never the HTML report, traces or the auth state.
       - name: Upload screenshots and report
         if: always() && steps.pages.outputs.slugs != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: visual-cis-production-${{ github.run_id }}
           path: |
