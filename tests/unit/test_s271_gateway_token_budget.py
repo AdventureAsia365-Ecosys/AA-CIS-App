@@ -201,11 +201,17 @@ def test_the_retry_stays_under_the_model_cap_and_a_request_at_the_cap_is_not_ret
 @pytest.mark.parametrize("change", [
     {"budget_retry": False},                         # a test reading one attempt (no production site, S271 W0)
     {"stage": "adhoc_conn_test"},                    # a probe: a cut is its expected answer
-    {"stage": "a3_atomize"},                         # re-asks a cut read itself with its own ceiling
 ])
 def test_opt_outs_make_one_call(rows, change):
     resp, sent = _run(_req(max_tokens=4096, **change), LUNA, [_reply("a", "max_tokens"), _reply("b")])
     assert len(sent) == 1 and resp.content == "a" and rows == []
+
+
+def test_a3_atomize_cut_is_retried_by_the_gateway_at_its_old_ceiling(rows):
+    """AA-1053: a3_atomize no longer opts out; its first ceiling stays unfloored (NO_FLOOR_STAGES), so the gateway's
+    retry asks 8192, the ceiling a3's own re-ask used before."""
+    resp, sent = _run(_req(max_tokens=4096, stage="a3_atomize"), LUNA, [_reply("a", "max_tokens"), _reply("b")])
+    assert sent == [4096, 8192] and resp.content == "b" and resp.truncation_retry_max_tokens == 8192
 
 
 def test_the_retry_switch(rows, monkeypatch):

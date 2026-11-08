@@ -50,6 +50,8 @@ from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import get_stage_config
 from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
 from shared.llm_client.decide import decide
+from shared.llm_client.errors import is_truncated
+from shared.llm_client.token_floor import route_ended_on_cut
 
 logger = structlog.get_logger()
 
@@ -105,12 +107,10 @@ def _strip_atom_action(action: str, words: list[str]) -> str:
 # AA-645 (S250) — one atomize read per day (or per tour on the legacy path) gets a second LLM call when the
 # first raises or returns JSON that does not parse. S250 Thailand wave: tour 7dbbc234 lost a day to "Expecting
 # property name enclosed in double quotes: line 183" and the job still ended "succeeded", so it was never retried.
-# A reply cut at the token ceiling is re-asked with more room; the catalog's max_output_tokens still caps it per
-# model (shared/llm_client/client.py), so no model is named here.
+# AA-1053: a reply cut at the token ceiling is NOT re-asked here. The gateway owns that retry (token_floor.py: the
+# same route model once more at double the ceiling, 4096 -> 8192, the ceiling this module's own re-ask used before);
+# a read still cut after it has failed, and a second ask would bill the same cut again.
 _MAX_TOKENS = 4096
-_TRUNCATION_RETRY_MAX_TOKENS = 8192
-# Anthropic/Converse report "max_tokens"; OpenAI-compatible routes report "length" (same set as T9's writer).
-_TRUNCATED_STOP_REASONS = {"max_tokens", "length"}
 _READ_ATTEMPTS = 2
 
 
@@ -134,7 +134,8 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
     """Up to `_READ_ATTEMPTS` gateway calls for one atomize read. Returns (atoms, llm_result, attempt, error):
     atoms is None when every attempt failed. Every billed reply that did not parse gets its own billed_unusable
     llm_call_log row here (AA-927); the caller writes the row of the reply it uses. `event` keeps the log names
-    the paths had before (`<event>_llm_failed`, `<event>_parse_failed`)."""
+    the paths had before (`<event>_llm_failed`, `<event>_parse_failed`). AA-1053: a cut read (a reply still cut after
+    the gateway's truncation retry, or a cut that raised) ends the loop: only the gateway retries a cut."""
     max_tokens = _MAX_TOKENS
     error = None
     for attempt in range(1, _READ_ATTEMPTS + 1):
@@ -150,19 +151,27 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
             error = f"{type(e).__name__}: {e}"
             logger.error(f"{event}_llm_failed", **log_fields, attempt=attempt,
                          error_type=type(e).__name__, error=str(e))
+            if route_ended_on_cut(e):
+                # AA-1053: a rung of the route ended on a cut (refused, or billed unusable: RouteUnusableReply /
+                # the route's aggregate error); the gateway already gave it its one truncation retry.
+                return None, None, attempt, error
             continue
         try:
             atoms = _atoms_from_reply(llm_result.content)
             return atoms, llm_result, attempt, None
         except (ValueError, KeyError, TypeError) as e:
-            error = f"invalid atom JSON from model: {e}"
+            cut = is_truncated(llm_result.stop_reason)
+            error = (f"invalid atom JSON from model (reply cut at its token ceiling): {e}" if cut
+                     else f"invalid atom JSON from model: {e}")
             logger.error(f"{event}_parse_failed", **log_fields, attempt=attempt,
-                         stop_reason=llm_result.stop_reason, max_tokens=max_tokens, error=str(e))
+                         stop_reason=llm_result.stop_reason, max_tokens=max_tokens, error=str(e),
+                         gateway_retry_max_tokens=getattr(llm_result, "truncation_retry_max_tokens", None))
             await record_unusable(llm_result, stage="a3_atomize", role=role, error=e,  # AA-927
                                   tenant_id=_llm_log_tenant_id(OWNER_SCOPE),
                                   quality_signal_extra={**(signal_extra or {}), "attempt": attempt})
-            if llm_result.stop_reason in _TRUNCATED_STOP_REASONS:
-                max_tokens = max(max_tokens, _TRUNCATION_RETRY_MAX_TOKENS)
+            if cut:
+                # AA-1053: still cut after the gateway's one truncation retry: the read failed, no ask of our own.
+                return None, None, attempt, error
     return None, None, _READ_ATTEMPTS, error
 
 

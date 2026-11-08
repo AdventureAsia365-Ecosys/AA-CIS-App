@@ -375,9 +375,14 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   Messages API effort is `output_config.effort` and reasoning_mode the one `thinking` form the family takes
   (`adapters/anthropic_messages.resolve_thinking`: 'off' = `between_tools` on Sonnet 5.5, `disabled` on Haiku 5.5 /
   Opus 5 / Sonnet 5, never at xhigh / max, nothing on Opus 5.5 / Fable; 'adaptive' explicit; nothing on 4.5); on
-  OpenAI / Azure effort low / medium / high is `reasoning_effort` on a reasoning model only
-  (`stage_params.openai_reasoning_effort`); Converse sends neither (AA-803). A field a path does not send is logged
-  once (`stage_params_not_applied`). CIS 381 seeds effort medium for t9_write on sonnet-5-5 and low for the Claude
+  OpenAI / Azure effort is `reasoning_effort` on a reasoning model only (low / medium / high as is, xhigh / max as
+  high); on Converse effort goes in `additionalModelRequestFields` only in the form the catalog row states
+  (`capabilities.converse_effort`: `output_config` for Claude, `reasoning_effort` for GPT; no row states one, AA-803:
+  set it after a probe; a ValidationException on it drops the field once), and reasoning_mode is never sent there.
+  **One effort rule (AA-1053):** the stage x model row is the only source of a stage's effort and
+  `shared/llm_client/effort_rule.py` the only module that maps it to a provider field (guard
+  `tests/unit/test_aa1053_effort_rule.py`); `LLMResponse.effort` (ledger `effort`) is the value sent, NULL = none
+  (the model's default). A field a path does not send is logged once (`stage_params_not_applied`). CIS 381 seeds effort medium for t9_write on sonnet-5-5 and low for the Claude
   5.5 validate stages; t2_generate and t8_angle_gen keep their default (high) until a paid quality read backs a
   change (since AA-900 W0 the writer release fingerprint `config_fp` covers these rows: a change flags reverify). A
   deployment may state its own `api_style` (NULL = the
@@ -946,7 +951,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `budget_cut`, `gateway_attempt`), the retry's reply carries `LLMResponse.truncation_retry_max_tokens` and the
     caller's row gets `truncation_retry: true` + `max_tokens` through `billed_fields` (`call_log.RETRY_KEYS`); same
     route_trace, the retry reports the cut attempt's `attempt_no` (never read as a fallback rung). Not retried:
-    `token_floor.NO_RETRY_STAGES` (`adhoc_conn_test`, `a3_atomize`), shadow calls, a request at the model's cap,
+    `token_floor.NO_RETRY_STAGES` (`adhoc_conn_test` only; AA-1053: a3_atomize's own re-ask is gone, it stops on a read
+    still cut and stays out of the floor, `NO_FLOOR_STAGES`; guard `tests/unit/test_aa1053_one_retry_owner.py` fails on
+    any re-ask after a cut outside the gateway), shadow calls, a request at the model's cap,
     past the route deadline, `LLM_BUDGET_RETRY=off`. And the **floor**: a reasoning-capable catalog model (Claude 5.x,
     GPT-5.x / 6.x, or `capabilities.reasoning`) is sent at least 4096 output tokens (or `capabilities.
     min_output_tokens`), over a call site's explicit value, after the stage x model row (`_call_catalog_model`;

@@ -66,6 +66,7 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "embedding_space.py",  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
              "json_reply.py",  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)
              "token_floor.py",  # S271: output-token floor + truncation retry rules (catalog row passed in, no I/O)
+             "effort_rule.py",  # AA-1053: the stage effort per provider kind (stage_params row; no row = nothing sent)
              "family_rule.py",  # AA-1024 A4: judge / writer model-family rule (catalog read only)
              "route_evidence.py",  # AA-1026 D7: route change evidence (reads shared.prompt_eval_runs by SQL)
              "app_profile.py",  # AA-1025 H1a: the app's AI switch (no row / unreadable = AI on)

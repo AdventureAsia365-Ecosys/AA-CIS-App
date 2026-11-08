@@ -22,10 +22,10 @@ next model. Never a third call. Ledger (the token_budget.py semantics, AA-927):
 - both requests share the gateway request (its route_trace) and the retry reports the attempt number of the reply it
   retried, so route_watch never reads the retry as a fallback rung; it still counts on the attempt cap.
 
-Not retried: a stage in ``NO_RETRY_STAGES`` (connection probes, ``a3_atomize`` which re-asks with its own ceiling), a
-request with ``budget_retry=False`` (no production call site since S271 W0; tests read one attempt with it), a shadow
-call, a request already at the model's output cap, or ``LLM_BUDGET_RETRY=off``. ``LLM_TOKEN_FLOOR=off`` switches the
-floor off.
+Not retried: a stage in ``NO_RETRY_STAGES`` (the connection probe only), a request with ``budget_retry=False`` (no
+production call site since S271 W0; tests read one attempt with it), a shadow call, a request already at the model's
+output cap, or ``LLM_BUDGET_RETRY=off``. ``LLM_TOKEN_FLOOR=off`` switches the floor off; ``NO_FLOOR_STAGES`` are never
+floored.
 
 S271 W0 (AA-900 l13): the gateway is the ONLY owner of this retry. Before, ``services/acp_shared/token_budget.py``
 sent T8 / T9 write / repair / FAQ filter with ``budget_retry=False`` and retried itself, but it only saw a cut reply
@@ -33,6 +33,11 @@ that came back with text: an EMPTY reply cut at max_tokens (a billed unusable re
 thinking using every token) raised inside the route, which then moved silently to the next model (3 of 3 Sonnet 5.5
 t9_write empty cuts answered by Sonnet 4.6 in the 06/11 ledger). Now token_budget only computes ceilings, and every
 retry records why (``RETRY_REASONS``, ``quality_signal.retry_reason`` on the retry's row and the cut row).
+
+AA-1053 (W1 contradiction #13): the last second owner went. ``a3_atomize`` was in ``NO_RETRY_STAGES`` and re-asked a
+cut read itself at 8192; now the gateway retries it like every stage (4096 -> 8192: the same ceilings, since a3 stays in
+``NO_FLOOR_STAGES``) and ``a3_atomize._ask_atoms`` stops on a read still cut. The guard
+``tests/unit/test_aa1053_one_retry_owner.py`` fails on any code outside the gateway that re-asks after a cut.
 
 **Effort floor** (``effort_floor``, the CI lint of tests/unit/test_aa900_s271_effort_floor_lint.py): the ceiling a
 call site should give a reasoning model at a thinking effort (``EFFORT_FLOORS``; the catalog's ``min_output_tokens``
@@ -68,9 +73,14 @@ RETRY_REASONS = (RETRY_CUT_REPLY, RETRY_BILLED_UNUSABLE_CUT, RETRY_TRUNCATED_REF
 EFFORT_FLOORS = {"low": tokens.REASONING_FLOOR, "medium": 8192, "high": 8192, "xhigh": 16000, "max": 16000}
 DEFAULT_EFFORT_FLOOR = 8192
 
-# Stages the gateway never retries (and never floors): the connection probe answers "ok" in a few tokens by design
-# (its cut is the expected outcome), and a3_atomize re-asks a cut read itself with its own ceiling.
-NO_RETRY_STAGES = frozenset({"adhoc_conn_test", "a3_atomize"})
+# The only stage the gateway never retries: the connection probe answers "ok" in a few tokens by design (its cut is
+# the expected outcome). AA-1053: nothing else; a cut retry outside the gateway is refused by
+# tests/unit/test_aa1053_one_retry_owner.py.
+NO_RETRY_STAGES = frozenset({"adhoc_conn_test"})
+# Stages the gateway never floors: the probe (above), and a3_atomize, whose first ceiling (4096) stays what it was when
+# it owned its retry (AA-1053 moved the retry, not the ceiling: a floored a3 on GPT-6 Luna would start at 8192). A
+# floor for a3 is its own measured change.
+NO_FLOOR_STAGES = frozenset({"adhoc_conn_test", "a3_atomize"})
 
 
 def _on(env: str) -> bool:
@@ -99,7 +109,7 @@ def floored_max_tokens(request: Any, model: Any) -> int:
     """The ceiling ``request`` is sent with on ``model`` once the floor applies (pure; the switch and the probe
     stages are honoured)."""
     max_tokens = int(getattr(request, "max_tokens", 0) or 0)
-    if model is None or not floor_enabled() or getattr(request, "stage", None) in NO_RETRY_STAGES:
+    if model is None or not floor_enabled() or getattr(request, "stage", None) in NO_FLOOR_STAGES:
         return max_tokens
     return tokens.floored(max_tokens, getattr(model, "model_key", None), _caps(model), _model_cap(model))
 
@@ -209,7 +219,34 @@ def is_cut_failure(exc: BaseException) -> bool:
     return any(isinstance(b, dict) and is_truncated(b.get("stop_reason")) for b in _billed_records(exc))
 
 
-__all__ = ["DEFAULT_EFFORT_FLOOR", "EFFORT_FLOORS", "FLOOR_SWITCH_ENV", "NO_RETRY_STAGES", "RETRY_BILLED_UNUSABLE_CUT",
-           "RETRY_CUT_REPLY", "RETRY_REASONS", "RETRY_SWITCH_ENV", "RETRY_TRUNCATED_REFUSAL", "apply_floor",
-           "cut_failure_cost", "cut_failure_reason", "effort_floor", "floor_enabled", "floored_max_tokens",
-           "is_cut_failure", "is_cut_reply", "retry_allowed", "retry_ceiling", "retry_enabled", "retry_request"]
+def route_ended_on_cut(exc: BaseException, _depth: int = 0) -> bool:
+    """AA-1053: True when a whole gateway request (``LLMClient.generate`` on a stage route) failed and at least one
+    model attempt in it ended on a cut. ``generate`` never surfaces a model's own cut error: the route wraps them in
+    ``RouteUnusableReply`` (every rung billed unusable; the billing dicts in ``logged_usage``, no cause) or in the
+    ``_all_failed`` error (a mix with an outage or a refused cut; every rung's error in ``route_failures``, only the
+    last one as cause, ``llm_error_class`` decided), and ``is_cut_failure`` reads neither. A caller that would ask
+    again uses this: the gateway already gave every cut rung its one truncation retry. Never raises."""
+    try:
+        if is_cut_failure(exc):
+            return True
+        seen: set = set()
+        cur: Optional[BaseException] = exc
+        while cur is not None and id(cur) not in seen and len(seen) < 16:
+            seen.add(id(cur))
+            if any(isinstance(b, dict) and is_truncated(b.get("stop_reason"))
+                   for b in (getattr(cur, "logged_usage", None) or ())):
+                return True
+            if _depth < 3 and any(isinstance(f, BaseException) and route_ended_on_cut(f, _depth + 1)
+                                  for f in (getattr(cur, "route_failures", None) or ())):
+                return True
+            cur = cur.__cause__ or cur.__context__
+    except Exception:  # noqa: BLE001 — an unreadable error is not a cut
+        return False
+    return False
+
+
+__all__ = ["DEFAULT_EFFORT_FLOOR", "EFFORT_FLOORS", "FLOOR_SWITCH_ENV", "NO_FLOOR_STAGES", "NO_RETRY_STAGES",
+           "RETRY_BILLED_UNUSABLE_CUT", "RETRY_CUT_REPLY", "RETRY_REASONS", "RETRY_SWITCH_ENV",
+           "RETRY_TRUNCATED_REFUSAL", "apply_floor", "cut_failure_cost", "cut_failure_reason", "effort_floor",
+           "floor_enabled", "floored_max_tokens", "is_cut_failure", "is_cut_reply", "retry_allowed", "retry_ceiling",
+           "retry_enabled", "retry_request", "route_ended_on_cut"]

@@ -18,13 +18,12 @@ Anthropic Messages API, OpenAI / Azure). The THINKING BUDGET of a stage (AA-741 
 ``reasoning_mode``; the Claude 5.x models take no numeric thinking budget (``budget_tokens`` is a 400 there) and bill
 their thinking as output inside max_tokens, so effort is the lever:
 
-- Anthropic Messages API: ``effort`` as ``output_config.effort`` (the deployment's ``effort_by_stage``;
-  client._call_anthropic_messages), ``reasoning_mode`` as the ``thinking`` object the model family takes
+- ``effort``: AA-1053 (W1 contradiction #14) — ``effort_rule.py`` is the one place that maps a row's effort to each
+  provider kind (Anthropic ``output_config.effort``, OpenAI / Azure ``reasoning_effort``, Converse
+  ``additionalModelRequestFields`` only when the catalog row states ``capabilities.converse_effort``).
+- ``reasoning_mode``: Anthropic Messages API only, as the ``thinking`` object the model family takes
   (``adapters.anthropic_messages.resolve_thinking``: 'off' = between_tools on Sonnet 5.5, disabled on Haiku 5.5 /
-  Opus 5 / Sonnet 5; Opus 5.5 and Fable cannot turn it off; 'adaptive' explicit).
-- OpenAI / Azure (Chat Completions): ``effort`` low / medium / high as ``reasoning_effort``, on a reasoning-capable
-  catalog model only (``shared/aa_llm/tokens.reasoning_capable``); xhigh / max and ``reasoning_mode`` are not sent.
-- Converse: neither (AA-803: Converse runs the model's default) until a probe has shown the provider's field.
+  Opus 5 / Sonnet 5; Opus 5.5 and Fable cannot turn it off; 'adaptive' explicit); not sent on OpenAI or Converse.
 
 A row field a path does not send is logged once (``stage_params_not_applied``). The legacy keys (haiku / sonnet,
 ``_legacy_chain``) are not catalog paths and read nothing here.
@@ -191,29 +190,6 @@ def effort_for(stage: Optional[str], model_key: str) -> Optional[str]:
     """The effort the stage x model row sets (None = not set)."""
     p = params_for(stage, model_key)
     return p.effort if p is not None else None
-
-
-# AA-741 S271: the efforts the Chat Completions ``reasoning_effort`` field takes on every GPT-5.x / 6.x reasoning model
-# the catalog has (xhigh / max are not sent: not every model takes them, and a 400 would cost the attempt).
-OPENAI_REASONING_EFFORTS = ("low", "medium", "high")
-
-
-def openai_reasoning_effort(stage: Optional[str], model) -> Optional[str]:
-    """The ``reasoning_effort`` to send on the OpenAI / Azure path for (stage, catalog model): the row's effort when
-    it is low / medium / high and the model reasons (``shared/aa_llm/tokens.reasoning_capable``: GPT-5.x and later, or
-    the catalog row's ``capabilities.reasoning``); None otherwise (nothing sent: the model's default). Never raises."""
-    try:
-        from shared.aa_llm import tokens
-
-        key = getattr(model, "model_key", "") or ""
-        effort = effort_for(stage, key)
-        if effort not in OPENAI_REASONING_EFFORTS:
-            return None
-        caps = getattr(model, "capabilities", None)
-        return effort if tokens.reasoning_capable(key, caps if isinstance(caps, dict) else None) else None
-    except Exception as e:  # noqa: BLE001 — a parameter read never breaks the call
-        logger.warning("stage_params_reasoning_effort_failed", stage=stage, error=str(e)[:200])
-        return None
 
 
 def reasoning_mode_for(stage: Optional[str], model_key: str) -> Optional[str]:

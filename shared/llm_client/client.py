@@ -26,7 +26,7 @@ from shared.aa_llm.ledger import failed_outcome as core_failed_outcome, outcome_
 from .errors import (ACCESS_DENIED, BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED,
                      TRUNCATED, LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
                      RouteRoleNotServed, account_level_class, classify)
-from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, family_rule,
+from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, effort_rule, family_rule,
                prompt_registry, stage_params, stream_sink, tenant_budget, token_floor)
 from . import app_profile
 from . import cassette
@@ -459,6 +459,9 @@ def _all_failed(message: str, failures: list) -> RuntimeError:
     if not cls:
         # Decided here: a mixed failure is not account-level, whatever its last cause says.
         exc.llm_error_class = THROTTLED if THROTTLED in classes else OTHER
+    # AA-1053: every attempt's error, not only the last (the cause): a caller reads whether any of them was a cut
+    # (token_floor.route_ended_on_cut) before it asks the whole route again.
+    exc.route_failures = tuple(failures)
     if failures:
         exc.__cause__ = failures[-1]
     return exc
@@ -738,7 +741,7 @@ def _converse_with_param_downgrades(call, kwargs: dict, model_key: str, schema: 
     choice of a structured call, switch `kwargs` to `auto` (`_use_auto_tool_choice`), remember the model
     and retry ONCE. A ValidationException is not billed."""
     try:
-        return _converse_dropping_rejected_temperature(call, kwargs, model_key)
+        return _converse_dropping_rejected_effort(call, kwargs, model_key)
     except Exception as e:  # noqa: BLE001 — botocore ClientError; anything else is re-raised below
         tool_choice = (kwargs.get("toolConfig") or {}).get("toolChoice") or {}
         if not schema or not tool_choice or "auto" in tool_choice or not _tool_choice_rejected(e):
@@ -747,7 +750,7 @@ def _converse_with_param_downgrades(call, kwargs: dict, model_key: str, schema: 
                        action="retry_with_auto_tool_choice; add the model to _NO_FORCED_TOOL_CHOICE_MARKERS")
         _FORCED_TOOL_REJECTED.add(model_key)
         _use_auto_tool_choice(kwargs, schema)
-        return _converse_dropping_rejected_temperature(call, kwargs, model_key)
+        return _converse_dropping_rejected_effort(call, kwargs, model_key)
 
 
 def _temperature_rejected(exc: BaseException) -> bool:
@@ -756,6 +759,28 @@ def _temperature_rejected(exc: BaseException) -> bool:
     text = f"{type(exc).__name__} {exc}".lower()
     return "validationexception" in text and "temperature" in text and any(
         w in text for w in ("deprecated", "not supported", "unsupported", "not allowed"))
+
+
+def _effort_field_rejected(exc: BaseException) -> bool:
+    """AA-1053: Bedrock's answer to an effort field (``additionalModelRequestFields``) the model does not take."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return "validationexception" in text and any(
+        w in text for w in ("output_config", "effort", "additionalmodelrequestfields", "extraneous key"))
+
+
+def _converse_dropping_rejected_effort(call, kwargs: dict, model_key: str):
+    """AA-1053: `_converse_dropping_rejected_temperature`; when Bedrock rejects the effort field a catalog row's
+    ``capabilities.converse_effort`` asked for, retry ONCE without it and drop it from `kwargs` (the caller reads
+    `kwargs` to know whether it was sent). A ValidationException is not billed. The real fix is the catalog row."""
+    try:
+        return _converse_dropping_rejected_temperature(call, kwargs, model_key)
+    except Exception as e:  # noqa: BLE001 — botocore ClientError; anything else is re-raised below
+        if effort_rule.CONVERSE_FIELD not in kwargs or not _effort_field_rejected(e):
+            raise
+        logger.warning("converse_effort_rejected", model=model_key, error=str(e)[:200],
+                       action="retry_without_effort; remove capabilities.converse_effort from the catalog row")
+        kwargs.pop(effort_rule.CONVERSE_FIELD, None)
+        return _converse_dropping_rejected_temperature(call, kwargs, model_key)
 
 
 def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
@@ -2475,9 +2500,15 @@ class LLMClient:
         # in the list, after the auto-tool instruction, so the whole stable prefix is cached.
         if _converse_cache_point(model, profile_id, request.system_prompt):
             kwargs["system"] = [*kwargs["system"], dict(CACHE_POINT_BLOCK)]
-        # AA-1017: a stage x model effort / reasoning_mode is not sent on Converse (see stage_params); said once.
-        stage_params.warn_not_applied(request.stage, model.model_key, "converse")
-        # AA-803: no `thinking` / `budget_tokens` field is ever sent (no additionalModelRequestFields), so
+        # AA-1053: the stage's effort in the Converse form the catalog row states (effort_rule.plan_converse; no row
+        # states one today, so nothing is sent); reasoning_mode is not sent on Converse. What is not sent is said once.
+        effort_plan = effort_rule.plan_converse(request.stage, model)
+        if effort_plan.wire:
+            kwargs[effort_rule.CONVERSE_FIELD] = dict(effort_plan.wire)
+        stage_params.warn_not_applied(request.stage, model.model_key, "converse",
+                                      applied=("effort",) if effort_plan.sent else ())
+        # AA-803: no `thinking` / `budget_tokens` field is ever sent (additionalModelRequestFields carries only the
+        # effort above, and only when the catalog row states its form), so
         # adaptive-thinking-only models (Haiku 5.5, Sonnet 5.5, Opus 5.5) run their default, and the
         # last message is always the user's (no assistant prefill, which those models reject).
 
@@ -2505,7 +2536,8 @@ class LLMClient:
                 {"tokens_in": t.get("in", 0) + t.get("cache_read", 0) + t.get("cache_write", 0),
                  "tokens_out": t.get("out", 0)}, cost_, stop_reason, provider_requests,
                 cache_read=t.get("cache_read", 0), cache_write=t.get("cache_write", 0))],
-                reply=raw_reply, request_id=request_id)
+                reply=raw_reply, request_id=request_id,
+                effort=effort_plan.sent if effort_rule.CONVERSE_FIELD in kwargs else None)
             exc.__cause__ = cause
             return exc
 
@@ -2558,7 +2590,7 @@ class LLMClient:
             except Exception as e:
                 raise billed_failure(str(e), e) from e
         else:
-            resp = _converse_dropping_rejected_temperature(rt.converse_stream, kwargs, model.model_key)
+            resp = _converse_dropping_rejected_effort(rt.converse_stream, kwargs, model.model_key)
             request_id = _bedrock_request_id(resp)
             parts = []
             usage = {}
@@ -2618,6 +2650,8 @@ class LLMClient:
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             stop_reason=stop_reason, provider_requests=provider_requests, pricing_mode=priced.pricing_mode,
             request_id=request_id, deployment_wire_id=profile_id,
+            # AA-1053: the effort the request ran with (None = none sent, or dropped after a rejection)
+            effort=effort_plan.sent if effort_rule.CONVERSE_FIELD in kwargs else None,
         )
 
     def _call_anthropic_messages(self, request: LLMRequest, model: CatalogModel,
@@ -2640,15 +2674,10 @@ class LLMClient:
             max_tokens = min(max_tokens, model.max_output_tokens)
         stream_sink.emit_restart(request.stage)
         on_delta = None if schema else stream_sink.delta_callback(request.stage)
-        # AA-1017: a stage x model effort beats the deployment's own effort_by_stage / effort; the catalog row's
-        # capabilities (effort_default) are passed only when it states some, so today's call is unchanged.
-        request_defaults = dep.request_defaults
-        effort = stage_params.effort_for(request.stage, model.model_key)
-        if effort and request.stage:
-            by_stage = request_defaults.get("effort_by_stage") if isinstance(request_defaults, dict) else None
-            request_defaults = {**(request_defaults or {}),
-                                "effort_by_stage": {**(by_stage if isinstance(by_stage, dict) else {}),
-                                                    request.stage: effort}}
+        # AA-1017 / AA-1053: the stage's effort (effort_rule, the one rule) beats the deployment's own effort_by_stage
+        # / effort; the catalog row's capabilities (effort_default) are passed only when it states some, so today's
+        # call is unchanged.
+        request_defaults = effort_rule.anthropic_request_defaults(request.stage, model, dep.request_defaults)
         extra = {"capabilities": model.capabilities} if getattr(model, "capabilities", None) else {}
         # AA-741 S271: the stage x model thinking mode ('off' / 'adaptive'), sent as the model family's `thinking`
         # object (adapters.anthropic_messages.resolve_thinking); not passed at all when the row sets none, so the
@@ -2749,11 +2778,11 @@ class LLMClient:
             kwargs["seed"] = request.seed
         reasoning_effort = None
         if catalog_model is not None:
-            # AA-741 S271: the stage x model effort as reasoning_effort (a reasoning model only; low / medium / high);
-            # reasoning_mode and any other effort are not sent on this path (said once).
-            reasoning_effort = stage_params.openai_reasoning_effort(request.stage, catalog_model)
-            if reasoning_effort is not None:
-                kwargs["reasoning_effort"] = reasoning_effort
+            # AA-741 S271 / AA-1053: the stage's effort as reasoning_effort (effort_rule.plan_openai: a reasoning model
+            # only; xhigh / max ask high); reasoning_mode is not sent on this path (said once).
+            effort_plan = effort_rule.plan_openai(request.stage, catalog_model)
+            reasoning_effort = effort_plan.sent
+            kwargs.update(effort_plan.wire)
             stage_params.warn_not_applied(request.stage, catalog_model.model_key, "openai_chat",
                                           applied=("effort",) if reasoning_effort else ())
         if request.json_schema:
