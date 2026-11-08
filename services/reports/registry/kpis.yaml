@@ -1210,8 +1210,9 @@ kpis:
 - id: K-DORA-DF
   version: 1
   name: Deployment frequency
-  definition: Successful deploy runs per app per week (deploy-dev.yml for CIS, Booking, Partner; deploy-web-dev.yml / deploy-portal-dev.yml
-    for Partner; deploy-lambdas.yml for TripPlanner; vercel-deploy.yml)
+  definition: Successful deploy runs per app per week (deploy-dev.yml for CIS, Booking, Partner; deploy-admin-dev.yml
+    for CIS, Booking; deploy-web-dev.yml / deploy-portal-dev.yml for Partner; deploy-lambdas.yml and deploy-web-dev.yml
+    for TripPlanner)
   unit: count
   threshold: '>= daily on active apps (elite band, context only)'
   sources: []
