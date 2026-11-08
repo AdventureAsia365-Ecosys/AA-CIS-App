@@ -818,12 +818,101 @@ def _provider_circuit_off(request, monkeypatch):
     provider_circuit.reset()
 
 
+# ── One replayed database per test module (AA-1024 l22 follow-up, S273) ──────────────────────────────────────────
+# Every module used to share the one replayed database, so whatever a module left behind reached every later module:
+# test_aa712_migration_226 drops the catalog and geo schemas (the catalog views of 225 / 228 / 241 ... and geo's later
+# tables never come back), x1_244_undo revokes every cis_app grant in the CIS schemas (also the grants later migrations
+# gave, 309 / 322 / 347 ...), a migration replay rewrites seed rows. The 4-shard CI passed only because of its file
+# order; the nightly random order (seed 92395) ended 55 failed / 224 errors. Now the session replays once into
+# DB_NAME, freezes that state as the template REPLAY_TEMPLATE_DB, and every module starts on a fresh copy of it
+# (CREATE DATABASE ... TEMPLATE: about 0.1 s for this size of database on postgres 15+, WAL_LOG strategy).
+# What a copy does NOT reset: cluster-wide objects (roles, role attributes and memberships, passwords) and the
+# database ACL, which the copy re-applies from the replay state. A module that changes a role must still undo it.
+# CIS_TEST_DB_RESET=off keeps the old shared database (for debugging one module's leftovers).
+REPLAY_TEMPLATE_DB = os.environ.get("CIS_TEST_DB_TEMPLATE", f"{DB_NAME}_replay_tpl")
+ADMIN_DB = os.environ.get("CIS_TEST_ADMIN_DB", "postgres")
+_DB_RESET = os.environ.get("CIS_TEST_DB_RESET", "on").strip().lower() not in ("off", "0", "false", "no")
+_TEMPLATE_ACL: dict = {}
+
+
+def _admin_conn():
+    conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=ADMIN_DB, user=DB_USER, password=DB_PASS)
+    conn.autocommit = True
+    return conn
+
+
+def _qi(name):
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _terminate_others(cur, dbname):
+    cur.execute("SELECT count(pg_terminate_backend(pid)) AS n FROM pg_stat_activity "
+                "WHERE datname = %s AND pid <> pg_backend_pid()", (dbname,))
+
+
+def _database_acl(cur, dbname):
+    """The database's owner and ACL (pg_database is cluster-wide: CREATE DATABASE ... TEMPLATE does not copy it)."""
+    cur.execute("SELECT pg_get_userbyid(datdba) AS owner, datacl IS NULL AS default_acl FROM pg_database "
+                "WHERE datname = %s", (dbname,))
+    owner, default_acl = cur.fetchone()
+    cur.execute("SELECT a.privilege_type AS privilege, "
+                "CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END AS grantee "
+                "FROM pg_database d, aclexplode(d.datacl) a WHERE d.datname = %s AND a.grantee <> d.datdba "
+                "ORDER BY a.grantee, a.privilege_type", (dbname,))
+    grants = [f"GRANT {privilege} ON DATABASE {{db}} TO {grantee}" for privilege, grantee in cur.fetchall()]
+    return {"owner": owner, "default_acl": default_acl, "grants": grants}
+
+
+def freeze_replay_template():
+    """Copy the replayed DB_NAME to REPLAY_TEMPLATE_DB (no connection may be open on DB_NAME meanwhile)."""
+    conn = _admin_conn()
+    try:
+        cur = conn.cursor()
+        _TEMPLATE_ACL.clear()
+        _TEMPLATE_ACL.update(_database_acl(cur, DB_NAME))
+        cur.execute(f"DROP DATABASE IF EXISTS {_qi(REPLAY_TEMPLATE_DB)}")
+        _terminate_others(cur, DB_NAME)
+        cur.execute(f"CREATE DATABASE {_qi(REPLAY_TEMPLATE_DB)} TEMPLATE {_qi(DB_NAME)}")
+        # nobody reads or writes the frozen state by mistake (a superuser can still copy it)
+        cur.execute(f"ALTER DATABASE {_qi(REPLAY_TEMPLATE_DB)} ALLOW_CONNECTIONS false")
+    finally:
+        conn.close()
+
+
+def reset_db_from_template():
+    """Replace DB_NAME with a fresh copy of the replay template: every open connection to it is closed."""
+    conn = _admin_conn()
+    try:
+        cur = conn.cursor()
+        _terminate_others(cur, DB_NAME)
+        cur.execute(f"DROP DATABASE IF EXISTS {_qi(DB_NAME)}")
+        cur.execute(f"CREATE DATABASE {_qi(DB_NAME)} TEMPLATE {_qi(REPLAY_TEMPLATE_DB)} "
+                    f"OWNER {_qi(_TEMPLATE_ACL['owner'])}")
+        if not _TEMPLATE_ACL["default_acl"]:
+            cur.execute(f"REVOKE ALL ON DATABASE {_qi(DB_NAME)} FROM PUBLIC")
+            for grant in _TEMPLATE_ACL["grants"]:
+                cur.execute(grant.format(db=_qi(DB_NAME)))
+    finally:
+        conn.close()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _setup_schema():
-    """Apply schema once per session."""
+    """Apply schema once per session, then freeze it as the template every module starts from."""
     conn = _get_conn()
     _apply_schema(conn)
     conn.close()
+    if _DB_RESET:
+        freeze_replay_template()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _fresh_db_per_module(_setup_schema):
+    """Each test module starts on a fresh copy of the replayed database (see REPLAY_TEMPLATE_DB). Runs before the
+    module's own module-scoped fixtures (autouse fixtures of a conftest come first within their scope)."""
+    if _DB_RESET:
+        reset_db_from_template()
+    yield
 
 
 @pytest.fixture
