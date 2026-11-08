@@ -240,15 +240,17 @@ def test_the_row_effort_reaches_a_reasoning_model(table, effort):
     assert kwargs["max_completion_tokens"] == 4096                       # the gateway floor is not this lane's
 
 
-def test_xhigh_a_mode_or_a_model_that_does_not_reason_send_nothing(table, monkeypatch):
+def test_xhigh_asks_high_a_mode_or_a_model_that_does_not_reason_send_nothing(table, monkeypatch):
+    """AA-1053: xhigh / max map explicitly to high (effort_rule.OPENAI_EFFORTS), the highest value every GPT
+    reasoning model takes; before, nothing was sent (the model's default)."""
     warn = MagicMock()
     monkeypatch.setattr(stage_params.logger, "warning", warn)
     table[("t9_write", "gpt-6-luna-openai")] = StageModelParams("t9_write", "gpt-6-luna-openai", effort="xhigh",
                                                                 reasoning_mode="off")
-    _, kwargs = _openai_call(GPT_OPENAI)
-    assert "reasoning_effort" not in kwargs
+    resp, kwargs = _openai_call(GPT_OPENAI)
+    assert kwargs["reasoning_effort"] == "high" and resp.effort == "high"
     assert warn.call_args.args[0] == "stage_params_not_applied"
-    assert warn.call_args.kwargs["effort"] == "xhigh" and warn.call_args.kwargs["reasoning_mode"] == "off"
+    assert "effort" not in warn.call_args.kwargs and warn.call_args.kwargs["reasoning_mode"] == "off"
     table[("t9_write", "lantern-mini")] = StageModelParams("t9_write", "lantern-mini", effort="low")
     _, kwargs = _openai_call(LANTERN)
     assert "reasoning_effort" not in kwargs
