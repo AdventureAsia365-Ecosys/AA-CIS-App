@@ -115,7 +115,7 @@ jobs:
         run: |
           python3 .github/scripts/ci_scope.py --event "$EVENT" \
             --area integration=api/migrations/,tests/integration/ \
-            --area docker=Dockerfile,.dockerignore,requirements.txt,.trivyignore \
+            --area docker=Dockerfile,.dockerignore,requirements.txt,.trivyignore,.url-wheels/ \
             --area frontend=frontend/ | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.12
@@ -146,10 +146,18 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit==2.10.1 --quiet
 
+      # S273: the URL-pinned spaCy model wheel comes from the actions cache (keyed on its URL + sha256), downloaded with
+      # retries only on a miss and always checked against the pin; install from the step's rewritten requirements file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
       # AA-868: failing. Accepted findings live in .github/pip-audit-ignore.txt with an expiry date;
       # an expired entry or any finding not on the list turns this check red.
       - name: Audit main requirements (failing)
-        run: bash .github/scripts/pip_audit_gate.sh requirements.txt
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
+        run: bash .github/scripts/pip_audit_gate.sh "$REQ"
 
 
   # AA-1032 (faster CI): the unit suite runs as UNIT_SHARDS parallel jobs ("Unit shard i/N"), each on 4 pytest-xdist
@@ -184,10 +192,18 @@ jobs:
         with:
           enable-cache: true
 
+      # S273: the URL-pinned spaCy model wheel comes from the actions cache (keyed on its URL + sha256), downloaded with
+      # retries only on a miss and always checked against the pin; install from the step's rewritten requirements file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
       - name: Install dependencies
         # requirements-dev.txt pins the coverage version (CI only; requirements.txt feeds the production image).
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
         run: |
-          uv pip install --system -r requirements.txt -r requirements-dev.txt
+          uv pip install --system -r "$REQ" -r requirements-dev.txt
 
       - name: Run unit tests (this shard)
         env:
@@ -270,10 +286,17 @@ jobs:
         with:
           enable-cache: true
 
+      # S273: the spaCy model wheel from the actions cache (see "Unit shard"); install from the rewritten file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
       - name: Install dependencies
         # Q0 red on base runs pytest on the base tip; coverage comes from the pinned requirements-dev.txt.
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
         run: |
-          uv pip install --system -r requirements.txt -r requirements-dev.txt
+          uv pip install --system -r "$REQ" -r requirements-dev.txt
 
       - uses: actions/download-artifact@v4
         with:
@@ -401,9 +424,16 @@ jobs:
         with:
           enable-cache: true
 
+      # S273: the spaCy model wheel from the actions cache (see "Unit shard"); install from the rewritten file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
       - name: Install dependencies
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
         run: |
-          uv pip install --system -r requirements.txt
+          uv pip install --system -r "$REQ"
           uv pip install --system -r tests/integration/requirements-integration.txt
 
       - name: Setup test DB user
@@ -657,6 +687,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # S273: the verified spaCy model wheel goes into the build context's .url-wheels/ seed (bind-mounted by the
+      # Dockerfile), so the image build does not download it from github.com.
+      - name: URL-pinned wheels (cached, hash-checked)
+        uses: ./.github/actions/url-wheels
+        with:
+          copy-to: .url-wheels
 
       - name: Build Docker image
         run: |

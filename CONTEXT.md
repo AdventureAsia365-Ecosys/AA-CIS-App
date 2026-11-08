@@ -1748,7 +1748,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
   (`.github/coverage-ratchet.json`, `.github/scripts/coverage_ratchet.py`): below `floor` fails, lowering
   `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. `deploy-dev.yml` does
-  not trigger on `frontend/**` (the image has no frontend file). Security headers on the deployed host are checked
+  not trigger on `frontend/**` (the image has no frontend file). The URL-pinned wheel of `requirements.txt` (the
+  spaCy model) is never downloaded per job: `.github/actions/url-wheels` restores it from the actions cache (key = the
+  URL + sha256 pins, warmed on main by Deploy Dev and the nightly run), downloads it with retries only on a miss, checks
+  the pinned sha256 every time and hands the job a rewritten requirements file pointing at the local wheel; Docker
+  builds read the verified copy from the `.url-wheels/` seed (bind mount) or download it the same way
+  (`.github/scripts/url_wheels.py`, S273). Security headers on the deployed host are checked
   by the UI smoke specs (`aa876-security-headers.spec.ts`, `aa885-portal-host.spec.ts`).
 - **Public repo, no resource IDs (AA-902)**: the required **Lint** job runs
   `.github/scripts/check_resource_ids.py` over every tracked file and fails on an AWS account ID, an ARN
