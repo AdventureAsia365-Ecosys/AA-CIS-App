@@ -122,10 +122,14 @@ async def run(ctx: JobContext) -> dict:
         display="blog_json" if context.get("channel") == "blog" else "text",
     )
     await ctx.progress(phase="writing", piece_id=piece_id)
-    await _run_write_with_progress(UUID(str(request_id)), UUID(str(piece_id)), context, pool, progress)
+    # AA-1049 W3: a paid trial may switch a W3 option on for THIS job only (payload trial_flags, audit tenants only;
+    # services/quality/trial_flags.py). No payload key = main's path, no extra read.
+    from services.quality import trial_flags
+    async with trial_flags.scope(pool, KIND, p, p.get("tenant_id") or context.get("tenant_id")) as trial:
+        await _run_write_with_progress(UUID(str(request_id)), UUID(str(piece_id)), context, pool, progress)
 
     async with pool.acquire() as conn:
         final = await conn.fetchval(
             "SELECT status FROM acp_shared.content_piece WHERE piece_id = $1::uuid", piece_id)
     await ctx.progress(phase="done")
-    return {"piece_id": piece_id, "piece_status": final}
+    return {"piece_id": piece_id, "piece_status": final, **({"trial_flags": trial} if trial else {})}

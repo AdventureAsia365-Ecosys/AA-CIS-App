@@ -4265,6 +4265,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     call twice and resumes without a new write, and a stricter status (any enforce finding left = `needs_review`). Dry
     store seam `t2_store.py` (store, review row and checkpoints; no DB write); free replay
     `scripts/quality/replay_aa1049_t2.py` (declared / undeclared / MISS buckets against a replay recorded on main).
+  - **Per-job trial of the W3 switches** (`services/quality/trial_flags.py`): a `t2_rewrite` / `t9_write` job
+    payload may carry `trial_flags` (`T2_ORCHESTRATOR`; `T9_SEO_BUILDER`, `T9_REGRESSION_GUARD_MODE`, only the
+    values the switch knows). Honoured for an audit tenant only (`shared.tenants.kind = 'demo'`, not the pilot);
+    anything else runs main's path. Scoped to the job's task (a ContextVar), never the worker env; the job result
+    records `trial_flags` (requested / applied / refused). No router sets it: paid trials enqueue it by script.
 - **T3 — QA Gate**: an automatic validate→repair loop (max 2 repairs) on T2's output. There is no
   manual tenant approval step: `status='approved'` is T3's own automatic result, not a button.
   - **Blocking and repair (AA-639).** T3 blocks only on `_HARD_BLOCK_CODES` and passes the specific
