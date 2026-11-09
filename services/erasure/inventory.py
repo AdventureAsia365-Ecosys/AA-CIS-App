@@ -153,6 +153,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # AA-1048 (388): claim labels of the tenant's pieces and versions (claim spans and reasons quote the tenant text).
     # Platform (A1) claims have no tenant and stay.
     _d("shared.eval_claim_label", "claim-level labels of the tenant's content (claim spans and reasons)"),
+    # AA-1050 (391): the claim instrument's shadow verdicts of the tenant's pieces and versions (no text, spans only).
+    _d("shared.claim_shadow_verdict", "claim-instrument shadow verdicts of the tenant's content (ids and spans)"),
     _d("shared.pipeline_runs", "tenant pipeline batches (raw rows follow through FKs)"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
     _d("shared.tenant_api_usage_monthly", "monthly API usage rollup of the tenant"),
