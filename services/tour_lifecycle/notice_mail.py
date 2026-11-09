@@ -137,13 +137,12 @@ def _restored_lines(n: dict) -> list[str]:
     s = n.get("summary") or {}
     lines = [f"Good news: {n['tour_name']} is back on sale with Adventure Asia from {s.get('back_on') or 'today'}.",
              "You can publish new articles and posts about it again from your Content studio."]
-    # AA-1039: the pages we moved to draft while the tour was off sale (the restore's republish jobs fill these lists)
+    # AA-1039: the pages we moved to draft while the tour was off sale (the restore's republish jobs fill these lists;
+    # a page still waiting is never named: the mail goes once none waits, and the digest backstop moves the rest to
+    # pages_kept first)
     for page in s.get("pages_back") or []:
         lines.append(f"Your page {page.get('url')}, which we moved to draft while the tour was off sale, is online "
                      "again.")
-    for page in s.get("pages_returning") or []:
-        lines.append(f"Your page {page.get('url')}, which we moved to draft while the tour was off sale, is being put "
-                     "back online.")
     for page in s.get("pages_kept") or []:
         lines.append(f"Your page {page.get('url')} is still in draft: we could not put it back online for you. You can "
                      "publish it again from WordPress when it is ready.")

@@ -92,9 +92,30 @@ REQUEUE_SCHEMA_MISSING_SQL = f"""
 """
 
 NOTICE_SQL = """
-    SELECT n.notice_id::text AS notice_id, n.tenant_id::text AS tenant_id, n.event, n.tour_name, n.delivery,
-           n.summary, n.mailed_at, n.created_at
+    SELECT n.notice_id::text AS notice_id, n.tenant_id::text AS tenant_id, n.tour_id::text AS tour_id, n.event,
+           n.tour_name, n.delivery, n.summary, n.mailed_at, n.created_at
       FROM acp_shared.tenant_tour_notice n
+"""
+
+# A restored notice whose key is not served at send time: closed without a mail (mailed_at set, message_id NULL, the
+# reason in skipped_reason), so neither the digest nor a later mail job sends a stale "back on sale".
+CLOSE_UNSENT_SQL = """
+    UPDATE acp_shared.tenant_tour_notice
+       SET mailed_at = now(), mail_job_id = $2::uuid, message_id = NULL, skipped_reason = $3
+     WHERE notice_id = ANY($1::uuid[]) AND mailed_at IS NULL
+"""
+
+# The digest backstop of a restored notice still waiting for pages: they move to pages_kept (returns the summary).
+KEEP_WAITING_SQL = """
+    UPDATE acp_shared.tenant_tour_notice n
+       SET summary = n.summary
+           || jsonb_build_object('pages_kept', COALESCE(n.summary -> 'pages_kept', '[]'::jsonb)
+                                 || COALESCE((SELECT jsonb_agg(jsonb_build_object('url', x ->> 'url'))
+                                                FROM jsonb_array_elements(n.summary -> 'pages_returning') x),
+                                             '[]'::jsonb))
+           || jsonb_build_object('pages_returning', '[]'::jsonb)
+     WHERE n.notice_id = $1::uuid AND jsonb_typeof(n.summary -> 'pages_returning') = 'array'
+    RETURNING n.summary
 """
 
 MARK_MAILED_SQL = """
@@ -268,13 +289,18 @@ async def run_republish(ctx: JobContext) -> dict:
     try:
         result = await fanout.republish_page(ctx.pool, str(flag_id), read_secret=read_secret,
                                              adapter_for=adapter_for)
-    except fanout.DraftRefused as exc:
-        if exc.permanent or ctx.job.attempt >= ctx.job.max_attempts:
-            # the last try: the page stays in draft, the tenant's mail says so and goes out
-            given_up = await fanout.give_up_republish(ctx.pool, str(flag_id), exc.reason)
+    except Exception as exc:  # noqa: BLE001 — every failure: retried, or on the last try the page is given up
+        reason = exc.reason if isinstance(exc, fanout.DraftRefused) else f"{type(exc).__name__}: {exc}"[:300]
+        last = ctx.job.attempt >= ctx.job.max_attempts or getattr(exc, "permanent", False) \
+            or isinstance(exc, NonRetryable)
+        if last:
+            # the page stays in draft (a claim left behind is reverted), the tenant's mail says so and goes out
+            given_up = await fanout.give_up_republish(ctx.pool, str(flag_id), reason)
             await _enqueue_notice_mail(ctx, given_up)
-            raise NonRetryable(f"page not put back: {exc.reason}") from exc
-        raise RuntimeError(f"page not put back yet: {exc.reason}") from exc
+            raise NonRetryable(f"page not put back: {reason}") from exc
+        if isinstance(exc, fanout.DraftRefused):
+            raise RuntimeError(f"page not put back yet: {reason}") from exc
+        raise
     if result.get("status") == "republished":
         from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
         try:
@@ -312,12 +338,39 @@ def _in_digest(notice: dict, *, now: datetime) -> bool:
     return created is not None and now - created >= timedelta(seconds=IMMEDIATE_BACKSTOP_S)
 
 
+async def _prepare_restored(ctx: JobContext, notices: list[dict]) -> tuple[list[dict], int]:
+    """The claimed notices to send, after two checks on each "back on sale" notice:
+    - its key is no longer served at send time (retired or paused again since): closed without a mail
+      (:data:`CLOSE_UNSENT_SQL`), so the tenant is never told a tour is back that is not;
+    - pages it still waits for (``pages_returning``: a republish job that never finished, taken by the digest
+      backstop) move to ``pages_kept``, so the mail never says a page "is being put back" when nobody knows."""
+    out, closed = [], []
+    for n in notices:
+        if n["event"] != "restored":
+            out.append(n)
+            continue
+        if not fanout.served(await ctx.pool.fetchval(fanout.TOUR_STATE_SQL, n["tour_id"])):
+            closed.append(n["notice_id"])
+            continue
+        if (n["summary"] or {}).get("pages_returning"):
+            fresh = await ctx.pool.fetchval(KEEP_WAITING_SQL, n["notice_id"])
+            if fresh is not None:
+                n = {**n, "summary": _summary(fresh)}
+        out.append(n)
+    if closed:
+        await ctx.pool.execute(CLOSE_UNSENT_SQL, closed, str(ctx.job_id), "not sent: the tour is off sale again")
+    return out, len(closed)
+
+
 async def _send_tenant(ctx: JobContext, cfg, tenant_id: str, notices: list[dict], ses) -> dict:
     claimed = {r["notice_id"] for r in await ctx.pool.fetch(CLAIM_SQL, [n["notice_id"] for n in notices],
                                                             str(ctx.job_id))}
     notices = [n for n in notices if n["notice_id"] in claimed]
     if not notices:
         return {"tenant_id": tenant_id, "status": "skipped", "reason": "held_by_another_mail_job"}
+    notices, closed = await _prepare_restored(ctx, notices)
+    if not notices:
+        return {"tenant_id": tenant_id, "status": "skipped", "reason": "tour_not_served", "closed": closed}
     ids = [n["notice_id"] for n in notices]
     agency = await notice_mail.tenant_name(ctx.pool, tenant_id)
     if agency is None:

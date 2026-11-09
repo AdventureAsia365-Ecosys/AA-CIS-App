@@ -3273,13 +3273,20 @@ posts, else in the daily digest (08:00 UTC). A fan-out replay re-enqueues every 
 event (mail job key `tour_notice_email:<notice_id>`), and the digest also takes an `immediate` notice left unmailed
 for an hour (a dead mail job); a mail job claims its notices before sending, so the two never both send one. A second
 `retired` event of a retired key (a reason change) adds no flag, notice or mail. `restored` resolves the open flags
-and writes the "back on sale" notice only for tenants whose latest notice is `retired` (never after a pause); the
-WordPress pages the retirement it undoes already moved to draft (flags resolved `drafted` of a `retired` event since the
-key's previous `restored` event, marked once in `detail.restore_republish`) get one `restored_page_republish` job each,
-inserted in the fan-out transaction: the page is published again (and its `publish_log` row back to `published`) only
-when the tour is served, the piece is still publishable (status, AA-986 rule, no open subject-gate flag, no newer live
-post of it) and WordPress still has it as a draft; a page the tenant removed, published or scheduled is left alone.
-That tenant's notice is `immediate` but mailed by the last of those jobs, so it says which pages are back. Before
+and writes the "back on sale" notice only for tenants whose latest notice is `retired` (never after a pause). The
+draft job moves only a post WordPress says is `publish` (a private / pending / scheduled / trashed one is left alone,
+flag resolved `unpublished`) and records `wordpress_before = 'publish'` + the post's `modified_gmt`; its final write
+holds the key lock, and a restore that resolved the flag meanwhile gets the page published back. On restore, the
+WordPress pages the retirement it undoes moved from `publish` to draft (flags resolved `drafted` of a `retired` event
+since the key's previous `restored` event, marked once in `detail.restore_republish`) get one
+`restored_page_republish` job each, inserted in the fan-out transaction (an older flag without the recorded status
+stays in draft and the tenant is told). The job claims first under the key lock (`publish_log` back to `published`),
+then publishes the post, and reverts the claim if WordPress refuses; it publishes only when the tour is served, the
+piece is the request's latest publishable version (status, AA-986 rule, no open subject-gate flag, no other live post
+of the request) and WordPress still has the same draft (status `draft`, `modified_gmt` unchanged). Served means the
+liveness state `served`; a key without a state is not served. That tenant's notice is `immediate` but mailed by the
+last of those jobs, so it says which pages are back; a "back on sale" notice of a key off sale again at send time is
+closed unsent. Before
 CIS 360 is applied the fan-out fails retryable and the sampler re-queues those jobs once the tables exist.
 Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
 verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
