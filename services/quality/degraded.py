@@ -52,6 +52,16 @@ DAY_CHECK_SKIPPED = "day_check_skipped"
 JUDGE_UNAVAILABLE = "judge_unavailable"
 BRAND_AUDIT_UNAVAILABLE = "brand_audit_unavailable"
 REPAIR_CONTRACT = "repair_contract"
+# AA-1042 (Quality guard): a fallback model wrote (part of) the output. Not a fail-open detector: severity "count"
+# (marked in QA) unless the stage's hold switch is on (shared.llm_route_policy.hold_fallback_writes): then "hard"
+# (services/quality/route_guard.py).
+FALLBACK_WRITER = "fallback_writer"
+# S271 W0 (AA-900 l13): a measuring answer (judge / validate / decide role) the gateway could not give from the
+# calibrated instrument: a fallback rung (route position > 0) or an uncalibrated model (nova-lite) answered it; and a
+# judge of the same model family as a writer of the same output (ADR 0009 decision 12). Marked ("count") only: no hold
+# changes in W0 (services/quality/route_guard.py says what each caller does with them).
+FALLBACK_INSTRUMENT = "fallback_instrument"
+SAME_FAMILY_PAIR = "same_family_pair"
 
 SEVERITIES = ("hard", "block", "soft", "count")
 
@@ -65,6 +75,9 @@ REGISTRY: dict[str, str] = {
     JUDGE_UNAVAILABLE: "block",
     BRAND_AUDIT_UNAVAILABLE: "count",   # it already fails closed (manual_check)
     REPAIR_CONTRACT: "soft",            # the repair was reverted; the text is the pre-repair text
+    FALLBACK_WRITER: "count",           # AA-1042: marked; "hard" when the stage holds fallback writes (route_guard)
+    FALLBACK_INSTRUMENT: "count",       # S271 W0: marked only (W0 changes no hold)
+    SAME_FAMILY_PAIR: "count",          # S271 W0: marked only (the eval runners refuse such a verdict themselves)
 }
 
 
@@ -174,7 +187,12 @@ def apply_a1_hold(state: dict) -> dict:
         return state
     codes = list(dict.fromkeys(list(state.get("failure_codes") or []) + [HOLD_CODE]))
     feedback = state.get("feedback") or ""
-    why = f"{HOLD_CODE}: {', '.join(hard_names(lst))} did not run — re-run once the detector is healthy"
+    names = hard_names(lst)
+    detectors = [n for n in names if n != FALLBACK_WRITER]
+    parts = ([f"{', '.join(detectors)} did not run — re-run once the detector is healthy"] if detectors else [])
+    if FALLBACK_WRITER in names:   # AA-1042: held because the stage holds content written by a fallback model
+        parts.append("written by a fallback model — review it, or re-run once the primary model answers")
+    why = f"{HOLD_CODE}: " + "; ".join(parts)
     out = {**state, "failure_codes": codes, "brand_audit_status": "manual_check",
            "feedback": f"{feedback}; {why}" if feedback else why}
     if state.get("revalidate_ran"):

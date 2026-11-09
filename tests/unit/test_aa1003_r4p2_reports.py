@@ -106,7 +106,19 @@ def test_tp01_funnel_conversions_and_trend():
     f = out.output["funnel"]
     assert len(f["weeks"]) == 5 and f["this"]["ai_search"] == 7 and f["previous"]["ai_search"] == 3
     assert "Top pinned components" in out.markdown and "## Not readable from CIS" in out.markdown
-    assert "80 sessions, 14 trips started, 2 inquiries sent" in out.summary
+    assert "80 sessions, 14 trips started, 4 trips edited" in out.summary
+    # R0 hotfix (root ADR 0019 B2B-only model): the inquiry step is historical, never red or amber
+    assert k["K-TP-T2I"]["status"] == "historical" and "hand-off is off" in k["K-TP-T2I"]["note"]
+    assert "Inquiries sent (historical)" in out.markdown and "## Inquiries (historical)" in out.markdown
+    assert "Trip to inquiry (historical)" in out.markdown
+    assert "inquiries sent" not in out.summary
+
+
+def test_tp01_inquiry_step_stays_historical_on_a_quiet_week():
+    out = planner.render_tp01(_reg(), _reg().report("TP-01"), MON, SUN, {"traffic": {"rows": []}, "searches": [],
+                                                                        "spend": []}, NOW)
+    k = _kpis(out)
+    assert k["K-TP-T2I"]["status"] == "historical" and k["K-TP-T2I"]["value"] is None
 
 
 def test_tp01_missing_contract_view_and_quiet_week():

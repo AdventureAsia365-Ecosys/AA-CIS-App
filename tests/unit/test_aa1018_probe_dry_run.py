@@ -89,6 +89,40 @@ def test_the_plan_is_capped(monkeypatch):
     assert any(s["why"].startswith("over_limit") for s in plan["skipped"])
 
 
+def test_the_cap_covers_a_registry_the_size_of_cis_376_with_headroom():
+    """AA-1042 (S269): CIS 376 brings the enabled deployments on enabled connections to 33 (acc2 6 with 2 embedding
+    rows, acc3 12, anthropic-direct 13, openai-direct 2). Connections are walked in name order, so at a cap of 30 the
+    last rows (openai-direct: the last-resort writer rung) were skipped as over_limit and their access_state went
+    stale. The cap must cover that registry and leave room for the next rows."""
+    anthropic_on = ProviderConnection(connection_key="anthropic-direct", kind="anthropic", auth_mode="api_key",
+                                      label="x", data_scope="vendor_direct", enabled=True,
+                                      secret_name="aa-llm/dev/anthropic-direct", base_url="https://api.anthropic.com")
+    openai_on = ProviderConnection(connection_key="openai-direct", kind="openai", auth_mode="api_key", label="x",
+                                   data_scope="vendor_direct", enabled=True, secret_name="aa-llm/dev/openai-direct")
+    conns = {"acc2": BUILTIN_CONNECTIONS["acc2"], "acc3": BUILTIN_CONNECTIONS["acc3"],
+             "anthropic-direct": anthropic_on, "openai-direct": openai_on}
+    sizes = {"acc2": (4, 2), "acc3": (12, 0), "anthropic-direct": (13, 0), "openai-direct": (2, 0)}
+    models, deps = {}, []
+    for conn, (text, embed) in sizes.items():
+        for i in range(text + embed):
+            key = f"{conn}-m{i}"
+            models[key] = _model(key, style="embed" if i >= text else "converse")
+            deps.append(_dep(key, conn))
+
+    def testable(conn, mine):
+        return [(d, models[d.model_key]) for d in mine if models[d.model_key].api_style != "embed"]
+
+    def embeddable(conn, mine):
+        return [(d, models[d.model_key]) for d in mine if models[d.model_key].api_style == "embed"]
+
+    assert all(not c.policy_problems() for c in conns.values())
+    plan = probe.build_plan(conns, deps, testable, embeddable)
+    assert len(plan["probes"]) == 33 and plan["skipped"] == []
+    assert [p["connection_key"] for p in plan["probes"]][-2:] == ["openai-direct", "openai-direct"]
+    assert probe.MAX_PROBES >= 33 + 10                                   # room for the next catalog rows
+    assert plan["estimated_usd"] < 0.03                                  # the S262 bound for a daily run
+
+
 def _ctx(payload):
     ctx = MagicMock()
     ctx.payload = payload
@@ -250,7 +284,8 @@ async def test_load_llm_carries_connections_invariant_and_the_last_probe(monkeyp
 
 # ── Bedrock client settings from the connection row ────────────────────────────────────────────────────────────────
 
-def test_a_task_role_runtime_keeps_todays_config_when_the_row_is_null(monkeypatch):
+def test_a_task_role_runtime_makes_one_attempt_when_the_row_is_null(monkeypatch):
+    """AA-642 A3: the gateway owns retries — one botocore attempt per request (was 2 before A3)."""
     from shared.llm_client import bedrock_satellite as bs
     built = []
     monkeypatch.setattr(bs.boto3, "client", lambda *a, **kw: built.append(kw) or SimpleNamespace())
@@ -258,12 +293,12 @@ def test_a_task_role_runtime_keeps_todays_config_when_the_row_is_null(monkeypatc
     bs.native_runtime(BUILTIN_CONNECTIONS["acc2"])
     cfg = built[0]["config"]
     assert cfg.read_timeout == 300 and cfg.connect_timeout == 10
-    assert cfg.retries == {"total_max_attempts": 2, "mode": "standard"}
+    assert cfg.retries == {"total_max_attempts": 1, "mode": "standard"}
     bs.native_runtime(BUILTIN_CONNECTIONS["acc2"], read_timeout=30, max_attempts=1)     # the embed client
     assert built[1]["config"].read_timeout == 30 and built[1]["config"].retries["total_max_attempts"] == 1
 
 
-def test_a_task_role_runtime_takes_the_rows_timeout_and_retries(monkeypatch):
+def test_a_task_role_runtime_takes_the_rows_timeout_but_never_its_retries(monkeypatch):
     from dataclasses import replace
 
     from shared.llm_client import bedrock_satellite as bs
@@ -274,19 +309,22 @@ def test_a_task_role_runtime_takes_the_rows_timeout_and_retries(monkeypatch):
     cfg = built[0]["config"]
     assert cfg.read_timeout == 120 and cfg.retries["total_max_attempts"] == 1
     bs.native_runtime(replace(BUILTIN_CONNECTIONS["acc2"], timeout_s=None, max_retries=3), read_timeout=30)
-    assert built[1]["config"].read_timeout == 30 and built[1]["config"].retries["total_max_attempts"] == 4
+    assert built[1]["config"].read_timeout == 30 and built[1]["config"].retries["total_max_attempts"] == 1
+    bs.native_runtime(BUILTIN_CONNECTIONS["acc2"], max_attempts=4)                    # an old caller: still one
+    assert built[2]["config"].retries["total_max_attempts"] == 1
 
 
-def test_the_satellite_runtime_has_no_config_when_the_row_is_null(monkeypatch):
+def test_the_satellite_runtime_makes_one_attempt_when_the_row_is_null(monkeypatch):
     from shared.llm_client import bedrock_satellite as bs
     session = MagicMock()
     monkeypatch.setattr(bs, "_get_satellite_session", lambda account: session)
     monkeypatch.setattr(bs, "satellite_connection", lambda account: BUILTIN_CONNECTIONS["acc3"])
     bs.get_satellite_client("bedrock-runtime", account="acc3")
-    assert "config" not in session.client.call_args.kwargs                # byte for byte today's client
+    cfg = session.client.call_args.kwargs["config"]
+    assert cfg.retries == {"total_max_attempts": 1, "mode": "standard"}       # botocore's default would retry
 
 
-def test_the_satellite_runtime_takes_the_rows_settings_but_not_the_control_plane(monkeypatch):
+def test_the_satellite_runtime_takes_the_rows_timeout_but_not_the_control_plane(monkeypatch):
     from dataclasses import replace
 
     from shared.llm_client import bedrock_satellite as bs
@@ -296,6 +334,6 @@ def test_the_satellite_runtime_takes_the_rows_settings_but_not_the_control_plane
     monkeypatch.setattr(bs, "satellite_connection", lambda account: conn)
     bs.get_satellite_client("bedrock-runtime", account="acc3")
     cfg = session.client.call_args.kwargs["config"]
-    assert cfg.read_timeout == 90 and cfg.retries == {"total_max_attempts": 2, "mode": "standard"}
+    assert cfg.read_timeout == 90 and cfg.retries == {"total_max_attempts": 1, "mode": "standard"}
     bs.get_satellite_client("bedrock", account="acc3")                    # Batch control plane: unchanged
     assert "config" not in session.client.call_args.kwargs

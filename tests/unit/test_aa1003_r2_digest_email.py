@@ -37,7 +37,6 @@ def _green_facts() -> dict:
                                "ran_at": "2026-10-29T04:46:00+00:00"}]},
         "deploys": {"since": "x", "workers": [], "migrations": []},
         "waves": {"open": []},
-        "handoff": {"last_check": None},
         "reports": {"flagged": []},
     }
 
@@ -66,13 +65,12 @@ def test_digest_flags_every_kind_of_problem():
     facts["probes"]["probes"][0].update(status="failed", value=4)
     facts["reports"]["flagged"] = [{"id": "EX-04", "name": "KPI scorecard", "due": "overdue", "failed_7d": 1}]
     rows = [_kpi("K-LLM-COST-DAY", D, 9.0), _kpi("K-LLM-COST-DAY", D - timedelta(days=1), 1.0),
-            _kpi("K-LLM-FALLBACK-24H", D, 0.2), _kpi("K-TP-HANDOFFGAP", D, 1), _kpi("K-BK-PARKED", D, 2)]
+            _kpi("K-LLM-FALLBACK-24H", D, 0.2)]
     items = digest.attention(facts, digest._series(rows), D)
     text = " | ".join(items)
     for needle in ("Section waves", "Booking: degraded", "not the API's commit", "aa-cis-dev-5xx",
                    "3 job(s) failed", "overdue by more than 30 min", "LLM route blocked", "fallback rate 20.0 %",
-                   "Tour liveness gate: failed", "LLM spend 9.00 USD", "1 TripPlanner inquiries",
-                   "2 inquiries parked", "Report EX-04"):
+                   "Tour liveness gate: failed", "LLM spend 9.00 USD", "Report EX-04"):
         assert needle in text, needle
     out = digest.render_digest(registry.load(), registry.load().report("OPS-12"), D, facts, rows, NOW)
     assert out.summary.endswith(f"{len(items)} items need a look")
@@ -166,7 +164,8 @@ def test_unreadable_probes_and_alarms_are_named_not_hidden():
 
 
 def test_collect_isolates_a_failing_section(monkeypatch):
-    for name in ("load_apps", "load_jobs", "load_llm", "load_deploys", "load_waves", "load_handoff", "load_reports"):
+    for name in ("load_apps", "load_jobs", "load_llm", "load_deploys", "load_waves", "load_reports",
+                 "load_balances", "load_lifecycle"):                 # AA-642 (S263 L2, B4); AA-1024 D2
         monkeypatch.setattr(digest, name, AsyncMock(return_value={"ok": name}))
     monkeypatch.setattr(digest, "load_alarms", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(digest, "load_probes", AsyncMock(return_value={"status": "ok"}))
@@ -287,24 +286,21 @@ def test_report_kinds_are_background_and_not_deploy_blocking():
         assert k[name].background and not k[name].deploy_blocking
 
 
-# ── TP-03 ops alert e-mail ──────────────────────────────────────────────────────────────────────────────────────
+# ── TP-03 retired (R0 hotfix, root ADR 0019 B2B-only model) ─────────────────────────────────────────────────────
 
-def test_inquiry_handoff_alert_template_and_daily_key(monkeypatch):
-    payload = {"template": ops_alerts.TEMPLATE_INQUIRY_HANDOFF_GAP, "gap": 2, "sent": 5, "received": 3,
-               "parked": 0, "failed": 1, "window": {"first": "2026-10-24", "last": "2026-10-30"},
-               "checked_at": "2026-10-30T03:00:00+00:00"}
-    msg = ops_alerts.render_inquiry_handoff_gap(payload, to=("a@example.com",), base_url="https://admin.example",
-                                                environment="dev")
-    assert "2 TripPlanner inquiries not in the Booking inbox" in msg.subject
-    assert "https://admin.example/admin/reports" in msg.text and "2026-10-24 to 2026-10-30" in msg.text
+def test_digest_has_no_inquiry_handoff_section_or_item_even_with_old_kpi_rows():
+    # old K-TP-HANDOFFGAP / K-BK-PARKED rows stay in shared.kpi_daily: they must not raise items any more
+    rows = [_kpi("K-LLM-COST-DAY", D, 0.5), _kpi("K-TP-HANDOFFGAP", D, 3), _kpi("K-BK-PARKED", D, 2)]
+    facts = _green_facts()
+    assert digest.attention(facts, digest._series(rows), D) == []
+    out = digest.render_digest(registry.load(), registry.load().report("OPS-12"), D, facts, rows, NOW)
+    assert "Inquiry handoff" not in out.markdown and out.summary.endswith(": all green")
+    assert not {"K-TP-HANDOFFGAP", "K-BK-PARKED"} & set(digest.DIGEST_KPIS)
+
+
+def test_the_handoff_gap_e_mail_template_is_gone():
     from services.jobs import ops_alert_email_job
-    assert ops_alert_email_job._RENDERERS[ops_alerts.TEMPLATE_INQUIRY_HANDOFF_GAP] is \
-        ops_alerts.render_inquiry_handoff_gap
-    monkeypatch.setenv("SES_FROM_ADDRESS", "no-reply@example.com")
-    from shared.jobs import queue
-    enq = AsyncMock(return_value=("job-1", True))
-    monkeypatch.setattr(queue, "enqueue", enq)
-    got = asyncio.run(ops_alerts.enqueue_inquiry_handoff_email(MagicMock(), details={"gap": 2},
-                                                               now=datetime(2026, 10, 30, 3, tzinfo=UTC)))
-    assert got == "job-1" and enq.await_args.kwargs["idempotency_key"] == \
-        "ops_alert_email:inquiry_handoff_gap:2026-10-30"
+
+    assert not hasattr(ops_alerts, "TEMPLATE_INQUIRY_HANDOFF_GAP")
+    assert "inquiry_handoff_gap" not in ops_alert_email_job._RENDERERS
+    assert ops_alerts.REPORTS_PAGE_PATH == "/admin/reports"           # still the report e-mail link

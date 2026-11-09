@@ -13,6 +13,9 @@
 //   - saved views (localStorage, per user)
 //   - CSV export of the current (filtered) rows
 //
+// AA-1008: `rowTestId` gives each row its own data-testid (an app whose tests and scenarios name rows, e.g. the
+// AA-Partner trip ledger's `line-<id>`); every row also carries `data-kit-row`.
+//
 // S251: a sorted header carries `aria-sort` ("ascending" / "descending"; an unsorted header has none, as WAI-ARIA
 // advises), so a screen reader hears the sort. `compact` narrows the cell padding (10 px a side instead of 16 px) for a
 // wide table that must fit its page without a sideways scroll (tenant portal My Content).
@@ -80,6 +83,9 @@ export type DataTableProps<T> = {
   /** Stable id — namespaces saved views + column-visibility persistence. */
   tableId: string;
   getRowId: (row: T) => string;
+  /** AA-1008: a row's own data-testid (e.g. `line-<id>`), for an app whose tests and scenarios name rows; default
+   *  "kit-datatable-row". Every row also carries `data-kit-row` (the kit's own hook, whatever the test id). */
+  rowTestId?: (row: T) => string;
 
   loading?: boolean;
   error?: string | null;
@@ -172,6 +178,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     columns,
     tableId,
     getRowId,
+    rowTestId,
     loading = false,
     error = null,
     onRetry,
@@ -593,7 +600,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
             return (
               <div
                 key={row.id}
-                data-testid="kit-datatable-row"
+                data-testid={rowTestId ? rowTestId(row.original) : "kit-datatable-row"}
+                data-kit-row=""
                 onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                 style={{
                   border: `1px solid ${row.getIsSelected() ? K.accentBorder : K.line}`,
@@ -722,7 +730,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
               {pageRows.map((row) => (
                 <tr
                   key={row.id}
-                  data-testid="kit-datatable-row"
+                  data-testid={rowTestId ? rowTestId(row.original) : "kit-datatable-row"}
+                data-kit-row=""
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                   style={{
                     background: row.getIsSelected() ? K.accentTint : "transparent",

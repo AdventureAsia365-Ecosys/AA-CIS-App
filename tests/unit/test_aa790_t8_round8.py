@@ -24,7 +24,9 @@ GOAL = get_goal("introduction_awareness")
 # AA-789 tier 0 (S258): the thin-moment sentence says "only be named in passing", not "in one sentence at most" (the
 # angle brief carried the count to the writer, which copied it: 'The monastery ruins get one sentence here').
 # Was df5bd75e54608e21.
-ROUND6_SYSTEM_SHA = "0a26c260a0fc0717"
+# AA-741 (S271 review, t8_angle_gen v2): one sentence after the ROUTE rule says a ROUTE that names a FOCUS is about
+# that moment (a Segment-grain Blog walk). Was 0a26c260a0fc0717.
+ROUND6_SYSTEM_SHA = "b794985c5f5d88b9"
 
 GOOD_BRIEF = ("Reader: you ride the valley road on day two and stop for a swim at the falls. "
               "Brand: pace, the seed says the ride is short and on tarmac. "
@@ -194,7 +196,7 @@ class TestGenerateOnce:
         _, client, log = self._run(monkeypatch)
         req = client.generate.call_args.args[0]
         assert req.system_prompt is prompts.SYSTEM_PROMPT and req.stage == "t8_angle_gen"
-        assert req.model_tier is None and req.max_tokens == 2048
+        assert req.model_tier is None and req.max_tokens == 8192   # AA-741 (S270): was 2048; S271 W0: 4096 -> 8192
         kw = log.await_args.kwargs
         assert kw["stage"] == "t8_angle_gen"
         assert set(kw["quality_signal"]) == {"angles_generated", "recommended_index", "avg_paa_answers_per_angle",

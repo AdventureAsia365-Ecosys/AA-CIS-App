@@ -57,6 +57,8 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", _T),
         ("GET", rf"{_T}/(usage|entitlements|data-requests|members|jobs)"),
         ("POST", rf"{_T}/(lock|unlock|owner-invite|data-requests|owner-recovery)"),
+        # S263 (crm.ops.v1 1.8): withdraw the first-owner invitation; delete a synthetic (test) agency.
+        ("POST", rf"{_T}/(owner-invite/withdraw|delete)"),
         ("POST", rf"{_T}/owner-recovery/{_ID}/complete"),
         ("POST", rf"{_T}/members/{_ID}/deactivate"),
         ("PUT", rf"{_T}/(entitlements-allowed|insights-opt-out)"),
@@ -64,6 +66,8 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # AA-979 P2b — Content studio invitation delivery (Tenant 360 Members invite / send again), relayed by
         # api/routers/admin_tenant360.py: the CRM sends the AA system mail and owns the claim (crm.studio_invitation).
         ("POST", rf"{_T}/studio-invitations"),
+        # AA-1025 H1c (crm.ops.v1 1.10): the CRM app profile, relayed by PATCH /admin/ai-gateway/app-profiles/crm.
+        ("PUT", r"/llm/app-profile"),
     )
 )
 

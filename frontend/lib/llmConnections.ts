@@ -149,6 +149,8 @@ export type HealthStatus = "ok" | "open" | "degraded" | "disabled" | "unknown";
 export interface ModelHealth {
   model_key: string;
   state: CircuitState;
+  /** AA-900: refused because the model has no access yet on an account that answers (not a problem). */
+  expected_refusal?: boolean;
   consecutive_failures: number;
   last_ok_at: string | null;
   last_error_at: string | null;
@@ -166,6 +168,8 @@ export interface ConnectionHealth {
   enabled: boolean;
   status: HealthStatus;
   open_models: number;
+  /** AA-900: the models with no access yet (left out of open_models and of the status). */
+  known_refused_models?: string[];
   last_ok_at: string | null;
   last_error_at: string | null;
   last_error_class: string | null;

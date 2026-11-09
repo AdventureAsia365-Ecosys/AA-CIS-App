@@ -98,7 +98,6 @@ export async function startRevalidate(
  */
 export async function startRegenerate(args: {
   tourId: string;
-  modelTier: string;
   // AA-916 WM-07 — the review row and the chip: the API writes one reason-only signal per job it creates
   // (a dedup double click writes none); neither goes into the job payload.
   reviewId?: string;
@@ -113,7 +112,7 @@ export async function startRegenerate(args: {
       tour_id: args.tourId,
       batch_id: crypto.randomUUID(),
       tenant_id: "00000000-0000-0000-0000-000000000001",
-      model_tier: args.modelTier,
+      // AA-1024 A2: no model_tier: the run uses the s1_generate route (AI providers › Routing); the API refuses one.
       allow_auto_upgrade: false,
       ...(args.reviewId && args.reasonCode ? { review_id: args.reviewId, reason_code: args.reasonCode } : {}),
     }),

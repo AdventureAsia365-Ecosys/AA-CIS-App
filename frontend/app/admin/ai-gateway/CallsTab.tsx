@@ -17,10 +17,12 @@ import {
   useT, useUrlFilters, type ColumnDef, type FilterSelect,
 } from "../../_kit";
 import {
-  CALL_APPS, CALL_PARAM, CALL_PROVIDERS, CALL_SOURCES, CALL_STATUSES, budgetProviderLabel, callFiltersFrom,
+  CALL_APPS, CALL_DRILL_KEYS, CALL_PARAM, CALL_PROVIDERS, CALL_SOURCES, CALL_STATUSES, budgetProviderLabel,
+  callFiltersFrom,
   callTone, callsPath, usd, type CallRow, type CallsResp, type TraceTarget,
 } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
+import type { RouteTarget } from "@/lib/routeTrace";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { APP, CALLS, WINDOW } from "./calls.messages";
 import { OUTCOME, SOURCE } from "./messages";
@@ -33,7 +35,11 @@ function short(id: string): string {
   return id.slice(0, 8);
 }
 
-export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => void }) {
+export default function CallsTab({ onTrace, onRoute }: {
+  onTrace: (t: TraceTarget) => void;
+  /** AA-1042: open the row's gateway request on the Trace tab */
+  onRoute?: (t: RouteTarget) => void;
+}) {
   const t = useT(CALLS);
   const tw = useT(WINDOW);
   const ta = useT(APP);
@@ -100,9 +106,10 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
         const known = e.outcome != null && e.outcome in OUTCOME.en;
         return (
           <span style={{ display: "grid", gap: 2, justifyItems: "start" }}>
-            <Badge tone={callTone(e.outcome)} dot={false}>
+            <Badge tone={e.expected_refusal ? "neutral" : callTone(e.outcome)} dot={false}>
               {known ? tout(e.outcome as keyof typeof OUTCOME.en) : (e.outcome ?? "—")}
             </Badge>
+            {e.expected_refusal && <span style={small}>{t("expectedRefusal")}</span>}
             {e.error_class && <span style={small}>{errorText(e.error_class)}</span>}
           </span>
         );
@@ -117,7 +124,16 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
       cell: ({ row: { original: e } }) => <span style={{ fontFamily: mono }}>
         {e.tokens_in == null && e.tokens_out == null ? "—" : `${e.tokens_in ?? 0} / ${e.tokens_out ?? 0}`}</span> },
     { id: "trace", header: t("colTrace"), enableSorting: false,
-      cell: ({ row: { original: e } }) => e.job_id ? (
+      cell: ({ row: { original: e } }) => {
+        // AA-1042: the row's gateway request (every attempt it needed) on the Trace tab
+        const rt = typeof e.detail?.route_trace === "string" ? e.detail.route_trace : null;
+        const route = rt && onRoute ? (
+          <span data-testid="ai-gateway-calls-route" style={{ display: "inline-flex" }}>
+            <LinkButton tone="muted" onClick={() => onRoute({ id: rt, at: e.at })} title={t("openRouteTitle")}>
+              {t("openRoute")}</LinkButton>
+          </span>
+        ) : null;
+        return e.job_id ? (
         <span style={{ display: "inline-flex", gap: 10, whiteSpace: "nowrap" }}>
           <span data-testid="ai-gateway-calls-trace" style={{ display: "inline-flex" }}>
             <LinkButton onClick={() => onTrace({ kind: "job", id: e.job_id as string })}
@@ -127,12 +143,16 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
             <LinkButton tone="muted" onClick={() => setMany({ [CALL_PARAM.job_id]: e.job_id })}>
               {t("onlyThisJob")}</LinkButton>
           )}
+          {route}
         </span>
-      ) : <span style={small}>{t("noJob")}</span> },
-  ], [t, ta, tsrc, tout, errorText, dir, accountText, onTrace, filters.job_id, setMany]);
+      ) : route ?? <span style={small}>{t("noJob")}</span>;
+      } },
+  ], [t, ta, tsrc, tout, errorText, dir, accountText, onTrace, onRoute, filters.job_id, setMany]);
 
   const cost = rows.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
-  const failed = rows.filter((r) => r.status === "refused" || r.status === "error").length;
+  // AA-900: an expected refusal (a model with no access yet) is counted apart, never as a failure
+  const expected = rows.filter((r) => r.expected_refusal).length;
+  const failed = rows.filter((r) => (r.status === "refused" || r.status === "error") && !r.expected_refusal).length;
   const crm = first?.crm;
 
   return (
@@ -140,7 +160,25 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
       data-testid={list.data || list.isError ? "ai-gateway-calls-ready" : "ai-gateway-calls"}>
       <div style={small}>{t("intro")}</div>
       <FilterBar search={{ key: CALL_PARAM.stage, placeholder: t("stageSearch") }} selects={selects}
-        extraKeys={[CALL_PARAM.job_id, CALL_PARAM.tour_id]} testId="ai-gateway-calls-filters" />
+        extraKeys={[CALL_PARAM.job_id, CALL_PARAM.tour_id, ...CALL_DRILL_KEYS.map((k) => CALL_PARAM[k])]}
+        testId="ai-gateway-calls-filters" />
+      {CALL_DRILL_KEYS.some((k) => filters[k]) && (
+        // AA-1045: the usage explorer's drill-down (a cell's range and dimensions), cleared in one click
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+          data-testid="ai-gateway-calls-drill">
+          <span style={small}>{t("drillTitle")}</span>
+          {filters.since && filters.until && (
+            <Badge tone="accent" dot={false}>
+              <DateText value={filters.since} withTime /> – <DateText value={filters.until} withTime />
+            </Badge>
+          )}
+          {CALL_DRILL_KEYS.filter((k) => k !== "since" && k !== "until" && filters[k]).map((k) => (
+            <Badge key={k} tone="accent" dot={false}>{t("drillDim", k, filters[k] as string)}</Badge>
+          ))}
+          <LinkButton tone="muted" onClick={() => setMany(Object.fromEntries(
+            CALL_DRILL_KEYS.map((k) => [CALL_PARAM[k], null])))}>{t("clearFilter")}</LinkButton>
+        </div>
+      )}
       {(filters.job_id || filters.tour_id) && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {filters.job_id && (
@@ -170,13 +208,15 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
             <KpiTile size="sm" label={t("kpiCost")} value={list.isLoading ? undefined : usd(cost)} />
             <KpiTile size="sm" label={t("kpiFailed")} info={t("kpiFailedInfo")}
               value={list.isLoading ? undefined : failed} valueTone={failed ? "danger" : undefined} />
+            <KpiTile size="sm" label={t("kpiExpected")} info={t("kpiExpectedInfo")}
+              value={list.isLoading ? undefined : expected} testId="ai-gateway-calls-kpi-expected" />
           </div>
           {rows.length > 0 && (
             <div>
               <div style={{ ...small, marginBottom: 4 }}>{t("latencyTitle")}</div>
               <LatencyStrip testId="ai-gateway-calls-latency"
-                points={[...rows].reverse().map((r) => ({ ms: r.latency_ms, tone: r.status === "refused"
-                  || r.status === "error" ? "danger" : "info" }))} />
+                points={[...rows].reverse().map((r) => ({ ms: r.latency_ms, tone: (r.status === "refused"
+                  || r.status === "error") && !r.expected_refusal ? "danger" : "info" }))} />
             </div>
           )}
           {crm && (

@@ -93,7 +93,7 @@ def test_no_workflow_deploys_the_portal():
         text = wf.read_text()
         assert "VERCEL_PORTAL_PROJECT_ID" not in text, f"{wf.name} still deploys the portal project"
         assert "smoke-portal" not in text, f"{wf.name} still runs the portal smoke"
-    admin = (workflows / "vercel-deploy.yml").read_text()
+    admin = (workflows / "deploy-admin-dev.yml").read_text()
     assert '"portal/**"' not in admin
     deploy_dev = (workflows / "deploy-dev.yml").read_text()
     assert "portal/" not in deploy_dev, "a portal change must never redeploy ECS"

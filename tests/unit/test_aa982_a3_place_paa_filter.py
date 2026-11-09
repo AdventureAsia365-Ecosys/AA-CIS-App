@@ -129,6 +129,8 @@ class _Conn:
                     for k, h in HASHES.items()]
         if "jev_tenant_allowlist" in sql:
             return []
+        if "FROM shared.llm_role_config" in sql:      # AA-1039: the pii stages (none)
+            return []
         if "FROM shared.decision_log" in sql:
             subjects, keys, hashes = set(args[0]), args[1], args[2]
             want = dict(zip(keys, hashes))

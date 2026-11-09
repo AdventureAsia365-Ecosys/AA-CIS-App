@@ -41,8 +41,8 @@ also regenerates the file.
 | Untyped public route | same test file, `tests/unit/snapshots/aa899_untyped_public_routes.json` | a public route returns a 2xx JSON body with no schema and is not on the list, or a listed route got a model and is still listed |
 | Breaking change | `API contract` / `OpenAPI breaking changes` (`.github/workflows/api-contract.yml`) | oasdiff finds an error-level change on a **public** path between the base branch's file and the PR's file |
 
-**Public paths** are everything except `/admin/*`: the tenant API `/v1/*`, `/auth/*` (the Booking staff sign-in calls
-`/auth/admin-login` and `/auth/booking-token`; Booking verifies the bridge token with `/auth/.well-known/jwks.json`) and
+**Public paths** are everything except `/admin/*`: the tenant API `/v1/*`, `/auth/*` (staff and partner sign-in
+checks; the Booking bridge routes `/auth/booking-token` and `/auth/.well-known/jwks.json` were removed by AA-911) and
 `/health*` (ALB, deploy smoke). `/admin/*` is called only by this repo's admin console through its BFF, which changes in
 the same PR: its breaking changes are listed as warnings and in the job summary, never failing. Every change is listed
 in the job summary (oasdiff changelog).

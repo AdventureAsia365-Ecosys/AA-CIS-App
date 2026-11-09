@@ -203,6 +203,47 @@ def _install_log_redaction() -> None:
 # start (refresh_daily_credit_limit); a sync reader (daily_credit_limit) uses the last value read in this process.
 GEOAPIFY_CONNECTION_KEY = "geoapify"
 _registry_daily_limit: Optional[int] = None
+# AA-642 (S263 L2, B1): the row's ``enabled`` (the admin switch), read with the daily limit when a job starts. False =
+# every Geoapify request is refused before it is sent (GeocoderUnavailable: the run stops, names stay pending, no try
+# counted). None (no row read yet, no row, unreadable) = on. A switch flipped during a run applies from the next run.
+_registry_enabled: Optional[bool] = None
+
+
+def connection_switched_off() -> bool:
+    """True when the Geoapify connection row last read in this process says enabled = false."""
+    return _registry_enabled is False
+
+
+def check_switch() -> None:
+    """Raise GeocoderUnavailable when the Geoapify connection is switched off (nothing is sent)."""
+    if connection_switched_off():
+        from shared.llm_client import connections as conn_registry
+
+        raise GeocoderUnavailable(f"geoapify: {conn_registry.switched_off_reason(GEOAPIFY_CONNECTION_KEY)}")
+
+
+async def check_circuit() -> None:
+    """AA-1025 B3: raise GeocoderUnavailable when the shared Geoapify circuit (shared.provider_health, every api /
+    worker task) is open: nothing is sent, the run stops like on an outage and its names stay pending (no try
+    counted). Half-open: this call may be the one probe. Never raises otherwise."""
+    from shared import provider_circuit
+
+    refusal = await provider_circuit.admit(GEOAPIFY_CONNECTION_KEY)
+    if refusal:
+        raise GeocoderUnavailable(f"geoapify: {refusal}")
+
+
+async def circuit_outcome(status: Optional[int], message: str = "") -> None:
+    """AA-1025 B3: one Geoapify call's outcome on the shared circuit (after its retries): 200 (or a 404 'no such
+    place' of the details API) closes it; 401 / 403, 402, 429, 5xx, a timeout or a body that is not JSON count as a
+    failure; any other 4xx is the request's own fault (not counted). Never raises."""
+    from shared import provider_circuit
+
+    if status in (200, 404) and not message:
+        await provider_circuit.record_success(GEOAPIFY_CONNECTION_KEY)
+    else:
+        await provider_circuit.record_failure(GEOAPIFY_CONNECTION_KEY, provider_circuit.failure_class(status),
+                                              f"geoapify: {message}" if message else "geoapify")
 
 
 def daily_credit_limit() -> int:
@@ -215,15 +256,43 @@ def daily_credit_limit() -> int:
 
 async def refresh_daily_credit_limit(db) -> int:
     """Read the Geoapify connection row (``db``: asyncpg connection or pool) and return ``daily_credit_limit()``. A
-    missing row / column or a failed read keeps the last value (none = env / constant). Never raises."""
-    global _registry_daily_limit
+    missing row / column or a failed read keeps the last value (none = env / constant). AA-642 (S263 L2): the row's
+    switch too (``connection_switched_off``). Never raises."""
+    global _registry_daily_limit, _registry_enabled
     from shared.llm_client import connections as conn_registry
 
     row = await conn_registry.provider_connection(db, GEOAPIFY_CONNECTION_KEY)
     if row is not None:
         value = row.daily_credit_limit
         _registry_daily_limit = value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        _registry_enabled = row.enabled if isinstance(row.enabled, bool) else None
     return daily_credit_limit()
+
+
+async def note_access(state: str) -> None:
+    """AA-642 (S263 L2, B1): the Geoapify row's access_state (written when it changes in this process). Never
+    raises."""
+    from shared.llm_client import connections as conn_registry
+
+    await conn_registry.note_provider_access(GEOAPIFY_CONNECTION_KEY, state)
+
+
+def _note_access(state: str) -> None:
+    """``note_access`` from sync code (a missing key is found in the sync ``_get_key``): scheduled on the running loop
+    when there is one, else skipped (the next async call writes the state). Never raises."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        task = loop.create_task(note_access(state))
+        _pending_notes.add(task)
+        task.add_done_callback(_pending_notes.discard)
+    except Exception:  # noqa: BLE001 — a state write never breaks the geocoder
+        pass
+
+
+_pending_notes: set = set()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -269,6 +338,7 @@ class GeoapifyGeocoder:
         self.cost_per_request = cost_per_request
         self.requests = 0                   # HTTP requests sent by this instance (= credits spent)
         self.failed_requests = 0            # AA-804: of those, the ones that did not answer 200 (still a credit)
+        self.latency_ms = 0                 # AA-1025 D3: the provider time of those requests (geo.geocode_call)
         self.daily_credit_limit = int(daily_credit_limit)
         self.credits_used_today = int(credits_used_today)   # before this instance (geo.geocode_call, UTC day)
         self.max_retries = max_retries
@@ -284,13 +354,16 @@ class GeoapifyGeocoder:
         return self._http
 
     def _get_key(self) -> str:
+        check_switch()                      # AA-642 (S263 L2): switched off in the admin = nothing is sent
         if not self._key:
             from shared.secrets import get_geoapify_key
             try:
                 key = get_geoapify_key()
             except Exception as e:  # noqa: BLE001 — the message may name the secret; keep the type only
+                _note_access("unconfigured")
                 raise GeocoderUnavailable(f"geoapify: API key unavailable ({type(e).__name__})") from None
             if not (key or "").strip():
+                _note_access("unconfigured")
                 raise GeocoderUnavailable("geoapify: API key is empty")
             self._key = key.strip()
         return self._key
@@ -319,7 +392,8 @@ class GeoapifyGeocoder:
                      bias: Optional[tuple[float, float]] = None) -> dict:
         """One search (with retries on 429 / 5xx / transport errors). Every attempt costs a credit."""
         params = {**self.params(text, iso2, codes=codes, bias=bias), "apiKey": self._get_key()}
-        last = "unknown"
+        await check_circuit()               # AA-1025 B3: the shared Geoapify circuit open = nothing is sent
+        last, last_status = "unknown", None
         for attempt in range(self.max_retries + 1):
             if self.credits_left() <= 0:
                 raise CreditLimitReached(
@@ -328,25 +402,35 @@ class GeoapifyGeocoder:
             await self._throttle.wait()
             self.requests += 1
             retry_after = None
+            sent = time.monotonic()
             try:
                 resp = await self._client().get(GEOAPIFY_URL, params=params)
             except Exception as e:  # noqa: BLE001 — transport error: the message may hold the URL
-                last = f"{type(e).__name__}"
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
+                last, last_status = f"{type(e).__name__}", None
                 self.failed_requests += 1
             else:
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:
-                        return resp.json()
+                        data = resp.json()
                     except Exception as e:  # noqa: BLE001
                         self.failed_requests += 1
+                        await circuit_outcome(None, "invalid JSON")
                         raise GeocoderError(f"geoapify: invalid JSON ({type(e).__name__})") from None
+                    await note_access("ok")
+                    await circuit_outcome(200)
+                    return data
                 self.failed_requests += 1
                 if status in (401, 403):
+                    await note_access("access_denied")
+                    await circuit_outcome(status, f"HTTP {status} (key rejected)")
                     raise GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
+                    await circuit_outcome(status, f"HTTP {status}")
                     raise GeocoderError(f"geoapify: HTTP {status}")
-                last = f"HTTP {status}"
+                last, last_status = f"HTTP {status}", status
                 retry_after = (getattr(resp, "headers", None) or {}).get("Retry-After")
             if attempt == self.max_retries:
                 break
@@ -358,6 +442,7 @@ class GeoapifyGeocoder:
                 pass
             logger.warning("geoapify_retry", attempt=attempt + 1, error=last, delay_s=delay)
             await self._sleep(delay)
+        await circuit_outcome(last_status, f"{last} after {self.max_retries + 1} attempts")
         raise GeocoderError(f"geoapify: {last} after {self.max_retries + 1} attempts")
 
     # ── the confirm call ──

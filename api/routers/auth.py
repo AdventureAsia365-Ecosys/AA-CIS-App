@@ -1,29 +1,22 @@
 # api/routers/auth.py
-# S7 Step 2 — Real API key authentication for tenant portal
+# Tenant JWT helpers (the partner-pool studio session, AA-979 P2b) and the staff password-session helpers.
 #
-# Flow:
-#   POST /auth/tenant-login  { api_key }
-#   → SHA256 hash key
-#   → lookup shared.tenants WHERE api_key_hash = hash AND is_active = true
-#   → if found: return signed JWT { tenant_id, name, plan_tier, exp }
-#   → frontend stores JWT in cookie → middleware verifies JWT on each request
+# AA-1036 R3 slice 3 (root ADR 0019 d6): tenant API keys are gone. POST /auth/tenant-login answers 410 Gone
+# (tenant_login_gone below); people sign in to the Content studio with their partner account
+# (POST /auth/tenant-session, api/routers/tenant_session.py). No code path issues or verifies a tenant key.
 #
 # JWT secret: JWT_SECRET env var (required, no fallback — AA-506)
 # JWT expiry: 24h
 
-import hashlib
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Optional
 
-import asyncpg
 import bcrypt
 import jwt  # PyJWT
-from fastapi import APIRouter, Depends, HTTPException, Request, Security, status
-from fastapi.security import APIKeyHeader
+from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from pydantic.json_schema import SkipJsonSchema
-from api.core.secret_compare import secrets_equal
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -41,39 +34,36 @@ if not JWT_SECRET:
 JWT_ALG      = "HS256"
 JWT_EXPIRY_H = 24
 
-# AA-760 — the tenant portal's own sign-in (portal/app/api/auth/tenant-login) asks for a token with
-# client="portal". The claim marks a portal SESSION: api/middleware/rate_limit.py still rate-limits it but
-# does not meter it as an API call (shared.tenant_api_usage = the "API calls" on the tenant's Billing page).
-# A token minted without it (any machine caller of POST /auth/tenant-login, and every token minted before
-# AA-760) is metered, as before. Same API key either way: the claim is signed, so it cannot be added to an
-# existing token, but a caller holding the key could ask for it. API calls carry no charge (overage is per
-# rewrite, v_tenant_monthly_usage) and the RPM limit applies to both, so that only lowers a displayed count.
+# AA-760 — the claim client="portal" marks a studio SESSION: api/middleware/rate_limit.py still rate-limits it but
+# does not meter it as an API call (shared.tenant_api_usage = the "API calls" on the tenant's Billing page). Every
+# partner-pool session carries it (_create_partner_session_jwt). AA-1036: the API-key tokens that went without it
+# are no longer minted (POST /auth/tenant-login is 410).
 PORTAL_CLIENT = "portal"
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── POST /auth/tenant-login: 410 Gone (AA-1036 R3 slice 3) ──────────────────────
 
-class TenantLoginRequest(BaseModel):
-    api_key: str
-    # AA-760 — set only by the portal's sign-in BFF (see PORTAL_CLIENT); left out of the public schema.
-    client: SkipJsonSchema[Optional[Literal["portal"]]] = None
-
-
-class TenantLoginResponse(BaseModel):
-    token: str
-    tenant_id: str
-    tenant_name: str
-    plan_tier: str
+TENANT_LOGIN_GONE = {
+    "detail": "tenant_api_key_removed",
+    "message": ("Tenant API keys were removed. Sign in to the Content studio with your partner account "
+                "(the agency web sign-in)."),
+    "sign_in": "partner",
+}
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+def tenant_login_gone() -> JSONResponse:
+    """The answer of ``POST /auth/tenant-login`` for any body (root ADR 0019 d6): 410 Gone, a short JSON body that
+    names the partner sign-in. The body is never read, so a missing, malformed or valid-looking key answers the same."""
+    return JSONResponse(status_code=status.HTTP_410_GONE, content=dict(TENANT_LOGIN_GONE))
 
-def _hash_api_key(raw_key: str) -> str:
-    """SHA256 hex digest — matches migration 007 encode(sha256(...),'hex')."""
-    return hashlib.sha256(raw_key.encode()).hexdigest()
 
+# ── Tenant JWT helpers ────────────────────────────────────────────────────────
 
 def _create_jwt(tenant_id: str, name: str, plan_tier: str, client: Optional[str] = None) -> str:
+    """A tenant JWT without ``amr`` / ``mid`` / ``csr`` (the shape the retired API-key sign-in minted). AA-1036: no
+    route mints it any more; the unit tests use it to check how the token gates treat such a token (owner
+    behaviour, metered unless ``client=portal``). ``tests/unit/test_aa1036_no_tenant_api_keys.py`` keeps it out of
+    production code."""
     payload = {
         "sub":       tenant_id,
         "name":      name,
@@ -97,11 +87,12 @@ def _create_partner_session_jwt(tenant_id: str, name: str, plan_tier: str, *, me
                                 content_studio_role: str, not_after: Optional[datetime] = None) -> tuple[str, datetime]:
     """AA-979 P2b — the tenant JWT of a partner-pool sign-in (``POST /auth/tenant-session``).
 
-    Same shape and secret as the API-key token (``role=tenant``, ``sub`` = tenant id), so every ``/v1/*`` route and
-    ``/auth/verify-tenant`` accept it unchanged, plus: ``client=portal`` (an unmetered portal session, AA-760),
-    ``amr=partner`` (how the session was opened), ``mid`` (the membership) and ``csr`` (the Content studio role the
-    tenant role middleware enforces). Lives at most :data:`PARTNER_SESSION_MAX_S` and never past ``not_after`` (the
-    partner access token's own expiry), so a removed member or a disabled account loses the studio within 15 min."""
+    Same shape and secret as the legacy tenant token (``_create_jwt``: ``role=tenant``, ``sub`` = tenant id), so
+    every ``/v1/*`` route and ``/auth/verify-tenant`` accept it unchanged, plus: ``client=portal`` (an unmetered
+    portal session, AA-760), ``amr=partner`` (how the session was opened), ``mid`` (the membership) and ``csr`` (the
+    Content studio role the tenant role middleware enforces). Lives at most :data:`PARTNER_SESSION_MAX_S` and never
+    past ``not_after`` (the partner access token's own expiry), so a removed member or a disabled account loses the
+    studio within 15 min."""
     if content_studio_role not in STUDIO_ROLES:
         raise ValueError("unknown Content studio role")
     now = datetime.now(timezone.utc)
@@ -124,8 +115,8 @@ def _create_partner_session_jwt(tenant_id: str, name: str, plan_tier: str, *, me
 
 
 def studio_role_of(payload: dict) -> Optional[str]:
-    """AA-979 — the Content studio role a verified tenant JWT carries (``csr``), or None for an API-key token (owner
-    behaviour, unchanged). An unknown value is treated as the most restrictive role (viewer)."""
+    """AA-979 — the Content studio role a verified tenant JWT carries (``csr``), or None for a token without it (the
+    legacy shape, owner behaviour). An unknown value is treated as the most restrictive role (viewer)."""
     if "csr" not in payload:
         return None
     role = payload.get("csr")
@@ -159,55 +150,13 @@ def verify_tenant_jwt(token: str) -> dict:
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
+# This /auth router is not mounted (api/main.py declares the live routes on the app); its tenant-login answers the
+# same 410 so the two handlers can never disagree again (AA-559 found the live one in main.py the hard way).
 
-@router.post("/tenant-login", response_model=TenantLoginResponse, deprecated=True)
-async def tenant_login(
-    body: TenantLoginRequest,
-    pool=Depends(lambda: None),  # replaced by app-level pool injection below
-):
-    """
-    DEPRECATED (AA-181): ACP tenant routes now authenticate with a single
-    X-API-Key header (see verify_tenant_api_key) instead of a JWT obtained here.
-    Kept for now for any remaining non-ACP callers; do not add new dependents.
-
-    Verify tenant API key against shared.tenants.api_key_hash.
-    Returns signed JWT on success.
-    """
-    if not body.api_key or len(body.api_key) < 10:
-        raise HTTPException(status_code=400, detail="Invalid API key format")
-
-    key_hash = _hash_api_key(body.api_key)
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT tenant_id::text, name, plan_tier
-            FROM shared.tenants
-            WHERE api_key_hash = $1
-              AND is_active = true
-            """,
-            key_hash,
-        )
-
-    if not row:
-        # Consistent timing to prevent enumeration
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
-
-    token = _create_jwt(
-        tenant_id=row["tenant_id"],
-        name=row["name"],
-        plan_tier=row["plan_tier"],
-    )
-
-    return TenantLoginResponse(
-        token=token,
-        tenant_id=row["tenant_id"],
-        tenant_name=row["name"],
-        plan_tier=row["plan_tier"],
-    )
+@router.post("/tenant-login", deprecated=True, status_code=status.HTTP_410_GONE)
+async def tenant_login():
+    """Removed (AA-1036 R3 slice 3, root ADR 0019 d6): 410 Gone for any body; sign in with the partner pool."""
+    return tenant_login_gone()
 
 
 # ── /auth/verify — middleware helper ──────────────────────────────────────────
@@ -234,105 +183,22 @@ async def verify_tenant_token(token: str):
     )
 
 
-# ── verify_tenant_api_key — AA-181 single-header ACP tenant auth ──────────────
-#
-# Replaces the per-router HTTPBearer(JWT) + X-Admin-Secret combo on all
-# /acp/* tenant routes. Accepts EXACTLY ONE of:
-#   - X-Admin-Secret: <ADMIN_SECRET>  -> AA internal staff (reviewer_type=aa_internal)
-#   - X-API-Key: <raw cis_... key>    -> tenant partner (reviewer_type=tenant_self),
-#     hashed with sha256 and matched against shared.tenants.api_key_hash
-#
-# AA_INTERNAL_ADMIN_SUB matches the long-standing admin sentinel used by the
-# old _get_tenant()/_get_admin() dependencies (see AA-22 tech debt note).
-AA_INTERNAL_ADMIN_SUB = "00000000-0000-0000-0000-000000000001"
-
-# auto_error=False: these only register the headers in the OpenAPI schema
-# (Swagger "Authorize" + per-route docs). The actual lookup/validation reads
-# request.headers directly below, so a request can omit one and still pass
-# via the other.
-_api_key_header_scheme = APIKeyHeader(
-    name="X-API-Key",
-    scheme_name="TenantApiKey",
-    auto_error=False,
-    description="Raw tenant API key (cis_...), hashed and matched against shared.tenants.api_key_hash.",
-)
-_admin_secret_header_scheme = APIKeyHeader(
-    name="X-Admin-Secret",
-    scheme_name="AdminSecret",
-    auto_error=False,
-    description="AA internal admin secret (ADMIN_SECRET env var) — for AA staff/internal callers.",
-)
-
-
-async def verify_tenant_api_key(
-    request: Request,
-    _api_key: str = Security(_api_key_header_scheme),
-    _admin_secret: str = Security(_admin_secret_header_scheme),
-) -> dict:
-    """
-    Single-header ACP tenant auth dependency (AA-181).
-
-    Send EXACTLY ONE of:
-      - X-API-Key: <raw cis_... key>   (tenant partner)
-      - X-Admin-Secret: <ADMIN_SECRET> (AA internal staff)
-
-    Returns a dict with: sub, tenant_id, role, actor, reviewer_type, name, plan_tier.
-    Raises 401 if neither X-Admin-Secret nor a valid X-API-Key is present.
-    """
-    admin_secret = os.environ.get("ADMIN_SECRET", "")
-    x_admin = request.headers.get("X-Admin-Secret", "")
-    if admin_secret and secrets_equal(x_admin, admin_secret):
-        return {
-            "sub": AA_INTERNAL_ADMIN_SUB,
-            "tenant_id": AA_INTERNAL_ADMIN_SUB,
-            "role": "admin",
-            "actor": "aa_internal_admin",
-            "reviewer_type": "aa_internal",
-            "name": "AA Internal",
-            "plan_tier": "internal",
-        }
-
-    raw_key = request.headers.get("X-API-Key", "")
-    if raw_key:
-        pool: asyncpg.Pool = request.app.state.pool
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT tenant_id::text, name, plan_tier
-                FROM shared.tenants
-                WHERE api_key_hash = $1
-                  AND is_active = true
-                """,
-                _hash_api_key(raw_key),
-            )
-        if row:
-            return {
-                "sub": row["tenant_id"],
-                "tenant_id": row["tenant_id"],
-                "role": "tenant",
-                "actor": row["name"] or row["tenant_id"],
-                "reviewer_type": "tenant_self",
-                "name": row["name"],
-                "plan_tier": row["plan_tier"],
-            }
-
-    raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
-
-
 # ── AA-232 — Per-user admin JWT auth (helpers + models) ──────────────────────
 #
 # The live endpoints (POST /auth/admin-login, POST /auth/verify-admin) are
-# declared in api/main.py, mirroring tenant_login/verify_tenant there — the
+# declared in api/main.py, mirroring verify_tenant there — the
 # /auth `router` object in this module is NOT mounted (see main.py: it imports
 # these helpers/models and re-declares the routes on `app` with Depends(get_pool)).
 # This module owns the reusable pieces only: bcrypt password verify, admin JWT
 # mint, and the request/response models. Admin JWTs share JWT_SECRET/HS256/
 # verify_jwt() with tenant tokens but carry sub = admin_users.id (UUID) and
-# role = 'admin'|'reviewer'|'content'|'viewer' (vs tenant's role = 'tenant').
+# role = a staff role of STAFF_ROLES below (vs tenant's role = 'tenant').
 
 # AA-656: every staff role in shared.admin_role (migration 218 added 'content', 249 the read-only 'viewer',
 # AA-878). Mirrors api/core/staff_authz.py ROLE_PERMS and the frontend matrix in frontend/lib/rbac.ts.
-STAFF_ROLES = ("admin", "reviewer", "content", "viewer")
+STAFF_ROLES = ("admin", "content", "viewer",
+               # AA-1035 R2 (CIS 362, root ADR 0019 d3)
+               "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
 
 
 class AdminLoginRequest(BaseModel):
@@ -357,13 +223,6 @@ class VerifyAdminResponse(BaseModel):
     email: Optional[str] = None
     display_name: Optional[str] = None
     auth: str = "legacy"
-
-
-class BookingTokenResponse(BaseModel):
-    """AA-680 — POST /auth/booking-token: an RS256 JWT (aud=booking) for AA-Booking."""
-    access_token: str
-    token_type: str
-    expires_in: int
 
 
 # A real bcrypt hash (cost 12, like the legacy staff password hashes) of a random value that was thrown

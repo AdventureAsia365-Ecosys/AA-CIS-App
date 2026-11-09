@@ -131,10 +131,12 @@ async def _log_calls(ctx: JobContext, details, overpass, cost_per_credit: float)
                 ctx.add_cost(cost)
                 await store.log_geocode_calls(conn, "geoapify", details.requests, cost, ctx.job_id,
                                               credits=details.credits, endpoint="place_details",
-                                              failed_requests=getattr(details, "failed_requests", None))
+                                              failed_requests=getattr(details, "failed_requests", None),
+                                              stage=KIND, latency_ms=getattr(details, "latency_ms", None))
             if overpass is not None and overpass.requests:
                 await store.log_geocode_calls(conn, "overpass", overpass.requests, 0.0, ctx.job_id,
-                                              credits=0, endpoint="overpass")
+                                              credits=0, endpoint="overpass", stage=KIND,
+                                              latency_ms=getattr(overpass, "latency_ms", None))
     except Exception as e:  # noqa: BLE001 — the spend is also on the job row
         logger.warning("place_shape_call_log_failed", error=str(e)[:200])
     for c in (details, overpass):

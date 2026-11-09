@@ -77,16 +77,19 @@ def test_the_backfill_follows_the_route(cur):
 
 
 def test_seeded_stages_naming_the_openai_api_allow_vendor_direct_and_only_they(cur):
+    # AA-1026 (S267, migration 366, "AWS preferred, not AWS only"): every active text stage (writer, judge, validate)
+    # allows vendor_direct too since 366; the embed stages and switched-off rows keep 311's rule.
     cur.execute("""
         SELECT r.stage, r.allowed_scopes,
                EXISTS (SELECT 1 FROM shared.llm_model_catalog m WHERE m.provider = 'openai'
                         AND (m.model_key = r.model_id OR m.model_key = ANY (r.fallback_model_ids)
-                             OR m.model_key = r.shadow_model_id)) AS names_openai_api
+                             OR m.model_key = r.shadow_model_id)) AS names_openai_api,
+               r.is_active AND r.role IN ('writer', 'judge', 'validate') AS text_stage_366
           FROM shared.llm_role_config r WHERE r.stage NOT LIKE %s""", (PREFIX + "%",))
     rows = cur.fetchall()
     assert rows
-    for stage, scopes, names_openai_api in rows:
-        assert scopes == (BOTH if names_openai_api else ["aws_only"]), stage
+    for stage, scopes, names_openai_api, text_stage_366 in rows:
+        assert scopes == (BOTH if names_openai_api or text_stage_366 else ["aws_only"]), stage
 
 
 def test_a_new_row_defaults_to_aws_only(cur):

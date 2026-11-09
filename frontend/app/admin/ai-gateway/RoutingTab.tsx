@@ -12,16 +12,22 @@
 // C4 (S262 wave 4, AA-1018 UI): each stage carries the failure-domain rule's answer (GET /api/admin/llm-availability
 // `invariant`, report only): "Fallback in another failure domain" or "No fallback in another failure domain" with why.
 // An API without the report shows no badge.
+// Route governance (S263, ADR 0009 decision 12): a new primary model of a writer / judge stage asks for the eval run
+// that backs it, or a break-glass reason (ChangeEvidenceFields in the confirm dialog); a save that breaks the
+// failure-domain rule comes back with `warnings` (report only), shown as an info toast.
+// AA-1039 R6 slice 1 (S266): "Routing by data class" (root ADR 0019 TL-12: personal-data stages stay on US routes,
+// content stages may go global) lists the stages per `pii_class` once the API sends it; until then an empty state
+// says so. Read only (lib/aiGateway stagesByDataClass).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import {
-  Badge, Button, ConfirmModal, DataTable, ErrorState, K, LoadingScreen, Section, Select, Spinner, apiGet, apiSend,
+  Badge, Button, ConfirmModal, DataTable, EmptyState, ErrorState, K, LoadingScreen, Section, Select, Spinner, apiGet, apiSend,
   mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  accountRouteMatters, actorLabel, invariantByStage, type Invariant, type InvariantStage,
+  accountRouteMatters, actorLabel, invariantByStage, stagesByDataClass, type Invariant, type InvariantStage,
 } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
@@ -30,8 +36,14 @@ import {
 } from "./llmShared";
 import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
 import { LlmAvailabilityCard } from "./LlmAvailabilityCard";
+import { StageCoverageCard } from "./StageCoverageCard";
 import { MODELS } from "./models.messages";
+import {
+  BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, needsEvidence,
+  type ChangeEvidence,
+} from "./ChangeEvidenceFields";
 import { StageRouteEditor } from "./StageRouteEditor";
+import { usePageAccess } from "./usePageAccess";
 import { useDomainText } from "./useDomainText";
 
 const STAGE_GROUP_LABELS: Record<string, string> = Object.fromEntries(STAGE_GROUPS.map((g) => [g.key, g.label]));
@@ -81,13 +93,17 @@ function DomainBadge({ result }: { result: InvariantStage }) {
   const t = useT(MODELS);
   const domainText = useDomainText();
   const others = result.other_domains.map((d) => domainText(d)).filter(Boolean).join("; ");
-  const why = result.ok ? t("domainOkWhy", others)
+  // AA-642 A1: a declared degrade mode passes the rule without a second domain (status "degrade").
+  const degrade = result.status === "degrade" && result.degrade_mode;
+  const why = degrade ? t("domainDegradeWhy", t("degradeMode", result.degrade_mode ?? ""))
+    : result.ok ? t("domainOkWhy", others)
     : result.primary_domain ? t("domainBreachOne", domainText(result.primary_domain) ?? "") : t("domainBreachNone");
   return (
     <span data-testid={`llm-domain-${result.stage}`} title={why}
       style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
-      <Badge tone={result.ok ? "success" : "warning"} dot={false} style={{ whiteSpace: "nowrap" }}>
-        {result.ok ? t("domainOk") : t("domainBreach")}
+      <Badge tone={degrade ? "info" : result.ok ? "success" : "warning"} dot={false}
+        style={{ whiteSpace: "nowrap" }}>
+        {degrade ? t("domainDegrade") : result.ok ? t("domainOk") : t("domainBreach")}
       </Badge>
     </span>
   );
@@ -117,8 +133,12 @@ function ModelRow({ row, showAccount, domain }: {
   const [accountRoute, setAccountRoute] = useState(row.account_route ?? "");
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const [evidence, setEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const awsAccounts = useAwsAccounts();
   const accountText = useAccountText();
+  // AA-1025 C1 follow-up: a session the API would refuse sees the route as text: selects locked, no Save.
+  const locked = !usePageAccess().can("routing");
 
   const accountSelect = showAccount && row.account_route_options.length > 0;
   const dirty = modelId !== row.model_id || (accountSelect && accountRoute !== (row.account_route ?? ""));
@@ -130,12 +150,20 @@ function ModelRow({ row, showAccount, domain }: {
   const acctLabel = (v: string) =>
     row.account_route_options.find((o) => o.value === v)?.label ?? accountName(v, awsAccounts, accountText);
 
+  // A new primary model of a writer / judge stage needs its evidence (an account-only save does not).
+  const askEvidence = needsEvidence(row.role) && modelId !== row.model_id;
+
   const mut = useMutation({
-    mutationFn: (body: { model_id: string; account_route: string | null }) =>
-      apiSend<StageConfigRow>(`/api/admin/llm-config/${row.stage}`, { method: "PATCH", body, admin: true }),
-    onSuccess: () => {
-      toast.success(t("modelSaved", row.stage));
+    mutationFn: (body: { model_id: string; account_route: string | null; eval_run_id?: string;
+                         break_glass_reason?: string }) =>
+      apiSend<StageConfigRow & { warnings?: string[] }>(`/api/admin/llm-config/${row.stage}`,
+        { method: "PATCH", body, admin: true }),
+    onSuccess: (data) => {
+      const warning = data?.warnings?.[0];
+      if (warning) toast.info(t("savedWithWarning", warning));
+      else toast.success(t("modelSaved", row.stage));
       setError("");
+      setEvidence(EMPTY_EVIDENCE);
       qc.invalidateQueries({ queryKey: LLM_CONFIG_KEY });
     },
     onError: (e) => {
@@ -146,11 +174,16 @@ function ModelRow({ row, showAccount, domain }: {
   });
 
   function confirmSave() {
+    if (askEvidence && !evidenceReady(evidence)) {
+      setEvidenceError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
+      return;
+    }
     setConfirming(false);
     setError("");
+    setEvidenceError(null);
     // Hidden select: send the row's own route back, so a model change never moves the stage to another account.
     const route = accountSelect ? accountRoute || null : row.account_route;
-    mut.mutate({ model_id: modelId, account_route: route });
+    mut.mutate({ model_id: modelId, account_route: route, ...(askEvidence ? evidenceBody(evidence) : {}) });
   }
 
   const saving = mut.isPending;
@@ -170,8 +203,13 @@ function ModelRow({ row, showAccount, domain }: {
         </div>
         <Badge tone={ROLE_TONE[row.role] ?? "neutral"} dot={false}>{row.role}</Badge>
         {domain && <DomainBadge result={domain} />}
+        {row.is_active === false && (
+          <span data-testid={`llm-stage-off-${row.stage}`} title={t("stageOffWhy", row.disabled_reason ?? "—")}>
+            <Badge tone="danger" dot={false} style={{ whiteSpace: "nowrap" }}>{t("stageOff")}</Badge>
+          </span>
+        )}
         <Select size="sm" data-testid={`llm-model-select-${row.stage}`} aria-label={t("primaryFor", row.stage)}
-          value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={saving}
+          value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={saving || locked}
           style={{ flex: "1 1 260px", minWidth: 0 }}
           options={row.options.map((o) => ({
             value: o.model_id, disabled: !o.available,
@@ -184,7 +222,7 @@ function ModelRow({ row, showAccount, domain }: {
         ) : null}
         {accountSelect && (
           <Select size="sm" data-testid={`llm-account-select-${row.stage}`} aria-label={t("accountFor", row.stage)}
-            value={accountRoute} onChange={(e) => setAccountRoute(e.target.value)} disabled={saving}
+            value={accountRoute} onChange={(e) => setAccountRoute(e.target.value)} disabled={saving || locked}
             style={{ flex: "0 1 180px", minWidth: 0 }}
             options={row.account_route_options.map((o) => ({ value: o.value, label: o.label }))} />
         )}
@@ -194,11 +232,13 @@ function ModelRow({ row, showAccount, domain }: {
             {row.updated_at ? formatDateTime(row.updated_at) : "—"} ·{" "}
             {actorLabel(row, t("staffMember"), (ref) => t("staffLogin", ref)) ?? "—"}
           </span>
-          <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
-            testId={`llm-model-save-${row.stage}`}>
-            {saving ? <Spinner size={12} /> : null}
-            {saving ? t("saving") : t("save")}
-          </Button>
+          {!locked && (
+            <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
+              testId={`llm-model-save-${row.stage}`}>
+              {saving ? <Spinner size={12} /> : null}
+              {saving ? t("saving") : t("save")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -206,11 +246,11 @@ function ModelRow({ row, showAccount, domain }: {
       {domain && <DomainLine result={domain} />}
 
       {/* AA-686 — fallback chain + shadow A/B editor */}
-      <StageRouteEditor row={row} />
+      <StageRouteEditor row={row} readOnly={locked} />
 
       <ConfirmModal
         open={confirming}
-        onClose={() => setConfirming(false)}
+        onClose={() => { setConfirming(false); setEvidenceError(null); }}
         onConfirm={confirmSave}
         title={t("changeModelTitle", row.stage)}
         confirmLabel={t("confirmChange")}
@@ -225,6 +265,10 @@ function ModelRow({ row, showAccount, domain }: {
               {" → "}
               {modelLabel(modelId)}{nextRoute ? ` (${acctLabel(nextRoute)})` : ""}
             </div>
+            {askEvidence && (
+              <ChangeEvidenceFields stage={row.stage} value={evidence} error={evidenceError}
+                onChange={(next) => { setEvidence(next); setEvidenceError(null); }} />
+            )}
           </div>
         }
       />
@@ -315,6 +359,7 @@ export default function RoutingTab() {
     <div data-testid="ai-gateway-routing-ready"
       style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
       <LlmAvailabilityCard />
+      <StageCoverageCard />
       <p style={{ ...small, margin: 0 }}>
         {t("stagesIntroA")} <b>{t("stagesIntroB")}</b>{t("stagesIntroC")} <b>{t("stagesIntroD")}</b>{" "}
         {t("stagesIntroE")}
@@ -333,7 +378,44 @@ export default function RoutingTab() {
           </Section>
         );
       })}
+      <DataClassCard rows={rows} />
       <JevStagesCard />
     </div>
+  );
+}
+
+// ── Routing by data class (AA-1039) ────────────────────────────────────────────────────────────────────────────────
+function DataClassCard({ rows }: { rows: StageConfigRow[] }) {
+  const t = useT(MODELS);
+  const stageLabels = useLocalized({ en: STAGE_LABELS, vi: STAGE_LABELS_VI });
+  const summary = stagesByDataClass(rows.filter((r) => !HIDDEN_STAGES.has(r.stage)));
+  const name = (s: string) => stageLabels[s] ?? s;
+  const line = (label: string, note: string, stages: string[], testId: string) => (
+    <div data-testid={testId} style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontSize: 13, color: K.ink, fontWeight: 600 }}>
+        {label} <span style={{ ...small, fontWeight: 400 }}>{note}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {stages.length === 0 ? <span style={small}>{t("dataClassNone")}</span>
+          : stages.map((s) => <Badge key={s} tone="neutral" dot={false}>{name(s)}</Badge>)}
+      </div>
+    </div>
+  );
+  return (
+    <Section title={t("dataClassTitle")}>
+      <div data-testid="ai-gateway-data-class" style={{ display: "grid", gap: 14 }}>
+        <p style={{ ...small, margin: 0 }}>{t("dataClassIntro")}</p>
+        {summary ? (
+          <>
+            {line(t("dataClassPii"), t("dataClassPiiNote"), summary.pii, "ai-gateway-data-class-pii")}
+            {line(t("dataClassContent"), t("dataClassContentNote"), summary.content, "ai-gateway-data-class-content")}
+            {summary.unclassified.length > 0 && line(t("dataClassUnset"), t("dataClassUnsetNote"),
+              summary.unclassified, "ai-gateway-data-class-unset")}
+          </>
+        ) : (
+          <EmptyState title={t("dataClassEmptyTitle")} description={t("dataClassEmptyBody")} />
+        )}
+      </div>
+    </Section>
   );
 }

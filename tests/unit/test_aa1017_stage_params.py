@@ -120,7 +120,10 @@ def test_converse_request_with_and_without_a_row(table):
     table[("t2_judge", "gpt-6-luna")] = StageModelParams("t2_judge", "gpt-6-luna", max_tokens=700, temperature=0.3,
                                                          effort="low")
     after = _converse(req, LUNA)
-    assert after["inferenceConfig"] == {"maxTokens": 700, "temperature": 0.3}
+    # S271: gpt-6-luna reasons inside max_tokens, so the gateway floor (shared/aa_llm/tokens.py) lifts the row's 700
+    assert after["inferenceConfig"] == {"maxTokens": 4096, "temperature": 0.3}
+    table[("t2_judge", "gpt-6-luna")] = StageModelParams("t2_judge", "gpt-6-luna", max_tokens=7000, temperature=0.3)
+    assert _converse(req, LUNA)["inferenceConfig"] == {"maxTokens": 7000, "temperature": 0.3}   # above it: the row
     assert "additionalModelRequestFields" not in after                     # effort is not sent on Converse
     assert {k: v for k, v in after.items() if k != "inferenceConfig"} == \
         {k: v for k, v in before.items() if k != "inferenceConfig"}

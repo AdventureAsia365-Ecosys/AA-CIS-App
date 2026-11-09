@@ -13,6 +13,15 @@ import pytest
 from services.content_generation import batch_prompt, graph, itinerary_utils
 from shared.llm_client.models import LLMResponse
 
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+
+
 _TOUR = {
     "name": "Bhutan: Culinary Trail East to West — 10 Days", "country": "Bhutan", "duration": "10 Days",
     "summary": "A journey from Samdrup Jongkhar to Paro.", "highlights": ["Punakha Dzong"],

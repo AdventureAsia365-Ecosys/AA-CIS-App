@@ -113,6 +113,8 @@ async def _cis_card(pool: Any) -> dict:
         # AA-993 G5: unsafe only while a rerun wave is open or a deploy-blocking kind runs (`blocked_by` says which);
         # `active` / `by_status` are the jobs a deploy releases and the new revision re-claims (shown as info).
         card["deploy_gate"] = await deploy_gate_status(pool)
+        if card["deploy_gate"].get("exec_scripts_error"):
+            problems.append(card["deploy_gate"]["exec_scripts_error"])
     except Exception as e:
         logger.warning("platform_apps_deploy_gate_failed", error=repr(e)[:200])
         card["deploy_gate"] = None
@@ -274,6 +276,15 @@ async def crm_llm_calls(authorization: Optional[str], params: dict,
     only, no text), with the staff member's own WORKFORCE token, for the AI providers Calls tab. ``(body, {})`` or
     ``(None, problem)`` like ``_crm_ops_get``. Never raises; never cached (the answer depends on the caller)."""
     return await _crm_ops_get(authorization, "/llm/calls", params, client)
+
+
+async def crm_llm_usage_rows(authorization: Optional[str], start: date, end: date,
+                             client: Optional[httpx.AsyncClient] = None) -> tuple[Optional[dict], dict]:
+    """AA-1025 C1 — the CRM's daily usage rows ``[start, end]`` as crm.ops.v1 GET /llm/usage sends them (day, stage,
+    model, calls, failed_calls, cost_usd; summed over every agency, no personal data), for the AI providers page's CRM
+    and Guardrails rows. ``(body, {})`` or ``(None, problem)`` like ``_crm_ops_get``. Never raises; never cached."""
+    return await _crm_ops_get(authorization, "/llm/usage", {"from": start.isoformat(), "to": end.isoformat()},
+                              client)
 
 
 async def crm_llm_usage(authorization: Optional[str], start: date, end_exclusive: date,

@@ -69,7 +69,7 @@ def test_policy_is_admin_only():
     assert staff_authz.POLICY[("POST", "/admin/reports/{report_id}/run")] == staff_authz.OPS_WRITE
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 def test_other_roles_are_refused(api, role):
     assert api.get("/admin/reports", headers=_staff(role)).status_code == 403
     assert api.post("/admin/reports/EX-04/run", json={}, headers=_staff(role)).status_code == 403

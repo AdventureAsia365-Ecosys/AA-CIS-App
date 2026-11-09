@@ -9,11 +9,16 @@ writes text. Design: docs/architecture/at-series-v2-design.md §3.
 - Each answer lands in a **zone**: `accept` / `reject` (confident — only these can change what a
   stage does, and only in `enforce` mode), `grey` (the stage keeps its existing rule), `error`
   (Jev unreachable or misconfigured: fail-open, the stage keeps its existing rule) or `skipped`
-  (mode off, or tenant content that may not leave AA yet).
+  (mode off, tenant content that may not leave AA yet, or a personal-data stage).
 - **Tenant guard (design C2):** tenant content goes to TypeSafe only for tenants in
   `shared.jev_tenant_allowlist` until the DPA/ZDR is confirmed. Platform content always may.
+- **Data class guard (AA-1039, root ADR 0019 d12):** TypeSafe is a vendor outside our AWS accounts, so a stage whose
+  `shared.llm_role_config.pii_class` is `pii` never sends its state there: every question is `skipped`
+  (`PII_STAGE_SKIP_ERROR`) and the stage keeps its own rule. The pii stages are read with the questions (same TTL);
+  until a first read succeeds in the process every stage counts as pii, a later failed refresh keeps the last set.
 - Every verdict is written to `shared.decision_log` (all probabilities kept) and each call to
-  `shared.llm_call_log` (provider `typesafe`, role `validate`), under the current job if any.
+  `shared.llm_call_log` (provider `typesafe`, role `decide` since AA-1025 D3; `validate` before), under the
+  current job if any.
 
 `decide()` never raises: a caller can always read `decision.accepted(k)` / `rejected(k)`, which are
 True only for an enforced, confident verdict.
@@ -43,6 +48,9 @@ from .catalog import get_model_sync
 logger = structlog.get_logger()
 
 JEV_MODEL = "jev-latest"
+# AA-1025 D3 (root ADR 0009 decision 8, DM-10.4): a Jev call's llm_call_log row has role 'decide' (the CHECK of CIS 319
+# allows it); rows before D3 say 'validate'. Readers that mean "Jev" filter on provider 'typesafe', never on the role.
+JEV_ROLE = "decide"
 JEV_URL = os.environ.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai").rstrip("/") + "/v1/systemone"
 _FALLBACK_PRICE_IN_PER_MTOK = 0.042          # used only if the catalog row cannot be read
 _TIMEOUT_S = 3.0
@@ -53,8 +61,23 @@ _CONFIG_TTL_S = 20.0
 # values above) gives the base URL, the timeout and the retries; JEV_URL / _TIMEOUT_S / _MAX_ATTEMPTS answer when there
 # is no row or a field is NULL (row -> env TYPESAFE_BASE_URL -> constant). Read with the question config (same TTL).
 JEV_CONNECTION_KEY = "typesafe"
-_PROVIDER_SQL = ("SELECT base_url, timeout_s, max_retries FROM shared.llm_provider_connection "
+_PROVIDER_SQL = ("SELECT base_url, timeout_s, max_retries, enabled FROM shared.llm_provider_connection "
                  "WHERE connection_key = $1")
+# AA-642 (S263 L2, B1): the row's ``enabled`` is the Jev switch (admin AI providers › Providers). Off = no TypeSafe call
+# from decide() or the daily canary; each ask writes its 0 USD refused llm_call_log row (account 'typesafe') and the
+# stage keeps its own rule (fail-open, like an outage). No row / unreadable = on (the 322 seed).
+JEV_SWITCHED_OFF = (f"connection {JEV_CONNECTION_KEY!r} is switched off (AI providers, Providers): nothing was sent "
+                    "to the provider")
+# AA-642 (S263 L2, B1): the lasting outcome of a Jev call in the row's access_state (cis_app has column UPDATE since
+# 322). Written with its own SQL (decide.py stays off the connection registry, test_aa1002_no_behaviour_change) through
+# the decide pool, once per change per process; a failed write waits _ACCESS_RETRY_S. Never raises.
+_SET_ACCESS_SQL = ("UPDATE shared.llm_provider_connection SET access_state = $2 "
+                   "WHERE connection_key = $1 AND access_state IS DISTINCT FROM $2")
+_ACCESS_OF_CLASS = {"access_denied": "access_denied", "quota_exhausted": "quota_exhausted",
+                    "credential": "unconfigured"}
+_ACCESS_RETRY_S = 60.0
+_access_written: Optional[str] = None
+_access_retry_at = float("-inf")
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 # AA-720 — Jev credit monitoring. TypeSafe has no balance API; a 402 with error_type
@@ -67,6 +90,8 @@ _JEV_COOLDOWN_MIN = float(os.environ.get("JEV_CREDIT_COOLDOWN_MIN", "15"))
 # Breaker state is process-local (same as the _questions / _allowlist caches below): each worker
 # trips and recovers on its own clock. A truly global breaker would need DB/Redis; per-process is
 # the minimal design that matches the existing caches and is enough to stop the latency bleed.
+# AA-1025 B3: the shared circuit (shared/provider_circuit.py, table shared.provider_health) now covers every task and
+# every failure class (outage / 5xx / timeouts too); this per-process credit breaker stays as the fast local stop.
 _jev_cooldown_until = 0.0        # time.monotonic() deadline; 0.0 = breaker closed (calls allowed)
 
 
@@ -196,6 +221,10 @@ def _top_level(probabilities: dict) -> Optional[str]:
 
 _questions: dict[str, Question] = {}
 _questions_loaded_at = 0.0
+# AA-1039: the stages whose llm_role_config.pii_class is 'pii', refreshed with _questions (same timestamp). None =
+# never read in this process: every stage counts as pii (fail closed) until a read succeeds; a failed refresh after a
+# good read keeps the last set (a class changes only by a migration).
+_pii_stages: Optional[frozenset[str]] = None
 _allowlist: set[str] = set()
 _allowlist_loaded_at = 0.0
 _provider: dict = {}
@@ -212,9 +241,71 @@ async def _load_provider(conn) -> None:
     _provider_loaded_at = now
     try:
         row = await conn.fetchrow(_PROVIDER_SQL, JEV_CONNECTION_KEY)
-        _provider = {k: row[k] for k in ("base_url", "timeout_s", "max_retries")} if row is not None else {}
+        _provider = {k: _row_get(row, k) for k in ("base_url", "timeout_s", "max_retries", "enabled")} \
+            if row is not None else {}
     except Exception as exc:  # noqa: BLE001 — no table / DB error: the last row (or the constants) stay in force
         logger.info("decide_provider_row_unavailable", error=str(exc)[:200])
+
+
+def _row_get(row, key: str):
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
+
+
+def jev_enabled() -> bool:
+    """AA-642 (S263 L2, B1): False only when Jev's connection row (last read by ``_load_provider``) says
+    enabled = false."""
+    return _provider.get("enabled") is not False
+
+
+async def jev_connection_enabled(db) -> bool:
+    """The Jev switch for a caller outside decide() (the daily canary): re-reads the row when the cached one is older
+    than _CONFIG_TTL_S. ``db``: an asyncpg pool or connection. Never raises (unreadable = the last value, else on)."""
+    try:
+        if hasattr(db, "acquire"):
+            async with db.acquire() as conn:
+                await _load_provider(conn)
+        else:
+            await _load_provider(db)
+    except Exception as exc:  # noqa: BLE001 — a settings read never stops the canary
+        logger.info("decide_provider_row_unavailable", error=str(exc)[:200])
+    return jev_enabled()
+
+
+async def _write_jev_access(db, state: str) -> None:
+    if hasattr(db, "acquire"):
+        async with db.acquire() as conn:
+            await conn.execute(_SET_ACCESS_SQL, JEV_CONNECTION_KEY, state)
+    else:
+        await db.execute(_SET_ACCESS_SQL, JEV_CONNECTION_KEY, state)
+
+
+# Tests replace it (conftest: no database in unit tests).
+jev_access_writer = _write_jev_access
+
+
+async def note_jev_access(db, state: Optional[str]) -> None:
+    """Write ``state`` as Jev's access_state when it changed in this process. ``db``: pool or connection. Never
+    raises."""
+    global _access_written, _access_retry_at
+    now = time.monotonic()
+    if state is None or state == _access_written or now < _access_retry_at:
+        return
+    _access_written = state
+    try:
+        await jev_access_writer(db, state)
+    except Exception as exc:  # noqa: BLE001 — before 322 or DB busy: try again after the back-off
+        _access_written = None
+        _access_retry_at = now + _ACCESS_RETRY_S
+        logger.warning("jev_access_state_write_failed", error=str(exc)[:200])
+
+
+def reset_jev_access() -> None:
+    """Tests: forget the access state written by this process."""
+    global _access_written, _access_retry_at
+    _access_written, _access_retry_at = None, float("-inf")
 
 
 def jev_endpoint() -> tuple[str, float, int]:
@@ -229,8 +320,32 @@ def jev_endpoint() -> tuple[str, float, int]:
             retries + 1 if isinstance(retries, int) and retries >= 0 else _MAX_ATTEMPTS)
 
 
+_PII_STAGES_SQL = "SELECT stage FROM shared.llm_role_config WHERE pii_class = 'pii'"
+PII_STAGE_SKIP_ERROR = "pii stage: no vendor decision"
+
+
+async def _load_pii_stages(conn) -> frozenset[str]:
+    """AA-1039: the stages of class ``pii`` (shared.llm_role_config.pii_class, CIS 373). Before 373 the column is
+    missing and every stage is ``content`` (an empty set). Any other failure raises (``_load_config`` keeps the last
+    good set, or none: every stage is then pii and no state goes to TypeSafe)."""
+    try:
+        rows = await conn.fetch(_PII_STAGES_SQL)
+    except (asyncpg.exceptions.UndefinedColumnError, asyncpg.exceptions.UndefinedTableError):
+        return frozenset()
+    return frozenset(r["stage"] for r in rows)
+
+
+def stage_is_pii(stage: Optional[str]) -> bool:
+    """True when ``stage`` is a personal-data stage (its llm_role_config row says ``pii``): decide() never sends its
+    state to TypeSafe. A stage with no llm_role_config row is ``content``, like the gateway reads it. Before the first
+    successful read of the classes in this process (``_pii_stages`` None: the read failed) every stage is pii."""
+    if _pii_stages is None:
+        return True
+    return bool(stage) and stage in _pii_stages
+
+
 async def _load_config(conn) -> None:
-    global _questions, _questions_loaded_at, _allowlist, _allowlist_loaded_at
+    global _questions, _questions_loaded_at, _allowlist, _allowlist_loaded_at, _pii_stages
     now = time.monotonic()
     if now - _questions_loaded_at > _CONFIG_TTL_S:
         rows = await conn.fetch(
@@ -249,6 +364,16 @@ async def _load_config(conn) -> None:
             )
             for r in rows
         }
+        try:
+            _pii_stages = await _load_pii_stages(conn)
+        except Exception as exc:  # noqa: BLE001 — the class read never fails a decision: it fails closed
+            logger.warning("decide_pii_class_unread", error=f"{type(exc).__name__}: {exc}"[:200],
+                           kept_last_read=_pii_stages is not None,
+                           hint=("last read kept" if _pii_stages is not None else
+                                 "stage class unknown (role_config read failed): every stage skipped, "
+                                 "no TypeSafe call"))
+            if _pii_stages is None:
+                return                            # questions kept, not timestamped: the next call reads again
         _questions_loaded_at = now
     if now - _allowlist_loaded_at > _CONFIG_TTL_S:
         rows = await conn.fetch("SELECT tenant_id::text AS t FROM shared.jev_tenant_allowlist")
@@ -736,6 +861,8 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             else:
                 err = "tenant not on Jev allow-list"
             decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=err)
+        elif stage_is_pii(stage):                 # AA-1039: personal data never leaves for a vendor (ADR 0019 d12)
+            decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=PII_STAGE_SKIP_ERROR)
         else:
             asked[key] = q
 
@@ -771,6 +898,26 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     # AA-804 (ledger v2): a refused or failed ask gets its own 0 USD llm_call_log row: (status, error_class, error,
     # questions, latency_ms). None = no refusal / failure (an answered ask is logged with its cost as before).
     failed_ask: Optional[tuple] = None
+    access_state: Optional[str] = None            # AA-642 (S263 L2): the call's lasting outcome, for access_state
+
+    if to_ask:
+        # AA-1025 H1a: the app's AI switched off in its app profile: no TypeSafe call; the stage keeps its own rule
+        # (fail-open, like the Jev switch) and the ask gets its 0 USD refused row (error_class disabled).
+        from . import app_profile
+        off = await app_profile.ai_off_async(db)
+        if off is not None:
+            text = app_profile.refusal_text(off.app)
+            for key, q in to_ask.items():
+                decision.verdicts[key] = Verdict(key, q.mode, "error", error=text)
+            failed_ask = ("refused", "disabled", text, len(to_ask), None)
+            to_ask = {}
+
+    if to_ask and not jev_enabled():
+        # AA-642 (S263 L2, B1): the admin switched Jev off: no TypeSafe call; the stage keeps its own rule (fail-open).
+        for key, q in to_ask.items():
+            decision.verdicts[key] = Verdict(key, q.mode, "error", error=JEV_SWITCHED_OFF)
+        failed_ask = ("refused", "other", JEV_SWITCHED_OFF, len(to_ask), None)
+        to_ask = {}
 
     if to_ask and jev_breaker_open():
         # AA-720 — credit breaker open: skip TypeSafe entirely (no 3s-per-call bleed), the stage
@@ -788,12 +935,28 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
         to_ask = {}
 
     if to_ask:
+        # AA-1025 B3: the shared Jev circuit (shared.provider_health, every api / worker task): open after a run of
+        # failed calls (5xx, timeouts, 401 / 403, 402), so no task spends its 3 x 3 s on a provider that is down. Open
+        # = no TypeSafe call; the stage keeps its own rule (fail-open), and the ask gets its 0 USD refused row.
+        from shared import provider_circuit
+
+        refusal = await provider_circuit.admit(JEV_CONNECTION_KEY)
+        if refusal:
+            for key, q in to_ask.items():
+                decision.verdicts[key] = Verdict(key, q.mode, "error", error=refusal)
+            failed_ask = ("refused", provider_circuit.open_class(JEV_CONNECTION_KEY) or "other", refusal,
+                          len(to_ask), None)
+            to_ask = {}
+
+    if to_ask:
         started = time.perf_counter()
         try:
             data = await _call_jev(state, {k: wire_question(q) for k, q in to_ask.items()})
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
             decision.model, decision.input_tokens, decision.cost_usd = jev_usage(data)
             _charge_jev_budget(decision.cost_usd)
+            access_state = "ok"
+            await _circuit_success()
             answers = data.get("answers") or {}
             for key, q in to_ask.items():
                 answer = answers.get(key)
@@ -808,6 +971,8 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             # open like any other error so the stage keeps running on its existing rule.
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
             _trip_jev_breaker()
+            access_state = "quota_exhausted"
+            await _circuit_failure(402, str(exc) or "credit_exhausted")
             logger.warning("decide_call_billing_error", stage=stage, subject=subject_key)
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted")
@@ -827,12 +992,30 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=err[:500])
             cls = classify(exc)
+            access_state = _ACCESS_OF_CLASS.get(cls)
+            await _circuit_failure(getattr(getattr(exc, "response", None), "status_code", None), err)
             failed_ask = ("refused" if cls in ("access_denied", "quota_exhausted", "throttled") else "error",
                           cls if cls in ("access_denied", "quota_exhausted", "throttled") else "other",
                           err, len(to_ask), decision.latency_ms)
 
     await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask, failed_ask=failed_ask)
+    await note_jev_access(db, access_state)
     return decision
+
+
+async def _circuit_success() -> None:
+    """AA-1025 B3: TypeSafe answered: the shared Jev circuit closes (written at most once a minute when healthy)."""
+    from shared import provider_circuit
+
+    await provider_circuit.record_success(JEV_CONNECTION_KEY)
+
+
+async def _circuit_failure(status: Optional[int], message: str) -> None:
+    """AA-1025 B3: one failed decide call (after its own retries) on the shared Jev circuit. ``status`` = the last HTTP
+    status (None = timeout / transport error); a 400 / 422 (the request's own content) is not counted."""
+    from shared import provider_circuit
+
+    await provider_circuit.record_failure(JEV_CONNECTION_KEY, provider_circuit.failure_class(status), message)
 
 
 async def _insert_logs(conn, rows, hit_rows) -> None:
@@ -893,17 +1076,19 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
         zones: dict[str, int] = {}
         for v in decision.verdicts.values():
             zones[v.zone] = zones.get(v.zone, 0) + 1
-        kwargs = dict(stage=stage, role="validate", model=decision.model, tokens_in=decision.input_tokens,
+        kwargs = dict(stage=stage, role=JEV_ROLE, model=decision.model, tokens_in=decision.input_tokens,
                       tokens_out=0, cost_usd=decision.cost_usd, provider="typesafe",
                       quality_signal={"source": "decide", "questions": len(asked), "zones": zones},
                       tenant_id=str(tenant_id) if tenant_id else None,
-                      latency_ms=decision.latency_ms, units=len(asked), unit_kind="question")
+                      latency_ms=decision.latency_ms, units=len(asked), unit_kind="question",
+                      connection_key=JEV_CONNECTION_KEY)      # AA-642 (S263 L2): account = the Jev connection
         await record_call_with_pool(db, **kwargs)       # its own, separate acquisition
     elif failed_ask is not None:
         status, error_class, error, questions, latency_ms = failed_ask
         row = gateway_failure_row(
-            stage=stage, role="validate", model=JEV_MODEL, status=status, error_class=error_class, error=error,
-            provider="typesafe", latency_ms=latency_ms, units=questions, unit_kind="question",
+            stage=stage, role=JEV_ROLE, model=JEV_MODEL, status=status, error_class=error_class, error=error,
+            provider="typesafe", connection_key=JEV_CONNECTION_KEY, latency_ms=latency_ms, units=questions,
+            unit_kind="question",
             quality_signal_extra={"source": "decide", "questions": questions},
             tenant_id=str(tenant_id) if tenant_id else None)
         await record_call_with_pool(db, **row)          # its own, separate acquisition

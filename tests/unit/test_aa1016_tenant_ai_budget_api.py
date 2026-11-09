@@ -44,9 +44,13 @@ class FakeConn:
     """fetch / fetchrow / fetchval / execute answered by SQL fragment; ``missing`` raises UndefinedTableError for a
     fragment (the table before migration 321); ``denied`` raises InsufficientPrivilegeError."""
 
-    def __init__(self, *, tenant_name="Lotus Trails", row=None, spend=None, missing=(), denied=(), prev=None):
+    def __init__(self, *, tenant_name="Lotus Trails", row=None, spend=None, missing=(), denied=(), prev=None,
+                 source=None, gateway=None):
         self.tenant_name = tenant_name
         self.row = row
+        # AA-1028 slice 3: the effective budget (EFFECTIVE_SOURCE_SQL, then cost_guard's read)
+        self.source = source or {"resolved_source": None, "override_enabled": None, "has_row": row is not None}
+        self.gateway = gateway
         self.spend = spend or []
         self.missing = missing
         self.denied = denied
@@ -81,6 +85,10 @@ class FakeConn:
             return self.row
         if sql == tb.LOCK_SQL:
             return self.prev
+        if sql == tb.EFFECTIVE_SOURCE_SQL:
+            return self.source
+        if "LEFT JOIN shared.v_tenant_entitlement_resolved e" in sql:      # cost_guard._TENANT_BUDGET_SQL
+            return self.gateway
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
     async def fetchval(self, sql, *args):
@@ -119,10 +127,13 @@ ROW = {"tenant_id": TENANT, "tenant_name": "Lotus Trails", "monthly_usd": 20.0, 
 def test_policy_reads_are_spend_read_and_writes_spend_write():
     p = staff_authz.POLICY
     assert p[("GET", "/admin/ai-gateway/experiments")] == staff_authz.SPEND_READ
-    assert p[("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_READ
+    # AA-1035 R2: the Tenant 360 tile also reads for customer_success's book (tenant.book.account.read, scoped);
+    # never for support (S267 review)
+    assert p[("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == (staff_authz.SPEND_READ,
+                                                                          staff_authz.TENANT_BOOK_ACCOUNT_READ)
     assert p[("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_WRITE
     assert p[("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_WRITE
-    for role in ("reviewer", "content", "viewer"):
+    for role in ("content", "viewer"):
         assert staff_authz.SPEND_WRITE not in staff_authz.ROLE_PERMS[role]
 
 
@@ -134,7 +145,9 @@ def test_policy_reads_are_spend_read_and_writes_spend_write():
     (10.0, 8.0, 80, 150, False, (80.0, "alert")),
     (10.0, 15.0, 100, 150, True, (150.0, "approval")),
     (10.0, 15.0, 100, 150, False, (150.0, "over")),
-    (0.0, 0.0, 100, 150, True, (None, "ok")),
+    # AA-1028 slice 3 (S266 review): a 0 budget is "no AI spend", past every threshold before the first call
+    (0.0, 0.0, 100, 150, True, (None, "approval")),
+    (0.0, 0.0, 100, 150, False, (None, "over")),
     (0.0, 0.5, 100, 150, True, (None, "approval")),
 ])
 def test_budget_state(monthly, spent, alert, approval, stop, expected):
@@ -219,7 +232,7 @@ def test_spend_budget_row_names_its_actor():
 
 def test_body_defaults_and_rounding():
     b = router_mod.TenantBudgetBody(monthly_usd=12.345, notes="  ")
-    assert b.model_dump() == {"monthly_usd": 12.35, "alert_pct": 100, "approval_pct": 150, "hard_stop": False,
+    assert b.model_dump() == {"monthly_usd": 12.35, "alert_pct": 100, "approval_pct": 150, "hard_stop": True,
                               "notes": None}
 
 
@@ -242,6 +255,57 @@ def test_get_one_with_budget_and_spend():
     assert out["budget"]["updated_by_name"] == "Mai Tran" and out["budget"]["updated_by_kind"] == "staff"
     assert out["defaults"] == tb.DEFAULTS and out["month_start"].endswith("-01T00:00:00+00:00")
     assert conn.ran(tb.TENANT_EXISTS_SQL) == [(TENANT,)]        # lower-cased before any read
+
+
+def _gw(monthly, spent, *, alert=80, approval=100, stop=True, source="plan"):
+    return {"tenant_id": TENANT, "monthly_usd": monthly, "alert_pct": alert, "approval_pct": approval,
+            "hard_stop": stop, "source": source, "spent": spent, "calls": 3}
+
+
+def test_get_one_without_a_row_shows_the_plan_budget_the_gateway_applies():
+    # AA-1028 slice 3 (S266 review): a priced tenant with no row is not "unlimited": its plan's 15 USD hold at 100 %
+    conn = FakeConn(row=None, spend=[{"tenant_id": TENANT, "calls": 3, "cost_usd": 15.0}],
+                    source={"resolved_source": "plan", "override_enabled": None, "has_row": False},
+                    gateway=_gw(15, 15.0))
+    out = asyncio.run(tb.read_one(FakePool(conn), TENANT, now=NOW))
+    assert out["budget"] is None
+    assert out["effective"] == {"source": "plan", "monthly_usd": 15.0, "alert_pct": 80, "approval_pct": 100,
+                                "hard_stop": True, "used_pct": 100.0, "state": "approval"}
+
+
+def test_get_one_names_a_winning_subscription_override():
+    conn = FakeConn(row=ROW, spend=[], source={"resolved_source": "override", "override_enabled": True,
+                                                "has_row": True},
+                    gateway=_gw(0.01, 0.0, alert=100, approval=150, stop=False, source="override"))
+    out = asyncio.run(tb.read_one(FakePool(conn), TENANT, now=NOW))
+    assert out["effective"]["source"] == "subscription_override" and out["effective"]["monthly_usd"] == 0.01
+    assert out["budget"]["monthly_usd"] == ROW["monthly_usd"]           # the row edited here, shown as it is
+
+
+def test_get_one_effective_is_unlimited_without_any_budget():
+    conn = FakeConn(row=None, spend=[], gateway=None)
+    out = asyncio.run(tb.read_one(FakePool(conn), TENANT, now=NOW))
+    assert out["effective"]["source"] == "none" and out["effective"]["state"] == "unlimited"
+
+
+def test_get_one_before_the_resolver_has_no_effective_block():
+    conn = FakeConn(row=ROW, spend=[], missing=("v_tenant_entitlement_resolved",))
+    out = asyncio.run(tb.read_one(FakePool(conn), TENANT, now=NOW))
+    assert out["ready"] is True and out["effective"] is None and out["budget"] is not None
+
+
+@pytest.mark.parametrize("resolved,override,has_row,expected", [
+    ("override", True, True, "subscription_override"),
+    (None, False, False, "subscription_override"),      # a disabled override is served as 0 USD (cost_guard)
+    ("override", None, True, "budget_row"),
+    (None, None, True, "budget_row"),                   # a row while no content subscription is live
+    ("plan", None, False, "plan"),
+    ("trial", None, False, "plan"),
+    ("plan", True, False, "plan"),                      # an override that does not apply (no live content)
+    (None, None, False, "none"),
+])
+def test_effective_source(resolved, override, has_row, expected):
+    assert tb.effective_source(resolved, override, has_row) == expected
 
 
 def test_get_one_before_migration_321_is_not_ready():

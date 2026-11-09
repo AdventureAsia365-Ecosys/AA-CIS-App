@@ -7,7 +7,8 @@ import { test } from "node:test";
 
 import {
   CALL_PARAM, RETIRED_COST_OPS_TABS, RETIRED_SETTINGS_TABS, accountRouteMatters, aiGatewayHref, budgetBody,
-  budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, callFiltersFrom, callTone, callsHref, callsPath,
+  budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, callFiltersFrom, centralBody, centralDraftOf,
+  centralPath, centralScope, sameCentralDraft, validCentralScope, callTone, callsHref, callsPath,
   costOpsSpendHref, groupRows, needsLook, parseSpendView, parseTab, parseTrace, parseTraceTarget, parseView, pct,
   retiredTabTarget, sameDraft, severity, statusTone, tourTraceHref, traceHref, traceParam, tracePath, usd, validScope,
 } from "./aiGateway.ts";
@@ -99,9 +100,9 @@ test("retired Settings and Cost Operations tabs point to their new tab", () => {
     "/admin/ai-gateway?tab=providers&view=jev-credit");
   assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "budgets"), "/admin/ai-gateway?tab=budgets");
   // UI part 3: the LLM, DataForSEO and Jev tabs are views of the merged "AI & data spend" tab
-  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "llm"), "/admin/cost-ops?tab=spend");
-  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "dfs"), "/admin/cost-ops?tab=spend&view=dfs");
-  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "jev"), "/admin/cost-ops?tab=spend&view=jev");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "llm"), "/admin/spend?tab=spend");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "dfs"), "/admin/spend?tab=spend&view=dfs");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "jev"), "/admin/spend?tab=spend&view=jev");
   // tabs that stay where they are, no tab, and object keys are never a target
   for (const v of ["brand", "pipeline", "", null, undefined, "toString", "__proto__"]) {
     assert.equal(retiredTabTarget(RETIRED_SETTINGS_TABS, v), null, String(v));
@@ -149,6 +150,35 @@ test("budget scopes, labels, tones and the PUT path", () => {
   assert.equal(budgetPutPath("dfs", "job:segment_research"), "/api/admin/budgets/dfs/job%3Asegment_research");
 });
 
+test("central LLM caps (AA-1025 A7): scopes, drafts, body rules and the path", () => {
+  assert.equal(centralScope("stage", " t9_write "), "stage:t9_write");
+  assert.equal(centralScope("eval", "ignored"), "eval");
+  assert.equal(validCentralScope("app:cis"), true);
+  assert.equal(validCentralScope("job:place_extract"), true);
+  assert.equal(validCentralScope("adhoc"), true);
+  for (const bad of ["global", "stage:", "app:CIS", "tenant:x", "eval:x"]) assert.equal(validCentralScope(bad), false);
+  const fresh = centralDraftOf(null);
+  assert.equal(fresh.hard_stop, false);                                        // T-8: alert-only by default
+  const d = { ...fresh, target: "t9_write", per_day: "0.01", hard_stop: true };
+  assert.deepEqual(centralBody(d), { scope: "stage:t9_write", body: { per_run_usd: null, per_day_usd: 0.01,
+    per_month_usd: null, hard_stop: true, alert_pct: 80 } });
+  assert.equal(centralBody({ ...d, per_run: "1" }).error, "runScope");
+  assert.equal(centralBody({ ...d, kind: "job", target: "place_extract", per_run: "1" }).body.per_run_usd, 1);
+  assert.equal(centralBody({ ...d, per_day: "" }).error, "noCap");
+  assert.equal(centralBody({ ...d, per_month: "-2" }).error, "cap");
+  assert.equal(centralBody({ ...d, target: "T9" }).error, "scope");
+  assert.equal(centralBody({ ...d, alert_pct: "101" }).error, "alertPct");
+  const row = { scope_kind: "adhoc", target: null, per_run_usd: null, per_day_usd: null, per_month_usd: 2,
+    hard_stop: false, alert_pct: 90 };
+  const r = centralDraftOf(row);
+  assert.deepEqual(r, { kind: "adhoc", target: "", per_run: "", per_day: "", per_month: "2", hard_stop: false,
+    alert_pct: "90" });
+  assert.equal(sameCentralDraft(r, { ...r, per_month: " 2 " }), true);
+  assert.equal(sameCentralDraft(r, { ...r, hard_stop: true }), false);
+  assert.equal(centralPath("stage:t9_write"), "/api/admin/budgets/llm/stage%3At9_write");
+  assert.equal(budgetProviderLabel("llm"), "All LLM providers");
+});
+
 // ── UI part 3: tour trace, Calls tab, merged spend tab ─────────────────────────────────────────────────────────────
 
 test("trace targets: a job or a tour, parsed strictly, with their API paths", () => {
@@ -190,9 +220,9 @@ test("callTone: refused and errors red, partial outcomes amber, answers green", 
 });
 
 test("the merged spend tab: exactly one tab value, a view only when it is not the LLM view", () => {
-  assert.equal(costOpsSpendHref(), "/admin/cost-ops?tab=spend");
-  assert.equal(costOpsSpendHref("llm"), "/admin/cost-ops?tab=spend");
-  assert.equal(costOpsSpendHref("jev"), "/admin/cost-ops?tab=spend&view=jev");
+  assert.equal(costOpsSpendHref(), "/admin/spend?tab=spend");
+  assert.equal(costOpsSpendHref("llm"), "/admin/spend?tab=spend");
+  assert.equal(costOpsSpendHref("jev"), "/admin/spend?tab=spend&view=jev");
   assert.equal(parseSpendView("dfs"), "dfs");
   assert.equal(parseSpendView("aws"), "llm");
   assert.equal(parseSpendView(null), "llm");

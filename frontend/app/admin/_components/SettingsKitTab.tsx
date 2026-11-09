@@ -1,5 +1,5 @@
 "use client";
-// app/admin/_components/SettingsKitTab.tsx
+// app/admin/_components/SettingsKitTab.tsx (rendered by /admin/platform/ui-kit since AA-1039 R6 rest)
 // AA-662 — the UI-kit "living reference" rendered as a tab inside admin Settings (not a standalone
 // nav page). Shows every kit primitive with static data so the design system can be reviewed in
 // the running admin shell without hitting the backend; one section proves the app-wide
@@ -35,6 +35,7 @@ import {
   Eyebrow,
   K,
   Section as KitSection,
+  Button,
   sans,
 } from "../../_kit";
 import { M } from "./SettingsKitTab.messages";
@@ -272,28 +273,9 @@ function KitTabInner() {
   );
 }
 
+/** The demo buttons of this gallery: the kit ghost button. */
 function KitBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "7px 14px",
-        borderRadius: 999,
-        border: `1px solid ${K.line}`,
-        background: K.card,
-        color: K.ink3,
-        fontSize: 13,
-        fontWeight: 600,
-        cursor: "pointer",
-        fontFamily: sans,
-      }}
-    >
-      {children}
-    </button>
-  );
+  return <Button variant="ghost" onClick={onClick}>{children}</Button>;
 }
 
 export default function SettingsKitTab() {

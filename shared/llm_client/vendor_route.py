@@ -34,12 +34,24 @@ account-wide refusal on a connection leaves out every deployment of it, includin
 Slice S9 adds Azure OpenAI connections (kind ``azure_openai``) for ``openai_chat`` rows of an OpenAI model; the client
 of every OpenAI-format connection is built per connection (``adapters/openai_chat.py``).
 
+AA-642 A5 (gap RW-09, root ADR 0009 decision 5): ``deployment_plan`` / ``vendor_deployment_for`` take the stage's
+role and leave out a deployment whose connection's ``served_roles`` (migration 322) do not include it (acc2 serves
+embed / judge / validate, never a writer: ADR 0009 decision 14). NULL ``served_roles`` (a row before 322, the built-in
+mirror) or no role (a call without a stage role) = no filter.
+
 Slice S10 adds the monthly budget per connection (``connection_budget.py``): a connection that reached its hard budget
 is left out like an open circuit (named in ``DeploymentPlan.budget_skips``). A connection without a budget (every seed
 row) is never read for it, so the plan is unchanged.
+
+AA-900 (S271 lane l11): the ``llm_deployment_skip`` info line is rate-limited per process (``_skip``): the first skip of
+a (model, connection, reason) is logged at once, repeats within ``SKIP_LOG_INTERVAL_S`` are counted and the next line
+after the window carries ``suppressed`` = how many were left out. On Dev every request of a stage whose chain names an
+acc3 model with no grant used to log one line per deferred deployment (CloudWatch noise, no new information).
 """
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -47,6 +59,7 @@ import structlog
 
 from . import breaker, connection_budget, connections, data_scope, deployments
 from .catalog import LEGACY_KEYS, CatalogModel
+from .errors import RouteRoleNotServed
 
 logger = structlog.get_logger()
 
@@ -80,23 +93,34 @@ def _usable(model: CatalogModel, found: Optional[VendorDeployment]) -> Optional[
     return found
 
 
+def serves_role(conn: connections.ProviderConnection, role: Optional[str]) -> bool:
+    """AA-642 A5: may ``conn`` serve a call of ``role``? True when the role is unknown (None) or the connection states
+    no ``served_roles`` (NULL); else the role must be listed."""
+    roles = getattr(conn, "served_roles", None)
+    return not role or roles is None or role in roles
+
+
 def vendor_deployment_for(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
-                          budget_skips: Optional[list] = None) -> Optional[VendorDeployment]:
+                          budget_skips: Optional[list] = None,
+                          role: Optional[str] = None) -> Optional[VendorDeployment]:
     """The Anthropic deployment to call for ``model``, or None for today's path. AA-1002 (S5): None as well when the
     stage's ``allowed_scopes`` (None = no stage policy) do not allow that connection's data scope. AA-1002 (S10): None
     when its connection reached its hard monthly budget, and then (connection_key, budget) is appended to
     ``budget_skips`` when the caller passes a list, so a model only that connection serves stops as a budget stop.
-    Never raises."""
+    AA-642 A5: None as well when that connection does not serve the stage's ``role``. Never raises."""
     try:
         found = _usable(model, _first_enabled(model.model_key))
+        if found is not None and not serves_role(found.connection, role):
+            _skip_log(model.model_key, found.connection.connection_key,
+                      f"the connection does not serve the role {role}")
+            return None
         if found is not None and not data_scope.allows(allowed_scopes, found.connection.data_scope):
-            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
-                        reason=f"data scope {found.connection.data_scope} is not allowed for the stage")
+            _skip_log(model.model_key, found.connection.connection_key,
+                      f"data scope {found.connection.data_scope} is not allowed for the stage")
             return None
         over = connection_budget.stops(found.connection) if found is not None else None
         if over is not None:
-            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
-                        reason="monthly budget reached")
+            _skip_log(model.model_key, found.connection.connection_key, "monthly budget reached")
             if budget_skips is not None:
                 budget_skips.append((found.connection.connection_key, over))
             return None
@@ -114,9 +138,15 @@ def split_pin(key: str) -> Optional[tuple[str, str]]:
     return (model_key, connection_key) if model_key and connection_key else None
 
 
-def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeployment:
+def pinned_deployment(model: CatalogModel, connection_key: str, *, allowed_scopes: Optional[tuple] = None,
+                      pii_class: Optional[str] = None) -> VendorDeployment:
     """The enabled deployment of ``model`` on ``connection_key`` (an Anthropic connection, enabled). Raises
-    RuntimeError naming what is missing."""
+    RuntimeError naming what is missing.
+
+    AA-1039 (review S268): a pin names one deployment, but it is still a call of the request's stage, so it keeps the
+    stage's data policy exactly as ``deployment_plan`` does: a connection whose data scope ``allowed_scopes`` does not
+    allow (None = no stage policy) is refused, and a ``pii`` stage is refused anywhere but our AWS accounts in the US
+    (``data_scope.pii_allows``). A probe with no stage passes None for both: unchanged."""
     rows = [d for d in deployments.deployments_for_sync(model.model_key, enabled_only=False)
             if d.connection_key == connection_key]
     if not rows:
@@ -129,6 +159,12 @@ def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeploym
     found = _usable(model, VendorDeployment(rows[0], conn))
     if found is None:
         raise RuntimeError(f"connection {connection_key!r} ({conn.kind}) cannot serve {model.model_key!r} in S2")
+    if not data_scope.allows(allowed_scopes, conn.data_scope):
+        raise RuntimeError(f"data scope {conn.data_scope} of connection {connection_key!r} is not allowed for "
+                           "the stage")
+    if not data_scope.pii_allows(pii_class, conn.data_scope, rows[0].wire_id, conn.region, conn.kind):
+        raise RuntimeError(f"the deployment of {model.model_key!r} on {connection_key!r} is refused: "
+                           f"{data_scope.pii_reason(pii_class)}")
     return found
 
 
@@ -164,16 +200,87 @@ class DeploymentPlan(list):
 
     AA-1002 (S10): ``budget_skips``: the (connection_key, cost_guard.ConnectionBudget) of each deployment left out
     because its connection reached its hard monthly budget. An empty plan with only budget skips is
-    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop)."""
+    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop).
 
-    def __init__(self, items=(), circuit_skips=(), budget_skips=()):
+    AA-642 A5 (review S263): ``role_skips``: the (connection_key, role) of each enabled deployment left out because its
+    connection does not serve the stage's role. An empty plan with role skips and no circuit / budget skip is
+    ``role_refusal`` (errors.RouteRoleNotServed): the gateway refuses the model with that reason instead of a generic
+    "no usable deployment"."""
+
+    def __init__(self, items=(), circuit_skips=(), budget_skips=(), role_skips=()):
         super().__init__(items)
         self.circuit_skips: list[tuple[str, Optional[str]]] = list(circuit_skips)
         self.budget_skips: list[tuple[str, object]] = list(budget_skips)
+        self.role_skips: list[tuple[str, Optional[str]]] = list(role_skips)
+
+
+def role_refusal(model_key: str, plan) -> Optional[RouteRoleNotServed]:
+    """AA-642 A5 (review S263): the typed refusal of an EMPTY plan that is empty because of the served_roles filter
+    (role skips, no circuit or budget skip: those keep their own error), else None."""
+    if plan is None or len(plan) or getattr(plan, "circuit_skips", None) or getattr(plan, "budget_skips", None):
+        return None
+    skips = getattr(plan, "role_skips", None)
+    if not skips:
+        return None
+    return RouteRoleNotServed(model_key, skips[0][1], skips)
+
+
+# AA-1042 (S270): the circuit classes that mean "the provider refuses" (not an outage, not throttling): a rung whose
+# every usable deployment sits behind a circuit opened by one of them is deferred by the route (``sunk_skips``).
+REFUSING_CIRCUIT_CLASSES = (breaker.ACCESS_DENIED, breaker.QUOTA_EXHAUSTED, breaker.CREDENTIAL)
+
+
+def sunk_skips(plan) -> Optional[list[tuple[str, str]]]:
+    """AA-1042 (S270) — the circuit skips of a plan that is EMPTY only because of circuits opened by a refusal
+    (``REFUSING_CIRCUIT_CLASSES``: open, or half-open with the probe lease held by another call; the connection-level
+    circuit included), else None. ``LLMClient._call_route`` then defers that route rung instead of logging a refused
+    row in place. None (the rung keeps today's behaviour) for: no plan (registry does not describe the model), a plan
+    with a deployment (a closed circuit, or a half-open one whose probe lease is free: its one probe call per breaker
+    period runs in place), a budget skip, a circuit opened by throttling / an outage / an unknown class, or a plan
+    emptied by the role / scope filters alone. Role skips next to refusing circuit skips do not stop the sink: those
+    deployments can never serve the role, the circuits are why the plan is empty. Pure."""
+    if plan is None or len(plan) or getattr(plan, "budget_skips", None):
+        return None
+    skips = list(getattr(plan, "circuit_skips", None) or ())
+    if not skips or any(cls not in REFUSING_CIRCUIT_CLASSES for _, cls in skips):
+        return None
+    return skips
+
+
+SKIP_LOG_INTERVAL_S = 600.0
+_SKIP_LOG_MAX_KEYS = 2048
+_skip_logged: dict[tuple[str, str, str], tuple[float, int]] = {}    # key -> (last logged, suppressed since)
+_skip_lock = threading.Lock()
+
+
+def _skip_log(model_key: str, connection_key: str, reason: str) -> None:
+    """``llm_deployment_skip`` at most once per (model, connection, reason) per ``SKIP_LOG_INTERVAL_S`` and process;
+    the first occurrence is never lost, a later line says how many repeats it stands for (``suppressed``)."""
+    key = (model_key, connection_key, reason)
+    now = time.monotonic()
+    with _skip_lock:
+        last, suppressed = _skip_logged.get(key, (None, 0))
+        if last is not None and now - last < SKIP_LOG_INTERVAL_S:
+            _skip_logged[key] = (last, suppressed + 1)
+            return
+        if len(_skip_logged) >= _SKIP_LOG_MAX_KEYS and key not in _skip_logged:
+            _skip_logged.clear()                    # bounded: reasons carry free text (role, scope names)
+        _skip_logged[key] = (now, 0)
+    if suppressed:
+        logger.info("llm_deployment_skip", model=model_key, connection=connection_key, reason=reason,
+                    suppressed=suppressed, window_s=int(SKIP_LOG_INTERVAL_S))
+    else:
+        logger.info("llm_deployment_skip", model=model_key, connection=connection_key, reason=reason)
+
+
+def reset_skip_log() -> None:
+    """Forget the skip-log memo (tests)."""
+    with _skip_lock:
+        _skip_logged.clear()
 
 
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
-    logger.info("llm_deployment_skip", model=model.model_key, connection=d.connection_key, reason=reason)
+    _skip_log(model.model_key, d.connection_key, reason)
 
 
 _WIRE_DRIFT_SEEN: set[tuple[str, str, str, str]] = set()
@@ -216,7 +323,9 @@ def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Opti
     return None
 
 
-def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None) -> Optional[list[VendorDeployment]]:
+def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None, *,
+                    role: Optional[str] = None,
+                    pii_class: Optional[str] = None) -> Optional[list[VendorDeployment]]:
     """AA-1002 (S3) — where ``model`` is called, in order. The model's deployment rows (``shared.llm_model_deployment``,
     lowest ``priority`` first, ``connection_key`` breaks ties) that the gateway can call — a Bedrock connection
     (assume_role / task_role) for converse / anthropic_native / embed rows, an Anthropic connection for Anthropic
@@ -224,9 +333,15 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
     row), an API-key connection without a policy problem — are its CALLABLE rows. Of those, the plan keeps
 
     - an enabled deployment on an enabled connection;
+    - role (AA-642 A5, ``serves_role``): a connection whose ``served_roles`` include the stage's ``role`` (None = no
+      filter; NULL served_roles = serves every role). Checked first, so a connection that may not serve the role
+      never counts as the first row of the S3 vendor rule nor as a circuit / budget skip;
     - data scope (slice S5, ``data_scope.py``): with the stage's ``allowed_scopes``, a connection whose ``data_scope``
       is in them (an ``aws_only`` stage never leaves AWS, whatever the priorities; a stage that allows
-      ``vendor_direct`` may fall back to a vendor API behind acc3). With no stage policy (``allowed_scopes`` None: the
+      ``vendor_direct`` may fall back to a vendor API behind acc3). A ``pii`` stage (AA-1039, ``pii_class``, CIS 373)
+      also needs an ``aws_only`` connection and a US deployment (``data_scope.pii_allows``: a ``us.`` profile or an
+      in-region id on a ``us-*`` connection, never ``global.``), whatever its scopes say. With no stage policy
+      (``allowed_scopes`` None: the
       column not migrated, a stage with no row) the S3 rule: a ``vendor_direct`` connection only when it is the FIRST
       enabled callable row (the admin deliberately put a vendor API ahead, S2's rule), never a same-model fallback
       behind an ``aws_only`` one (migration 306 seeds enabled Anthropic API rows behind acc3 for every Anthropic
@@ -263,10 +378,19 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
         if not callable_rows:
             return None
         candidates: list[VendorDeployment] = []
+        role_skips: list[tuple[str, Optional[str]]] = []
         for c in callable_rows:
             if not (c.deployment.enabled and c.connection.enabled):
                 continue
+            if not serves_role(c.connection, role):
+                _skip(model, c.deployment, f"the connection does not serve the role {role}")
+                role_skips.append((c.connection.connection_key, role))
+                continue
             scope = c.connection.data_scope
+            if not data_scope.pii_allows(pii_class, scope, c.deployment.wire_id, c.connection.region,
+                                         c.connection.kind):
+                _skip(model, c.deployment, data_scope.pii_reason(pii_class))
+                continue
             if allowed_scopes is not None:
                 if not data_scope.allows(allowed_scopes, scope):
                     _skip(model, c.deployment, f"data scope {scope} is not allowed for the stage")
@@ -296,7 +420,35 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
                 budget_skips.append((c.connection.connection_key, over))
                 continue
             plan.append(c)
-        return DeploymentPlan(plan, skips, budget_skips)
+        return DeploymentPlan(plan, skips, budget_skips, role_skips)
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
+        return None
+
+
+# ── AA-1026 (S267): AWS first across the whole route (switch, default off) ────────────────────────────────────────────
+
+def route_reach(model: CatalogModel, role: Optional[str] = None) -> Optional[tuple[frozenset, frozenset]]:
+    """AA-1026 (S267, tech lead: family fallback chains) — ``(usable, described)``: the data scopes of the connections
+    ``model`` may be called on right now, ignoring circuits and budgets (its CALLABLE deployment rows, ``_callable``,
+    that are enabled, on an enabled connection that serves ``role``), and the data scopes of every callable row
+    (enabled or not). ``client.route_attempts`` splits a route that may leave AWS into an AWS pass and a vendor
+    pass with it when the AWS-first switch is on (default off: model first, S267). None when the registry does not
+    describe the model (no registry rows, no callable row, a registry error): the caller keeps the model where it
+    is. Never raises."""
+    try:
+        if not connections.registry_rows_sync() or not deployments.has_rows_sync(model.model_key):
+            return None
+        usable: set[str] = set()
+        described: set[str] = set()
+        for d in deployments.deployments_for_sync(model.model_key, enabled_only=False):
+            conn = connections.get_connection_sync(d.connection_key)
+            if conn is None or _callable(model, conn):
+                continue
+            described.add(conn.data_scope)
+            if d.enabled and conn.enabled and serves_role(conn, role):
+                usable.add(conn.data_scope)
+        return (frozenset(usable), frozenset(described)) if described else None
+    except Exception as e:  # noqa: BLE001 — a registry problem must never break the route
+        logger.warning("llm_route_reach_failed", model=model.model_key, error=str(e)[:200])
         return None

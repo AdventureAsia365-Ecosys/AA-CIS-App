@@ -10,6 +10,15 @@ from services.content_generation import brand_fit as bf
 from services.content_generation import brand_fit_v2 as v2
 from services.content_generation import judge_node as jn
 
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    S1_JUDGE_LIVE=on (the S1 judge called on a writer-v2 draft; D9 takes it off the live path).
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("S1_JUDGE_LIVE", "on")
+
+
 SOURCE = {
     "name": "Vang Vieng Kayak and Caves",
     "summary": "A day of kayaking on the Nam Song river near Vang Vieng.",

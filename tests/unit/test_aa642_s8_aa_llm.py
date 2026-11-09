@@ -195,7 +195,7 @@ def test_budget_threshold():
     assert budget.threshold(0.5, 1.0, near_ratio=0.5) == "near"
 
 
-# ── pricing (core-only behaviour; parity with CIS is in test_aa642_s8_aa_llm_parity.py) ───────────────────────────
+# ── pricing (core-only behaviour; CIS on the core: test_aa1024_a10_core_identity.py) ─────────────────────────────
 
 def test_quote_reports_an_estimate_and_never_raises_on_the_callback():
     seen = []
@@ -227,6 +227,85 @@ def test_contract_selects_name_their_columns():
     ("ThrottlingException: Too many requests", ("refused", "throttled")),
     ("read timeout on endpoint", ("error", "other")),
     (None, ("error", "other")),
+    # AA-1024 A10 step 0: the gateway's own outcomes live in the core.
+    ("Error code: 400 - Could not finish the message because max_tokens or model output limit was reached",
+     ("truncated", "truncated")),
+    ("Could not parse response content as the length limit was reached", ("truncated", "truncated")),
+    ("llm_access_denied: stage 't9_write' is switched off by an admin: AccessDenied drill", ("refused", "disabled")),
 ])
 def test_failed_outcome(error, want):
     assert ledger.failed_outcome(error) == want
+
+
+class _Tagged(RuntimeError):
+    def __init__(self, cls):
+        super().__init__("gateway refusal")
+        self.llm_error_class = cls
+
+
+@pytest.mark.parametrize("cls,want", [
+    ("deadline", ("error", "deadline")),
+    ("budget", ("refused", "budget")),
+    ("role_not_served", ("refused", "role_not_served")),
+    ("disabled", ("refused", "disabled")),
+    ("truncated", ("truncated", "truncated")),
+    ("credential", ("refused", "credential")),
+    ("throttled", ("refused", "throttled")),
+    ("other", ("error", "other")),
+])
+def test_outcome_of_a_known_class_and_of_a_tagged_error(cls, want):
+    assert ledger.outcome_of(cls) == want
+    assert ledger.failed_outcome(_Tagged(cls)) == want
+
+
+def test_outcome_of_an_unknown_class_is_an_error():
+    assert ledger.outcome_of(None) == ledger.outcome_of("bogus") == ("error", "other")
+
+
+def test_every_outcome_class_is_a_ledger_class():
+    assert set(ledger.OUTCOME_CLASSES) <= set(ledger.ERROR_CLASSES)
+    assert set(ledger.OUTCOME_CLASSES.values()) <= set(ledger.STATUSES)
+
+
+def test_classify_text_reads_the_kill_switch_first_and_a_refused_cut_reply():
+    from shared.aa_llm import errors
+    # The admin's reason may contain any word: the kill switch wins over the patterns.
+    assert errors.classify_text("stage 't2_generate' is switched off by an admin: ThrottlingException") == "disabled"
+    assert errors.disabled_stage_of("stage 't2_generate' is switched off") == "t2_generate"
+    assert errors.disabled_stage_of("no stage here") is None
+    # The OpenAI 400 also says invalid_request_error; truncated is checked before the patterns.
+    assert errors.classify_text("invalid_request_error: max_tokens or model output limit was reached") == "truncated"
+    assert errors.reply_class("max_tokens") == "truncated" and errors.reply_class("end_turn") is None
+    assert errors.is_truncated("length") and not errors.is_truncated(None)
+
+
+@pytest.mark.parametrize("classes,want", [
+    ([], None),
+    (["role_not_served"], "role_not_served"),
+    (["role_not_served", "role_not_served"], "role_not_served"),
+    (["role_not_served", "quota_exhausted"], "quota_exhausted"),
+    (["role_not_served", "access_denied", "quota_exhausted"], "access_denied"),
+    (["role_not_served", "throttled"], None),
+    (["access_denied"], "access_denied"),
+])
+def test_account_level_class_with_role_refusals(classes, want):
+    from shared.aa_llm import errors
+    assert errors.account_level_class(classes) == want
+
+
+def test_v2_values_is_the_row_normalisation():
+    row = ledger.LedgerRow(app="tripplanner", stage="s", role="writer", model="m", stop_reason="length",
+                           quality_signal={"eval_run": "r"}, latency_ms=-1, attempt_no=3, error_class="nope")
+    values = ledger.v2_values(app="tripplanner", stop_reason="length", quality_signal={"eval_run": "r"},
+                              latency_ms=-1, attempt_no=3, error_class="nope")
+    assert row.v2_values() == values
+    got = dict(zip(ledger.V2_COLUMNS, values))
+    assert (got["status"], got["error_class"], got["latency_ms"], got["attempt_no"]) == ("truncated", "truncated",
+                                                                                          None, 3)
+    assert got["is_experiment"] is True and got["is_shadow"] is False
+
+
+def test_ledger_error_classes_are_in_the_newest_cis_check():
+    text = (ROOT / "api" / "migrations" / "338_llm_ledger_role_not_served.sql").read_text(encoding="utf-8")
+    for cls in ledger.ERROR_CLASSES:
+        assert f"'{cls}'" in text, cls

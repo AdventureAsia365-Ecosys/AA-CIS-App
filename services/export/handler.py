@@ -480,14 +480,19 @@ async def mark_tour_rejected(conn, tour_id: str) -> None:
 
 
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
-                         atomize_created_by: str = "system:a3_publish") -> dict:
+                         atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish") -> dict:
     """Publish one approved version as the tour's Master Content and enqueue its A3 atomize.
 
     AA-645 step 0 (C2): the admin "promote" (make an older version current again) publishes through here too, with
     `atomize_dedupe=False` (the `a3_atomize:<version_id>` key of that version's first publish is spent) and
     `atomize_force=True` (that version's day fingerprints still match, so a normal run would skip every day and the
     atoms of the version being replaced would stay). Atom ids are content hashes, so re-reading the old text brings
-    the old atoms back and soft-deletes the others."""
+    the old atoms back and soft-deletes the others.
+
+    AA-1047 W1 (root ADR 0020 "one exit"): every publish runs the REPORT-mode final contract on the stored version
+    and records it (``metadata.final_contract`` + its exit log) under ``contract_exit`` — ``auto_publish`` (an S1
+    run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler). Every caller names its
+    exit (topology test). It never blocks the publish."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -589,8 +594,10 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         # AA-987: a publish that closes a paused / retired key (`restored`) brings the tour back on TripPlanner now,
         # not after its 30-min cache. The publish transaction is committed; best-effort, never raises.
         if published.events:
-            from services.tour_lifecycle.effects import notify_tripplanner
+            from services.tour_lifecycle.effects import fan_out_to_tenants, notify_tripplanner
             await notify_tripplanner(conn, published.events, trigger="publish")
+            # AA-1039 R6: a `restored` event also clears the tenants' retirement flags and mails "back on sale"
+            await fan_out_to_tenants(conn, published.events, trigger="publish")
 
         # 3. Mark tour as exported
         await conn.execute(f"""
@@ -650,6 +657,15 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if batch_id:
             await sync_batch_completion(conn, batch_id, silver)
 
+        # 5. AA-1047 W1: the final contract of this publish exit, over the version as published (report mode: recorded,
+        # never blocks; best-effort, after every publish step so it can never delay or fail one).
+        try:
+            from services.quality.final_contract_store import record_s1_exit
+        except ImportError:   # the legacy export Lambda package ships without services/quality
+            record_s1_exit = None
+        if record_s1_exit is not None:
+            await record_s1_exit(conn, version_id, contract_exit, actual="published")
+
         return {
             "status":     "exported",
             "catalog_id": catalog_id,
@@ -670,7 +686,7 @@ def lambda_handler(event: dict, context) -> dict:
             logger.warning("no_version_id_in_validation_result", keys=str(event.keys()))
             return {"status": "failed", "error": "missing version_id"}
         try:
-            result = asyncio.run(process_export(version_id))
+            result = asyncio.run(process_export(version_id, contract_exit="lambda"))
             return result
         except Exception as e:
             logger.error("export_failed", error=str(e))
@@ -686,7 +702,7 @@ def lambda_handler(event: dict, context) -> dict:
                 if not version_id:
                     logger.warning("missing_version_id")
                     continue
-                result = asyncio.run(process_export(version_id))
+                result = asyncio.run(process_export(version_id, contract_exit="lambda"))
                 results.append(result)
             except Exception as e:
                 logger.error("export_failed", error=str(e))

@@ -27,28 +27,26 @@ def _style(channel: str) -> dict:
 
 class TestWriterCeiling:
     def test_blog_gets_a_larger_ceiling_than_social(self):
-        assert generate.max_tokens_for("blog") == 8000
-        assert generate.max_tokens_for("linkedin") == 3000
+        # AA-741 (S270): raised for the 5.x models (was 8000 / 3000); S271 W0: the short channels at the effort floor
+        assert generate.max_tokens_for("blog") == 12000
+        assert generate.max_tokens_for("linkedin") == 8192
 
-    def test_ceiling_stop_is_retried_once_with_more_room(self):
+    def test_a_gateway_retried_reply_is_one_call_and_one_row(self):
+        # S271 W0 (AA-900 l13): the gateway retries a ceiling stop on the same model (and writes the cut row); the
+        # writer makes one call and logs the reply it got, with the retry's facts
         client = MagicMock()
-        client.generate.side_effect = [_resp("cut", "max_tokens"), _resp("Full post.", "end_turn", 0.2)]
+        r = _resp("Full post.", "end_turn", 0.2)
+        r.truncation_retry_max_tokens, r.truncation_retry_reason, r.truncation_cut_cost_usd = 16384, "cut_reply", 0.1
+        client.generate.return_value = r
         with patch.object(generate, "LLMClient", return_value=client), \
                 patch.object(generate, "record_call_sync") as log:
             text, cost, _, _ = generate.write_content(channel_style=_style("linkedin"), **_KW)
         assert text == "Full post."
         assert cost == pytest.approx(0.3)
-        first, second = (c.args[0] for c in client.generate.call_args_list)
-        assert first.max_tokens == 3000 and second.max_tokens == 4500
-        assert log.call_count == 2
+        (first,) = (c.args[0] for c in client.generate.call_args_list)
+        assert first.max_tokens == 8192 and first.budget_retry is True
+        assert log.call_count == 1
         assert log.call_args.kwargs["quality_signal"]["truncation_retry"] is True
-
-    def test_openai_length_stop_counts_as_truncated(self):
-        client = MagicMock()
-        client.generate.side_effect = [_resp("cut", "length"), _resp("Done.")]
-        with patch.object(generate, "LLMClient", return_value=client), patch.object(generate, "record_call_sync"):
-            generate.write_content(channel_style=_style("facebook"), **_KW)
-        assert client.generate.call_count == 2
 
     def test_normal_stop_makes_one_call(self):
         client = MagicMock()
@@ -57,13 +55,9 @@ class TestWriterCeiling:
             generate.write_content(channel_style=_style("linkedin"), **_KW)
         assert client.generate.call_count == 1
 
-    def test_retry_ceiling_is_capped(self):
-        client = MagicMock()
-        client.generate.side_effect = [_resp('{"body": "cut', "max_tokens"),
-                                       _resp('{"body": "Done.", "seo_title": "t"}')]
-        with patch.object(generate, "LLMClient", return_value=client), patch.object(generate, "record_call_sync"):
-            generate.write_content(channel_style=_style("blog"), **_KW)
-        assert client.generate.call_args_list[1].args[0].max_tokens == 12000
+    def test_the_retry_ceiling_is_the_gateways_capped_double(self):
+        from services.acp_shared import token_budget as tb
+        assert tb.retry_budget(generate.max_tokens_for("blog")) == 24000   # 12000 x 2, at the cap
 
 
 class TestCompleteGate:

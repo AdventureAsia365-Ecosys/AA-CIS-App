@@ -334,6 +334,7 @@ async def _run_blog(text, repair_side_effect=None):
     return fin.call_args.kwargs, rep, rqg
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_blog_attempt_three_cuts_the_truth_item_instead_of_a_second_repair():
     kw, rep, rqg = await _run_blog(LONG_BLOG)
@@ -349,6 +350,7 @@ async def test_blog_attempt_three_cuts_the_truth_item_instead_of_a_second_repair
     assert isinstance(sets[0], qg.F9PassMemory)  # AA-865 — it also keeps the last judged text
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_blog_cut_that_would_go_under_the_minimum_keeps_the_hold():
     kw, rep, _ = await _run_blog(SHORT_BLOG)
@@ -360,6 +362,7 @@ async def test_blog_cut_that_would_go_under_the_minimum_keeps_the_hold():
     assert refused[0]["repair_mode"] == "sentences"  # what then ran: the repair
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_blog_failed_attempt_three_repair_never_cuts_under_the_minimum():
     """The S234 r3 fallback (repair call fails → delete_flagged) must not take a blog under its minimum."""

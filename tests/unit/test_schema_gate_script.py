@@ -43,6 +43,27 @@ def test_cis_keys_are_the_range_above_the_baseline() -> None:
     assert sg.required_keys("cis", CIS_SRC, files) == ["264", "265", "266"]
 
 
+CIS_GAP_SRC = "REQUIRED_CIS_SCHEMA = 266\nLEGACY_CIS_BASELINE = 263\nREQUIRED_CIS_ABOVE_GAP = (270, 271)\n"
+
+
+def test_cis_keys_above_the_gap_are_required_one_by_one() -> None:
+    # AA-1035: 267 (the gap, not applied) and 268 are not required; 270 and 271 are, each on its own.
+    files = ["264_a.sql", "267_gap.sql", "268_b.sql", "270_c.sql", "271_d.sql", "272_e.sql"]
+    assert sg.readiness_keys("cis", CIS_GAP_SRC) == {"264", "265", "266", "270", "271"}
+    assert sg.required_keys("cis", CIS_GAP_SRC, files) == ["264", "265", "266", "270", "271"]
+
+
+def test_cis_above_gap_keys_gate_the_deploy() -> None:
+    body = {"registered_keys": ["264", "265", "266", "270"]}
+    required = sg.required_keys("cis", CIS_GAP_SRC, [])
+    assert sg.evaluate("cis", required, body).missing == ["271"]
+
+
+def test_cis_above_gap_must_be_a_literal_tuple() -> None:
+    with pytest.raises(ValueError):
+        sg.readiness_keys("cis", CIS_SRC + "REQUIRED_CIS_ABOVE_GAP = 270\n")
+
+
 def test_crm_keys_are_normalised() -> None:
     src = "REQUIRED_SCHEMA_VERSIONS = ('crm-001', 'crm-002')\n"
     assert sg.required_keys("crm", src, ["001_a.sql", "002_b.sql"]) == ["crm-001", "crm-002"]

@@ -57,9 +57,11 @@ def _app():
     """(source builder, output builder, judge_version, hard classes) from the image; None when not importable."""
     try:
         from services.quality.registry import hard_fact_classes
+        from services.writing_memory import eval_judge as ej
         from services.writing_memory import eval_writers as ew
-        from services.writing_memory.eval_judge import judge_source_text, judge_version
-        return judge_source_text, ew.output_text, judge_version, list(hard_fact_classes())
+        # S271 W0: the labelled OUTPUT view R2's judge reads (ew.output_text on an older image)
+        out_fn = getattr(ej, "judge_output_text", ew.output_text)
+        return ej.judge_source_text, out_fn, ej.judge_version, list(hard_fact_classes())
     except Exception as e:  # noqa: BLE001 — an old image: lengths are left out
         print(f"(app modules not importable: {type(e).__name__}: {e}; lengths are left out)")
         return None

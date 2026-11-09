@@ -109,7 +109,8 @@ classes:
     writers: [A1, T2, T9_blog, T9_social]
     definition: >-
       An invented description, superlative, rarity or editorial claim (the most challenging route, the only
-      place) that the source does not support.
+      place) that the source does not support. Reflection that states no fact about the trip is voice, not this
+      class (writing policy D3, AA-1047).
     detectors:
       - {ref: NAME_SUPERLATIVE, kind: rule, writers: [A1], mode: warn}
       - {ref: STOCK_SUPERLATIVE, kind: rule, writers: [A1], mode: warn}
@@ -289,19 +290,26 @@ classes:
      writers: [A1, T2, T9_blog, T9_social], definition: "An optional, conditional or background item written as a firm trip promise.",
      detectors: [{ref: F17_trip_fact, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
                  {ref: HIGHLIGHTS_OPTIONAL_LANGUAGE, kind: rule, writers: [A1], mode: warn}], synthetic_examples: []}
-  - {id: other.f7, alias: F7, since: qtax-v1, severity: warn, checkability: judgement, artefact: output,
+  # AA-1047: other.f7, other.c3, other.s5 are block (writing_policy.yaml severities; S271 T9 contradiction 5).
+  - {id: other.f7, alias: F7, since: qtax-v1, severity: block, checkability: judgement, artefact: output,
      writers: [A1, T2, T9_blog, T9_social], definition: "An invented timing or schedule (before dawn, Day 2 ends at the pools).",
      detectors: [{ref: F17_trip_fact, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
-                 {ref: ITINERARY_MEAL_TIME_INVENTED, kind: rule, writers: [A1], mode: enforce}], synthetic_examples: []}
+                 {ref: ITINERARY_MEAL_TIME_INVENTED, kind: rule, writers: [A1], mode: enforce}],
+     synthetic_examples: [
+       {truth: positive, source: "Day 2: walk to the Orvine salt pools.", text: "Day 2 starts at dawn with a walk to the salt pools."},
+       {truth: negative, source: "Day 2: walk to the Orvine salt pools.", text: "Day 2 includes a walk to the salt pools."}]}
   - {id: other.s3, alias: S3, since: qtax-v1, severity: warn, checkability: oracle, artefact: output,
      writers: [A1, T2, T9_blog, T9_social], definition: "A repeated or garbled sentence.",
      detectors: [{ref: F13_repeat, kind: rule, writers: [T9_blog, T9_social], mode: enforce}], synthetic_examples: []}
   - {id: other.s4, alias: S4, since: qtax-v1, severity: warn, checkability: judgement, artefact: output,
      writers: [T2, T9_blog, T9_social], definition: "A reference to something never introduced, or a sentence orphaned by a cut.",
      detectors: [{ref: F13_leak, kind: rule, writers: [T9_blog, T9_social], mode: enforce}], synthetic_examples: []}
-  - {id: other.s5, alias: S5, since: qtax-v1, severity: warn, checkability: judgement, artefact: output,
+  - {id: other.s5, alias: S5, since: qtax-v1, severity: block, checkability: judgement, artefact: output,
      writers: [T9_blog], definition: "A broken or duplicated FAQ pair (the answer does not answer the question).",
-     detectors: [{ref: F16_faq, kind: rule, writers: [T9_blog], mode: enforce}], synthetic_examples: []}
+     detectors: [{ref: F16_faq, kind: rule, writers: [T9_blog], mode: enforce}],
+     synthetic_examples: [
+       {truth: positive, source: "Corran Monastery keeps a working library.", text: "Q: What is in the library? A: The monastery sits above the river."},
+       {truth: negative, source: "Corran Monastery keeps a working library.", text: "Q: What is in the library? A: Corran Monastery keeps a working library."}]}
   - {id: other.s7, alias: S7, since: qtax-v1, severity: warn, checkability: oracle, artefact: output,
      writers: [A1, T2, T9_blog, T9_social], definition: "A formatting artifact (misspelled hashtag, missing answer marker, stray spaces, all caps).",
      detectors: [{ref: F13_hygiene, kind: rule, writers: [T9_blog, T9_social], mode: warn},
@@ -309,9 +317,12 @@ classes:
   - {id: other.c1, alias: C1, since: qtax-v1, severity: warn, checkability: judgement, artefact: selector,
      writers: [A1, T2], definition: "An off-topic SEO keyword (another country or route) injected into the text.",
      detectors: [{ref: a1_keyword_about_tour, kind: jev, writers: [A1], mode: enforce}], synthetic_examples: []}
-  - {id: other.c3, alias: C3, since: qtax-v1, severity: warn, checkability: judgement, artefact: output,
+  - {id: other.c3, alias: C3, since: qtax-v1, severity: block, checkability: judgement, artefact: output,
      writers: [T9_blog], definition: "A thin source moment given a full heading or the lead.",
-     detectors: [{ref: F17_trip_fact, kind: rule, writers: [T9_blog], mode: enforce}], synthetic_examples: []}
+     detectors: [{ref: F17_trip_fact, kind: rule, writers: [T9_blog], mode: enforce}],
+     synthetic_examples: [
+       {truth: positive, source: "Day 3: pass the Vell Hollow viewpoint on the drive.", text: "## Vell Hollow at length\nThree paragraphs on the viewpoint."},
+       {truth: negative, source: "Day 3: pass the Vell Hollow viewpoint on the drive.", text: "The drive passes the Vell Hollow viewpoint."}]}
   - {id: other.c5, alias: C5, since: qtax-v1, severity: warn, checkability: judgement, artefact: output,
      writers: [A1, T9_blog, T9_social], definition: "An element the brief required is missing (CTA, FAQ pairs, a named moment).",
      detectors: [{ref: F6_cta_present, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
@@ -506,6 +517,7 @@ a1_codes:
   # S1-first code checks, writer-v2 brand audit, the meta cut signature).
   BRAND_AUDIT_FLAGGED: {classes: [other.v1], note: "writer-v2 brand audit, report-only (quality_shadow)"}
   BRAND_AUDIT_UNAVAILABLE: {classes: [other.degraded_detector]}
+  BRAND_AUDIT_UNCALIBRATED_JUDGE: {classes: [other.degraded_detector], note: "AA-1026 I6: a pass from an uncalibrated fallback judge (acc2) is held as manual_check"}
   DAY_CHECK_SKIPPED: {classes: [other.degraded_detector], note: "day oracle degraded marker, never enforced"}
   DAY_COUNT_VS_DURATION: {classes: [struct.day_structure]}
   DAY_DEPARTURE_MIDTRIP: {classes: [struct.day_structure]}

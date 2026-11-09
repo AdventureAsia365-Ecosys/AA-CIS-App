@@ -21,7 +21,14 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
                          "286_place_card_draft_gpt6_luna.sql")
 STAGE = "a3_place_card"
 POST_286 = ("gpt-6-luna", ["gpt-5.6-luna"], "validate", "openai", "acc3", True, None, 0)
-CHECK_222 = ("haiku", ["sonnet"], "validate", "claude", "acc3", True, None, 0)
+# The check route after the replay: 222 set haiku -> sonnet, AA-1026 (migration 327) moved it to the Converse keys and
+# migration 331 (AA-1026 I6) appended the acc2 fallback of each place card stage (another maker for each); migration
+# 366 (AA-1026 S267) set the family chains (Claude 4.x siblings on the check; on the draft, model first: GPT-6 Luna's
+# OpenAI API twin right behind it); migration 376 (AA-1042 S269) dropped the check's Sonnet 4.6 rung to keep six
+# attempts once Haiku 4.5 gained its Anthropic API deployment.
+CHECK_ROUTE = ("haiku-5-5", ["haiku-4-5", "llama4-scout"], "validate", "claude", "acc3", True, None, 0)
+REPLAY_286 = ("gpt-6-luna", ["gpt-6-luna-openai", "gpt-5.6-luna", "nova-lite"], "validate", "openai", "acc3", True,
+              None, 0)
 
 
 @pytest.fixture
@@ -85,8 +92,8 @@ def _gpt6_enabled(c):
 
 
 def test_replay_state_is_post_286(cur):
-    assert _row(cur) == POST_286
-    assert _row(cur, "a3_place_card_check") == CHECK_222
+    assert _row(cur) == REPLAY_286                              # 286's route, plus 331's acc2 fallback last
+    assert _row(cur, "a3_place_card_check") == CHECK_ROUTE
     assert _gpt6_enabled(cur) == (True, None)
     assert _registered(cur) == 1
 
@@ -100,7 +107,7 @@ def test_moves_the_222_row_and_is_idempotent(cur):
     assert cur.fetchone()[0] == "migration-286-aa784"
     _run(cur)                                                   # a re-run changes nothing
     assert _row(cur) == POST_286
-    assert _row(cur, "a3_place_card_check") == CHECK_222        # the check route is never touched
+    assert _row(cur, "a3_place_card_check") == CHECK_ROUTE        # the check route is never touched
     assert _registered(cur) == 1
 
 

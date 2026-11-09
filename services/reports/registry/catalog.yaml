@@ -7,11 +7,13 @@
 #
 # Fields: id, family, name_en, name_vi, audience, owner_role, decision (what the reader decides with it), cadence
 # (words), schedule (one of hourly/daily/weekly/monthly/quarterly/live/event/on_demand), channel, automation
-# (auto/semi/manual/on_demand), status (state of the report today: exists/partial/planned/missing), priority (P0-P3),
-# template (path of its Markdown template, or null for a product page), generator (cis = the CIS engine renders it
-# with job kind report_generate; null = not automated yet), automated_from (optional, generator cis only: the first
-# snapshot day YYYY-MM-DD whose daily chain can create the report's scheduled period, the deploy day of its generator,
-# so the register does not call earlier periods overdue), kpis (IDs in kpis.yaml), sections (what it contains).
+# (auto/semi/manual/on_demand), status (state of the report today: exists/partial/planned/missing, or retired: it no
+# longer runs, keeps its ID and past runs), priority (P0-P3), template (path of its Markdown template, or null for a
+# product page), generator (cis = the CIS engine renders it with job kind report_generate; null = not automated yet,
+# or retired), automated_from (optional, generator cis only: the first snapshot day YYYY-MM-DD whose daily chain can
+# create the report's scheduled period, the deploy day of its generator, so the register does not call earlier
+# periods overdue), retired_on (status retired only, required: the day it stopped, YYYY-MM-DD), kpis (IDs in
+# kpis.yaml), sections (what it contains).
 
 version: 1
 imported_from: docs/audits/2026-10-29-S258-report-catalog/catalog.json
@@ -47,7 +49,9 @@ reports:
   - 3. Shipped per app (CIS, TripPlanner, Booking, Partner/CRM, Infra) from release-please CHANGELOG versions and DEV-03
     Done-with-live-verify issues
   - '4. Money: week spend, month-to-date vs prorated budget, month-end forecast (from FI-02)'
-  - 5. Demand and catalog headline (TP-01, BK-02 counts, CIS-01 tours live, CIS-05 quality headline)
+  - 5. Demand and catalog headline (TP-01 sessions and trips, BK-02 B2B counts once built, CIS-01 tours live, CIS-05 quality
+    headline); the B2C inquiry funnel (TripPlanner inquiries sent, Booking inquiries received) is historical since the B2B-only
+    switch-off of 2026-11-03
   - 6. Incidents and risks (OPS-04 records, OPS-12 week roll-up, blocked items such as the acc3 Bedrock access incident)
   - '7. Next week: top 3-5 items from docs/backlog/README.md'
   - 8. Decisions needed (options + recommendation; docs/backlog/README.md section 2, docs/guides/ceo.md section 6)
@@ -100,7 +104,7 @@ reports:
   decision: Which partners to upsell, rescue or offboard; is the partner business growing; which plan and price work?
   cadence: monthly section of EX-02 (business day 2) + live tab; quarterly cohort in EX-05
   schedule: monthly
-  channel: New Summary tab on /admin/platform/agencies (merged with the planned S-03 AA insights, AA-966) + CSV; monthly
+  channel: New Summary tab on /admin/tenants/agencies (merged with the planned S-03 AA insights, AA-966) + CSV; monthly
     numbers into EX-02
   automation: auto
   status: missing
@@ -222,7 +226,7 @@ reports:
     week?
   cadence: weekly Monday 01:30 UTC (stuck list) + monthly in EX-02
   schedule: weekly
-  channel: /admin/platform/agencies Onboarding tab + section of EX-03; stuck list in the weekly SES digest to AA admins
+  channel: /admin/tenants/agencies Onboarding tab + section of EX-03; stuck list in the weekly SES digest to AA admins
   automation: auto
   status: missing
   priority: P2
@@ -538,7 +542,7 @@ reports:
   decision: Which tenants get value; where does the T-series hold or regenerate too much; who is near quota or overage?
   cadence: monthly business day 2 + live
   schedule: monthly
-  channel: /admin/tenant-activity Monthly tab; SES digest to AA admins
+  channel: /admin/tenant-qa/trace Monthly tab; SES digest to AA admins
   automation: auto
   status: partial
   priority: P2
@@ -669,13 +673,40 @@ reports:
   - Wave total, running total vs approved cap, USD per tour, projection for the full country/catalog
   - Failures and retry cost
   - Next-wave recommendation
+- id: CIS-08
+  family: ai-quality
+  name_en: Content quality funnel and nightly watchdog
+  name_vi: Phễu chất lượng nội dung và watchdog hằng đêm
+  audience: tech lead, reviewer
+  owner_role: tech lead
+  decision: Is first-pass yield, hold rate or cost per delivered object moving after a route, prompt or gate change;
+    does a stage need a route or ceiling fix (cut rate, fallback share, served-model drift)?
+  cadence: daily after the KPI snapshot (00:30 UTC); alerts through the ops-check bell and e-mail
+  schedule: daily
+  channel: GET /admin/quality/funnel (JSON); /admin/reports run page; admin bell + alerts e-mail on a threshold
+  automation: auto
+  status: partial
+  priority: P1
+  template: null
+  generator: cis
+  automated_from: 2026-11-07
+  kpis: []
+  sections:
+  - Per workflow (T9 by channel, S1, T2) per ISO week (ICT) - objects created, delivered vs held, first-pass yield,
+    attempts per delivered object, LLM USD per delivered object
+  - Every failing gate per attempt (T9 ledgers of every attempt, S1 evaluations), F9 judge-unavailable and
+    TEXT_INTEGRITY apart from the claim findings
+  - Per stage per week - rung share, fallback share, cut rate, refused calls, cost
+  - Watchdog over the trailing 7 days - cut rate, fallback share and served-model drift per stage against the
+    documented thresholds, and the alerts raised
 - id: TP-01
   family: app-ops
   name_en: Weekly TripPlanner funnel
   name_vi: Phễu TripPlanner hằng tuần
   audience: business owner, tech lead
   owner_role: tech lead
-  decision: Is the B2C planner turning visitors into advisor inquiries; where does the funnel leak?
+  decision: Is the TripPlanner demo turning visitors into planned trips; where does the funnel leak? The advisor-inquiry
+    step is historical since 2026-11-03 (B2B-only model, the hand-off answers 410); tenant leads come with lead.submitted.v1
   cadence: weekly Monday 01:30 UTC + live card
   schedule: weekly
   channel: /admin/overview TripPlanner card with week/month comparison; SES digest; headline in EX-01
@@ -691,8 +722,9 @@ reports:
   - K-TP-T2I
   - K-TP-LLMCAP
   sections:
-  - Sessions, trips started, trips edited, inquiries sent (week + 4-week trend)
-  - Step conversion
+  - Sessions, trips started, trips edited (week + 4-week trend); inquiries sent kept as a historical column (zero since
+    the hand-off switch-off)
+  - Step conversion (session to trip; trip to inquiry historical)
   - AI searches and keyword-fallback share
   - TripPlanner LLM spend vs daily cap
   - Top pinned components
@@ -724,28 +756,32 @@ reports:
   - Regressions vs last month
 - id: TP-03
   family: data-quality
-  name_en: Inquiry handoff reconciliation (TripPlanner to Booking)
-  name_vi: Đối soát yêu cầu tư vấn TripPlanner sang Booking (mỗi giờ + tổng hợp ngày)
+  name_en: Inquiry handoff reconciliation (TripPlanner to Booking, retired)
+  name_vi: Đối soát yêu cầu tư vấn TripPlanner sang Booking (đã ngừng)
   audience: ops staff, tech lead
   owner_role: ops staff
-  decision: Did every customer inquiry reach Booking and become a trip case; which ones are parked or failed?
-  cadence: hourly check (cheap view reads) + daily summary 01:00 UTC (08:00 ICT)
+  decision: 'Retired on 2026-11-03 with the B2B-only model (ADR 0019 d8, d11): TripPlanner no longer hands inquiries to
+    Booking (send-to-advisor answers 410 b2b_only, bk_inquiry_pull is off), so there is nothing to reconcile and a check
+    would only raise false gaps. Tenant leads travel on lead.submitted.v1 into the tenant CRM; their delivery check is a
+    new report when that contract has a producer. Past runs stay readable.'
+  cadence: retired (was an hourly check + a daily summary 01:00 UTC)
   schedule: daily
-  channel: Line in OPS-12 and BK-01; bell (shared.notifications) + ops alert e-mail only when a gap exists
+  channel: none (retired); past runs on /admin/reports
   automation: auto
-  status: partial
-  priority: P0
+  status: retired
+  retired_on: 2026-11-03
+  priority: P3
   template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
-  generator: cis
+  generator: null
   kpis:
   - K-TP-HANDOFFGAP
   - K-BK-PARKED
   - K-BK-INQ2CASE
   sections:
-  - Inquiries sent vs received per day
-  - Parked and failed inquiries with age
-  - Received but no trip case after 24 h
-  - Mismatches over the last 7 days
+  - Inquiries sent vs received per day (historical)
+  - Parked and failed inquiries with age (historical)
+  - Received but no trip case after 24 h (historical)
+  - Mismatches over the last 7 days (historical)
 - id: BK-01
   family: app-ops
   name_en: Booking daily operations digest
@@ -775,16 +811,16 @@ reports:
   - Quotes/proposals expiring in 3 days
   - B2B holds expiring in 48 h
   - Payments recorded but not verified
-  - Inquiries parked or failed (TP-03)
   - Open departure incidents (BK-06)
 - id: BK-02
   family: app-ops
-  name_en: Booking sales pipeline
-  name_vi: Phễu bán hàng Booking (tuần/tháng)
-  audience: business owner, sales lead
+  name_en: Booking B2B pipeline (agency requests to confirmed trade bookings)
+  name_vi: Phễu bán hàng B2B của Booking (yêu cầu của đại lý tới booking đã xác nhận)
+  audience: business owner, sales lead, account managers
   owner_role: business owner
-  decision: How fast and how often do inquiries become confirmed trips; which source and channel convert; where do cases
-    stall?
+  decision: How fast and how often do agency requests (CRM bookings through the Booking B2B API) become confirmed trade
+    bookings; which agencies convert; where do cases stall? B2C inquiries are out of scope since 2026-11-03 (B2B-only model,
+    ADR 0019 d8).
   cadence: weekly Monday 01:30 UTC (sales) + monthly business day 2 (business owner)
   schedule: weekly
   channel: Booking dashboard Reports tab with CSV; counts to CIS through ops.overview.v1
@@ -799,12 +835,14 @@ reports:
   - K-BK-TTC
   - K-BK-STALLED
   sections:
-  - 'Funnel by source_system and channel: inquiries, cases, proposal sent, confirmed, cancelled'
+  - 'Funnel of B2B trip cases (channel b2b, source_system crm) per partner agency (party_tenant_id): cases, proposal sent,
+    confirmed, cancelled'
   - Conversion per step, month over month
   - Time to first proposal and to confirmation (median, p90)
-  - Open cases by status and age
-  - Quoted and confirmed value (inside Booking only)
+  - Open B2B cases by status and age
+  - Quoted and confirmed net value (inside Booking only)
   - Lost/cancel reasons
+  - Holds and quotes per partner stay in BK-05
 - id: BK-03
   family: finops
   name_en: Receivables and payables aging with collections
@@ -912,16 +950,16 @@ reports:
   - Time to clear incidents
 - id: CX-01
   family: customer
-  name_en: Traveller satisfaction and reviews
-  name_vi: Mức hài lòng của khách và đánh giá sau chuyến đi
-  audience: business owner, sales lead, contracting staff; agency owner for CRM agencies (own data only)
-  owner_role: sales lead (AA); agency owner (CRM)
-  decision: Are travellers happy, which suppliers, guides or itineraries cause complaints, and which reviews can be used
-    in marketing (with consent)?
-  cadence: monthly business day 2 + complaint alert on each detractor answer
+  name_en: Agency satisfaction and support
+  name_vi: Mức hài lòng của đại lý và chất lượng hỗ trợ
+  audience: business owner, account managers, tech lead
+  owner_role: account manager (customer success)
+  decision: Are partner agencies (the tenants) happy with the platform and with AA as their supplier, which plans, add-ons
+    or trips cause complaints, and which agencies are at risk of leaving? Re-scoped on 2026-11-03 from traveller satisfaction
+    (B2B-only model, ADR 0019 invariant 1); traveller reviews stay inside each agency's CRM, owned by the agency.
+  cadence: monthly business day 2 (survey quarterly) + complaint alert on each detractor answer
   schedule: monthly
-  channel: Booking Reports tab (AA trips); CRM Reports page (agency trips, agency only); aggregate scores to CIS via a bk-NNN
-    contract view for EX-02
+  channel: CIS admin Tenants group (Tenant 360) and /admin/reports; aggregates per agency only, no traveller data
   automation: auto
   status: missing
   priority: P2
@@ -933,12 +971,11 @@ reports:
   - K-CX-NPS
   - K-CX-COMPLAINT
   sections:
-  - 1. Survey response rate after trip end
-  - 2. CSAT and NPS by destination, trip style, channel
-  - 3. Supplier and guide mentions (scores per supplier)
-  - 4. Complaints and follow-ups with owner and status
-  - 5. Incidents during the trip (BK-06) next to the score
-  - 6. Reviews with publish consent (count only in CIS; text stays in the owning app)
+  - 1. Agency survey response rate (quarterly partner survey)
+  - 2. Agency CSAT and NPS by plan, add-on and country
+  - 3. Support requests and complaints per agency with owner, status and time to close
+  - 4. Trade-booking issues per agency (BK-06 incidents, supplier problems) next to the score
+  - 5. Agencies at risk (detractors, falling usage, overdue invoices) for the account manager
 - id: MKT-01
   family: growth
   name_en: Acquisition and marketing funnel
@@ -961,7 +998,7 @@ reports:
   sections:
   - 1. Sessions and sign-ups by source (direct, search, social, partner, campaign)
   - 2. Source -> trip -> inquiry -> confirmed, per source
-  - 3. Booking customers by booking.customers.source and trip case channel
+  - 3. Trip cases by channel (B2B agency; B2C cases are history only since the B2C retirement of November 2026)
   - 4. Partner leads (B2B, Content studio, CRM) by source
   - 5. Campaign list with results (when CRM campaigns exist, AA-968)
 - id: MKT-02
@@ -974,7 +1011,7 @@ reports:
     off?
   cadence: monthly business day 2
   schedule: monthly
-  channel: /admin/content-quality SEO tab; tenant view later in the portal
+  channel: /admin/tenant-qa/quality SEO tab; tenant view later in the portal
   automation: semi
   status: missing
   priority: P3
@@ -1531,7 +1568,7 @@ reports:
   - '1. The twelve readiness topics from docs/legal/readiness-packet.md: status, proposed answer, owner role'
   - 2. Draft pages still marked 'Draft - pending legal review' (TripPlanner and Partner privacy/terms)
   - 3. Vendor DPAs and AI zero-retention status (docs/legal/register.md vendor table)
-  - 4. Tenant AI clause status (docs/legal/tenant-terms-ai-clause-draft.md)
+  - 4. Tenant AI clause status (docs/legal/tenant-ai-schedule.md)
   - 5. '[to be confirmed]' markers remaining in public pages
   - 6. Changes since last review
 - id: DATA-01
@@ -1584,8 +1621,9 @@ reports:
   - K-REC-FEEDLAG
   - K-LLM-RECON
   sections:
-  - 'Inquiry handoff: TripPlanner outbox vs Booking inbox (weekly roll-up of TP-03)'
-  - Booking inbox backlog and age (booking.inbox_events)
+  - 'Inquiry handoff: TripPlanner outbox vs Booking inbox (historical: retired with TP-03 on 2026-11-03, the B2C hand-off
+    is off)'
+  - Booking inbox backlog and age (booking.inbox_events; historical with the inquiry hand-off)
   - 'Tour lifecycle events read by bk_tour_lifecycle_pull (AA-986): lag'
   - Booking supply feed (booking.v_supply_outbox) consumption by CRM (crm.booking_feed_state)
   - LLM gateway ledger vs Cost Explorer (K-LLM-RECON, FI-01)

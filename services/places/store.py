@@ -9,6 +9,7 @@ FORCE-RLS and the runner may be neither superuser nor BYPASSRLS (lesson S236).
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable, Optional
 
 import asyncpg
@@ -869,23 +870,50 @@ _GEOCODE_CALL_SQL = ("INSERT INTO geo.geocode_call (provider, requests, cost_usd
 # AA-804 (ledger v2, migration 319): the same row plus the job's tenant and the requests that did not answer.
 _GEOCODE_CALL_V2_SQL = ("INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id, credits, endpoint, "
                         "tenant_id, failed_requests) VALUES ($1, $2, $3, $4::uuid, $5, $6, $7::uuid, $8)")
+# AA-1025 D3 (migration 346, root ADR 0009 decision 8 read federated): plus status, latency_ms, app and stage.
+_GEOCODE_CALL_V3_SQL = ("INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id, credits, endpoint, "
+                        "tenant_id, failed_requests, status, latency_ms, app, stage) "
+                        "VALUES ($1, $2, $3, $4::uuid, $5, $6, $7::uuid, $8, $9, $10, $11, $12)")
+GEOCODE_STATUSES = ("ok", "refused", "error")
+_STAGE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def geocode_status(requests: int, failed_requests: Optional[int]) -> str:
+    """The ledger status of one batch: ``error`` when every request failed, else ``ok`` (the readers' derivation for
+    rows written before migration 346). Pure."""
+    failed = failed_requests if isinstance(failed_requests, int) and not isinstance(failed_requests, bool) else 0
+    return "error" if requests > 0 and failed >= requests else "ok"
 
 
 async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float, job_id: Optional[str], *,
                             credits: Optional[int] = None, endpoint: str = "search",
-                            failed_requests: Optional[int] = None, tenant_id: Optional[str] = None) -> None:
+                            failed_requests: Optional[int] = None, tenant_id: Optional[str] = None,
+                            stage: Optional[str] = None, latency_ms: Optional[int] = None,
+                            status: Optional[str] = None) -> None:
     """One row per run and endpoint. `credits` defaults to `requests` (a geocode search is 1 credit).
 
     AA-804: `failed_requests` = the requests of the run that did not answer (each still spent a credit; NULL = not
-    counted); `tenant_id` defaults to the job's bound tenant (call_log.bind_tenant; NULL = platform). Before
-    migration 319 the row is written without them."""
+    counted); `tenant_id` defaults to the job's bound tenant (call_log.bind_tenant; NULL = platform). AA-1025 D3:
+    `stage` (the work that sent the batch: place_geocode, place_relocate, place_shape, adhoc_conn_test), `latency_ms`
+    (the batch's provider time), `status` (default: `geocode_status`) and the app (``call_log.APP``). Before migration
+    346 the row is written without the D3 columns, before 319 without the tenant and failed requests too."""
     if not requests:
         return
-    from shared.llm_client.call_log import _row_tenant
+    from shared.llm_client.call_log import APP, _row_tenant
     args = (provider, requests, round(cost_usd, 6), job_id, requests if credits is None else credits, endpoint)
     failed = failed_requests if isinstance(failed_requests, int) and not isinstance(failed_requests, bool) else None
+    tenant = _row_tenant(tenant_id, "geocode_call")
+    status = status if status in GEOCODE_STATUSES else geocode_status(requests, failed)
+    latency = latency_ms if isinstance(latency_ms, int) and not isinstance(latency_ms, bool) and latency_ms >= 0 \
+        else None
+    stage = stage if isinstance(stage, str) and _STAGE_RE.match(stage) else None
     try:
-        await conn.execute(_GEOCODE_CALL_V2_SQL, *args, _row_tenant(tenant_id, "geocode_call"), failed)
+        await conn.execute(_GEOCODE_CALL_V3_SQL, *args, tenant, failed, status, latency, APP, stage)
+        return
+    except asyncpg.exceptions.UndefinedColumnError:
+        pass
+    try:
+        await conn.execute(_GEOCODE_CALL_V2_SQL, *args, tenant, failed)
     except asyncpg.exceptions.UndefinedColumnError:
         await conn.execute(_GEOCODE_CALL_SQL, *args)
 

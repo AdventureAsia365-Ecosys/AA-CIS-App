@@ -1,7 +1,7 @@
 // UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 // app/_kit/core/kitGallery.messages.ts
 // AA-994 S4a — the demo text of the kit gallery (core/KitGallery.tsx), English and Vietnamese; S6a adds the form demo; the
-// button variants (core Buttons.tsx) add the buttons demo.
+// button variants (core Buttons.tsx) add the buttons demo; AA-1008 the shell frame demo.
 
 import { defineMessages } from "./i18n";
 
@@ -38,6 +38,7 @@ export const GALLERY_MESSAGES = defineMessages(
     menuArchive: "Archive",
     menuLocked: "Locked action",
     confirmTitle: "Confirm dialog",
+    aiNoticeTitle: "AI notice",
     openConfirm: "Open confirm",
     openDanger: "Open with a reason",
     openBusy: "Open busy with an error",
@@ -131,6 +132,14 @@ export const GALLERY_MESSAGES = defineMessages(
     btnPressable: "Surface",
     btnOpenPhoto: "Open photo 1: Hoan Kiem Lake",
     btnTile: "Hoan Kiem Lake",
+    shellTitle: "Shell frame",
+    shellBrand: "Demo app",
+    shellNavHome: "Home",
+    shellNavTrips: "Trips",
+    shellMenu: "Open the menu",
+    shellCloseMenu: "Close the menu",
+    shellTopbar: "Topbar slot: search, language, theme, account",
+    shellBody: "The page goes here. Below the breakpoint the sidebar is a drawer: open it from the menu button.",
   },
   {
     sectionTitle: "Section",
@@ -164,6 +173,7 @@ export const GALLERY_MESSAGES = defineMessages(
     menuArchive: "Lưu trữ",
     menuLocked: "Thao tác bị khoá",
     confirmTitle: "Hộp xác nhận",
+    aiNoticeTitle: "Ghi chú AI",
     openConfirm: "Mở hộp xác nhận",
     openDanger: "Mở, có ô lý do",
     openBusy: "Mở khi đang xử lý, có lỗi",
@@ -257,5 +267,13 @@ export const GALLERY_MESSAGES = defineMessages(
     btnPressable: "Vùng bấm",
     btnOpenPhoto: "Mở ảnh 1: Hồ Hoàn Kiếm",
     btnTile: "Hồ Hoàn Kiếm",
+    shellTitle: "Khung ứng dụng",
+    shellBrand: "Ứng dụng mẫu",
+    shellNavHome: "Trang chủ",
+    shellNavTrips: "Chuyến đi",
+    shellMenu: "Mở menu",
+    shellCloseMenu: "Đóng menu",
+    shellTopbar: "Ô thanh trên: tìm kiếm, ngôn ngữ, giao diện, tài khoản",
+    shellBody: "Nội dung trang nằm ở đây. Dưới điểm ngắt, thanh bên là ngăn kéo: mở bằng nút menu.",
   },
 );

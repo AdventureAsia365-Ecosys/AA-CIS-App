@@ -31,8 +31,8 @@ def build_hitl_event_payload(run_id: str, stage: int, gate: int,
                              decision: str, reviewer_type: str) -> dict:
     """Build the acp.hitl.approved/rejected detail payload (AA-186 contract).
 
-    reviewer_type must be the value from verify_tenant_api_key()'s actor dict
-    ("aa_internal" | "tenant_self") — a different namespace than
+    reviewer_type is "aa_internal" | "tenant_self" (the actor namespace of the retired AA-181
+    verify_tenant_api_key(), removed by AA-1036; the event contract keeps the two values) — a different namespace than
     acp_hitl_requests.reviewer_type ("aa_internal"|"tenant_admin") and
     _audit_actor_type()'s audit_log.actor_type enum ("hitl_reviewer"|"tenant_admin").
     Do not source this field from either of those.

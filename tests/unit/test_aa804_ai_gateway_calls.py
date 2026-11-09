@@ -52,15 +52,15 @@ def test_cursor_round_trip_and_refusals():
     ({}, ("llm", "jev", "dfs", "geocoder", "crm")),
     ({"source": "dfs"}, ("dfs",)),
     ({"status": "truncated"}, ("llm",)),
-    ({"status": "refused"}, ("llm", "dfs", "crm")),
+    ({"status": "refused"}, ("llm", "jev", "dfs", "geocoder", "crm")),     # AA-1025 D3: Jev / geocoder refusals
     ({"provider": "jev"}, ("jev",)),
     ({"provider": "bedrock"}, ("llm", "crm")),
     ({"provider": "geocoder"}, ("geocoder",)),
     ({"app": "crm"}, ("crm",)),
-    ({"app": "tripplanner"}, ("llm", "dfs")),
+    ({"app": "tripplanner"}, ("llm", "dfs", "geocoder")),     # AA-1025 D3: geocode_call has an app column (346)
     ({"app": "cis"}, ("llm", "jev", "dfs", "geocoder")),
-    ({"stage": "invented_stage"}, ("llm", "jev", "dfs")),
-    ({"stage": "crm_draft"}, ("llm", "jev", "dfs", "crm")),
+    ({"stage": "invented_stage"}, ("llm", "jev", "dfs", "geocoder")),    # AA-1025 D3: and a stage column
+    ({"stage": "crm_draft"}, ("llm", "jev", "dfs", "geocoder", "crm")),
     ({"job_id": JOB}, ("llm", "jev", "dfs", "geocoder")),
     ({"tour_id": TOUR}, ("llm", "jev", "dfs", "geocoder")),
 ])
@@ -100,7 +100,7 @@ def test_tour_filter_reads_the_tour_column_and_its_jobs():
 def test_derived_status_of_the_ledgers_without_a_status_column():
     sql, _ = _sql("jev", status="error")
     assert "FROM shared.decision_log" in sql
-    assert "CASE WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END = $3" in sql
+    assert f"{' '.join(calls.gw.JEV_STATUS_SQL.split())} = $3" in sql
     sql, _ = _sql("geocoder", status="error", job_id=JOB)
     assert "FROM geo.geocode_call" in sql and "called_at >= $1" in sql and "job_id = $3::uuid" in sql
     assert "ORDER BY called_at DESC" in sql
@@ -366,7 +366,9 @@ def _call_route(pool, **kw):
     from api.routers import admin_ai_gateway as router_mod
 
     args = {k: None for k in ("job_id", "tour_id", "app", "provider", "status", "stage", "source", "window",
-                              "cursor")}
+                              "cursor",
+                              # AA-1045: the usage explorer's drill-down filters
+                              "since", "until", "tenant", "model", "account", "role", "error_class", "product")}
     args.update(limit=calls.DEFAULT_LIMIT, **kw)
     req = _request(pool)
     req.scope = {"state": {}}

@@ -1,7 +1,7 @@
 """S241 — staff-only guard for /v1 routers that act on every tenant's data (/v1/rules; /v1/social until AA-850).
 
 Before S241 those routers used a local `_get_admin` that accepted the X-Admin-Secret OR any valid
-JWT. A tenant can trade its API key for a JWT (POST /auth/tenant-login, role='tenant'), so any
+JWT. A tenant could trade its API key for a JWT (POST /auth/tenant-login, role='tenant'; 410 since AA-1036), so any
 tenant could list every tenant's social posts, approve/reject them, and switch off global output
 rules. AA-799 fixed the same pattern in v1_pipeline._require_admin; this is that guard, shared.
 

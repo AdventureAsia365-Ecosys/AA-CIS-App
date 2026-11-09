@@ -31,14 +31,16 @@ import json
 import re
 from typing import Any, Optional
 
+from services.quality import writing_policy as _wp
+from services.seo_intelligence import keyword_fit as _keyword_fit
 from services.quality.s1_facts import build_fact_table, field_text, item_lines
 
 ARMS = ("aplus", "w", "e")
 VERSION = "s1-writer-v2/1"
 WRITER_MAX_TOKENS = 16000   # Claude 5.5 models think adaptively and the thinking counts against max_tokens (S246)
 META_MAX_TOKENS = 4000
-META_TARGET = (130, 148)    # aim below the gate band 140–155 (lesson S233: LLMs overshoot a character target)
-MAX_KEYWORDS = 3
+META_TARGET = _wp.writer_aim("s1")    # AA-1047: aim below the policy meta band (lesson S233: LLMs overshoot a target)
+MAX_KEYWORDS = _keyword_fit.S1_MAX_KEYWORDS
 MAX_FIGURES = 80
 
 # ------------------------------------------------------------------ source preparation
@@ -105,26 +107,9 @@ def day_plan(tour: dict, facts: Optional[dict] = None) -> dict:
     return {"mode": "single_day", "kind": kind, "days": [{"day": 1, "source": itin.strip(), "range": None}]}
 
 
-def relevant_keywords(seo: Optional[dict], tour: dict, limit: int = MAX_KEYWORDS) -> list[str]:
-    """DFS keywords the meta may use: not transactional, and every content word occurs in the source (the S233
-    `keyword_covered` rule — a raw search query is not forced into a title). At most `limit`, in DFS order."""
-    from services.acp_content_writing.quality_gates import keyword_covered
-    from services.acp_content_writing.service import _TRANSACTIONAL_RE
-
-    seo = seo or {}
-    raw = (seo.get("keywords") or {}).get("top_keywords") or seo.get("top_keywords") or []
-    source = "\n".join(field_text(tour.get(f)) for f in ("name", "summary", "description", "highlights",
-                                                         "itineraries", "country", "duration"))
-    out: list[str] = []
-    for k in raw:
-        kw = (k.get("keyword") if isinstance(k, dict) else k) or ""
-        kw = str(kw).strip()
-        if not kw or kw in out or _TRANSACTIONAL_RE.search(kw) or not keyword_covered(source, kw):
-            continue
-        out.append(kw)
-        if len(out) >= limit:
-            break
-    return out
+# AA-1055 PR 1: the keyword filter lives in services/seo_intelligence/keyword_fit.py, shared with T2 (one function,
+# no copy). Re-exported here: the S1 v2 live path, the AA-645 harness and the tests call `v2.relevant_keywords`.
+relevant_keywords = _keyword_fit.relevant_keywords
 
 
 # ------------------------------------------------------------------ the fact sheet (writer input)
@@ -220,8 +205,7 @@ def render_fact_sheet(tour: dict, facts: dict, plan: dict) -> str:
 # ------------------------------------------------------------------ prompts: W (new writer)
 
 _BACKGROUND = {
-    "allow": ("You may add one short clause of well-known background about a place the fact sheet names (what it"
-              " is, its era or setting), never presented as part of this tour."),
+    "allow": _wp.fragment("s1_writer.background_allow"),      # AA-1047: D1, from writing_policy.yaml
     "forbid": "Do not add background about places: every name and statement comes from the fact sheet.",
 }
 
@@ -617,7 +601,8 @@ def meta_system_prompt(forbidden: list[str]) -> str:
         "You write the SEO title and the meta description for one tour page of a white-label tour catalogue.",
         "",
         "RULES",
-        "1. seo_title: at most 60 characters; the place and the activity or duration; no brand, no hype.",
+        _wp.fill("1. seo_title: at most <<title.max>> characters; the place and the activity or duration; no brand,"
+                 " no hype."),
         f"2. seo_meta: one complete sentence ending in a period, {lo}–{hi} characters (count them). Facts only from"
         " the PAGE and FIGURES given: never a service, inclusion, view, guide, transfer or comfort the page does not"
         " state. Name the duration and the main places or activity.",

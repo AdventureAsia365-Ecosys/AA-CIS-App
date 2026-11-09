@@ -33,6 +33,16 @@ denied on two or more models; ``state`` closed | open | half_open, ``refusing`` 
 until when, the tripping models), and ``failure_domain`` (``shared.llm_client.invariant.failure_domain``).
 ``invariant`` is the report-only failure-domain rule (``invariant.read``): per stage and stage class, whether an
 enabled, funded deployment in another failure domain exists.
+
+AA-1026 (S267) — ``stage_coverage`` (``shared.llm_client.stage_coverage.read``): per active stage, the model that
+answers now (proven by the breaker or the probe within 36 h, no refusal or open circuit since), or none: the Stage
+coverage card on the Routing tab; the same report raises the ops check ``llm_stage_coverage.<stage>``.
+
+AA-900 (S271 lane l11) — a deployment refused only because it has no grant yet (its circuit's class access_denied,
+its deployment's last probe access_denied, its account answering: ``shared.llm_client.expected_refusal``) is listed
+with ``expected_refusal: true`` and in ``known_refused_models``; it does not make its connection ``open`` or
+``degraded``, is not in ``open_models`` and is not the connection's ``last_error_*``. The connection-level
+``circuit`` is unchanged (an account-wide refusal is never expected).
 """
 from __future__ import annotations
 
@@ -42,10 +52,11 @@ from typing import Iterable, Optional
 
 import asyncpg
 
-from shared.llm_client import invariant
+from shared.llm_client import invariant, stage_coverage
 from shared.llm_client.breaker import (CLOSED, Health, connection_health, connection_members, connection_refusing,
                                        state_of)
 from shared.llm_client.errors import ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, classify_text
+from shared.llm_client.expected_refusal import known_denied_model
 
 FAILURE_CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED)
 BLOCKING_CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED)
@@ -185,9 +196,11 @@ def build(call_rows: Iterable[dict], job_rows: Iterable[dict], *, hours: int, no
 CONNECTIONS_SQL = """
     SELECT c.connection_key, c.kind, c.label, c.enabled, c.data_scope, c.account_id, c.account_id_env,
            h.model_key, h.last_ok_at, h.last_error_at, h.last_error_class, h.last_error, h.consecutive_failures,
-           h.circuit_open_until, h.open_streak, h.opened_at, h.probe_until
+           h.circuit_open_until, h.open_streak, h.opened_at, h.probe_until,
+           c.access_state AS connection_access_state, d.access_state AS deployment_access_state
       FROM shared.llm_provider_connection c
       LEFT JOIN shared.llm_provider_health h USING (connection_key)
+      LEFT JOIN shared.llm_model_deployment d ON d.connection_key = h.connection_key AND d.model_key = h.model_key
      WHERE c.kind IN ('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock')
      ORDER BY c.connection_key, h.model_key
 """
@@ -200,9 +213,10 @@ def connection_status(enabled: bool, models: list[dict], now: datetime) -> str:
     """See the module docstring (AA-1002 S4)."""
     if not enabled:
         return "disabled"
-    if any(m["state"] != CLOSED for m in models):
+    live = [m for m in models if not m.get("expected_refusal")]      # AA-900: a model with no grant is no problem
+    if any(m["state"] != CLOSED for m in live):
         return "open"
-    if any(m["consecutive_failures"] for m in models):
+    if any(m["consecutive_failures"] for m in live):
         return "degraded"
     last_ok = _latest(m["_last_ok"] for m in models)
     if last_ok is not None and now - last_ok <= timedelta(hours=STALE_OK_HOURS):
@@ -231,14 +245,19 @@ def build_connections(rows: Iterable[dict], *, now: datetime) -> list[dict]:
             "last_ok_at": _iso(h.last_ok_at), "last_error_at": _iso(h.last_error_at),
             "last_error_class": h.last_error_class, "last_error": (h.last_error or "")[:ERROR_SAMPLE_CHARS] or None,
             "circuit_open_until": _iso(h.circuit_open_until), "probe_until": _iso(h.probe_until),
-            "open_streak": h.open_streak, "_last_ok": h.last_ok_at, "_last_error": h.last_error_at})
+            "open_streak": h.open_streak, "_last_ok": h.last_ok_at, "_last_error": h.last_error_at,
+            "expected_refusal": state_of(h, now) != CLOSED and known_denied_model(
+                h.last_error_class, r.get("deployment_access_state"), r.get("connection_access_state"))})
     out = []
     for entry in by_key.values():
         models = entry["models"]
-        newest_error = max((m for m in models if m["_last_error"]), key=lambda m: m["_last_error"], default=None)
+        # AA-900: the last error shown is the newest one of a model that is not an expected refusal
+        newest_error = max((m for m in models if m["_last_error"] and not m["expected_refusal"]),
+                           key=lambda m: m["_last_error"], default=None)
         entry.update(
             status=connection_status(entry["enabled"], models, now),
-            open_models=sum(1 for m in models if m["state"] != CLOSED),
+            open_models=sum(1 for m in models if m["state"] != CLOSED and not m["expected_refusal"]),
+            known_refused_models=sorted(m["model_key"] for m in models if m["expected_refusal"]),
             last_ok_at=_iso(_latest(m["_last_ok"] for m in models)),
             last_error_at=newest_error["last_error_at"] if newest_error else None,
             last_error_class=newest_error["last_error_class"] if newest_error else None,
@@ -287,4 +306,5 @@ async def read(conn, *, hours: int = 24, now: Optional[datetime] = None) -> dict
     out = build(call_rows, job_rows, hours=hours, now=now)
     out["health_ready"], out["connections"] = await read_connections(conn, now=now)
     out["invariant"] = await invariant.read(conn, blocked=blocked_from(out["connections"]), now=now)
+    out["stage_coverage"] = await stage_coverage.read(conn, now=now)     # AA-1026 (S267): the Stage coverage card
     return out

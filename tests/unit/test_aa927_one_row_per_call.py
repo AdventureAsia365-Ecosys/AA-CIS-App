@@ -19,6 +19,14 @@ from shared.llm_client.client import LLMClient, _billed_unusable
 from shared.llm_client.models import LLMRequest, LLMResponse
 
 
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+
+
 # ── the fake gateway + the row capture ──────────────────────────────────────────────────────────
 
 
@@ -342,7 +350,9 @@ def test_m_route_fallback_writes_one_gateway_attempt_row(monkeypatch):
     c = _client()
     with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), \
             patch.object(c, "_call_key", side_effect=fake):
-        resp = c._call_route(LLMRequest(system_prompt="s", user_prompt="u", stage="t10_judge"),
+        # S271: budget_retry=False — one attempt per model here; the gateway's truncation retry of this cut empty
+        # reply (and its rows) is tests/unit/test_s271_gateway_token_budget.py
+        resp = c._call_route(LLMRequest(system_prompt="s", user_prompt="u", stage="t10_judge", budget_retry=False),
                              ["gpt-5.6-luna", "gpt-6-luna"], "acc3", role="judge")
     call_log.wait_for_pending_writes()
     assert resp is good and resp.fallback_used is True

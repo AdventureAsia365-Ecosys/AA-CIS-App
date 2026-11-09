@@ -105,10 +105,10 @@ def test_legacy_hs256_bearer_passes_through_untouched(issuer, directory):
     client = TestClient(_echo_app(directory))
     for token in (_create_admin_jwt(SUB, "u", "admin"), _create_jwt("t1", "Tenant", "starter")):
         res = client.get("/admin/echo", headers={
-            "Authorization": f"Bearer {token}", "x-admin-role": "reviewer", "x-admin-user-id": FORGED_ID,
+            "Authorization": f"Bearer {token}", "x-admin-role": "content", "x-admin-user-id": FORGED_ID,
         })
         body = res.json()
-        assert (body["role"], body["user"], body["authorization"]) == ("reviewer", FORGED_ID, f"Bearer {token}")
+        assert (body["role"], body["user"], body["authorization"]) == ("content", FORGED_ID, f"Bearer {token}")
         assert body["current"] is None
     assert directory.sql == []
 

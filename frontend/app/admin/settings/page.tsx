@@ -1,5 +1,6 @@
 "use client";
-// app/admin/settings/page.tsx — AA-158 Admin Settings
+// app/admin/settings/page.tsx — AA-158 Admin Settings; AA-1039 R6 rest: Catalogue settings (Pipeline gates, AA house
+// style, SEO config) of AA Catalogue
 // AA-994: text in the UI language (messages.ts); gate keys, pipeline steps, keywords and tenant values stay as sent.
 // AA-804 UI part 2: the LLM Models and Jev Credit tabs moved to AI providers (/admin/ai-gateway). Their old links
 // (`?tab=models`, `?tab=jev-credit`: bookmarks, alert e-mails already sent) are replaced in the browser by the new
@@ -10,10 +11,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { X, Plus, Save } from "lucide-react";
 import BrandIdentityEditor from "../_components/BrandIdentityEditor";
-import SettingsKitTab from "../_components/SettingsKitTab";
 import {
   Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT, Badge, Eyebrow, K, LoadingScreen,
-  Section, Spinner, alpha, mono, sans, serif, type Tone,
+  Section, Spinner, alpha, mono, sans,
+  Input, Textarea,
+  IconButton,
 } from "../../_kit";
 import { RETIRED_SETTINGS_TABS, retiredTabTarget } from "@/lib/aiGateway";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
@@ -22,19 +24,8 @@ import { SETTINGS } from "./messages";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// GET /admin/settings also sends `tenant` and `plan` (the aa_internal row); this page no longer shows them.
 interface SettingsData {
-  tenant: {
-    tenant_id: string;
-    name: string;
-    slug: string;
-    plan_tier: string;
-    is_active: boolean;
-  };
-  plan: {
-    tours_quota_monthly: number;
-    price_usd_monthly: number;
-    trash_retention_days: number;
-  };
   brand_rules: {
     system_prompt: string | null;
     style_guide: string | null;
@@ -217,12 +208,10 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             }}>
               {kw}
               {canEdit && (
-                <button onClick={() => removeKeyword(kw)} style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: K.accentDeep, display: "flex", padding: 0,
-                }}>
+                <IconButton variant="plain" size="xs" label={t("removeKeyword", kw)} onClick={() => removeKeyword(kw)}
+                  style={{ color: K.accentDeep, width: 16, height: 16 }}>
                   <X size={11} />
-                </button>
+                </IconButton>
               )}
             </span>
           ))}
@@ -231,7 +220,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
           )}
         </div>
         {canEdit && <div style={{ display: "flex", gap: 8 }}>
-          <input
+          <Input
             value={kwInput}
             onChange={e => setKwInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addKeyword())}
@@ -250,7 +239,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
 
       <Section>
         <Eyebrow>{t("targetMarket")}</Eyebrow>
-        <textarea
+        <Textarea
           value={targetJson}
           onChange={e => setTargetJson(e.target.value)}
           readOnly={!canEdit}
@@ -294,92 +283,6 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
 }
 
 
-// ─── Tenant Info Tab ──────────────────────────────────────────────────────────
-
-function TenantInfoTab({
-  tenant, plan,
-}: {
-  tenant: SettingsData["tenant"];
-  plan: SettingsData["plan"];
-}) {
-  const t = useT(SETTINGS);
-  const PLAN_COLOR: Record<string, Tone> = {
-    internal:   "accent",
-    starter:    "info",
-    growth:     "success",
-    business:   "purple",
-    enterprise: "purple",
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Section>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 20 }}>
-          <div>
-            <Eyebrow>{t("tenantName")}</Eyebrow>
-            <div style={{ fontSize: 16, fontWeight: 600, color: K.ink, fontFamily: serif }}>
-              {tenant.name}
-            </div>
-          </div>
-          <div>
-            <Eyebrow>{t("slug")}</Eyebrow>
-            <code style={{ fontSize: 13, fontFamily: mono, color: K.body }}>{tenant.slug}</code>
-          </div>
-          <div>
-            <Eyebrow>{t("planTier")}</Eyebrow>
-            <Badge tone={PLAN_COLOR[tenant.plan_tier] ?? "neutral"}>
-              {tenant.plan_tier}
-            </Badge>
-          </div>
-          <div>
-            <Eyebrow>{t("status")}</Eyebrow>
-            <Badge tone={tenant.is_active ? "success" : "danger"}>
-              {tenant.is_active ? t("active") : t("inactive")}
-            </Badge>
-          </div>
-          <div>
-            <Eyebrow>{t("tenantId")}</Eyebrow>
-            <code style={{ fontSize: 11, fontFamily: mono, color: K.muted2, wordBreak: "break-all" }}>
-              {tenant.tenant_id}
-            </code>
-          </div>
-        </div>
-      </Section>
-
-      <Section>
-        <Eyebrow>{t("planQuota")}</Eyebrow>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 16 }}>
-          <div>
-            <div style={{ fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              {t("monthlyTours")}
-            </div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink, letterSpacing: "-0.02em" }}>
-              {plan.tours_quota_monthly > 0 ? plan.tours_quota_monthly.toLocaleString() : "∞"}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              {t("monthlyPrice")}
-            </div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink, letterSpacing: "-0.02em" }}>
-              {plan.price_usd_monthly > 0 ? `$${plan.price_usd_monthly.toFixed(0)}` : "—"}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              {t("trashRetention")}
-            </div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink, letterSpacing: "-0.02em" }}>
-              {t("days", plan.trash_retention_days)}
-            </div>
-            <div style={{ fontSize: 10, color: K.muted2, marginTop: 2 }}>{t("systemDefault")}</div>
-          </div>
-        </div>
-      </Section>
-    </div>
-  );
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 // AA-663 — "Brand Rules" (a read-only summary of the active brand) is replaced by the full Brand
@@ -388,15 +291,15 @@ function TenantInfoTab({
 // AA-882 — `needs`: a tab whose reads the backend keeps admin-only is not shown to a role without it (none today:
 // the two such tabs, LLM Models and Jev Credit, moved to AI providers, an admin-only page).
 // `label` is a key of messages.ts SETTINGS (AA-994).
-type TabLabel = "tabPipeline" | "tabBrand" | "tabSeo" | "tabTenant" | "tabUiKit";
+// AA-1039 R6 rest (IA §6.2: AA Catalogue › Catalogue settings — the gate and the "AA house style"): the page holds the
+// catalogue's own settings only. Tenant Info (the aa_internal tenant row and plan) is that tenant's Tenant 360
+// (Settings tab) and the UI kit reference is /admin/platform/ui-kit; `?tab=tenant` / `?tab=ui-kit` answer 307 there
+// (lib/adminIa.ts ADMIN_ROUTE_MOVES).
+type TabLabel = "tabPipeline" | "tabBrand" | "tabSeo";
 const TABS: { key: string; label: TabLabel; needs?: Capability }[] = [
   { key: "pipeline",  label: "tabPipeline" },
   { key: "brand",     label: "tabBrand" },
   { key: "seo",       label: "tabSeo" },
-  { key: "tenant",    label: "tabTenant" },
-  // AA-662 — UI-kit living reference (design system), moved here from a standalone /admin/kit-demo
-  // page so it lives under Settings as a system/reference tab rather than a top-level nav item.
-  { key: "ui-kit",    label: "tabUiKit" },
 ];
 
 export default function SettingsPage() {
@@ -466,10 +369,6 @@ function SettingsPageInner() {
             {tab === "seo" && (
               <SeoConfigTab seo={data.seo_config} canEdit={can(role, "content.settings.write")} />
             )}
-            {tab === "tenant" && (
-              <TenantInfoTab tenant={data.tenant} plan={data.plan} />
-            )}
-            {tab === "ui-kit" && <SettingsKitTab />}
           </>
         )}
       </PageFrame>

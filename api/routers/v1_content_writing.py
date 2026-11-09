@@ -33,6 +33,8 @@ from api.routers.v1_tours import get_tenant
 from shared.tour_liveness import TourNotServedError
 from services.acp_angle_gate.service import RequestNotFoundError
 from services.acp_content_writing import service
+from services.acp_content_writing.ai_marking import piece_mark
+from services.acp_content_writing.ai_marking import response_headers as ai_response_headers
 from services.acp_content_writing.export import (
     render_content_text_to_document,
     render_content_text_to_fragment,
@@ -198,6 +200,7 @@ async def export_piece(
         raise HTTPException(status_code=409, detail="Nothing to export yet")
 
     channel = piece["channel"]
+    ai_mark = piece.get("ai") or piece_mark(piece.get("created_at"))
     if format == "html":
         if channel != "blog":
             raise HTTPException(
@@ -205,10 +208,11 @@ async def export_piece(
                 detail="HTML export is only available for the Blog channel — every other "
                        "channel's content isn't written as markdown.",
             )
+        # AA-1040 — the AI mark: data-ai-* on the <article>, <meta name="ai-*"> tags (in the <head> of a document).
         if mode == "fragment":
-            body = render_content_text_to_fragment(piece["content_text"])
+            body = render_content_text_to_fragment(piece["content_text"], ai=ai_mark)
         else:
-            body = render_content_text_to_document(piece["content_text"], title="Blog post")
+            body = render_content_text_to_document(piece["content_text"], title="Blog post", ai=ai_mark)
     else:
         body = piece["content_text"]
 
@@ -227,9 +231,11 @@ async def export_piece(
     except Exception:
         pass
 
+    # AA-1040 — every download carries the mark as headers too (a text export has no markup to carry it).
+    headers = ai_response_headers(ai_mark)
     if format == "html":
-        return Response(content=body, media_type="text/html")
-    return Response(content=body, media_type="text/plain")
+        return Response(content=body, media_type="text/html", headers=headers)
+    return Response(content=body, media_type="text/plain", headers=headers)
 
 
 @router.get(

@@ -44,8 +44,10 @@ def publish_key(piece_id, channel: str, content_text: str) -> str:
 
 
 def blog_slug(base: str, key: str) -> str:
-    """WordPress slug unique to the piece revision, so a lost post can be found again by slug."""
-    stem = re.sub(r"[^a-z0-9]+", "-", (base or "").lower()).strip("-")[:60].strip("-") or "post"
+    """WordPress slug unique to the piece revision, so a lost post can be found again by slug. AA-1047: the stem is
+    cut at a hyphen to the policy slug cap (writing_policy.yaml bands.slug), never mid-word."""
+    from services.quality import writing_policy as _wp
+    stem = _wp.slug_at_boundary(re.sub(r"[^a-z0-9]+", "-", (base or "").lower()).strip("-")) or "post"
     return f"{stem}-{key.rsplit(':', 1)[-1][:8]}"
 
 

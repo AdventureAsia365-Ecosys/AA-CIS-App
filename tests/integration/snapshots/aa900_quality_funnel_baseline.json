@@ -1,0 +1,647 @@
+{
+  "findings": [
+    "qf_cut.t9_write",
+    "qf_drift.t10_judge",
+    "qf_fb.t10_judge"
+  ],
+  "stages": [
+    {
+      "answered": 2,
+      "cost_usd": 0.5,
+      "cut": 0,
+      "cut_rate": 0.0,
+      "errors": 0,
+      "expected_refusals": 0,
+      "fallback_answered": 0,
+      "fallback_share": 0.0,
+      "primary_answered": 2,
+      "refused": 0,
+      "replies": 2,
+      "rung1": 0,
+      "rung2plus": 0,
+      "rung_share": {
+        "primary": 1.0,
+        "rung1": 0.0,
+        "rung2plus": 0.0,
+        "unknown": 0.0
+      },
+      "stage": "s1_generate",
+      "unknown_rung": 0,
+      "week": "2031-03-03",
+      "workflow": "s1"
+    },
+    {
+      "answered": 25,
+      "cost_usd": 0.05,
+      "cut": 0,
+      "cut_rate": 0.0,
+      "errors": 0,
+      "expected_refusals": 0,
+      "fallback_answered": 0,
+      "fallback_share": 0.0,
+      "primary_answered": 25,
+      "refused": 0,
+      "replies": 25,
+      "rung1": 0,
+      "rung2plus": 0,
+      "rung_share": {
+        "primary": 1.0,
+        "rung1": 0.0,
+        "rung2plus": 0.0,
+        "unknown": 0.0
+      },
+      "stage": "t10_judge",
+      "unknown_rung": 0,
+      "week": "2031-02-17",
+      "workflow": "t9"
+    },
+    {
+      "answered": 25,
+      "cost_usd": 0.06,
+      "cut": 0,
+      "cut_rate": 0.0,
+      "errors": 0,
+      "expected_refusals": 0,
+      "fallback_answered": 5,
+      "fallback_share": 0.2,
+      "primary_answered": 20,
+      "refused": 0,
+      "replies": 25,
+      "rung1": 5,
+      "rung2plus": 0,
+      "rung_share": {
+        "primary": 0.8,
+        "rung1": 0.2,
+        "rung2plus": 0.0,
+        "unknown": 0.0
+      },
+      "stage": "t10_judge",
+      "unknown_rung": 0,
+      "week": "2031-03-03",
+      "workflow": "t9"
+    },
+    {
+      "answered": 3,
+      "cost_usd": 0.3,
+      "cut": 0,
+      "cut_rate": 0.0,
+      "errors": 0,
+      "expected_refusals": 0,
+      "fallback_answered": 0,
+      "fallback_share": 0.0,
+      "primary_answered": 3,
+      "refused": 0,
+      "replies": 3,
+      "rung1": 0,
+      "rung2plus": 0,
+      "rung_share": {
+        "primary": 1.0,
+        "rung1": 0.0,
+        "rung2plus": 0.0,
+        "unknown": 0.0
+      },
+      "stage": "t2_generate",
+      "unknown_rung": 0,
+      "week": "2031-03-03",
+      "workflow": "t2"
+    },
+    {
+      "answered": 1,
+      "cost_usd": 0.07,
+      "cut": 0,
+      "cut_rate": 0.0,
+      "errors": 0,
+      "expected_refusals": 0,
+      "fallback_answered": 0,
+      "fallback_share": 0.0,
+      "primary_answered": 1,
+      "refused": 0,
+      "replies": 1,
+      "rung1": 0,
+      "rung2plus": 0,
+      "rung_share": {
+        "primary": 1.0,
+        "rung1": 0.0,
+        "rung2plus": 0.0,
+        "unknown": 0.0
+      },
+      "stage": "t9_repair",
+      "unknown_rung": 0,
+      "week": "2031-03-03",
+      "workflow": "t9"
+    },
+    {
+      "answered": 18,
+      "cost_usd": 0.24,
+      "cut": 2,
+      "cut_rate": 0.1,
+      "errors": 0,
+      "expected_refusals": 0,
+      "fallback_answered": 0,
+      "fallback_share": 0.0,
+      "primary_answered": 18,
+      "refused": 0,
+      "replies": 20,
+      "rung1": 0,
+      "rung2plus": 0,
+      "rung_share": {
+        "primary": 1.0,
+        "rung1": 0.0,
+        "rung2plus": 0.0,
+        "unknown": 0.0
+      },
+      "stage": "t9_write",
+      "unknown_rung": 0,
+      "week": "2031-03-03",
+      "workflow": "t9"
+    }
+  ],
+  "totals": {
+    "s1": {
+      "this_week": {
+        "attempts_delivered": 5,
+        "attempts_per_delivered": 1.25,
+        "cost_usd": 0.5,
+        "created": 5,
+        "delivered": 4,
+        "failed": 0,
+        "first_pass": 2,
+        "first_pass_yield": 0.4,
+        "held": 1,
+        "hold_rate": 0.2,
+        "usd_per_delivered": 0.125
+      },
+      "window": {
+        "attempts_delivered": 6,
+        "attempts_per_delivered": 1.2,
+        "cost_usd": 0.5,
+        "created": 7,
+        "delivered": 5,
+        "failed": 1,
+        "first_pass": 3,
+        "first_pass_yield": 0.4286,
+        "held": 1,
+        "hold_rate": 0.1667,
+        "usd_per_delivered": 0.1
+      }
+    },
+    "t2": {
+      "this_week": {
+        "attempts_delivered": 4,
+        "attempts_per_delivered": 2.0,
+        "cost_usd": 0.3,
+        "created": 3,
+        "delivered": 2,
+        "failed": 1,
+        "first_pass": 1,
+        "first_pass_yield": 0.3333,
+        "held": 1,
+        "hold_rate": 0.5,
+        "usd_per_delivered": 0.15
+      },
+      "window": {
+        "attempts_delivered": 4,
+        "attempts_per_delivered": 2.0,
+        "cost_usd": 0.3,
+        "created": 3,
+        "delivered": 2,
+        "failed": 1,
+        "first_pass": 1,
+        "first_pass_yield": 0.3333,
+        "held": 1,
+        "hold_rate": 0.5,
+        "usd_per_delivered": 0.15
+      }
+    },
+    "t9": {
+      "this_week": {
+        "attempts_delivered": 6,
+        "attempts_per_delivered": 2.0,
+        "attributed_cost_usd": 0.12,
+        "attributed_usd_per_delivered": 0.04,
+        "cost_usd": 0.37,
+        "created": 4,
+        "delivered": 3,
+        "failed": 1,
+        "first_pass": 1,
+        "first_pass_yield": 0.25,
+        "held": 1,
+        "hold_rate": 0.3333,
+        "unattributed_cost_usd": 0.25,
+        "usd_per_delivered": 0.1233
+      },
+      "window": {
+        "attempts_delivered": 7,
+        "attempts_per_delivered": 1.75,
+        "attributed_cost_usd": 0.12,
+        "attributed_usd_per_delivered": 0.03,
+        "cost_usd": 0.42,
+        "created": 5,
+        "delivered": 4,
+        "failed": 1,
+        "first_pass": 2,
+        "first_pass_yield": 0.4,
+        "held": 1,
+        "hold_rate": 0.25,
+        "unattributed_cost_usd": 0.3,
+        "usd_per_delivered": 0.105
+      }
+    }
+  },
+  "unavailable": {},
+  "watch_stages": [
+    {
+      "cut_pct": 0.0,
+      "drift_models": [],
+      "drift_pct": null,
+      "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
+      "prior": {
+        "answered": 0,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {},
+        "replies": 0
+      },
+      "recent": {
+        "answered": 2,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {
+          "zz-writer": 2
+        },
+        "replies": 2
+      },
+      "stage": "s1_generate",
+      "workflow": "s1"
+    },
+    {
+      "cut_pct": 0.0,
+      "drift_models": [
+        "zz-judge-b"
+      ],
+      "drift_pct": 20.0,
+      "fallback_pct": 20.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
+      "prior": {
+        "answered": 25,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {
+          "zz-judge-a": 25
+        },
+        "replies": 25
+      },
+      "recent": {
+        "answered": 25,
+        "cut": 0,
+        "fallback_answered": 5,
+        "models": {
+          "zz-judge-a": 20,
+          "zz-judge-b": 5
+        },
+        "replies": 25
+      },
+      "stage": "t10_judge",
+      "workflow": "t9"
+    },
+    {
+      "cut_pct": 0.0,
+      "drift_models": [],
+      "drift_pct": null,
+      "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
+      "prior": {
+        "answered": 0,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {},
+        "replies": 0
+      },
+      "recent": {
+        "answered": 3,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {
+          "zz-writer": 3
+        },
+        "replies": 3
+      },
+      "stage": "t2_generate",
+      "workflow": "t2"
+    },
+    {
+      "cut_pct": 0.0,
+      "drift_models": [],
+      "drift_pct": null,
+      "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
+      "prior": {
+        "answered": 0,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {},
+        "replies": 0
+      },
+      "recent": {
+        "answered": 1,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {
+          "zz-writer": 1
+        },
+        "replies": 1
+      },
+      "stage": "t9_repair",
+      "workflow": "t9"
+    },
+    {
+      "cut_pct": 10.0,
+      "drift_models": [],
+      "drift_pct": null,
+      "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
+      "prior": {
+        "answered": 0,
+        "cut": 0,
+        "fallback_answered": 0,
+        "models": {},
+        "replies": 0
+      },
+      "recent": {
+        "answered": 18,
+        "cut": 2,
+        "fallback_answered": 0,
+        "models": {
+          "zz-writer": 18
+        },
+        "replies": 20
+      },
+      "stage": "t9_write",
+      "workflow": "t9"
+    }
+  ],
+  "workflows": {
+    "s1": {
+      "by_week": [
+        {
+          "attempts_delivered": 1,
+          "attempts_per_delivered": 1.0,
+          "cost_usd": 0.0,
+          "created": 2,
+          "degraded": 0,
+          "delivered": 1,
+          "failed": 1,
+          "fallback_writer": 0,
+          "first_pass": 1,
+          "first_pass_yield": 0.5,
+          "fix_pass": 0,
+          "held": 0,
+          "hold_rate": 0.0,
+          "human": 0,
+          "open": 0,
+          "usd_per_delivered": 0.0,
+          "week": "2031-02-24"
+        },
+        {
+          "attempts_delivered": 5,
+          "attempts_per_delivered": 1.25,
+          "cost_usd": 0.5,
+          "created": 5,
+          "degraded": 0,
+          "delivered": 4,
+          "failed": 0,
+          "fallback_writer": 0,
+          "first_pass": 2,
+          "first_pass_yield": 0.4,
+          "fix_pass": 1,
+          "held": 1,
+          "hold_rate": 0.2,
+          "human": 1,
+          "open": 0,
+          "usd_per_delivered": 0.125,
+          "week": "2031-03-03"
+        }
+      ],
+      "gate_fails": [
+        {
+          "attempt": 1,
+          "fires": 1,
+          "gate": "fact.embellish",
+          "objects": 1,
+          "week": "2031-02-24"
+        },
+        {
+          "attempt": 1,
+          "fires": 1,
+          "gate": "seo.meta_length",
+          "objects": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 2,
+          "fires": 1,
+          "gate": "brand:voice.generic",
+          "objects": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 2,
+          "fires": 1,
+          "gate": "fact.embellish",
+          "objects": 1,
+          "week": "2031-03-03"
+        }
+      ]
+    },
+    "t2": {
+      "by_week": [
+        {
+          "attempts_delivered": 4,
+          "attempts_per_delivered": 2.0,
+          "cost_usd": 0.3,
+          "created": 3,
+          "delivered": 2,
+          "failed": 1,
+          "fallback_writer": 1,
+          "first_pass": 1,
+          "first_pass_yield": 0.3333,
+          "held": 1,
+          "hold_rate": 0.5,
+          "open": 0,
+          "usd_per_delivered": 0.15,
+          "week": "2031-03-03"
+        }
+      ],
+      "gate_fails": null,
+      "note": "per-attempt T3 codes are not stored on the version"
+    },
+    "t9": {
+      "by_week_channel": [
+        {
+          "approved": 1,
+          "attempts_approved": 1,
+          "attempts_delivered": 1,
+          "attempts_held": 0,
+          "attempts_per_approved": 1.0,
+          "attempts_per_delivered": 1.0,
+          "attempts_per_held": null,
+          "channel": "facebook",
+          "cost_usd": 0.0,
+          "created": 1,
+          "degraded": 0,
+          "delivered": 1,
+          "failed": 0,
+          "first_pass": 1,
+          "first_pass_yield": 1.0,
+          "held": 0,
+          "hold_rate": 0.0,
+          "processing": 0,
+          "usd_per_delivered": 0.0,
+          "week": "2031-02-24"
+        },
+        {
+          "approved": 2,
+          "attempts_approved": 3,
+          "attempts_delivered": 6,
+          "attempts_held": 3,
+          "attempts_per_approved": 1.5,
+          "attempts_per_delivered": 2.0,
+          "attempts_per_held": 3.0,
+          "channel": "blog",
+          "cost_usd": 0.12,
+          "created": 3,
+          "degraded": 1,
+          "delivered": 3,
+          "failed": 0,
+          "first_pass": 1,
+          "first_pass_yield": 0.3333,
+          "held": 1,
+          "hold_rate": 0.3333,
+          "processing": 0,
+          "usd_per_delivered": 0.04,
+          "week": "2031-03-03"
+        },
+        {
+          "approved": 0,
+          "attempts_approved": 0,
+          "attempts_delivered": 0,
+          "attempts_held": 0,
+          "attempts_per_approved": null,
+          "attempts_per_delivered": null,
+          "attempts_per_held": null,
+          "channel": "facebook",
+          "cost_usd": 0.0,
+          "created": 1,
+          "degraded": 0,
+          "delivered": 0,
+          "failed": 1,
+          "first_pass": 0,
+          "first_pass_yield": 0.0,
+          "held": 0,
+          "hold_rate": null,
+          "processing": 0,
+          "usd_per_delivered": null,
+          "week": "2031-03-03"
+        }
+      ],
+      "first_gate_holds": [
+        {
+          "channel": "blog",
+          "gate": "F9_cta_fact",
+          "held": 1,
+          "week": "2031-03-03"
+        }
+      ],
+      "gate_fails": [
+        {
+          "attempt": 1,
+          "blocking": true,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F4_seo_surface",
+          "pieces": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 1,
+          "blocking": true,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F9_cta_fact",
+          "pieces": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 1,
+          "blocking": false,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F9_cta_fact.judge_unavailable",
+          "pieces": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 2,
+          "blocking": true,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F9_cta_fact",
+          "pieces": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 2,
+          "blocking": true,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F9_cta_fact.text_integrity",
+          "pieces": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 3,
+          "blocking": true,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F16_faq",
+          "pieces": 1,
+          "week": "2031-03-03"
+        },
+        {
+          "attempt": 3,
+          "blocking": true,
+          "channel": "blog",
+          "fires": 1,
+          "gate": "F9_cta_fact",
+          "pieces": 1,
+          "week": "2031-03-03"
+        }
+      ],
+      "unattributed_cost_usd": {
+        "2031-02-17": 0.05,
+        "2031-03-03": 0.25
+      }
+    }
+  }
+}

@@ -75,6 +75,9 @@ SCOPE_TENANT_READ = "cis.tenant/read"
 # AA-979 P2b: the CRM binds an accepted studio invitation's partner-pool identity (tenant.membership.v1 1.1,
 # POST /tenant/membership/v1/invitations/{id}/activate). Granted to the CRM client only (AA-CIS-Infra identity_m2m.tf).
 SCOPE_TENANT_ACTIVATE = "cis.tenant/activate"
+# AA-1036 R3 (contract tenant.addons.v1): the CRM reads an agency's add-ons and relays its CRM owner's add-on request
+# (GET /tenant/v1/tenants/{id}/add-ons, POST /tenant/v1/tenants/{id}/add-on-requests). CRM client only.
+SCOPE_TENANT_ADDONS = "cis.tenant/addons"
 
 # The shared verifier's message for a validly signed token of a client this route class does not accept.
 CLIENT_NOT_ALLOWED = "client not allowed"

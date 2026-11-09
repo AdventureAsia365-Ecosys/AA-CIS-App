@@ -64,6 +64,7 @@ from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_publish import daily_limit
+from services.acp_shared import subject_gate
 # AA-765: T11 channel dispatch (adapters, post building, remote lookup / delete) lives in services/acp_publish.
 from services.acp_publish.dispatch import (
     INTEGRATION_TYPE, SUPPORTED_CHANNELS, channel_display_name, delete_remote, find_remote, other_account,
@@ -341,6 +342,8 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
         # AA-986 L3: the served state of each piece's tour (Publish badge; publishing it is refused with a 409)
         served = await annotate_by_request(conn, tenant_id, [{"request_id": r.get("request_id")} for r in rows])
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
+    # AA-1039 R6 (d21): why a piece waits (the AA-subject gate's content-style reason), read on MAIN (no tenant grant)
+    needs_change = await _pending_needs_change(request.app.state.pool, tenant_id, [r["piece_id"] for r in rows])
 
     return {
         "data": [
@@ -355,6 +358,8 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
                 # atom-picker request), same convention as T10's fetch_review()/fetch_review_list().
                 "route_hub_name": r["route_hub_name"],
                 "route_segment_count": r["route_segment_count"],
+                # AA-1039 R6 (d21): None, or the sentence that says what to change before this piece can publish
+                "needs_change": needs_change.get(r["piece_id"]),
             }
             for r, sv in zip(rows, served)
         ],
@@ -372,6 +377,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
 _PUBLISH_PIECE_TENANT_COND = "cp.tenant_id = $2::uuid"
 _PUBLISH_PIECE_SQL = """
             SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
+                   cp.created_at, cp.writer_input -> 'ai_provenance' AS ai_provenance,
                    COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
                    cp.angle_gate_request_id::text AS request_id,
                    EXISTS (SELECT 1 FROM acp_shared.content_piece newer
@@ -469,6 +475,11 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             raise refuse_http(exc) from exc
         integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
 
+    key = publish_key(piece_id, channel, piece["content_text"])
+    # AA-1039 R6 (root ADR 0019 d21): the AA-subject gate again, right before a new publish, on MAIN (the Compliance
+    # flag table and the Segment tables have no tenant-pool grant). A failing piece is held (409, content-style reason).
+    await _subject_gate(pool, piece, tenant_id, piece_id, channel, key=key)
+
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422, detail=f"Connect {channel_display_name(channel)} to publish")
 
@@ -481,7 +492,6 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     if is_tombstoned_secret(creds):  # AA-859: refused before claim(), so no publish_log row is written
         raise HTTPException(status_code=422, detail=reconnect_detail(channel_display_name(channel)))
 
-    key = publish_key(piece_id, channel, piece["content_text"])
     # AA-819 — the override read runs before claim()'s transaction (a missing column must not abort it).
     # AA-859 MAIN exception (plan D2): shared.tenants has no RLS and no aa_app_user grant; one lookup keyed on the
     # JWT `sub`, on the admin pool, before the tenant block.
@@ -554,6 +564,52 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         logger.warning("publish_audit_log_failed", tenant_id=tenant_id, piece_id=str(piece_id), error=str(exc))
 
     return _publish_response(row, success=success)
+
+
+async def _pending_needs_change(pool, tenant_id, piece_ids) -> dict:
+    """{piece_id: sentence} of the pending pieces the AA-subject gate holds (display only; a read failure is {})."""
+    try:
+        async with pool.acquire() as main_conn:
+            return await subject_gate.open_messages(main_conn, piece_ids)
+    except Exception:  # noqa: BLE001 — display only
+        logger.warning("subject_gate_pending_read_failed", tenant_id=str(tenant_id), exc_info=True)
+        return {}
+
+
+# AA-1039: a publish_log row of the same piece revision + channel that is live or in flight (the replay / in-progress
+# answers of claim()).
+_SAME_REVISION_SQL = """
+    SELECT EXISTS (SELECT 1 FROM acp_shared.publish_log
+                    WHERE piece_id = $1::uuid AND tenant_id = $2::uuid AND idempotency_key = $3
+                      AND status IN ('published', 'requested'))
+"""
+
+SUBJECT_GATE_UNAVAILABLE = "We couldn't check this piece just now. Please try publishing it again in a minute."
+
+
+async def _subject_gate(pool, piece, tenant_id, piece_id, channel, *, key: str | None = None) -> None:
+    """Raise 409 when the piece fails the AA-subject gate (services/acp_shared/subject_gate.py); the verdict is
+    recorded in admin Tenant content QA › Compliance either way. Fails closed: when the gate cannot answer (a read
+    error, whatever the piece's text holds) the publish is refused with 503 "try again", never let through. Before
+    CIS 360 the gate still answers (its flag reads and writes are skipped, subject_gate.record / released). Only a new
+    publish is checked: a repeat of the same revision (`key`: published, or in flight) is answered by claim() as
+    before; that text passed the gate then, or went live before the gate existed."""
+    gate_piece = {"piece_id": str(piece_id), "tenant_id": str(tenant_id), "request_id": piece.get("request_id"),
+                  "content_text": piece["content_text"], "channel": channel}
+    try:
+        async with pool.acquire() as conn:
+            if key and await conn.fetchval(_SAME_REVISION_SQL, str(piece_id), str(tenant_id), key):
+                return
+            result = await subject_gate.run(conn, piece=gate_piece, stage="publish", actor=f"tenant:{tenant_id}")
+    except Exception as exc:  # noqa: BLE001 — logged; a 503 the tenant can retry, never a 500 and never a pass
+        logger.warning("subject_gate_publish_error", tenant_id=str(tenant_id), piece_id=str(piece_id), exc_info=True)
+        raise HTTPException(status_code=503, detail=SUBJECT_GATE_UNAVAILABLE,
+                            headers={"X-Error-Code": "content_check_unavailable", "Retry-After": "60"}) from exc
+    if not result.ok:
+        logger.info("publish_held_by_subject_gate", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                    codes=result.codes)
+        raise HTTPException(status_code=409, detail=result.tenant_message,
+                            headers={"X-Error-Code": subject_gate.PublishHeld.code})
 
 
 def _publish_response(row: dict, *, success: bool, replayed: bool = False) -> dict:

@@ -23,6 +23,9 @@ from api.routers import admin
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.content_generation.brand_standards import AA_BRAND_IDENTITY_PROMPT
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 _TEST_SECRET = "test-admin-secret"
 
 TENANT_ID = uuid.uuid4()
@@ -107,7 +110,11 @@ class TestCreateTenantIsActive:
         assert result.is_active is True
         assert result.posts_per_week == 4
         insert_args = conn.fetchval.call_args_list[2][0]
-        assert "VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, $7, true)" in insert_args[0]
+        # AA-1028 R1 slice 3: + kind, is_canary (agency outside Dev, root ADR 0019 d16)
+        # AA-1036: no api_key_hash column / parameter any more (tenant API keys removed)
+        assert "VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, true, $7, $8)" in insert_args[0]
+        assert "api_key_hash" not in insert_args[0]
+        assert insert_args[6] == 60 and insert_args[7:] == ("agency", False)  # starter RPM from its plan
         assert insert_args[4] == PLAN_ID  # AA-797: plan_id is set on create
         assert insert_args[5] == 4  # posts_per_week bound param
 

@@ -10,6 +10,7 @@ from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from services.content_generation.brand_fit import itinerary_digest
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
+from .seo_meta_utils import SEO_META_MAX, SEO_META_MIN, SEO_TITLE_MAX  # AA-1047: the policy bands
 
 logger = structlog.get_logger()
 
@@ -25,9 +26,9 @@ META_ROBOTIC_OPENERS = [
     re.compile(r'^Find\b',       re.IGNORECASE),
 ]
 OPTIONAL_HIGHLIGHT = re.compile(r'^Optional\b', re.IGNORECASE)
-ELEPHANT_RIDING = re.compile(
-    r'elephant[-\s]?back|elephant\s+ride|elephant\s+trek', re.IGNORECASE
-)
+# S271 W0 (root ADR 0020 D8): the elephant-riding policy detector lives in services/quality/elephant_policy.py (the
+# policy wording, plurals and inflections, negation-aware); kept under the old name for its importers.
+from services.quality.elephant_policy import ELEPHANT_RIDING_RE as ELEPHANT_RIDING  # noqa: E402
 NAME_ALL_CAPS_RE = re.compile(r'^[A-Z\s\d&\-]+$')
 NAME_SUPERLATIVES = ['the best of', 'ultimate', 'must-see', 'and fun', 'expenditures']
 # AA-195 / AA-608: fabricated meal LOGISTICS or clock-times in itineraries = PRODUCT_TRUTH_RISK.
@@ -125,6 +126,8 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
         return False
     if not is_tenant_rewrite:
         # AA-645 (S249): an A1 meal line that copies the same source day's own meal codes is not a claim to check.
+        # AA-1047 (writing policy `meals.source_day_line: a1_only`, S272 fail-closed): a T2 rewrite keeps main's path
+        # (no shortcut: only an enforced Jev accept clears its meal claim) until W2 measures it.
         blocks = source_day_meal_blocks(tour, itin_text)
         claims = [c for c in claims if not source_backed_meal_line(c["sentence"], blocks.get(c["day"]))]
         if not claims:
@@ -387,9 +390,11 @@ def pre_audit_checks(generated: dict, tour: dict | None = None, *, tenant_id: st
         if OPTIONAL_HIGHLIGHT.match(str(h)):
             codes.append("HIGHLIGHTS_OPTIONAL_LANGUAGE")
             break
-    combined = " ".join(str(h) for h in highlights).lower()
-    if ELEPHANT_RIDING.search(combined):
-        codes.append("FACT_CHECK_MANUAL_CHECK")
+    # S271 W0 (D8): elephant riding anywhere on the page or in the source (before: the generated highlights only,
+    # and a regex that missed "elephant riding"). The tour is kept as it is and goes to a human (manual_check).
+    from services.quality import elephant_policy
+    if elephant_policy.scan(generated, tour):
+        codes.append(elephant_policy.POLICY_CODE)
 
     itineraries = generated.get("itineraries") or ""
     if isinstance(itineraries, (list, dict)):
@@ -472,6 +477,33 @@ BRAND_AUDIT_UNAVAILABLE = "BRAND_AUDIT_UNAVAILABLE"
 
 # A code that always means "a human must look", regardless of how many codes there are.
 _MANUAL_CHECK_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK"}
+
+# AA-1026 I6: a brand audit answered on one of these connections may flag or hold a tour, never pass it. Since CIS
+# migrations 331 / 332 the brand audit routes (s1_brand_audit, t2_brand_audit) end on an acc2 Bedrock model (Nova
+# Lite) that has not passed the judge calibration of root ADR 0009 decision 12 (40 labelled items): a lenient but
+# well-formed "pass" from it would publish a tour (_is_publishable). Its "pass" becomes manual_check with this code,
+# so the tour goes to the Review Queue. Drop a connection from the set once the models it serves for this stage are
+# calibrated (and say so in the ADR).
+UNCALIBRATED_JUDGE_CONNECTIONS = frozenset({"acc2"})
+BRAND_AUDIT_UNCALIBRATED_JUDGE = "BRAND_AUDIT_UNCALIBRATED_JUDGE"
+
+
+def uncalibrated_judge(resp) -> str | None:
+    """The connection key when ``resp`` was answered on a connection whose brand-audit verdicts are not calibrated,
+    else None. Read defensively (a test double may carry anything)."""
+    conn = getattr(resp, "connection_key", None)
+    return conn if isinstance(conn, str) and conn in UNCALIBRATED_JUDGE_CONNECTIONS else None
+
+
+def hold_uncalibrated_pass(status: str, codes: list[str], resp) -> tuple[str, list[str], str | None]:
+    """(status, codes, issue): a ``pass`` from an uncalibrated judge becomes ``manual_check`` with
+    BRAND_AUDIT_UNCALIBRATED_JUDGE and a reviewer note; any other verdict (flagged, manual_check) is kept as it is."""
+    conn = uncalibrated_judge(resp)
+    if status != "pass" or conn is None:
+        return status, codes, None
+    issue = (f"The brand audit was answered by a fallback model on {conn} whose verdicts are not calibrated yet, "
+             "so its pass is held for a human check.")
+    return "manual_check", list(dict.fromkeys([*codes, BRAND_AUDIT_UNCALIBRATED_JUDGE])), issue
 
 
 def derive_status(failure_codes: list[str], publish_ready, model_status=None) -> str:
@@ -593,6 +625,11 @@ def brand_audit_node(state: dict) -> dict:
     # on a successful score). Keeps deterministic pre-audit codes for flag_fix; no double GPT cost.
     if "judge_brand_fit" in state:
         return _audit_from_judge(state, generated)
+    # S271 W0 (root ADR 0020 D9): with the S1 judge off the live path a writer-v2 draft gets the same deterministic
+    # audit it got when the judge ran (pre-audit codes, no LLM call), not the standalone s1_brand_audit LLM call.
+    from .judge_node import s1_judge_off_live_path
+    if s1_judge_off_live_path(state):
+        return _audit_from_judge(state, generated)
 
     # AA-792: a T2 tenant rewrite is never graded against Adventure Asia's own voice (calm, private,
     # no hype…) — that marked e.g. Trail Pulse's energetic copy off-brand. It is audited against the
@@ -652,7 +689,7 @@ REVIEW ORDER:
 3. Trip type accuracy: subtitle/summary/SEO match actual activity?
 4. Highlights quality: specific moments, 4+ items, no "Optional"?
 5. Human readability: no editorial language leak?
-6. SEO quality: title 60 chars max, meta 140-155 chars, ends with period?
+6. SEO quality: title {SEO_TITLE_MAX} chars max, meta {SEO_META_MIN}-{SEO_META_MAX} chars, ends with period?
 7. Publish readiness: ready without any changes?
 
 Return JSON only per schema."""
@@ -678,6 +715,12 @@ Return JSON only per schema."""
         if _is_v2_draft(state):
             all_codes, status, voice_report = _v2_report_only_voice(all_codes, pre_codes, model_status,
                                                                     result.get("publish_ready"))
+        # AA-1026 I6: an uncalibrated fallback judge (acc2) can hold or flag a tour, never pass it.
+        status, all_codes, held_note = hold_uncalibrated_pass(status, all_codes, resp)
+        if held_note:
+            result["issues"] = [*(result.get("issues") or []), held_note]
+            logger.warning("brand_audit_uncalibrated_pass_held", model=resp.model_used,
+                           connection=uncalibrated_judge(resp))
         result["failure_codes"] = all_codes
         result["status"] = status
 

@@ -131,6 +131,20 @@ def test_tenant_rewrite_keeps_the_old_path():
     assert MEAL in codes      # no source-backed shortcut on T2: the short claim gets no Jev verdict, so it stays
 
 
+def test_t2_meal_line_copied_from_the_same_source_day_still_blocks_as_on_main():
+    """AA-1047 S272 review (fail closed until W2): the policy's `meals.source_day_line` is `a1_only`. The reviewer's
+    case: the exact line the A1 shortcut clears ("Meals: breakfast, lunch." copied from the source day's "(B, L)")
+    in a T2 rewrite is NOT exempt: it takes main's Jev path (this short line is under Jev's unit size, so no verdict
+    can clear it) and the page keeps the flag, as main does."""
+    itin = "Day 1 — Chiang Mai\nAn easy ride along the Ping River. Meals: breakfast, lunch."
+    a1_codes, a1_jev = _codes(itin, NORTHERN_HEIGHTS)
+    assert MEAL not in a1_codes and a1_jev == 0                 # A1: source-backed, Jev not asked
+    t2_codes, _ = _codes(itin, NORTHERN_HEIGHTS, tenant_id="t1", is_tenant_rewrite=True)
+    assert MEAL in t2_codes                                     # T2: no shortcut, the flag stays (as on main)
+    from services.quality import writing_policy as wp
+    assert wp.meals()["source_day_line"] == "a1_only"
+
+
 def test_unmarked_source_counts_for_a_one_day_page_only():
     src = "Pick-up from the hotel, cycle through the hutongs and the Lama Temple.\nMeals: Lunch\n"
     one_day = "Day 1 — Hutongs by bike\nThe ride passes the Lama Temple. Meals: lunch."

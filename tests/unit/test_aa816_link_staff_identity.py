@@ -183,7 +183,7 @@ def test_plan_owner_sets_only_that_row_and_keeps_existing_owners():
 @pytest.mark.parametrize("rows,needle", [
     ([_row("other")], "no shared.admin_users row"),
     ([_row("nghiep", is_active=False)], "inactive"),
-    ([_row("nghiep", role="reviewer")], "only an 'admin' row"),
+    ([_row("nghiep", role="content")], "only an 'admin' row"),
     ([_row("nghiep", role="content")], "only an 'admin' row"),
 ])
 def test_plan_owner_errors(rows, needle):

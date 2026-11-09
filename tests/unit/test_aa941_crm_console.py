@@ -111,6 +111,8 @@ async def test_legacy_session_is_refused_without_a_call(crm):
     ("POST", f"/tenants/{TID}/members/{RID}/role"),
     ("GET", f"/tenants/{TID}/usage?x=1"),
     ("PUT", f"/tenants/{TID}/lock"),
+    ("GET", f"/tenants/{TID}/delete"),               # S263: the delete is a POST only
+    ("POST", f"/tenants/{TID}/owner-invite/withdraw/x"),
 ])
 async def test_paths_outside_the_allow_list_never_leave_cis(crm, method, path):
     status, body = await crm_console.crm_ops_call(method, path, f"Bearer {OTHER_ISS}")
@@ -183,10 +185,18 @@ def _console_routes() -> list[APIRoute]:
 
 def test_every_console_route_has_its_policy():
     routes = _console_routes()
-    assert len(routes) == 19
+    assert len(routes) == 21  # S263: + owner-invite/withdraw, delete
+    # AA-1035 R2 close-out: the desk roles read their book (usage / entitlements: the account read, never support)
+    account = {"/admin/platform/crm/agencies/{tenant_id}/usage",
+               "/admin/platform/crm/agencies/{tenant_id}/entitlements"}
     for r in routes:
         for m in r.methods:
-            want = TENANT_READ if m == "GET" else TENANT_WRITE
+            if m != "GET":
+                want = TENANT_WRITE
+            elif r.path in account:
+                want = (TENANT_READ, "tenant.book.account.read")
+            else:
+                want = (TENANT_READ, "tenant.book.read")
             assert POLICY.get((m, r.path)) == want, (m, r.path)
     policy_paths = {(m, p) for (m, p) in POLICY if p.startswith("/admin/platform/crm/")}
     assert policy_paths == {(m, r.path) for r in routes for m in r.methods}
@@ -222,7 +232,7 @@ def test_every_route_reaches_an_allowed_crm_path(client, crm):
         (method,) = r.methods
         res = client.request(method, _concrete(r.path), headers=_h(), json={"ticket_ref": "AA-941"})
         assert res.status_code == 200, (method, r.path, res.text)
-    assert len(crm.calls) == 19
+    assert len(crm.calls) == 21
     assert all(c.headers["authorization"] == f"Bearer {OTHER_ISS}" for c in crm.calls)
     assert all(str(c.url.path).startswith("/crm/ops/v1/") for c in crm.calls)
 
@@ -264,12 +274,31 @@ def test_legacy_session_route_is_401(client, crm):
     assert crm.calls == []
 
 
+def test_s263_withdraw_and_delete_relay_to_their_crm_paths(client, crm):
+    """crm.ops.v1 1.8: the two S263 writes reach exactly their CRM paths with the body as sent; a viewer is refused
+    before any call."""
+    res = client.post(f"/admin/platform/crm/agencies/{TID}/owner-invite/withdraw", headers=_h(),
+                      json={"ticket_ref": "SUP-7"})
+    assert res.status_code == 200
+    res = client.post(f"/admin/platform/crm/agencies/{TID}/delete", headers=_h(),
+                      json={"agency_name": "Lotus Test Tours", "ticket_ref": "SUP-8"})
+    assert res.status_code == 200
+    assert [str(c.url.path) for c in crm.calls] == [
+        f"/crm/ops/v1/tenants/{TID}/owner-invite/withdraw", f"/crm/ops/v1/tenants/{TID}/delete"]
+    assert json.loads(crm.calls[1].content) == {"agency_name": "Lotus Test Tours", "ticket_ref": "SUP-8"}
+    for path in ("owner-invite/withdraw", "delete"):
+        res = client.post(f"/admin/platform/crm/agencies/{TID}/{path}", headers=_h("viewer"),
+                          json={"ticket_ref": "SUP-9"})
+        assert res.status_code == 403
+    assert len(crm.calls) == 2
+
+
 def test_viewer_refused_on_writes_content_on_reads(client, crm):
     res = client.post(f"/admin/platform/crm/agencies/{TID}/unlock", headers=_h("viewer"), json={"ticket_ref": "A-1"})
     assert res.status_code == 403
     res = client.get("/admin/platform/crm/agencies", headers=_h("content"))
     assert res.status_code == 403 and "tenant.read" in res.json()["detail"]
-    res = client.put(f"/admin/platform/crm/agencies/{TID}/insights-opt-out", headers=_h("reviewer"),
+    res = client.put(f"/admin/platform/crm/agencies/{TID}/insights-opt-out", headers=_h("content"),
                      json={"opt_out": True, "owner_request_ref": "AA-1"})
     assert res.status_code == 403
     assert crm.calls == []

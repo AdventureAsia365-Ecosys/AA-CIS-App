@@ -69,13 +69,18 @@ def test_the_write_allow_list_is_exactly_the_reviewed_routes():
         ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
         ("POST", "/admin/tenants/{tenant_id}/members/invitations"),
         ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"),
+        # AA-1035 R2 slice 2 (proposed A10b-2): start / end a read-only view-as session, synthetic tenants only
+        # (test_aa1035_s2_view_as.py)
+        ("POST", "/admin/tenants/{tenant_id}/view-as"),
+        ("POST", "/admin/view-as/sessions/{session_id}/end"),
     }
     # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
     # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.
     paths = real_app.openapi()["paths"]
     for method, route in e2e_staff.E2E_ALLOWED_WRITES:
         assert method.lower() in paths.get(route, {})
-        assert staff_authz.POLICY[(method, route)] in staff_authz.ROLE_PERMS["admin"]
+        assert set(staff_authz.policy_capabilities(staff_authz.POLICY[(method, route)])) & \
+            staff_authz.ROLE_PERMS["admin"]   # AA-1035: an any_of entry (member writes) passes for admin
     # The path regexes and the templates name the same routes.
     assert len(e2e_staff.E2E_ALLOWED_WRITE_PATHS) == len(e2e_staff.E2E_ALLOWED_WRITES)
 
@@ -146,7 +151,7 @@ def test_scope_accepts_admin_without_booking():
     sd.require_e2e_test_scope(ADMIN_E2E, "admin", None)
 
 
-@pytest.mark.parametrize("role,booking", [("reviewer", None), ("content", None), ("viewer", None), (None, None),
+@pytest.mark.parametrize("role,booking", [("content", None), ("content", None), ("viewer", None), (None, None),
                                           ("admin", "admin"), ("admin", "sales")])
 def test_scope_refuses_anything_but_admin_without_booking(role, booking):
     with pytest.raises(sd.StaffDirectoryError) as err:
@@ -156,10 +161,10 @@ def test_scope_refuses_anything_but_admin_without_booking(role, booking):
 
 
 def test_the_a10_reviewer_scope_is_unchanged():
-    sd.require_e2e_test_scope(REVIEWER_E2E, "reviewer", None)
+    sd.require_e2e_test_scope(REVIEWER_E2E, "content", None)
     with pytest.raises(sd.StaffDirectoryError) as err:
         sd.require_e2e_test_scope(REVIEWER_E2E, "admin", None)   # e2e@ can not borrow the admin role
-    assert err.value.code == "e2e_test_scope" and "reviewer" in err.value.detail
+    assert err.value.code == "e2e_test_scope" and "content" in err.value.detail
 
 
 @pytest.mark.parametrize("value", NOT_DEV)
@@ -222,7 +227,7 @@ async def test_create_outside_dev_is_refused_before_any_write(db, stubbed, monke
     assert len(db.rows) == 1 and db.audit == []
 
 
-@pytest.mark.parametrize("role,booking", [("reviewer", None), ("content", None), ("admin", "sales")])
+@pytest.mark.parametrize("role,booking", [("content", None), ("content", None), ("admin", "sales")])
 @pytest.mark.asyncio
 async def test_create_with_another_scope_is_refused_on_dev_too(db, stubbed, monkeypatch, role, booking):
     _set_env(monkeypatch, "dev")
@@ -283,9 +288,9 @@ async def test_the_a10_reviewer_create_is_not_env_gated(db, stubbed, monkeypatch
     _set_env(monkeypatch, "test")
     cognito, stub = stubbed
     _expect(stub, "admin_create_user", _create(REVIEWER_E2E), {"User": {"Username": REVIEWER_E2E}})
-    _expect(stub, "admin_add_user_to_group", _group(REVIEWER_E2E, "cis-reviewer"))
+    _expect(stub, "admin_add_user_to_group", _group(REVIEWER_E2E, "cis-content"))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=REVIEWER_E2E, display_name="E2E",
-                                   role="reviewer")
+                                   role="content")
     assert result.status == sd.STATUS_OK
 
 
@@ -366,10 +371,11 @@ async def test_other_staff_are_not_flagged(issuer, directory, monkeypatch):
 @pytest.mark.asyncio
 async def test_the_a10_reviewer_is_not_flagged_and_not_env_gated(issuer, directory, monkeypatch):
     _set_env(monkeypatch, "test")
-    directory.add(role="reviewer", email=REVIEWER_E2E, iss=ISS, sub=SUB)
+    directory.add(role="content", email=REVIEWER_E2E, iss=ISS, sub=SUB)
     identity = await staff_identity.authenticate(
-        directory, issuer.token(email=REVIEWER_E2E, **{"cognito:groups": ["cis-reviewer"]}))
-    assert (identity.role, identity.e2e_read_only) == ("reviewer", False)
+        directory, issuer.token(email=REVIEWER_E2E, **{"cognito:groups": ["cis-content"]}))
+    # AA-1035: the A10 account signs in with cis-content as content (CIS 375 moved its row; the alias is gone)
+    assert (identity.role, identity.e2e_read_only) == ("content", False)
 
 
 # ── Bearer middleware ────────────────────────────────────────────────────────────────────────────
@@ -416,7 +422,6 @@ def test_middleware_lets_reads_through_as_admin(issuer, directory, monkeypatch, 
     ("POST", "/admin/waves/check"),
     ("POST", f"/admin/tenants/{PIECE}/members/{VERSION}/remove"),
     ("PATCH", f"/admin/tenants/{PIECE}/members/{VERSION}"),
-    ("POST", f"/admin/tenants/{PIECE}/generate-key"),
     ("POST", f"/admin/tenants/{PIECE}/members/invitations/"),
 ])
 def test_middleware_refuses_every_other_write_before_the_route(issuer, directory, monkeypatch, method, path):
@@ -472,6 +477,7 @@ class _Identity:
 
     def __init__(self, e2e: bool) -> None:
         self.e2e_read_only = e2e
+        self.e2e_allowlisted_writes = e2e   # the A10b identity (AA-1035 A10d: the only one with the allow-list)
 
 
 def test_principal_carries_the_flag():
@@ -618,6 +624,24 @@ def test_playwright_admin_evidence_project_is_opt_in_and_ignored_by_chromium():
     with open(os.path.join(ROOT, "tests", "e2e", "admin-evidence", "admin-pages.spec.ts"), encoding="utf-8") as f:
         spec = f.read()
     assert "process.env.E2EADMIN !== '1'" in spec
+
+
+def test_every_admin_evidence_spec_is_opt_in():
+    # AA-1042 (S270): each spec of the agent-only project skips unless its own E2E switch is set (E2EADMIN for the
+    # E2E admin, E2ECS for the customer_success identity), and no workflow sets any of those switches.
+    specs = sorted(glob.glob(os.path.join(ROOT, "tests", "e2e", "admin-evidence", "*.spec.ts")))
+    assert any(p.endswith("aa1042-1045-evidence.spec.ts") for p in specs)
+    switches = set()
+    for path in specs:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(r"test\.skip\(process\.env\.(E2E[A-Z]+) !== '1'", f.read())
+        assert m, f"{path} is not opt-in"
+        switches.add(m.group(1))
+    for path in glob.glob(os.path.join(ROOT, ".github", "workflows", "*.y*ml")):
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        for switch in switches:
+            assert not re.search(rf"\b{switch}\b", text), (path, switch)
 
 
 def test_json_detail_values_are_stable():

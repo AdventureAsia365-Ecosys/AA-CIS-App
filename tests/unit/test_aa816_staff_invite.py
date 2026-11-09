@@ -344,7 +344,7 @@ async def test_re_post_of_an_existing_create_queues_no_second_invite(db, stubbed
     c6._expect_error(stub, "admin_create_user", "UsernameExistsException", c6._create())
     c6._expect(stub, "admin_add_user_to_group", c6._group(NEW_EMAIL, "cis-content"))
     c6._expect(stub, "admin_enable_user", c6._user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS:
+    for g in c6._cis_but("cis-content") + sd.BOOKING_GROUPS:
         c6._expect(stub, "admin_remove_user_from_group", c6._group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
                                    role="content", send_invite=True)
@@ -522,8 +522,8 @@ def test_route_resend_policy_refuses_legacy_non_owner_and_reviewer(api, db):
     resp = client.post(f"/admin/platform/staff/{uid}/invite", headers=c6._h(token))
     assert resp.status_code == 403 and resp.json()["detail"] == "Only a platform owner can change staff accounts"
     sub2 = "cccccccc-0000-4000-8000-00000000000c"
-    db.add(owner=True, email="rev@adventure.asia", role="reviewer", iss=ISS, sub=sub2)
-    token = iss.token(sub=sub2, email="rev@adventure.asia", **{"cognito:groups": ["cis-reviewer"]})
+    db.add(owner=True, email="rev@adventure.asia", role="content", iss=ISS, sub=sub2)
+    token = iss.token(sub=sub2, email="rev@adventure.asia", **{"cognito:groups": ["cis-content"]})
     assert client.post(f"/admin/platform/staff/{uid}/invite", headers=c6._h(token, role="admin")).status_code == 403
     assert db.jobs == []
 
@@ -583,7 +583,7 @@ def test_kind_is_registered():
 
 @pytest.mark.asyncio
 async def test_handler_sends_through_ses_as_the_terraform_sender(db, mail_env):
-    uid = db.add(email=NEW_EMAIL, role="reviewer", booking="sales", display_name="Thu <Le>")
+    uid = db.add(email=NEW_EMAIL, role="content", booking="sales", display_name="Thu <Le>")
     ses = StubSes()
     ctx = _ctx(db, uid, ses)
     result = await job_mod.run(ctx)

@@ -101,7 +101,7 @@ export const COST_SRC = {
   card:
     "AWS bill via Cost Explorer, split by each resource's App tag, month to date (fetched about once a day, the bill " +
     "itself lags about two days), plus the AI calls log for AI billed outside the AWS bill (updated on the server " +
-    "every 15 minutes, press Refresh to load the latest); the same numbers as Cost per app",
+    "every 15 minutes, press Refresh to load the latest); the same numbers as Spend › By app",
   total: `${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL}, for the same app and month`,
   prevMonth: (month: string) => `The same sources for the whole of ${month}`,
   aiNote: `AI calls log, this month: the whole AI estimate. ${AI_ON_BILL_SRC}`,
@@ -151,8 +151,8 @@ export const PROVIDER_COST_SRC = {
     "AI calls log (AWS Bedrock, OpenAI, Jev) and the DataForSEO calls log, spend since midnight UTC today; red when it " +
     "reaches the budget's alert level",
   month:
-    "AI calls log, this month (the same AI estimate as Cost per app); DataForSEO: its calls log, this month",
-  budget: "Spend budgets set in CIS (AI providers, Budgets), the daily limit per provider; counted when spend today reaches the alert level",
+    "AI calls log, this month (the same AI estimate as Spend › By app); DataForSEO: its calls log, this month",
+  budget: "Spend budgets set in CIS (AI gateway, Budgets), the daily limit per provider; counted when spend today reaches the alert level",
   aiMonth: "AI calls log, all AI providers, this month (UTC)",
   dfsBalance: "DataForSEO account balance from the last stored balance check (not a live call)",
 };

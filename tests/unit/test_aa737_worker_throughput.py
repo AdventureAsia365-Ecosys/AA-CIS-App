@@ -87,7 +87,19 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-1002 S10: nightly LLM cost reconciliation ($0: DB, stored CE snapshot, usage APIs)
                           "llm_cost_reconcile",
                           # AA-1018: the daily LLM connection probe (off unless LLM_DAILY_PROBE=on; dry run $0)
-                          "llm_connection_probe"}
+                          "llm_connection_probe",
+                          # AA-1024 D2: the nightly model lifecycle sync ($0: Bedrock control-plane lists)
+                          "llm_model_lifecycle_sync",
+                          # AA-1042: the route watch every 15 min and the daily route digest ($0: DB reads, bells)
+                          "llm_route_watch",
+                          # AA-1026 D5: re-embed of one vector column (dry run $0; a fill is capped, resumable)
+                          "embedding_reembed",
+                          # AA-1026 I6: the acc2 fallback contract smoke (dry run $0; live about 0.01 USD, cap 0.10)
+                          "llm_contract_smoke",
+                          # AA-1045: the hourly usage rollup of the paid-call ledgers ($0, every quarter hour)
+                          "ai_usage_rollup",
+                          # AA-900 W0: the nightly quality funnel watchdog alerts ($0, after each CIS-08 run)
+                          "quality_funnel_watch"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

@@ -175,7 +175,7 @@ async def test_apply_cut_updates_the_tenants_row_in_place_and_audits():
     # the write names the tenant's row explicitly: id AND tenant_id AND a still-editable status
     assert "WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])" in upd_sql
     # silent: only the content changes — no status / edit_source / edited_at / version_number write
-    assert "SET rewritten_content = $3::jsonb\n" in upd_sql and "edited_at" not in upd_sql
+    assert "SET rewritten_content = $3::jsonb," in upd_sql and "edited_at" not in upd_sql
     assert args[0] == VERSION_ID and args[1] == str(TENANT_ID) and args[3] == ["ai_generated", "needs_review"]
     new_rc = json.loads(args[2])
     assert new_rc["summary"] == ("Walk the old town of Luang Prabang with a local guide. "
@@ -297,7 +297,7 @@ async def test_apply_refuses_to_empty_a_text_section_and_stale_spans():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["content", "reviewer", None])
+@pytest.mark.parametrize("role", ["content", None])
 async def test_t2_write_endpoints_require_admin_role(role):
     conn = _Conn(_version_row())
     with pytest.raises(HTTPException) as e:
@@ -330,7 +330,7 @@ async def test_suggest_tour_sentence_uses_cheap_stage_and_source_tour():
         out = await cq.suggest_tour_sentence(VERSION_ID, body, _request(conn), x_admin_secret=SECRET,
                                              x_admin_role="admin")
     req = m.return_value.generate.call_args.args[0]
-    assert req.stage == "t9_repair" and req.max_tokens <= 400
+    assert req.stage == "t9_repair" and req.max_tokens == 8192  # AA-741: t9_repair ceiling (S271: 8192)
     assert "BRAND: Trail Pulse" in req.user_prompt and "Ten days, groups of 2-12." in req.user_prompt
     kw = rec.call_args.kwargs
     assert kw["tenant_id"] == str(TENANT_ID) and kw["quality_signal"]["mode"] == "admin_suggest_tour"

@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import BATCH_ID, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
-from _rls_fixture_helpers import restore_266_catalog_owner_read  # noqa: E402
+from _rls_fixture_helpers import catalog_owner_grantable_by, restore_266_catalog_owner_read  # noqa: E402
 
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
 CONSUMERS = ("tripplanner", "booking")
@@ -82,6 +82,7 @@ def rds_like_228():
         a.execute(f"REASSIGN OWNED BY {RUNNER} TO CURRENT_USER; DROP OWNED BY {RUNNER}; DROP ROLE {RUNNER}")
     a.execute(f"CREATE ROLE {RUNNER} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS CREATEROLE INHERIT", (DB_PASS,))
     a.execute(f"GRANT CREATE ON DATABASE {DB_NAME} TO {RUNNER}")
+    catalog_owner_grantable_by(a, RUNNER)   # the template keeps catalog_owner alive (conftest)
     for schema in RUNNER_SCHEMAS:
         a.execute(f"ALTER SCHEMA {schema} OWNER TO {RUNNER}")
     for table in RUNNER_TABLES:

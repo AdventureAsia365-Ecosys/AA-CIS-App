@@ -25,9 +25,20 @@ for in docs/implementation-notes/AA-1003.md, "R2 follow-up requests"):
   spend       K-LLM-COST-DAY of day D vs the median of the 14 days before (shared.kpi_daily).
   deploys     CIS worker tasks started and migrations registered (shared.schema_versions, every owner) in the 24 h
               before the digest.
-  handoff     TP-03: K-TP-HANDOFFGAP / K-BK-PARKED of day D and the latest hourly check.
+  (handoff)   TP-03 retired by the R0 hotfix (root ADR 0019, B2B-only model): no inquiry handoff section any more.
   waves       open shared.rerun_wave rows (information: a wave is planned work).
+  balances    AA-642 (S263 L2, B4): the paid providers that are not LLMs and the money left: the DataForSEO balance
+              (latest stored snapshot) and the Jev credit estimate (money_sources.balances, the same reader as the
+              money reports), Geoapify credits used today against the daily limit (geo.geocode_call), each provider
+              connection's switch / access_state / last probe (shared.llm_provider_connection), the hand-set credits,
+              and the settled LLM cost reconcile mismatches of the last RECONCILE_DAYS days
+              (shared.llm_cost_reconcile). A balance under its threshold, a refusing or switched-off provider, the
+              Geoapify daily limit reached or a mismatch is an attention line.
   reports     the register's overdue reports and failed runs (EX-06 rule).
+  lifecycle   AA-1024 D2 (OPS-04): every routed model (active shared.llm_role_config rows, aliases expanded) with its
+              lifecycle status and end-of-life date (shared.llm_model_catalog, CIS 352, filled by the nightly
+              llm_model_lifecycle_sync). An end of life within 90 days (or past), a LEGACY or unlisted routed model,
+              a routed model with no status (the sync has not run) or with status unknown is an attention line.
 
 Every section is read on its own: one that fails becomes a "section unavailable" line and an attention item, never a
 failed digest (`collect`). `render` is pure and unit-tested.
@@ -53,8 +64,11 @@ SPEND_FLAG_MIN_USD = 1.0         # ... and above 1 USD (Dev runs are bursty; cen
 FALLBACK_RED = 0.05              # K-LLM-FALLBACK-24H threshold (< 5 %)
 OVERDUE_QUEUED_AFTER = timedelta(minutes=30)
 HTTP_TIMEOUT_S = 2.0
-DIGEST_KPIS = ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H", "K-JOB-FAIL", "K-JOB-QUEUEAGE", "K-TP-HANDOFFGAP",
-               "K-BK-PARKED", "K-DATA-PROBES", "K-DATA-STALE", "K-DATA-LIVENESS")
+RECONCILE_DAYS = 3               # AA-642 (S263 L2): the reconcile's own default window
+BALANCE_PROVIDERS = ("typesafe", "dataforseo", "geoapify")
+REFUSING_STATES = ("access_denied", "quota_exhausted", "unconfigured")
+DIGEST_KPIS = ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H", "K-JOB-FAIL", "K-JOB-QUEUEAGE", "K-DATA-PROBES",
+               "K-DATA-STALE", "K-DATA-LIVENESS")
 
 FAILED_BY_KIND_SQL = """
     SELECT kind, count(*)::int AS n FROM shared.job
@@ -82,11 +96,6 @@ MIGRATIONS_SQL = """
 OPEN_WAVES_SQL = """
     SELECT name, country, created_at, cardinality(expected_tour_ids) AS tours FROM shared.rerun_wave
      WHERE status = 'open' ORDER BY created_at
-"""
-LAST_CHECK_SQL = """
-    SELECT created_at, result FROM shared.job
-     WHERE kind = $1 AND status = 'succeeded'
-     ORDER BY created_at DESC LIMIT 1
 """
 
 
@@ -235,21 +244,87 @@ async def load_waves(conn) -> dict:
                       "tours": r["tours"]} for r in rows]}
 
 
-async def load_handoff(conn) -> dict:
-    row = await conn.fetchrow(LAST_CHECK_SQL, handoff.CHECK_KIND)
-    if row is None:
-        return {"last_check": None}
-    res = handoff._json(row["result"])
-    return {"last_check": {"at": _iso(row["created_at"]), "gap": res.get("gap"), "sent": res.get("sent"),
-                           "received": res.get("received"), "persistent": res.get("persistent"),
-                           "window": res.get("window")}}
-
-
 async def load_reports(conn, reg: Registry, now: datetime) -> dict:
     rows = generate.register_rows(reg, await store.last_runs(conn), now)
     flagged = [{"id": r["id"], "name": r["name_en"], "due": r["due"]["state"], "failed_7d": r["failed_7d"]}
-               for r in rows if r["id"] != "OPS-12" and (r["due"]["state"] == "overdue" or r["failed_7d"])]
+               for r in rows if r["id"] != "OPS-12" and r["due"]["state"] != "retired"
+               and (r["due"]["state"] == "overdue" or r["failed_7d"])]
     return {"flagged": flagged}
+
+
+async def load_balances(conn, now: datetime) -> dict:
+    """AA-642 (S263 L2, B4): the balances section (stored rows only: no provider is called)."""
+    from services.llm_cost import reconcile
+    from services.places import geocoder
+    from services.places import store as place_store
+    from services.reports import money_sources
+    from shared.llm_client import connections as conn_registry
+
+    money = await money_sources.balances(conn)
+    rows = {k: await conn_registry.provider_connection(conn, k) for k in BALANCE_PROVIDERS}
+
+    def threshold(key: str) -> Optional[float]:
+        row = rows.get(key)
+        value = row.low_balance_usd if row is not None else None
+        return value if value is not None else conn_registry.BUILTIN_PROVIDERS[key].low_balance_usd
+
+    geo = rows.get("geoapify")
+    limit = geo.daily_credit_limit if geo is not None and geo.daily_credit_limit is not None \
+        else geocoder.daily_credit_limit()
+    recent = await reconcile.read_recent(conn, days=RECONCILE_DAYS, today=now.date())
+    mismatches = [{"connection_key": key, "day": r["day"], "logged_usd": r["logged_usd"],
+                   "provider_usd": r["provider_usd"], "diff_usd": r["diff_usd"]}
+                  for key, days in sorted((recent or {}).items()) for r in days
+                  if r["status"] == "mismatch" and not (r.get("details") or {}).get("provisional")]
+    return {"dfs": money.get("dfs"), "dfs_threshold_usd": threshold("dataforseo"),
+            "jev": money.get("jev"), "jev_threshold_usd": threshold("typesafe"),
+            "geoapify": {"credits_used_today": await place_store.geocoder_requests_today(conn, "geoapify"),
+                         "daily_credit_limit": limit},
+            "credits": money.get("credits") or {},
+            "providers": [{"connection_key": k, "enabled": r.enabled if r is not None else None,
+                           "access_state": r.access_state if r is not None else None,
+                           "last_probe_at": r.last_probe_at if r is not None else None}
+                          for k, r in rows.items()],
+            "reconcile": {"ready": recent is not None, "days": RECONCILE_DAYS, "mismatches": mismatches}}
+
+
+LIFECYCLE_SQL = ("SELECT model_key, lifecycle_status, eol_date, lifecycle_checked_at FROM shared.llm_model_catalog "
+                 "ORDER BY model_key")
+LIFECYCLE_JOB_SQL = """
+    SELECT id::text AS id, status, result, finished_at FROM shared.job
+     WHERE kind = 'llm_model_lifecycle_sync' AND finished_at >= $1 ORDER BY finished_at DESC LIMIT 1
+"""
+
+
+async def load_lifecycle(conn, now: datetime) -> dict:
+    """AA-1024 D2: the routed models and their lifecycle (stored rows only: no provider is called). ``ready`` False
+    before migration 352."""
+    import asyncpg
+
+    from services.jobs.llm_model_lifecycle_job import ALIASES_SQL, ROUTES_SQL
+    from shared.llm_client import model_lifecycle as ml
+
+    try:
+        rows = [dict(r) for r in await conn.fetch(LIFECYCLE_SQL)]
+    except asyncpg.exceptions.UndefinedColumnError:
+        return {"ready": False}
+    routed = ml.route_keys([dict(r) for r in await conn.fetch(ROUTES_SQL)],
+                           [dict(r) for r in await conn.fetch(ALIASES_SQL)])
+    by_key = {r["model_key"]: r for r in rows}
+    job = await conn.fetchrow(LIFECYCLE_JOB_SQL, now - timedelta(hours=48))
+    res = handoff._json(job["result"]) if job is not None else {}
+    return {"ready": True,
+            "models": [{"model_key": k, "stages": stages,
+                        "status": (by_key.get(k) or {}).get("lifecycle_status"),
+                        "eol_date": _iso((by_key.get(k) or {}).get("eol_date")),
+                        "checked_at": _iso((by_key.get(k) or {}).get("lifecycle_checked_at"))}
+                       for k, stages in routed.items()],
+            "warnings": ml.warnings([{"model_key": r["model_key"], "lifecycle_status": r["lifecycle_status"],
+                                      "eol_date": r["eol_date"]} for r in rows], routed, now.date()),
+            "last_run": None if job is None else {
+                "job_id": job["id"], "status": job["status"], "finished_at": _iso(job["finished_at"]),
+                "connections": [{k: c.get(k) for k in ("connection_key", "access", "error_class")}
+                                for c in (res or {}).get("connections") or []]}}
 
 
 async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
@@ -262,8 +337,9 @@ async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
         "probes": lambda: load_probes(day, now),
         "deploys": lambda: load_deploys(conn, now),
         "waves": lambda: load_waves(conn),
-        "handoff": lambda: load_handoff(conn),
         "reports": lambda: load_reports(conn, reg, now),
+        "balances": lambda: load_balances(conn, now),
+        "lifecycle": lambda: load_lifecycle(conn, now),
     }
     facts: dict[str, Any] = {"errors": {}}
     for name, load in sections.items():   # one connection: sequential reads
@@ -356,17 +432,60 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
     if spend["flagged"]:
         med = "no history" if spend["median_14d"] is None else fmt(spend["median_14d"], "usd")
         items.append(f"LLM spend {fmt(spend['value'], 'usd')} on {day.isoformat()} (14-day median {med})")
-    gap = _value(series, "K-TP-HANDOFFGAP", day)
-    if gap:
-        items.append(f"{gap:.0f} TripPlanner inquiries not received by Booking on {day.isoformat()} (UTC day)")
-    last = (facts.get("handoff") or {}).get("last_check")
-    if last and last.get("persistent"):
-        items.append(f"Inquiry handoff gap {last.get('gap')} at the last hourly check")
-    parked = _value(series, "K-BK-PARKED", day)
-    if parked:
-        items.append(f"{parked:.0f} inquiries parked or failed in the Booking inbox")
     for r in (facts.get("reports") or {}).get("flagged", []):
         items.append(f"Report {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed run(s) in 7 days")
+    items += balance_attention(facts.get("balances"))
+    items += lifecycle_attention(facts.get("lifecycle"))
+    return items
+
+
+def lifecycle_attention(lc: Optional[dict]) -> list[str]:
+    """AA-1024 D2: attention lines of the lifecycle section (pure). Absent section or before migration 352: none."""
+    if not lc or not lc.get("ready"):
+        return []
+    items = [w["message"] for w in lc.get("warnings") or []]
+    missing = [m["model_key"] for m in lc.get("models") or [] if not m.get("status")]
+    if missing:
+        items.append(f"{len(missing)} routed model(s) have no lifecycle status ({', '.join(missing[:5])}): the "
+                     "nightly model lifecycle sync has not run")
+    unknown = [m["model_key"] for m in lc.get("models") or [] if m.get("status") == "unknown"]
+    if unknown:
+        items.append(f"Lifecycle unknown for {len(unknown)} routed model(s) ({', '.join(unknown[:5])}): no Bedrock "
+                     "account serving them answered the lifecycle read")
+    return items
+
+
+def _below(value, threshold) -> bool:
+    return value is not None and threshold is not None and float(value) < float(threshold)
+
+
+def balance_attention(b: Optional[dict]) -> list[str]:
+    """AA-642 (S263 L2, B4): attention lines of the balances section (pure). Absent section: none."""
+    if not b:
+        return []
+    items = []
+    dfs = b.get("dfs") or {}
+    if _below(dfs.get("balance_usd"), b.get("dfs_threshold_usd")):
+        items.append(f"DataForSEO balance {fmt(dfs['balance_usd'], 'usd')} is below its "
+                     f"{fmt(b['dfs_threshold_usd'], 'usd')} alert threshold (read {dfs.get('fetched_at')})")
+    jev = b.get("jev") or {}
+    if _below(jev.get("estimated_left_usd"), b.get("jev_threshold_usd")):
+        items.append(f"Jev credit about {fmt(jev['estimated_left_usd'], 'usd')} left, below its "
+                     f"{fmt(b['jev_threshold_usd'], 'usd')} alert threshold (estimate)")
+    geo = b.get("geoapify") or {}
+    if geo.get("daily_credit_limit") is not None and (geo.get("credits_used_today") or 0) >= geo["daily_credit_limit"]:
+        items.append(f"Geoapify daily credits used up ({geo['credits_used_today']} of {geo['daily_credit_limit']}); "
+                     "place geocoding resumes after 00:00 UTC")
+    for p in b.get("providers") or []:
+        if p.get("enabled") is False:
+            items.append(f"Provider {p['connection_key']} is switched off: its stages run without it")
+        elif p.get("access_state") in REFUSING_STATES:
+            items.append(f"Provider {p['connection_key']} refuses ({p['access_state']})")
+    rec = b.get("reconcile") or {}
+    if rec.get("mismatches"):
+        keys = sorted({m["connection_key"] for m in rec["mismatches"]})
+        items.append(f"LLM cost reconcile: {len(rec['mismatches'])} settled connection-day(s) differ from the "
+                     f"provider's figure ({', '.join(keys)})")
     return items
 
 
@@ -494,21 +613,81 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
                for m in deploys["migrations"]] or ["- No migration registered."]
         md.append("")
 
-    md += ["## Inquiry handoff (TP-03)", "",
-           f"Gap on UTC day {day.isoformat()}: {fmt(kpis_out['K-TP-HANDOFFGAP'], 'count')}; parked or failed: "
-           f"{fmt(kpis_out['K-BK-PARKED'], 'count')}."]
-    last = (facts.get("handoff") or {}).get("last_check")
-    md += ([f"Last hourly check {last['at']}: sent {last['sent']}, received {last['received']}, gap {last['gap']}"
-            f"{' (persistent)' if last.get('persistent') else ''}.", ""] if last else ["No hourly check yet.", ""])
-
     waves = (facts.get("waves") or {}).get("open") or []
     md += ["## Open waves", ""] + ([f"- {w['name']} ({w['country'] or 'all'}, {w['tours']} tours) since "
                                      f"{w['created_at']}" for w in waves] or ["- None."]) + [""]
+    md += render_balances(facts.get("balances"))
+    md += render_lifecycle(facts.get("lifecycle"))
     flagged = (facts.get("reports") or {}).get("flagged") or []
     md += ["## Reports", ""] + ([f"- {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed in 7 days"
                                  for r in flagged] or ["- No report overdue or failed."]) + [""]
     summary = headline[:1000]
     return Rendered(summary, output, "\n".join(md))
+
+
+def render_balances(b: Optional[dict]) -> list[str]:
+    """AA-642 (S263 L2, B4): the balances section (Markdown lines, pure). Absent from a digest written before it."""
+    if not b:
+        return []
+    dfs = b.get("dfs") or {}
+    jev = b.get("jev") or {}
+    geo = b.get("geoapify") or {}
+    md = ["## Balances and paid providers", "",
+          "| Source | Left | Alert below | Note |", "|---|---|---|---|",
+          f"| DataForSEO | {fmt(dfs.get('balance_usd'), 'usd')} | {fmt(b.get('dfs_threshold_usd'), 'usd')} | "
+          f"read {dfs.get('fetched_at') or 'never'} (daily balance check) |",
+          f"| Jev (TypeSafe) | {fmt(jev.get('estimated_left_usd'), 'usd')} | {fmt(b.get('jev_threshold_usd'), 'usd')} "
+          f"| estimate: top-ups minus logged spend |",
+          f"| Geoapify | {fmt(_left(geo), 'count')} credits today | — | {geo.get('credits_used_today', '—')} of "
+          f"{geo.get('daily_credit_limit', '—')} used (UTC day) |"]
+    for key, c in sorted((b.get("credits") or {}).items()):
+        md.append(f"| Credit {key} | {fmt(c.get('remaining_usd'), 'usd')} | — | hand-set, expires "
+                  f"{c.get('expires_on') or '—'} |")
+    md += ["", "| Provider | On | Access | Last probe |", "|---|---|---|---|"]
+    md += [f"| {p['connection_key']} | {_on(p.get('enabled'))} | {p.get('access_state') or '—'} | "
+           f"{p.get('last_probe_at') or '—'} |" for p in b.get("providers") or []]
+    rec = b.get("reconcile") or {}
+    md.append("")
+    if not rec.get("ready"):
+        md.append("LLM cost reconcile: not available (migration 317 not applied).")
+    elif rec.get("mismatches"):
+        md.append(f"LLM cost reconcile, last {rec.get('days')} days: " + "; ".join(
+            f"{m['connection_key']} {m['day']} logged {fmt(m['logged_usd'], 'usd')} vs provider "
+            f"{fmt(m['provider_usd'], 'usd')}" for m in rec["mismatches"][:10]) + ".")
+    else:
+        md.append(f"LLM cost reconcile, last {rec.get('days')} days: no settled mismatch.")
+    return md + [""]
+
+
+def render_lifecycle(lc: Optional[dict]) -> list[str]:
+    """AA-1024 D2: the model lifecycle section (Markdown lines, pure). Absent from a digest written before it."""
+    if not lc:
+        return []
+    md = ["## Model lifecycle", ""]
+    if not lc.get("ready"):
+        return md + ["Not available (CIS migration 352 not applied).", ""]
+    run = lc.get("last_run")
+    if run:
+        md.append(f"Last sync {run.get('finished_at')} ({run.get('status')}); accounts: "
+                  + (", ".join(f"{c['connection_key']} {c['access']}"
+                               + (f" ({c['error_class']})" if c.get("error_class") else "")
+                               for c in run.get("connections") or []) or "—") + ".")
+    else:
+        md.append("No lifecycle sync in the last 48 h.")
+    md += ["", "| Routed model | Status | End of life | Stages |", "|---|---|---|---|"]
+    md += [f"| {m['model_key']} | {m.get('status') or '—'} | {m.get('eol_date') or '—'} | "
+           f"{', '.join(m.get('stages') or []) or '—'} |" for m in lc.get("models") or []]
+    return md + [""]
+
+
+def _left(geo: dict) -> Optional[float]:
+    if geo.get("daily_credit_limit") is None:
+        return None
+    return max(0, geo["daily_credit_limit"] - (geo.get("credits_used_today") or 0))
+
+
+def _on(enabled: Optional[bool]) -> str:
+    return {True: "yes", False: "no"}.get(enabled, "no row (on)")
 
 
 def render_providers(llm: dict) -> list[str]:

@@ -16,6 +16,9 @@ capability first and falls back to today's code rules when the row does not say 
 - ``cache_min_tokens`` (int): the minimum cacheable prompt prefix. Unset = the per-family table in client.py.
 - ``effort_default`` (string or null): the Anthropic API effort sent when the deployment sets none; null = the model
   takes no effort parameter. Unset = ``adapters/anthropic_messages._EFFORT_DEFAULTS``.
+- ``converse_effort`` (string): AA-1053, the form a stage's effort takes on Bedrock Converse
+  (``additionalModelRequestFields``): ``output_config`` (Claude) or ``reasoning_effort`` (GPT). Unset = no effort
+  field on Converse (AA-803: set it only after a probe has shown the provider takes it). ``effort_rule.py`` reads it.
 
 Every row has ``{}`` at migration 320, so behaviour is today's. Prices change by migration only: the admin PATCH may
 switch a row on or off but ``set_catalog_price`` refuses a price edit (AA-1017, D9).

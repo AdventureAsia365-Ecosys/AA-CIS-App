@@ -1,10 +1,9 @@
 """The cost of one billed model request (root ADR 0009 decisions 8 and 13).
 
-Same arithmetic as AA-CIS-App ``shared/llm_client/pricing.py`` (AA-658, AA-1002 S6), copied here as the shared core
-(AA-642 S8) with one difference: this module never reads a catalog. The caller passes the catalog prices it read
-through its own config source (CIS ``shared.llm_model_catalog``, TripPlanner ``catalog.v_llm_gateway_config_v1``),
-so the module stays pure. ``tests/unit/test_aa642_s8_aa_llm_parity.py`` in AA-CIS-App proves ``quote`` gives the CIS
-numbers and pricing mode for the same prices until the CIS module re-exports this one.
+The arithmetic of the AI gateway (AA-658, AA-1002 S6), the shared core (AA-642 S8). This module never reads a catalog:
+the caller passes the catalog prices it read through its own config source (CIS ``shared.llm_model_catalog``,
+TripPlanner ``catalog.v_llm_gateway_config_v1``), so the module stays pure. AA-CIS-App ``shared/llm_client/pricing.py``
+calls this ``quote`` with the catalog row it read (AA-1024 A10), so every app prices a request the same way.
 
 Rates are $ per 1K tokens inside this module (the CIS convention); catalog and deployment prices are $ per MTok.
 

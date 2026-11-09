@@ -12,13 +12,10 @@
 //
 // Runs ONLY in the `cognito` project with E2ECOGNITO=1 (set by .github/workflows/e2e-cognito.yml, which also
 // assumes the read-only mailbox role). The E2E user is "E2E Cognito" (e2e@e2e-mail.lumiguides.it.com — the SES
-// test mailbox itself, a TEMPORARY exception to the @adventure.asia rule, S243 option B; CIS role reviewer,
+// test mailbox itself, a TEMPORARY exception to the @adventure.asia rule, S243 option B; CIS role content since CIS 375 (reviewer before),
 // Booking none). Never the break-glass client.
-// Only the production CIS host is a registered cis-admin callback used here, so the CIS half never runs against a
-// preview. AA-911: the Booking half runs on booking.lumiguides.it.com (default) or the fixed Preview host
-// booking-preview.lumiguides.it.com; when E2EBOOKINGBYPASS is set (the aa-booking-admin Protection Bypass for
-// Automation, only needed if that host sits behind Vercel Authentication) it is sent as a header to the Preview
-// host only and turned into a host cookie there, so the value is never sent to any other host.
+// Only the production hosts are registered callbacks: the CIS half runs on aa-cis.lumiguides.it.com and the Booking
+// half on booking.lumiguides.it.com (both on the ECS staff web since AA-911; the Vercel Preview host is retired).
 // The code is a live credential: it is never logged, and no screenshot is taken while it may be on screen.
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import fs from 'fs';
@@ -29,20 +26,8 @@ import {
 } from '../helpers/cognitoSignIn';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
-// AA-680: the Booking staff admin host (a registered callback of the booking-staff client). AA-911: the run may
-// target the fixed Preview host instead (e2e-cognito.yml input booking_base_url → E2EBOOKINGORIGIN). Only these
-// two hosts are accepted; anything else fails the run before any navigation.
-const BOOKING_ORIGINS = ['https://booking.lumiguides.it.com', 'https://booking-preview.lumiguides.it.com'] as const;
-const BOOKING_PREVIEW_ORIGIN = BOOKING_ORIGINS[1];
-function bookingOrigin(): string {
-  const raw = (process.env.E2EBOOKINGORIGIN ?? '').trim().replace(/\/+$/, '');
-  if (raw === '') return BOOKING_ORIGINS[0];
-  if (!(BOOKING_ORIGINS as readonly string[]).includes(raw)) {
-    throw new Error(`E2EBOOKINGORIGIN must be one of ${BOOKING_ORIGINS.join(', ')}`);
-  }
-  return raw;
-}
-const BOOKING_ORIGIN = bookingOrigin();
+// AA-680: the Booking staff admin host (a registered callback of the booking-staff client).
+const BOOKING_ORIGIN = 'https://booking.lumiguides.it.com';
 // Booking session cookies (AA-Booking frontend/lib/session.ts): none may hold a value after a refusal.
 const BOOKING_SESSION_COOKIES = ['bk_access', 'bk_staff_rt', 'bk_cis_session'];
 const SHOTS_DIR = 'tests/e2e/results/cognito';
@@ -105,7 +90,7 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
       timeout: 30000,
     });
     // The shell (AdminShell: sidebar + topbar) wraps every /admin page; the account menu is in its topbar.
-    // The landing page is role-aware (reviewer → /admin/review), so only the shell is asserted.
+    // The landing page is role-aware (content → /admin/review), so only the shell is asserted.
     await expect(page.locator('main').first()).toBeVisible({ timeout: 20000 });
     const account = page.getByRole('button', { name: 'Account menu' });
     await expect(account).toBeVisible({ timeout: 15000 });
@@ -119,21 +104,6 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
     // Booking's callback asks the Booking API GET /booking/staff/me with the new token; the API answers 403
     // no_booking_role, the callback revokes the refresh token, sets no session and redirects to
     // /login?reason=no_booking_role (AA-Booking frontend/app/api/auth/callback/cognito/route.ts).
-    const bypass = (process.env.E2EBOOKINGBYPASS ?? '').trim();
-    if (BOOKING_ORIGIN === BOOKING_PREVIEW_ORIGIN && bypass !== '') {
-      // The bypass goes as request headers on requests to the Preview host only (never in a URL, so never in a
-      // log line), with x-vercel-set-bypass-cookie: Vercel answers with a host-only cookie, which the redirected
-      // Cognito callback (a top-level GET Playwright does not route) then carries.
-      await page.context().route(`${BOOKING_PREVIEW_ORIGIN}/**`, (route) =>
-        route.continue({
-          headers: {
-            ...route.request().headers(),
-            'x-vercel-protection-bypass': bypass,
-            'x-vercel-set-bypass-cookie': 'true',
-          },
-        }),
-      );
-    }
     await page.goto(`${BOOKING_ORIGIN}/login`, { waitUntil: 'domcontentloaded' });
     const bookingCompany = page.getByRole('link', { name: /sign in with company email/i });
     await expect(bookingCompany).toBeVisible({ timeout: 15000 });

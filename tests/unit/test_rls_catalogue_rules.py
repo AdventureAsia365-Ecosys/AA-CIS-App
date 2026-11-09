@@ -126,6 +126,22 @@ def test_rule_g_column_and_schema_grants_and_platform_roles():
     assert [f.key for f in rules.check(d, EMPTY).violations] == ["shared.x.c:tripplanner", "shared:bk_owner"]
 
 
+def test_booking_read_of_the_retired_inquiry_view_is_a_violation_again():
+    # AA-1046: TripPlanner tp-027 revokes booking's tp-009 grants (USAGE on tripplanner, SELECT on v_inquiry_outbox,
+    # whose payload carries every tenant's traveller data); the shared allowlist no longer covers a grant back, while
+    # the CIS ops view reads of tripplanner stay allowlisted.
+    rels = {"tripplanner": {"v_inquiry_outbox": table(kind="view",
+                                                      grants=[{"grantee": "booking", "privileges": "SELECT"}]),
+                            "v_ops_traffic_daily": table(kind="view",
+                                                         grants=[{"grantee": "cis_app", "privileges": "SELECT"}])}}
+    d = dump(rels, {"tripplanner": [{"grantee": "booking", "privileges": "USAGE"},
+                                    {"grantee": "cis_app", "privileges": "USAGE"}]})
+    result = rules.check(d, rules.ALLOWLIST)
+    assert sorted(f.key for f in result.violations) == ["tripplanner.v_inquiry_outbox:booking", "tripplanner:booking"]
+    assert sorted(f.key for f, _why in result.allowlisted) == ["tripplanner.v_ops_traffic_daily:cis_app",
+                                                                "tripplanner:cis_app"]
+
+
 def test_wildcard_entries_and_stale_report():
     rels = {"catalog": {"v_a": table(grants=[{"grantee": "booking", "privileges": "SELECT"}]),
                         "v_b": table(grants=[{"grantee": "booking", "privileges": "SELECT"}])}}

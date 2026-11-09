@@ -9,9 +9,11 @@
 // api/routers/admin_platform.py, staff.read = admin; BFF API_READ_RULES "platform").
 // S243 — readiness is recomputed from the staff rows on every load (`readiness_now`), so it agrees with the
 // page header right after a disable or invite; only the sign-in comparison (Cognito drift) is "as of" the last check.
-// S253 — Dev only: the E2E test accounts root ADR 0006a allows (A10, A10a, A10b) come in `known_e2e_exceptions`, each
-// with its ADR clause; they are listed in their own block and are not counted in "to check". An E2E address with any
-// other group set stays a finding.
+// S253 — Dev only: the E2E test accounts root ADR 0006a allows (A10, A10a, A10b; A10c since AA-1031) come in
+// `known_e2e_exceptions`, each with its ADR clause; they are listed in their own block and are not counted in "to
+// check". An E2E address with any other group set stays a finding.
+// AA-1031 — the CRM roles are compared with the crm-* sign-in groups (finding kind `crm_role`); a report made before
+// the database update for CRM roles says `crm_compared: false`, shown as one muted line.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
@@ -53,6 +55,8 @@ interface Report {
   // Dev only, not counted in drift_total. Optional: reports stored before S253 do not have them.
   known_e2e_enabled?: boolean;
   known_e2e_exceptions?: KnownE2E[];
+  // AA-1031. Optional: reports stored before it do not have it.
+  crm_compared?: boolean;
 }
 
 interface KnownE2E {
@@ -244,6 +248,9 @@ export default function DirectoryHealth() {
               </div>
             )}
           </div>
+          )}
+          {report?.crm_compared === false && (
+            <div data-testid="directory-crm-not-compared" style={{ color: K.muted }}>{t("crmNotCompared")}</div>
           )}
           {known.length > 0 && (
             <div data-testid="directory-e2e-exceptions" style={{ lineHeight: 1.5 }}>

@@ -25,7 +25,7 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from . import data_scope
+from . import data_scope, route_evidence, route_versions
 
 logger = structlog.get_logger()
 
@@ -45,10 +45,13 @@ _AUDIT_INSERT_SQL = """
 
 
 async def _insert_audit(conn, *, actor: str, action: str, resource_type: str,
-                        resource_id: str, before: Any, after: Any) -> None:
+                        resource_id: str, before: Any, after: Any, evidence: Optional[dict] = None) -> None:
+    details = {"before": before, "after": after}
+    if evidence:                      # AA-1026 D7: the eval run / break-glass reason of a route change
+        details["evidence"] = evidence
     await conn.execute(
         _AUDIT_INSERT_SQL, actor, action, resource_type, str(resource_id),
-        json.dumps({"before": before, "after": after}, default=str),
+        json.dumps(details, default=str),
     )
 
 
@@ -69,6 +72,16 @@ class StageConfig:
     # AA-1018 part 2 (migration 320) — the wall-time budget of the whole route in seconds (every model and deployment
     # it tries, fallbacks included). None = no deadline (every row today, column NULL / not migrated): no change.
     route_deadline_s: Optional[int] = None
+    # AA-642 A1 (migration 326): the stage kill switch (llm_role_config.is_active; False = every call refused before any
+    # provider attempt), the admin's reason, and the declared degrade mode (ADR 0009 decision 5). A stage with no row
+    # (SAFE_DEFAULTS) is on.
+    enabled: bool = True
+    disabled_reason: Optional[str] = None
+    degrade_mode: Optional[str] = None
+    # AA-1039 (R6, migration 373; root ADR 0019 d12): the stage's data class, content | pii (data_scope.PII_CLASSES).
+    # A pii stage is called only on our AWS accounts in the US (vendor_route.deployment_plan). Column missing / no row
+    # = content (every row before 373).
+    pii_class: str = "content"
 
 
 # S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
@@ -188,6 +201,16 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # ADR 0010 decision 5); no shadow (cost-cuts K2: an eval stage is seeded with shadow_sample_pct = 0).
     "writing_memory_eval": StageConfig("writing_memory_eval", "judge", "openai", "gpt-5.6-luna", "acc3",
                                        fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    # AA-642 A2 (migration 335): the demand-research loop (services/acp_contract/segment_research.py, one keyword step
+    # per call) and the batch proposer (segment_research_batch.py). Both were model_tier="haiku" requests with no
+    # stage: writer (they phrase keywords), degrade mode queue_retry (the job is re-queued, tech lead T-21's CIS mode).
+    # The database rows route on haiku-5-5 (327's mapping of haiku: no new traffic on the deprecated legacy chain);
+    # these fallbacks keep the legacy key on purpose, like every SAFE_DEFAULTS entry (migration 327): they serve a
+    # process that cannot read the database, where only the hard-coded legacy chain works without the catalog.
+    "segment_research":       StageConfig("segment_research", "writer", "claude", "haiku", "acc3",
+                                          degrade_mode="queue_retry"),
+    "segment_research_batch": StageConfig("segment_research_batch", "writer", "claude", "haiku", "acc3",
+                                          degrade_mode="queue_retry"),
 }
 
 # AA-1002 (S5): migration 311's backfill for these rows — the stages whose route names a model reached only outside
@@ -197,9 +220,16 @@ _VENDOR_DIRECT_STAGES = frozenset({
     "s1_judge", "s1_brand_audit", "t2_judge", "t2_brand_audit", "t7_debate_judge", "t10_judge", "t10_adjudicate",
     "a3_place_dedupe", "writing_memory_mine", "writing_memory_eval",
 })
+# AA-642 A3 (migration 334, root ADR 0009 decision 5 "one deadline per route"): the route deadline of every stage, by
+# role. The first attempt always runs; no later attempt starts once the deadline has passed. Each value is above the
+# longest single attempt of the role (Bedrock read timeout 300 s; an acc2 embedding 30 s), so a timed-out first
+# attempt still leaves room for a fallback, and caps a whole chain (at most errors.MAX_CHAIN_ATTEMPTS attempts) well
+# below the 6 x 300 s it could take before.
+ROUTE_DEADLINE_S = {"writer": 1200, "judge": 900, "validate": 600, "embed": 120}
 for _stage, _cfg in list(SAFE_DEFAULTS.items()):
     SAFE_DEFAULTS[_stage] = dataclasses.replace(
-        _cfg, allowed_scopes=data_scope.ALL_SCOPES if _stage in _VENDOR_DIRECT_STAGES else data_scope.AWS_ONLY_SCOPES)
+        _cfg, allowed_scopes=data_scope.ALL_SCOPES if _stage in _VENDOR_DIRECT_STAGES else data_scope.AWS_ONLY_SCOPES,
+        route_deadline_s=ROUTE_DEADLINE_S.get(_cfg.role))
 del _stage, _cfg
 
 # A stage with no row and no SAFE_DEFAULTS entry (an adhoc_* script, a connection test): no stage policy (None).
@@ -207,6 +237,34 @@ _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 
 # stage -> (StageConfig, fetched_at_monotonic)
 _cache: dict[str, tuple[StageConfig, float]] = {}
+
+# AA-1039 (review S268, item 3): stage -> the pii_class of its last SUCCESSFUL read in this process (a row, or no row =
+# content). A class changes only by a migration (no runtime grant on the column), so ``invalidate()`` and the route
+# version watch, which drop ``_cache``, never clear this map: after a route save on a cold DB, a stage read before
+# keeps its real class instead of failing closed.
+_pii_known: dict[str, str] = {}
+
+
+def _read_failed_default(stage: str) -> StageConfig:
+    """The config of ``stage`` when the DB read FAILED and no cached row exists (a cold cache, the DB unreachable).
+    SAFE_DEFAULTS keeps the route; the data class is the stage's last successful read in this process (``_pii_known``)
+    or, for a stage never read here, unknown: it fails closed as ``data_scope.PII_UNREAD`` (``pii``, marked as not
+    read so the logs say "stage class unknown"). AA-1039 (review S268): a personal-data stage is never downgraded to
+    ``content`` (Bedrock ``global.`` profiles, vendor APIs) because its row could not be read. A pii class (read or
+    not) also gets ``allowed_scopes = (aws_only,)``, the invariant migration 373's CHECK holds in the table, so no
+    path that reads only the scopes (``_call_openai``, the legacy last resort) can send it out of AWS. Not cached: the
+    next call reads again. A read that succeeds with no row, or before migration 373, is not a failure (content)."""
+    base = SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+    known = _pii_known.get(stage)
+    if known == data_scope.PII_CONTENT:
+        return base
+    return dataclasses.replace(base, pii_class=known or data_scope.PII_UNREAD,
+                               allowed_scopes=data_scope.AWS_ONLY_SCOPES)
+
+
+def _remember_class(stage: str, cfg: StageConfig) -> None:
+    """Record the class of a successful read (``_pii_known``)."""
+    _pii_known[stage] = data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))
 
 
 def _row_to_config(row) -> StageConfig:
@@ -218,7 +276,19 @@ def _row_to_config(row) -> StageConfig:
         shadow_sample_pct=row["shadow_sample_pct"] or 0,
         allowed_scopes=data_scope.normalize(_scopes_of(row)),
         route_deadline_s=_deadline_of(row),
+        enabled=_column(row, "is_active", True) is not False,
+        disabled_reason=_column(row, "disabled_reason", None),
+        degrade_mode=_column(row, "degrade_mode", None),
+        pii_class=data_scope.normalize_pii_class(_column(row, "pii_class", None)),
     )
+
+
+def _column(row, name: str, default):
+    """An optional column of a row (missing before its migration, or not selected): ``default``."""
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return default
 
 
 def _deadline_of(row) -> Optional[int]:
@@ -247,30 +317,49 @@ def _scopes_of(row) -> Optional[list]:
 
 # AA-1018 part 2: migration 320 adds route_deadline_s, read the same way (missing column = no deadline, retried later).
 _deadline_column_missing_at = 0.0
+# AA-642 A1: migration 326 adds degrade_mode / disabled_reason, read the same way (missing = none declared, no reason).
+_SWITCH_COLUMNS = ", degrade_mode, disabled_reason"
+_switch_column_missing_at = 0.0
+# AA-1039 (R6): migration 373 adds pii_class, read the same way (missing = content, retried later).
+_PII_COLUMN = ", pii_class"
+_pii_column_missing_at = 0.0
 
 
 def _scope_select() -> str:
-    """", allowed_scopes[, route_deadline_s]" for the optional columns believed to exist, else ""."""
+    """", allowed_scopes[, route_deadline_s[, degrade_mode, disabled_reason[, pii_class]]]" for the optional columns
+    believed to exist, else ""."""
     now = time.monotonic()
     if _scope_column_missing_at and now - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ""
     if _deadline_column_missing_at and now - _deadline_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ", allowed_scopes"
-    return ", allowed_scopes, route_deadline_s"
+    if _switch_column_missing_at and now - _switch_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ", allowed_scopes, route_deadline_s"
+    if _pii_column_missing_at and now - _pii_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS
+    return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS + _PII_COLUMN
 
 
 async def _fetch_scoped(fetch, sql_for):
-    """``fetch(sql_for(optional_cols))``; on a missing optional column (route_deadline_s before migration 320,
-    allowed_scopes before 311), once more without it."""
-    global _scope_column_missing_at, _deadline_column_missing_at
-    for _ in range(3):
+    """``fetch(sql_for(optional_cols))``; on a missing optional column (pii_class before migration 373, degrade_mode /
+    disabled_reason before 326, route_deadline_s before 320, allowed_scopes before 311), once more without it."""
+    global _scope_column_missing_at, _deadline_column_missing_at, _switch_column_missing_at, _pii_column_missing_at
+    for _ in range(5):
         cols = _scope_select()
         try:
             return await fetch(sql_for(cols))
         except asyncpg.exceptions.UndefinedColumnError as e:
             if not cols:
                 raise
-            if "route_deadline_s" in cols and "route_deadline_s" in str(e):
+            if "pii_class" in cols and "pii_class" in str(e):
+                _pii_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_pii_column_missing",
+                               hint="migration 373 not applied: every stage reads as content")
+            elif "degrade_mode" in cols and ("degrade_mode" in str(e) or "disabled_reason" in str(e)):
+                _switch_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_switch_columns_missing",
+                               hint="migration 326 not applied: no degrade modes, no switch reasons")
+            elif "route_deadline_s" in cols and "route_deadline_s" in str(e):
                 _deadline_column_missing_at = time.monotonic()
                 logger.warning("llm_role_config_deadline_column_missing",
                                hint="migration 320 not applied: no route deadlines")
@@ -286,8 +375,8 @@ async def _fetch_one(stage: str) -> Optional[StageConfig]:
     try:
         row = await _fetch_scoped(
             lambda sql: conn.fetchrow(sql, stage),
-            lambda cols: (f"SELECT stage, role, provider, model_id, account_route, {_ROUTE_COLUMNS}{cols} "
-                          "FROM shared.llm_role_config WHERE stage = $1 AND is_active"))
+            lambda cols: (f"SELECT stage, role, provider, model_id, account_route, is_active, {_ROUTE_COLUMNS}{cols} "
+                          "FROM shared.llm_role_config WHERE stage = $1"))
         return _row_to_config(row) if row else None
     finally:
         await conn.close()
@@ -305,14 +394,27 @@ async def get_stage_config(stage: str) -> StageConfig:
         if cfg is None:
             cfg = SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
             logger.warning("llm_role_config_stage_missing", stage=stage,
-                            hint="no active row — using SAFE_DEFAULTS, check migration 137 seeded")
+                            hint="no row — using SAFE_DEFAULTS, check migration 137 seeded")
         _cache[stage] = (cfg, now)
+        _remember_class(stage, cfg)
         return cfg
     except Exception as e:
-        logger.warning("llm_role_config_read_failed", stage=stage, error=str(e))
         if cached:
+            logger.warning("llm_role_config_read_failed", stage=stage, error=str(e))
             return cached[0]  # stale-but-real beats a hardcoded default when the DB hiccups
-        return SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+        cfg = _read_failed_default(stage)
+        logger.warning("llm_role_config_read_failed", stage=stage, error=str(e),
+                       pii_class=(data_scope.PII_UNREAD_REASON if data_scope.pii_class_unread(cfg.pii_class)
+                                  else cfg.pii_class))
+        return cfg
+
+
+def _watch_route_version() -> None:
+    try:
+        from . import route_settings
+        route_settings.watch_version()
+    except Exception as e:  # noqa: BLE001 — the watch never fails a stage read
+        logger.warning("llm_route_version_watch_failed", error=str(e)[:200])
 
 
 def get_stage_config_sync(stage: str) -> StageConfig:
@@ -331,7 +433,11 @@ def get_stage_config_sync(stage: str) -> StageConfig:
     raise "cannot be called from a running event loop" there. Detected via
     `asyncio.get_running_loop()` and handled by running the fetch in a throwaway worker thread
     (its own fresh loop) instead of either crashing or silently degrading to SAFE_DEFAULTS on
-    every single call from that one call site."""
+    every single call from that one call site.
+
+    AA-1042 (S268): it first asks ``route_settings.watch_version()`` (20 s cache, a clock read on a hit), which drops
+    this cache and the deployment cache when another process saved a new route config version."""
+    _watch_route_version()
     cached = _cache.get(stage)
     if cached and time.monotonic() - cached[1] < _CACHE_TTL_SECONDS:
         return cached[0]
@@ -349,12 +455,13 @@ def get_stage_config_sync(stage: str) -> StageConfig:
         return asyncio.run(get_stage_config(stage))
     except Exception as e:
         logger.warning("llm_role_config_sync_read_failed", stage=stage, error=str(e))
-        return cached[0] if cached else SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+        return cached[0] if cached else _read_failed_default(stage)
 
 
 def invalidate(stage: Optional[str] = None) -> None:
     """Called by PATCH /admin/llm-config/{stage} right after a successful write. `stage=None`
-    clears everything (used by tests / a full reseed)."""
+    clears everything (used by tests / a full reseed). AA-1039: ``_pii_known`` is kept (a class changes only by a
+    migration)."""
     if stage is None:
         _cache.clear()
     else:
@@ -362,9 +469,8 @@ def invalidate(stage: Optional[str] = None) -> None:
 
 
 async def list_stage_configs() -> list[StageConfig]:
-    """Admin UI read — every row regardless of is_active isn't needed here (inactive rows would
-    only exist if a future UI adds soft-delete; migration 137 seeds everything active), so this
-    intentionally mirrors get_stage_config()'s own `AND is_active` filter for consistency."""
+    """Admin UI read — every row, switched-off ones included (AA-642 A1: ``is_active`` is the stage kill switch), with
+    ``degrade_mode`` / ``disabled_reason`` (None before migration 326)."""
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         rows = await _fetch_scoped(
@@ -376,6 +482,11 @@ async def list_stage_configs() -> list[StageConfig]:
             r["fallback_model_ids"] = list(r["fallback_model_ids"] or [])
             scopes = data_scope.normalize(r.get("allowed_scopes"))   # AA-1002 (S5): None before migration 311
             r["allowed_scopes"] = list(scopes) if scopes is not None else None
+            r.setdefault("degrade_mode", None)                          # AA-642 A1: None before migration 326
+            r.setdefault("disabled_reason", None)
+            # AA-1039 (R6): content | pii; None before migration 373 (AI gateway > Routing by data class then shows
+            # "no class yet"; the gateway itself reads a missing column as content)
+            r["pii_class"] = data_scope.normalize_pii_class(r["pii_class"]) if "pii_class" in r else None
         return out
     finally:
         await conn.close()
@@ -383,7 +494,7 @@ async def list_stage_configs() -> list[StageConfig]:
 
 async def set_stage_config(
     stage: str, model_id: str, account_route: Optional[str], updated_by: str,
-    audit_actor: Optional[str] = None,
+    audit_actor: Optional[str] = None, evidence: Optional[dict] = None,
 ) -> dict:
     """Admin UI write — role/provider are NOT editable here (they're a property of the call site,
     not a choice; changing role/provider for a stage is a code change, not a config change).
@@ -394,10 +505,14 @@ async def set_stage_config(
     AA-686: when `audit_actor` is given, the change is recorded in acp_shared.audit_log inside the
     same transaction as the UPDATE (action `llm_model_changed`), so a committed model change is
     always paired with its audit row.
+
+    AA-1026 D7: ``evidence`` (route_evidence.require) goes into that audit row; a break-glass change also writes the
+    admin bell in the same transaction.
     """
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         async with conn.transaction():
+            version_state = await route_versions.begin_safe(conn)    # AA-1042: every route change is a version
             before = await conn.fetchrow(
                 "SELECT model_id, account_route FROM shared.llm_role_config WHERE stage = $1",
                 stage,
@@ -420,7 +535,13 @@ async def set_stage_config(
                     resource_type="llm_role_config", resource_id=stage,
                     before=dict(before) if before else None,
                     after={"model_id": model_id, "account_route": account_route},
+                    evidence=evidence,
                 )
+                await route_evidence.record_break_glass(
+                    conn, stage=stage, actor=audit_actor, evidence=evidence,
+                    change={"model_id": model_id, "before": dict(before) if before else None})
+            await route_versions.record_safe(conn, version_state, actor=audit_actor or updated_by,
+                                             note=f"Routing tab: primary model of {stage}")
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
@@ -431,17 +552,19 @@ async def set_stage_config(
 
 async def set_stage_route(
     stage: str, *, fallback_model_ids: list[str], shadow_model_id: Optional[str],
-    shadow_sample_pct: int, updated_by: str, audit_actor: str,
+    shadow_sample_pct: int, updated_by: str, audit_actor: str, evidence: Optional[dict] = None,
 ) -> dict:
     """AA-686 — set a stage's route (ordered fallback chain + optional shadow). Validation of the
     model keys (vendor rule, duplicate/primary-in-fallback, shadow == primary) belongs to the
     router, which has the catalog; this helper is the persistence + audit boundary. The UPDATE and
     the acp_shared.audit_log row (action `llm_route_changed`) share one transaction, and the stage
     cache is invalidated the same way set_stage_config does so the next LLM call sees the new route.
+    AA-1026 D7: ``evidence`` goes into the audit row; a break-glass change writes the admin bell in the transaction.
     """
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         async with conn.transaction():
+            version_state = await route_versions.begin_safe(conn)    # AA-1042: every route change is a version
             before = await conn.fetchrow(
                 f"SELECT model_id, {_ROUTE_COLUMNS} FROM shared.llm_role_config WHERE stage = $1",
                 stage,
@@ -468,10 +591,51 @@ async def set_stage_route(
                 before=before_d,
                 after={"fallback_model_ids": list(fallback_model_ids),
                        "shadow_model_id": shadow_model_id, "shadow_sample_pct": shadow_sample_pct},
+                evidence=evidence,
             )
+            await route_evidence.record_break_glass(
+                conn, stage=stage, actor=audit_actor, evidence=evidence,
+                change={"fallback_model_ids": list(fallback_model_ids), "before": before_d})
+            await route_versions.record_safe(conn, version_state, actor=audit_actor,
+                                             note=f"Routing tab: fallbacks of {stage}")
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
+    finally:
+        await conn.close()
+        invalidate(stage)
+
+
+async def set_stage_enabled(stage: str, *, enabled: bool, reason: Optional[str], updated_by: str,
+                            audit_actor: str) -> dict:
+    """AA-642 A1 — the stage kill switch (``is_active``; migration 326 gives it that meaning). Switching off stores the
+    admin's ``reason`` (``disabled_reason``); switching on clears it. The UPDATE and its acp_shared.audit_log row
+    (action ``llm_stage_switched_off`` / ``llm_stage_switched_on``) share one transaction; this process's cache is
+    invalidated at once, other processes (the worker) see it within ``_CACHE_TTL_SECONDS``. Raises ValueError for an
+    unknown stage."""
+    reason = None if enabled else ((reason or "").strip()[:500] or None)
+    conn = await asyncpg.connect(get_database_url(), ssl="require")
+    try:
+        async with conn.transaction():
+            before = await conn.fetchrow(
+                "SELECT is_active, disabled_reason FROM shared.llm_role_config WHERE stage = $1 FOR UPDATE", stage)
+            if before is None:
+                raise ValueError(f"unknown stage: {stage!r}")
+            row = await conn.fetchrow(
+                """
+                UPDATE shared.llm_role_config
+                SET is_active = $2, disabled_reason = $3, updated_at = now(), updated_by = $4
+                WHERE stage = $1
+                RETURNING stage, is_active, disabled_reason, degrade_mode, updated_at, updated_by
+                """,
+                stage, enabled, reason, updated_by,
+            )
+            await _insert_audit(
+                conn, actor=audit_actor, action="llm_stage_switched_on" if enabled else "llm_stage_switched_off",
+                resource_type="llm_role_config", resource_id=stage, before=dict(before),
+                after={"is_active": enabled, "disabled_reason": reason},
+            )
+        return dict(row)
     finally:
         await conn.close()
         invalidate(stage)

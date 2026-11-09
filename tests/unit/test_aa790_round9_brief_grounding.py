@@ -11,6 +11,7 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import GOALS
 from services.acp_content_writing import brief_grounding as bg
 from services.acp_content_writing import prompts, service
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 
 SEED = ("Riverside Monastery — visit the prayer hall\nLocation: Riverside Monastery, Valley Town, Example Province\n"
         "Day 2 of the trip\nSource itinerary: Walk 3 kilometres along the river to the monastery and join the "
@@ -33,7 +34,12 @@ CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "ads", "email
 # (recomputed on 67af0922 and 717c58f1 after BRIEF became synthetic text, AA-919 golden-set guard).
 # AA-789 tier 0 (S258): recomputed after the route blog's "Thin moment" rule lost its "ONE plain sentence" shape
 # (was aec208af965d479a801d517e2267c73047f4e007e14335de4a0ca63b74a7a804).
-ROUND6_FIXTURE_SHA = "9bf0f4fd5286922b01b020920f2491627d3d185a680d9f14734e08f15615a4fc"
+# AA-741 (S271): recomputed after every blog prompt gained the LENGTH AND EFFORT block
+# (prompts._BLOG_LENGTH_INSTRUCTIONS, t9_write v2); without it the 192 prompts are the S258 bytes
+# (was 9bf0f4fd5286922b01b020920f2491627d3d185a680d9f14734e08f15615a4fc).
+# S271 review: recomputed after the block's floor became a hard minimum
+# (was 189452638947e8695ec85482e5bcd9b300974e1e64150df05aac33e01d1bbb37).
+ROUND6_FIXTURE_SHA = "f9876035d8a581d555df777d18e6407e8fa50f08caf097221ad7e31a16b85431"
 
 
 def fixture_prompts(**extra) -> list[str]:
@@ -79,7 +85,9 @@ def test_explicit_off_beats_the_env(monkeypatch):
 
 def test_system_prompt_and_writer_version_unchanged():
     """Round 9 never touches SYSTEM_PROMPT, so writer_prompt_version stays the round-6 hash."""
-    assert service.WRITER_PROMPT_VERSION == "b5978839"
+    # AA-1047: cc9b4979 = b5978839 plus the writing policy lines (pre_aa1047 puts them back)
+    assert service.WRITER_PROMPT_VERSION == "cc9b4979"
+    assert service.prompt_version_of(pre_aa1047(prompts.SYSTEM_PROMPT)) == "b5978839"
 
 
 def test_ground_angle_off_returns_the_same_object(monkeypatch):

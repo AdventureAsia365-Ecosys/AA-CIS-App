@@ -20,6 +20,14 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
                          "282_supply_writer_sonnet_5_5.sql")
 STAGE = "supply_content_writer"
 POST_282 = ("sonnet-5-5", ["sonnet"], "writer", "claude", "acc3", True, None, 0)
+# AA-1026 (migration 327, later in the replay): the legacy 'sonnet' becomes its chain on Converse keys (sonnet-5-5 is
+# already first, then haiku-5-5), the A-series writer ends on the OpenAI API model, and haiku-5-5 is dropped again: it
+# would follow sonnet-5-5's Anthropic API deployment (T-3: outside AWS only after every AWS path of the route).
+# AA-1026 (migration 366, S267): the family chain, Sonnet 4.6 and Haiku 4.5 on acc3 before the OpenAI API (the gateway
+# runs it model first: Sonnet 5.5 on acc3, then on the Anthropic API, then Sonnet 4.6 ...). AA-1042 (migration 376,
+# S269): Sonnet 4.6 gained its Anthropic API deployment, so Haiku 4.5 left the chain to keep six attempts. AA-900
+# (migration 383, S271 W0, tech lead D7): no writer route keeps GPT-6 Luna on the OpenAI API.
+POST_366 = ("sonnet-5-5", ["sonnet-4-6"], "writer", "claude", "acc3", True, None, 0)
 
 
 @pytest.fixture
@@ -36,7 +44,8 @@ def cur():
 
 
 def _restore(c):
-    """The post-282 state other tests see."""
+    """The post-282, then post-366 state other tests see (the replay's end state: 327 then 366 rewrote the row; their
+    files are not re-run here, their guards check the whole route table, which other tests' rows may differ from)."""
     c.execute("UPDATE shared.llm_model_catalog SET enabled = true, blocked_reason = NULL "
               "WHERE model_key = 'sonnet-5-5'")
     c.execute("""INSERT INTO shared.llm_role_config
@@ -46,6 +55,9 @@ def _restore(c):
                  ON CONFLICT (stage) DO NOTHING""", (STAGE,))
     _seed_278(c)
     _run(c)
+    c.execute("UPDATE shared.llm_role_config SET fallback_model_ids = %s::text[], "
+              "allowed_scopes = ARRAY['aws_only', 'vendor_direct'], updated_by = 'migration-383-aa900' "
+              "WHERE stage = %s", (POST_366[1], STAGE))
 
 
 def _seed_278(c):
@@ -70,8 +82,8 @@ def _registered(c):
     return c.fetchone()[0]
 
 
-def test_replay_state_is_post_282(cur):
-    assert _row(cur) == POST_282
+def test_replay_state_is_post_366(cur):
+    assert _row(cur) == POST_366
     assert _registered(cur) == 1
 
 

@@ -13,7 +13,6 @@ package, same dependency already used there.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 
@@ -27,9 +26,10 @@ from services.acp_shared.brand_pack import foreign_brand_mentions
 from services.acp_angle_gate.prompts import (BRIEF_MODE_OFF, BRIEF_MODE_R8, R8_BRIEF_LABELS, R8_BRIEF_MAX_FIGURES,
                                              R8_BRIEF_MAX_WORDS, brief_mode as resolve_brief_mode,
                                              build_user_prompt, system_prompt)
-from services.acp_angle_gate.route_digest import thin_anchor
+from services.acp_angle_gate.route_digest import focus_name, thin_anchor
 from services.acp_shared.channel_spec import sanitize_best_final_style
 from services.acp_shared.dfs_relevance import SearchDemandSignal
+from services.acp_shared.token_budget import T8_ANGLE_GEN_MAX_TOKENS, ReplyStillCut, agenerate_with_budget_retry
 from services.acp_shared.piece_history import PriorPiece
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -132,22 +132,29 @@ async def _generate_once(
     )
     client = LLMClient()
     request = LLMRequest(
-        system_prompt=system_prompt(brief_mode), user_prompt=user_prompt, stage=stage, max_tokens=2048,
-        model_tier=model_tier,
+        system_prompt=system_prompt(brief_mode), user_prompt=user_prompt, stage=stage,
+        max_tokens=T8_ANGLE_GEN_MAX_TOKENS, model_tier=model_tier,
     )
     extra = dict(quality_signal_extra or {})
     if brief_mode != BRIEF_MODE_OFF:
         extra["brief_mode"] = brief_mode
-    resp = await asyncio.to_thread(client.generate, request)
+    ids = {"tenant_id": str(tenant_id) if tenant_id else None,
+           "angle_gate_request_id": str(request_id) if request_id else None}
+
+    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling (by the gateway since S271
+    # W0, which writes the cut row), never a third time.
+    reply = await agenerate_with_budget_retry(client.generate, request)
+    resp = reply.resp
+    extra.update(reply.signal())
     try:
+        if reply.still_cut:
+            raise AngleGenerationError(str(ReplyStillCut(stage, reply.max_tokens, reply.retry_max_tokens)))
         parsed = _parse_response(resp.content)
         angles, recommended_index, reason = _validate(parsed)
     except Exception as e:
         # AA-927: the reply was billed — its row (billed_unusable) before the generation error goes up.
         await record_unusable(resp, stage=stage, role="writer", error=e,
-                              tenant_id=str(tenant_id) if tenant_id else None,
-                              angle_gate_request_id=str(request_id) if request_id else None,
-                              quality_signal_extra={"attempt": attempt, **extra})
+                              quality_signal_extra={"attempt": attempt, **extra}, **ids)
         raise
     logger.info(
         "angle_gate_angles_generated", goal=goal["key"],
@@ -182,7 +189,7 @@ async def _generate_once(
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
-    return angles, recommended_index, reason, resp.cost_usd
+    return angles, recommended_index, reason, reply.cost_usd
 
 
 _ANGLE_TEXT_FIELDS = ("name", "why_it_works", "formula_fit", "best_final_style")
@@ -229,7 +236,12 @@ def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
     too, so it gets the same one retry with the problems as feedback. Mode 'off' checks exactly what it did before."""
     out: list[str] = []
     thin = [thin_anchor(a, moments) for a in angles] if moments else []
-    if thin and all(thin):
+    focus = focus_name(moments)
+    if thin and all(thin) and focus:
+        # AA-741 (S271 review) — a Segment-grain Blog walk is about its FOCUS moment
+        out.append("every angle leads with a moment other than the FOCUS (" + "; ".join(dict.fromkeys(thin))
+                   + f"): lead with the FOCUS, {focus}; the other moments are the way there and onwards")
+    elif thin and all(thin):
         out.append("every angle leads with a thin moment (" + "; ".join(dict.fromkeys(thin)) + ") — lead with one "
                    "of the ANCHOR CANDIDATES; a thin moment is only named in passing")
     brand_name = brand_pack.get("brand_name")

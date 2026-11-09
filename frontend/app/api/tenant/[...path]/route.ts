@@ -24,7 +24,7 @@
 // verification (POST /auth/verify-admin, signature-checked) instead.
 //
 // Known behavior change: backend /auth/verify-admin only whitelists
-// role in ("admin","reviewer") and content-role sessions carry no JWT
+// role in ("admin","reviewer") and content-role sessions carried no JWT (history: reviewer is gone, CIS 375)
 // (separate login path, see login/route.ts) — so content-role callers now
 // get 401 through this proxy where they previously passed on the cookie
 // alone. This mirrors the same known-limitation carve-out proxy.ts
@@ -63,7 +63,7 @@ async function handler(
   // AA-882 — the verified JWT role, as /api/admin/[...path] sends it. Without it the backend
   // treats the call as the machine principal (api/core/staff_authz.py), which may call the
   // scheduler POSTs (jev-canary/check, dfs-balance/check, jev/402-sweep, retention/schedule)
-  // whatever the staff role; with it, reviewer/content get 403 on every POLICY route.
+  // whatever the staff role; with it, a role without the capability gets 403 on every POLICY route.
   headers["x-admin-role"] = auth.role;
 
   const { path } = await params;

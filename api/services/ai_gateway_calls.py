@@ -14,8 +14,13 @@ call, newest first, across the ledgers.
 Filters (all optional, combined with AND): ``job_id``, ``tour_id`` (the tour's jobs, as the tour trace reads them, plus
 the ``tour_id`` columns), ``app`` (cis | tripplanner | crm | …), ``provider`` (a spend-budget provider:
 ``shared.cost_guard.PROVIDERS``), ``status`` (ok | refused | error | billed_unusable | truncated), ``stage``,
-``source`` and ``window`` (1h | 24h | 7d | 30d, default 24h). A filter a ledger cannot answer leaves that ledger out
-(for example ``stage`` leaves the geocoder out, ``status=truncated`` leaves everything but the LLM log out), so a
+``source`` and ``window`` (1h | 24h | 7d | 30d, default 24h). AA-1045 (the usage explorer's drill-down): ``since`` /
+``until`` (ISO date-times with an offset; a custom range that replaces the window, at most ``MAX_RANGE``), ``tenant``,
+``model``, ``account``, ``role``, ``error_class`` and ``product``, each the same expression over each ledger as the
+explorer's rollup (api/services/usage_dims.py), so a cell and its calls count the same rows; ``(none)`` keeps the rows
+without a value. A filter a ledger cannot answer leaves that ledger out
+(for example ``status=truncated`` leaves everything but the LLM log out; AA-1025 D3: the geocoder answers ``stage``,
+``app`` and ``status=refused`` since migration 346), so a
 filtered list never shows rows that only look like matches.
 
 Paging is keyset on (``at``, ``id``) descending, where ``id`` is ``<source>:<ledger row id>`` compared byte-wise
@@ -45,6 +50,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from api.services import ai_gateway as gw
+from api.services import usage_dims as ud
 from shared.aws_client.accounts import VENDOR_CONNECTION_LABELS
 
 SOURCES = ("llm", "jev", "dfs", "geocoder", "crm")
@@ -52,12 +58,17 @@ CIS_SOURCES = ("llm", "jev", "dfs", "geocoder")
 STATUSES = ("ok", "refused", "error", "billed_unusable", "truncated")
 WINDOWS = {"1h": timedelta(hours=1), "24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 DEFAULT_WINDOW = "24h"
+MAX_RANGE = timedelta(days=400)
+NONE_VALUE = "(none)"
+# AA-1045: the explorer's dimensions the Calls list filters on (usage_dims.dim_sql per ledger; product from the stage).
+DIM_FILTERS = ("tenant", "model", "account", "role", "error_class", "product")
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 200
-# The statuses each ledger can hold (decision_log and geocode_call have none: derived, ok | error).
+# The statuses each ledger can hold. decision_log has no status column: derived (ai_gateway.JEV_STATUS_SQL, AA-1025
+# D3: a refused ask is refused). geocode_call has one since migration 346 (AA-1025 D3); older rows are derived.
 SOURCE_STATUSES = {
-    "llm": set(STATUSES), "dfs": {"ok", "refused", "error"}, "jev": {"ok", "error"},
-    "geocoder": {"ok", "error"}, "crm": {"ok", "refused", "error"},
+    "llm": set(STATUSES), "dfs": {"ok", "refused", "error"}, "jev": {"ok", "refused", "error"},
+    "geocoder": {"ok", "refused", "error"}, "crm": {"ok", "refused", "error"},
 }
 # The spend-budget provider (shared/cost_guard.py PROVIDERS) a source answers for; llm and crm by their provider.
 SOURCE_OF_PROVIDER = {"jev": "jev", "dfs": "dfs", "geocoder": "geocoder"}
@@ -71,6 +82,7 @@ CRM_MAX_PAGES = 5
 _APP_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
 _STAGE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 _KEY_RE = re.compile(r"^(llm|jev|dfs|geocoder|crm):[0-9A-Za-z-]{1,64}$")
+_DIM_VALUE_RE = re.compile(r"^[\w .:/@()+-]{1,120}$")
 
 
 @dataclass(frozen=True)
@@ -83,6 +95,31 @@ class CallFilters:
     stage: Optional[str] = None
     source: Optional[str] = None
     window: str = DEFAULT_WINDOW
+    # AA-1045 drill-down from the usage explorer
+    since: Optional[str] = None
+    until: Optional[str] = None
+    tenant: Optional[str] = None
+    model: Optional[str] = None
+    account: Optional[str] = None
+    role: Optional[str] = None
+    error_class: Optional[str] = None
+    product: Optional[str] = None
+
+    def dims(self) -> dict[str, str]:
+        """The explorer dimension filters that are set."""
+        return {d: getattr(self, d) for d in DIM_FILTERS if getattr(self, d) is not None}
+
+
+def _instant(value: Optional[str], name: str) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        t = datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"{name} must be an ISO date-time with an offset") from None
+    if t.tzinfo is None:
+        raise ValueError(f"{name} must be an ISO date-time with an offset")
+    return t.astimezone(timezone.utc).isoformat()
 
 
 def _uuid(value: Optional[str], name: str) -> Optional[str]:
@@ -96,7 +133,10 @@ def _uuid(value: Optional[str], name: str) -> Optional[str]:
 
 def parse_filters(*, job_id: Optional[str] = None, tour_id: Optional[str] = None, app: Optional[str] = None,
                   provider: Optional[str] = None, status: Optional[str] = None, stage: Optional[str] = None,
-                  source: Optional[str] = None, window: Optional[str] = None) -> CallFilters:
+                  source: Optional[str] = None, window: Optional[str] = None, since: Optional[str] = None,
+                  until: Optional[str] = None, tenant: Optional[str] = None, model: Optional[str] = None,
+                  account: Optional[str] = None, role: Optional[str] = None, error_class: Optional[str] = None,
+                  product: Optional[str] = None) -> CallFilters:
     """The checked filters, or ValueError naming the first bad one (the router answers 422). Pure."""
     from shared.cost_guard import PROVIDERS
 
@@ -116,9 +156,27 @@ def parse_filters(*, job_id: Optional[str] = None, tour_id: Optional[str] = None
         raise ValueError(f"source must be one of {', '.join(SOURCES)}")
     if window is not None and window not in WINDOWS:
         raise ValueError(f"window must be one of {', '.join(WINDOWS)}")
+    since, until = _instant(blank(since), "since"), _instant(blank(until), "until")
+    if (since is None) != (until is None):
+        raise ValueError("give both since and until, or neither")
+    if since is not None and until is not None:
+        a, b = datetime.fromisoformat(since), datetime.fromisoformat(until)
+        if b <= a:
+            raise ValueError("until must be after since")
+        if b - a > MAX_RANGE:
+            raise ValueError(f"since .. until covers at most {MAX_RANGE.days} days")
+    dims: dict[str, Optional[str]] = {}
+    for name, value in (("tenant", tenant), ("model", model), ("account", account), ("role", role),
+                        ("error_class", error_class), ("product", product)):
+        v = blank(value)
+        if v is not None and not _DIM_VALUE_RE.match(v):
+            raise ValueError(f"{name} must be a dimension value")
+        if name == "tenant" and v is not None and v != NONE_VALUE:
+            v = _uuid(v, "tenant")
+        dims[name] = v
     return CallFilters(job_id=_uuid(job_id, "job_id"), tour_id=_uuid(tour_id, "tour_id"), app=app,
                        provider=provider, status=status, stage=stage, source=source,
-                       window=window or DEFAULT_WINDOW)
+                       window=window or DEFAULT_WINDOW, since=since, until=until, **dims)
 
 
 def parse_cursor(value: Optional[str]) -> Optional[tuple[datetime, str]]:
@@ -156,19 +214,42 @@ def sources_for(f: CallFilters) -> tuple[str, ...]:
         if f.app is not None:
             if s == "crm" and f.app != "crm":
                 continue
-            if s in ("jev", "geocoder") and f.app != "cis":
+            if s == "jev" and f.app != "cis":
                 continue
-            if s in ("llm", "dfs") and f.app == "crm":
+            if s in ("llm", "dfs", "geocoder") and f.app == "crm":
                 continue  # the CRM's rows are in its own ledger
         if f.stage is not None:
-            if s == "geocoder":
-                continue
             if s == "crm" and not f.stage.startswith("crm_"):
                 continue
         if s == "crm" and (f.job_id is not None or f.tour_id is not None):
             continue  # CRM rows carry crm.job ids and no tour
+        if not _dims_answerable(s, f):
+            continue
         out.append(s)
     return tuple(out)
+
+
+def _dims_answerable(source: str, f: CallFilters) -> bool:
+    """AA-1045: can this ledger hold a row matching the explorer dimension filters? Pure."""
+    dims = f.dims()
+    if source == "crm":
+        # the CRM's rows carry a model and a crm_* stage (product crm); no account, role, error class the explorer
+        # shares, and an agency rather than a CIS tenant
+        if any(d in dims for d in ("tenant", "account", "role", "error_class")):
+            return False
+        return dims.get("product") in (None, "crm")
+    for d, v in dims.items():
+        if d == "product":
+            continue
+        if ud.dim_sql(source, d) is None and v != NONE_VALUE:
+            return False
+    return True
+
+
+def _dim_expr(source: str, d: str) -> Optional[str]:
+    if d == "product":
+        return ud.product_sql(ud.dim_sql(source, "stage") or "NULL")
+    return ud.dim_sql(source, d)
 
 
 # ── SQL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -185,14 +266,19 @@ _TABLE = {"llm": "shared.llm_call_log", "jev": "shared.decision_log", "dfs": "sh
           "geocoder": "geo.geocode_call"}
 _TIME = {"llm": "created_at", "jev": "created_at", "dfs": "created_at", "geocoder": "called_at"}
 _COLS = {"llm": gw._LLM_COLS, "jev": gw._DECISION_COLS, "dfs": gw._DFS_COLS, "geocoder": gw._GEO_COLS}
+# AA-1025 D3 (migration 346): geocode_call's status / app / stage are read through to_jsonb, so the list runs before
+# 346 is applied; a row without them (written before 346) is derived as before (status) or cis (app).
+_GEO = "to_jsonb(geocode_call)"
 _STATUS_EXPR = {
     "llm": "coalesce(status, 'ok')",
     "dfs": "coalesce(status, 'ok')",
-    "jev": "CASE WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END",
-    "geocoder": ("CASE WHEN coalesce(failed_requests, 0) > 0 AND failed_requests >= requests "
-                 "THEN 'error' ELSE 'ok' END"),
+    "jev": gw.JEV_STATUS_SQL,
+    "geocoder": (f"coalesce({_GEO} ->> 'status', CASE WHEN coalesce(failed_requests, 0) > 0 "
+                 "AND failed_requests >= requests THEN 'error' ELSE 'ok' END)"),
 }
-_APP_EXPR = {"llm": "coalesce(app, quality_signal ->> 'app', 'cis')", "dfs": "coalesce(app, 'cis')"}
+_APP_EXPR = {"llm": "coalesce(app, quality_signal ->> 'app', 'cis')", "dfs": "coalesce(app, 'cis')",
+             "geocoder": f"coalesce({_GEO} ->> 'app', 'cis')"}
+_STAGE_EXPR = {"llm": "stage", "jev": "stage", "dfs": "stage", "geocoder": f"{_GEO} ->> 'stage'"}
 _TENANT = {"llm": "tenant_id::text", "jev": "tenant_id::text", "dfs": "tenant_id::text",
            "geocoder": "tenant_id::text"}
 
@@ -210,7 +296,8 @@ def source_sql(source: str, f: CallFilters, *, since: datetime, until: datetime,
 
     t = _TIME[source]
     key = _KEY[source]
-    where = [f"{t} >= {arg(since)}", f"{t} <= {arg(until)}"]
+    # AA-1045: a custom range is half-open [since, until), as the explorer's hours are
+    where = [f"{t} >= {arg(since)}", f"{t} {'<' if f.until is not None else '<='} {arg(until)}"]
     if source == "llm":
         where.append("coalesce(provider, '') <> 'typesafe'")
     if cursor is not None:
@@ -228,8 +315,13 @@ def source_sql(source: str, f: CallFilters, *, since: datetime, until: datetime,
         where.append(f"{_APP_EXPR[source]} = {arg(f.app)}")
     if f.status is not None:
         where.append(f"{_STATUS_EXPR[source]} = {arg(f.status)}")
-    if f.stage is not None and source in ("llm", "jev", "dfs"):
-        where.append(f"stage = {arg(f.stage)}")
+    if f.stage is not None and source in _STAGE_EXPR:
+        where.append(f"{_STAGE_EXPR[source]} = {arg(f.stage)}")
+    for d, v in f.dims().items():
+        e = _dim_expr(source, d)
+        if e is None:
+            continue  # only (none) gets here (_dims_answerable): every row of this ledger has no value
+        where.append(f"coalesce(({e})::text, '') = {arg('' if v == NONE_VALUE else v)}")
     if f.provider is not None and source == "llm":
         if f.provider == "bedrock":
             where.append("provider LIKE 'bedrock%'")
@@ -366,7 +458,8 @@ async def _crm_page(crm_calls: CrmCalls, crm_usage: Optional[CrmUsage], f: CallF
         for n in range(1, CRM_MAX_PAGES + 1):
             for r in (crm_row(x) for x in body["rows"] if isinstance(x, dict)):
                 if r is not None and since <= r["_at"] <= until and (
-                        f.provider is None or gw.budget_provider(r["provider"]) == f.provider):
+                        f.provider is None or gw.budget_provider(r["provider"]) == f.provider) and (
+                        f.model is None or (r.get("model") or "") == ("" if f.model == NONE_VALUE else f.model)):
                     rows.append(r)
             last = _crm_floor(body.get("next_cursor"))  # this page's last row, when the CRM has more
             if last is None or last[0] < since or len(rows) >= limit:
@@ -405,7 +498,10 @@ async def list_calls(pool, f: CallFilters, *, cursor: Optional[str] = None, limi
     now = now or datetime.now(timezone.utc)
     limit = max(1, min(int(limit), MAX_LIMIT))
     keyset = parse_cursor(cursor)
-    since, until = now - WINDOWS[f.window], now
+    if f.since is not None and f.until is not None:
+        since, until = datetime.fromisoformat(f.since), min(datetime.fromisoformat(f.until), now)
+    else:
+        since, until = now - WINDOWS[f.window], now
     sources = sources_for(f)
     errors: list[dict] = []
 
@@ -443,7 +539,8 @@ async def list_calls(pool, f: CallFilters, *, cursor: Optional[str] = None, limi
         crm["rows"] = sum(1 for r in rows if r["source"] == "crm")  # the CRM rows on this page, after the merge
     return {
         "generated_at": now.isoformat(),
-        "window": {"key": f.window, "from": since.isoformat(), "to": until.isoformat()},
+        "window": {"key": "custom" if f.since is not None else f.window, "from": since.isoformat(),
+                   "to": until.isoformat()},
         "filters": {k: v for k, v in asdict(f).items() if v is not None},
         "sources": list(sources),
         "rows": rows,

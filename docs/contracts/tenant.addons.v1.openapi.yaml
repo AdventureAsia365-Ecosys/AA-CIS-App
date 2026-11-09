@@ -1,0 +1,201 @@
+openapi: 3.1.0
+info:
+  title: tenant.addons.v1 (AA-CIS-App → AA-Partner CRM; an agency's add-ons and its add-on requests)
+  version: "1.0"
+  description: >-
+    CIS shared is the master of the tenant account and of the agency's add-on requests (shared.tenant_addon_request,
+    CIS 374; root ADR 0019 d7, AA-1036 R3): an agency asks for an add-on (CRM, Trip planner), AA staff approve or
+    decline it in CIS Tenant 360 › Subscription, and an approval attaches the plan through the CIS tenant_provision
+    saga. The Content studio asks with the studio owner's own tenant token (CIS /v1/account/add-ons and
+    /v1/account/add-on-requests). This contract is the same list and the same request for an agency whose owner works
+    in the CRM without a Content studio membership: the CRM API relays its owner's request service to service, so the
+    requests keep one store in CIS and one decision path. The CRM decides who may ask (the CRM owner of the agency,
+    root ADR 0010 decision 5: CRM roles are the CRM's) and names that member by its CRM member id; CIS never learns
+    a CRM role, a name or an e-mail. CIS applies the same rules as for the studio: refused while the account is not
+    in service (409 tenant_not_in_service) or the add-on is already on (409 already_subscribed); one pending request per
+    add-on (a second ask answers the open one with created false, no new staff notification); at most 10 requests per
+    tenant in 24 hours (429 too_many_requests); an optional note of at most 500 characters. The note is the agency's
+    own text and decision_note the reason AA staff wrote for the agency; no staff actor, plan key, job id, price or
+    billing field crosses. tenant_id is the CIS tenant id, which is the CRM agency id. Auth: M2M token of the aa-m2m
+    pool, client = AA-Partner (CRM), scope cis.tenant/addons (both operations).
+  x-aa-contract: tenant.addons.v1
+  x-aa-producer: AA-CIS-App
+  x-aa-consumers: [AA-Partner]
+  x-aa-issues: [AA-1036]
+servers:
+  - url: /tenant/v1
+security:
+  - m2m: [cis.tenant/addons]
+paths:
+  /tenants/{tenant_id}/add-ons:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: listTenantAddOns
+      summary: The agency's add-ons (active, requested or available) with the pending request and the last decision
+      responses:
+        "200":
+          description: One entry per add-on product
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddOnList"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /tenants/{tenant_id}/add-on-requests:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: requestTenantAddOn
+      summary: Ask Adventure Asia for an add-on on behalf of the agency's CRM owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AddOnRequestIn"}
+      responses:
+        "201":
+          description: The new request (staff are notified)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddOnRequestCreated"}
+        "200":
+          description: A request for this add-on is already open (created false; nothing new written)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddOnRequestCreated"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+components:
+  securitySchemes:
+    m2m:
+      type: oauth2
+      description: Cognito M2M pool aa-m2m-<env>, client credentials.
+      flows:
+        clientCredentials:
+          tokenUrl: https://m2m-auth.example.invalid/oauth2/token
+          scopes:
+            cis.tenant/addons: Read an agency's add-ons and request one on behalf of its CRM owner
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum: [unauthorized, forbidden, not_found, invalid, conflict, too_many_requests, unavailable]
+        reason:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{0,39}$"
+          description: >-
+            CIS's stable refusal code where the status has more than one cause (as tenant.membership.v1): 409
+            already_subscribed or tenant_not_in_service, 429 too_many_requests, 400 unknown_product or note_too_long,
+            404 tenant_not_found. A consumer shows an unknown reason as a generic refusal.
+        message: {type: string, maxLength: 500}
+    Product:
+      type: string
+      enum: [crm, tripplanner]
+    Text:
+      type: [string, "null"]
+      maxLength: 500
+    AddOnRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, product, status, note, requested_at, decided_at, decision_note, setup]
+      properties:
+        request_id: {type: string, format: uuid}
+        product: {$ref: "#/components/schemas/Product"}
+        status:
+          type: string
+          enum: [pending, approved, declined]
+        note:
+          $ref: "#/components/schemas/Text"
+          description: The agency's own note on its request.
+        requested_at: {type: string, format: date-time}
+        decided_at: {type: [string, "null"], format: date-time}
+        decision_note:
+          $ref: "#/components/schemas/Text"
+          description: What AA staff wrote for the agency (a decline's reason); never the staff member.
+        setup:
+          type: [string, "null"]
+          enum: [in_progress, done, failed, null]
+          description: >-
+            An approved request's setup (the attach job): in_progress, done, or failed (the add-on is not on yet;
+            Adventure Asia finishes it). Null when not approved or no longer known.
+    AddOnState:
+      type: object
+      additionalProperties: false
+      required: [product, state, subscription_status, request, last_decision]
+      properties:
+        product: {$ref: "#/components/schemas/Product"}
+        state:
+          type: string
+          enum: [active, requested, available]
+          description: active = a live subscription of the product (trialing, active or past_due); requested = a
+            request is pending; available = neither.
+        subscription_status:
+          type: [string, "null"]
+          enum: [trialing, active, past_due, null]
+        request:
+          oneOf:
+            - {$ref: "#/components/schemas/AddOnRequest"}
+            - {type: "null"}
+          description: The pending request, if any.
+        last_decision:
+          oneOf:
+            - {$ref: "#/components/schemas/AddOnRequest"}
+            - {type: "null"}
+          description: The newest decided request (approved or declined), if any.
+    AddOnList:
+      type: object
+      additionalProperties: false
+      required: [in_service, add_ons]
+      properties:
+        in_service:
+          type: boolean
+          description: The account may request add-ons now (account_status trial, active or past_due, not suspended,
+            not offboarded).
+        add_ons:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: {$ref: "#/components/schemas/AddOnState"}
+    AddOnRequestIn:
+      type: object
+      additionalProperties: false
+      required: [product, crm_member_id]
+      properties:
+        product: {$ref: "#/components/schemas/Product"}
+        note: {$ref: "#/components/schemas/Text"}
+        crm_member_id:
+          type: string
+          format: uuid
+          description: >-
+            The CRM member (crm.member, the agency's CRM owner the CRM checked) who asked; CIS records it as the
+            request's requester and in its audit, never a name or an e-mail.
+    AddOnRequestCreated:
+      type: object
+      additionalProperties: false
+      required: [created, request]
+      properties:
+        created: {type: boolean}
+        request: {$ref: "#/components/schemas/AddOnRequest"}

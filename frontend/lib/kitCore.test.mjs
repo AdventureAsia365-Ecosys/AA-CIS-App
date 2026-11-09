@@ -87,7 +87,7 @@ test("ADR 0016 decision 1: the portable files are in core, the CIS-specific ones
     "sidebarStore.ts", "useSidebar.ts", "PageFrame.tsx", "GuidePanel.tsx", "check-kit-copy.mjs", "tokens.css", MANIFEST]) {
     assert.ok(core.has(f), `${f} is in core`);
   }
-  for (const f of ["api.ts", "guideContent.ts", "SessionKeepAlive.tsx", "adminNav.tsx", "useNavSections.ts",
+  for (const f of ["api.ts", "guideContent.ts", "SessionKeepAlive.tsx", "adminNav.tsx",
     "useAdminIdentity.ts", "useReviewPendingCount.ts", "AdminShell.tsx", "Sidebar.tsx", "Topbar.tsx", "BottomNav.tsx",
     "CommandPalette.tsx"]) {
     assert.ok(!core.has(f), `${f} stays CIS-local`);

@@ -64,11 +64,11 @@ def _email():
 @pytest.mark.asyncio
 async def test_first_sign_in_binds_once_and_sets_last_login(db):
     email = _email()
-    uid = await db.add(role="reviewer", email=email)
+    uid = await db.add(role="content", email=email)
     sub = str(uuid.uuid4())
     identity = await staff_identity.resolve_staff(
-        db.pool, _principal(sub, email.upper(), ["cis-reviewer"]), touch_login=True)
-    assert (identity.admin_id, identity.role, identity.db_role) == (uid, "reviewer", "reviewer")
+        db.pool, _principal(sub, email.upper(), ["cis-content"]), touch_login=True)
+    assert (identity.admin_id, identity.role, identity.db_role) == (uid, "content", "content")
     assert identity.email == email and identity.display_name == "Test Person"
     row = await db.get(uid)
     assert (row["cognito_iss"], row["cognito_sub"]) == (ISS, sub)

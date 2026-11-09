@@ -527,28 +527,139 @@ async def maybe_alert_connection(conn, budget: ConnectionBudget) -> bool:
         return False
 
 
-# ── AA-1016: the monthly AI budget of a Content studio tenant (shared.tenant_ai_budget, migration 321) ──────────────
+# ── AA-1025 A7: the central LLM budgets (shared.spend_budget provider 'llm', migration 340) ─────────────────────────
 #
-# One optional row per tenant: monthly_usd (NULL = unlimited), alert_pct (default 100: the bell), approval_pct
-# (default 150: from there new T-stage AI calls of that tenant wait for staff approval when hard_stop is on). Spend =
-# the tenant's llm_call_log rows this UTC month (tenant_id = the tenant). No row (every tenant today) = no budget: the
-# gateway reads nothing more and behaves as before (shared/llm_client/tenant_budget.py). No silent cut-off: the
-# approval stop always writes an admin bell (and queues the ops e-mail) naming the tenant and its spend.
+# The rules, the scopes and the spend queries live in shared/llm_client/central_budget.py (checked by the gateway before
+# any attempt). Only the bell lives here, next to the other budget bells: same event type, entity "llm:<scope>".
 
+CENTRAL_PROVIDER = "llm"
+CENTRAL_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT
+
+
+async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: bool, message: str) -> bool:
+    """One admin bell (and the ops e-mail, AA-828) for a central LLM budget at or above its alert threshold, or one
+    that refused a call (``stopped``); at most one unread bell per scope per 24 h. Best effort: never raises. ``conn``
+    is an asyncpg connection; ``summary`` is central_budget.summary()."""
+    entity = f"{CENTRAL_PROVIDER}:{summary.get('scope')}"[:100]      # notifications.entity_id is varchar(100)
+    try:
+        if await conn.fetchval(_RECENT_ALERT_SQL, CENTRAL_BUDGET_ALERT_EVENT, entity):
+            return False
+        await conn.execute(_INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, CENTRAL_BUDGET_ALERT_EVENT, entity,
+                           json.dumps({"message": message, **summary}))
+        try:
+            from shared import ops_alerts  # lazy: keeps this module import-light for the LLM client
+
+            await ops_alerts.enqueue_spend_budget_email(conn, summary=summary, alert_pct=alert_pct, stopped=stopped,
+                                                        message=message, used_pct=summary.get("used_pct"))
+        except Exception as exc:  # noqa: BLE001 — the bell row stays
+            logger.warning("llm_central_budget_email_enqueue_failed", scope=summary.get("scope"), error=str(exc)[:300])
+        logger.warning("llm_central_budget_alert", stopped=stopped, **summary)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llm_central_budget_alert_failed", scope=summary.get("scope"), error=str(exc)[:300])
+        return False
+
+
+# ── AA-1016: the monthly AI budget of a Content studio tenant ─────────────────────────────────────────────────────
+#
+# AA-1028 R1 slice 3 (root ADR 0019 d2): the amount is the tenant's resolved entitlement ``ai.budget_usd_monthly``
+# (``shared.v_tenant_entitlement_resolved``: an override > the AA-1016 row of ``shared.tenant_ai_budget`` > the plan of
+# its live content subscription, 15 / 40 / 80 USD on Starter / Growth / Business; NULL = unlimited, e.g. AA itself).
+# The thresholds come from the tenant's ``shared.tenant_ai_budget`` row when it has one (alert_pct, approval_pct,
+# hard_stop, as AA-1016); a plan budget with no row uses PLAN_ALERT_PCT / PLAN_APPROVAL_PCT with the hard stop on: the
+# included spend is the ceiling (fail closed at 100 %). A tenant with no resolved key keeps its AA-1016 row, if any,
+# else the ai.budget_usd_monthly of its content subscription's plan while that subscription is not canceled (S266
+# review: never "no budget" for a customer whose resolver rows are momentarily absent, e.g. a trial past its end
+# before CIS 361 or an unpaid / paused subscription). A budget of 0 USD always stops (hard stop on whatever the
+# AA-1016 row says: "0 = no AI"). Spend = the tenant's llm_call_log rows this UTC month (tenant_id = the tenant),
+# shadow rows out. Not budgeted: the gateway reads nothing more (shared/llm_client/tenant_budget.py). No silent
+# cut-off: the approval stop always writes an admin bell (and queues the ops e-mail) naming the tenant and its spend.
+# Before CIS 353 (no resolver view) the AA-1016 row alone decides, as before.
+
+AI_BUDGET_KEY = "ai.budget_usd_monthly"
+PLAN_ALERT_PCT = 80
+PLAN_APPROVAL_PCT = 100
 TENANT_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT       # same bell type as the job and connection budgets
-TENANT_BUDGET_TENANTS_SQL = ("SELECT tenant_id::text AS tenant_id FROM shared.tenant_ai_budget "
-                             "WHERE monthly_usd IS NOT NULL")
-_TENANT_BUDGET_SQL = """
+# Fail closed on "off" (S266 review of slice 3): the resolver drops a disabled key, which for a limit would read as
+# "no budget". subscription.set_override refuses enabled=false on a limit; an active disabled override of the key
+# that exists anyway (written before that rule, or by hand) is served as a 0 USD budget with the hard stop on.
+_DISABLED_OVERRIDE = """
+    SELECT o.tenant_id FROM shared.tenant_entitlement_override o
+     WHERE o.feature_key = 'ai.budget_usd_monthly' AND NOT o.enabled
+       AND (o.expires_at IS NULL OR o.expires_at > now())
+"""
+# The fallback when no key resolves and the tenant has no AA-1016 row: its content subscription's plan value (one
+# content row per tenant, UNIQUE (tenant_id, product)), unless the subscription is canceled (offboarded, CIS 356).
+_PLAN_FALLBACK = """
+    SELECT s.tenant_id, pf.limit_value FROM shared.tenant_subscription s
+      JOIN shared.plan_feature pf ON pf.plan_key = s.plan_key AND pf.feature_key = 'ai.budget_usd_monthly'
+     WHERE s.product = 'content' AND s.status <> 'canceled'
+"""
+TENANT_BUDGET_TENANTS_SQL = f"""
+    SELECT d.tenant_id::text AS tenant_id FROM ({_DISABLED_OVERRIDE}) d
+    UNION
+    SELECT e.tenant_id::text AS tenant_id FROM shared.v_tenant_entitlement_resolved e
+     WHERE e.feature_key = 'ai.budget_usd_monthly' AND e.limit_value IS NOT NULL
+    UNION
+    SELECT b.tenant_id::text FROM shared.tenant_ai_budget b
+     WHERE b.monthly_usd IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved e
+                        WHERE e.tenant_id = b.tenant_id AND e.feature_key = 'ai.budget_usd_monthly')
+    UNION
+    SELECT p.tenant_id::text FROM ({_PLAN_FALLBACK}) p
+     WHERE p.limit_value IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM shared.tenant_ai_budget b WHERE b.tenant_id = p.tenant_id)
+       AND NOT EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved e
+                        WHERE e.tenant_id = p.tenant_id AND e.feature_key = 'ai.budget_usd_monthly')
+"""
+_LEGACY_TENANTS_SQL = ("SELECT tenant_id::text AS tenant_id FROM shared.tenant_ai_budget "
+                       "WHERE monthly_usd IS NOT NULL")
+# The tenant's spend this UTC month, shadow rows out: the Tenant 360 › Cost rule (admin_tenant360._COST_WHERE, AA-798)
+# and the AI budget tile's MONTH_SPEND_SQL (api/services/tenant_ai_budget.py). A shadow call carries the tenant (the
+# LLM client re-binds it for the shadow run) but is AA's own A/B cost: counting it would hold the tenant's T-stage jobs
+# at half its real spend (S266 re-review). ``is_shadow`` is ledger v2 (CIS 319), ``quality_signal`` the older flag.
+_SPEND_WHERE = """
+             WHERE l.tenant_id = $1::uuid
+               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
+               AND NOT coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}'::jsonb)"""
+_SPEND_COLUMNS = f"""
+           (SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l{_SPEND_WHERE}) AS spent,
+           (SELECT count(*)::int FROM shared.llm_call_log l{_SPEND_WHERE}) AS calls
+"""
+_TENANT_BUDGET_SQL = f"""
+    SELECT $1::uuid::text AS tenant_id, x.monthly_usd, x.alert_pct, x.approval_pct,
+           -- a 0 USD budget always stops (S266 review: "0 = no AI", whatever the AA-1016 row's hard_stop says)
+           x.forced OR x.monthly_usd = 0 OR x.row_hard_stop AS hard_stop, x.source, {_SPEND_COLUMNS}
+      FROM (
+        SELECT CASE WHEN d.tenant_id IS NOT NULL THEN 0::numeric
+                    WHEN e.feature_key IS NOT NULL THEN e.limit_value
+                    WHEN b.tenant_id IS NOT NULL THEN b.monthly_usd
+                    ELSE p.limit_value END AS monthly_usd,
+               coalesce(b.alert_pct, {PLAN_ALERT_PCT}) AS alert_pct,
+               coalesce(b.approval_pct, {PLAN_APPROVAL_PCT}) AS approval_pct,
+               d.tenant_id IS NOT NULL AS forced, coalesce(b.hard_stop, true) AS row_hard_stop,
+               CASE WHEN d.tenant_id IS NOT NULL THEN 'override'
+                    WHEN e.feature_key IS NOT NULL THEN e.source
+                    WHEN b.tenant_id IS NOT NULL THEN 'override'
+                    WHEN p.tenant_id IS NOT NULL THEN 'plan' END AS source
+          FROM (SELECT 1) AS one
+          LEFT JOIN ({_DISABLED_OVERRIDE}) d ON d.tenant_id = $1::uuid
+          LEFT JOIN shared.v_tenant_entitlement_resolved e
+                 ON e.tenant_id = $1::uuid AND e.feature_key = 'ai.budget_usd_monthly'
+          LEFT JOIN shared.tenant_ai_budget b ON b.tenant_id = $1::uuid
+          LEFT JOIN ({_PLAN_FALLBACK}) p ON p.tenant_id = $1::uuid
+      ) x
+"""
+_LEGACY_TENANT_BUDGET_SQL = f"""
     SELECT b.tenant_id::text AS tenant_id, b.monthly_usd, b.alert_pct, b.approval_pct, b.hard_stop,
-           (SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l
-             WHERE l.tenant_id = b.tenant_id
-               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS spent,
-           (SELECT count(*)::int FROM shared.llm_call_log l
-             WHERE l.tenant_id = b.tenant_id
-               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS calls
+           'override'::text AS source, {_SPEND_COLUMNS}
       FROM shared.tenant_ai_budget b
      WHERE b.tenant_id = $1::uuid AND b.monthly_usd IS NOT NULL
 """
+
+
+def _undefined_table(exc: BaseException) -> bool:
+    return type(exc).__name__ == "UndefinedTableError"
 
 
 @dataclass(frozen=True)
@@ -563,8 +674,8 @@ class TenantAIBudget:
 
     @property
     def used_pct(self) -> Optional[float]:
-        if self.monthly_usd <= 0:      # a $0 budget: any spend is past every threshold (the CHECK caps pcts at 1000)
-            return None if self.month_spent_usd <= 0 else 1000.0
+        if self.monthly_usd <= 0:      # a $0 budget = no AI spend: every call is past every threshold (the CHECK
+            return 1000.0              # caps pcts at 1000), the first one included (S266: "0 = no AI", fail closed)
         return 100.0 * self.month_spent_usd / self.monthly_usd
 
     @property
@@ -576,7 +687,12 @@ class TenantAIBudget:
     def needs_approval(self) -> bool:
         """New T-stage AI calls of the tenant wait for staff: hard_stop on and spend at or past approval_pct."""
         pct = self.used_pct
-        return self.hard_stop and pct is not None and pct >= self.approval_pct
+        return self.stops and pct is not None and pct >= self.approval_pct
+
+    @property
+    def stops(self) -> bool:
+        """The hard stop in effect: the row's hard_stop, and always for a 0 USD budget (S266: "0 = no AI")."""
+        return self.hard_stop or self.monthly_usd <= 0
 
     @property
     def state(self) -> str:
@@ -590,30 +706,37 @@ class TenantAIBudget:
             "provider": "tenant_ai", "scope": f"tenant:{self.tenant_id}", "tenant_id": self.tenant_id,
             "monthly_usd": round(self.monthly_usd, 2), "month_spent_usd": round(self.month_spent_usd, 4),
             "month_calls": self.month_calls, "used_pct": _round(self.used_pct), "alert_pct": self.alert_pct,
-            "approval_pct": self.approval_pct, "hard_stop": self.hard_stop, "state": self.state,
+            "approval_pct": self.approval_pct, "hard_stop": self.stops, "state": self.state,
         }
 
 
 async def budgeted_tenants(conn) -> Optional[frozenset]:
-    """The tenants that have an AI budget (a row with monthly_usd). None before migration 321 (no table)."""
-    try:
-        rows = await conn.fetch(TENANT_BUDGET_TENANTS_SQL)
-    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 321: no tenant has a budget
-        if type(exc).__name__ != "UndefinedTableError":
-            raise
-        return None
-    return frozenset(r["tenant_id"] for r in rows)
+    """The tenants that have an AI budget (a resolved ai.budget_usd_monthly with a limit, or an AA-1016 row with
+    monthly_usd while no key resolves, else the content subscription plan's value while not canceled). Before CIS
+    353: the AA-1016 rows; None before migration 321 (no table)."""
+    for sql in (TENANT_BUDGET_TENANTS_SQL, _LEGACY_TENANTS_SQL):
+        try:
+            rows = await conn.fetch(sql)
+        except Exception as exc:  # noqa: BLE001 — UndefinedTableError: the next, older read
+            if not _undefined_table(exc):
+                raise
+            continue
+        return frozenset(r["tenant_id"] for r in rows)
+    return None
 
 
 async def tenant_budget_check(conn, tenant_id: str) -> Optional[TenantAIBudget]:
-    """The AI budget state of ``tenant_id`` this UTC month (one query), or None when it has no budget (no row, or
-    monthly_usd NULL) or the table does not exist yet (before migration 321)."""
-    try:
-        row = await conn.fetchrow(_TENANT_BUDGET_SQL, str(tenant_id))
-    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 321
-        if type(exc).__name__ != "UndefinedTableError":
-            raise
-        return None
+    """The AI budget state of ``tenant_id`` this UTC month (one query), or None when it has no budget (no resolved
+    limit and no AA-1016 amount) or the tables do not exist yet (before migration 321)."""
+    row = None
+    for sql in (_TENANT_BUDGET_SQL, _LEGACY_TENANT_BUDGET_SQL):
+        try:
+            row = await conn.fetchrow(sql, str(tenant_id))
+        except Exception as exc:  # noqa: BLE001 — UndefinedTableError: the next, older read (none before 321)
+            if not _undefined_table(exc):
+                raise
+            continue
+        break
     if row is None or row["monthly_usd"] is None:
         return None
     return TenantAIBudget(tenant_id=row["tenant_id"], monthly_usd=float(row["monthly_usd"]),

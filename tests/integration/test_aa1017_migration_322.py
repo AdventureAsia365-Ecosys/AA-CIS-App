@@ -116,7 +116,10 @@ def test_llm_rows_are_backfilled_like_the_failure_domain_report(cur):
     assert set(rows["acc2"]["served_roles"]) == {"embed", "judge", "validate"}            # tech lead S261
     assert set(rows["acc3"]["served_roles"]) == {"writer", "judge", "validate", "embed"}
     assert set(rows["openai-direct"]["served_roles"]) == {"writer", "judge", "validate"}
-    assert rows["acc3"]["balance_source"] == "cost_explorer" and rows["openai-direct"]["balance_source"] == "none"
+    # 322 backfills 'none' on the vendor APIs; AA-1025 B5 (migration 343, applied by conftest after it) moves them to
+    # the credit ledger, and a re-run of 322 never overwrites a value (WHERE balance_source IS NULL).
+    assert rows["acc3"]["balance_source"] == "cost_explorer"
+    assert rows["openai-direct"]["balance_source"] in ("none", "topups_minus_spend")
 
 
 def test_seeded_rows_hold_todays_values(cur):

@@ -81,8 +81,8 @@ PER_TOUR_TIMEOUT_S = 1500
 SETTLE_S = 2.0
 MIN_QUALITY = 7.0
 LEAK_PHRASES = ("Adventure Asia", "Design This Journey")     # = brand_fit_v2.LEAK_PHRASES (pinned by a test)
-# = brand_audit_node.ELEPHANT_RIDING (pinned by a test); kept here so selection is testable without the app
-ELEPHANT_RIDING = re.compile(r'elephant[-\s]?back|elephant\s+ride|elephant\s+trek', re.IGNORECASE)
+# S271 W0: the one elephant-riding policy detector (services/quality/elephant_policy.py, pure: no app deps)
+from services.quality.elephant_policy import ELEPHANT_RIDING_RE as ELEPHANT_RIDING, mentions_riding  # noqa: E402
 
 CANDIDATES_SQL = """
 SELECT rt.tour_id::text AS tour_id, rt.country, rt.duration, rt.src_name, rt.src_summary, rt.src_description,
@@ -143,7 +143,7 @@ def _md5(tour_id: str, seed: str) -> str:
 def is_elephant(c: dict) -> bool:
     text = " ".join(str(c.get(k) or "") for k in ("src_name", "src_summary", "src_description", "src_highlights",
                                                     "src_itineraries"))
-    return bool(ELEPHANT_RIDING.search(text))
+    return mentions_riding(text, c.get("country"))
 
 
 def eligible(cands: list[dict], excluded: set[str]) -> tuple[list[dict], dict]:

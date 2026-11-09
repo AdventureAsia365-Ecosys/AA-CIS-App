@@ -61,6 +61,9 @@ def _conn(locked=None, updated=None):
     return conn
 
 
+ADMIN = principal_from_role("admin")
+
+
 def _request(conn):
     ctx = AsyncMock()
     ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -81,7 +84,7 @@ def _audit_rows(conn):
     return out
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 def test_only_tenant_admins_reach_the_members_routes(role):
     for method, route in ROUTES:
         assert denial_reason(principal_from_role(role), method, route) is not None, (role, method)
@@ -99,8 +102,10 @@ def test_the_body_carries_the_content_studio_role_only():
 @pytest.mark.asyncio
 async def test_role_change_audits_and_returns_a_fingerprint():
     conn = _conn(locked=_member_row(), updated=_member_row(content_studio_role="owner"))
+    # AA-1035: a change to owner needs tenant.write (the admin principal staff_policy resolves in the app)
     out = await t360.patch_tenant_member(TENANT_ID, MEMBER_ID, t360.MemberRoleChange(content_studio_role="owner"),
-                                         _request(conn), x_admin_secret=_SECRET, x_admin_user_id="u-1")
+                                         _request(conn), x_admin_secret=_SECRET, x_admin_user_id="u-1",
+                                         principal=ADMIN)
     assert out["changed"] is True and out["member"]["content_studio_role"] == "owner"
     assert out["member"]["identity_fingerprint"] == writer.fingerprint("https://issuer.example/pool", "sub-1")
     assert "sub-1" not in json.dumps(out)
@@ -139,7 +144,8 @@ async def test_unknown_member_is_404_and_a_removed_member_is_409():
     conn = _conn(locked=_member_row(status="removed", removed_at=NOW, removed_by="admin:u-1"))
     with pytest.raises(HTTPException) as e:
         await t360.patch_tenant_member(TENANT_ID, MEMBER_ID, t360.MemberRoleChange(content_studio_role="owner"),
-                                       _request(conn), x_admin_secret=_SECRET, x_admin_user_id="u-1")
+                                       _request(conn), x_admin_secret=_SECRET, x_admin_user_id="u-1",
+                                       principal=ADMIN)
     assert e.value.status_code == 409
 
 

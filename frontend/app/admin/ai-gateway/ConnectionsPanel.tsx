@@ -11,6 +11,9 @@
 // (GET /api/admin/llm-connections/costs: month-to-date spend against each budget, the nightly reconciliation rows;
 // POST /api/admin/llm-connections/reconcile queues a $0 check); the budget policy fields join the settings form.
 // Built on the kit only (DataTable, Drawer, ConfirmModal, Field/Input/Select/Textarea, Badge, Button, Toast).
+// AA-1025 C1 follow-up: every write control (on / off, Save, Run test, Check now) shows only when GET
+// /api/admin/ai-gateway/access says this session may use it (usePageAccess); a read-only session sees the values as
+// text and the form read-only.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +24,7 @@ import {
 } from "../../_kit";
 import { CONNECTIONS } from "./connections.messages";
 import { useErrorClassText } from "./useErrorClassText";
+import { usePageAccess } from "./usePageAccess";
 import { type CatalogRow } from "./llmShared";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -97,6 +101,9 @@ function HealthBadge({ health, t }: { health?: ConnectionHealth; t: T }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
       <Badge tone={healthTone(status)}>{t(HEALTH_KEY[status] ?? "healthUnknown")}</Badge>
       {!!health?.open_models && <span style={small}>{t("openModels", health.open_models)}</span>}
+      {!!health?.known_refused_models?.length && (
+        <span style={small}>{t("knownRefused", health.known_refused_models.length)}</span>
+      )}
     </div>
   );
 }
@@ -186,6 +193,7 @@ function DeploymentsTable({ conn, health, t }: { conn: Connection; health?: Conn
 function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const locked = !usePageAccess().can("connections");
   const [form, setForm] = useState<EditForm>(() => formOf(conn));
   const [apiError, setApiError] = useState("");
   const { body, errors } = patchBody(conn, form);
@@ -215,7 +223,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
   const set = (f: EditField) => (e: { target: { value: string } }) => setForm((x) => ({ ...x, [f]: e.target.value }));
   const num = (f: EditField, label: string) => (
     <Field label={label} error={errorText(f)} hint={t("emptyMeansDefault")}>
-      <Input inputMode="decimal" value={form[f]} onChange={set(f)} disabled={mut.isPending}
+      <Input inputMode="decimal" value={form[f]} onChange={set(f)} disabled={mut.isPending || locked}
              data-testid={`conn-field-${f}`} />
     </Field>
   );
@@ -245,7 +253,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
       </div>
       {conn.cost_policy && (
         <Field label={t("hardStop")} hint={t("hardStopHint")}>
-          <Select value={form.budget_hard_stop} disabled={mut.isPending}
+          <Select value={form.budget_hard_stop} disabled={mut.isPending || locked}
                   onChange={(e) => setForm((x) => ({ ...x, budget_hard_stop: e.target.value === "false" ? "false" : "true" }))}
                   options={[{ value: "true", label: t("hardStopYes") }, { value: "false", label: t("hardStopNo") }]}
                   style={{ maxWidth: "100%", minWidth: 0 }} />
@@ -254,31 +262,36 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
       {conn.cost_policy && takesUsageKey(conn) && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 12 }}>
           <Field label={t("usageSecret")} error={errorText("usage_secret_name")} hint={t("usageSecretHint")}>
-            <Input value={form.usage_secret_name} onChange={set("usage_secret_name")} disabled={mut.isPending}
+            <Input value={form.usage_secret_name} onChange={set("usage_secret_name")} disabled={mut.isPending || locked}
                    spellCheck={false} autoComplete="off" style={{ fontFamily: mono }} data-testid="conn-field-usage_secret_name" />
           </Field>
           <Field label={t("usageScope")} error={errorText("usage_scope_id")} hint={t("usageScopeHint")}>
-            <Input value={form.usage_scope_id} onChange={set("usage_scope_id")} disabled={mut.isPending}
+            <Input value={form.usage_scope_id} onChange={set("usage_scope_id")} disabled={mut.isPending || locked}
                    spellCheck={false} autoComplete="off" style={{ fontFamily: mono }} />
           </Field>
         </div>
       )}
       <Field label={t("notes")}>
-        <Textarea value={form.notes} onChange={set("notes")} disabled={mut.isPending} rows={2} />
+        <Textarea value={form.notes} onChange={set("notes")} disabled={mut.isPending || locked} rows={2} />
       </Field>
       {apiError && <span data-testid="conn-save-error" style={{ fontSize: 12, color: K.danger }}>{apiError}</span>}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <Button variant="primary" size="sm" disabled={!changed || hasErrors || mut.isPending} onClick={() => mut.mutate()}>
-          {mut.isPending ? t("saving") : t("save")}
-        </Button>
-        {!changed && <span style={small}>{t("noChange")}</span>}
-      </div>
+      {locked ? (
+        <span role="status" data-testid="conn-save-read-only" style={small}>{t("readOnly")}</span>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Button variant="primary" size="sm" disabled={!changed || hasErrors || mut.isPending} onClick={() => mut.mutate()}>
+            {mut.isPending ? t("saving") : t("save")}
+          </Button>
+          {!changed && <span style={small}>{t("noChange")}</span>}
+        </div>
+      )}
     </div>
   );
 }
 
 function TestPanel({ conn, name, t }: { conn: Connection; name: string; t: T }) {
   const errorText = useErrorClassText();
+  const mayTest = usePageAccess().can("connection_test");
   const qc = useQueryClient();
   const catalog = useQuery({
     queryKey: ["llm-catalog"],
@@ -317,11 +330,13 @@ function TestPanel({ conn, name, t }: { conn: Connection; name: string; t: T }) 
                   placeholder={t("testCheapest")} style={{ maxWidth: "100%", minWidth: 0 }}
                   options={choices.map((d) => ({ value: d.model_key, label: `${d.model_key}${d.enabled ? "" : ` (${t("depOff")})`}` }))} />
         </Field>
-        <span data-testid="conn-run-test">
-          <Button variant="secondary" size="md" disabled={mut.isPending} onClick={() => setConfirm(true)}>
-            {mut.isPending ? t("testing") : t("runTest")}
-          </Button>
-        </span>
+        {mayTest && (
+          <span data-testid="conn-run-test">
+            <Button variant="secondary" size="md" disabled={mut.isPending} onClick={() => setConfirm(true)}>
+              {mut.isPending ? t("testing") : t("runTest")}
+            </Button>
+          </span>
+        )}
       </div>
       {error && <span style={{ fontSize: 12, color: K.danger }}>{error}</span>}
       {result && (
@@ -360,6 +375,7 @@ function CostPanel({ cost, tolerance, ready, loadError, t }: {
 }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const mayRun = usePageAccess().can("connections");
   const [error, setError] = useState("");
   const run = useMutation({
     mutationFn: () => apiSend("/api/admin/llm-connections/reconcile", { method: "POST", body: {}, admin: true }),
@@ -434,13 +450,15 @@ function CostPanel({ cost, tolerance, ready, loadError, t }: {
       )}
       {tolerance && <span style={small}>{t("reconcileNote", usd(tolerance.usd), tolerance.pct)}</span>}
       {error && <span style={{ fontSize: 12, color: K.danger }}>{error}</span>}
-      <div>
-        <span data-testid="conn-reconcile-now">
-          <Button variant="secondary" size="sm" disabled={run.isPending || !ready} onClick={() => run.mutate()}>
-            {run.isPending ? t("reconcileRunning") : t("reconcileNow")}
-          </Button>
-        </span>
-      </div>
+      {mayRun && (
+        <div>
+          <span data-testid="conn-reconcile-now">
+            <Button variant="secondary" size="sm" disabled={run.isPending || !ready} onClick={() => run.mutate()}>
+              {run.isPending ? t("reconcileRunning") : t("reconcileNow")}
+            </Button>
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -507,6 +525,7 @@ export function ConnectionsPanel() {
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [pending, setPending] = useState<{ conn: Connection; enabled: boolean } | null>(null);
   const [switchError, setSwitchError] = useState("");
+  const maySwitch = usePageAccess().can("connections");
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["llm-connections"],
@@ -599,6 +618,13 @@ export function ConnectionsPanel() {
       cell: (c) => {
         const r = c.row.original;
         const can = r.enabled || canSwitchOn(r);
+        if (!maySwitch) {
+          return (
+            <span data-testid={`conn-enabled-${r.connection_key}`}>
+              <Badge tone={r.enabled ? "success" : "neutral"} dot={false}>{r.enabled ? t("on") : t("off")}</Badge>
+            </span>
+          );
+        }
         return (
           <span data-testid={`conn-enabled-${r.connection_key}`} onClick={(e) => e.stopPropagation()}>
             <Button
@@ -629,7 +655,7 @@ export function ConnectionsPanel() {
         </span>
       ),
     },
-  ], [t, nameOf, healthOf, costOf, switchMut.isPending]);
+  ], [t, nameOf, healthOf, costOf, switchMut.isPending, maySwitch]);
 
   const open = rows.find((r) => r.connection_key === openKey) ?? null;
 

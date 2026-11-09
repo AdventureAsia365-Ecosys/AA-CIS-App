@@ -38,14 +38,29 @@ jobs:
     environment: dev
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      # S273 (AA-1024): the plugin .deb pinned by version and sha256 (.github/actions/release-bin/pins.txt) and cached,
+      # instead of an unchecked download of plugin/latest on every run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/release-bin
+            .github/scripts
+
+      - name: Fetch Session Manager plugin (pinned, cached)
+        id: ssm-plugin
+        uses: ./.github/actions/release-bin
+        with:
+          tool: session-manager-plugin
+
       - name: Install Session Manager plugin
-        run: |
-          curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o session-manager-plugin.deb
-          sudo dpkg -i session-manager-plugin.deb
+        env:
+          DEB: ${{ steps.ssm-plugin.outputs.path }}
+        run: sudo dpkg -i "$DEB"
       - name: Run eval via ECS exec
         run: |
           TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" \

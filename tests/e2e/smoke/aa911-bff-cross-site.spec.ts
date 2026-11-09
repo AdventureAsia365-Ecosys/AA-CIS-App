@@ -1,7 +1,7 @@
 // tests/e2e/smoke/aa911-bff-cross-site.spec.ts
 // AA-911 — every admin BFF write route refuses a cross-site request before it reads a cookie or a body.
-// `it.com` is a public suffix, so every *.lumiguides.it.com host (including the fixed Preview hosts that serve
-// unmerged PR code) is the same site as the admin host and its requests carry the SameSite=Lax session cookies.
+// `it.com` is a public suffix, so every *.lumiguides.it.com host (the other staff and partner apps) is the same site
+// as the admin host and its requests carry the SameSite=Lax session cookies.
 // Runs in the "smoke" project WITHOUT the admin storage state: the requests carry no session at all, so a refused
 // request is the guard (403 "Cross-site request refused") and an allowed one stops at the auth check (401/403).
 //   • unit: isCrossSiteWrite (only non-GET/HEAD/OPTIONS from another origin);
@@ -14,7 +14,8 @@ import { baseUrl } from './smoke-helpers';
 import { isCrossSiteWrite } from '../../../frontend/lib/sameOrigin';
 
 const REFUSED = 'Cross-site request refused';
-const SIBLING = 'https://booking-preview.lumiguides.it.com';
+// A sibling host on the same site (the Booking staff admin); only sent as an Origin value, never requested.
+const SIBLING = 'https://booking.lumiguides.it.com';
 
 const WRITE_ROUTES: { method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; path: string }[] = [
   { method: 'POST', path: '/api/admin/waves/check' },

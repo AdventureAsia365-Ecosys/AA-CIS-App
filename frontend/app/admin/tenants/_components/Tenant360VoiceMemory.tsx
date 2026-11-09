@@ -4,6 +4,7 @@
 // channel, and its latest release per writer. GET /admin/writing-memory/tenants/{id}/voice (admin only, tenant.read;
 // every read filters the tenant id). The tenant never sees this card's data (memory: tenant sees content only).
 
+import Link from "next/link";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -86,7 +87,7 @@ export function Tenant360VoiceMemory({ tenantId }: { tenantId: string }) {
           <DataTable tableId="tenant360-voice-releases" data={q.data.releases} columns={cols}
             getRowId={(r) => r.release_id} paginate={false} compact tableMinWidth={560}
             emptyTitle={t("noReleases")} />
-          <a href="/admin/writing-memory" style={{ fontSize: 12.5, color: K.accentDeep }}>{t("openWritingMemory")}</a>
+          <Link href="/admin/lab/writing-memory" style={{ fontSize: 12.5, color: K.accentDeep }}>{t("openWritingMemory")}</Link>
         </div>
       )}
     </section>

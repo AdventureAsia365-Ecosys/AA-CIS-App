@@ -1,7 +1,7 @@
 "use client";
 // app/_kit/Sidebar.tsx
 // AA-752 — the admin shell sidebar. Navy panel in both themes (--aa-side-* tokens). The logo is a
-// link to /admin/overview; the nav sections/groups/items/roles come from adminNav.tsx.
+// link to /admin/overview; the nav groups/items/roles come from adminNav.tsx.
 // Collapse/expand via the chevron button and the `[` key (ignored while typing); collapsed = a
 // 68px icon rail with tooltips (title + aria-label). The active item gets a gold rail + tinted bg.
 // The Review Queue item shows the pending count (useReviewPendingCount: one query shared with the
@@ -13,27 +13,32 @@
 // globals.css). This lets the phone drawer (always `data-collapsed="false"` under the media query)
 // render full labels regardless of the desktop collapsed state.
 //
-// AA-883 (S241 admin console) — the nav is split into two sections, Platform and CIS Content
-// (adminNav.tsx NAV_SECTIONS). Each section has a header that folds it (state in useNavSections,
-// localStorage, useSyncExternalStore). Headers render only when the role sees both sections, so
-// reviewer/content keep the flat CIS list. In the collapsed icon rail (desktop only: the phone drawer
-// is always the full panel) the headers become a plain divider and folded sections still show their
-// icons. Below the nav, an "Apps" block links to the other apps from lib/apps.ts (new tab each), with
-// one icon per app so the collapsed rail tells them apart.
+// AA-883 (S241 admin console) — below the nav, an "Apps" block links to the other apps from lib/apps.ts (new tab each),
+// with one icon per app so the collapsed rail tells them apart.
+//
+// S264 — the titled groups fold through the kit NavGroup + useNavGroups (core, scope "cis-admin"): folded unless the
+// user opened them, the group holding the current page always open on arrival. A folded group shows the Review Queue
+// count on its header. One-item groups named like their item have no header and stay open. The icon rail shows every
+// item, folded or not.
+//
+// AA-1039 R6 slice 1 (S266, root ADR 0019 d13) — seven groups (Home, Tenants, AA Catalogue, Tenant content QA,
+// AI & spend, Writing Lab, Platform) from lib/adminIa.ts; the two foldable sections of S241 (Platform / CIS Content)
+// and the footer Settings entry are gone (Settings is in AA Catalogue). Hrefs nest (/admin/tenants and
+// /admin/tenants/agencies), so the active item is the longest match (adminNav isActiveEntry), never two at once.
+//
+// AA-1037 (root ADR 0019 d9): the Trade group's items are pages of Booking admin; they open in the same tab (adminNav
+// followExternal, a full page load) with the arrow mark of an outside link, and are never the active item.
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ArrowUpRight, CalendarCheck, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
 import { LOGO_SRC } from "./core/brand";
-import {
-  SETTINGS_ENTRY, navActive, sectionGroups, visibleSections,
-  type NavEntry, type NavGroup, type NavSection,
-} from "./adminNav";
-import { useNavSections } from "./useNavSections";
+import { activeGroup, followExternal, isActiveEntry, visibleGroups, type NavEntry, type NavGroup } from "./adminNav";
 import { APP_LINKS, type AppId, type AppLink } from "@/lib/apps";
-import { useSidebarCollapsed } from "./core/useSidebar";
+import { useNavGroups, useSidebarCollapsed } from "./core/useSidebar";
+import { NavGroup as KitNavGroup } from "./core/NavGroup";
+import { navGroupId } from "./core/sidebarStore";
 import { useHydrated } from "./core/useHydrated";
-import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useNavLabel } from "./adminNav";
@@ -49,7 +54,6 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   // AA-834 — e2e hook: `data-hydrated="true"` appears only once the toggle handlers are live.
   const hydrated = useHydrated();
   const t = useT(SHELL_MESSAGES);
-  const navLabel = useNavLabel();
 
   // `[` toggles collapse, ignored while typing in an input/textarea/select or contenteditable.
   useEffect(() => {
@@ -68,22 +72,29 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   // Review Queue pending count — shared with the BottomNav (one key, one request).
   const pending = useReviewPendingCount();
 
-  // AA-883 — sections the role sees; headers only when there is more than one.
-  const sections = visibleSections(role);
-  const showHeaders = sections.length > 1;
-  const [isClosed, toggleSection] = useNavSections();
   // The 68px icon rail: desktop collapsed. The phone drawer always shows the full panel (globals.css),
   // whatever the stored desktop state, so folding works there as on the expanded desktop sidebar.
   const rail = collapsed && !drawerOpen;
+
+  // The role's groups, and the group holding the current page (always open on arrival).
+  const groups = visibleGroups(role);
+  const current = activeGroup(pathname);
+  const navGroups = useNavGroups("cis-admin", current ? navGroupId(current.label) : null, pathname);
 
   function go(href: string) {
     router.push(href);
     onNavigate?.();
   }
 
+  // A nav entry: a CIS route through the router, another app's page (AA-1037 Trade) as a same-tab full load.
+  function openEntry(entry: NavEntry) {
+    if (!followExternal(entry)) router.push(entry.href);
+    onNavigate?.();
+  }
+
   return (
     <aside
-      className={`aa-admin-sidebar aa-shell-sidebar${drawerOpen ? " aa-admin-sidebar--open" : ""}`}
+      className="aa-admin-sidebar aa-shell-sidebar"
       data-testid="admin-sidebar"
       data-collapsed={collapsed ? "true" : "false"}
       data-hydrated={hydrated ? "true" : undefined}
@@ -122,31 +133,14 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         </button>
       </div>
 
-      {/* Nav — AA-883: Platform / CIS Content sections */}
-      <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 22 }}>
-        {sections.map((section) => {
-          const groups = sectionGroups(section.id)
-            .map((g) => ({ ...g, items: g.items.filter((n) => canSeePage(role, n.href)) }))
-            .filter((g) => g.items.length > 0);
-          // The icon rail has no header label to unfold with, so a folded section still shows there.
-          const closed = showHeaders && isClosed(section.id) && !rail;
-          const hasActive = groups.some((g) => g.items.some((n) => navActive(n, pathname)));
+      {/* Nav — AA-1039: the seven groups of lib/adminIa.ts */}
+      <nav data-testid="admin-nav" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        {groups.map((group, i) => {
+          const id = navGroupId(group.label);
           return (
-            <div key={section.id} data-testid={`nav-section-${section.id}`}
-              style={{ display: "flex", flexDirection: "column" }}>
-              {showHeaders && (rail ? (
-                <div role="separator" aria-label={navLabel(section.label)}
-                  data-testid={`nav-section-divider-${section.id}`}
-                  style={{ borderTop: "1px solid rgba(255,255,255,0.07)", margin: "0 6px" }} />
-              ) : (
-                <SectionHeader section={section} closed={closed} hasActive={hasActive}
-                  onToggle={() => toggleSection(section.id)} />
-              ))}
-              {!closed && groups.map((group, i) => (
-                <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go}
-                  spaceAbove={groupSpaceAbove(group, groups[i - 1], showHeaders, rail)} />
-              ))}
-            </div>
+            <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={openEntry}
+              open={navGroups.isOpen(id)} onToggle={() => navGroups.toggle(id)} rail={rail}
+              spaceAbove={groupSpaceAbove(group, groups[i - 1], rail)} />
           );
         })}
       </nav>
@@ -157,13 +151,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         {APP_LINKS.map((a) => <AppLinkItem key={a.id} app={a} />)}
       </div>
 
-      {/* Settings + collapse toggle */}
+      {/* Collapse toggle */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <NavItem
-          entry={SETTINGS_ENTRY}
-          active={navActive(SETTINGS_ENTRY, pathname)}
-          onClick={() => go(SETTINGS_ENTRY.href)}
-        />
         <button
           onClick={() => setCollapsed(!collapsed)}
           data-testid="sidebar-collapse"
@@ -195,71 +184,43 @@ function groupHasTitle(group: NavGroup): boolean {
 }
 
 // Vertical rhythm (S241 UI verify: untitled one-item groups sat ~51px apart vs 37px inside a group).
-// Only two untitled groups in a row (Tenants → Jobs) close up to a 6px nudge, so they read as rows
-// (≈42px pitch), not as islands. Any group that follows a TITLED group keeps the full 16px break:
-// with 6px, Tenants and Jobs sat right under "People & access › Staff" and read as its children.
-// The first group keeps 16px under a section header (0 with no header). In the icon rail the titles
-// are hidden, so every group gets 16.
-function groupSpaceAbove(group: NavGroup, prev: NavGroup | undefined, showHeaders: boolean, rail: boolean): number {
-  if (!prev) return showHeaders ? 16 : 0;
+// Only two untitled groups in a row close up to a 6px nudge, so they read as rows (≈42px pitch), not as islands.
+// Any group next to a TITLED group keeps the full 16px break, so it never reads as that group's child. The first
+// group sits right under the brand block. In the icon rail the titles are hidden, so every group gets 16.
+function groupSpaceAbove(group: NavGroup, prev: NavGroup | undefined, rail: boolean): number {
+  if (!prev) return 0;
   if (rail) return 16;
   return groupHasTitle(prev) || groupHasTitle(group) ? 16 : 6;
 }
 
-function NavGroupBlock({ group, pathname, pending, go, spaceAbove }: {
-  group: NavGroup; pathname: string; pending: number | null | undefined; go: (href: string) => void;
-  spaceAbove: number;
+function NavGroupBlock({ group, pathname, pending, go, spaceAbove, open, onToggle, rail }: {
+  group: NavGroup; pathname: string; pending: number | null | undefined; go: (entry: NavEntry) => void;
+  spaceAbove: number; open: boolean; onToggle: () => void; rail: boolean;
 }) {
-  const showTitle = groupHasTitle(group);
   const navLabel = useNavLabel();
+  const badgeOf = (n: NavEntry) => (n.href === "/admin/review" && pending ? pending : undefined);
+  const total = group.items.reduce((sum, n) => sum + (badgeOf(n) ?? 0), 0);
   return (
-    <div style={{ marginTop: spaceAbove }}>
-      {showTitle && <div className="aa-sidebar-group-title" style={groupTitleStyle}>{navLabel(group.label)}</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {group.items.map((n) => (
-          <NavItem
-            key={n.href}
-            entry={n}
-            active={navActive(n, pathname)}
-            badge={n.href === "/admin/review" && pending ? pending : undefined}
-            onClick={() => go(n.href)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SectionHeader({ section, closed, hasActive, onToggle }: {
-  section: NavSection; closed: boolean; hasActive: boolean; onToggle: () => void;
-}) {
-  const t = useT(SHELL_MESSAGES);
-  const navLabel = useNavLabel();
-  const label = navLabel(section.label);
-  const color = closed && hasActive ? K.accent : "var(--aa-side-title)";
-  return (
-    <button
-      onClick={onToggle}
-      aria-expanded={!closed}
-      data-testid={`nav-section-toggle-${section.id}`}
-      title={closed ? t("showSection", label) : t("hideSection", label)}
-      style={{
-        display: "flex", alignItems: "center", gap: 8, width: "100%",
-        padding: "6px 10px 6px", border: "none", borderTop: "1px solid rgba(255,255,255,0.07)",
-        background: "transparent", cursor: "pointer", fontFamily: sans, color,
-        textAlign: "left" as const,
-      }}
+    <KitNavGroup
+      id={navGroupId(group.label)}
+      label={groupHasTitle(group) ? navLabel(group.label) : null}
+      open={open}
+      onToggle={onToggle}
+      rail={rail}
+      active={group.items.some((n) => isActiveEntry(n, pathname))}
+      badge={total || null}
+      style={{ marginTop: spaceAbove }}
     >
-      <span className="aa-sidebar-label" style={{
-        flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.14em",
-        textTransform: "uppercase" as const, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-      }}>
-        {label}
-      </span>
-      <span className="aa-sidebar-label" style={{ display: "flex", flexShrink: 0, opacity: 0.8 }}>
-        {closed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-      </span>
-    </button>
+      {group.items.map((n) => (
+        <NavItem
+          key={n.href}
+          entry={n}
+          active={isActiveEntry(n, pathname)}
+          badge={badgeOf(n)}
+          onClick={() => go(n)}
+        />
+      ))}
+    </KitNavGroup>
   );
 }
 
@@ -313,6 +274,8 @@ function NavItem({ entry, active, badge, onClick }: {
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      data-external={entry.external ? "true" : undefined}
+      data-href={entry.external ? entry.href : undefined}
       title={label}
       aria-label={label}
       style={{
@@ -343,6 +306,11 @@ function NavItem({ entry, active, badge, onClick }: {
       <span className="aa-sidebar-label" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {label}
       </span>
+      {entry.external && (
+        <span className="aa-sidebar-label" aria-hidden="true" style={{ flexShrink: 0, opacity: 0.6, display: "flex" }}>
+          <ArrowUpRight size={12} />
+        </span>
+      )}
       {badge != null && (
         <span className="aa-sidebar-badge-pill" style={{
           background: K.accent, color: "var(--aa-on-accent)",

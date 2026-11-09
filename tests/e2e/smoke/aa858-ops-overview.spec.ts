@@ -1,4 +1,7 @@
 // tests/e2e/smoke/aa858-ops-overview.spec.ts
+// AA-1034 R0 (root ADR 0019, B2B-only model): the TripPlanner customers and Booking funnel cards are hidden
+// (SHOW_B2C_CARDS in the page), so the page shows the health and cost cards and must show neither B2C card. The
+// endpoint still answers all four sections.
 // AA-858 — the business view on /admin/overview (apps health, TripPlanner customers, Booking funnel, cost per
 // app). ADMIN-ONLY: GET /admin/overview/ops is ops.read, so a viewer/reviewer run must skip this file.
 // Runs in the "smoke" project (admin storageState from smoke-setup). Every wait is bounded. Checks:
@@ -8,7 +11,7 @@
 //   (c) at 390 px, with real scrollbars (headless hides them by default, lesson S239), the page has no
 //       horizontal overflow; a table wrapper of the new cards may scroll sideways only inside its own box and
 //       then shows the kit ScrollX hint (S243: every column stays, e.g. Booking "Cancelled");
-//   (d) /admin/platform/cost (also admin-only): the four KPI values on screen add up,
+//   (d) /admin/spend?tab=apps (Spend › By app, was /admin/platform/cost; admin-only): the four KPI values on screen add up,
 //       AWS bill + AI estimate − AI already on the AWS bill = Total, to the cent (S243 review);
 //   (e) every number tile ([data-kpi]) and every number column ([data-num-col]) on the page, business view and CIS
 //       sections alike, names its source; at least one per card; every source text is plain words (no table or
@@ -20,7 +23,9 @@
 import { test, expect, chromium } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute, isAdminRun } from './smoke-helpers';
 
-const CARDS = ['ops-health', 'ops-tripplanner', 'ops-booking', 'ops-cost'] as const;
+const CARDS = ['ops-health', 'ops-cost'] as const;
+/** AA-1034 R0: hidden under the B2B-only model. */
+const B2C_CARDS = ['ops-tripplanner', 'ops-booking'] as const;
 const SECTIONS = ['health', 'tripplanner', 'booking', 'cost'] as const;
 
 // AA-816 S2 path: @staff = needs the smoke session (project `smoke`, never the per-PR `smoke-public` run).
@@ -57,14 +62,9 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
         await expect(page.getByTestId(id).locator('h2')).toBeVisible();
       }
       await expect(page.getByTestId('overview-cis-heading')).toBeVisible();
+      for (const id of B2C_CARDS) await expect(page.getByTestId(id), `${id} is a B2C card`).toHaveCount(0);
 
       // Every KPI tile in an "ok" section names its source.
-      if (body.tripplanner.status === 'ok') {
-        for (const k of ['planner_session_started', 'trip_started', 'inquiry_sent', 'ai_search']) {
-          const hint = page.getByTestId(`ops-tp-${k}`).getByTestId('source-hint-text');
-          await expect(hint).toHaveText(/^Source: /);
-        }
-      }
       if (body.health.status === 'ok') {
         for (const app of ['cis', 'tripplanner', 'booking']) {
           const hints = page.getByTestId(`ops-health-${app}`).getByTestId('source-hint');
@@ -136,7 +136,7 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
     await installBypassRoute(context);
     const page = await context.newPage();
     try {
-      await page.goto('/admin/platform/cost', { waitUntil: 'domcontentloaded' });
+      await page.goto('/admin/spend?tab=apps', { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('platform-cost-kpis')).toBeVisible({ timeout: 30000 });
       const cents = async (id: string) => {
         const t = (await page.getByTestId(`${id}-value`).innerText()).trim();
@@ -172,7 +172,7 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
           .filter((el) => !el.querySelector('[data-testid="source-hint"]'))
           .map((el) => (el as HTMLElement).innerText.replace(/\s+/g, ' ').slice(0, 40));
         const perCard: Record<string, number> = {};
-        for (const id of ['ops-health', 'ops-tripplanner', 'ops-booking', 'ops-cost']) {
+        for (const id of ['ops-health', 'ops-cost']) {
           perCard[id] = document.querySelectorAll(`[data-testid="${id}"] [data-testid="source-hint"]`).length;
         }
         const texts = Array.from(document.querySelectorAll('main [data-testid="source-hint-text"]')).map(
@@ -247,11 +247,11 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
     const page = await context.newPage();
     try {
       await page.goto('/admin/overview', { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('ops-tripplanner')).toBeVisible({ timeout: 30000 });
-      const btn = page.getByTestId('ops-tripplanner').getByTestId('source-hint-button').last();
+      await expect(page.getByTestId('ops-cost')).toBeVisible({ timeout: 30000 });
+      const btn = page.getByTestId('ops-cost').getByTestId('source-hint-button').last();
       await btn.scrollIntoViewIfNeeded();
       await btn.tap();
-      const tip = page.getByTestId('ops-tripplanner').getByTestId('source-hint-text').last();
+      const tip = page.getByTestId('ops-cost').getByTestId('source-hint-text').last();
       await expect(tip).toBeVisible();
       const box = await tip.boundingBox();
       expect(box).not.toBeNull();
@@ -259,7 +259,7 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
       expect(box!.x + box!.width).toBeLessThanOrEqual(390);
       const sw = await page.evaluate(() => document.documentElement.scrollWidth);
       expect(sw, 'an open hint must not widen the page').toBeLessThanOrEqual(390);
-      await page.getByTestId('ops-tripplanner').locator('h2').tap();
+      await page.getByTestId('ops-cost').locator('h2').tap();
       await expect(tip).toBeHidden();
     } finally {
       await context.close();

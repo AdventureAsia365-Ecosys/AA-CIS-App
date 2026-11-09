@@ -42,7 +42,17 @@ REGISTRY_READERS = {
     "connection_budget.py": "S10: which connections have a monthly budget (registry_rows_sync) and the month spend / "
                             "policy reads through connections.run_sync / _connect",
     "tenant_budget.py": "AA-1016: the tenant budget and month-spend reads through connections.run_sync / _connect",
+    "central_budget.py": "AA-1025 A7: the central LLM caps and their spend reads through connections.run_sync / "
+                         "_connect",
     "prompt_registry.py": "AA-900: the shared.prompt_version read through connections.run_sync / _connect",
+    "embedding_space.py": "AA-1026: the embedding space registry read through connections.run_sync / _connect",
+    "app_profile.py": "AA-1025 H1a: the app profile read through connections.run_sync / _connect",
+    "capacity.py": "AA-1025 H2: the TPM limits read through connections.run_sync / _connect; LLM_KINDS of a "
+                   "connection an admin limit names",
+    "route_settings.py": "AA-1042: the route order mode / config version read through connections.run_sync / "
+                         "_connect; drops the deployment cache (deployments.invalidate) when the version changes",
+    "route_watch.py": "AA-1042: the route policy rows read through connections.run_sync / _connect (the hold switch "
+                      "cache); no connection or deployment is read",
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
@@ -51,7 +61,23 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "invariant.py",      # AA-1018: report-only failure-domain rule (reads the tables by SQL, not the registry)
              "stage_params.py",   # AA-1017: stage x model parameters (its own table; empty = the same request object)
              "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
-             "prompt_registry.py")  # AA-900: prompt version lookup (no registered row = None on the ledger)
+             "central_budget.py",  # AA-1025 A7: central LLM caps (no llm row = nothing read beyond the cached rows)
+             "prompt_registry.py",  # AA-900: prompt version lookup (no registered row = None on the ledger)
+             "embedding_space.py",  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
+             "json_reply.py",  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)
+             "token_floor.py",  # S271: output-token floor + truncation retry rules (catalog row passed in, no I/O)
+             "effort_rule.py",  # AA-1053: the stage effort per provider kind (stage_params row; no row = nothing sent)
+             "family_rule.py",  # AA-1024 A4: judge / writer model-family rule (catalog read only)
+             "route_evidence.py",  # AA-1026 D7: route change evidence (reads shared.prompt_eval_runs by SQL)
+             "app_profile.py",  # AA-1025 H1a: the app's AI switch (no row / unreadable = AI on)
+             "capacity.py",  # AA-1025 H2: TPM limits and lines (no row / unreadable = no limit, nothing held)
+             "model_lifecycle.py",  # AA-1024 D2: Bedrock model lifecycle (free control-plane list; no call path)
+             "stage_coverage.py",  # AA-1026 S267: report-only stage coverage (reads the tables by SQL, not a call)
+             "route_settings.py",  # AA-1042: the route order mode (no row / unreadable = the env var, as before 370)
+             "route_versions.py",  # AA-1042: route config versions, written inside the admin route writes (no call)
+             "route_watch.py",  # AA-1042: route alerts (ledger SQL) and the cached hold switch (no row = off)
+             "expected_refusal.py",  # AA-900 S271: the expected-refusal SQL / predicate for display (pure, no I/O)
+             "cassette.py")  # AA-900 S271 W0: record-only raw-reply store (best-effort background write, never raises)
 
 
 def _imported_modules(path: Path) -> set[str]:

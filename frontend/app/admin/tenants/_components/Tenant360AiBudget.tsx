@@ -5,8 +5,10 @@
 // GET /api/admin/ai-gateway/tenant-budgets/{tenant_id} (spend.read): the budget row (or none) and this month's AI
 // spend (llm_call_log of the tenant, shadow rows out: the same figure as the Cost tab). Edit opens a kit Drawer; Save
 // asks to confirm and PUTs the whole row (spend.write, audited); "Remove the budget" DELETEs it (back to no budget,
-// audited). Before CIS migration 321 the read says "not ready" and the tile explains why (no edit). The budget is
-// stored and shown only: holding new jobs at the approval level comes with the gateway check (later slice).
+// audited). Before CIS migration 321 the read says "not ready" and the tile explains why (no edit).
+// AA-1028 R1 slice 3: the gateway enforces the tenant's resolved budget (an override on the Subscription tab > the row
+// edited here > the plan's included spend), so the tile shows that effective budget (``effective``) and its source;
+// the editor still edits this tenant's own row.
 // Kit only (KpiTile, Drawer, Field, Input, Select, Textarea, ConfirmModal, Toast).
 
 import { useMemo, useState } from "react";
@@ -18,7 +20,8 @@ import {
 import {
   actorLabel, isReadOnlyRefusal, pct, sameTenantDraft, tenantBudgetBody, tenantBudgetDraftOf, tenantBudgetPath,
   tenantBudgetTone, usd,
-  type TenantBudgetDraft, type TenantBudgetError, type TenantBudgetResp, type TenantBudgetState,
+  type TenantBudgetDraft, type TenantBudgetError, type TenantBudgetResp, type TenantBudgetSource,
+  type TenantBudgetState,
 } from "@/lib/aiGateway";
 import { T360_BUDGET } from "./tenant360Budget.messages";
 
@@ -32,6 +35,11 @@ const ERROR_KEY = {
 const STATE_KEY = {
   unlimited: "state_unlimited", ok: "state_ok", alert: "state_alert", approval: "state_approval", over: "state_over",
 } as const satisfies Record<TenantBudgetState, keyof typeof T360_BUDGET.en>;
+
+const SOURCE_KEY = {
+  subscription_override: "source_subscription_override", budget_row: "source_budget_row", plan: "source_plan",
+  none: "source_none",
+} as const satisfies Record<TenantBudgetSource, keyof typeof T360_BUDGET.en>;
 
 function BudgetEditor({ data, onClose }: { data: TenantBudgetResp; onClose: () => void }) {
   const t = useT(T360_BUDGET);
@@ -140,25 +148,35 @@ function AiBudgetTile({ tenantId }: { tenantId: string }) {
   });
   const d = q.data;
   const b = d?.budget ?? null;
-  const value = !d ? undefined : !d.ready ? "—" : b?.monthly_usd == null ? t("noBudget") : usd(b.monthly_usd, 2);
+  // what the gateway applies (effective) when the plan catalogue exists; before it, the row alone decides
+  const e = d?.effective ?? null;
+  const shown = e ?? (b ? { monthly_usd: b.monthly_usd, used_pct: b.used_pct, state: b.state } : null);
+  const value = !d ? undefined : !d.ready ? "—" : shown?.monthly_usd == null ? t("noBudget") : usd(shown.monthly_usd, 2);
   const hint = q.error ? t("loadError")
     : !d ? undefined
       : !d.ready ? t("notReady")
-        : b && b.monthly_usd != null
-          ? t("spentOf", usd(d.month_spent_usd), pct(b.used_pct))
+        : shown && shown.monthly_usd != null
+          ? t("spentOf", usd(d.month_spent_usd), shown.monthly_usd <= 0 ? t("noAiSpend") : pct(shown.used_pct))
           : t("spentNoBudget", usd(d.month_spent_usd));
   return (
     <div data-testid="tenant360-ai-budget"
       style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, minWidth: 0, marginBottom: 10 }}>
       <div style={{ flex: "0 1 300px", minWidth: 0 }}>
         <KpiTile size="sm" label={t("tileLabel")} value={value} hint={hint}
-          valueTone={b && (b.state === "approval" || b.state === "alert" || b.state === "over") ? "warning" : undefined} />
+          valueTone={shown && (shown.state === "approval" || shown.state === "alert" || shown.state === "over")
+            ? "warning" : undefined} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-        {b && b.monthly_usd != null && (
-          <Badge tone={tenantBudgetTone(b.state)} dot={false} style={{ whiteSpace: "nowrap" }}>
-            {t(STATE_KEY[b.state] ?? "state_ok")}
+        {shown && shown.monthly_usd != null && (
+          <Badge tone={tenantBudgetTone(shown.state)} dot={false} style={{ whiteSpace: "nowrap" }}>
+            {t(STATE_KEY[shown.state] ?? "state_ok")}
           </Badge>
+        )}
+        {e && (
+          <span style={{ ...small, color: e.source === "subscription_override" ? K.amber : K.muted }}
+            data-testid="tenant-ai-budget-source">
+            {t(SOURCE_KEY[e.source] ?? "source_none")}
+          </span>
         )}
         {b && (
           <span style={small}>

@@ -66,7 +66,7 @@ def test_wire_question_shape():
 
 # ── the call, with a fake connection ──────────────────────────────────────────────────────────
 
-def _conn(questions, allowlist=(), cached=()):
+def _conn(questions, allowlist=(), cached=(), pii_stages=()):
     conn = MagicMock()
 
     async def fetch(sql, *args):
@@ -78,6 +78,8 @@ def _conn(questions, allowlist=(), cached=()):
                     for q in questions]
         if "FROM shared.decision_log" in sql:          # verdict cache lookup
             return list(cached)
+        if "FROM shared.llm_role_config" in sql:       # AA-1039: the stages of class pii
+            return [{"stage": st} for st in pii_stages]
         return [{"t": t} for t in allowlist]
 
     conn.fetch = AsyncMock(side_effect=fetch)
@@ -89,6 +91,7 @@ def _conn(questions, allowlist=(), cached=()):
 def _fresh_cache():
     d._questions_loaded_at = 0.0
     d._allowlist_loaded_at = 0.0
+    d._pii_stages = None                          # AA-1039: the classes are read again by each test
     d.reset_decision_memo()
     yield
     d.reset_decision_memo()
@@ -113,7 +116,7 @@ async def test_success_parses_answers_prices_input_and_logs():
     rows = conn.executemany.await_args.args[1]
     assert {r[1] for r in rows} == {"kw_belongs", "idea_ok"} and {r[6] for r in rows} == {"reject", "accept"}
     log = m_log.await_args.kwargs
-    assert log["provider"] == "typesafe" and log["role"] == "validate" and log["tokens_in"] == 1000
+    assert log["provider"] == "typesafe" and log["role"] == "decide" and log["tokens_in"] == 1000
 
 
 @pytest.mark.asyncio
@@ -397,3 +400,119 @@ async def test_pool_write_failure_retries_on_a_fresh_connection():
     assert fresh.executemany.await_args.args[1][0][1] == "kw_belongs"
     fresh.close.assert_awaited_once()
     assert sum(d._hits.values()) == 0
+
+
+# ── AA-1039: a personal-data stage never sends its state to TypeSafe ──────────────────────────
+
+@pytest.mark.asyncio
+async def test_pii_stage_is_skipped_without_calling_jev_even_for_platform_content():
+    """A stage whose llm_role_config.pii_class is 'pii' (root ADR 0019 d12) keeps its state on our AWS accounts:
+    every question is skipped before the tenant guard, the cache and the TypeSafe call, and the skip is logged."""
+    conn = _conn([_q(), _q(key="idea_ok", mode="shadow")], allowlist=[TEST_TENANT], pii_stages=["t9_pii"])
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "a guest's passport name",
+                              ["kw_belongs", "idea_ok"], PLATFORM)
+    m_call.assert_not_awaited()
+    for key in ("kw_belongs", "idea_ok"):
+        v = dec.verdicts[key]
+        assert (v.zone, v.error) == ("skipped", d.PII_STAGE_SKIP_ERROR)
+        assert not dec.rejected(key) and not dec.accepted(key)
+    assert {r[6] for r in conn.executemany.await_args.args[1]} == {"skipped"}   # visible in decision_log
+    assert d.stage_is_pii("t9_pii") and not d.stage_is_pii("a3_research") and not d.stage_is_pii(None)
+
+
+@pytest.mark.asyncio
+async def test_pii_stage_skips_through_the_public_decide_with_an_allowlisted_tenant():
+    conn = _conn([_q()], allowlist=[TEST_TENANT], pii_stages=["t9_pii"])
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d.decide("t9_pii", "piece:1", "text", ["kw_belongs"], tenant_id=TEST_TENANT,
+                             pool=d._SingleConn(conn))
+    m_call.assert_not_awaited()
+    assert dec.verdicts["kw_belongs"].error == d.PII_STAGE_SKIP_ERROR
+
+
+@pytest.mark.asyncio
+async def test_content_stage_is_still_asked_when_another_stage_is_pii():
+    conn = _conn([_q()], pii_stages=["t9_pii"])
+    answer = {"model": "jev", "usage": {"input_tokens": 1}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:1", "text", ["kw_belongs"], None)
+    m_call.assert_awaited_once()
+    assert dec.accepted("kw_belongs")
+
+
+@pytest.mark.asyncio
+async def test_before_migration_373_every_stage_is_content():
+    """No pii_class column yet: every stage is content (an empty set), decide() asks as before."""
+    import asyncpg
+
+    conn = _conn([_q()])
+    plain = conn.fetch.side_effect
+
+    async def fetch(sql, *args):
+        if "FROM shared.llm_role_config" in sql:
+            raise asyncpg.exceptions.UndefinedColumnError('column "pii_class" does not exist')
+        return await plain(sql, *args)
+
+    conn.fetch = AsyncMock(side_effect=fetch)
+    answer = {"model": "jev", "usage": {"input_tokens": 1}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], PLATFORM)
+    m_call.assert_awaited_once()
+    assert dec.accepted("kw_belongs")
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_data_class_fails_closed_without_calling_jev():
+    """Any other failure reading the pii stages, never read before in this process: the class is unknown, so every
+    question is skipped as a pii stage's (review S268) and nothing goes to TypeSafe."""
+    conn = _conn([_q()])
+    plain = conn.fetch.side_effect
+
+    async def fetch(sql, *args):
+        if "FROM shared.llm_role_config" in sql:
+            raise ConnectionError("db went away")
+        return await plain(sql, *args)
+
+    conn.fetch = AsyncMock(side_effect=fetch)
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "tour:1", "text", ["kw_belongs"], None)
+    m_call.assert_not_awaited()
+    v = dec.verdicts["kw_belongs"]
+    assert (v.zone, v.error) == ("skipped", d.PII_STAGE_SKIP_ERROR)
+    assert d._questions_loaded_at == 0.0          # not cached: the next call reads the class again
+    assert d.stage_is_pii("a3_research")          # every stage, until a read succeeds
+
+
+@pytest.mark.asyncio
+async def test_a_failed_refresh_keeps_the_last_classes_read():
+    """A class changes only by a migration: once read, a failed refresh keeps the last set (a content stage is still
+    asked), and the questions are timestamped as usual."""
+    conn = _conn([_q()], pii_stages=["t9_pii"])
+    await d._load_config(conn)
+    plain = conn.fetch.side_effect
+
+    async def fetch(sql, *args):
+        if "FROM shared.llm_role_config" in sql:
+            raise ConnectionError("db went away")
+        return await plain(sql, *args)
+
+    conn.fetch = AsyncMock(side_effect=fetch)
+    d._questions_loaded_at = 0.0
+    answer = {"model": "jev", "usage": {"input_tokens": 1}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        asked = await d._decide(d._SingleConn(conn), "a3_research", "kw:1", "text", ["kw_belongs"], None)
+        kept = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], d.PLATFORM_TENANT_ID)
+    m_call.assert_awaited_once()
+    assert asked.accepted("kw_belongs")
+    assert kept.verdicts["kw_belongs"].error == d.PII_STAGE_SKIP_ERROR
+    assert d._questions_loaded_at > 0.0

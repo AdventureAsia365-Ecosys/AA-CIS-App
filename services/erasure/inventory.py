@@ -75,8 +75,15 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("acp_shared.content_piece", "T9 content pieces (labels and publish rows follow)"),
     # AA-923 WM-32 (315): human labels on the tenant's T2 versions (keyed on tenant_id: the subject has no FK here).
     _d("acp_shared.content_label", "admin labels on the tenant's T2 versions and A1 rewrites"),
+    # AA-1039 R6 (360): compliance flags on the tenant's pieces / posts, its tour e-mail notices, its notice period.
+    _d("acp_shared.content_compliance_flag", "admin compliance flags on the tenant's pieces and live posts"),
+    _d("acp_shared.tenant_tour_notice", "e-mail notices of retired / restored tours (ids and counts)"),
+    _d("acp_shared.tour_retirement_policy", "the tenant's notice period (the platform row has no tenant)"),
     _d("acp_shared.debate_brand_fit_cache", "brand-fit cache of the tenant"),
     _d("acp_shared.facts", "tenant-scope facts (platform facts have no tenant)"),
+    # AA-1047 (386): the FactSheets of the tenant's T2 / T9 writes (tour text, agency facts and brand lines,
+    # pii:free_text); generated_content / tenant_tour_versions name them by fs_id with no FK
+    _d("acp_shared.fact_sheet", "FactSheets of the tenant's T2 / T9 writes"),
     _d("acp_shared.publish_log", "tenant publish history (channels)"),
     _d("acp_shared.quarter_plan", "quarter plans (versions follow through the FK)"),
     _d("acp_shared.subject", "tenant subjects (T7 slate)"),
@@ -106,6 +113,22 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # AA-978 (276): the guards allow these deletes only for an offboarded tenant (or after the 90-day retention).
     _d("shared.tenant_members", "the agency's memberships (identities, Content studio roles)"),
     _d("shared.tenant_membership_event", "the agency's tenant.membership.v1 feed events"),
+    # AA-1028 R1 (353): the control-plane rows of the tenant. The guards allow the entitlement and event deletes only
+    # for an offboarded tenant; the subscription / override deletes of an offboarded tenant emit nothing.
+    _d("shared.tenant_subscription", "the tenant's product subscriptions (plan, status, billing reference)"),
+    _d("shared.tenant_entitlement_override", "per-tenant entitlement exceptions"),
+    _d("shared.tenant_entitlement", "the tenant's materialised entitlements"),
+    _d("shared.tenant_account_event", "the tenant's tenant.entitlements.v1 account events"),
+    # AA-1035 R2 (364): which staff member looks after the tenant, and the read-only view-as log of the tenant. Deleted
+    # explicitly here as cis_app (364 grants DELETE on both for this; the view-as log's guard trigger allows a DELETE
+    # only for an offboarded or deleted tenant, so the log stays append-only for everything else). The FK cascade
+    # from shared.tenants is the backstop.
+    _d("shared.staff_tenant_assignment", "the staff members assigned to the tenant (owner / backup / support)"),
+    _d("shared.staff_view_as_session", "the read-only view-as sessions staff opened on the tenant"),
+    # AA-1036 R3 (374): the tenant's add-on requests (its note, the staff decision); FK cascade as the backstop.
+    _d("shared.tenant_addon_request", "the tenant's add-on requests and the staff decisions"),
+    # AA-1038 R5 slice 2 (379): the TripPlanner site settings (theme tokens, locale); FK cascade as the backstop.
+    _d("shared.tenant_tripplanner_site", "the tenant's TripPlanner site settings (theme, locale, lead route)"),
     # AA-916 (277, ADR 0010 decision 11): tenant text lives only in deletable tables. Platform rows have no tenant.
     _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     # AA-917 (280): tenant-scoped learned writing rules (derived from the tenant's text). Platform rules have no tenant.
@@ -127,6 +150,11 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # items of the tenant's pieces / golden items. The weekly KPI report is a platform table (ids and numbers only).
     _d("shared.writing_memory_keep", "keep decisions on the tenant's writing-memory releases"),
     _d("shared.writing_memory_disagreement", "judge / human disagreement items of the tenant's content"),
+    # AA-1048 (388): claim labels of the tenant's pieces and versions (claim spans and reasons quote the tenant text).
+    # Platform (A1) claims have no tenant and stay.
+    _d("shared.eval_claim_label", "claim-level labels of the tenant's content (claim spans and reasons)"),
+    # AA-1050 (391): the claim instrument's shadow verdicts of the tenant's pieces and versions (no text, spans only).
+    _d("shared.claim_shadow_verdict", "claim-instrument shadow verdicts of the tenant's content (ids and spans)"),
     _d("shared.pipeline_runs", "tenant pipeline batches (raw rows follow through FKs)"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
     _d("shared.tenant_api_usage_monthly", "monthly API usage rollup of the tenant"),
@@ -185,6 +213,12 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("geo.geocode_call", "detach", "Geoapify cost history"),
     TenantTable("shared.llm_call_daily", "merge",
                 "daily LLM rollup; added into the NULL-tenant row of the same key, then deleted"),
+    # AA-1045 (372): the hourly usage rollup of the four ledgers above. A re-roll after the erasure recomputes the
+    # hours still in the raw window from the detached ledger rows (NULL tenant), which is what this merge leaves.
+    TenantTable("shared.ai_usage_hourly", "merge",
+                "hourly usage rollup; summed into the NULL-tenant row of the same key, then deleted"),
+    # AA-900 (385): the gateway's raw model replies (tenant content, pii:free_text): deleted, nothing to keep
+    _d("shared.llm_cassette", "raw model replies of the tenant's calls (AI gateway cassette)"),
     # ── kept
     TenantTable("acp_shared.audit_log", "keep",
                 "append-only hash chain (triggers refuse UPDATE/DELETE); the erasure keeps the audit row"),
@@ -210,6 +244,36 @@ MERGE_SQL: dict[str, str] = {
                tokens_out = d.tokens_out + EXCLUDED.tokens_out,
                cost_usd = d.cost_usd + EXCLUDED.cost_usd,
                updated_at = now()
+    """,
+    # One tenant row per key at most (the unique key includes tenant_id), so no GROUP BY: each row lands on the
+    # NULL-tenant row of its key, the latency histograms added bucket by bucket.
+    "shared.ai_usage_hourly": """
+        INSERT INTO shared.ai_usage_hourly AS h
+               (hour, source, app, provider, account, model, stage, role, tenant_id, status, error_class, traffic,
+                requests, ledger_rows, fallback_requests, tokens_in, tokens_out, cache_read_tokens,
+                cache_write_tokens, reasoning_tokens, cost_usd, latency_ms_sum, latency_ms_count, latency_hist,
+                refreshed_at)
+        SELECT hour, source, app, provider, account, model, stage, role, NULL, status, error_class, traffic,
+               requests, ledger_rows, fallback_requests, tokens_in, tokens_out, cache_read_tokens,
+               cache_write_tokens, reasoning_tokens, cost_usd, latency_ms_sum, latency_ms_count, latency_hist, now()
+          FROM shared.ai_usage_hourly
+         WHERE tenant_id = $1::uuid
+        ON CONFLICT (hour, source, app, provider, account, model, stage, role, tenant_id, status, error_class,
+                     traffic) DO UPDATE SET
+               requests = h.requests + EXCLUDED.requests,
+               ledger_rows = h.ledger_rows + EXCLUDED.ledger_rows,
+               fallback_requests = h.fallback_requests + EXCLUDED.fallback_requests,
+               tokens_in = h.tokens_in + EXCLUDED.tokens_in,
+               tokens_out = h.tokens_out + EXCLUDED.tokens_out,
+               cache_read_tokens = h.cache_read_tokens + EXCLUDED.cache_read_tokens,
+               cache_write_tokens = h.cache_write_tokens + EXCLUDED.cache_write_tokens,
+               reasoning_tokens = h.reasoning_tokens + EXCLUDED.reasoning_tokens,
+               cost_usd = h.cost_usd + EXCLUDED.cost_usd,
+               latency_ms_sum = h.latency_ms_sum + EXCLUDED.latency_ms_sum,
+               latency_ms_count = h.latency_ms_count + EXCLUDED.latency_ms_count,
+               latency_hist = (SELECT array_agg(a + b ORDER BY k)
+                                 FROM unnest(h.latency_hist, EXCLUDED.latency_hist) WITH ORDINALITY AS u(a, b, k)),
+               refreshed_at = now()
     """,
 }
 
@@ -280,9 +344,10 @@ class ChecklistItem:
 
 
 TRAVELLER_CHECKLIST: tuple[ChecklistItem, ...] = (
-    ChecklistItem("AA-Booking", "booking.customers, customer_otps, customer_sessions, inbox_events.payload, "
-                  "trip_cases (+ children), notifications, media_files + S3 object; audit_logs before/after "
-                  "redacted, never deleted; one Booking audit row for the erasure",
+    ChecklistItem("AA-Booking", "inbox_events.payload, b2c trip_cases (+ children, kept as history), "
+                  "notifications, retired_b2c_record (archived customer invoices and payments: redact the free text, "
+                  "the rows stay under the accounting exception); audit_logs before/after redacted, never deleted; "
+                  "one Booking audit row for the erasure",
                   "runbook sections 2 (lookup) and 3 (erase): DB Migrate run-script, ids only, AA-Booking lane"),
     ChecklistItem("AA-TripPlanner-Web", "tripplanner.customers, sessions, trip_drafts, trip_events, outbox.payload",
                   "runbook sections 2 and 3: DB Migrate run-script, ids only, TripPlanner lane"),

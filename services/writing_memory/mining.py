@@ -115,10 +115,6 @@ def label_meaning(label: str) -> str:
     return f"the phrase '{value}' was removed"
 
 
-def _enough(sigs: list[dict]) -> bool:
-    return len(sigs) >= cfg.MIN_SUPPORT and len({s["source_id"] for s in sigs}) >= cfg.MIN_SUPPORT
-
-
 BASES = ("tenant", "platform_tenants", "platform_reviewers", "a1_gate_repeat")
 
 
@@ -360,13 +356,18 @@ TRIGGERS = ("auto", "manual")
 
 
 def decide_run(trigger: str, *, runs_this_month: int, auto_runs_this_month: int, new_pass: int,
-               open_waves: int, auto_enabled: bool = True) -> Optional[str]:
+               open_waves: int, auto_enabled: bool = True, r1_writers: Optional[int] = None) -> Optional[str]:
     """Why a run must not happen (None = it may). Pure (cost-cuts #6): an automatic run needs the env switch
     (`auto_enabled`, default off in run_gate), >= 10 new pass signals since the last run, at most 2 automatic runs a
     month and no open rerun wave (C5.4d: paid background work stays off a wave); a manual run (the admin, e.g. before
-    the monthly release close) is the 3rd run of the month at most."""
+    the monthly release close) is the 3rd run of the month at most.
+    AA-900 W0 (ADR 0020, critic F4): first of all, mining is frozen until some writer has an R1 record
+    (`r1_writers` = how many writers have one; None = the R1 gate is off, WRITING_MEMORY_R1_GATE=off)."""
     if trigger not in TRIGGERS:
         return f"unknown trigger {trigger!r}"
+    if r1_writers is not None and r1_writers < 1:
+        return ("mining is frozen until the claim instrument is calibrated: no writer has a passing R1 run yet "
+                "(ADR 0020 W0)")
     if trigger == "auto" and not auto_enabled:
         return f"automatic mining is off ({cfg.AUTO_MINE_ENV} is not set)"
     if runs_this_month >= cfg.MINE_MAX_RUNS_PER_MONTH:
@@ -391,11 +392,15 @@ async def run_gate(conn, trigger: str, *, exclude_job_id: Optional[str] = None) 
             waves = int(await conn.fetchval(_OPEN_WAVE_SQL) or 0)
     except Exception:  # noqa: BLE001 — no rerun_wave table in this DB: no wave
         waves = 0
+    from services.writing_memory import r1_gate
+    recs = await r1_gate.records(conn) if r1_gate.gate_on() else None
     facts = {"runs_this_month": int(runs["this_month"] or 0), "auto_runs_this_month": int(runs["auto_this_month"] or 0),
              "new_pass": new_pass, "open_waves": waves, "auto_enabled": cfg.auto_mine_enabled(),
-             "last_run_at": runs["last_run_at"].isoformat() if runs["last_run_at"] else None}
+             "last_run_at": runs["last_run_at"].isoformat() if runs["last_run_at"] else None,
+             "r1": r1_gate.summary(recs),
+             "r1_writers": len(recs or {}) if r1_gate.gate_on() else None}
     return decide_run(trigger, **{k: facts[k] for k in ("runs_this_month", "auto_runs_this_month", "new_pass",
-                                                       "open_waves", "auto_enabled")}), facts
+                                                       "open_waves", "auto_enabled", "r1_writers")}), facts
 
 
 async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CALLS) -> dict:
@@ -412,16 +417,22 @@ async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CAL
         rejected_sets = await rules_mod.lint_rejected_signal_sets(conn)
         month = await load_month_budget(conn)
         grams, names, missing = await _corpora(conn)
+        from services.writing_memory import r1_gate
+        r1 = await r1_gate.records(conn) if r1_gate.gate_on() else None
     run_budget = await load_run_budget(pool, "bedrock", "writing_memory_mine", day_scope="kind")
 
     all_grams: set = set().union(*grams.values()) if grams else set()
     clusters = build_clusters(sigs, a1_pieces_30d=a1_pieces)
     result: dict = {"trigger": trigger, "signals": len(sigs), "clusters": len(clusters), "expired": expired,
-                    "skipped_open": 0, "skipped_lint_same": 0, "waiting_small": 0, "drafted": 0, "candidates": 0,
+                    "skipped_open": 0, "skipped_lint_same": 0, "skipped_no_r1": 0, "waiting_small": 0, "drafted": 0,
+                    "candidates": 0,
                     "lint_rejected": 0, "redacted": 0, "store_refused": 0, "none": 0, "unusable": 0, "calls": 0,
                     "cost_usd": 0.0, "stopped": None, "corpus_missing": missing, "rules": []}
     for c in clusters:
         key = (c.writer, c.scope, c.tenant_id, c.cluster_key)
+        if r1_gate.gate_on() and c.writer not in (r1 or {}):
+            result["skipped_no_r1"] += 1      # AA-900 W0: no paid draft for a writer without an R1 record
+            continue
         if key in open_keys:
             result["skipped_open"] += 1
             continue

@@ -1,3 +1,4 @@
+import re
 """AA-656 — every staff role gets a verifiable JWT.
 
 /auth/verify-admin is what the Next.js middleware and the BFF proxies call to learn the caller's
@@ -57,7 +58,7 @@ def client(pool, monkeypatch):
     return TestClient(app)
 
 
-@pytest.mark.parametrize("role", ["admin", "reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", ["admin", "content", "viewer"])
 def test_verify_admin_accepts_every_staff_role(client, pool, role):
     pool.users[ADMIN_ID] = (f"u-{role}", role, True)
     token = _create_admin_jwt(ADMIN_ID, f"u-{role}", role)
@@ -82,11 +83,11 @@ def test_verify_admin_refuses_an_unknown_user(client, pool):
 
 def test_verify_admin_returns_the_db_role_not_the_jwt_claim(client, pool):
     """An admin demoted to reviewer keeps an admin JWT for 24 h; the BFF forwards the DB role."""
-    pool.users[ADMIN_ID] = ("u-admin", "reviewer", True)
+    pool.users[ADMIN_ID] = ("u-admin", "content", True)
     token = _create_admin_jwt(ADMIN_ID, "u-admin", "admin")
     res = client.post("/auth/verify-admin", json={"token": token})
     assert res.status_code == 200, res.text
-    assert res.json()["role"] == "reviewer"
+    assert res.json()["role"] == "content"
 
 
 def test_verify_admin_caches_the_staff_row_briefly(client, pool, monkeypatch):
@@ -120,13 +121,17 @@ def test_verify_admin_rejects_unknown_role(client):
 
 def test_staff_roles_match_enum_and_frontend_matrix():
     # The backend tuple, the DB enum (migration 074 + 218 + 249) and frontend/lib/rbac.ts must agree.
-    assert STAFF_ROLES == ("admin", "reviewer", "content", "viewer")
+    r2 = ("content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")   # AA-1035, CIS 362
+    assert STAFF_ROLES == ("admin", "content", "viewer") + r2
     mig = (REPO / "api/migrations/218_admin_role_content.sql").read_text()
     assert "ADD VALUE IF NOT EXISTS 'content'" in mig
     mig = (REPO / "api/migrations/249_admin_role_viewer.sql").read_text()
     assert "ADD VALUE IF NOT EXISTS 'viewer'" in mig
+    mig = (REPO / "api/migrations/362_admin_role_r2_staff_roles.sql").read_text()
+    assert all(f"ADD VALUE IF NOT EXISTS '{r}'" in mig for r in r2)
     rbac = (REPO / "frontend/lib/rbac.ts").read_text()
-    assert 'STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content", "viewer"]' in rbac
+    listed = re.search(r"export const STAFF_ROLES: readonly StaffRole\[\] = \[([^\]]*)\]", rbac).group(1)
+    assert tuple(re.findall(r'"([a-z_]+)"', listed)) == STAFF_ROLES
 
 
 def test_content_password_login_is_gone():

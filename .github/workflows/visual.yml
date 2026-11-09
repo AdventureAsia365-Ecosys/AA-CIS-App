@@ -1,0 +1,365 @@
+name: Visual
+
+# AA-1008 (S1d/S2c; root ADR 0016 decision 9, re-scoped by ADR 0019 d23: the frontends leave Vercel, so the per-PR run
+# needs no preview) — the visual run of CIS admin from GitHub's network, never the agent machine's IP. Every changed
+# page (tests/e2e/visual/changed-pages.mjs over the diff; a kit / shell / lib change = every page) at 1440 x 900 and
+# 390 x 844, light and dark, asserting: no page-level horizontal overflow (the document AND the kit frame, which
+# scrolls on its own), 0 console errors, no failed same-origin request, the kit frame present, the theme applied.
+# Screenshots + report.json are the artifact `visual-cis-<target>-<run id>` (14 days); the job summary carries the
+# page x 4 table (the PR comment went with the per-PR run, S271).
+#
+# Required check (AA-1008 H3): the job `pr` reports on EVERY pull request (as "skipped" since S271: the per-PR run
+# moved to the queue) and runs on the merge queue (merge_group), so it can be a required status check; its name
+# "Visual (next start, public pages + kit gallery)" is the required context
+# (the tech lead's branch-protection script and verify-h3.sh pin it: never rename it). There is no `paths:` filter (a
+# required check must report on every PR, and merge_group ignores path filters): the job's first step after the
+# checkout, Scope, diffs the PR (or the queue group) against its base and matches the old filter's path list; no match
+# = "no frontend change" in the summary, every later step skipped, the job green. The skip is step-level on purpose: a
+# separate scope job with a job-level if/needs reports "skipped", which GitHub counts as passed even when the scope job
+# itself failed.
+#
+# Jobs:
+#   pr        merge_group (frontend / visual files, decided by the Scope step) and dispatch without base_url (skipped
+#             on pull_request since S271): `next build` with KIT_GALLERY=1 and `next start` in the runner, no
+#             session and no backend: the public pages that changed + the gated kit gallery (every core component,
+#             incl. the ShellFrame demo). It first runs the SELF-TEST: the gallery with a planted overflow (document
+#             and frame) must make the run fail, and summary.mjs --selftest checks that each planted capture was
+#             caught; a self-test that passes is red.
+#   deployed  workflow_call from deploy-admin-dev.yml after the verified ECS deploy on main, and dispatch from main with
+#             base_url: the changed pages (or `pages`) on the deployed host: public pages without a session, staff pages
+#             signed in as the Cognito E2E user (the smoke setup: email code from the mailbox via the read-only OIDC
+#             role, environment e2e, the e2e-cognito concurrency group). Only PNGs and report.json are uploaded:
+#             never the HTML report or the auth state (a `fill` step would name the typed code).
+
+on:
+  # No `paths:` (AA-1008 H3): the check must report on every PR (as "skipped" since S271, see job `pr`).
+  pull_request:
+    branches: [main]
+  # The merge queue (AA-889) tests each group on a gh-readonly-queue/main/* commit and waits for every required check.
+  merge_group:
+    types: [checks_requested]
+  workflow_call:
+    inputs:
+      base_url:
+        description: "The deployed host to capture"
+        required: true
+        type: string
+      sha:
+        description: "The deployed commit"
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        description: "The commit before the push (changed pages = base_sha...sha); empty = every page"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      # the read-only mailbox role of the E2E sign-in (deploy-admin-dev.yml passes `secrets: inherit`; declared so the called
+      # workflow names every secret it reads, actionlint G15)
+      E2E_MAIL_ROLE_ARN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployed host (https://aa-cis.lumiguides.it.com, dispatch from main); empty = the next start run"
+        required: false
+        type: string
+        default: ""
+      pages:
+        description: "Comma list of page slugs (tests/e2e/visual/pages.ts) or all"
+        required: false
+        type: string
+        default: "all"
+
+permissions:
+  contents: read
+
+# A PR's newer push cancels its older run; a merge_group run (no PR number, no base_url) has its own run_id group, so
+# two queue groups never cancel each other.
+concurrency:
+  group: visual-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base_url || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pr:
+    name: Visual (next start, public pages + kit gallery)
+    # S271 (CI minutes): skipped on pull_request (a job-level skip with no `needs` reports "skipped", which passes the
+    # required check, so the PR can still enter the queue); the queue group runs it with its Scope step, so the merge
+    # queue still checks every frontend change before main. Trade-off: a visual failure is found in the queue, not on
+    # the PR; to see it earlier, dispatch this workflow on the PR branch (no base_url).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.base_url == '') || github.event_name == 'merge_group'
+    # Pinned like ui-smoke.yml: Playwright's Chromium is not supported on ubuntu 26.04 yet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      BASE_URL: http://localhost:3001
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # AA-1008 H3: the old pull_request `paths:` list, matched here (renames count by both names). A dispatch runs
+      # every step. A diff that cannot be computed runs the full check (never a silent skip).
+      - name: Scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE=${BASE_REF:+origin/$BASE_REF} ;;
+            merge_group) BASE=$GROUP_BASE ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "Scope: $EVENT runs every step"; exit 0 ;;
+          esac
+          if [ -z "$BASE" ] || ! FILES=$(git diff --name-only --no-renames "$BASE...HEAD"); then
+            echo "::warning::no base commit, or git diff ${BASE:-(none)}...HEAD failed: running the full visual check"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MATCHED=$(printf '%s\n' "$FILES" \
+            | grep -E '^(frontend/|tests/e2e/visual/|tests/e2e/smoke/smoke-helpers\.ts$|playwright\.config\.ts$|\.github/workflows/visual\.yml$)' \
+            || true)
+          if [ -n "$MATCHED" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Scope: $(printf '%s\n' "$MATCHED" | wc -l) frontend / visual file(s) changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "### Visual — no frontend change (nothing to capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Scope: no frontend change; every later step is skipped and the check is green"
+          fi
+
+      - name: Set up Node 22
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        if: steps.scope.outputs.run == 'true'
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
+
+      # merge_group has no github.base_ref: the queue group is diffed against its base commit.
+      - name: Changed pages
+        id: pages
+        if: steps.scope.outputs.run == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PAGES: ${{ inputs.pages }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "origin/$BASE_REF" HEAD)
+          elif [ "$EVENT" = "merge_group" ]; then
+            SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "$MERGE_BASE_SHA" HEAD)
+          else
+            SLUGS=${PAGES:-all}
+          fi
+          echo "slugs=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "Changed pages: ${SLUGS:-none}"
+
+      - name: Build the frontend with the kit gallery (KIT_GALLERY=1) and start it
+        if: steps.scope.outputs.run == 'true'
+        working-directory: frontend
+        env:
+          KIT_GALLERY: "1"
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          nohup npx next start -p 3001 > "$RUNNER_TEMP/next.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3001/kit-gallery && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/next.log"
+          echo "::error::next start did not answer /kit-gallery"
+          exit 1
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (lesson S220).
+      - name: Install Playwright (repo root)
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      # The planted overflow (document and frame) must be caught: the Playwright run must fail and every planted
+      # capture must show its overflow in the report. A green self-test means the assertion is broken.
+      - name: Self-test (a planted overflow must fail the run)
+        if: steps.scope.outputs.run == 'true'
+        env:
+          VISUAL_SELFTEST: "1"
+        run: |
+          if npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=line; then
+            echo "::error::the planted-overflow pages passed the visual checks: the overflow assertion is broken"
+            exit 1
+          fi
+          node tests/e2e/visual/summary.mjs --selftest
+          rm -rf tests/e2e/results/visual
+
+      - name: Capture and check
+        if: steps.scope.outputs.run == 'true'
+        env:
+          VISUAL_AUTH: public
+          VISUAL_GALLERY: "1"
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=list
+
+      - name: Summary
+        if: always() && steps.scope.outputs.run == 'true'
+        env:
+          SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          mkdir -p tests/e2e/results/visual
+          {
+            echo "### Visual — next start (public pages + kit gallery)"
+            echo ""
+            node tests/e2e/visual/summary.mjs
+            echo ""
+            echo "Changed pages: \`${SLUGS:-none}\`. Signed-in pages are captured after the production deploy (job deployed)."
+          } | tee tests/e2e/results/visual/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload screenshots and report
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-cis-pr-${{ github.run_id }}
+          path: |
+            tests/e2e/results/visual/shots/*.png
+            tests/e2e/results/visual/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  deployed:
+    name: Visual (deployed host, signed in)
+    # The mailbox role trusts refs/heads/main + environment e2e only; inside a called workflow github.ref is the caller's.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || inputs.base_url != '') && github.event_name != 'pull_request' &&
+      github.event_name != 'merge_group'
+    runs-on: ubuntu-24.04
+    environment: e2e
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    # Shared with e2e-cognito.yml and ui-smoke.yml: two runs at once would race for the same mailbox and codes.
+    concurrency:
+      group: e2e-cognito
+      cancel-in-progress: false
+    env:
+      BASE_URL: ${{ inputs.base_url }}
+      # Opt-in switch the smoke setup checks (no underscore by design, like ui-smoke.yml).
+      E2ECOGNITO: "1"
+    steps:
+      - name: Only the Cognito callback host
+        env:
+          URL: ${{ inputs.base_url }}
+        run: |
+          case "${URL%/}" in
+            https://aa-cis.lumiguides.it.com) echo "Visual run on $URL" ;;
+            *) echo "::error::base_url must be https://aa-cis.lumiguides.it.com (got $URL)"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Changed pages
+        id: pages
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.sha || github.sha }}
+          PAGES: ${{ inputs.pages }}
+        run: |
+          if [ -n "$PAGES" ]; then
+            SLUGS=$PAGES
+          elif [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "$BASE_SHA" "$HEAD_SHA")
+          else
+            SLUGS=all
+          fi
+          echo "slugs=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "Changed pages: ${SLUGS:-none}"
+
+      - name: Configure AWS credentials (OIDC, read-only mailbox role)
+        if: steps.pages.outputs.slugs != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
+          aws-region: us-west-1
+          role-session-name: cis-visual-${{ github.run_id }}
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (lesson S220).
+      - name: Install Playwright (repo root)
+        if: steps.pages.outputs.slugs != ''
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Capture the public pages
+        if: steps.pages.outputs.slugs != ''
+        env:
+          VISUAL_AUTH: public
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=list --pass-with-no-tests
+
+      # visual-staff-* depend on smoke-setup: one Cognito sign-in, then every staff page from that storage state.
+      - name: Capture the staff pages (signed in)
+        if: always() && steps.pages.outputs.slugs != ''
+        env:
+          VISUAL_AUTH: staff
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          npx playwright test -c playwright.config.ts --project=visual-staff-1440 --project=visual-staff-390 --reporter=list --pass-with-no-tests
+
+      - name: Summary
+        if: always() && steps.pages.outputs.slugs != ''
+        env:
+          SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          mkdir -p tests/e2e/results/visual
+          {
+            echo "### Visual — $BASE_URL (signed in as the Cognito E2E user)"
+            echo ""
+            node tests/e2e/visual/summary.mjs
+            echo ""
+            echo "Pages: \`$SLUGS\`. A page the E2E role may not open is skipped (lib/rbac.ts PAGE_RULES)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # PNGs and the JSON report only: never the HTML report, traces or the auth state.
+      - name: Upload screenshots and report
+        if: always() && steps.pages.outputs.slugs != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-cis-production-${{ github.run_id }}
+          path: |
+            tests/e2e/results/visual/shots/*.png
+            tests/e2e/results/visual/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Delete auth state
+        if: always()
+        run: rm -rf tests/e2e/.auth

@@ -34,19 +34,21 @@ import hashlib
 import json
 import re
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core import e2e_staff
-from api.core.staff_authz import request_staff_identity, staff_policy
+from api.core.staff_authz import QUALITY_WRITE, has_perm, request_staff_identity, staff_policy
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.core.tenant_scope import tenant_scope_filter
 from api.routers.admin import verify_admin_secret
-from services.acp_content_writing import hygiene, sentence_repair, text_integrity
+from services.acp_content_writing import f9_policy, hygiene, sentence_repair, text_integrity
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
+from services.acp_shared.token_budget import T9_REPAIR_MAX_TOKENS
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
 from services.acp_shared import atom_replaced, place_cards, route_guard, seed_audit
@@ -55,6 +57,7 @@ from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction,
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.quality import registry as qr
+from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.writing_memory import signals as wm  # AA-916
 from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
 
@@ -111,6 +114,35 @@ _FAILED_GATES_SQL = """
     COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements(COALESCE(cp.flags, '[]'::jsonb)) g),
              '[]'::jsonb) AS flag_gates
 """
+
+# ── AA-1035 R2 close-out: Tenant QA of the caller's book ─────────────────────────────────────────
+# customer_success reads the lists, details and stats through tenant_content.book.read (staff_authz POLICY
+# _TENANT_QA_READ), and only for the tenants of its book (api/core/tenant_scope.tenant_scope_filter; None = every
+# tenant: the tenant_content.read roles, whose scope is "all", and the machine). A piece or version of another tenant
+# answers 404, the same as an unknown id, so a scoped caller can not probe ids.
+
+def _scope_clause(allowed: Optional[frozenset[str]], column: str, params: list) -> str:
+    """`` AND <column> = ANY($n::uuid[])`` for a scoped caller (appends the ids to ``params``), else ""."""
+    if allowed is None:
+        return ""
+    params.append(sorted(allowed))
+    return f" AND {column} = ANY(${len(params)}::uuid[])"
+
+
+async def _require_in_scope(request: Request, conn, tenant_sql: str, object_id: str, not_found: str) -> None:
+    """404 ``not_found`` when the caller is scoped and the object's tenant is not in its book (or the id is unknown:
+    the full read answers that one itself)."""
+    allowed = await tenant_scope_filter(request, conn)
+    if allowed is None:
+        return
+    tenant = await conn.fetchval(tenant_sql, object_id)
+    if tenant is None or str(tenant) not in allowed:
+        raise HTTPException(status_code=404, detail=not_found)
+
+
+_PIECE_TENANT_SQL = "SELECT tenant_id FROM acp_shared.content_piece WHERE piece_id = $1::uuid"
+_VERSION_TENANT_SQL = "SELECT tenant_id FROM gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid"
+
 
 _COST_SQL = """
     COALESCE((SELECT sum(l.cost_usd) FROM shared.llm_call_log l WHERE l.job_id = cp.job_id), 0) AS cost_usd
@@ -193,6 +225,7 @@ async def list_pieces(
     direction = "ASC" if sort_dir == "asc" else "DESC"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        where += _scope_clause(await tenant_scope_filter(request, conn), "cp.tenant_id", params)   # AA-1035
         labels_enabled = await _labels_enabled(conn)
         label_cols = _LABEL_COLS_SQL if labels_enabled else ""
         if labels_enabled and label:
@@ -439,21 +472,24 @@ async def get_piece(piece_id: str, request: Request, x_admin_secret: str = Heade
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        await _require_in_scope(request, conn, _PIECE_TENANT_SQL, piece_id, "Piece not found")   # AA-1035
         return await _load_piece_detail(conn, piece_id)
 
 
 # ── S234: cut / rewrite one flagged sentence (admin only) ─────────────────────────────────────
 
 _EDITABLE_STATUSES = ("approved", "held")  # same boundary as the tenant hand-edit (AA-569)
-_SUGGEST_MAX_TOKENS = 400  # one sentence of JSON back
+# One sentence of JSON back. AA-741 (S270): 400 -> the t9_repair ceiling (4096): haiku-5-5 thinks inside max_tokens
+# and was cut at 2048 on this stage; a ceiling costs nothing on a complete reply.
+_SUGGEST_MAX_TOKENS = T9_REPAIR_MAX_TOKENS
 _SUGGEST_STAGE = "t9_repair"
 
 
 def _require_admin_role(x_admin_role: Optional[str]) -> None:
-    """Defense in depth behind the BFF's own check: the sentence actions change a tenant's piece,
-    so only the `admin` staff role (never reviewer / content) may call them."""
-    if x_admin_role != "admin":
-        raise HTTPException(status_code=403, detail="Only an admin can edit a piece")
+    """Defense in depth behind the BFF's own check: the sentence actions change a tenant's piece, so only a role
+    with quality.write (admin, and since AA-1035 R2 content_lead / tenant_qa; never content) may call them."""
+    if not has_perm(x_admin_role, QUALITY_WRITE):
+        raise HTTPException(status_code=403, detail="Your staff role can not edit a piece")
 
 
 def _resolve(content_text: str, start: int, end: int, text: str) -> tuple[int, int]:
@@ -474,8 +510,9 @@ class SentenceSuggestBody(BaseModel):
 @router.post("/pieces/{piece_id}/sentences/suggest")
 async def suggest_sentence(piece_id: str, body: SentenceSuggestBody, request: Request,
                            x_admin_secret: str = Header(None), x_admin_role: Optional[str] = Header(None)):
-    """A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, max 400
-    tokens, about $0.001-0.006), logged to llm_call_log with this piece's id. Nothing is saved —
+    """A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, the
+    t9_repair ceiling, one budget retry on a cut reply; about $0.001-0.006), logged to llm_call_log
+    with this piece's id. Nothing is saved —
     the admin reviews (or edits) it and sends it to /apply. The suggestion is run through the same
     deterministic checks /apply uses, so the drawer can show what would block it."""
     verify_admin_secret(x_admin_secret)
@@ -559,9 +596,11 @@ def _sentence_audit(body: "SentenceApplyBody", ref: "wm.SignalRef", warnings: li
 def _refuse_e2e_mode(request: Request, mode: str) -> None:
     """AA-816 A10b (S252): the Dev-only E2E CIS admin may apply a sentence edit (the AA-916 WM-07 sample) only as a Cut
     or a manual Edit; ``rewrite`` records a model suggestion it could not have asked for (``…/suggest`` is refused to
-    it by the bearer middleware). 403 ``e2e_read_only`` for any other mode."""
-    if (getattr(request_staff_identity(request), "e2e_read_only", False)
-            and mode not in e2e_staff.E2E_SENTENCE_MODES):
+    it by the bearer middleware). 403 ``e2e_read_only`` for any other mode. AA-1035 A10d: any other Dev-only E2E
+    identity (no ``e2e_allowlisted_writes``) is refused whatever the mode."""
+    identity = request_staff_identity(request)
+    if getattr(identity, "e2e_read_only", False) and (
+            not e2e_staff.has_allowlisted_writes(identity) or mode not in e2e_staff.E2E_SENTENCE_MODES):
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
 
@@ -600,6 +639,7 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             row = await conn.fetchrow(
                 """
                 SELECT cp.content_text, cp.status, cp.tenant_id, cp.writer_input,
+                       cp.seo_title, cp.meta_description, cp.slug, cp.gate_ledger, cp.held_reason,
                        COALESCE(cp.channel, (SELECT agr.channel FROM acp_shared.angle_gate_request agr
                                              WHERE agr.request_id = cp.angle_gate_request_id)) AS channel,
                        EXISTS (SELECT 1 FROM acp_shared.publish_log pl
@@ -652,9 +692,11 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             if len(new_text) < min_chars <= len(old_text):
                 raise HTTPException(status_code=422, detail=f"This would take the piece under the {min_chars}-char "
                                                             f"minimum for {row['channel']}")
-            await conn.execute(
-                "UPDATE acp_shared.content_piece SET content_text = $2 WHERE piece_id = $1::uuid",
-                piece_id, new_text)
+            # AA-1047 W1 (root ADR 0020 "one exit"): the edited piece through the REPORT-mode final contract, stored
+            # with the text (writer_input.final_contract; a piece without writer_input keeps NULL)
+            contract = _t9_contract_record(new_text, row, wi)
+            await conn.execute(_PIECE_UPDATE_SQL, piece_id, new_text,
+                               json.dumps(contract, default=str) if contract is not None else None)
             # AA-916 WM-06 — the sentence before / after as a writing signal (same transaction: it is the
             # edit's history now). A T9 piece has no Jev claim question, so fact_not_in_source is kept on the
             # signal only (fact_status fail).
@@ -892,8 +934,9 @@ class PieceLabelBody(BaseModel):
 
 
 def _require_label_admin(x_admin_role: Optional[str]) -> None:
-    if x_admin_role != "admin":
-        raise HTTPException(status_code=403, detail="Only an admin can see or set piece labels")
+    """quality.write (admin, content_lead, tenant_qa since AA-1035 R2) sees and sets piece labels."""
+    if not has_perm(x_admin_role, QUALITY_WRITE):
+        raise HTTPException(status_code=403, detail="Your staff role can not see or set piece labels")
 
 
 def _label_row(r) -> dict:
@@ -1135,6 +1178,7 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
         tenant_clause = "AND cp.tenant_id = $2::uuid"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        tenant_clause += _scope_clause(await tenant_scope_filter(request, conn), "cp.tenant_id", params)   # AA-1035
         gates = await conn.fetch(
             f"""
             SELECT g->>'gate' AS gate, COALESCE(cp.channel, 'unknown') AS channel,
@@ -1159,7 +1203,52 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
             WHERE cp.created_at > now() - make_interval(days => $1) {tenant_clause}
             GROUP BY 1, 2 ORDER BY pieces DESC
             """, *params)
-    return {"days": days, "gates": [_row(r) for r in gates], "tenants": [_row(r) for r in tenants]}
+        # AA-1047 W1 (W0 review #1356): the failed F9_cta_fact entries, split by the classes the entry recorded
+        # (f9_policy.classes) — a judge outage or TEXT_INTEGRITY is not a fidelity failure.
+        f9_rows = await conn.fetch(
+            f"""
+            SELECT COALESCE(cp.channel, 'unknown') AS channel, g AS entry
+            FROM acp_shared.content_piece cp, jsonb_array_elements(cp.gate_ledger) g
+            WHERE cp.created_at > now() - make_interval(days => $1) AND cp.status <> 'processing' {tenant_clause}
+              AND g->>'gate' = '{qr.F9_CTA_FACT}' AND (g->>'passed')::boolean = false
+            """, *params)
+    gate_rows = [_row(r) for r in gates]
+    split = f9_stats_split([(r["channel"], _j(r["entry"])) for r in f9_rows])
+    for g in gate_rows:
+        if g.get("gate") == qr.F9_CTA_FACT:
+            g.update(split["by_channel"].get(g.get("channel"), {}))
+    return {"days": days, "gates": gate_rows, "tenants": [_row(r) for r in tenants],
+            "f9_classes": split["classes"]}
+
+
+# The F9 classes that are not a fidelity failure of the text (f9_policy): no verdict, or a broken sentence.
+_F9_NOT_FIDELITY = frozenset({f9_policy.JUDGE_UNAVAILABLE, f9_policy.TEXT_INTEGRITY})
+
+
+def f9_stats_split(entries: list[tuple[str, Any]]) -> dict:
+    """AA-1047 W1: /stats' view of the failed F9_cta_fact entries. Per channel, ``failed`` / ``blocking_failed``
+    count only the entries with a class other than a judge outage or TEXT_INTEGRITY (the content failures);
+    ``failed_judge_unavailable`` / ``failed_text_integrity`` count the rest (an entry with both counts in both);
+    ``classes`` sums every class over the window ({channel: {class: n}})."""
+    by_channel: dict[str, dict] = {}
+    classes: dict[str, dict[str, int]] = {}
+    for channel, g in entries:
+        if not isinstance(g, dict):
+            continue
+        cls = f9_policy.entry_classes(g)
+        row = by_channel.setdefault(channel, {"failed": 0, "blocking_failed": 0, "failed_judge_unavailable": 0,
+                                              "failed_text_integrity": 0})
+        if set(cls) - _F9_NOT_FIDELITY or not cls:
+            row["failed"] += 1
+            row["blocking_failed"] += 1 if g.get("blocking", True) else 0
+        if f9_policy.JUDGE_UNAVAILABLE in cls:
+            row["failed_judge_unavailable"] += 1
+        if f9_policy.TEXT_INTEGRITY in cls:
+            row["failed_text_integrity"] += 1
+        ch = classes.setdefault(channel, {})
+        for k, n in cls.items():
+            ch[k] = ch.get(k, 0) + int(n)
+    return {"by_channel": by_channel, "classes": classes}
 
 
 # ── T2 tenant tour versions ────────────────────────────────────────────────────────────────────
@@ -1192,7 +1281,6 @@ async def list_tour_versions(
     if q:
         params.append(f"%{q}%")
         where.append(f"pt.aa_name ILIKE ${len(params)}")
-    w = " AND ".join(where)
     order = _VERSION_SORTS.get(sort, "ttv.created_at")
     direction = "ASC" if sort_dir == "asc" else "DESC"
     base = """
@@ -1202,6 +1290,8 @@ async def list_tour_versions(
     """
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        w = " AND ".join(where) + _scope_clause(await tenant_scope_filter(request, conn), "ttv.tenant_id",
+                                                params)   # AA-1035
         total = await conn.fetchval(f"SELECT count(*) {base} WHERE {w}", *params)
         rows = await conn.fetch(
             f"""
@@ -1262,9 +1352,62 @@ _VERSION_DETAIL_SQL = """
 # that touches 0 rows (the tenant approved meanwhile, or a future FORCE RLS hides the row from the
 # admin role, D2) is a 409, never a silent success.
 _VERSION_UPDATE_SQL = """
-    UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $3::jsonb
+    UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $3::jsonb,
+        -- AA-1047 W1: the REPORT-mode final contract of this exit (admin-only; NULL $5 keeps the old record)
+        judge_breakdown = CASE WHEN $5::jsonb IS NULL THEN judge_breakdown
+                               ELSE COALESCE(judge_breakdown, '{}'::jsonb)
+                                    || jsonb_build_object('final_contract', $5::jsonb)
+                          END
     WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])
 """
+
+
+# A T9 admin sentence apply: the text and the exit's contract record (writer_input.final_contract only: the writer's
+# own keys, its lineage among them (AA-1052), stay; a piece without writer_input keeps NULL).
+_PIECE_UPDATE_SQL = (
+    "UPDATE acp_shared.content_piece SET content_text = $2,"
+    " writer_input = CASE WHEN writer_input IS NULL OR $3::jsonb IS NULL THEN writer_input"
+    " ELSE jsonb_set(writer_input, '{final_contract}', $3::jsonb) END"
+    " WHERE piece_id = $1::uuid")
+
+
+def _t2_contract_record(new_rc: dict, tour: dict, structural: list, row) -> Optional[dict]:
+    """AA-1047 W1: the REPORT-mode final contract of an admin sentence apply on a T2 version (recorded in
+    judge_breakdown.final_contract, never blocks). None on an error (logged)."""
+    try:
+        inp = final_contract.T2Input(content=new_rc, master=tour, structural_issues=list(structural or []))
+        record = final_contract.check_t2(inp, exit="admin_sentence_apply", actual=row["status"]).record()
+        record = final_contract.stamp_stored(record, final_contract.tour_text_sha(new_rc))
+        final_contract.log_record(record, version_id=str(row["id"]))
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the edit
+        logger.warning("final_contract_failed", workflow="t2", exit="admin_sentence_apply",
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        return None
+
+
+def _t9_contract_record(new_text: str, row, wi: dict) -> Optional[dict]:
+    """AA-1047 W1: the REPORT-mode final contract of an admin sentence apply on a T9 piece (recorded in
+    writer_input.final_contract, never blocks). None on an error (logged)."""
+    def get(key):
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    try:
+        ledger = _j(get("gate_ledger"))
+        inp = final_contract.T9Input(content_text=new_text, channel=get("channel"), cta=(wi or {}).get("cta"),
+                                     seo_title=get("seo_title"), meta_description=get("meta_description"),
+                                     slug=get("slug"), gate_ledger=ledger if isinstance(ledger, list) else [],
+                                     held_reason=get("held_reason"))
+        record = final_contract.check_t9(inp, exit="admin_sentence_apply", actual=get("status")).record()
+        record = final_contract.stamp_stored(record, final_contract.text_sha(new_text))
+        final_contract.log_record(record)
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the edit
+        logger.warning("final_contract_failed", workflow="t9", exit="admin_sentence_apply",
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        return None
 
 
 def t2_edit_block(status: Optional[str], version_number: Optional[int],
@@ -1463,6 +1606,7 @@ async def get_tour_version(version_id: str, request: Request, x_admin_secret: st
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        await _require_in_scope(request, conn, _VERSION_TENANT_SQL, version_id, "Version not found")   # AA-1035
         return await _load_version_detail(conn, version_id)
 
 
@@ -1588,8 +1732,11 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
                            - set(_t3_structural_issues(rc, tour, rules)))
             if added:
                 raise HTTPException(status_code=422, detail=f"This edit adds a T3 problem — {', '.join(added)}")
+            # AA-1047 W1 (root ADR 0020 "one exit"): the edited version through the REPORT-mode final contract
+            contract = _t2_contract_record(new_rc, tour, _t3_structural_issues(new_rc, tour, rules), row)
             res = await conn.execute(_VERSION_UPDATE_SQL, version_id, str(row["tenant_id"]),
-                                     json.dumps(new_rc), list(_T2_EDITABLE_STATUSES))
+                                     json.dumps(new_rc), list(_T2_EDITABLE_STATUSES),
+                                     json.dumps(contract, default=str) if contract is not None else None)
             if not str(res).endswith(" 1"):
                 raise HTTPException(status_code=409, detail="The version was not updated (it changed or is no "
                                                             "longer editable) — reload and try again")
@@ -1837,8 +1984,8 @@ async def edit_place_card_facts(card_id: str, body: PlaceCardFactsEdit, request:
     with before/after per changed fact). A fact re-kinded to visiting/practical stays on the card but
     leaves the T9 writer seed (atom_seed.writer_facts). Status / verified_by are not touched."""
     verify_admin_secret(x_admin_secret)
-    if x_admin_role != "admin":
-        raise HTTPException(status_code=403, detail="Only an admin can edit place-card facts")
+    if not has_perm(x_admin_role, QUALITY_WRITE):
+        raise HTTPException(status_code=403, detail="Your staff role can not edit place-card facts")
     cid = _card_uuid(card_id)
     reason = " ".join(body.reason.split())
     if len(reason) < 3:

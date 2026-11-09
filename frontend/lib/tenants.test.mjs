@@ -15,8 +15,8 @@ const B = { tenant_id: "bbbbbbbb-2222-4222-8222-222222222222", name: "", slug: "
 const C = { tenant_id: "cccccccc-3333-4333-8333-333333333333", name: "Beta Trips", slug: "Beta Trips" };
 const byId = new Map([A, B, C].map((t) => [t.tenant_id, t]));
 
-test("one tenant list for every page: the include-inactive list and the data-erasure cache key", () => {
-  assert.equal(TENANTS_API, "/api/admin/tenants?include_inactive=true");
+test("one tenant list for every page: the names-only picker route (AA-1035) and the data-erasure cache key", () => {
+  assert.equal(TENANTS_API, "/api/admin/tenant-names");
   assert.deepEqual([...TENANTS_QUERY_KEY], ["admin-tenants", "include-inactive"]);
 });
 

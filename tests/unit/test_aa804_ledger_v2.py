@@ -25,6 +25,7 @@ from shared.llm_client.connections import ConnectionCredentialError
 from shared.llm_client.models import LLMRequest, LLMResponse
 from shared.llm_client.vendor_route import VendorDeployment
 from shared.llm_client import catalog, vendor_route
+from shared.llm_client import role_config
 from tests.unit.test_aa1002_s3_deployment_routing import MODELS, World, _dep, _org, _route
 
 RUN = "6f1c5f8e-1b9e-4c55-9f5e-1a2b3c4d5e6f"
@@ -238,6 +239,10 @@ def test_a_model_the_catalog_does_not_know_gets_its_row_from_the_net(gw, rows):
 
 def test_the_legacy_chain_logs_each_tier(gw, monkeypatch, rows):
     from shared.llm_client import bedrock_satellite as bs
+    # AA-1039 (review S268): the stage read succeeds with no row (an adhoc_* stage): content. Left to the DB, a
+    # unit run (no DB) fails the read, which now fails closed as pii (no legacy chain, no vendor pin).
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync",
+                        lambda s: role_config.SAFE_DEFAULTS.get(s, role_config._GENERIC_FALLBACK))
     monkeypatch.setattr(bs, "invoke_claude", MagicMock(side_effect=bs.BedrockUnavailable("Error 002: Access to "
                                                                                           "Bedrock models is not "
                                                                                           "allowed")))
@@ -484,9 +489,12 @@ def test_log_geocode_calls_writes_the_tenant_and_the_failures():
     with call_log.bind_tenant("33333333-3333-3333-3333-333333333333"):
         asyncio.run(store.log_geocode_calls(conn, "geoapify", 5, 0.01, None, failed_requests=2))
     sql, *args = conn.execute.call_args.args
-    assert sql == store._GEOCODE_CALL_V2_SQL and args[6:] == ["33333333-3333-3333-3333-333333333333", 2]
+    # AA-1025 D3: the v3 row (migration 346) adds status, latency, app and stage after the 319 columns
+    assert sql == store._GEOCODE_CALL_V3_SQL and args[6:8] == ["33333333-3333-3333-3333-333333333333", 2]
     conn = AsyncMock()
-    conn.execute.side_effect = [asyncpg.exceptions.UndefinedColumnError("tenant_id"), None]
+    conn.execute.side_effect = [asyncpg.exceptions.UndefinedColumnError("status"),
+                                asyncpg.exceptions.UndefinedColumnError("tenant_id"), None]
     asyncio.run(store.log_geocode_calls(conn, "geoapify", 5, 0.01, None))
-    assert conn.execute.call_args.args[0] == store._GEOCODE_CALL_SQL
+    assert [c.args[0] for c in conn.execute.call_args_list] == [
+        store._GEOCODE_CALL_V3_SQL, store._GEOCODE_CALL_V2_SQL, store._GEOCODE_CALL_SQL]
     assert json.dumps(args[:6])        # the pre-319 values are unchanged

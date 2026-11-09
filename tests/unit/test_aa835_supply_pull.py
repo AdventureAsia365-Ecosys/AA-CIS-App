@@ -134,7 +134,7 @@ def test_photo_source_ok_and_bucket_pin(monkeypatch):
     ("POST", "/admin/supply-content/{entity_id}/unpublish"),
 ])
 def test_writes_need_a_content_role(method, route):
-    for role, allowed in (("admin", True), ("content", True), ("reviewer", True), ("viewer", False)):
+    for role, allowed in (("admin", True), ("content", True), ("content", True), ("viewer", False)):
         reason = staff_authz.denial_reason(staff_authz.principal_from_role(role), method, route)
         assert (reason is None) is allowed, (role, route, reason)
     assert staff_authz.denial_reason(staff_authz.MACHINE, method, route) is not None

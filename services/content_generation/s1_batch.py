@@ -206,6 +206,32 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
     }
 
 
+async def _refuse_pii_stage() -> None:
+    """BatchUnavailable when BATCH_STAGE is ``pii`` (shared.llm_role_config.pii_class, CIS 373) or its class could
+    not be read (role_config fails closed as pii)."""
+    from shared.llm_client import data_scope, role_config
+    cfg = await role_config.get_stage_config(BATCH_STAGE)
+    pii = data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))
+    if pii == data_scope.PII_PERSONAL:
+        logger.warning("s1_batch_refused_pii_stage", stage=BATCH_STAGE, reason=data_scope.pii_reason(pii))
+        raise BatchUnavailable(f"stage {BATCH_STAGE} may not use Bedrock Batch ({data_scope.pii_reason(pii)}): "
+                               "run the tours on demand (the stage route)")
+
+
+# S271 W0 (root ADR 0020, AA-900 l16): the batch seeds attempt 1 with TODAY's (v1) writer prompt; the graph then keeps
+# that draft on v1 (s1_writer_v2_live.applies is False on a batch seed), so with writer v2 live a batch run would write
+# the catalogue with the writer v2 replaced, outside its fact sheet and eval. Refused while writer v2 is on.
+WRITER_V2_REFUSAL = (
+    "S1 Bedrock Batch is refused while the S1 writer v2 is live: the batch seeds attempt 1 with the v1 writer prompt "
+    "and the graph keeps that draft on v1 (root ADR 0020 W0). Rewrite through the per-tour path instead.")
+
+
+def writer_v2_refusal() -> Optional[str]:
+    """The refusal reason when the S1 writer v2 is on (the live A1 writer), else None."""
+    from services.content_generation import s1_writer_v2_live
+    return WRITER_V2_REFUSAL if s1_writer_v2_live.enabled() else None
+
+
 async def submit_s1_batch(
     tour_ids: list[str],
     *,
@@ -218,7 +244,15 @@ async def submit_s1_batch(
     Batch job. Returns {"job_arn","job_slug","output_uri","account","tour_ids","record_count"}.
 
     enforce_min: reject a batch below MIN_BATCH_RECORDS (Bedrock rejects small Claude jobs) — set
-    False only for a live quota probe once the real minimum is confirmed."""
+    False only for a live quota probe once the real minimum is confirmed.
+
+    AA-1039 (review S268): refused (BatchUnavailable, before any prompt is read) when the writer stage is a
+    personal-data stage, or its class cannot be read: Batch runs the legacy Haiku profile (a ``global.`` profile,
+    outside the deployment plan), so the tours run on demand on the stage route, which keeps a pii stage on our AWS
+    accounts in the US."""
+    if (refused := writer_v2_refusal()) is not None:   # S271 W0: before any prompt is read
+        raise BatchUnavailable(refused)
+    await _refuse_pii_stage()
     tenant_uuid = _TENANT_SLUG_MAP.get(tenant_id, tenant_id)
     job_slug = uuid.uuid4().hex[:12]
 
@@ -262,11 +296,13 @@ async def ingest_s1_batch(
     tour_ids: list[str],
     batch_id: str,
     seo_mode: str = "standard",
-    model_tier: Optional[str] = "haiku",
     poll: bool = True,
 ) -> dict:
     """Poll the batch job (optional), read its output, then run each tour through the existing
     persist path via _execute_run_tour(batch_text=...). Returns a per-tour summary.
+
+    AA-1024 A2 (ADR 0009 decision 5): no model_tier (it was "haiku"): the on-demand retries and a tour the batch could
+    not write run on the s1_generate stage route, like every other rewrite.
 
     Uses batch_id as TourRunRequest.batch_id so pipeline_runs accounting and generated_content
     metadata carry the same batch traceability the synchronous ingest already records."""
@@ -297,7 +333,7 @@ async def ingest_s1_batch(
             # still gets a version (the writer retry loop starts from generate, not the seed node).
             summary["batch_write_failed"] += 1
             req = TourRunRequest(tour_id=tid, batch_id=batch_id, tenant_id=_MASTER_TENANT_ID,
-                                 seo_mode=seo_mode, model_tier=model_tier)
+                                 seo_mode=seo_mode)
             try:
                 await _execute_run_tour(req)
                 summary["per_tour"].append({"tour_id": tid, "outcome": "batch_failed_fell_back_sync"})
@@ -306,7 +342,7 @@ async def ingest_s1_batch(
             continue
 
         req = TourRunRequest(tour_id=tid, batch_id=batch_id, tenant_id=_MASTER_TENANT_ID,
-                             seo_mode=seo_mode, model_tier=model_tier)
+                             seo_mode=seo_mode)
         try:
             result = await _execute_run_tour(
                 req,

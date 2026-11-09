@@ -137,8 +137,15 @@ async def test_role_config_reads_route_deadline_s(pool):
             stage = await conn.fetchval("SELECT stage FROM shared.llm_role_config WHERE is_active ORDER BY stage "
                                         "LIMIT 1")
             await conn.execute("UPDATE shared.llm_role_config SET route_deadline_s = 90 WHERE stage = $1", stage)
+
+            async def fetch(sql):
+                # A savepoint per attempt: an optional column of a later migration that is not applied yet (e.g.
+                # pii_class before CIS 373) must not abort the test's transaction before the retry without it.
+                async with conn.transaction():
+                    return await conn.fetchrow(sql, stage)
+
             row = await role_config._fetch_scoped(
-                lambda sql: conn.fetchrow(sql, stage),
+                fetch,
                 lambda cols: (f"SELECT stage, role, provider, model_id, account_route, {role_config._ROUTE_COLUMNS}"
                               f"{cols} FROM shared.llm_role_config WHERE stage = $1 AND is_active"))
             assert role_config._row_to_config(row).route_deadline_s == 90

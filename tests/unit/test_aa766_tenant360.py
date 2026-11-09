@@ -15,6 +15,9 @@ from api.routers import admin
 from api.routers import admin_tenant360 as t360
 from services.acp_shared.audit_log import AdminTenantAuditAction
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 _SECRET = "test-admin-secret"
 TENANT_ID = uuid.uuid4()
 PLAN_ID = uuid.uuid4()
@@ -115,12 +118,12 @@ class TestRateLimitOverride:
         conn.fetchrow.return_value = _before()
         conn.fetchval.return_value = uuid.uuid4()
         out = await self._patch(conn, {"plan_tier": "growth"})
-        assert out["plan_tier"] == "growth" and out["rate_limit_rpm"] == admin.PLAN_LIMITS["growth"]["rpm"]
+        assert out["plan_tier"] == "growth" and out["rate_limit_rpm"] == 300
 
     @pytest.mark.asyncio
     async def test_rpm_needs_admin_role(self):
         with pytest.raises(HTTPException) as e:
-            await self._patch(_conn(), {"rate_limit_rpm": 120}, role="reviewer")
+            await self._patch(_conn(), {"rate_limit_rpm": 120}, role="content")
         assert e.value.status_code == 403
 
     def test_rpm_bounds_validated(self):

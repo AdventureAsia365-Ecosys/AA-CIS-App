@@ -14,7 +14,7 @@
 import type { GuideContent } from "../../_kit/guideContent";
 
 export const AI_GATEWAY_GUIDE: GuideContent = {
-  title: "How to use AI providers",
+  title: "How to use the AI gateway",
   intro: "One page for every paid AI and data source. Read it to answer four questions: is each source answering, "
     + "what did it cost, which model does each stage use, and is anything close to a limit.",
   sections: [
@@ -24,14 +24,17 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       blocks: [
         { kind: "paragraph", text: "The platform pays several outside services: the language models (through AWS "
           + "Bedrock or a vendor API), Jev for yes / no decisions, DataForSEO for search data and Geoapify for place "
-          + "coordinates. This page shows all of them side by side." },
+          + "coordinates. The partner CRM's own AI calls and its personal-data check (Bedrock Guardrails) are listed "
+          + "too, and so are TripPlanner's maps (Mapbox), which run on a free tier. This page shows all of them side "
+          + "by side." },
         { kind: "paragraph", text: "Every number comes from our own logs and stored balance checks; opening the page "
-          + "calls no provider and costs nothing. The page has six tabs: Providers (health, spend and balance, plus "
-          + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Models & "
+          + "calls no provider and costs nothing. The page has eight tabs: Providers (health, spend and balance, plus "
+          + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Route control "
+          + "(the order of models and providers, presets and versions), Models & "
           + "trials (the model catalog and the shadow comparisons), Budgets (every spending cap), Calls (every "
-          + "logged call, one by one) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
+          + "logged call, one by one), Trace (every attempt of one request, the share served by each fallback rung, the route alerts) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
           + "Operations › Budgets moved here; their old links open the right tab. The spend totals by tenant, model "
-          + "and market stay on Cost Operations, in its AI & data spend tab." },
+          + "and market stay on Spend, in its AI & data spend tab." },
       ],
     },
     {
@@ -51,12 +54,30 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       heading: "How to read a row",
       blocks: [
         { kind: "terms", uiLabels: true, items: [
+          { term: "App profiles", text: "The AI switch of each app (CIS, TripPlanner, Partner CRM, AA-Booking). AI "
+            + "off: every AI call of that app is refused before it is sent, with a 0 USD refused row on the Calls tab, "
+            + "and its jobs wait until AI is back on. The card also keeps each app's bulk pause, default daily budget "
+            + "and what the app shows when AI is unavailable. CIS, TripPlanner (within 20 seconds) and the Partner CRM "
+            + "act on the switch; TripPlanner and the CRM also stop at their default daily budget, and TripPlanner's "
+            + "80 % and 100 % alerts reach the bell and the ops e-mail. A Partner CRM change is sent to the CRM first "
+            + "(it needs the CRM platform admin group). Switching off needs a reason and is audited." },
           { term: "LLM connections", text: "One row per way the platform reaches a model, for example Bedrock in an "
-            + "AWS account (shown by its account number) or the OpenAI API." },
+            + "AWS account (shown by its account number) or the OpenAI API. The partner CRM's AI calls have one row "
+            + "of their own, read from the CRM with your staff sign-in; they are switched in the CRM, not here." },
           { term: "Decisions (Jev)", text: "Jev's row. Its balance is an estimate: the top-ups recorded in Jev credit "
             + "minus the spend we logged, because Jev has no balance service." },
-          { term: "Data providers", text: "DataForSEO (balance from the daily check) and Geoapify (credits used "
-            + "today against the daily limit; the limit resets each UTC day)." },
+          { term: "Data providers", text: "DataForSEO (balance from the daily check), Geoapify (credits used "
+            + "today against the daily limit; the limit resets each UTC day) and Mapbox for TripPlanner's maps (free "
+            + "tier, nothing logged: its row links to the Mapbox console)." },
+          { term: "Guards", text: "Bedrock Guardrails, which finds personal data in the partner CRM's text before a "
+            + "model sees it. Its calls and cost come from the CRM's log." },
+          { term: "Errors · latency", text: "For the last 24 hours and the last 7 days: how many calls reached the "
+            + "provider, the share that failed (an error, an answer cut short or a billed but unusable answer), and "
+            + "the answer time: p50 is the typical call, p95 the slowest one in twenty. Calls our own guard or a switch "
+            + "refused before sending are counted apart and are not errors. Geoapify's answer time is the mean time per "
+            + "request of each batch (batches before 02/11/2026 have none). The "
+            + "partner CRM rows come from the CRM's daily totals: today (UTC) and the last 7 days, refusals counted as "
+            + "failures, no answer time." },
           { term: "Health", text: "For a connection: when it last answered and the last error type. For Jev: calls "
             + "and errors of the last 24 hours and the mean answer time." },
           { term: "Budget", text: "The monthly budget of a connection and the daily cap of its provider, with how "
@@ -87,10 +108,11 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Cap reached", text: "A budget, the balance or today's credits are used up. Calls stop or fall back "
             + "until the cap is raised or the period ends." },
           { term: "Off", text: "Switched off on purpose. Not counted as a problem." },
-          { term: "No recent calls", text: "An LLM connection with no answered call in the last 24 hours. Nothing is "
-            + "known to be wrong; the Routing tab uses the same words." },
+          { term: "No recent calls", text: "An LLM connection, or a partner CRM row, with no answered call in the last "
+            + "24 hours. Nothing is known to be wrong; the Routing tab uses the same words." },
           { term: "Unknown", text: "The source could not be read, or no balance or top-up is known yet (Jev, "
             + "DataForSEO). The row says why." },
+          { term: "Not logged", text: "A source we list but do not log (Mapbox). Not counted as a problem." },
         ] },
       ],
     },
@@ -105,7 +127,17 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
             + "edited here: they change only through a reviewed migration." },
           { term: "Jev credit", text: "Record each Jev top-up by hand (Jev has no balance service), see the "
             + "estimated credit left, and send test alerts." },
+          { term: "Credit", text: "The same for the OpenAI and Anthropic APIs: record the balance read on the "
+            + "provider's console and each top-up, see the estimated balance (the newest balance read plus the "
+            + "top-ups after it, minus the spend logged since) and set the alert threshold. Below it, admins get "
+            + "one bell and one e-mail a day." },
         ] },
+        { kind: "control", label: "Switch off", does: "Switches Jev, DataForSEO or Geoapify off (or back on with "
+          + "Switch on), after a confirm. While off, nothing is sent to it: each refused call is logged at zero cost, "
+          + "Jev answers as if it were down and a DataForSEO or geocoding run stops. Jev and DataForSEO see the "
+          + "change within a minute; a geocoding job reads it when it starts.",
+          cost: "Free. Switching off saves the calls; switching on brings back their usual price.",
+          when: "The provider misbehaves, its credit must not be spent, or a test needs it off." },
         { kind: "control", label: "Re-queue refused jobs", does: "Checks first which failed jobs of the last 14 days "
           + "stopped because a provider refused an account, shows the numbers, and only after you confirm puts them "
           + "back in the queue with a fresh set of attempts, one batch of 50 at a time (Check the next batch for the rest). "
@@ -142,6 +174,63 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       ],
     },
     {
+      id: "route-control",
+      heading: "Route control: chains, provider order, presets and versions",
+      blocks: [
+        { kind: "paragraph", text: "Route control is where every routing setting is changed without a deploy. A "
+          + "stage's chain is its list of models: the first one (the primary) serves the stage, and the next ones take "
+          + "over in order when it fails, is refused or reaches its spending cap. One request makes at most six "
+          + "attempts in all." },
+        { kind: "paragraph", text: "Many models can be reached in more than one way: Claude on AWS (the LLM account) "
+          + "or on the Anthropic API, GPT on AWS or on the OpenAI API. The provider order of a model says which way is "
+          + "tried first. The order mode says how the gateway walks a chain: same model first (every provider of a "
+          + "model, then the next model; the default) or AWS first (every AWS model of the chain, then the vendor "
+          + "APIs)." },
+        { kind: "flow", steps: ["Change a chain, a provider order or the order mode", "Preview (checked by the "
+          + "server, free)", "Review and save (a new version)", "The gateway uses it within about 20 seconds"] },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Serves first", text: "The model and provider that would be called first for the stage right now, "
+            + "for the change you are making. It reads the live state (switched off, refused or over its cap means "
+            + "skipped) and calls no model." },
+          { term: "No live model", text: "No model of the chain would be called now. A save that leaves a stage like "
+            + "this is refused; a stage that was already like this only shows a warning." },
+          { term: "In force", text: "The version the gateway uses now." },
+          { term: "Outside the admin", text: "A change made without this page (for example a database migration), "
+            + "recorded as its own version before the next change from the admin." },
+        ] },
+        { kind: "subheading", text: "Rules the server checks on every save" },
+        { kind: "list", items: [
+          "A judge never uses a model of the writers' family (it would mark its own work).",
+          "The two sides of a check pair (place cards, place duplicates) use models of different makers.",
+          "A chain makes at most six attempts per request, counting every provider of every model.",
+          "Every stage keeps at least one model that would be called now.",
+          "A stage that may not leave AWS cannot get a model reached only through a vendor API, and such a model "
+            + "stays at the end of a chain (or right behind the same model on AWS).",
+        ] },
+        { kind: "paragraph", text: "A rule that was already broken before your change is shown as a warning, so it "
+          + "never blocks an unrelated change. A writer or judge stage that gets a new chain, or that a provider "
+          + "order, preset or order mode change moves to another model or provider, needs the eval run that backs "
+          + "it, or a break-glass reason (which also alerts the admins), as on the Routing tab." },
+        { kind: "control", label: "Prefer Anthropic API for Claude (sponsored)", does: "Puts the Anthropic API "
+          + "first for every Claude model and sets the order mode to same model first. Chains do not change.",
+          cost: "Free to apply; Claude calls then bill on the Anthropic API key while its connection is on.",
+          when: "The Anthropic API is sponsored or cheaper than AWS." },
+        { kind: "control", label: "Prefer AWS", does: "Puts the AWS providers first for every model. The order mode "
+          + "and the chains do not change.", cost: "Free to apply.",
+          when: "The vendor APIs should only be the last resort again." },
+        { kind: "control", label: "Review and save", does: "Shows every change, the rule errors and warnings, then "
+          + "saves them as one new version with your note.", cost: "Free; the next calls use the new routes.",
+          avoid: "The preview lists an error: fix it first." },
+        { kind: "control", label: "Revert", does: "Restores the chains, provider order and order mode of an earlier "
+          + "version as a new version (the history keeps every step).", cost: "Free.",
+          when: "A change made things worse." },
+        { kind: "callout", tone: "note", title: "What a version holds",
+          text: "The order mode, every stage's chain and every model's provider order. The shadow model, the stage "
+            + "switch, the data scopes and the spending caps keep their own controls and are not changed by a revert. "
+            + "Every model call records the version that was in force." },
+      ],
+    },
+    {
       id: "models",
       heading: "Models & trials",
       blocks: [
@@ -170,11 +259,21 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Tenant AI budgets", text: "The monthly AI budget of each tenant that has one, with this month's spend "
             + "and state. Set or change it on the tenant (Tenants › the tenant › Cost). Staff only. Stored and shown "
             + "now; holding new jobs at the approval level comes with the gateway check." },
+          { term: "Central LLM caps", text: "Caps on every model call of one scope, whatever provider answers: the "
+            + "whole app, one stage, one kind of job (also per job run), the eval runs or the ad-hoc scripts; per day "
+            + "and per month. Checked before each call: a cap that stops refuses the call before anything is sent "
+            + "(a zero-cost refused row in Calls). New caps start alert only; on Dev they stay alert only." },
+          { term: "Coverage per call site", text: "One line per stage that calls a model, with the central caps it is "
+            + "under, the kinds of job that called it, and its spend. A line with no central cap is still capped by "
+            + "its connection's monthly budget." },
           { term: "Stops at the cap", text: "The run ends when the next call would pass the cap." },
           { term: "Alert only", text: "Never stops; an admin alert goes out at the alert %." },
         ] },
         { kind: "control", label: "Add a cap", does: "Creates a provider-wide or a job cap.",
           cost: "Free.", when: "A paid source shows No in the coverage list." },
+        { kind: "control", label: "Add a central cap", does: "Creates a cap on every model call of one scope; Remove "
+            + "in its editor drops it.",
+          cost: "Free.", when: "A call site shows no central cap and its spend should ring a bell." },
       ],
     },
     {
@@ -223,11 +322,13 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           text: "Calls logged before 31 Oct 2026 have no outcome or answer time, and a refused attempt from before "
             + "that date was not logged at all. Since then every attempt has its row, a refused one at zero cost." },
         { kind: "list", items: [
-          "TripPlanner's model calls show from the shared log; its per-stage caps are on Cost Operations › AI & data "
+          "TripPlanner's model calls show from the shared log; its per-stage caps are on Spend › AI & data "
             + "spend and the Apps board.",
-          "Bedrock Guardrails and Mapbox write no log yet, so they have no row.",
+          "Mapbox writes no log: its row has no spend or answer times; read its usage on the Mapbox console.",
+          "The partner CRM's rows need your staff sign-in. They read the CRM's daily totals only (whole UTC days, no "
+            + "answer time); single CRM calls are on the Calls tab.",
           "Trial runs of new models (quick test, judge check, compare) are not on the Models & trials tab yet.",
-          "Spend is what we logged at our prices. The AWS bill can differ slightly; Cost Operations shows the bill.",
+          "Spend is what we logged at our prices. The AWS bill can differ slightly; Spend shows the bill.",
         ] },
       ],
     },
@@ -239,6 +340,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
     { term: "Daily cap", text: "The most a provider may cost in one UTC day across the whole platform." },
     { term: "Trace", text: "All the logged paid calls of one job, in time order." },
     { term: "Fallback", text: "The next model a stage tries when its primary fails." },
+    { term: "Chain", text: "The ordered list of models a stage tries: the primary, then its fallbacks." },
+    { term: "Provider order", text: "Which provider of the same model is tried first (AWS or the vendor API)." },
+    { term: "Route version", text: "One saved state of every chain, provider order and the order mode." },
     { term: "Shadow", text: "A second model that answers the same call only to be compared; its answer is never used." },
   ],
 };

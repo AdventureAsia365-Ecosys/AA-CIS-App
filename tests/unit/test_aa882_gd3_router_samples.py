@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from api.core.staff_authz import MACHINE_ROUTES, POLICY, ROLE_PERMS
+from api.core.staff_authz import MACHINE_ROUTES, POLICY, ROLE_PERMS, policy_capabilities
 from api.main import app
 from api.routers import admin, admin_settings
 
@@ -26,8 +26,13 @@ SAMPLES = [
     ("admin", "PATCH", "/admin/master/{tour_id}/trash", None),
     ("admin", "PUT", "/admin/notifications/read-all", None),
     ("admin", "GET", "/admin/tenants", None),
-    ("admin", "POST", "/admin/tenants/{tenant_id}/generate-key", None),
     ("admin_tenant360", "GET", "/admin/tenants/{tenant_id}/cost", None),
+    ("admin_view_as", "POST", "/admin/tenants/{tenant_id}/view-as", {"reason": "Checking a held piece"}),  # AA-1035 s2
+    ("admin_tenant_assignments", "GET", "/admin/tenant-assignments", None),                       # AA-1035 s2
+    ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
+    ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),
+    ("admin_tenant_addon_requests", "POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline", {}),
+    ("admin_plans", "POST", "/admin/plans", {}),
     ("admin_pipeline", "POST", "/admin/review-queue/{review_id}/approve", {}),
     ("admin_pipeline", "POST", "/admin/run-tour-async", {}),
     ("admin_pipeline", "POST", "/admin/brands", {}),
@@ -35,6 +40,7 @@ SAMPLES = [
     ("admin_atoms", "PATCH", "/admin/atoms/{atom_id}", {"text": "x"}),
     ("admin_a4", "POST", "/admin/a4/publish-log/{publish_id}/unpublish", {}),
     ("admin_content_quality", "PATCH", "/admin/content-quality/place-cards/{card_id}", {}),
+    ("admin_tenant_compliance", "POST", "/admin/tenant-qa/compliance/{flag_id}/release", {"reason": "ok"}),  # AA-1039
     ("admin_photos", "POST", "/admin/photos/{photo_id}/assign", {}),
     ("admin_places", "POST", "/admin/places/backfill", {"limit": 999}),
     ("admin_supply_content", "POST", "/admin/supply-content/{entity_id}/versions/{version_id}/publish", None),
@@ -44,14 +50,23 @@ SAMPLES = [
     ("admin_overview", "GET", "/admin/overview", None),
     ("admin_budgets", "GET", "/admin/budgets", None),
     ("admin_llm_ops", "GET", "/admin/spend/daily", None),
+    ("admin_usage_explorer", "GET", "/admin/usage-explorer/query", None),               # AA-1045
+    ("admin_usage_explorer", "POST", "/admin/usage-explorer/rollup/run",
+     {"from": "2026-11-01T00:00:00+00:00", "to": "2026-11-01T01:00:00+00:00"}),         # AA-1045 (ops.write)
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/providers", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/trace", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/budgets", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/calls", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/experiments", None),                  # AA-900 UI (C4)
+    ("admin_ai_gateway", "GET", "/admin/ai-gateway/access", None),                       # AA-1025 C1 follow-up
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}", None),     # AA-1016 UI (C4)
     ("admin_ai_gateway", "PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}", {"monthly_usd": 5}),
     ("admin_ai_gateway", "DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}", None),
+    ("admin_llm_route_control", "GET", "/admin/ai-gateway/route-control", None),           # AA-1042
+    ("admin_llm_route_control", "POST", "/admin/ai-gateway/route-control/save",
+     {"order_mode": "aws_first", "expected_version": 1}),
+    ("admin_llm_route", "GET", "/admin/ai-gateway/route-policy", None),                  # AA-1042 Trace tab
+    ("admin_llm_route", "PUT", "/admin/ai-gateway/route-policy/{stage}", {"fallback_alert_pct": 20}),
     ("admin_dashboard", "GET", "/admin/dashboard/summary", None),
     ("admin_search", "GET", "/admin/search", None),
     ("admin_seo", "GET", "/admin/seo-intelligence", None),
@@ -76,15 +91,20 @@ SAMPLES = [
     ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/activate", None),      # AA-918
     ("admin_writing_memory", "POST", "/admin/writing-memory/releases/{release_id}/activate", None),      # AA-919
     ("admin_writing_memory", "GET", "/admin/writing-memory/releases/active", None),
+    ("admin_claim_labels", "POST", "/admin/writing-memory/claim-labels/import", {}),                 # AA-1048 W2
+    ("admin_claim_labels", "GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report", None),
+    ("admin_claim_shadow", "GET", "/admin/writing-memory/claim-shadow/summary", None),                # AA-1050 W4
     ("admin_reports", "GET", "/admin/reports", None),      # AA-1003
     ("admin_reports", "POST", "/admin/reports/{report_id}/run", {}),
+    ("admin_quality_funnel", "GET", "/admin/quality/funnel", None),   # AA-900 W0 (ops.read or lab.read)
+    ("admin_quality_lineage", "GET", "/admin/quality/lineage/coverage", None),   # AA-1052 W6 (ops.read or lab.read)
     ("admin_facts", "GET", "/admin/facts", None),      # AA-814
     ("admin_facts", "PATCH", "/admin/facts/{fact_id}", {"body": "b", "expected_updated_at": "2026-10-29T08:00:00Z"}),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
 ]
 
-PRINCIPALS = ["admin", "reviewer", "content", None]  # None = machine (secret, no role header)
+PRINCIPALS = ["admin", "content", None]  # None = machine (secret, no role header)
 
 _POLICY_DENIALS = ("Role '", "This route needs a staff role", "Unknown staff role")
 
@@ -129,7 +149,8 @@ def _expected(method, path, role) -> str:
         return "reached"
     if role is None:
         return "reached" if (method, path) in MACHINE_ROUTES else "denied"
-    return "reached" if capability in ROLE_PERMS[role] else "denied"
+    # AA-1035: an any_of entry passes with any of its capabilities
+    return "reached" if any(c in ROLE_PERMS[role] for c in policy_capabilities(capability)) else "denied"
 
 
 def test_every_router_with_routes_has_a_sample():
@@ -159,8 +180,8 @@ def test_sample_route_per_principal(client, sample, role):
 
 def test_reviewer_keeps_the_review_queue_and_loses_the_master_lifecycle(client):
     """The two behaviours a reviewer notices: Review Queue actions work, Master Content trash does not."""
-    assert _outcome(client, "POST", "/admin/review-queue/{review_id}/approve", {}, "reviewer") == "reached"
-    assert _outcome(client, "PATCH", "/admin/master/{tour_id}/trash", None, "reviewer") == "denied"
+    assert _outcome(client, "POST", "/admin/review-queue/{review_id}/approve", {}, "content") == "reached"
+    assert _outcome(client, "PATCH", "/admin/master/{tour_id}/trash", None, "content") == "denied"
 
 
 def test_brand_identity_tenant_jwt_path_is_not_narrowed(client):

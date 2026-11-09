@@ -21,6 +21,9 @@ from fastapi import HTTPException
 
 from api.routers import _billing, admin, admin_pipeline, admin_overview, admin_settings, v1_tours
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 _SECRET = "test-admin-secret"
 TENANT_ID = str(uuid.uuid4())
 MONTH = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -176,3 +179,59 @@ class TestViewReadersShape:
             for col in re.findall(r"\b[uv]\.([a-z_]+)", src):
                 assert col in live_cols, col
             assert "plan_attached" not in re.findall(r"\b[uv]\.([a-z_]+)", src)
+
+
+@pytest.mark.asyncio
+async def test_aa1035_directory_money_columns_are_null_for_support(monkeypatch):
+    """S267 review: a scoped caller without a money read (support) gets the directory without price, overage and cost;
+    customer_success (tenant.book.account.read) keeps them."""
+    row = {
+        "tenant_id": uuid.UUID(TENANT_ID), "name": "T", "slug": "t", "plan_tier": "growth",
+        "posts_per_week": 3, "country": None, "rate_limit_rpm": 300, "created_at": MONTH,
+        "is_active": True, "cancelled_at": None,
+        "api_calls_used": 0, "quota_tours_pct": 0, "quota_calls_pct": 0, "tours_overage": 2,
+        "overage_usd": Decimal("6.00"), "llm_cost_usd": Decimal("1.2345"),
+        "tours_quota_monthly": 200, "api_calls_quota_monthly": 20000, "price_usd_monthly": Decimal("799.00"),
+        "source_active": 0, "source_superseded": 0, "source_trashed": 0,
+        "master_active": 0, "master_inactive": 0, "master_trashed": 0, "daily_publish_limit": None,
+    }
+
+    async def scoped(request, conn):
+        return frozenset({TENANT_ID})
+
+    monkeypatch.setattr(admin, "tenant_scope_filter", scoped)
+    for role, money in (("support", False), ("customer_success", True)):
+        conn = AsyncMock()
+        conn.fetch.return_value = [row]
+        conn.fetchval.return_value = True
+        req = _request(conn)
+        req.headers = {"x-admin-role": role}
+        t = (await admin.list_tenants(req, x_admin_secret=_SECRET, include_inactive=False))["tenants"][0]
+        if money:
+            assert t["plan"]["price_usd_monthly"] == 799.0 and t["this_month"]["llm_cost_usd"] == pytest.approx(1.2345)
+            assert t["this_month"]["overage_usd"] == 6.0
+        else:
+            assert t["plan"]["price_usd_monthly"] is None
+            assert t["this_month"]["overage_usd"] is None and t["this_month"]["llm_cost_usd"] is None
+        assert t["this_month"]["tours_overage"] == 2       # counts stay
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role,money", [("support", False), ("customer_success", True), ("admin", True)])
+async def test_aa1035_details_cost_is_null_for_support(role, money):
+    """S267 review: the Tenant 360 header (GET /admin/tenants/{id}/details) shows support no LLM cost."""
+    conn = AsyncMock()
+    tenant = {"name": "T", "slug": "t", "plan_tier": "growth", "rate_limit_rpm": 300, "created_at": MONTH}
+    usage = {"api_calls_used": 5, "quota_calls_pct": Decimal("1.0"), "api_calls_quota_monthly": 500}
+    conn.fetchrow = AsyncMock(side_effect=[tenant, usage, None])
+    conn.fetchval = AsyncMock(side_effect=[3, Decimal("2.5"), Decimal("1.5")])
+    run = {"batch_id": uuid.uuid4(), "started_at": MONTH, "tours_total": 2, "tours_passed": 2,
+           "llm_model": "model-x", "cost_usd": Decimal("0.75"), "status": "completed"}
+    conn.fetch = AsyncMock(side_effect=[[], [run], []])
+    out = await admin.get_tenant_details(uuid.UUID(TENANT_ID), _request(conn), x_admin_secret=_SECRET,
+                                         page=1, page_size=25, sort="created_at", sort_dir="desc", country=None,
+                                         master_status=None, score=None, search=None, version=None,
+                                         x_admin_role=role)
+    assert (out["summary"]["total_llm_cost_usd"] is None) is not money
+    assert (out["pipeline_runs"][0]["llm_cost_usd"] is None) is not money
+    assert out["summary"]["total_rewrites"] == 3

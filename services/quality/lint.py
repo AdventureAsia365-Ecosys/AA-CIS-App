@@ -22,6 +22,8 @@ Errors
   (j) a Q0 corpus case (tests/unit/quality/cases/*.json) whose class_id does not resolve to a class (directly or
       through taxonomy.yaml aliases) or whose detector is not a registered gate, Jev key, A1 code or code check.
   plus schema errors in the three YAML files and a stale generated TS file.
+  AA-1047: plus the writing-policy lint (services/quality/policy_lint.py, (p1)-(p7)): no hand restatement of a value
+  of services/quality/writing_policy.yaml, its compiled file fresh, taxonomy severities equal to the policy's.
 Warnings: coverage parity (§3.4 #4), hard/block classes with no enforcing detector, selector paths with no
 Q0 keep/drop set yet (§3.4 #6; becomes an error once the Q-2 corpus exists), unused Jev keys read by code,
 and (j) a gating (hard/block) Q0 case whose class id resolves only to warn classes (AA-924 input).
@@ -353,7 +355,7 @@ def check_chips(files: dict[str, str], root: Path, res: Result) -> None:
         elif found != list(chips.get("defect_classes") or {}):
             res.errors.append(f"(e) DEFECT_CLASSES {found} != registry chips.defect_classes "
                               f"{list(chips.get('defect_classes') or {})} (set and order are frozen)")
-    shared = root / "frontend/app/admin/content-quality/shared.ts"
+    shared = root / "frontend/app/admin/tenant-qa/quality/shared.ts"
     if shared.exists():
         ts = shared.read_text(encoding="utf-8")
         for const, group in (("DEFECT_NAMES", "defect_classes"), ("DUPLICATE_REASON_LABELS", "duplicate_reasons")):
@@ -587,6 +589,11 @@ def run(root: Path = ROOT) -> Result:
     if not gen.exists() or gen.read_text(encoding="utf-8") != gen_frontend.render():
         res.errors.append(f"{GENERATED_TS} is stale: run python -m services.quality.gen_frontend")
     # warnings
+    # AA-1047: the writing-policy lint (no hand restatement of a policy value; compiled file fresh; severities agree)
+    from services.quality import policy_lint
+    policy_errors, policy_scanned = policy_lint.run_policy(root, [p for p in tracked if (root / p).exists()])
+    res.errors.extend(f"writing policy: {e}" for e in policy_errors)
+    res.scanned["policy"] = policy_scanned
     for row in registry.parity_report():
         res.warnings.append(f"parity: {row['severity']} class {row['class']} has detectors for {row['covered']} "
                             f"but none for {row['missing']}")
@@ -596,7 +603,7 @@ def run(root: Path = ROOT) -> Result:
 
 
 def render_report(res: Result) -> str:
-    lines = ["### Quality registry lint (qtax-v1)", "",
+    lines = ["### Quality registry lint (qtax-v1) + writing policy (AA-1047)", "",
              f"Scanned {res.scanned.get('python', 0)} Python and {res.scanned.get('ts', 0)} TS files. "
              f"**{len(res.errors)} error(s)**, {len(res.warnings)} warning(s), "
              f"{len(res.allows)} `qlint: allow`.", ""]

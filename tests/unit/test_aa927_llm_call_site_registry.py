@@ -41,6 +41,8 @@ def _self(path: str, fn: str) -> tuple:
 # (path, enclosing function) -> the function(s) that write the row. The canonical pattern is the call
 # site itself (row written right after generate() returns, billed_unusable row in the except branch).
 LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
+    # AA-1042: the route test's tiny requests; run_route_test logs each answer (**billed_fields), the gateway the rest
+    ("api/services/llm_route_trace.py", "_test_one"): (("api/services/llm_route_trace.py", "run_route_test"),),
     ("services/acp_angle_gate/generate.py", "_generate_once"): _self(
         "services/acp_angle_gate/generate.py", "_generate_once"),
     ("services/acp_content_writing/generate.py", "_generate_full"): (
@@ -102,6 +104,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/content_generation/source_facts.py", "extract_day_facts"),
     ("services/places/llm.py", "_generate_sync"): (("services/places/llm.py", "make_generate.generate"),),
     ("services/places/llm.py", "embed_texts"): _self("services/places/llm.py", "embed_texts"),
+    # AA-1026 D5: the re-embed job's fill and probe write their own row right after embed() returns.
+    ("services/embeddings/reembed.py", "fill"): _self("services/embeddings/reembed.py", "fill"),
+    ("services/embeddings/reembed.py", "probe"): _self("services/embeddings/reembed.py", "probe"),
     # AA-917: the writing-memory rule drafter; draft_rule writes the row (or the billed_unusable row) after the call.
     ("services/writing_memory/drafter.py", "_generate_sync"): (("services/writing_memory/drafter.py", "draft_rule"),),
     ("services/writing_memory/preference.py", "_generate_sync"): (("services/writing_memory/preference.py",
@@ -109,6 +114,12 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     # AA-919 WM-19: the R2 judge; judge_output writes the row (or the billed_unusable row) after the call.
     ("services/writing_memory/eval_judge.py", "_generate_sync"): (
         ("services/writing_memory/eval_judge.py", "judge_output"),),
+    # AA-1048: the R1 claim-instrument calibration (stage adhoc_aa1048); run() passes every reply to _log, which writes
+    # the row (record_call_sync **billed_fields) or the billed_unusable row (record_unusable_sync).
+    ("services/ground_truth/r1.py", "gateway_call"): (("services/ground_truth/r1.py", "_log"),),
+    # AA-1050 W4: the claim-instrument shadow (stage claim_shadow); run_object passes every reply to its `log`, which is
+    # claim_shadow._log in production (record_call_with_pool **billed_fields, or record_unusable).
+    ("services/quality/claim_shadow.py", "gateway_call"): (("services/quality/claim_shadow.py", "_log"),),
     ("services/jobs/place_dedupe_job.py", "_generate_sync"): (
         ("services/jobs/place_dedupe_job.py", "make_models.call"),),
     # AA-835: the supply content draft (job supply_content_draft); its row right after generate(), the billed
@@ -142,6 +153,10 @@ EXCLUDED: dict[tuple[str, str], str] = {
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "
                                                    "overlay; no call",
+    ("services/jobs/llm_contract_smoke_job.py", "_brand_fit.score"): (
+        "AA-1026 contract smoke: the brand fit call runs on the smoke's pinned client (LLMClient.probe, stage "
+        "adhoc_aa1026) and run_smoke writes one llm_call_log row per reply (_log_replies); the plan's capture client "
+        "makes no call"),
 }
 
 

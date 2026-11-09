@@ -422,7 +422,7 @@ export interface MetricsPage { items: KpiReport[]; soft_stop_codes: SoftStopCode
 
 export type Resolution = "judge_right" | "human_right" | "unclear";
 export interface Disagreement {
-  item_id: string; source: "golden" | "piece_label"; source_ref: string; writer: Writer; scope: Scope;
+  item_id: string; source: "golden" | "piece_label" | "golden_claim"; source_ref: string; writer: Writer; scope: Scope;
   tenant_id: string | null; machine_verdict: string; human_label: string; week_start: string;
   status: "open" | "resolved"; resolution: Resolution | null; note: string | null; resolved_by: string | null;
   resolved_at: string | null; created_at: string;

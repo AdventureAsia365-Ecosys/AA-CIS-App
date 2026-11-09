@@ -80,7 +80,7 @@ def test_r4_sql_names_only_reference_tables():
     for name in ("gold_aa_internal.tour_lifecycle_event", "gold_aa_internal.v_tour_liveness", "shared.v_tour_photos",
                  "silver_aa_internal.generated_content", "shared.prompt_eval_runs", "shared.writing_memory_release",
                  "shared.eval_item_result", "shared.rerun_wave", "shared.job", "shared.schema_versions",
-                 "booking.v_ops_inquiry_inbox", "tripplanner.v_ops_inquiry_keys", "shared.report_run",
+                 "tripplanner.v_ops_inquiry_keys", "shared.report_run",
                  "shared.llm_call_log", "shared.decision_log", "shared.cost_explorer_snapshot",
                  "shared.tenant_api_usage"):
         assert f"### `{name}`" in text, name
@@ -281,6 +281,17 @@ def test_ops14_rates_overdue_and_dead_kinds():
     assert "booking.job" in out.markdown
 
 
+def test_ops14_a_retired_scheduled_kind_is_not_dead():
+    """R0 hotfix: the TP-03 hourly check stopped on purpose; 30 days later it must not turn K-JOB-DEAD red."""
+    reg = _reg()
+    facts = _job_facts()
+    facts["job_last"] = facts["job_last"] + [{"kind": "inquiry_handoff_check", "last_created": None, "scheduled": True,
+                                              "last_scheduled": (NOW - timedelta(days=45)).isoformat()}]
+    out = reliability.render_ops14(reg, reg.report("OPS-14"), MON, SUN, facts, NOW, expected=EXPECTED)
+    kp = _kpis(out)
+    assert kp["K-JOB-DEAD"]["value"] == 1 and "inquiry_handoff_check" not in kp["K-JOB-DEAD"]["note"]
+
+
 def test_ops14_unreadable_job_table():
     reg = _reg()
     facts = {k: {"error": "InsufficientPrivilegeError: x"} for k in _job_facts()}
@@ -341,14 +352,12 @@ def test_ops13_without_cloudwatch_names_the_reason():
 
 # ── DATA-02 ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_data02_inbox_unmatched_and_llm_recon():
+def test_data02_llm_recon_and_the_historical_inquiry_lines():
+    """R0 hotfix (root ADR 0019, B2B-only model): the inquiry hand-off lines are historical, never red or amber, even
+    when an old fact shape still carries an unmatched key."""
     reg = _reg()
     facts = {
-        "handoff": {"totals": {"sent": 5, "received": 4, "gap": 1, "parked": 0, "failed": 0, "cases": 4},
-                    "days": []},
-        "inbox": {"status": [{"status": "processed", "n": 4, "unprocessed": 0, "no_case_after_24h": 0}],
-                  "unprocessed_age_p95_s": None, "lag_p95_s": 42.0},
-        "unmatched": {"unmatched": 1, "keys": 5, "oldest": "2026-10-27T01:00:00+00:00"},
+        "unmatched": {"unmatched": 1, "keys": 5, "oldest": "2026-10-27T01:00:00+00:00"},      # ignored now
         "aws": [{"day": MON, "account": "acc3", "amount_usd": 10.0}, {"day": MON, "account": "acc2", "amount_usd": 9.0},
                 {"day": SUN, "account": "acc3", "amount_usd": 10.0}],
         "llm": [{"day": MON, "account": "acc3", "cost_usd": 9.0}, {"day": SUN, "account": "acc3", "cost_usd": 8.0},
@@ -358,19 +367,29 @@ def test_data02_inbox_unmatched_and_llm_recon():
     out = reliability.render_data02(reg, reg.report("DATA-02"), MON, SUN, facts, NOW)
     kp = _kpis(out)
     assert set(kp) == set(reg.report("DATA-02").kpis)
-    assert kp["K-REC-INBOX"]["value"] == 42.0 and kp["K-REC-INBOX"]["status"] == "ok"
-    assert kp["K-REC-UNMATCHED"]["value"] == 1 and kp["K-REC-UNMATCHED"]["status"] == "red"
+    for kid in ("K-REC-INBOX", "K-REC-UNMATCHED"):
+        assert kp[kid]["status"] == "historical" and kp[kid]["value"] is None, kid
     assert kp["K-REC-FEEDLAG"]["status"] == reliability.NOT_WIRED
     assert kp["K-LLM-RECON"]["value"] == pytest.approx(0.15) and kp["K-LLM-RECON"]["status"] == "amber"
-    assert "flagged" in out.summary and "Sent 5, received 4, gap 1" in out.markdown
+    assert out.summary.endswith("flagged K-LLM-RECON")
+    assert "Inquiry handoff, TripPlanner to Booking (historical)" in out.markdown
 
 
-def test_data02_contract_views_missing():
-    reg = _reg()
-    facts = {k: {"error": "UndefinedTableError: x"} for k in ("handoff", "inbox", "unmatched", "aws", "llm")}
-    out = reliability.render_data02(reg, reg.report("DATA-02"), MON, SUN, facts, NOW)
-    assert "Contract views not readable" in out.markdown
-    assert _kpis(out)["K-REC-INBOX"]["status"] == "no_data"
+def test_data02_reads_no_inquiry_view():
+    class Conn:
+        async def fetch(self, sql, *args):
+            assert "v_ops_inquiry" not in sql and "v_ops_traffic_daily" not in sql, sql
+            return []
+
+        async def fetchrow(self, sql, *args):
+            assert "v_ops_inquiry" not in sql, sql
+            return None
+
+    facts = asyncio.run(reliability.collect_data02(Conn(), MON, SUN))
+    assert not {"handoff", "inbox", "unmatched"} & set(facts)
+    out = reliability.render_data02(_reg(), _reg().report("DATA-02"), MON, SUN,
+                                    {k: {"error": "UndefinedTableError: x"} for k in ("aws", "llm")}, NOW)
+    assert _kpis(out)["K-LLM-RECON"]["status"] == "no_data" and "nothing flagged" in out.summary
 
 
 # ── DATA-03 ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -472,6 +491,5 @@ def test_kpi_tables_show_values_in_the_unit_they_are_computed_in():
                       for s in ("succeeded", "failed")]}
     data04 = reliability.render_data04(reg, reg.report("DATA-04"), date(2026, 10, 1), date(2026, 10, 31), facts, NOW)
     assert _actual(data04, "K-RET-RUNS") == "50.0 %"
-    data02 = reliability.render_data02(reg, reg.report("DATA-02"), MON, SUN, {
-        "unmatched": {"unmatched": 2, "keys": 5, "oldest": None}}, NOW)
-    assert _actual(data02, "K-REC-UNMATCHED") == "2"
+    data02 = reliability.render_data02(reg, reg.report("DATA-02"), MON, SUN, {}, NOW)
+    assert _actual(data02, "K-REC-UNMATCHED") == "—"                    # historical since the R0 hotfix

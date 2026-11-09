@@ -12,17 +12,23 @@
       "tokens.ts",
       "brand.ts",
       "theme.ts",
+      "i18n.ts",
+      "aiNotice.messages.ts",
+      "brandTheme.ts",
       "check-kit-copy.mjs",
       "eslint-kit.mjs",
       "MANIFEST.json"
     ]
   },
   "files": {
+    "AiNotice.tsx": {
+      "sha256": "9e42076c70e34f46f8a604375b272b99c23f8996478af5e205eb21426f6da480"
+    },
     "Buttons.tsx": {
       "sha256": "6ca183d8c2baa3747a8e58cfc1bb7a8d94e26e454640af9c96e724a72764e8a4"
     },
     "DataTable.tsx": {
-      "sha256": "5e14846b1a501f8e2ae86cbf04f6f719e1044c2d4c339667b4568a5c6652027a"
+      "sha256": "156ff6d7ad8796fe71c071bca6cabb85edc3eb923301a0774870d009e6c5d6a0"
     },
     "DateField.tsx": {
       "sha256": "89fb1df19fd09b1fe1f1348d506b714aee238c17fb7e05590a254ac82a9369e3"
@@ -43,7 +49,7 @@
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
     },
     "KitGallery.tsx": {
-      "sha256": "e2da39f1fe65b65f7907a8fdedded398611724d4dfbaea655c1c2904969aac19"
+      "sha256": "52b5113871ad8faadb6d77dcb391108ce537ede6dc0705d8b7061304d56298d8"
     },
     "KpiTile.tsx": {
       "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
@@ -55,10 +61,13 @@
       "sha256": "af487dedc10704c17e15aa53a9ab5a16253aa2e6e8fbba9f87e7fa383d22e4e9"
     },
     "Modal.tsx": {
-      "sha256": "a461fd3892dcbf7631e3cee12eaf56348200bbb7988d5fdf9ecb8299f498dc2c"
+      "sha256": "097128126700f1910c207d9a5ac5f09ad33e80eaf14d89dd85704b8c41599c39"
     },
     "Money.tsx": {
       "sha256": "831a7f2266ef50869646043e9aea3b403316c91afd84dd8513ad9d17adeeedb6"
+    },
+    "NavGroup.tsx": {
+      "sha256": "4b7f9c87143af7839dc44a89f48b9b00975c81a47145a46523d1c63cd3b13d92"
     },
     "PageFrame.tsx": {
       "sha256": "690f4643fea7cddff32bc10f5d91d9e5dde872909d18ef04488198831f42efce"
@@ -72,17 +81,26 @@
     "Section.tsx": {
       "sha256": "cd5866f1f9879af76870d189042219eef6a3f9b0a2c67cad0a1247ddfe155388"
     },
+    "ShellFrame.tsx": {
+      "sha256": "9edf1b16987d5f77020b383861c256adb1d56ed2284332c3b7f47308d0a2af49"
+    },
     "Toast.tsx": {
       "sha256": "0a8813902842ac63feba66873ad7d47e3a9162f27f5a43da33ba2b149eaaf4c5"
     },
     "TraceTimeline.tsx": {
       "sha256": "260c5bf648b13241961d085880d2e8f63aff9da041a8ee5f2044c0da387ede12"
     },
+    "aiNotice.messages.ts": {
+      "sha256": "4e14c790280b0d8a99b09db5dd7a90fd12721ff70c324bc24da277b8c6ede525"
+    },
     "brand.ts": {
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
     },
+    "brandTheme.ts": {
+      "sha256": "998300c4c672d896fdddc006cb11c5754fff6de37294e7d5518c2885c033a247"
+    },
     "check-kit-copy.mjs": {
-      "sha256": "8d717c8c83bcf0be7e982f69c64261f0313e04689ab290342b02938b1f31eee0"
+      "sha256": "bfdc21b739ad08365b40299682c5af150a7a64b5269f522f903ce2556da3754a"
     },
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
@@ -100,19 +118,19 @@
       "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
     },
     "kit.messages.ts": {
-      "sha256": "f0ac33de7ec10679d8cc020d6cbe6ad4c19d1b87f62ebf2ca27fa2608b12c933"
+      "sha256": "8bed1617d7020509551e894090261339e49a0f058077c7eea8bbe877073eccd0"
     },
     "kitGallery.messages.ts": {
-      "sha256": "392b351fc0e698b7c4cc67bff8476fcc1f726eeeb4110a0abbab9f19fc8c807c"
+      "sha256": "227e0c13d57e7cd7f06fc3875cd467671406801571daf9f399c0eeea6d4a1043"
     },
     "primitives.tsx": {
-      "sha256": "b6e46b4ba04232e61925a79c92ce574c03c6d3a7654ebb8fc113a652b97df4ad"
+      "sha256": "ba79f54e2d81e2898817dc93f46849abf934480e2bc5f0c565c0a21a5284a11f"
     },
     "savedViews.ts": {
       "sha256": "902e4502baa8e95134d6ef20773bf624fbc07ac044063824e3a424de33c5eb24"
     },
     "sidebarStore.ts": {
-      "sha256": "0199d90c435b8f015f930b694ad4689e1afc7c6065970516bb62334c42c91556"
+      "sha256": "dba86f9478c51e7398efcd4120618fe59f3bc5ea7597229ff6b7c228de6ce06b"
     },
     "theme.ts": {
       "sha256": "23d70cb0649f15fbe55e7ef91a7cfa2780128f93a371c286e27db4dcbcddeb00"
@@ -121,7 +139,7 @@
       "sha256": "17f8bc6cf10dd0e6586510fc5b4c75476d76e047c9b0d1fc7bc08dc9bcf52899"
     },
     "tokens.ts": {
-      "sha256": "611ff7c7c9dc3bb18f49857f42ec868c672637a56f0608239ed7e2edabc23dc5"
+      "sha256": "c794544ed97ce9562c526e79d0020891879bbe1efae496c691be496b9d3e01d3"
     },
     "useHydrated.ts": {
       "sha256": "ff03882575b53db53178d782e184fc9844ab02f03e5c89d09ff981f2422180a4"
@@ -133,7 +151,7 @@
       "sha256": "df0174679a66288ff2343bc45b797b08dea342cbff09d940f60287e45f66d96f"
     },
     "useSidebar.ts": {
-      "sha256": "cec75bb269a63cbcfffc98db9d8badca552ffc53166266e53ead2cf9453869b2"
+      "sha256": "b5d5b202d2eb112a216fc382e8113c50a9df020c794a463ea2292d953dce9fe9"
     },
     "useTheme.ts": {
       "sha256": "a5866120d8aca082a3d9f12e406ec319fed71658104d1cf9a133db591a07e774"

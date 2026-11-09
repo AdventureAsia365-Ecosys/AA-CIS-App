@@ -64,9 +64,9 @@ def test_linked_admin_gets_200_with_directory_fields(client, directory, issuer):
 
 
 def test_first_sign_in_binds_by_email_exactly_once(client, directory, issuer):
-    uid = directory.add(role="reviewer", email=EMAIL)
+    uid = directory.add(role="content", email=EMAIL)
     with capture_logs() as logs:
-        res = _verify(client, issuer.token(**{"cognito:groups": ["cis-reviewer"], "email": "Staff@Adventure.Asia"}))
+        res = _verify(client, issuer.token(**{"cognito:groups": ["cis-content"], "email": "Staff@Adventure.Asia"}))
     assert res.status_code == 200, res.text
     assert res.json()["admin_id"] == uid
     row = directory.row(uid)
@@ -75,7 +75,7 @@ def test_first_sign_in_binds_by_email_exactly_once(client, directory, issuer):
     assert any(e["event"] == "staff_identity_linked" and e["admin_id"] == uid for e in logs)
     # Later sign-ins find the row by (iss, sub); nothing is bound again.
     staff_identity.clear_cache()
-    assert _verify(client, issuer.token(**{"cognito:groups": ["cis-reviewer"]})).status_code == 200
+    assert _verify(client, issuer.token(**{"cognito:groups": ["cis-content"]})).status_code == 200
     assert directory.links == 1
 
 
@@ -93,6 +93,15 @@ def test_a_row_bound_to_another_identity_is_never_rebound(client, directory, iss
 def test_booking_only_groups_are_refused_403_before_the_directory(client, directory, issuer):
     directory.add(iss=ISS, sub=SUB)
     res = _verify(client, issuer.token(**{"cognito:groups": ["booking-admin", "booking-sales"]}))
+    assert res.status_code == 403
+    assert res.json()["detail"] == "No CIS staff group"
+    assert directory.sql == []
+
+
+def test_the_retired_cis_reviewer_group_alone_is_refused_403(client, directory, issuer):
+    """AA-1035 close-out: the reviewer alias is gone (CIS 375); cis-reviewer is no CIS role any more."""
+    directory.add(role="content", iss=ISS, sub=SUB)
+    res = _verify(client, issuer.token(**{"cognito:groups": ["cis-reviewer"]}))
     assert res.status_code == 403
     assert res.json()["detail"] == "No CIS staff group"
     assert directory.sql == []
@@ -127,16 +136,24 @@ def test_role_comes_from_the_highest_group_and_drift_is_logged_not_denied(client
     with capture_logs() as logs:
         res = _verify(client, issuer.token(**{"cognito:groups": ["cis-content", "cis-reviewer", "booking-admin"]}))
     assert res.status_code == 200, res.text
-    assert res.json()["role"] == "reviewer"
+    assert res.json()["role"] == "content"   # AA-1035: the retired cis-reviewer group adds nothing
     drift = [e for e in logs if e["event"] == "staff_role_drift"]
     assert drift == [{"event": "staff_role_drift", "log_level": "warning", "admin_id": uid,
-                      "group_role": "reviewer", "db_role": "admin", "sub": SUB}]
+                      "group_role": "content", "db_role": "admin", "sub": SUB}]
 
 
 @pytest.mark.parametrize("groups, role", [
     (["cis-content", "cis-admin"], "admin"),
     (["cis-content"], "content"),
-    (["booking-admin", "cis-content", "cis-reviewer"], "reviewer"),
+    (["booking-admin", "cis-content", "cis-reviewer"], "content"),   # AA-1035: the retired group holds no role
+    # AA-1035 R2 (root ADR 0019 d3): the six new groups, in the WORKFORCE precedence order (10-39)
+    (["cis-content", "cis-content_lead"], "content_lead"),
+    (["cis-support", "cis-customer_success"], "customer_success"),
+    (["cis-tenant_qa", "cis-finance"], "finance"),
+    (["cis-content", "cis-tenant_qa"], "tenant_qa"),
+    (["cis-support"], "support"),
+    (["cis-ai_ops", "cis-customer_success"], "ai_ops"),
+    (["cis-admin", "cis-ai_ops"], "admin"),
 ])
 def test_role_order_admin_reviewer_content(client, directory, issuer, groups, role):
     directory.add(role=role, iss=ISS, sub=SUB)

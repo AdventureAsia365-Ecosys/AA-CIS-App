@@ -36,6 +36,8 @@ import {
   useFormat,
   useT,
   useToast,
+  Input, Textarea,
+  ChipButton, Pressable,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -283,7 +285,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
       )}
 
       <Field label={t("fieldTitle")} htmlFor={fid("title")} error={(dirty && problems.title) || fieldError("title")}>
-        <input id={fid("title")} type="text" autoComplete="off" value={form.title} readOnly={!editable}
+        <Input id={fid("title")} type="text" autoComplete="off" value={form.title} readOnly={!editable}
           onChange={(e) => edit({ title: e.target.value })} style={fieldStyle} maxLength={400} />
       </Field>
 
@@ -302,7 +304,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
             {form.body_markdown || <span style={{ color: K.muted }}>{t("empty")}</span>}
           </div>
         ) : (
-          <textarea id={fid("body")} value={form.body_markdown} readOnly={!editable} rows={14}
+          <Textarea id={fid("body")} value={form.body_markdown} readOnly={!editable} rows={14}
             onChange={(e) => edit({ body_markdown: e.target.value })}
             style={{ ...fieldStyle, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, resize: "vertical", minHeight: 260 }} />
         )}
@@ -330,17 +332,12 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
           {countryOptions(form.country_codes, tx.lang).map((c) => {
             const on = form.country_codes.includes(c.code);
             return (
-              <button key={c.code} type="button" aria-pressed={on} disabled={!editable}
+              <ChipButton key={c.code} size="sm" selected={on} disabled={!editable}
                 onClick={() => edit({
                   country_codes: on ? form.country_codes.filter((x) => x !== c.code) : [...form.country_codes, c.code],
-                })}
-                style={{
-                  fontSize: 12, padding: "3px 9px", borderRadius: RADIUS.pill, fontFamily: sans,
-                  border: `1px solid ${on ? K.accentBorder : K.line}`, background: on ? K.accentTint : "transparent",
-                  color: on ? K.accentDeep : K.muted, cursor: editable ? "pointer" : "default",
-                }}>
+                })}>
                 {c.name}
-              </button>
+              </ChipButton>
             );
           })}
         </div>
@@ -349,7 +346,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
       <Field label={t("tours")} htmlFor={fid("tours")}
         error={problems["applies_to.tours"] ?? fieldError("applies_to.tours")}
         hint={t("toursHint")}>
-        <textarea id={fid("tours")} value={form.tours_text} readOnly={!editable} rows={2}
+        <Textarea id={fid("tours")} value={form.tours_text} readOnly={!editable} rows={2}
           onChange={(e) => edit({ tours_text: e.target.value })}
           style={{ ...fieldStyle, fontFamily: mono, fontSize: 12.5, resize: "vertical" }} />
       </Field>
@@ -434,17 +431,16 @@ function History({ versions }: { versions: AaVersion[] }) {
         const isOpen = open === v.version;
         return (
           <div key={v.version} style={{ border: `1px solid ${K.line}`, borderRadius: RADIUS.md, minWidth: 0 }}>
-            <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : v.version)}
+            <Pressable aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : v.version)}
               style={{
-                display: "flex", width: "100%", gap: 8, alignItems: "center", padding: "6px 8px", border: "none",
-                background: "transparent", cursor: "pointer", fontFamily: sans, fontSize: 12.5, color: K.ink,
+                display: "flex", gap: 8, alignItems: "center", padding: "6px 8px", fontSize: 12.5, color: K.ink,
                 textAlign: "left", flexWrap: "wrap",
               }}>
               {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               <strong>v{v.version}</strong>
               <span style={{ color: K.muted }}>{formatDateTime(v.published_at)}</span>
               <span style={{ color: K.muted, overflowWrap: "anywhere" }}>{v.published_by}</span>
-            </button>
+            </Pressable>
             {isOpen && (
               <div style={{ padding: "0 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ fontWeight: 600, color: K.ink, fontSize: 13 }}>{v.title}</div>
@@ -507,7 +503,7 @@ function MissingLocale({ locale, sibling, canWrite, onCreated }: {
         <form onSubmit={(e) => { e.preventDefault(); void create(); }}
           style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <Field label={t("localeTitle", label)} htmlFor={`aa-missing-${locale}`}>
-            <input id={`aa-missing-${locale}`} type="text" autoComplete="off" maxLength={300} value={title}
+            <Input id={`aa-missing-${locale}`} type="text" autoComplete="off" maxLength={300} value={title}
               onChange={(e) => setTitle(e.target.value)} style={fieldStyle} />
           </Field>
           <div>

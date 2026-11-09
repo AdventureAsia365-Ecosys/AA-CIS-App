@@ -43,11 +43,12 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional, TypedDict
+from typing import Iterable, Optional, TypedDict
 
 import structlog
 
 from services.acp_content_writing import authenticity
+from services.acp_content_writing import f9_policy  # AA-900 W0 (interim F9 policy)
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
                                                   contrast_excess, copies, dangling_opener, expand_to_sentence,
                                                   find_issues, fold,
@@ -65,6 +66,8 @@ from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
 from shared.llm_client.call_log import BILLED_FIELD_KEYS, record_billed_failure_sync, record_call_sync
 from services.quality import registry as qr
+from services.quality import writing_policy as _wp  # AA-1047: bands, FAQ pairs, route rows
+from services.acp_content_writing import route_table as _route_table  # AA-1049: the one T9 route table
 from services.acp_content_writing.seed_align import modes as seed_align
 from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate
 
@@ -81,15 +84,13 @@ _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
 # log whether a citation tag reached the judge (`piece_tag_free`). It matches any id, one or several.
 # AA-912: TAG_RE is the shared definition (services/acp_shared/citation_tags.py), imported above.
 
-# AA-514 — exact numeric thresholds ported verbatim from the origin's own
-# `reference/gate-thresholds.toml` (not invented), for gate_seo_surface().
-_SEO_TITLE_MAX_CHARS = 60
-# AA-768 (S233) — a title under 45 chars is a stub, not a headline (S232: 21-char
-# "Bhutan's Craft Bazaar" shipped on 6/20 blogs, two of them approved).
-_SEO_TITLE_MIN_CHARS = 45
-_META_DESCRIPTION_MIN_CHARS = 120
-_META_DESCRIPTION_MAX_CHARS = 158
-_SLUG_MAX_CHARS = 60
+# AA-1047 (root ADR 0020 D5) — the SEO bands of gate_seo_surface() come from the writing policy
+# (services/quality/writing_policy.yaml), the one meta band of every workflow. Before AA-1047 this gate used 120-158
+# while the SEO fit aimed 120-155 and the writer 130-145 (S271 T9 contradiction 12). AA-768 (S233): a title under the
+# band's floor is a stub, not a headline (S232: a 21-char title shipped on 6/20 blogs).
+_SEO_TITLE_MIN_CHARS, _SEO_TITLE_MAX_CHARS = _wp.band("title")
+_META_DESCRIPTION_MIN_CHARS, _META_DESCRIPTION_MAX_CHARS = _wp.band("meta")
+_SLUG_MAX_CHARS = _wp.slug_max()
 _SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 
 
@@ -348,6 +349,26 @@ def _forbidden_hits(content_text: str, atom_text: str,
     return hits
 
 
+def gating_forbidden(brand_pack: Optional[dict]) -> list[str]:
+    """AA-900 W0 — the forbidden words the gates BLOCK on: the pack's list minus the writing memory's learned L0
+    phrases while L0 is warn-only (writing_memory.l0.gating_forbidden; the tenant's own words always block)."""
+    from services.writing_memory.l0 import gating_forbidden as _gating
+    return _gating(brand_pack)
+
+
+def learned_hits(content_text: str, atom_text: str, brand_pack: Optional[dict],
+                 skip: Iterable[str] = ()) -> list[str]:
+    """AA-900 W0 — warn findings for the learned L0 phrases the piece uses while L0 is warn-only (same match and
+    source exemption as F2_brand_forbidden). A phrase another word layer judges (a platform-truth or stock-superlative
+    word, or a word in `skip`: the positioning words F2_style_warn already reports) is left to that layer."""
+    from services.acp_shared.signature_vocabulary import PLATFORM_TRUTH, STOCK_SUPERLATIVES
+    from services.writing_memory.l0 import warn_only_phrases
+    layered = {w.lower() for w in (*PLATFORM_TRUTH, *STOCK_SUPERLATIVES, *skip)}
+    phrases = [p for p in warn_only_phrases(brand_pack) if p.lower() not in layered]
+    return [f"uses '{m}', a phrase the writing memory learned to avoid (warn only until it is measured): "
+            f"'{sent}'" for m, sent, _ in _forbidden_hits(content_text, atom_text, phrases)]
+
+
 # ---------------------------------------------------------------- F2 word layers (AA-800)
 
 F2_PLATFORM_GATE = qr.F2_PLATFORM_TRUTH
@@ -394,7 +415,7 @@ def gate_signature_words(content_text: str, atom_text: str,
     from services.acp_shared.signature_vocabulary import (STOCK_SUPERLATIVES, SUPERLATIVE_CAP,
                                                           undeclared_positioning)
     pack = brand_pack or {}
-    own = {str(w).lower().strip() for w in pack.get("forbidden_words") or []}
+    own = {str(w).lower().strip() for w in gating_forbidden(pack)}      # AA-900 W0: learned L0 phrases warn only
     sup = [(w, sent) for w, sent in _word_hits(content_text, STOCK_SUPERLATIVES, atom_text) if w not in own]
     excess = sup[SUPERLATIVE_CAP:] if len(sup) > SUPERLATIVE_CAP else []
     over = [f"stock superlative '{w}' ({len(sup)} in this piece, at most {SUPERLATIVE_CAP}): say it with a "
@@ -404,6 +425,7 @@ def gate_signature_words(content_text: str, atom_text: str,
     undeclared = [w for w in undeclared_positioning(pack, include_prompt_only=True) if w not in own]
     warn += [f"uses '{w}', a positioning word this brand has not declared as its own: '{sent}'"
              for w, sent in _word_hits(content_text, undeclared, atom_text)]
+    warn += learned_hits(content_text, atom_text, pack, skip=undeclared)  # AA-900 W0: L0 warn-only findings
     return [_result(F2_SUPERLATIVE_GATE, list(dict.fromkeys(over)), repairable=True, blocking=bool(over)),
             _result(F2_STYLE_WARN_GATE, list(dict.fromkeys(warn)), repairable=False, blocking=False)]
 
@@ -1055,6 +1077,89 @@ def _f9_carry_keys(old_text: str, new_text: str, passed: set[str]) -> set[str]:
     return out
 
 
+def f9_user_prompt(content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+                   voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
+                   meta_description: Optional[str] = None) -> str:
+    """The F9 judge's user prompt for a piece already stripped of citation tags (`_gate_brand_voice` below; the
+    acc2 contract smoke, AA-1026, sends the same prompt). Moved out of `_gate_brand_voice` unchanged."""
+    has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
+    contract = json.dumps({
+        "status": "pass|flagged|manual_check",
+        **{f: "1|0" for f in _BRAND_VOICE_FIELDS},
+        "failure_codes": [f"subset of {_BRAND_VOICE_FAILURE_CODES}"],
+        "flagged_phrases": ["exact quoted phrase for each SUMMARY_OFF_BRAND/GENERIC_AI_WORDING/"
+                             "FACT_CHECK_MANUAL_CHECK code above — [] if none is used"],
+        # AA-786 — one entry per TEXT_INTEGRITY problem.
+        "broken_sentences": [{"sentence": "exact sentence from the piece", "problem": "what is broken"}],
+        "notes": "str",
+        # AA-768 round 4 — only used when a SOURCE is given (see below).
+        **({"unsupported_claims": [{"sentence": "exact sentence from the piece"
+                                                + (" (or the search title / meta description)" if has_seo else ""),
+                                    "claim": "the specific checkable fact it asserts",
+                                    "why_not_in_source": "what the SOURCE says instead, or that it is silent"}]}
+           if source_text else {}),
+    }, indent=1)
+    if source_text:
+        source_block = f"SOURCE (everything the writer was given as fact):\n{source_text}\n\n"
+        # AA-768 round 2 — the first live re-run showed the judge flagging opinions and rhetoric
+        # ("This is not a performance.", "That distinction matters…") and the brand describing
+        # its own approach. Only a checkable statement of fact is in scope for this code.
+        fact_rule = (
+            "FACT_CHECK_MANUAL_CHECK: use it ONLY for a checkable statement of fact — something "
+            "that is true or false about the place, the trip, or what travellers will do, see, "
+            "get or pay (an activity, service, inclusion, time, duration, price, number, "
+            "transport, or a promise) — that the SOURCE above does not support or contradicts. "
+            "Quote that exact sentence in flagged_phrases. These are NOT factual claims and must "
+            "never get this code: opinions, impressions, mood or rhetorical sentences, "
+            "generalisations about how travellers feel, the brand describing its own approach "
+            "or values (as in the BRAND RUBRIC), and the required call to action. "
+            + _wp.fragment("t10_judge.background") +  # AA-1047: D1, writing_policy.yaml
+            " Always unsupported: placing the "
+            "place in a town, region or country other than the SOURCE's Location; invented scene "
+            "detail (what the place looks, sounds or smells like, its paths, steps or roads, how "
+            "it is reached, crowds) the SOURCE does not give. If no sentence is an unsupported "
+            "checkable fact, do "
+            "not use the code. For every FACT_CHECK_MANUAL_CHECK flag, list the claim in "
+            "unsupported_claims with why the SOURCE does not support it. A claim the SOURCE "
+            "states — even in other words — is supported: never list it. No entry in "
+            "unsupported_claims means no FACT_CHECK_MANUAL_CHECK."
+        )
+    else:
+        source_block = ""
+        fact_rule = "When uncertain about a factual claim: status=manual_check + FACT_CHECK_MANUAL_CHECK."
+    seo_block = ""
+    if has_seo:
+        seo_block = (
+            "SEARCH TITLE AND META DESCRIPTION (shown in search results; check their facts like the "
+            "body, and for a claim in them quote the title or meta itself as the sentence):\n"
+            f"Title: {seo_title or ''}\nMeta description: {meta_description or ''}\n\n")
+    integrity_rule = (
+        "TEXT_INTEGRITY: use it ONLY for a sentence that is broken as text — garbled or "
+        "ungrammatical so it cannot be read as meant, the call to action written twice, visible "
+        "markup, a sentence cut off mid-thought. List each one in broken_sentences with the exact "
+        "sentence from the piece and what is broken. Never use it for style, tone or facts. "
+        "Whenever status is not pass, every reason must be one of the failure codes with its "
+        "quoted sentence or phrase — notes alone never explain a fail."
+    )
+    user_prompt = (
+        f"PIECE:\n{content_text}\n\n"
+        f"{seo_block}"
+        f"{source_block}"
+        f"REQUIRED CALL TO ACTION FOR THIS PIECE: {cta}\n\n"
+        f"BRAND RUBRIC:\n{brand_rubric_text}\n"
+        f"{_voice_block(voice)}"
+        f"{_GENERIC_AI_WORDING_ANCHOR}\n"
+        "Score every field 1 or 0. cta_clear=1 only if the required CTA above is present and "
+        "reads as a single, unambiguous action — not a vague sign-off. Use ONLY the listed "
+        f"failure codes: {_BRAND_VOICE_FAILURE_CODES}. If you use SUMMARY_OFF_BRAND or "
+        "GENERIC_AI_WORDING, you MUST quote the exact offending phrase in flagged_phrases. The "
+        "required CTA text itself is never grounds for SUMMARY_OFF_BRAND or GENERIC_AI_WORDING "
+        f"on its own — do not flag it. {fact_rule}\n{integrity_rule}\n\n"
+        f"Output ONLY JSON matching this contract:\n{contract}"
+    )
+    return user_prompt
+
+
 def gate_brand_voice(
     content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
     voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
@@ -1122,82 +1227,8 @@ def _gate_brand_voice(
     referent opener kept its antecedent), so a retry does not judge again what an earlier verdict passed and the
     repair did not change. A plain set, and attempt 1, behave as before."""
     content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
-    has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
-    contract = json.dumps({
-        "status": "pass|flagged|manual_check",
-        **{f: "1|0" for f in _BRAND_VOICE_FIELDS},
-        "failure_codes": [f"subset of {_BRAND_VOICE_FAILURE_CODES}"],
-        "flagged_phrases": ["exact quoted phrase for each SUMMARY_OFF_BRAND/GENERIC_AI_WORDING/"
-                             "FACT_CHECK_MANUAL_CHECK code above — [] if none is used"],
-        # AA-786 — one entry per TEXT_INTEGRITY problem.
-        "broken_sentences": [{"sentence": "exact sentence from the piece", "problem": "what is broken"}],
-        "notes": "str",
-        # AA-768 round 4 — only used when a SOURCE is given (see below).
-        **({"unsupported_claims": [{"sentence": "exact sentence from the piece"
-                                                + (" (or the search title / meta description)" if has_seo else ""),
-                                    "claim": "the specific checkable fact it asserts",
-                                    "why_not_in_source": "what the SOURCE says instead, or that it is silent"}]}
-           if source_text else {}),
-    }, indent=1)
-    if source_text:
-        source_block = f"SOURCE (everything the writer was given as fact):\n{source_text}\n\n"
-        # AA-768 round 2 — the first live re-run showed the judge flagging opinions and rhetoric
-        # ("This is not a performance.", "That distinction matters…") and the brand describing
-        # its own approach. Only a checkable statement of fact is in scope for this code.
-        fact_rule = (
-            "FACT_CHECK_MANUAL_CHECK: use it ONLY for a checkable statement of fact — something "
-            "that is true or false about the place, the trip, or what travellers will do, see, "
-            "get or pay (an activity, service, inclusion, time, duration, price, number, "
-            "transport, or a promise) — that the SOURCE above does not support or contradicts. "
-            "Quote that exact sentence in flagged_phrases. These are NOT factual claims and must "
-            "never get this code: opinions, impressions, mood or rhetorical sentences, "
-            "generalisations about how travellers feel, the brand describing its own approach "
-            "or values (as in the BRAND RUBRIC), and the required call to action. Widely known "
-            "background about a place the SOURCE names — what it is, its history and era, who "
-            "founded it, its religious or cultural role, whether it is still in use — is allowed "
-            "when it does not contradict the SOURCE (AA-768). Always unsupported: placing the "
-            "place in a town, region or country other than the SOURCE's Location; invented scene "
-            "detail (what the place looks, sounds or smells like, its paths, steps or roads, how "
-            "it is reached, crowds) the SOURCE does not give. If no sentence is an unsupported "
-            "checkable fact, do "
-            "not use the code. For every FACT_CHECK_MANUAL_CHECK flag, list the claim in "
-            "unsupported_claims with why the SOURCE does not support it. A claim the SOURCE "
-            "states — even in other words — is supported: never list it. No entry in "
-            "unsupported_claims means no FACT_CHECK_MANUAL_CHECK."
-        )
-    else:
-        source_block = ""
-        fact_rule = "When uncertain about a factual claim: status=manual_check + FACT_CHECK_MANUAL_CHECK."
-    seo_block = ""
-    if has_seo:
-        seo_block = (
-            "SEARCH TITLE AND META DESCRIPTION (shown in search results; check their facts like the "
-            "body, and for a claim in them quote the title or meta itself as the sentence):\n"
-            f"Title: {seo_title or ''}\nMeta description: {meta_description or ''}\n\n")
-    integrity_rule = (
-        "TEXT_INTEGRITY: use it ONLY for a sentence that is broken as text — garbled or "
-        "ungrammatical so it cannot be read as meant, the call to action written twice, visible "
-        "markup, a sentence cut off mid-thought. List each one in broken_sentences with the exact "
-        "sentence from the piece and what is broken. Never use it for style, tone or facts. "
-        "Whenever status is not pass, every reason must be one of the failure codes with its "
-        "quoted sentence or phrase — notes alone never explain a fail."
-    )
-    user_prompt = (
-        f"PIECE:\n{content_text}\n\n"
-        f"{seo_block}"
-        f"{source_block}"
-        f"REQUIRED CALL TO ACTION FOR THIS PIECE: {cta}\n\n"
-        f"BRAND RUBRIC:\n{brand_rubric_text}\n"
-        f"{_voice_block(voice)}"
-        f"{_GENERIC_AI_WORDING_ANCHOR}\n"
-        "Score every field 1 or 0. cta_clear=1 only if the required CTA above is present and "
-        "reads as a single, unambiguous action — not a vague sign-off. Use ONLY the listed "
-        f"failure codes: {_BRAND_VOICE_FAILURE_CODES}. If you use SUMMARY_OFF_BRAND or "
-        "GENERIC_AI_WORDING, you MUST quote the exact offending phrase in flagged_phrases. The "
-        "required CTA text itself is never grounds for SUMMARY_OFF_BRAND or GENERIC_AI_WORDING "
-        f"on its own — do not flag it. {fact_rule}\n{integrity_rule}\n\n"
-        f"Output ONLY JSON matching this contract:\n{contract}"
-    )
+    user_prompt = f9_user_prompt(content_text, cta, brand_rubric_text, source_text=source_text, voice=voice,
+                                 seo_title=seo_title, meta_description=meta_description)
     try:
         raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, max_tokens=_F9_MAX_TOKENS, stage="t10_judge")
         _ledger = _ledger if _ledger is not None else {}
@@ -1549,6 +1580,13 @@ _FAQ_TOPICS = {
                   r"(?:^Season:|\b(?:seasons?|summer|winter|spring|autumn|monsoon|weather|climate|temperatures?"
                   r"|cold|warm|rain)\b)"),
 }
+# AA-1047: which topics need a source line is the writing policy's (faq.topics_need_source); the regexes above are
+# the detector. The deterministic PAA selection, the LLM question filter (faq_filter.select_faq_questions) and the FAQ
+# dropper all read this one list (S271 T9 contradiction 6: the LLM filter kept questions the dropper then removed).
+FAQ_TOPICS_NEED_SOURCE = _wp.faq_topics_need_source()
+if set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS):  # pragma: no cover — a policy topic with no detector
+    raise RuntimeError("writing policy FAQ topics without a detector: "
+                       f"{set(FAQ_TOPICS_NEED_SOURCE) - set(_FAQ_TOPICS)}")
 _FAQ_Q_RE = re.compile(r"\*\*Q: (.*?)\*\*", re.DOTALL)
 
 
@@ -1556,7 +1594,7 @@ def unanswerable_faq_topics(question: str, own_seed_text: str, facts_text: Optio
     """The topics `question` asks about that neither the seed's own lines nor FACTS support."""
     support = f"{own_seed_text or ''}\n{facts_text or ''}"
     q = question.lower()
-    return [topic for topic, (ask, ok) in _FAQ_TOPICS.items()
+    return [topic for topic in FAQ_TOPICS_NEED_SOURCE for ask, ok in [_FAQ_TOPICS[topic]]
             if re.search(ask, q) and not re.search(ok, support, re.I | re.M)]
 
 
@@ -1594,7 +1632,7 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
 # the single deciding structural defect of those blogs. A blog must end on "## FAQ" with at least
 # FAQ_MIN_PAIRS pairs, counted AFTER drop_restated_faq / drop_unanswerable_faq ran. service.py
 # regenerates a short FAQ once (generate.write_faq, t9_repair) before the gates read the text.
-FAQ_MIN_PAIRS = 3
+FAQ_MIN_PAIRS = _wp.faq_pairs()["min"]  # AA-1047: writing_policy.yaml faq.pairs
 F16_GATE = qr.F16_FAQ
 
 
@@ -2201,18 +2239,19 @@ F15_WARN_GATE = qr.F15_VOICE_WARN
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 # AA-800: a second stock superlative (F2_superlatives) is style too.
 # AA-788: F9_brand_style too (off-brand voice / generic AI wording; it blocks only in its `repair` mode, attempt 1).
-STYLE_ONLY_GATES = frozenset({F15_GATE, qr.F2_SUPERLATIVES, qr.F9_BRAND_STYLE})
+# AA-1047: the three gate sets below are the policy's route rows (writing_policy.yaml route_rows), equal to the S271
+# hand-written sets (a test pins them). AA-1049: read through the one T9 route table (route_table.py).
+STYLE_ONLY_GATES = _route_table.STYLE_ONLY_GATES
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage route when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
 # AA-800 — the F2 word layers too: the repair swaps or cuts one word.
 # AA-788 — F9_brand_style too: the repair rewrites the flagged sentence in the brand's voice or cuts it.
-CHEAP_REPAIR_GATES = frozenset({F15_GATE, qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
-                                qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES, qr.F9_BRAND_STYLE})
+CHEAP_REPAIR_GATES = _route_table.CHEAP_REPAIR_GATES
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
-OWNED_BY_FIX_STEP = frozenset({qr.F16_FAQ, qr.F14_FIRST_LINE})
+OWNED_BY_FIX_STEP = _route_table.OWNED_BY_FIX_STEP
 _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
 OPENER_REPEAT_JACCARD = 0.6
 
@@ -2717,7 +2756,7 @@ def lexicon_sources(content_text: str, f2_source: str, brand_pack: Optional[dict
     kept = [(p, sent) for p, sent, _ in banned]
     forbidden: list[str] = []
     for p, sent, v in _forbidden_hits(content_text, f2_source if atom_text is None else atom_text,
-                                      (brand_pack or {}).get("forbidden_words")):
+                                      gating_forbidden(brand_pack)):      # AA-900 W0: learned L0 phrases warn only
         if any(_same_hit((p, sent), k) for k in kept):
             continue
         kept.append((p, sent))
@@ -2853,7 +2892,7 @@ def run_quality_gates(
         # AA-800 — the word layers: platform truth blocks; stock superlatives capped at one; positioning
         # words the brand did not declare are a warning. Same source exemption as F2. AA-924 — a word on the
         # tenant's own forbidden list is the lexicon's only.
-        gate_platform_truth(content_text, f2_source, (brand_pack or {}).get("forbidden_words")),
+        gate_platform_truth(content_text, f2_source, gating_forbidden(brand_pack)),
         *gate_signature_words(content_text, f2_source, brand_pack),
         gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),
         # AA-819 (AUP 2026-11) — no reviews / testimonials / customer first person / independence claim.
@@ -2898,6 +2937,11 @@ def run_quality_gates(
         sources += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
                                     voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
                                     **seo_kw)
+    # AA-900 W0 (ADR 0020 D1/D3/D4/D15) — the interim F9 policy: F9_cta_fact holds only on a quoted, unsupported trip
+    # activity / service / time / view; every other F9 class warns (f9_policy; T10_F9_POLICY_MODE=legacy rolls back).
+    # A replay's stored verdicts go through it too, so the replay shows the declared diff.
+    f9_lexicon = hygiene_ctx.lexicon if hygiene_ctx is not None else None
+    sources = [f9_policy.apply_policy(g, f9_lexicon) if g.get("gate") == qr.F9_CTA_FACT else g for g in sources]
     # AA-788 — F9_brand_style's `repair` mode: attempt 1 blocks for one sentence repair, never a hold (a no-op in the
     # default warn mode). A replay's stored verdicts get the same promotion.
     sources = [promote_brand_style(g, content_text, attempt_one=stock_blocking) if g.get("gate") == qr.F9_BRAND_STYLE
@@ -2949,7 +2993,8 @@ def run_quality_gates(
 __all__ = [
     "GateResultLite", "QualityCheckOutcome", "TAG_RE",
     "strip_citation_tags", "deep_strip_citation_tags", "gate_cta_present", "gate_grounding",
-    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words",
+    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words", "gating_forbidden",
+    "learned_hits",
     "gate_brand_name", "gate_extreme_length",
     "gate_seo_surface", "restated_faq_answers",
     "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",

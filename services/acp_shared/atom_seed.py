@@ -541,11 +541,13 @@ def route_moment_statuses(parts: list[dict]) -> list[dict]:
     return [{**p, "status_line": status_line(p["status"], p["status_quote"], contrast=contrast(p))} for p in out]
 
 
-async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[str, str]]:
+async def route_moment_seeds(conn, atoms: list, tenant_id: str,
+                             groups_out: Optional[list] = None) -> list[tuple[str, str]]:
     """S234 — a route's moments as [(first atom_id, seed block)], in the given (day) order, with
     same-place moments merged into one block (C10) and no sibling lines. `atoms` is
     [(atom_id, label)]; an atom whose seed cannot be read keeps its own block with the label
-    alone (the pre-S234 fallback)."""
+    alone (the pre-S234 fallback). `groups_out` (AA-741 S271), when given, receives each block's
+    atom ids in block order (the walk focus finds the block that holds the Subject's atom)."""
     parts: list[dict] = []
     for atom_id, label in atoms:
         p = await atom_seed_parts(conn, atom_id, tenant_id, siblings=False)
@@ -560,4 +562,6 @@ async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[st
     for group in group_route_moments(parts):
         block = group[0]["text"] if group[0].get("label_only") else compose_route_moment(group)
         out.append((group[0]["atom_id"], block))
+        if groups_out is not None:
+            groups_out.append([p["atom_id"] for p in group])
     return out

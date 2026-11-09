@@ -19,22 +19,11 @@ name: Cognito E2E
 # (e2e@e2e-mail.lumiguides.it.com, reviewer, Booking none) created through the staff directory.
 # workflow_dispatch only: nothing runs on push or PR.
 #
-# AA-911: input booking_base_url picks the Booking host of the refusal step: production (default) or the fixed
-# Preview host booking-preview.lumiguides.it.com (point it at the preview under test first; root runbook
-# docs/ops/runbooks/preview-staff-sign-in.md). If that host is behind Vercel Authentication, the `e2e` environment
-# secret BOOKING_PREVIEW_BYPASS (aa-booking-admin Protection Bypass for Automation) lets the run through; it is
-# passed to the spec only for the Preview host.
+# AA-911 Vercel retirement (S272): the Booking half runs on booking.lumiguides.it.com only (the ECS staff web). The
+# booking_base_url input, the fixed Preview host booking-preview. and the BOOKING_PREVIEW_BYPASS secret are gone with
+# the aa-booking-admin Vercel project.
 on:
   workflow_dispatch:
-    inputs:
-      booking_base_url:
-        description: "Booking host for the no-booking-role refusal step"
-        required: true
-        type: choice
-        options:
-          - https://booking.lumiguides.it.com
-          - https://booking-preview.lumiguides.it.com
-        default: https://booking.lumiguides.it.com
 
 permissions:
   contents: read
@@ -58,19 +47,20 @@ jobs:
       # Opt-in switch the sign-in spec checks (no underscore by design).
       E2ECOGNITO: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC, read-only mailbox role)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
           aws-region: us-west-1
           role-session-name: cis-e2e-cognito-${{ github.run_id }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (S220 lesson).
       - name: Install dependencies (repo root — Playwright lives here)
@@ -80,17 +70,13 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run the cognito project
-        env:
-          # No underscore by design (like E2ECOGNITO). The spec accepts only the two allowlisted hosts.
-          E2EBOOKINGORIGIN: ${{ inputs.booking_base_url }}
-          E2EBOOKINGBYPASS: ${{ inputs.booking_base_url == 'https://booking-preview.lumiguides.it.com' && secrets.BOOKING_PREVIEW_BYPASS || '' }}
         run: npx playwright test --project=cognito -c playwright.config.ts
 
       # Screenshots only. NOT the HTML/JSON reports: their step titles carry action values (a `fill` step
       # names the typed text), i.e. the sign-in code. The spec never screenshots a filled code field.
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-cognito-${{ github.run_id }}
           path: tests/e2e/results/cognito/*.png

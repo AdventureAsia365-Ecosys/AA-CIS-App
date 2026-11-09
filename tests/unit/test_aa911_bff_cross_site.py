@@ -1,7 +1,7 @@
 """AA-911 — every BFF write route refuses a cross-site request before it reads a cookie or a body.
 
 `it.com` is on the Public Suffix List, so `lumiguides.it.com` is the site: every `*.lumiguides.it.com` host (the
-other apps, and the fixed Preview hosts `booking-preview` / `aa-cis-preview` that serve unmerged PR code) is the
+other apps; until S272 also the fixed Vercel Preview hosts that served unmerged PR code) is the
 same site as the admin host, and its requests carry their SameSite=Lax session cookies. A `text/plain`
 POST needs no CORS preflight and the proxies forward it as JSON with the victim's credential, so each write route
 must call `refuseCrossSiteWrite(req)` (lib/crossSiteGuard.ts → lib/sameOrigin.ts isCrossSiteWrite) first.

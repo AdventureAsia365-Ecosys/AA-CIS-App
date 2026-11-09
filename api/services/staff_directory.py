@@ -15,21 +15,24 @@ called: :data:`COGNITO_OPERATIONS` is enforced by :class:`CognitoDirectory`, so 
 
 Operations
 ----------
-- create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, reviewer only, no
-  Booking grant — AA-816 E2E, migration 250; and, Dev only, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, admin only, no
-  Booking grant, refused unless ``ENVIRONMENT`` is exactly ``dev`` — A10b, migration 283); username derived from the
-  address's local part (unique); ``password_hash`` NULL (Cognito-only member); optional Booking grant. Cognito:
-  ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
+- create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, content only, no
+  Booking grant and no CRM role — AA-816 E2E, migration 250; and, Dev only, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`,
+  admin only, no Booking grant and no CRM role, refused unless ``ENVIRONMENT`` is exactly ``dev`` — A10b, migration
+  283; likewise :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`, customer_success only — A10d, migration 378); username
+  derived from the address's local part (unique); ``password_hash`` NULL (Cognito-only member);
+  optional Booking grant and CRM roles (AA-1031). Cognito: ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
   (always: without it Cognito mails a temporary password and the person could set a permanent password through
   managed login, bypassing email-code-only sign-in) and ``email`` + ``email_verified=true``. Then
-  ``AdminAddUserToGroup`` ``cis-<role>`` and, with a grant, ``booking-<role>``. An existing user
+  ``AdminAddUserToGroup`` ``cis-<role>``, with a grant ``booking-<role>``, and each CRM group. An existing user
   (``UsernameExistsException``: left over from the bootstrap tool, an old offboarding, or the first attempt of a
   re-POST) counts as created, but its state is unknown (the writer may not read it), so the create then also runs
-  ``AdminEnableUser`` and removes every other CIS / Booking staff group, exactly like an active-row sync: a stale
+  ``AdminEnableUser`` and removes every other CIS / Booking / CRM staff group, exactly like an active-row sync: a stale
   ``cis-admin`` must never outrank the role the directory shows.
-- roles: the CIS role (``admin_users.role``) and/or the Booking grant (set or removed). Cognito: add the new group,
-  then remove the old one (a failure in between leaves the person with MORE access for a moment, never locked out
-  of both; the retry finishes it).
+- roles: the CIS role (``admin_users.role``), the Booking grant (set or removed) and/or the CRM roles (AA-1031: a
+  set, ``shared.staff_crm_grant``, migration 330). Cognito: add the new groups, then remove the old ones (a failure
+  in between leaves the person with MORE access for a moment, never locked out of both; the retry finishes it).
+  The "Platform owner" preset (``preset="platform_owner"``) sets CIS admin + Booking admin and adds CRM
+  ``platform_admin`` in the same transaction and audit row; it never sets the owner flag.
 - disable: ``is_active = false``, then ``AdminDisableUser``, then ``AdminUserGlobalSignOut`` (ADR 0006 §7: a disabled
   user cannot re-authenticate even with the managed-login cookie; the worst case is one live 15-minute access
   token). ``AdminDisableUser`` already revokes the user's tokens, so a ``NotAuthorizedException`` from the sign-out
@@ -39,7 +42,12 @@ Operations
   then ``AdminEnableUser`` (always, a no-op on an enabled user) BEFORE ``AdminUserGlobalSignOut``: sign-out on a
   disabled Cognito user may be refused, and a failed sign-out must not leave the row active and the pool disabled.
 - sync (the retry): make the pool match the row (active: create if missing, enable, add the wanted groups, remove
-  the other staff groups; inactive: disable + sign out).
+  the other staff groups, CRM groups included since AA-1031; inactive: disable + sign out).
+
+CRM roles before migration 330 is applied (AA-1031): every operation checks ``to_regclass('shared.staff_crm_grant')``
+first (:func:`crm_grants_available`). Without the table a write that sends CRM roles is refused (503
+``crm_unavailable``) and sync / create-over-an-existing-user leave the CRM groups alone: the directory cannot see
+them, so it must not strip them.
 - invitation (S242, api/services/staff_invite.py): because AdminCreateUser is SUPPRESS, Cognito tells nobody. The
   create (``send_invite``) and ``resend_invite`` queue one ``staff_invite_email`` job in the same transaction; the
   worker sends the branded e-mail through SES. No Cognito call.
@@ -82,7 +90,7 @@ import structlog
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
-from api.core import e2e_staff, identity_config, staff_identity
+from api.core import e2e_staff, identity_config, staff_identity, view_as
 from api.services import staff_invite
 from services.acp_shared.audit_log import write_audit_log
 
@@ -96,29 +104,65 @@ MAX_DISPLAY_NAME_LEN = 120
 MAX_USERNAME_LEN = 100            # shared.admin_users.username varchar(100)
 _USERNAME_SUFFIX_TRIES = 50
 
-# shared.admin_role minus 'viewer' (AA-878, migration 249): the read-only E2E role is never assigned from here.
-CIS_ROLES: tuple[str, ...] = ("admin", "reviewer", "content")
-BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator")  # staff_app_grant_role_chk
+# shared.admin_role minus 'viewer' (AA-878, migration 249: the read-only E2E role is never assigned from here) and minus
+# 'reviewer' (AA-1035 R2: CIS 363 merged it into content, CIS 375 removed the alias and forbids the value; root ADR 0019
+# d3). Group cis-<role>.
+CIS_ROLES: tuple[str, ...] = (
+    "admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
+)
+# AA-1035: WORKFORCE groups of a retired role. No role reads them; Sync and the create-over-an-existing-user path still
+# remove them (a leftover membership is drift), and a group the pool no longer has counts as removed
+# (CognitoDirectory.remove_from_group). cis-reviewer goes from the pool after the alias removal (AA-CIS-Infra).
+RETIRED_CIS_GROUPS: tuple[str, ...] = ("cis-reviewer",)
+# staff_app_grant_role_chk (CIS 363 added finance: Booking reads it from the group booking-finance, root ADR 0019 d9)
+BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator", "finance")
 APP_BOOKING = "booking"
+# AA-1031 (migration 330, staff_crm_grant_role_chk): the AA-Partner staff roles, a SET per person, and their WORKFORCE
+# groups (root ADR 0006b decision 6). Spelled out: the group names carry a hyphen the role codes do not.
+CRM_ROLE_GROUPS = MappingProxyType({
+    "platform_admin": "crm-platform-admin",   # Agency admin: L1 platform console writes (/crm/ops/v1)
+    "ops": "crm-ops",                         # Operations (/crm/staff/v1)
+    "support": "crm-support",                 # Support (/crm/staff/v1; also needs an owner grant in the CRM)
+})
+CRM_ROLES: tuple[str, ...] = tuple(CRM_ROLE_GROUPS)
+# AA-1031: the "Platform owner" preset of the Staff page: every admin role in CIS, Booking and the CRM, in one save.
+PRESET_PLATFORM_OWNER = "platform_owner"
+PRESET_CIS_ROLE = "admin"
+PRESET_BOOKING_ROLE = "admin"
+PRESET_CRM_ROLE = "platform_admin"
 
 # TEMPORARY (AA-816, S243 decision "option B"; root ADR 0006a): the ONE non-company address the directory accepts,
 # the SES inbound test mailbox the Cognito email-code E2E test reads its sign-in code from. Exact match only, CIS
-# role reviewer only, no Booking grant (require_e2e_test_scope); the DB CHECK (migration 250) and the WORKFORCE
-# pre token trigger (AA-CIS-Infra) hold the same rule. Removed when the E2E work is finished (AA-816).
+# role content only (reviewer until the alias went, CIS 375), no Booking grant (require_e2e_test_scope); the DB CHECK
+# (migrations 250, 375) and the WORKFORCE pre token trigger (AA-CIS-Infra) hold the same rule. Removed when the E2E
+# work is finished (AA-816).
 E2E_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
-E2E_TEST_STAFF_ROLE = "reviewer"
+E2E_TEST_STAFF_ROLE = "content"
 # TEMPORARY (AA-816 A10b, S252; root ADR 0006a A10b): the Dev-only E2E CIS admin (api/core/e2e_staff.py). CIS role admin
 # only, never an owner, no Booking grant (require_e2e_test_scope), and only where ENVIRONMENT is exactly "dev"
 # (require_dev_only_e2e_environment). Migration 283 and the WORKFORCE trigger hold the same rule.
 E2E_CIS_ADMIN_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_EMAIL
 E2E_CIS_ADMIN_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
+# TEMPORARY (AA-1035 A10d, S270; root ADR 0006a A10d): the Dev-only read-only E2E customer_success account
+# (api/core/e2e_staff.py). CIS role customer_success only, never an owner, no Booking grant, no CRM role, Dev only, and
+# synthetic tenants only in its book (api/routers/admin_tenant360.put_tenant_assignment). Migration 378 and the
+# WORKFORCE trigger hold the same rule.
+E2E_CIS_CS_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL
+E2E_CIS_CS_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE
 # Every E2E address the directory accepts, with the one CIS role it may hold. Read-only.
 _E2E_TEST_STAFF_ROLES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: E2E_TEST_STAFF_ROLE,
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
+    E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
 })
-# The E2E addresses that may exist only on Dev.
-_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL})
+# The E2E addresses that may exist only on Dev (every entry of e2e_staff.DEV_ONLY_E2E_STAFF_ROLES).
+_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL, E2E_CIS_CS_TEST_STAFF_EMAIL})
+# The name each E2E address goes by in the directory's refusals.
+_E2E_ACCOUNT_NAMES = MappingProxyType({
+    E2E_TEST_STAFF_EMAIL: "E2E test account",
+    E2E_CIS_ADMIN_TEST_STAFF_EMAIL: "E2E CIS admin account",
+    E2E_CIS_CS_TEST_STAFF_EMAIL: "E2E customer success account",
+})
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
 BREAKGLASS_USERNAMES = frozenset({"admin"})
@@ -169,8 +213,13 @@ def booking_group(role: str) -> str:
     return f"booking-{role}"
 
 
-CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES)
+def crm_group(role: str) -> str:
+    return CRM_ROLE_GROUPS[role]
+
+
+CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES) + RETIRED_CIS_GROUPS
 BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES)
+CRM_GROUPS: tuple[str, ...] = tuple(crm_group(r) for r in CRM_ROLES)
 
 
 class StaffDirectoryError(Exception):
@@ -210,15 +259,16 @@ def normalise_email(email: Any) -> str:
 
 
 def is_e2e_test_email(email: Any) -> bool:
-    """True only for the E2E test addresses (:data:`E2E_TEST_STAFF_EMAIL`, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`),
-    after trimming and lower-casing."""
+    """True only for the E2E test addresses (:data:`E2E_TEST_STAFF_EMAIL`, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`,
+    :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`), after trimming and lower-casing."""
     return normalise_email(email) in _E2E_TEST_STAFF_ROLES
 
 
 def require_staff_email(email: Any) -> str:
     """The lower-cased ``@adventure.asia`` address, or 400. Mirrors the DB CHECK admin_users_email_chk and the
     WORKFORCE pre sign-up trigger (which refuses other domains too). The one exception is the exact address
-    :data:`E2E_TEST_STAFF_EMAIL` and the Dev-only :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL` (temporary, AA-816); their
+    :data:`E2E_TEST_STAFF_EMAIL` and the Dev-only :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL` and
+    :data:`E2E_CIS_CS_TEST_STAFF_EMAIL` (temporary, AA-816, AA-1035); their
     role is checked by :func:`require_e2e_test_scope`, the environment by :func:`require_dev_only_e2e_environment`."""
     value = normalise_email(email)
     if value in _E2E_TEST_STAFF_ROLES:
@@ -244,6 +294,7 @@ def require_display_name(name: Any) -> str:
 
 
 def require_cis_role(role: Any) -> str:
+    """A role the directory may write: an assignable one (never ``viewer`` nor the removed ``reviewer``)."""
     if role not in CIS_ROLES:
         raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)}", "cis_role")
     return role
@@ -257,25 +308,44 @@ def require_booking_role(role: Any) -> Optional[str]:
     return role
 
 
-def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str]) -> None:
-    """An E2E test address may only hold its one CIS role (``reviewer`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
-    for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`) with no Booking grant (400 ``e2e_test_scope``). No-op for every other
-    address. ``role`` / ``booking_role`` are the values the row would end up with."""
-    allowed = _E2E_TEST_STAFF_ROLES.get(normalise_email(email))
+def require_crm_roles(roles: Any) -> tuple[str, ...]:
+    """AA-1031: the CRM roles as a duplicate-free tuple in :data:`CRM_ROLES` order (``None`` = none), or 400."""
+    if roles is None:
+        return ()
+    if isinstance(roles, (str, bytes)) or not isinstance(roles, (list, tuple, set, frozenset)):
+        raise StaffDirectoryError(400, "CRM roles must be a list", "crm_role")
+    unknown = [r for r in roles if r not in CRM_ROLE_GROUPS]
+    if unknown:
+        raise StaffDirectoryError(400, f"CRM role must be one of {', '.join(CRM_ROLES)}", "crm_role")
+    return tuple(r for r in CRM_ROLES if r in set(roles))
+
+
+def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str],
+                           crm_roles: tuple[str, ...] = ()) -> None:
+    """An E2E test address may only hold its one CIS role (``content`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
+    for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, ``customer_success`` for :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`) with no
+    Booking grant and no CRM role (400 ``e2e_test_scope``; root ADR 0006a A10 / A10b / A10d, the WORKFORCE trigger
+    holds the same rule). No-op for every other address. ``role`` /
+    ``booking_role`` / ``crm_roles`` are the values the row would end up with."""
+    address = normalise_email(email)
+    allowed = _E2E_TEST_STAFF_ROLES.get(address)
     if allowed is None:
         return
-    if role != allowed or booking_role is not None:
-        name = "E2E CIS admin account" if allowed == E2E_CIS_ADMIN_TEST_STAFF_ROLE else "E2E test account"
+    if role != allowed or booking_role is not None or crm_roles:
+        name = _E2E_ACCOUNT_NAMES[address]
         raise StaffDirectoryError(
-            400, f"The {name} may only have the CIS role {allowed} and no Booking role", "e2e_test_scope")
+            400, f"The {name} may only have the CIS role {allowed}, no Booking role and no CRM role",
+            "e2e_test_scope")
 
 
 def require_dev_only_e2e_environment(email: Any) -> None:
-    """A10b: the Dev-only E2E address may be created, re-enabled or synced into its groups only where the API's
+    """A10b / A10d: a Dev-only E2E address may be created, re-enabled or synced into its groups only where the API's
     ``ENVIRONMENT`` is exactly ``dev`` (403 ``e2e_not_allowed_here``; unset refuses). No-op for every other address.
     Disabling it stays allowed everywhere, so the account can always be switched off."""
-    if normalise_email(email) in _DEV_ONLY_E2E_EMAILS and not e2e_staff.dev_only_e2e_environment():
-        raise StaffDirectoryError(403, "The E2E CIS admin account exists only on Dev", e2e_staff.E2E_NOT_ALLOWED_HERE)
+    address = normalise_email(email)
+    if address in _DEV_ONLY_E2E_EMAILS and not e2e_staff.dev_only_e2e_environment():
+        raise StaffDirectoryError(403, f"The {_E2E_ACCOUNT_NAMES[address]} exists only on Dev",
+                                  e2e_staff.E2E_NOT_ALLOWED_HERE)
 
 
 def username_base(email: str) -> str:
@@ -353,11 +423,22 @@ class CognitoDirectory:
         self._call("AdminAddUserToGroup", Username=email, GroupName=group)
 
     def remove_from_group(self, email: str, group: str) -> None:
+        """AdminRemoveUserFromGroup. A missing user or a missing group counts as done: neither holds anybody.
+
+        ``ResourceNotFoundException`` is what Cognito answers for a group the pool does not have (AA-1035: the R2
+        ``cis-<role>`` / ``booking-finance`` groups exist only once AA-CIS-Infra is applied, and every Sync / existing
+        user create removes every staff group the row does not hold). A wrong pool id answers the same code; the
+        create, add, enable and disable steps still fail on it, and the warning names the group."""
         try:
             self._call("AdminRemoveUserFromGroup", Username=email, GroupName=group)
         except ClientError as exc:
-            if _error_code(exc) != "UserNotFoundException":   # no user: it is in no group either
-                raise
+            code = _error_code(exc)
+            if code == "UserNotFoundException":   # no user: it is in no group either
+                return
+            if code == "ResourceNotFoundException":   # no group: nobody is in it
+                logger.warning("staff_directory_remove_missing_group", group=group)
+                return
+            raise
 
     def disable(self, email: str) -> None:
         try:
@@ -471,10 +552,35 @@ SQL_UPSERT_GRANT = (
     "ON CONFLICT (admin_user_id, app) DO UPDATE SET role = EXCLUDED.role, updated_at = now()"
 )
 SQL_DELETE_GRANT = "DELETE FROM shared.staff_app_grant WHERE admin_user_id = $1::uuid AND app = $2"
+# AA-1031 (migration 330). The table check runs first everywhere: before 330 is applied the CRM half is skipped.
+SQL_CRM_TABLE = "SELECT to_regclass('shared.staff_crm_grant') IS NOT NULL AS ok"
+SQL_CRM_GRANTS = (
+    "SELECT role FROM shared.staff_crm_grant WHERE admin_user_id = $1::uuid ORDER BY role FOR UPDATE"
+)
+SQL_INSERT_CRM_GRANT = (
+    "INSERT INTO shared.staff_crm_grant (admin_user_id, role) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING"
+)
+SQL_DELETE_CRM_GRANT = "DELETE FROM shared.staff_crm_grant WHERE admin_user_id = $1::uuid AND role = $2"
 
 
 def _actor_tag(actor_id: str) -> str:
     return f"admin:{actor_id}"
+
+
+async def crm_grants_available(conn: Any) -> bool:
+    """AA-1031: True once migration 330 created ``shared.staff_crm_grant`` (a catalog read, safe in a transaction)."""
+    return bool(await conn.fetchval(SQL_CRM_TABLE))
+
+
+async def _crm_roles(conn: Any, staff_id: str) -> tuple[str, ...]:
+    """The account's CRM roles, rows locked (call only when :func:`crm_grants_available`)."""
+    rows = await conn.fetch(SQL_CRM_GRANTS, staff_id)
+    return require_crm_roles([r["role"] for r in rows])
+
+
+def _crm_unavailable() -> StaffDirectoryError:
+    return StaffDirectoryError(503, "CRM roles are not available yet: the database update that stores them (CIS "
+                                    "migration 330) is not applied on this server", "crm_unavailable")
 
 
 async def _require_owner(conn: Any, actor_id: str) -> None:
@@ -546,8 +652,10 @@ async def _finish(pool: Any, actor_id: str, result: WriteResult, steps: list[Ste
 # ── Operations ───────────────────────────────────────────────────────────────────────────────────
 
 async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, email: Any, display_name: Any,
-                       role: Any, booking_role: Any = None, send_invite: bool = False) -> WriteResult:
-    """Insert the row (and Booking grant), then create the Cognito user (SUPPRESS) and add its groups.
+                       role: Any, booking_role: Any = None, send_invite: bool = False,
+                       crm_roles: Any = None) -> WriteResult:
+    """Insert the row (and Booking grant, and CRM roles, AA-1031), then create the Cognito user (SUPPRESS) and add
+    its groups.
 
     ``send_invite`` (S242): queue the invitation e-mail (one ``staff_invite_email`` job + its
     ``staff.invite_requested`` row) in the same transaction as the INSERT, so a rolled-back create never mails.
@@ -559,7 +667,8 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
     display_name = require_display_name(display_name)
     role = require_cis_role(role)
     booking_role = require_booking_role(booking_role)
-    require_e2e_test_scope(email, role, booking_role)
+    crm_roles = require_crm_roles(crm_roles)
+    require_e2e_test_scope(email, role, booking_role, crm_roles)
     require_dev_only_e2e_environment(email)
     if email in BREAKGLASS_EMAILS:
         raise StaffDirectoryError(403, "The break-glass address cannot be a directory account", "breakglass")
@@ -570,13 +679,18 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
+            crm_ok = await crm_grants_available(conn)
+            if crm_roles and not crm_ok:
+                raise _crm_unavailable()
             existing = await conn.fetchrow(SQL_TARGET_BY_EMAIL, email)
             if existing is not None:
                 if is_breakglass(existing["username"], existing["email"]):
                     raise StaffDirectoryError(403, "The break-glass account is managed only by its runbook",
                                               "breakglass")
                 grant = await conn.fetchval(SQL_GRANT, existing["id"], APP_BOOKING)
-                if not existing["is_active"] or existing["role"] != role or grant != booking_role:
+                existing_crm = await _crm_roles(conn, existing["id"]) if crm_ok else ()
+                if (not existing["is_active"] or existing["role"] != role or grant != booking_role
+                        or existing_crm != crm_roles):
                     raise StaffDirectoryError(
                         409, "A staff account with this address already exists; change it from its row",
                         "exists")
@@ -592,9 +706,12 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
                                               "conflict") from None
                 if booking_role is not None:
                     await conn.execute(SQL_UPSERT_GRANT, staff_id, APP_BOOKING, booking_role)
+                for crm_role in crm_roles:
+                    await conn.execute(SQL_INSERT_CRM_GRANT, staff_id, crm_role)
                 await _audit(conn, actor_id, StaffAudit.CREATED, staff_id, {
                     "email": email, "username": username, "display_name": display_name,
-                    "role": role, "booking_role": booking_role, "send_invite": bool(send_invite),
+                    "role": role, "booking_role": booking_role, "crm_roles": list(crm_roles),
+                    "send_invite": bool(send_invite),
                 })
                 created = True
                 if send_invite:
@@ -609,15 +726,16 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
 
     result = WriteResult(staff_id=staff_id, operation="create", created=created, invite=invite,
                          invite_job_id=invite_job_id)
-    wanted = [cis_group(role)] + ([booking_group(booking_role)] if booking_role is not None else [])
+    wanted = _wanted_groups(role, booking_role, crm_roles)
     steps: list[Step] = []
 
     def _create_user() -> None:
         if not cognito.create_user(email):
             # The user already existed in the pool, in an unknown state: make it match the row like an
             # active-row sync (enable, then drop every staff group the row does not grant; the wanted groups
-            # are added by the steps already listed, so add-before-remove holds).
-            steps.extend(_existing_user_steps(cognito, email, wanted))
+            # are added by the steps already listed, so add-before-remove holds). CRM groups only once the
+            # directory can hold them (migration 330).
+            steps.extend(_existing_user_steps(cognito, email, wanted, include_crm=crm_ok))
 
     steps.append(("create_user", _create_user))
     steps += _add_group_steps(cognito, email, wanted)
@@ -628,13 +746,24 @@ def _add_group_steps(cognito: CognitoDirectory, email: str, groups: list[str]) -
     return [(f"add_group:{g}", (lambda g=g: cognito.add_to_group(email, g))) for g in groups]
 
 
-def _remove_other_groups_steps(cognito: CognitoDirectory, email: str, wanted: list[str]) -> list[Step]:
+def _wanted_groups(role: str, booking_role: Optional[str], crm_roles: tuple[str, ...]) -> list[str]:
+    return ([cis_group(role)] + ([booking_group(booking_role)] if booking_role is not None else [])
+            + [crm_group(r) for r in crm_roles])
+
+
+def _remove_other_groups_steps(cognito: CognitoDirectory, email: str, wanted: list[str],
+                               include_crm: bool = True) -> list[Step]:
+    """Remove every staff group not in ``wanted``. ``include_crm=False`` (migration 330 not applied: the directory
+    cannot see CRM roles) leaves the CRM groups alone."""
+    groups = CIS_GROUPS + BOOKING_GROUPS + (CRM_GROUPS if include_crm else ())
     return [(f"remove_group:{g}", (lambda g=g: cognito.remove_from_group(email, g)))
-            for g in CIS_GROUPS + BOOKING_GROUPS if g not in wanted]
+            for g in groups if g not in wanted]
 
 
-def _existing_user_steps(cognito: CognitoDirectory, email: str, wanted: list[str]) -> list[Step]:
-    return [("enable_user", lambda: cognito.enable(email))] + _remove_other_groups_steps(cognito, email, wanted)
+def _existing_user_steps(cognito: CognitoDirectory, email: str, wanted: list[str],
+                         include_crm: bool = True) -> list[Step]:
+    return [("enable_user", lambda: cognito.enable(email))] + _remove_other_groups_steps(
+        cognito, email, wanted, include_crm=include_crm)
 
 
 async def _free_username(conn: Any, base: str) -> str:
@@ -651,13 +780,26 @@ _UNSET: Any = object()
 
 
 async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str,
-                       role: Any = _UNSET, booking_role: Any = _UNSET) -> WriteResult:
-    """Set the CIS role and/or the Booking grant (``booking_role=None`` removes it). Cognito: add the new group,
-    then remove the old one."""
-    if role is _UNSET and booking_role is _UNSET:
-        raise StaffDirectoryError(400, "Nothing to change: give a CIS role and/or a Booking role", "empty")
+                       role: Any = _UNSET, booking_role: Any = _UNSET, crm_roles: Any = _UNSET,
+                       preset: Optional[str] = None) -> WriteResult:
+    """Set the CIS role, the Booking grant (``booking_role=None`` removes it) and/or the CRM roles (AA-1031: the
+    whole set; ``[]`` removes every one). Cognito: add the new groups, then remove the old ones.
+
+    ``preset="platform_owner"`` (AA-1031, the Staff page's "Platform owner" preset) sets CIS ``admin`` and Booking
+    ``admin`` and adds CRM ``platform_admin`` to the roles already held, in one transaction and one audit row
+    (``details.preset``). It cannot be combined with the other fields. The owner flag is never set here."""
+    if preset is not None:
+        if preset != PRESET_PLATFORM_OWNER:
+            raise StaffDirectoryError(400, f"Unknown preset; the only preset is {PRESET_PLATFORM_OWNER}", "preset")
+        if role is not _UNSET or booking_role is not _UNSET or crm_roles is not _UNSET:
+            raise StaffDirectoryError(400, "A preset sets every role itself; send it alone", "preset_conflict")
+        role, booking_role = PRESET_CIS_ROLE, PRESET_BOOKING_ROLE
+    elif role is _UNSET and booking_role is _UNSET and crm_roles is _UNSET:
+        raise StaffDirectoryError(400, "Nothing to change: give a CIS role, a Booking role and/or CRM roles", "empty")
     new_role = require_cis_role(role) if role is not _UNSET else None
     new_booking = require_booking_role(booking_role) if booking_role is not _UNSET else None
+    crm_given = preset is not None or crm_roles is not _UNSET
+    asked_crm = require_crm_roles(crm_roles) if crm_roles is not _UNSET else ()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -666,8 +808,16 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             staff_id = target["id"]
             old_role = target["role"]
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
+            crm_ok = await crm_grants_available(conn)
+            if crm_given and not crm_ok:
+                raise _crm_unavailable()
+            old_crm = await _crm_roles(conn, staff_id) if crm_ok else ()
+            if preset is not None:
+                new_crm = require_crm_roles(set(old_crm) | {PRESET_CRM_ROLE})
+            else:
+                new_crm = asked_crm if crm_given else old_crm
             require_e2e_test_scope(target["email"], new_role if new_role is not None else old_role,
-                                   new_booking if booking_role is not _UNSET else old_booking)
+                                   new_booking if booking_role is not _UNSET else old_booking, new_crm)
             require_dev_only_e2e_environment(target["email"])
             changes: dict[str, Any] = {}
             if new_role is not None and new_role != old_role:
@@ -683,14 +833,24 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
                 else:
                     await conn.execute(SQL_UPSERT_GRANT, staff_id, APP_BOOKING, new_booking)
                 changes["booking_role"] = {"before": old_booking, "after": new_booking}
+            if crm_given and new_crm != old_crm:
+                for r in old_crm:
+                    if r not in new_crm:
+                        await conn.execute(SQL_DELETE_CRM_GRANT, staff_id, r)
+                for r in new_crm:
+                    if r not in old_crm:
+                        await conn.execute(SQL_INSERT_CRM_GRANT, staff_id, r)
+                changes["crm_roles"] = {"before": list(old_crm), "after": list(new_crm)}
             if changes:
+                if preset is not None:
+                    changes["preset"] = preset
                 await _audit(conn, actor_id, StaffAudit.ROLES_CHANGED, staff_id, changes)
 
     email = target["email"]
     steps: list[Step] = []
     if new_role is not None:
         steps.append((f"add_group:{cis_group(new_role)}", lambda: cognito.add_to_group(email, cis_group(new_role))))
-        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no Cognito group
+        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no group
             steps.append((f"remove_group:{cis_group(old_role)}",
                           lambda: cognito.remove_from_group(email, cis_group(old_role))))
     if booking_role is not _UNSET:
@@ -700,12 +860,22 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
         if old_booking is not None and old_booking != new_booking:
             steps.append((f"remove_group:{booking_group(old_booking)}",
                           lambda: cognito.remove_from_group(email, booking_group(old_booking))))
+    if crm_given:
+        steps += _add_group_steps(cognito, email, [crm_group(r) for r in new_crm])
+        steps += [(f"remove_group:{crm_group(r)}", (lambda g=crm_group(r): cognito.remove_from_group(email, g)))
+                  for r in old_crm if r not in new_crm]
     result = WriteResult(staff_id=staff_id, operation="roles")
     return await _finish(pool, actor_id, result, steps, has_email=bool(email))
 
 
+def _ended_views(closed: list[dict]) -> dict[str, Any]:
+    """The staff audit row's note of the view-as sessions the write ended (AA-1035; nothing when none was open)."""
+    return {"ended_view_as_sessions": [r["session_id"] for r in closed]} if closed else {}
+
+
 async def disable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str) -> WriteResult:
-    """``is_active = false``, then AdminDisableUser, then AdminUserGlobalSignOut (in that order, ADR 0006 §7)."""
+    """``is_active = false``, then AdminDisableUser, then AdminUserGlobalSignOut (in that order, ADR 0006 §7). The
+    member's open view-as sessions end in the same transaction (AA-1035, ``view_as.close_open_sessions``)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
@@ -716,8 +886,13 @@ async def disable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, 
             await _guard_last_owner(conn, target)
             if target["is_active"]:
                 await conn.execute(SQL_SET_ACTIVE, staff_id, False)
-                await _audit(conn, actor_id, StaffAudit.DISABLED, staff_id, {"is_active": {"before": True,
-                                                                                            "after": False}})
+            # AA-1035 follow-up (S268): the member's open view-as sessions end now (also when the row was already
+            # inactive: a session the gate has not touched yet), one tenant.view_as_ended row each.
+            closed = await view_as.close_open_sessions(conn, actor=_actor_tag(actor_id), cause="staff_disabled",
+                                                       staff_id=staff_id)
+            if target["is_active"]:
+                await _audit(conn, actor_id, StaffAudit.DISABLED, staff_id, {
+                    "is_active": {"before": True, "after": False}, **_ended_views(closed)})
     email = target["email"]
     steps: list[Step] = _disable_steps(cognito, email)
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="disable"), steps,
@@ -754,7 +929,8 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
 
     AdminEnableUser always runs, and BEFORE the sign-out: the writer may not read the pool's state (AdminGetUser is
     not allowed and counts as MAU), enabling an enabled user is a no-op, and a sign-out on a still-disabled Cognito
-    user may be refused, which must not leave the row active and the pool disabled."""
+    user may be refused, which must not leave the row active and the pool disabled. The member's open view-as sessions
+    end in the same transaction (AA-1035, ``view_as.close_open_sessions``)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
@@ -764,7 +940,11 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
             reenabled = not target["is_active"]
             if reenabled:
                 await conn.execute(SQL_SET_ACTIVE, staff_id, True)
-            await _audit(conn, actor_id, StaffAudit.SIGNED_OUT, staff_id, {"reenabled": reenabled})
+            # AA-1035 follow-up (S268): "end every session" includes the member's open view-as sessions.
+            closed = await view_as.close_open_sessions(conn, actor=_actor_tag(actor_id), cause="staff_signed_out",
+                                                       staff_id=staff_id)
+            await _audit(conn, actor_id, StaffAudit.SIGNED_OUT, staff_id, {"reenabled": reenabled,
+                                                                             **_ended_views(closed)})
     email = target["email"]
     steps: list[Step] = [("enable_user", lambda: cognito.enable(email)),
                          ("global_sign_out", lambda: cognito.global_sign_out(email))]
@@ -808,7 +988,8 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
     """The retry for ``saved_cognito_pending``: make the pool match the row. Idempotent.
 
     Active row: AdminCreateUser (SUPPRESS; an existing user is fine), AdminEnableUser, add ``cis-<role>`` (and
-    ``booking-<role>``), remove every other CIS / Booking staff group. Inactive row: AdminDisableUser, then
+    ``booking-<role>``, and the CRM groups), remove every other CIS / Booking / CRM staff group (CRM only once
+    migration 330 is applied). Inactive row: AdminDisableUser, then
     AdminUserGlobalSignOut (no user is created for an inactive row)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -816,6 +997,8 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
             target = await _load_target(conn, staff_id)
             staff_id = target["id"]
             booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
+            crm_ok = await crm_grants_available(conn)
+            crm = await _crm_roles(conn, staff_id) if crm_ok else ()
     email = target["email"]
     if not email:
         raise StaffDirectoryError(400, "This account has no work email, so it has no Cognito user to sync",
@@ -823,11 +1006,12 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
     if not target["is_active"]:
         steps: list[Step] = _disable_steps(cognito, email)
     else:
-        require_e2e_test_scope(email, target["role"], booking)   # never sync a drifted E2E row into more groups
+        # never sync a drifted E2E row into more groups
+        require_e2e_test_scope(email, target["role"], booking, crm)
         require_dev_only_e2e_environment(email)
-        wanted = [cis_group(target["role"])] + ([booking_group(booking)] if booking else [])
+        wanted = _wanted_groups(target["role"], booking, crm)
         steps = [("create_user", lambda: cognito.create_user(email)),
                  ("enable_user", lambda: cognito.enable(email))]
         steps += _add_group_steps(cognito, email, wanted)
-        steps += _remove_other_groups_steps(cognito, email, wanted)
+        steps += _remove_other_groups_steps(cognito, email, wanted, include_crm=crm_ok)
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="sync"), steps)

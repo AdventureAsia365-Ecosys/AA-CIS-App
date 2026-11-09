@@ -4,9 +4,9 @@
 // revalidate → re-validate job → poll → read verdict) is unchanged from the original page.tsx;
 // it now calls reviewApi and reports via the kit toast instead of inline state where useful.
 
-import { AlertTriangle, Edit3, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, Edit3, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
-import { K, mono, sans, Button, useFormat, useT } from "../../_kit";
+import { K, mono, sans, AiNotice, Button, useFormat, useT, Input, Textarea, Spinner, KX } from "../../_kit";
 import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
 import {
@@ -34,7 +34,7 @@ function RevalidatePill({ state }: { state: boolean | null }) {
       ? { bg: K.successSoft, color: K.success, label: t("revalPassed"), Icon: ShieldCheck }
       : state === false
         ? { bg: K.dangerSoft, color: K.danger, label: t("revalFailed"), Icon: XCircle }
-        : { bg: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", label: t("needsReval"), Icon: AlertTriangle };
+        : { bg: K.amberSoft, color: KX.amberDeep, label: t("needsReval"), Icon: AlertTriangle };
   const { Icon } = cfg;
   return (
     <span
@@ -66,7 +66,7 @@ function FieldLabel({ field, fails }: { field: string; fails?: { code: string; r
           fontWeight: 700,
           textTransform: "uppercase",
           letterSpacing: "0.1em",
-          color: failed ? K.danger : "var(--aa-neutral-fg2)",
+          color: failed ? K.danger : K.neutralFg,
         }}
       >
         {field in FIELD.en ? fieldName(field as keyof typeof FIELD.en) : field}
@@ -103,7 +103,7 @@ function fieldBoxStyle(failed: boolean): React.CSSProperties {
     borderRadius: 6,
     background: K.card,
     lineHeight: 1.6,
-    border: `1px solid ${failed ? "var(--aa-red-border2)" : K.line}`,
+    border: `1px solid ${failed ? K.dangerBorder : K.line}`,
     outline: "none",
     resize: "vertical",
   };
@@ -251,11 +251,11 @@ export function ReviewEditor({
         ) : (
           <>
             <Button variant="ghost" size="sm" disabled={saving || dirty.size === 0} onClick={save}>
-              {saving ? <Loader2 size={12} className="spin" /> : <Save size={12} />} {t("saveEdits")}
+              {saving ? <Spinner size={12} color="currentColor" /> : <Save size={12} />} {t("saveEdits")}
               {dirty.size ? ` (${dirty.size})` : ""}
             </Button>
             <Button variant="primary" size="sm" disabled={revalidating || dirty.size > 0} onClick={revalidate}>
-              {revalidating ? <Loader2 size={12} className="spin" /> : <ShieldCheck size={12} />} {t("revalidate")}
+              {revalidating ? <Spinner size={12} color="currentColor" /> : <ShieldCheck size={12} />} {t("revalidate")}
             </Button>
           </>
         )}
@@ -276,20 +276,23 @@ export function ReviewEditor({
         </div>
       )}
 
+      {/* AA-1033: the reviewer edits AI-written text here; the kit staff notice sits above it. */}
+      <AiNotice style={{ marginBottom: 14 }} />
+
       <ClaimChecks reviewId={item.id} canLabel={canLabel} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "14px 20px" }}>
         {TEXT_FIELDS.map((f) => (
           <div key={f} style={{ gridColumn: f === "seo_title" ? "1 / -1" : "auto" }}>
             <FieldLabel field={f} fails={fails[f]} />
-            <input value={draft[f]} readOnly={readOnly} onChange={(e) => set(f, e.target.value)} style={fieldBoxStyle(!!fails[f])} />
+            <Input value={draft[f]} readOnly={readOnly} onChange={(e) => set(f, e.target.value)} style={fieldBoxStyle(!!fails[f])} />
           </div>
         ))}
 
         {AREA_FIELDS.map((f) => (
           <div key={f} style={{ gridColumn: "1 / -1" }}>
             <FieldLabel field={f} fails={fails[f]} />
-            <textarea
+            <Textarea
               value={draft[f]}
               readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
@@ -312,7 +315,7 @@ export function ReviewEditor({
         {LIST_FIELDS.map((f) => (
           <div key={f}>
             <FieldLabel field={f} fails={fails[f]} />
-            <textarea
+            <Textarea
               value={draft[f]}
               readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
@@ -327,7 +330,7 @@ export function ReviewEditor({
         <div style={{ gridColumn: "1 / -1" }}>
           <FieldLabel field="aa_itineraries" fails={fails.aa_itineraries} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12 }}>
-            <textarea
+            <Textarea
               value={draft.aa_itineraries}
               readOnly={readOnly}
               onChange={(e) => set("aa_itineraries", e.target.value)}

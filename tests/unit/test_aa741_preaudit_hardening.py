@@ -185,7 +185,7 @@ def _token(role):
     return jwt.encode({"sub": "u-1", "role": role}, auth.JWT_SECRET, algorithm=auth.JWT_ALG)
 
 
-@pytest.mark.parametrize("role", ["admin", "reviewer", "content"])
+@pytest.mark.parametrize("role", ["admin", "content", "content"])
 def test_staff_token_is_refused_by_tenant_auth(role):
     from api.routers import auth, v1_tours
     with pytest.raises(HTTPException) as e:

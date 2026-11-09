@@ -26,7 +26,9 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from .errors import TRUNCATED_STOP_REASONS
+from shared.aa_llm import ledger as core_ledger
+
+from .errors import TRUNCATED_STOP_REASONS  # noqa: F401 — kept importable here (the core's own frozenset)
 from .models import ANTHROPIC_API_LABEL_PREFIX, AZURE_OPENAI_LABEL_PREFIX
 
 logger = structlog.get_logger()
@@ -66,9 +68,10 @@ _SHIPPED_INSERT_SQL = _INSERT_SQL
 # fields are), and v2 is not tried again for _V2_RETRY_SECONDS. The AA-729 harness relabels this statement too
 # (evalpatch.relabel_v2_sql); v2 is used only when both statements are the shipped ones or both were replaced, so an
 # eval row can never escape the relabel through it.
-V2_COLUMNS = ("app", "status", "error_class", "latency_ms", "connection_key", "deployment_wire_id", "attempt_no",
-              "request_id", "tour_id", "reasoning_tokens", "effort", "is_shadow", "is_experiment", "prompt_hash",
-              "prompt_version", "units", "unit_kind")
+# AA-1024 A10: the columns and their normalisation are the shared core's (shared/aa_llm/ledger.py, the row TripPlanner
+# writes too), so a CIS row and a TripPlanner row have one shape. The statement text below stays here: the AA-729 eval
+# harness relabels it; tests/unit/test_aa1024_a10_core_identity.py pins its column list to core_ledger.COLUMNS.
+V2_COLUMNS = core_ledger.V2_COLUMNS
 _INSERT_V2_SQL = """
     INSERT INTO shared.llm_call_log
         (tenant_id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal,
@@ -90,17 +93,131 @@ _v2_missing_at = 0.0
 # The app every row of this module belongs to (llm_call_log.app); TripPlanner writes its own rows.
 APP = "cis"
 # llm_call_log.status / error_class values (migration 319 CHECKs).
-STATUS_OK, STATUS_REFUSED, STATUS_ERROR = "ok", "refused", "error"
-STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = "billed_unusable", "truncated"
-STATUSES = (STATUS_OK, STATUS_REFUSED, STATUS_ERROR, STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED)
-ERROR_CLASSES = ("access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget",
-                 "truncated")
+STATUS_OK, STATUS_REFUSED, STATUS_ERROR = core_ledger.STATUS_OK, core_ledger.STATUS_REFUSED, core_ledger.STATUS_ERROR
+STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = core_ledger.STATUS_BILLED_UNUSABLE, core_ledger.STATUS_TRUNCATED
+STATUSES = core_ledger.STATUSES
+# AA-642 A1: 'disabled' = the stage kill switch, CHECK of migration 326. AA-642 A5: 'role_not_served' = no connection
+# serves the stage's role, CHECK of migration 338. AA-1024 A10: the core's list (shared/aa_llm/errors.py
+# LEDGER_ERROR_CLASSES, which frontend/lib/aiGatewayPolish.test.mjs parses).
+ERROR_CLASSES = core_ledger.ERROR_CLASSES
 # A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'. AA-1017:
-# the class and its stop reasons live in errors.py (TRUNCATED, TRUNCATED_STOP_REASONS, imported above), the one place
+# the class and its stop reasons live in the core's errors.py (TRUNCATED, TRUNCATED_STOP_REASONS), the one place
 # the gateway classifies outcomes.
 # The gateway facts of one reply that billed_fields() passes on (besides the S6 four).
 V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id", "effort", "reasoning_tokens",
                   "prompt_hash", "prompt_version")
+# AA-1042 (Route trace): the gateway request a reply answered and the route position that answered it. Not columns:
+# record_call* fold them into quality_signal ("route_trace", "route_position"), the keys the gateway's own attempt rows
+# carry too (route_trace, position), so every row of one request shares its route_trace. AA-1042 (S270): plus
+# "route_skips", the rungs before the answering one that were deferred behind an open refusal circuit (no row of their
+# own; the Route trace shows them as skipped attempts).
+ROUTE_KEYS = ("route_trace", "route_position", "route_skips")
+_ROUTE_TRACE_MAX = 64
+_ROUTE_SKIPS_MAX = 16
+_ROUTE_SKIP_TEXT_MAX = 120
+
+
+def _route_skips(value) -> Optional[list]:
+    """The well-formed entries of a reply's route_skips (model, connection, reason, position), capped; None when
+    there are none."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    out = []
+    for e in value[:_ROUTE_SKIPS_MAX]:
+        if not isinstance(e, dict) or not isinstance(e.get("model"), str) or not e["model"]:
+            continue
+        pos = e.get("position")
+        conn = e.get("connection")
+        reason = e.get("reason")
+        out.append({"model": e["model"][:_ROUTE_SKIP_TEXT_MAX],
+                    "connection": conn[:_ROUTE_SKIP_TEXT_MAX] if isinstance(conn, str) and conn else None,
+                    "reason": reason[:_ROUTE_SKIP_TEXT_MAX] if isinstance(reason, str) and reason else None,
+                    "position": pos if isinstance(pos, int) and not isinstance(pos, bool) and pos >= 0 else None})
+    return out or None
+
+
+def route_signal(route_trace=None, route_position=None, route_skips=None) -> dict:
+    """The quality_signal keys of a reply's route facts ({} when there are none). Defensive like billed_fields."""
+    out: dict = {}
+    if isinstance(route_trace, str) and route_trace and len(route_trace) <= _ROUTE_TRACE_MAX:
+        out["route_trace"] = route_trace
+    if isinstance(route_position, int) and not isinstance(route_position, bool) and route_position >= 0:
+        out["route_position"] = route_position
+    skips = _route_skips(route_skips)
+    if skips:
+        out["route_skips"] = skips
+    return out
+
+
+# S271 (AA-741 / AA-900): the gateway's one truncation retry (shared/llm_client/token_floor.py). Not a column either:
+# a reply that is the retry carries its ceiling (LLMResponse.truncation_retry_max_tokens), billed_fields() passes it
+# on and record_call* fold it into quality_signal as {"truncation_retry": true, "max_tokens": n}, the keys of the
+# caller-side budget retry (services/acp_shared/token_budget.py), so one query reads both.
+# S271 W0 (AA-900 l13): plus why it retried (LLMResponse.truncation_retry_reason -> quality_signal.retry_reason).
+RETRY_KEYS = ("truncation_retry_max_tokens", "truncation_retry_reason")
+_RETRY_REASON_MAX = 40
+
+
+def retry_signal(truncation_retry_max_tokens=None, truncation_retry_reason=None) -> dict:
+    """The quality_signal keys of a reply that is the gateway's truncation retry ({} for any other reply)."""
+    n = truncation_retry_max_tokens
+    if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+        out = {"truncation_retry": True, "max_tokens": n}
+        r = truncation_retry_reason
+        if isinstance(r, str) and r:
+            out["retry_reason"] = r[:_RETRY_REASON_MAX]
+        return out
+    return {}
+
+
+# S271 W0 (AA-900 l13): the gateway's degraded marks of a reply (LLMResponse.route_degraded, services/quality/
+# route_guard.py: a judge / validate / decide answer from a fallback rung or nova-lite, a same-family writer / judge
+# pair). Not a column: record_call* fold it into quality_signal.degraded (a list of {name, reason, ...}).
+DEGRADED_KEYS = ("route_degraded",)
+_DEGRADED_MAX = 8
+_DEGRADED_FIELDS = ("name", "reason", "stage", "model", "position", "families", "writers")
+
+
+def _degraded_entries(value) -> Optional[list]:
+    """The well-formed entries of a reply's route_degraded (known keys only, capped); None when there are none."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    out = []
+    for e in value[:_DEGRADED_MAX]:
+        if not isinstance(e, dict) or not isinstance(e.get("name"), str) or not e["name"]:
+            continue
+        clean = {}
+        for k in _DEGRADED_FIELDS:
+            v = e.get(k)
+            if isinstance(v, str) and v:
+                clean[k] = v[:_ROUTE_SKIP_TEXT_MAX]
+            elif k == "position" and isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                clean[k] = v
+            elif isinstance(v, (list, tuple)) and v:
+                clean[k] = [str(x)[:_ROUTE_SKIP_TEXT_MAX] for x in list(v)[:_DEGRADED_MAX]]
+        out.append(clean)
+    return out or None
+
+
+def degraded_signal(route_degraded=None) -> dict:
+    """The quality_signal key of a reply's degraded marks ({} when it has none)."""
+    entries = _degraded_entries(route_degraded)
+    return {"degraded": entries} if entries else {}
+
+
+def _with_route(quality_signal, route_trace=None, route_position=None, route_skips=None,
+                truncation_retry_max_tokens=None, truncation_retry_reason=None, route_degraded=None):
+    """``quality_signal`` with the route keys (and the truncation retry's, S271; the degraded marks, S271 W0) added
+    (a key the signal already has wins). Unchanged without them."""
+    extra = {**route_signal(route_trace, route_position, route_skips),
+             **retry_signal(truncation_retry_max_tokens, truncation_retry_reason),
+             **degraded_signal(route_degraded)}
+    if not extra:
+        return quality_signal
+    base = dict(quality_signal) if isinstance(quality_signal, dict) else {}
+    for k, v in extra.items():
+        base.setdefault(k, v)
+    return base
 
 
 def _s6_extras(model: str, cache_read_tokens, cache_write_tokens, pricing_mode) -> Optional[tuple]:
@@ -131,61 +248,22 @@ def _v2_ready() -> bool:
     return not (_v2_missing_at and _time.monotonic() - _v2_missing_at < _V2_RETRY_SECONDS)
 
 
-def _text(value, limit: int) -> Optional[str]:
-    return value[:limit] if isinstance(value, str) and value else None
-
-
-def _uuid_or_none(value) -> Optional[str]:
-    if value is None or str(value) in ("", "None"):
-        return None
-    try:
-        return str(uuid.UUID(str(value)))
-    except ValueError:
-        return None
-
-
 def _v2_values(*, stop_reason=None, quality_signal: Optional[dict] = None, connection_key=None,
                **fields) -> tuple:
     """The 17 values of V2_COLUMNS for one row (``fields`` = the caller's v2 keyword arguments). Derived when the
     caller is silent: app = APP; status = billed_unusable for a billed_unusable signal, truncated for a reply cut at
     its token limit, else ok; is_shadow from the {"shadow": true} signal; is_experiment while an eval label is bound
     (or the signal carries an eval run). A value of the wrong type or outside the CHECKs is written NULL. Never
-    raises."""
+    raises. AA-1024 A10: the shared core's ``ledger.v2_values``; CIS adds only its app default and the eval label."""
     qs = quality_signal if isinstance(quality_signal, dict) else {}
-    status = fields.get("status") if fields.get("status") in STATUSES else None
-    if status is None:
-        if qs.get("billed_unusable") is True:
-            status = STATUS_BILLED_UNUSABLE
-        elif isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS:
-            status = STATUS_TRUNCATED
-        else:
-            status = STATUS_OK
-    error_class = fields.get("error_class") if fields.get("error_class") in ERROR_CLASSES else None
-    if error_class is None and status == STATUS_TRUNCATED:
-        error_class = "truncated"
-    latency = _int_or_none(fields.get("latency_ms"))
-    attempt = _int_or_none(fields.get("attempt_no"))
-    shadow = fields.get("is_shadow")
+    app = fields.get("app")
     experiment = fields.get("is_experiment")
-    return (
-        _text(fields.get("app"), 40) or APP,
-        status,
-        error_class,
-        latency if latency is not None and latency >= 0 else None,
-        _text(connection_key, 100),
-        _text(fields.get("deployment_wire_id"), 300),
-        attempt if attempt is not None and attempt >= 1 else None,
-        _text(fields.get("request_id"), 200),
-        _uuid_or_none(fields.get("tour_id")),
-        _int_or_none(fields.get("reasoning_tokens")),
-        _text(fields.get("effort"), 40),
-        shadow if isinstance(shadow, bool) else qs.get("shadow") is True,
-        experiment if isinstance(experiment, bool) else (_eval_label.get() is not None or "eval_run" in qs),
-        _text(fields.get("prompt_hash"), 128),
-        _text(fields.get("prompt_version"), 100),
-        _int_or_none(fields.get("units")),
-        _text(fields.get("unit_kind"), 40),
-    )
+    if not isinstance(experiment, bool):
+        experiment = _eval_label.get() is not None or "eval_run" in qs
+    return core_ledger.v2_values(
+        **{c: fields.get(c) for c in V2_COLUMNS if c not in ("app", "connection_key", "is_experiment")},
+        app=app if isinstance(app, str) and app else APP, connection_key=connection_key, is_experiment=experiment,
+        stop_reason=stop_reason, quality_signal=qs)
 
 
 def _in_transaction(conn) -> bool:
@@ -318,6 +396,35 @@ def bind_eval_stage(stage: str, run_id: str) -> Iterator[None]:
         _eval_label.reset(token)
 
 
+# AA-1049 W3 (T2 train): an observation-only meter of the billed calls a caller's step records through the sync
+# writers (``record_call_sync`` and ``record_unusable_sync``), so a per-version budget can count a step whose own
+# function does not return its attempts or cost (T3's meta regenerate: up to 3 t2_flag_fix calls). Unset (every
+# caller but the opt-in T2 orchestrator), it does nothing; set, it only appends (stage, cost_usd): the row written is
+# unchanged. Same propagation as ``_current_job_id`` (asyncio.to_thread copies the context).
+_call_meter: ContextVar[Optional[list]] = ContextVar("llm_call_log_meter", default=None)
+
+
+@contextmanager
+def meter_calls() -> Iterator[list]:
+    """Yield a list that receives (stage, cost_usd) for every billed call recorded in this context."""
+    sink: list = []
+    token = _call_meter.set(sink)
+    try:
+        yield sink
+    finally:
+        _call_meter.reset(token)
+
+
+def _meter(stage, cost_usd) -> None:
+    sink = _call_meter.get()
+    if sink is None:
+        return
+    try:
+        sink.append((str(stage), float(cost_usd or 0.0)))
+    except (TypeError, ValueError):
+        sink.append((str(stage), 0.0))
+
+
 def _relabel(stage: str, tenant_id, quality_signal: Optional[dict], content_piece_id, angle_gate_request_id):
     """(stage, row tenant, quality_signal, piece, request) as the INSERT sends them: unchanged without an eval
     label; relabelled to the eval stage (tenant / piece / request NULL) with one."""
@@ -434,12 +541,25 @@ def billed_fields(resp) -> dict:
             out[key] = _int_or_none(value)
         else:
             out[key] = value if isinstance(value, str) and value else None
+    # AA-1042 (Route trace): which gateway request this reply answered, and the route position that answered it.
+    route = route_signal(getattr(resp, "route_trace", None), getattr(resp, "route_position", None),
+                         getattr(resp, "route_skips", None))
+    out["route_trace"] = route.get("route_trace")
+    out["route_position"] = route.get("route_position")
+    out["route_skips"] = route.get("route_skips")      # AA-1042 (S270): rungs deferred behind a refusal circuit
+    # S271: the retry's ceiling when this reply is the gateway's one truncation retry (else None)
+    n = getattr(resp, "truncation_retry_max_tokens", None)
+    out["truncation_retry_max_tokens"] = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else None
+    reason = getattr(resp, "truncation_retry_reason", None)        # S271 W0: why the gateway retried
+    out["truncation_retry_reason"] = reason if isinstance(reason, str) and reason else None
+    out["route_degraded"] = _degraded_entries(getattr(resp, "route_degraded", None))   # S271 W0: degraded marks
     return out
 
 
 # Every key billed_fields() returns: a structure that carries a reply's billing (brand_fit.RUN_BILLING_KEYS, the T10
 # judge's raw dict) keeps them all.
-BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS)
+BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS,
+                     *ROUTE_KEYS, *RETRY_KEYS, *DEGRADED_KEYS)
 
 
 async def record_call(
@@ -451,6 +571,9 @@ async def record_call(
     provider: Optional[str] = None,
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
+    route_trace: Optional[str] = None, route_position: Optional[int] = None,
+    route_skips: Optional[list] = None, truncation_retry_max_tokens: Optional[int] = None,
+    truncation_retry_reason: Optional[str] = None, route_degraded: Optional[list] = None,
     **v2,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
@@ -483,6 +606,9 @@ async def record_call(
     caller may state itself (status, error_class, tour_id, prompt_version, units, unit_kind, is_shadow,
     is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
     _check_v2(v2)
+    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
+                                 truncation_retry_max_tokens, truncation_retry_reason,        # S271
+                                 route_degraded)                                              # S271 W0
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -515,6 +641,9 @@ async def record_call_with_pool(
     provider: Optional[str] = None,
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
+    route_trace: Optional[str] = None, route_position: Optional[int] = None,
+    route_skips: Optional[list] = None, truncation_retry_max_tokens: Optional[int] = None,
+    truncation_retry_reason: Optional[str] = None, route_degraded: Optional[list] = None,
     **v2,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
@@ -525,6 +654,9 @@ async def record_call_with_pool(
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
     _check_v2(v2)
+    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
+                                 truncation_retry_max_tokens, truncation_retry_reason,        # S271
+                                 route_degraded)                                              # S271 W0
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -549,7 +681,7 @@ async def record_call_with_pool(
             content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id,
             stop_reason=stop_reason, account=account, fallback_used=fallback_used, provider=provider,
             cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens, pricing_mode=pricing_mode,
-            connection_key=connection_key, **v2,
+            connection_key=connection_key, **v2,       # quality_signal already carries the route keys (AA-1042)
         )
 
 
@@ -564,6 +696,7 @@ def record_call_sync(**kwargs) -> None:
     caller's loop with no reference kept: an unreferenced task can be garbage-collected, and the
     caller's `asyncio.run()` cancels every pending task when its loop closes, so the row of an
     already-billed call was lost. The common path (no running loop) is unchanged."""
+    _meter(kwargs.get("stage"), kwargs.get("cost_usd"))
     if _loop_running():
         _in_background(record_call, kwargs)
         return
@@ -625,7 +758,21 @@ V2_FIELDS = tuple(c for c in V2_COLUMNS if c != "connection_key")
 _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
                "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
                "fallback_used", "provider", "cache_read_tokens", "cache_write_tokens", "pricing_mode",
-               "connection_key", *V2_FIELDS)
+               "connection_key", *V2_FIELDS, *ROUTE_KEYS, *RETRY_KEYS, *DEGRADED_KEYS)
+
+
+def _fold_route(row: dict) -> dict:
+    """AA-1042: a record_calls row with its route keys (S271: and the truncation retry's) folded into quality_signal
+    (removed as fields)."""
+    folded = (*ROUTE_KEYS, *RETRY_KEYS, *DEGRADED_KEYS)
+    if not any(k in row for k in folded):
+        return row
+    out = {k: v for k, v in row.items() if k not in folded}
+    out["quality_signal"] = _with_route(row.get("quality_signal") or {}, row.get("route_trace"),
+                                        row.get("route_position"), row.get("route_skips"),
+                                        row.get("truncation_retry_max_tokens"), row.get("truncation_retry_reason"),
+                                        row.get("route_degraded"))
+    return out
 
 
 def _check_v2(v2: dict) -> None:
@@ -664,6 +811,7 @@ async def record_calls(rows: list[dict]) -> None:
         unknown = set(r) - set(_ROW_FIELDS)
         if unknown:
             raise TypeError(f"record_calls: unknown field(s) {sorted(unknown)}")
+    rows = [_fold_route(r) for r in rows]
     try:
         conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=15)
         try:
@@ -718,6 +866,7 @@ def billed_record(resp, **overrides) -> dict:
     # AA-804 (ledger v2): the attempt facts of the reply (latency, attempt position, wire id, request id, ...).
     v2 = billed_fields(resp)
     rec.update({k: v2[k] for k in V2_BILLED_KEYS})
+    rec.update({k: v2[k] for k in ROUTE_KEYS if v2.get(k) is not None})   # AA-1042 (Route trace)
     if v2["connection_key"]:
         rec["connection_key"] = v2["connection_key"]
     rec.update(overrides)
@@ -734,7 +883,9 @@ def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error
     signal.update({"billed_unusable": True, "error": str(error or "")[:300]})
     # AA-804 (ledger v2): status billed_unusable; the attempt facts the gateway put on the billed record pass through.
     return [dict(stage=stage, role=role, model=b.get("model") or "unknown", tokens_in=b.get("tokens_in"),
-                 tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"), quality_signal=dict(signal),
+                 tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"),
+                 quality_signal=_with_route(dict(signal), b.get("route_trace"), b.get("route_position"),
+                                             b.get("route_skips")),
                  tenant_id=tenant_id, content_piece_id=content_piece_id,
                  angle_gate_request_id=angle_gate_request_id, stop_reason=b.get("stop_reason"),
                  account=_row_account(b.get("account"), b.get("connection_key")),
@@ -768,6 +919,25 @@ def gateway_failure_row(*, stage: str, role: str, model: str, status: str, error
                 prompt_hash=prompt_hash, is_shadow=is_shadow, **v2)
 
 
+def cut_reply_row(resp, *, stage: str, role: str, max_tokens: int, retry_max_tokens: int,
+                  quality_signal_extra: Optional[dict] = None, is_shadow: Optional[bool] = None) -> dict:
+    """S271: the record_calls row the gateway writes for a reply cut at its token ceiling that it retries once
+    (shared/llm_client/token_floor.py): billed, status 'truncated', quality_signal = {**extra minus OK_RATE_KEYS,
+    "gateway_attempt": true, "budget_cut": true, "max_tokens", "retry_max_tokens"} (the keys of the caller-side
+    budget retry's cut row before S271 W0), so the row never moves a stage's ok-rate."""
+    signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
+    signal.update({"gateway_attempt": True, "budget_cut": True, "max_tokens": int(max_tokens),
+                   "retry_max_tokens": int(retry_max_tokens)})
+    provider = getattr(resp, "provider", None)
+    return dict(stage=stage, role=role, model=getattr(resp, "model_used", None) or "unknown",
+                tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+                cost_usd=float(getattr(resp, "cost_usd", 0.0) or 0.0), quality_signal=signal,
+                stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
+                fallback_used=getattr(resp, "fallback_used", None),
+                provider=provider if isinstance(provider, str) else None, status=STATUS_TRUNCATED,
+                is_shadow=is_shadow, **billed_fields(resp))
+
+
 async def record_billed_failure(*, stage: str, role: str, billed: Optional[list], error: str,
                                 quality_signal_extra: Optional[dict] = None, tenant_id: Optional[str] = None,
                                 content_piece_id: Optional[str] = None,
@@ -799,6 +969,7 @@ def record_unusable_sync(resp, *, stage: str, role: str, error, quality_signal_e
     call itself failed, nothing to write. `ids` = tenant_id / content_piece_id / angle_gate_request_id."""
     if resp is None:
         return
+    _meter(stage, getattr(resp, "cost_usd", None))
     record_billed_failure_sync(stage=stage, role=role, billed=[billed_record(resp)], error=str(error),
                                quality_signal_extra=quality_signal_extra, **ids)
 

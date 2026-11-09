@@ -106,6 +106,7 @@ class GeoapifyDetails:
         self._key = api_key
         self.requests = 0
         self.failed_requests = 0       # AA-804: requests that did not answer 200 / 404 (their credits are still spent)
+        self.latency_ms = 0            # AA-1025 D3: the provider time of those requests (geo.geocode_call)
         self.credits = 0
         self.daily_credit_limit = int(daily_credit_limit)
         self.credits_used_today = int(credits_used_today)
@@ -124,6 +125,7 @@ class GeoapifyDetails:
         return self._http
 
     def _get_key(self) -> str:
+        geocoder_mod.check_switch()         # AA-642 (S263 L2): switched off in the admin = nothing is sent
         if not self._key:
             from shared.secrets import get_geoapify_key
             try:
@@ -144,7 +146,8 @@ class GeoapifyDetails:
     async def fetch(self, place_id: str, *, full_geometry: bool = False) -> dict:
         cost = DETAILS_CREDITS + (FULL_GEOMETRY_CREDITS if full_geometry else 0)
         params = {**self.params(place_id, full_geometry), "apiKey": self._get_key()}
-        last = "unknown"
+        await geocoder_mod.check_circuit()          # AA-1025 B3: the shared Geoapify circuit open = nothing is sent
+        last, last_status = "unknown", None
         for attempt in range(self.max_retries + 1):
             if self.credits_left() < cost:
                 raise geocoder_mod.CreditLimitReached(
@@ -154,27 +157,36 @@ class GeoapifyDetails:
             self.requests += 1
             self.credits += cost
             retry_after = None
+            sent = time.monotonic()
             try:
                 resp = await self._client().get(DETAILS_URL, params=params)
             except Exception as e:  # noqa: BLE001
-                last = type(e).__name__
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
+                last, last_status = type(e).__name__, None
                 self.failed_requests += 1
             else:
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:
-                        return resp.json()
+                        data = resp.json()
                     except Exception as e:  # noqa: BLE001
                         self.failed_requests += 1
+                        await geocoder_mod.circuit_outcome(None, "details: invalid JSON")
                         raise ShapeSourceError(f"geoapify details: invalid JSON ({type(e).__name__})") from None
+                    await geocoder_mod.circuit_outcome(200)
+                    return data
                 if status == 404:
+                    await geocoder_mod.circuit_outcome(404)        # no such place: the provider answered
                     return {}
                 self.failed_requests += 1
                 if status in (401, 403):
+                    await geocoder_mod.circuit_outcome(status, f"details: HTTP {status} (key rejected)")
                     raise geocoder_mod.GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
+                    await geocoder_mod.circuit_outcome(status, f"details: HTTP {status}")
                     raise ShapeSourceError(f"geoapify details: HTTP {status}")
-                last = f"HTTP {status}"
+                last, last_status = f"HTTP {status}", status
                 retry_after = (getattr(resp, "headers", None) or {}).get("Retry-After")
             if attempt == self.max_retries:
                 break
@@ -185,6 +197,7 @@ class GeoapifyDetails:
             except (TypeError, ValueError):
                 pass
             await self._sleep(delay)
+        await geocoder_mod.circuit_outcome(last_status, f"details: {last} after {self.max_retries + 1} attempts")
         raise ShapeSourceError(f"geoapify details: {last} after {self.max_retries + 1} attempts")
 
     async def line(self, place_id: str) -> Optional[LineCandidate]:

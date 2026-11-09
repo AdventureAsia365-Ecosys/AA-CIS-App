@@ -76,6 +76,42 @@ def test_stop_conditions():
     assert all(wr.stop_conditions(bad).values())
 
 
+def test_stop_flags_are_pending_while_jobs_run_and_a_true_flag_exits_3():
+    """AA-1024 G17: the report used to exit 0 whatever the flags said, and a flag read while jobs were still queued
+    was taken for a stop. Now: pending while the wave's tours have queued or running jobs, exit 3 on a true flag."""
+    stops = {"stayed_v1_over_10pct": True, "legacy_itinerary_path": False}
+    busy = [{"kind": "a3_atomize", "status": "queued", "n": 2}]
+    assert wr.stop_state(stops, busy) == {"stayed_v1_over_10pct": "pending", "legacy_itinerary_path": "pending"}
+    assert wr.exit_code(wr.stop_state(stops, busy)) == wr.EXIT_PENDING == 5
+    assert wr.stop_state(stops, [{"kind": "a3_atomize", "status": "queued", "n": 0}])["stayed_v1_over_10pct"] == "true"
+    assert wr.exit_code(wr.stop_state(stops, [])) == wr.EXIT_STOP == 3
+    assert wr.exit_code(wr.stop_state({"legacy_itinerary_path": False}, [])) == 0
+    md = wr.markdown({}, stops, wr.stop_state(stops, busy), busy)
+    assert "stayed_v1_over_10pct=pending" in md and "PENDING" in md and "a3_atomize queued 2" in md
+    md = wr.markdown({}, stops, wr.stop_state(stops, []), [])
+    assert "stayed_v1_over_10pct=TRUE" in md and "STOP:" in md
+
+
+def test_main_returns_the_report_exit_code(monkeypatch, capsys):
+    calm = [_tour("Vietnam", "published", _version("b", gate=("X",)), _version("a", writer="v2"),
+                  atoms={"fingerprint_days": 2, "atoms_off_days": 0})]
+
+    async def fake_load(args):
+        return calm, [{"kind": "s1_rewrite", "status": "running", "n": 1}]
+
+    monkeypatch.setattr(wr, "load", fake_load)
+    assert wr.main(["--since", "2026-01-24T02:00:00Z", "--markdown"]) == wr.EXIT_PENDING
+    out = capsys.readouterr().out
+    assert '"exit_code": 5' in out and "PENDING" in out
+
+    async def drained(args):
+        return calm, []
+
+    monkeypatch.setattr(wr, "load", drained)
+    report = wr.build(calm, wr.parse_args(["--since", "2026-01-24T02:00:00Z"]), [])
+    assert wr.main(["--since", "2026-01-24T02:00:00Z"]) == report["exit_code"]
+
+
 def test_markdown_and_args():
     args = wr.parse_args(["--since", "2026-01-24T02:00:00Z"])
     assert args.since == dt.datetime(2026, 1, 24, 2, tzinfo=dt.timezone.utc) and args.until > args.since

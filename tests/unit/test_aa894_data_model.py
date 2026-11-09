@@ -118,7 +118,7 @@ def test_policy_is_admin_only():
 
     assert staff_authz.POLICY[("GET", PATH)] == staff_authz.OPS_READ
     assert staff_authz.has_perm("admin", staff_authz.OPS_READ)
-    for role in ("viewer", "reviewer", "content"):
+    for role in ("viewer", "content", "content"):
         assert not staff_authz.has_perm(role, staff_authz.OPS_READ), role
 
 
@@ -130,7 +130,7 @@ def test_missing_or_wrong_secret_403(client):
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("role", ["viewer", "reviewer", "content", "tenant"])
+@pytest.mark.parametrize("role", ["viewer", "content", "tenant"])
 def test_non_admin_roles_403(client, role):
     fake = FakeS3({LATEST: _model()})
     with _use(fake):

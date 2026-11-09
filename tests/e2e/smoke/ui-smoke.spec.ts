@@ -18,8 +18,8 @@
 //
 // AA-816 S2 path — the authenticated describes carry the tag @staff: only the `smoke` project (after smoke-setup)
 // runs them, on the two Cognito callback hosts (the fixed Preview host as the capped viewer, Production as the
-// Cognito E2E user, a reviewer). Per-PR previews run the `smoke-public` project, which skips @staff. Any other
-// non-admin role (reviewer, content) runs the page list against frontend/lib/rbac.ts PAGE_RULES: a page it may not
+// Cognito E2E user, content since CIS 375). Per-PR previews run the `smoke-public` project, which skips @staff. Any other
+// non-admin role (content, the desk roles) runs the page list against frontend/lib/rbac.ts PAGE_RULES: a page it may not
 // open must be refused like the viewer's; it does no write and no admin-only check (Production stays read-only).
 //
 // S251 (AA-835, AA-916) — also: Supply content (Booking) list + a made-up id's not-found card; the Review Queue's
@@ -58,15 +58,20 @@ ensureResultsDir();
 // AA-878 — `viewerRefused`: a page the read-only viewer may not open (admin-only, or Upload / S1, which only
 // write). A new admin-only page must carry it, or viewer mode fails on it (the proxy redirects it away).
 const ADMIN_PAGES: PageSpec[] = [
-  { id: 'atom-curation', label: 'Social Content', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'atom-curation', label: 'Atoms & routes', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'decisions', label: 'Jev Decisions', path: '/admin/decisions', viewerRefused: true },
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs', viewerRefused: true },
   // AA-839 — Jobs › Data erasure (admin only; DRY RUN by default, apply needs the env flag + a Cognito sign-in).
-  { id: 'data-erasure', label: 'Data erasure', path: '/admin/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
-  { id: 'cost-ops', label: 'Cost Operations', path: '/admin/cost-ops', viewerRefused: true },
-  // AA-804 — Platform › AI & spend › AI providers (admin only; backend spend.read). The tiles and three provider tables
-  // render once the providers answer; `ai-gateway-ready` marks that.
-  { id: 'ai-gateway', label: 'AI providers', path: '/admin/ai-gateway', readySelector: '[data-testid="ai-gateway-ready"]', viewerRefused: true },
+  { id: 'data-erasure', label: 'Data erasure', path: '/admin/tenants/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
+  // AA-1039 R6 slice 3 — AI & spend › Spend (was Cost Operations at /admin/cost-ops and Cost per app at
+  // /admin/platform/cost; both 307s, aa1039-admin-ia-redirects.spec.ts).
+  { id: 'spend', label: 'Spend', path: '/admin/spend', viewerRefused: true },
+  // AA-804 — AI & spend › AI gateway (was "AI providers"; admin only; backend spend.read). The tiles and three provider
+  // tables render once the providers answer; `ai-gateway-ready` marks that.
+  { id: 'ai-gateway', label: 'AI gateway', path: '/admin/ai-gateway', readySelector: '[data-testid="ai-gateway-ready"]', viewerRefused: true },
+  // AA-1045 — AI & spend › Usage explorer (AI & spend roles; backend spend.read). `usage-explorer-ready` once the
+  // explorer query answered (or failed: the page then says why).
+  { id: 'usage-explorer', label: 'Usage explorer', path: '/admin/usage', readySelector: '[data-testid="usage-explorer-ready"]', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).
@@ -76,49 +81,71 @@ const ADMIN_PAGES: PageSpec[] = [
   // Apps and Cost pages are cards / a custom table, so their ready marker renders only once data loaded.
   { id: 'platform-apps', label: 'Apps', path: '/admin/platform/apps', readySelector: '[data-testid="platform-apps-ready"]', viewerRefused: true },
   { id: 'platform-audit', label: 'Audit log', path: '/admin/platform/audit', viewerRefused: true },
-  { id: 'platform-cost', label: 'Cost per app', path: '/admin/platform/cost', readySelector: '[data-testid="platform-cost-ready"]', viewerRefused: true },
+  // AA-1039 R6 slice 3: Cost per app is the By app tab of Spend (was /admin/platform/cost).
+  { id: 'spend-by-app', label: 'Spend · By app', path: '/admin/spend?tab=apps', readySelector: '[data-testid="platform-cost-ready"]', viewerRefused: true },
+  // AA-1039 R6 slice 3 — Writing Lab: one stage end to end (eval gate tab; `writing-lab-ready` once the stage read
+  // answered) and the Writing memory tools (was /admin/writing-memory). Admin only.
+  { id: 'lab-stage', label: 'Writing Lab · A1 rewrite', path: '/admin/lab/a1-s1', readySelector: '[data-testid="writing-lab-ready"]', viewerRefused: true },
+  { id: 'lab-writing-memory', label: 'Writing memory', path: '/admin/lab/writing-memory', viewerRefused: true },
+  // AA-1039 R6 rest (S268): the Releases and Metrics tabs of a stage (their own reads of the Writing memory API).
+  { id: 'lab-releases', label: 'Writing Lab · Releases', path: '/admin/lab/t2-rewrite?tab=releases', readySelector: '[data-testid="lab-releases-ready"]', viewerRefused: true },
+  { id: 'lab-metrics', label: 'Writing Lab · Metrics', path: '/admin/lab/a1-s1?tab=metrics', readySelector: '[data-testid="lab-metrics-ready"]', viewerRefused: true },
   // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
   { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
-  // AA-941 — Platform › Tenants › Agencies (CRM): the partner CRM's L1 console (admin only; needs a Cognito sign-in).
-  { id: 'platform-agencies', label: 'Agencies (CRM)', path: '/admin/platform/agencies', viewerRefused: true },
+  // AA-941 — Tenants › CRM agencies (AA-1039: was /admin/platform/agencies): the partner CRM's L1 console (admin only;
+  // needs a Cognito sign-in).
+  { id: 'tenants-agencies', label: 'CRM agencies', path: '/admin/tenants/agencies', viewerRefused: true },
   { id: 'photos', label: 'Photos', path: '/admin/photos', viewerRefused: true },
   // AA-977 — CIS Content › Assets › AA content (CRM): every staff role reads (the viewer too; write controls hidden).
-  { id: 'aa-content', label: 'AA content (CRM)', path: '/admin/aa-content' },
+  { id: 'aa-content', label: 'AA content', path: '/admin/aa-content' },
   // AA-814 — CIS Content › Assets › Facts: every staff role reads (write controls hidden; writes admin only).
   { id: 'facts', label: 'Facts', path: '/admin/facts' },
   // AA-835 — CIS Content › Assets › Supply (Booking): every staff role reads (lib/rbac.ts PAGE_RULES ALL_STAFF).
-  { id: 'supply-content', label: 'Supply content (Booking)', path: '/admin/supply-content' },
-  { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
-  // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
-  { id: 'content-quality', label: 'Content Quality', path: '/admin/content-quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
+  { id: 'supply-content', label: 'Supply copy', path: '/admin/supply-content' },
+  // AA-1039 — Tenant content QA (was /admin/platform-stats, /admin/content-quality, /admin/tenant-activity and the
+  // atom-curation Slate section; the old URLs are 307s, aa1039-admin-ia-redirects.spec.ts).
+  { id: 'tenant-qa-review-log', label: 'Review log', path: '/admin/tenant-qa/review-log', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  // AA-769 — Content quality (T2/T9 quality signals for every tenant; tenants never see them).
+  { id: 'tenant-qa-quality', label: 'Content quality', path: '/admin/tenant-qa/quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
+  // AA-1039 R6 rest (tech lead, option A): Place cards, was Content quality's Cards tab (?tab=cards is a 307 here, see
+  // aa1039-admin-ia-redirects.spec.ts); TENANT_QA roles, the viewer refused. `place-cards-ready` wraps the table.
+  { id: 'place-cards', label: 'Place cards', path: '/admin/places/cards', readySelector: '[data-testid="place-cards-ready"]', viewerRefused: true },
+  { id: 'tenant-qa-slate', label: 'Slate', path: '/admin/tenant-qa/slate', readySelector: '[data-testid="tenant-qa-slate-ready"]', viewerRefused: true },
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence', viewerRefused: true },
-  { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'settings', label: 'Catalogue settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  // AA-1039 R6 rest: the UI kit reference moved from Settings to Platform (admin only, like every Platform page), and
+  // Tenant 360 is a route (the AA internal tenant always exists; `tenant360-ready` once its row and details loaded).
+  { id: 'platform-ui-kit', label: 'UI kit', path: '/admin/platform/ui-kit', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'tenant-360', label: 'Tenant 360', path: '/admin/tenants/00000000-0000-0000-0000-000000000001', readySelector: '[data-testid="tenant360-ready"]', viewerRefused: true },
   // AA-686 / AA-804 UI part 2 — the stage route editor moved from Settings › LLM Models to AI providers › Routing.
   // The row opens the new tab itself: the page matrix (roleMaySeePage) reads only the asked pathname, and
   // /admin/settings is open to every staff role, so the old `?tab=models` link cannot stand here. That redirect
   // is checked by aa663-admin-ia REDIRECTS and aa660-jev-decisions. `ai-gateway-routing-ready` renders only once
   // the stage routes loaded. The page is admin only (viewer refused).
-  { id: 'ai-gateway-routing', label: 'AI providers · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
-  { id: 'ai-gateway-models', label: 'AI providers · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
-  { id: 'ai-gateway-budgets', label: 'AI providers · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-routing', label: 'AI gateway · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
+  // AA-1042: the Route control tab (`route-control` renders once its read settled: the editor, or the not-set-up notice
+  // before CIS 370 is applied).
+  { id: 'ai-gateway-controls', label: 'AI gateway · Route control', path: '/admin/ai-gateway?tab=controls', readySelector: '[data-testid="route-control"]', viewerRefused: true },
+  { id: 'ai-gateway-models', label: 'AI gateway · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-budgets', label: 'AI gateway · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
   // AA-804 UI part 3: the Calls tab (every logged paid call; `ai-gateway-calls-ready` once the first page answered) and
   // Cost Operations' merged "AI & data spend" tab with TripPlanner's stage caps (AA-1015; `cost-tp-caps` is the section).
   // S262 C4: the Experiments section of Models & trials (prompt versions + evaluation runs, read-only) and the
   // "Re-queue refused jobs" card of the Providers tab (no click here: the dry run is a write route).
-  { id: 'ai-gateway-experiments', label: 'AI providers · Experiments', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-experiments"]', viewerRefused: true },
-  { id: 'ai-gateway-requeue', label: 'AI providers · Re-queue refused jobs', path: '/admin/ai-gateway?tab=providers', readySelector: '[data-testid="ai-gateway-requeue"]', viewerRefused: true },
-  { id: 'ai-gateway-calls', label: 'AI providers · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
-  { id: 'cost-ops-spend', label: 'Cost Operations · AI & data spend', path: '/admin/cost-ops?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
-  { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-experiments', label: 'AI gateway · Experiments', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-experiments"]', viewerRefused: true },
+  { id: 'ai-gateway-requeue', label: 'AI gateway · Re-queue refused jobs', path: '/admin/ai-gateway?tab=providers', readySelector: '[data-testid="ai-gateway-requeue"]', viewerRefused: true },
+  { id: 'ai-gateway-calls', label: 'AI gateway · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
+  { id: 'spend-ai-data', label: 'Spend · AI & data spend', path: '/admin/spend?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
+  { id: 'tenant-qa-trace', label: 'Content Trace', path: '/admin/tenant-qa/trace', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants', viewerRefused: true },
   { id: 'upload', label: 'Upload', path: '/admin/upload', viewerRefused: true },
 ];
 
 // AA-878 — viewer mode: an admin-only page must not render for the viewer. The proxy answers with a redirect
 // to the role's landing page (/admin/review), so the final URL is that page, never the asked one. AA-816: the same
-// for any non-admin role (reviewer on Production).
+// for any non-admin role (content on Production).
 async function assertViewerRefused(browser: import('@playwright/test').Browser, spec: PageSpec): Promise<void> {
   const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 } });
   await installBypassRoute(context);

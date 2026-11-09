@@ -5,7 +5,7 @@
 import type { GuideContent } from "../../_kit/guideContent";
 
 export const AI_GATEWAY_GUIDE_VI: GuideContent = {
-  title: "Cách dùng trang Nhà cung cấp AI",
+  title: "Cách dùng trang Cổng AI",
   intro: "Một trang cho mọi nguồn AI và dữ liệu trả phí. Đọc trang để trả lời bốn câu: từng nguồn còn trả lời không, "
     + "đã tốn bao nhiêu, mỗi bước dùng model nào, có gì sắp chạm giới hạn không.",
   sections: [
@@ -15,13 +15,16 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       blocks: [
         { kind: "paragraph", text: "Nền tảng trả tiền cho vài dịch vụ bên ngoài: các model ngôn ngữ (qua AWS Bedrock "
           + "hoặc API của hãng), Jev cho các quyết định có / không, DataForSEO cho dữ liệu tìm kiếm và Geoapify cho "
-          + "toạ độ địa điểm. Trang này đặt tất cả cạnh nhau." },
+          + "toạ độ địa điểm. Lần gọi AI riêng của CRM đối tác và bước kiểm dữ liệu cá nhân của nó (Bedrock "
+          + "Guardrails) cũng có ở đây, cùng bản đồ của TripPlanner (Mapbox) chạy trên gói miễn phí. Trang này đặt "
+          + "tất cả cạnh nhau." },
         { kind: "paragraph", text: "Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; mở trang không gọi "
-          + "nhà cung cấp nào và không tốn tiền. Trang có sáu tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
-          + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Model và thử nghiệm (danh mục model và "
-          + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi) và Hướng dẫn này. Cài đặt › "
-          + "LLM Models, Cài đặt › Số dư Jev và Cost Operations › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
-          + "Tổng chi theo tenant, model và thị trường vẫn ở Cost Operations, tab Chi phí AI và dữ liệu." },
+          + "nhà cung cấp nào và không tốn tiền. Trang có tám tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
+          + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Điều khiển route (thứ tự model và "
+          + "nhà cung cấp, preset và phiên bản), Model và thử nghiệm (danh mục model và "
+          + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi), Lộ trình (mọi lần thử của một yêu cầu, tỉ lệ mỗi bậc dự phòng đã phục vụ, cảnh báo route) và Hướng dẫn này. Cài đặt › "
+          + "LLM Models, Cài đặt › Số dư Jev và Spend › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
+          + "Tổng chi theo tenant, model và thị trường vẫn ở Spend, tab Chi phí AI và dữ liệu." },
       ],
     },
     {
@@ -40,12 +43,30 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       heading: "Đọc một dòng thế nào",
       blocks: [
         { kind: "terms", uiLabels: true, items: [
+          { term: "Hồ sơ ứng dụng", text: "Công tắc AI của từng ứng dụng (CIS, TripPlanner, CRM đối tác, AA-Booking). "
+            + "Tắt AI: mọi lời gọi AI của ứng dụng đó bị từ chối trước khi gửi đi, có một dòng bị từ chối 0 USD ở tab "
+            + "Calls, và job của nó chờ tới khi bật lại AI. Thẻ này cũng giữ việc tạm dừng tác vụ hàng loạt, ngân sách "
+            + "ngày mặc định và điều ứng dụng hiển thị khi AI không dùng được. CIS, TripPlanner (trong vòng 20 giây) và "
+            + "CRM đối tác áp dụng công tắc; TripPlanner và CRM còn dừng ở ngân sách ngày mặc định, và cảnh báo 80 % và "
+            + "100 % của TripPlanner tới chuông và e-mail vận hành. Thay đổi cho CRM đối tác được gửi tới CRM trước "
+            + "(cần nhóm quản trị nền tảng CRM). Tắt AI cần lý do và được ghi nhật ký kiểm toán." },
           { term: "Kết nối LLM", text: "Mỗi dòng là một đường nền tảng gọi tới model, ví dụ Bedrock trong một tài "
-            + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI." },
+            + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI. Lần gọi AI của CRM đối tác có một dòng riêng, "
+            + "đọc từ CRM bằng đăng nhập nhân viên của bạn; bật tắt chúng ở CRM, không phải ở đây." },
           { term: "Quyết định (Jev)", text: "Dòng của Jev. Số dư là ước tính: tổng nạp đã ghi ở Số dư Jev trừ chi tiêu "
             + "đã ghi, vì Jev không có dịch vụ xem số dư." },
-          { term: "Nhà cung cấp dữ liệu", text: "DataForSEO (số dư từ lần kiểm hằng ngày) và Geoapify (credit đã dùng "
-            + "hôm nay so với giới hạn ngày; giới hạn đặt lại mỗi ngày UTC)." },
+          { term: "Nhà cung cấp dữ liệu", text: "DataForSEO (số dư từ lần kiểm hằng ngày), Geoapify (credit đã dùng "
+            + "hôm nay so với giới hạn ngày; giới hạn đặt lại mỗi ngày UTC) và Mapbox cho bản đồ TripPlanner (gói "
+            + "miễn phí, không ghi sổ: dòng của nó dẫn tới Mapbox console)." },
+          { term: "Lớp bảo vệ", text: "Bedrock Guardrails, tìm dữ liệu cá nhân trong văn bản của CRM đối tác trước khi "
+            + "model đọc. Số lần gọi và chi phí lấy từ sổ ghi của CRM." },
+          { term: "Lỗi · độ trễ", text: "Trong 24 giờ và 7 ngày qua: bao nhiêu lần gọi tới được nhà cung cấp, phần trăm "
+            + "bị lỗi (lỗi, câu trả lời bị cắt, hoặc tính tiền mà không dùng được), và thời gian trả lời: p50 là lần gọi "
+            + "thường gặp, p95 là lần chậm nhất trong hai mươi lần. Lần gọi bị cổng của mình hoặc công tắc từ chối "
+            + "trước khi gửi được đếm riêng, không tính là lỗi. Thời gian trả lời của Geoapify là thời gian trung bình "
+            + "mỗi request của từng lô (lô trước 02/11/2026 không có). Dòng của CRM "
+            + "đối tác lấy từ tổng theo ngày của CRM: hôm nay (UTC) và 7 ngày qua, lần bị từ chối tính là lỗi, không có "
+            + "thời gian trả lời." },
           { term: "Sức khoẻ", text: "Với kết nối: lần trả lời gần nhất và loại lỗi gần nhất. Với Jev: số lần gọi và "
             + "lỗi trong 24 giờ qua, thời gian trả lời trung bình." },
           { term: "Ngân sách", text: "Ngân sách tháng của kết nối và trần ngày của nhà cung cấp, kèm phần đã dùng. "
@@ -76,10 +97,12 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Chạm trần", text: "Ngân sách, số dư hoặc credit hôm nay đã hết. Lần gọi dừng hoặc chuyển đường dự "
             + "phòng cho tới khi nâng trần hoặc hết kỳ." },
           { term: "Tắt", text: "Cố ý tắt. Không tính là có vấn đề." },
-          { term: "Chưa có lượt gọi gần đây", text: "Kết nối LLM không có lượt gọi được trả lời trong 24 giờ qua. "
+          { term: "Chưa có lượt gọi gần đây", text: "Kết nối LLM, hoặc dòng của CRM đối tác, không có lượt gọi được "
+            + "trả lời trong 24 giờ qua. "
             + "Chưa thấy gì sai; tab Điều hướng dùng cùng chữ này." },
           { term: "Chưa rõ", text: "Không đọc được nguồn, hoặc chưa biết số dư hay lần nạp nào (Jev, DataForSEO). "
             + "Dòng đó ghi rõ lý do." },
+          { term: "Không ghi sổ", text: "Nguồn được liệt kê nhưng không ghi sổ (Mapbox). Không tính là có vấn đề." },
         ] },
       ],
     },
@@ -94,7 +117,17 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
             + "migration có duyệt." },
           { term: "Số dư Jev", text: "Ghi tay từng lần nạp Jev (Jev không có dịch vụ xem số dư), xem số dư ước tính "
             + "và gửi cảnh báo thử." },
+          { term: "Số dư API", text: "Tương tự cho API OpenAI và Anthropic: ghi số dư đọc trên console của nhà cung "
+            + "cấp và từng lần nạp, xem số dư ước tính (lần ghi số dư mới nhất cộng các lần nạp sau đó, trừ chi phí đã "
+            + "ghi sổ từ lúc đó) và đặt ngưỡng cảnh báo. Dưới ngưỡng, admin nhận một thông báo chuông và một e-mail "
+            + "mỗi ngày." },
         ] },
+        { kind: "control", label: "Tắt", does: "Tắt Jev, DataForSEO hoặc Geoapify (hoặc bật lại bằng nút Bật), sau "
+          + "một bước xác nhận. Khi đang tắt, không gửi gì tới nhà cung cấp: mỗi lần gọi bị từ chối được ghi với chi phí "
+          + "0, Jev trả lời như khi đang sập, còn lượt chạy DataForSEO hay geocode dừng lại. Jev và DataForSEO nhận "
+          + "thay đổi trong vòng một phút; job geocode đọc nó lúc bắt đầu.",
+          cost: "Miễn phí. Tắt thì đỡ các lần gọi; bật lại thì các lần gọi tính giá như thường.",
+          when: "Nhà cung cấp chạy sai, không được tiêu credit của nó, hoặc một bài thử cần tắt nó." },
         { kind: "control", label: "Đưa lại job bị từ chối", does: "Kiểm trước những job lỗi trong 14 ngày qua đã dừng vì "
           + "nhà cung cấp từ chối một tài khoản, hiện các con số, và chỉ sau khi bạn xác nhận mới đưa chúng về hàng đợi "
           + "với lượt thử mới, mỗi đợt 50 job (bấm Kiểm đợt tiếp cho phần còn lại). Job mà kết nối vẫn bị từ chối thì "
@@ -131,6 +164,62 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       ],
     },
     {
+      id: "route-control",
+      heading: "Điều khiển route: chuỗi, thứ tự nhà cung cấp, preset và phiên bản",
+      blocks: [
+        { kind: "paragraph", text: "Điều khiển route là nơi đổi mọi thiết lập định tuyến mà không cần deploy. Chuỗi của "
+          + "một stage là danh sách model của nó: model đầu (model chính) phục vụ stage, các model sau lần lượt thay "
+          + "khi nó lỗi, bị từ chối hoặc chạm trần chi. Một yêu cầu thử tối đa sáu lần tất cả." },
+        { kind: "paragraph", text: "Nhiều model tới được bằng hơn một đường: Claude trên AWS (tài khoản LLM) hoặc qua "
+          + "API Anthropic, GPT trên AWS hoặc qua API OpenAI. Thứ tự nhà cung cấp của một model cho biết đường nào "
+          + "được thử trước. Kiểu thứ tự cho biết gateway đi theo chuỗi thế nào: cùng model trước (mọi nhà cung cấp "
+          + "của một model rồi tới model kế; mặc định) hoặc AWS trước (mọi model AWS của chuỗi, rồi tới API của "
+          + "hãng)." },
+        { kind: "flow", steps: ["Đổi một chuỗi, một thứ tự nhà cung cấp hoặc kiểu thứ tự", "Xem trước (máy chủ kiểm, "
+          + "miễn phí)", "Xem lại và lưu (một phiên bản mới)", "Gateway dùng nó trong khoảng 20 giây"] },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Phục vụ trước", text: "Model và nhà cung cấp sẽ được gọi đầu tiên cho stage lúc này, với thay đổi "
+            + "bạn đang làm. Nó đọc trạng thái thật (đang tắt, bị từ chối hay vượt trần thì bị bỏ qua) và không gọi "
+            + "model nào." },
+          { term: "Không còn model sống", text: "Không model nào của chuỗi sẽ được gọi lúc này. Lần lưu để một stage "
+            + "rơi vào cảnh này bị từ chối; stage vốn đã như vậy chỉ hiện cảnh báo." },
+          { term: "Đang dùng", text: "Phiên bản gateway đang dùng." },
+          { term: "Ngoài admin", text: "Thay đổi không làm qua trang này (ví dụ một migration cơ sở dữ liệu), được ghi "
+            + "thành phiên bản riêng trước lần thay đổi kế tiếp từ admin." },
+        ] },
+        { kind: "subheading", text: "Quy tắc máy chủ kiểm mỗi lần lưu" },
+        { kind: "list", items: [
+          "Judge không bao giờ dùng model cùng họ với writer (nó sẽ chấm bài của chính mình).",
+          "Hai bên của một cặp kiểm chéo (thẻ địa điểm, gộp địa điểm trùng) dùng model của hai hãng khác nhau.",
+          "Một chuỗi thử tối đa sáu lần mỗi yêu cầu, tính mọi nhà cung cấp của mọi model.",
+          "Mọi stage giữ ít nhất một model sẽ được gọi lúc này.",
+          "Stage không được rời AWS thì không nhận model chỉ tới được qua API của hãng, và model như vậy nằm cuối "
+            + "chuỗi (hoặc ngay sau chính model đó trên AWS).",
+        ] },
+        { kind: "paragraph", text: "Quy tắc đã bị vi phạm từ trước thay đổi của bạn chỉ hiện là cảnh báo, nên không "
+          + "chặn một thay đổi không liên quan. Stage writer hoặc judge có chuỗi mới, hoặc bị thứ tự nhà cung cấp, "
+          + "preset hay kiểu thứ tự chuyển sang model hoặc nhà cung cấp khác, cần eval run làm căn cứ, hoặc lý "
+          + "do break glass (kèm cảnh báo cho admin), như ở tab Điều hướng." },
+        { kind: "control", label: "Ưu tiên API Anthropic cho Claude (tài trợ)", does: "Đưa API Anthropic lên đầu cho "
+          + "mọi model Claude và đặt kiểu thứ tự thành cùng model trước. Chuỗi không đổi.",
+          cost: "Áp dụng miễn phí; lời gọi Claude sau đó tính tiền vào khoá API Anthropic khi kết nối đang bật.",
+          when: "API Anthropic đang được tài trợ hoặc rẻ hơn AWS." },
+        { kind: "control", label: "Ưu tiên AWS", does: "Đưa nhà cung cấp AWS lên đầu cho mọi model. Kiểu thứ tự và "
+          + "chuỗi không đổi.", cost: "Áp dụng miễn phí.",
+          when: "API của hãng lại chỉ nên là đường cuối cùng." },
+        { kind: "control", label: "Xem lại và lưu", does: "Hiện mọi thay đổi, lỗi quy tắc và cảnh báo, rồi lưu chúng "
+          + "thành một phiên bản mới kèm ghi chú của bạn.", cost: "Miễn phí; các lời gọi kế tiếp dùng route mới.",
+          avoid: "Bản xem trước còn lỗi: sửa trước đã." },
+        { kind: "control", label: "Hoàn tác", does: "Khôi phục chuỗi, thứ tự nhà cung cấp và kiểu thứ tự của một phiên "
+          + "bản cũ thành một phiên bản mới (lịch sử giữ mọi bước).", cost: "Miễn phí.",
+          when: "Một thay đổi làm mọi thứ tệ hơn." },
+        { kind: "callout", tone: "note", title: "Một phiên bản chứa gì",
+          text: "Kiểu thứ tự, chuỗi của mọi stage và thứ tự nhà cung cấp của mọi model. Model chạy bóng, công tắc "
+            + "stage, phạm vi dữ liệu và trần chi có điều khiển riêng và không bị hoàn tác thay đổi. Mỗi lần gọi model "
+            + "ghi lại phiên bản đang dùng lúc đó." },
+      ],
+    },
+    {
       id: "models",
       heading: "Model và thử nghiệm",
       blocks: [
@@ -159,11 +248,22 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Ngân sách AI theo đại lý", text: "Ngân sách AI hằng tháng của từng đại lý có đặt, kèm chi tiêu tháng "
             + "này và trạng thái. Đặt hoặc sửa tại đại lý (Đại lý › đại lý đó › Chi phí). Chỉ nhân viên thấy. Hiện được "
             + "lưu và hiển thị; giữ job mới ở mức duyệt sẽ có khi cổng AI kiểm ngân sách." },
+          { term: "Trần LLM chung", text: "Trần cho mọi lượt gọi model của một phạm vi, bất kể nhà cung cấp nào trả "
+            + "lời: cả ứng dụng, một stage, một loại job (cả mỗi lượt job), các lượt eval hoặc các script ad-hoc; theo "
+            + "ngày và theo tháng. Kiểm tra trước mỗi lượt gọi: trần có dừng sẽ từ chối lượt gọi trước khi gửi gì đi "
+            + "(một dòng bị từ chối, chi phí 0, trong Lần gọi). Trần mới bắt đầu ở chế độ chỉ cảnh báo; trên Dev giữ "
+            + "chỉ cảnh báo." },
+          { term: "Độ phủ theo điểm gọi", text: "Mỗi dòng là một stage có gọi model, kèm các trần chung nó nằm dưới, "
+            + "các loại job đã gọi nó và chi tiêu. Dòng chưa có trần chung vẫn bị chặn bởi ngân sách tháng của kết "
+            + "nối." },
           { term: "Dừng ở trần", text: "Lượt chạy kết thúc khi lượt gọi kế tiếp sẽ vượt trần." },
           { term: "Chỉ cảnh báo", text: "Không bao giờ dừng; gửi cảnh báo cho quản trị ở % cảnh báo." },
         ] },
         { kind: "control", label: "Thêm trần", does: "Tạo một trần cho cả nhà cung cấp hoặc cho một loại job.",
           cost: "Miễn phí.", when: "Một nguồn trả phí hiện Không trong danh sách có trần chưa." },
+        { kind: "control", label: "Thêm trần chung", does: "Tạo một trần cho mọi lượt gọi model của một phạm vi; Gỡ "
+            + "trong khung sửa sẽ bỏ nó.",
+          cost: "Miễn phí.", when: "Một điểm gọi chưa có trần chung và chi tiêu của nó cần có chuông báo." },
       ],
     },
     {
@@ -210,11 +310,13 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           text: "Lần gọi ghi trước 31/10/2026 không có kết quả hay thời gian trả lời, và lần bị từ chối trước ngày đó "
             + "không được ghi. Từ đó mọi lần thử đều có dòng, lần bị từ chối với chi phí 0." },
         { kind: "list", items: [
-          "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Cost Operations › Chi phí AI "
+          "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Spend › Chi phí AI "
             + "và dữ liệu và bảng Ứng dụng.",
-          "Bedrock Guardrails và Mapbox chưa ghi sổ nên chưa có dòng.",
+          "Mapbox không ghi sổ: dòng của nó không có chi tiêu hay thời gian trả lời; xem mức dùng trên Mapbox console.",
+          "Các dòng của CRM đối tác cần đăng nhập nhân viên của bạn. Chúng chỉ đọc tổng theo ngày của CRM (trọn ngày "
+            + "UTC, không có thời gian trả lời); từng lần gọi của CRM xem ở tab Lần gọi.",
           "Các lần chạy thử model mới (thử nhanh, kiểm model chấm, so sánh) chưa có trên tab Model và thử nghiệm.",
-          "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Cost Operations hiện hoá đơn.",
+          "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Spend hiện hoá đơn.",
         ] },
       ],
     },
@@ -226,6 +328,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
     { term: "Trần ngày", text: "Mức tối đa một nhà cung cấp được tốn trong một ngày UTC cho cả nền tảng." },
     { term: "Truy vết", text: "Mọi lần gọi trả phí đã ghi của một job, theo thời gian." },
     { term: "Dự phòng", text: "Model kế tiếp một bước thử khi model chính lỗi." },
+    { term: "Chuỗi", text: "Danh sách model có thứ tự mà một stage thử: model chính, rồi các model dự phòng." },
+    { term: "Thứ tự nhà cung cấp", text: "Nhà cung cấp nào của cùng một model được thử trước (AWS hay API của hãng)." },
+    { term: "Phiên bản route", text: "Một trạng thái đã lưu của mọi chuỗi, thứ tự nhà cung cấp và kiểu thứ tự." },
     { term: "Chạy bóng", text: "Model thứ hai trả lời cùng lượt gọi chỉ để so sánh; câu trả lời của nó không được dùng." },
   ],
 };

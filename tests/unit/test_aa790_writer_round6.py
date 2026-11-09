@@ -14,6 +14,7 @@ import pytest
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import GOALS
 from services.acp_content_writing import ai_tells, hygiene, prompts, quality_gates, service
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 from services.acp_content_writing.ai_tells import (BLOG_HEADING_RULE, BRAND_TEXTURE_ATMOSPHERE,
                                                    BRAND_TEXTURE_ATMOSPHERE_FAQ, BRAND_TEXTURE_COMMON,
                                                    BRAND_TEXTURE_FAQ, BRAND_TEXTURE_MOMENTUM,
@@ -67,13 +68,15 @@ _BRIDGE = ("A BRAND TEXTURE block, when the brief has one, belongs to the style 
 
 def test_writer_prompt_version_is_round_six():
     """SYSTEM_PROMPT's style-guide rule gains the BRAND TEXTURE bridge, so the SYSTEM_PROMPT hash moves."""
-    assert service.WRITER_PROMPT_VERSION == "b5978839"  # round 5: 79cd046a; round 4: 2b510e08; round 3: 24363541
+    # AA-1047: cc9b4979 (the writing policy lines); round 6: b5978839; round 5: 79cd046a; round 4: 2b510e08
+    assert service.WRITER_PROMPT_VERSION == "cc9b4979"
+    assert service.prompt_version_of(pre_aa1047(prompts.SYSTEM_PROMPT)) == "b5978839"
     assert ai_tells.AI_TELLS_VERSION == "ai_tells.v3"  # the pass makes no new edit
 
 
 def test_system_prompt_is_round_five_plus_the_bridge():
     assert _BRIDGE in _flat(prompts.SYSTEM_PROMPT)
-    before = prompts.SYSTEM_PROMPT.replace(
+    before = pre_aa1047(prompts.SYSTEM_PROMPT).replace(
         " A BRAND TEXTURE block, when the brief has one, belongs to the\n  style guide: it sets sentence shape and "
         "where the reader stands, never content.", "")
     assert hashlib.sha256(before.encode()).hexdigest() == (
@@ -82,7 +85,7 @@ def test_system_prompt_is_round_five_plus_the_bridge():
 
 def test_round_four_and_five_rules_are_byte_identical():
     """sha256[:16] on origin/main at round 5 (33c09fc0)."""
-    assert _sha16(PROMPT_RULES + SELF_CHECK_RULE) == "9ea12897753804d2"
+    assert _sha16(pre_aa1047(PROMPT_RULES + SELF_CHECK_RULE)) == "9ea12897753804d2"
     assert _sha16(FAMILY_RULE) == "682a32216b48e2ae"
     assert _sha16(FAMILY_SHORT_POST_RULE) == "4648e5c991b1e038"
     assert _sha16(VISIT_DETAIL_RULE) == "90f0442da4629567"
@@ -381,5 +384,6 @@ _PACKS = {"TERRA": TERRA, "FAMRUN": FAMRUN, "PLAIN": PLAIN, "EMPTY": {}}
 def test_family_and_no_signal_user_prompts_are_byte_identical_to_round_five(name, channel):
     p = _prompt(channel, _PACKS[name])
     assert "BRAND TEXTURE" not in p
-    assert _sha16(p) == _ROUND5_USER_PROMPTS[(name, channel)]
+    # AA-741 (S271): the blog's LENGTH AND EFFORT block (t9_write v2) is a later, separate change: compare without it.
+    assert _sha16(p.replace(prompts._BLOG_LENGTH_INSTRUCTIONS, "")) == _ROUND5_USER_PROMPTS[(name, channel)]
     assert (FAMILY_RULE in p) == (name == "TERRA")

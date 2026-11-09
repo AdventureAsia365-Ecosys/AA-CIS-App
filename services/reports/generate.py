@@ -6,7 +6,8 @@ Generators (catalog.yaml `generator: cis`):
          lists come first, then every other KPI the snapshot measures; KPIs nothing measures yet are named.
   EX-06  Report register: every catalog report with its schedule, priority, last run and due state.
   OPS-12 Daily platform health digest (R2, services/reports/digest.py; e-mailed to its opt-in list).
-  TP-03  Inquiry handoff reconciliation, TripPlanner to Booking (R2, services/reports/handoff.py).
+  TP-03  Inquiry handoff reconciliation, TripPlanner to Booking: retired on 2026-11-03 with the B2B-only model
+         (R0 hotfix, services/reports/b2b_only.py); past runs stay readable, nothing renders it any more.
   R3 money reports (services/reports/money.py): EX-01 weekly business pack (draft), FI-02 weekly spend digest
          (e-mailed), FI-01 monthly cost review with FI-03 LLM attribution, FI-04 vendors, FI-05 unit costs, FI-06
          budgets, and OPS-08 monthly capacity review.
@@ -16,6 +17,7 @@ Generators (catalog.yaml `generator: cis`):
   R4 part 2: TP-01 weekly TripPlanner funnel (services/reports/planner.py); SEC-03 monthly security hygiene, SEC-08
          privileged actions and audit log (services/reports/security.py); DEV-01 monthly delivery and DORA, DEV-03
          weekly engineering flow, OPS-15 session-close state snapshot (services/reports/delivery.py).
+  AA-900 (S271 W0): CIS-08 daily content quality funnel and watchdog findings (services/reports/funnel_report.py).
 
 Each renderer is pure (data in, (summary, output JSON, Markdown) out); the loaders read the DB. Reports read stored
 rows only: no LLM, no paid API, no recomputation of history (automation-plan.md §5).
@@ -181,10 +183,13 @@ def expected_period_end(report: Report, now: datetime) -> Optional[date]:
 
 
 def due_state(report: Report, last: Optional[dict], now: datetime) -> dict:
-    """{state, expected_period_end}; state: not_automated (no CIS generator), manual (generated on request only),
+    """{state, expected_period_end}; state: retired (catalog status retired: never due, R0 hotfix), not_automated
+    (no CIS generator), manual (generated on request only),
     pending_first (scheduled, but the newest scheduled period was chained before the report's automated_from day, so
     the chain never made it: nothing is expected yet), ok (the expected period is covered), due (the chain for it may
     still be running: within OVERDUE_GRACE of its start), overdue (past the grace)."""
+    if report.retired:
+        return {"state": "retired", "expected_period_end": None}
     if not report.runnable:
         return {"state": "not_automated", "expected_period_end": None}
     exp = scheduled_expectation(report, now)
@@ -238,12 +243,15 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
     for r in rows:
         by_state[r["due"]["state"]] = by_state.get(r["due"]["state"], 0) + 1
     automated = [r for r in rows if r["runnable"]]
-    attention = [r for r in rows if r["due"]["state"] in ("due", "overdue") or r["failed_7d"]]
+    retired = [r for r in rows if r["due"]["state"] == "retired"]
+    # a retired report's last failures are history, not work (R0 hotfix: TP-03)
+    attention = [r for r in rows if r["due"]["state"] in ("due", "overdue")
+                 or (r["failed_7d"] and r["due"]["state"] != "retired")]
     output = {
         "report_id": report.id, "name": report.name_en, "period": {"start": day.isoformat(), "end": day.isoformat()},
         "generated_at": generated_at.isoformat(), "generated_by": GENERATED_BY,
         "registry": {"reports": len(rows), "automated": len(automated), "imported_from": reg.imported_from},
-        "states": by_state, "attention": [r["id"] for r in attention],
+        "states": by_state, "attention": [r["id"] for r in attention], "retired": [r["id"] for r in retired],
         "reports": [_register_entry(r, report.id) for r in rows],
     }
     summary = (f"{report.id} {day.isoformat()}: {len(rows)} reports, {len(automated)} generated here, "
@@ -261,9 +269,14 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
     md += ["", "## Needs attention", ""]
     md += [f"- {r['id']} {r['name_en']}: {r['due']['state']}, {r['failed_7d']} failed in 7 days" for r in attention] \
         or ["- Nothing overdue or failed."]
-    md += ["", "## Catalogue by priority", "", "| Priority | Reports | Generated here |", "|---|---|---|"]
+    if retired:
+        md += ["", "## Retired", "", "| Report | Retired on | Last run |", "|---|---|---|"]
+        md += [f"| {r['id']} {r['name_en']} | {r.get('retired_on') or '—'} | "
+               f"{(r['last_run'] or {}).get('status') or 'never'} |" for r in retired]
+    md += ["", "## Catalogue by priority (retired reports left out)", "", "| Priority | Reports | Generated here |",
+           "|---|---|---|"]
     for p in ("P0", "P1", "P2", "P3"):
-        group = [r for r in rows if r["priority"] == p]
+        group = [r for r in rows if r["priority"] == p and r["due"]["state"] != "retired"]
         md.append(f"| {p} | {len(group)} | {sum(1 for r in group if r['runnable'])} |")
     md.append("")
     return Rendered(summary, output, "\n".join(md))
@@ -290,12 +303,6 @@ async def _digest(conn, reg: Registry, report: Report, first: date, last: date, 
     from services.reports import digest      # lazy: digest imports this module
 
     return await digest.render(conn, reg, report, first, last, now)
-
-
-async def _handoff(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
-    from services.reports import handoff
-
-    return await handoff.render(conn, reg, report, first, last, now)
 
 
 async def _money_week(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
@@ -334,19 +341,26 @@ async def _security(conn, reg: Registry, report: Report, first: date, last: date
     return await security.render(conn, reg, report, first, last, now)
 
 
+async def _funnel(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import funnel_report
+
+    return await funnel_report.render(conn, reg, report, first, last, now)
+
+
 async def _delivery(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
     from services.reports import delivery
 
     return await delivery.render(conn, reg, report, first, last, now)
 
 
-# AA-1003 R2: OPS-12 daily digest (services/reports/digest.py), TP-03 inquiry handoff (services/reports/handoff.py).
+# AA-1003 R2: OPS-12 daily digest (services/reports/digest.py); TP-03 (inquiry handoff) was retired by the R0 hotfix.
 # R3 (services/reports/money.py): weekly EX-01, FI-02; monthly FI-01, FI-03, FI-04, FI-05, FI-06, OPS-08.
 # R4: catalog and AI quality (services/reports/quality.py): weekly CIS-01, event CIS-06, CIS-07; reliability and data
 # quality (services/reports/reliability.py): weekly OPS-13, OPS-14, DATA-02, event DATA-03, monthly DATA-04.
 # R4 part 2: weekly TP-01 (planner.py); monthly SEC-03, SEC-08 (security.py); monthly DEV-01, weekly DEV-03, event
 # OPS-15 (delivery.py).
-RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest, "TP-03": _handoff,
+# AA-900 (S271 W0): daily CIS-08 content quality funnel + watchdog findings (funnel_report.py).
+RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest,
                                   "EX-01": _money_week, "FI-02": _money_week,
                                   **{rid: _money_month for rid in ("FI-01", "FI-03", "FI-04", "FI-05", "FI-06",
                                                                    "OPS-08")},
@@ -354,7 +368,8 @@ RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-
                                   **{rid: _reliability for rid in ("OPS-13", "OPS-14", "DATA-02", "DATA-03",
                                                                    "DATA-04")},
                                   "TP-01": _planner, "SEC-03": _security, "SEC-08": _security,
-                                  **{rid: _delivery for rid in ("DEV-01", "DEV-03", "OPS-15")}}
+                                  **{rid: _delivery for rid in ("DEV-01", "DEV-03", "OPS-15")},
+                                  "CIS-08": _funnel}
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:

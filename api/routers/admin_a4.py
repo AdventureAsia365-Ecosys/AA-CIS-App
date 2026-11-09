@@ -70,7 +70,7 @@ publish-log + force-unpublish, content-log, and platform-stats only.
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
 import structlog
@@ -246,6 +246,7 @@ async def get_content_log(
     date_to: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=500),
     x_admin_secret: str = Header(None),
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
     """AA-469 Việc 5 — T9/T10's own gap, closed: `content_piece.gate_ledger`/`held_reason` is the
     best structured error data of any LLM-using stage (per-gate pass/fail + violations, plus
@@ -308,7 +309,13 @@ async def get_content_log(
     real proxy — the underlying atom's text, or the T8 goal when no atom text exists — content_
     piece has no title/topic column of its own, confirmed in STEP0, never fabricated) are new
     computed fields. `publish_external_url`/`publish_published_at` are added to the SELECT so the
-    merged table's "Published Y/N + link" column needs no second call to `/publish-log`."""
+    merged table's "Published Y/N + link" column needs no second call to `/publish-log`.
+
+    AA-1006 follow-up (S263 F3) — paged: `offset` skips that many rows (newest first) and `total` is every row the
+    filters match, not the length of this page (it used to be `len(data)`, so the Content Trace header said "Total
+    pieces 200" for the first 200 rows of a larger set). `by_channel` counts the same matching rows per channel for
+    the header tiles. When the first page already holds every match, both come from the page itself (no second
+    query); otherwise one grouped count over the same joins and WHERE answers them. `offset` / `limit` are echoed."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
 
@@ -337,7 +344,9 @@ async def get_content_log(
     elif published == "no":
         conditions.append("pl.publish_id IS NULL")
     where = " AND ".join(conditions)
+    filter_params = list(params)
     params.append(limit)
+    params.append(offset)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(f"""
@@ -404,8 +413,20 @@ async def get_content_log(
                 ON pl.piece_id = cp.piece_id AND pl.status = 'published'
             WHERE {where}
             ORDER BY cp.created_at DESC
-            LIMIT ${len(params)}
+            LIMIT ${len(params) - 1} OFFSET ${len(params)}
         """, *params)
+        # AA-1006 follow-up (S263 F3): the real match count (and per channel) unless this page already holds it.
+        count_rows = None
+        if offset > 0 or len(rows) >= limit:
+            count_rows = await conn.fetch(f"""
+                SELECT COALESCE(cp.channel, agr.channel) AS channel, count(*) AS n
+                FROM acp_shared.content_piece cp
+                JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
+                LEFT JOIN acp_shared.publish_log pl
+                    ON pl.piece_id = cp.piece_id AND pl.status = 'published'
+                WHERE {where}
+                GROUP BY 1
+            """, *filter_params)
 
     def _publish_status(status: str, published: bool) -> str:
         if published:
@@ -503,11 +524,22 @@ async def get_content_log(
             "job_id": r.get("job_id"),
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         })
+    if count_rows is None:
+        by_channel: dict[str, int] = {}
+        for item in data:
+            key = item["channel"] or ""
+            by_channel[key] = by_channel.get(key, 0) + 1
+    else:
+        by_channel = {(r["channel"] or ""): int(r["n"]) for r in count_rows}
+    total = sum(by_channel.values())
     logger.info(
-        "a4_content_log_queried", count=len(data), tenant_filter=tenant_id, tour_filter=tour_id,
-        status_filter=status, channel_filter=channel, published_filter=published,
+        "a4_content_log_queried", count=len(data), total=total, offset=offset, tenant_filter=tenant_id,
+        tour_filter=tour_id, status_filter=status, channel_filter=channel, published_filter=published,
     )
-    return {"data": data, "total": len(data), "tenant_filter": tenant_id, "tour_filter": tour_id}
+    return {
+        "data": data, "total": total, "offset": offset, "limit": limit, "by_channel": by_channel,
+        "tenant_filter": tenant_id, "tour_filter": tour_id,
+    }
 
 
 @router.post("/publish-log/{publish_id}/unpublish")

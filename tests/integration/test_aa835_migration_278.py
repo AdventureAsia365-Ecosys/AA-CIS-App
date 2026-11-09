@@ -144,11 +144,15 @@ def test_registered_rerunnable_owned_and_granted(cur):
         cur.execute("SELECT has_table_privilege(%s, 'catalog.v_supply_content', 'SELECT')", (role,))
         assert cur.fetchone()[0] is allowed, role
     # 278 seeds the stage ('sonnet', ON CONFLICT DO NOTHING); the replay already ran 282 (S251), which moved it to the
-    # catalog key sonnet-5-5 with the legacy 'sonnet' last, and a re-run of 278 leaves that row alone.
+    # catalog key sonnet-5-5 with the legacy 'sonnet' last, then 327 (AA-1026: Converse keys, the OpenAI API model
+    # last), then 366 (AA-1026 S267: the family chain, Sonnet 4.6 / Haiku 4.5 on acc3 before the OpenAI API), then 376
+    # (AA-1042 S269: Haiku 4.5 out, six attempts once Sonnet 4.6 has its Anthropic API deployment), then 383 (AA-900
+    # S271 W0, tech lead D7: no writer route keeps GPT-6 Luna on the OpenAI API), and a re-run of 278 leaves that row
+    # alone.
     cur.execute("SELECT stage, role, provider, model_id, account_route, is_active, shadow_model_id, fallback_model_ids "
                 "FROM shared.llm_role_config WHERE stage = 'supply_content_writer'")
     assert cur.fetchone() == ("supply_content_writer", "writer", "claude", "sonnet-5-5", "acc3", True, None,
-                              ["sonnet"])
+                              ["sonnet-4-6"])
     cur.execute("SELECT per_run_usd, per_day_usd, hard_stop FROM shared.spend_budget "
                 "WHERE provider = 'bedrock' AND scope = 'job:supply_content_draft'")
     assert [float(x) if not isinstance(x, bool) else x for x in cur.fetchone()] == [0.10, 1.00, True]

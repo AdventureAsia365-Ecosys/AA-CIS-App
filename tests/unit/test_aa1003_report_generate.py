@@ -121,9 +121,27 @@ def test_register_lists_every_report_and_flags_failures():
     assert len(rows) == len(reg.reports)
     out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
     assert "EX-04" in out.output["attention"]
-    # EX-04, EX-06; R2: OPS-12, TP-03; R3: 8 money; R4: 8; R4 part 2: TP-01, SEC-03, SEC-08, DEV-01, DEV-03, OPS-15
+    # EX-04, EX-06; R2: OPS-12 (TP-03 retired by the R0 hotfix); R3: 8 money; R4: 8; R4 part 2: TP-01, SEC-03, SEC-08,
+    # DEV-01, DEV-03, OPS-15; AA-900: CIS-08
     assert out.output["registry"]["automated"] == 26
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
+
+
+def test_a_retired_report_is_never_due_flagged_or_counted():
+    """R0 hotfix (root ADR 0019): TP-03 is retired. Its old failed runs are history: no attention, no overdue."""
+    reg = _reg()
+    tp03 = reg.report("TP-03")
+    assert tp03.retired and not tp03.runnable and tp03.retired_on == date(2026, 11, 3)
+    assert generate.due_state(tp03, _last(DAY, failed=3), NOW) == {"state": "retired", "expected_period_end": None}
+    rows = generate.register_rows(reg, {"TP-03": _last(DAY, failed=3)}, NOW)
+    out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
+    assert "TP-03" not in out.output["attention"] and out.output["retired"] == ["TP-03"]
+    assert out.output["states"]["retired"] == 1
+    assert "## Retired" in out.markdown and "| TP-03 " in out.markdown and "| 2026-11-03 |" in out.markdown
+    p0 = next(line for line in out.markdown.splitlines() if line.startswith("| P0 |"))
+    assert int(p0.split("|")[2]) == sum(1 for r in reg.reports if r.priority == "P0" and not r.retired)
+    entry = next(e for e in out.output["reports"] if e["id"] == "TP-03")
+    assert entry["status"] == "retired" and entry["due"] == "retired"
 
 
 def test_register_names_its_own_run_instead_of_running():

@@ -49,6 +49,12 @@ def _fresh_warning_memory():
     client_mod._LEGACY_SCHEMA_WARNED.clear()
 
 
+def _no_trace(extra: dict) -> dict:
+    """AA-1042: the gateway's billed-failure rows also carry the request's route trace id (a fresh uuid each time)."""
+    assert isinstance(extra.get("route_trace"), str) and len(extra["route_trace"]) == 36
+    return {k: v for k, v in extra.items() if k != "route_trace"}
+
+
 def _client():
     return LLMClient.__new__(LLMClient)   # no boto3 / openai clients: every provider call below is a stub
 
@@ -121,7 +127,7 @@ def test_unusable_reply_raises_billed_unusable_and_logs_one_row(reply):
     assert row[0]["model"] == "satellite-sonnet-4-6" and row[0]["account"] == "acc3"
     assert row[0]["tokens_in"] == 900 and row[0]["tokens_out"] == 150 and row[0]["cost_usd"] > 0
     assert row[0]["provider"] == "bedrock-satellite"
-    assert billed[0]["role"] == "writer" and billed[0]["extra"] == {"position": 0}
+    assert billed[0]["role"] == "writer" and _no_trace(billed[0]["extra"]) == {"position": 0}
 
 
 def test_billed_rows_are_built_like_the_converse_path_rows():
@@ -149,7 +155,7 @@ def test_route_moves_to_the_next_model_after_an_unusable_legacy_reply():
     assert not isinstance(resp, Exception), resp
     assert resp.model_used == "satellite-haiku-4-5" and resp.fallback_used is True
     assert [c["model"] for c in calls] == ["sonnet", "haiku"]
-    assert len(billed) == 1 and billed[0]["extra"] == {"position": 0}
+    assert len(billed) == 1 and _no_trace(billed[0]["extra"]) == {"position": 0}
 
 
 # ── 4. no schema -> unchanged ───────────────────────────────────────────────────────────────────────────────────────

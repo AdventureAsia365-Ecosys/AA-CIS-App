@@ -13,7 +13,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useId, useMemo, useState } from "react";
-import { Button, K, apiGet, useT } from "../../_kit";
+import { Button, K, apiGet, useT, Input, Select } from "../../_kit";
 import { M } from "./components.messages";
 import {
   TENANTS_API, TENANTS_QUERY_KEY, TENANT_SEARCH_MIN, filterTenants, tenantLabel, tenantOptionText,
@@ -42,13 +42,11 @@ export function TenantName({ id, style }: { id: string | null | undefined; style
   return <span title={id} style={{ overflowWrap: "anywhere", ...style }}>{label(id)}</span>;
 }
 
-const fieldStyle: React.CSSProperties = {
-  width: "100%", fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`,
-  background: K.card, color: K.ink, boxSizing: "border-box", maxWidth: "100%", minWidth: 0,
-};
-// Filter bars: a compact box that grows with the names, never wider than the bar.
-const inlineFieldStyle: React.CSSProperties = { ...fieldStyle, width: "auto", minWidth: 180, fontSize: 12.5 };
-const inlineSearchStyle: React.CSSProperties = { ...fieldStyle, width: 170, fontSize: 12.5 };
+// The kit Input / Select draw the box; these set the width only (AA-1006).
+const fieldStyle: React.CSSProperties = { width: "100%" };
+// Filter bars: a compact box (kit size "sm") that grows with the names, never wider than the bar.
+const inlineFieldStyle: React.CSSProperties = { width: "auto", minWidth: 180 };
+const inlineSearchStyle: React.CSSProperties = { width: 170 };
 // The label stays for screen readers when a toolbar shows no visible labels (`hideLabel`).
 const srOnly: React.CSSProperties = {
   position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0 0 0 0)",
@@ -109,18 +107,18 @@ export function TenantSelect({
     </label>
   );
   const search = searchable && (
-    <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+    <Input type="search" size={inline ? "sm" : "md"} value={query} onChange={(e) => setQuery(e.target.value)}
       style={inline ? inlineSearchStyle : fieldStyle} placeholder={t("searchTenants")}
       aria-label={t("searchLabel", label)} disabled={disabled} />
   );
   const select = (
-    <select id={id} value={value} onChange={(e) => onChange(e.target.value, byId.get(e.target.value))} style={inline ? inlineFieldStyle : fieldStyle}
+    <Select id={id} size={inline ? "sm" : "md"} value={value} onChange={(e) => onChange(e.target.value, byId.get(e.target.value))} style={inline ? inlineFieldStyle : fieldStyle}
       required={required} aria-required={required} aria-invalid={required && !value ? true : undefined}
       disabled={disabled || isLoading} data-testid={testId}>
       <option value="">{isLoading ? t("loadingTenants") : placeholder}</option>
       {shown.map((tn) => <option key={tn.tenant_id} value={tn.tenant_id}>{optionText(tn)}</option>)}
       {extraOptions?.map((o) => <option key={`extra:${o.value}`} value={o.value}>{o.label}</option>)}
-    </select>
+    </Select>
   );
   const loadError = error ? (
     <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: K.danger }}>

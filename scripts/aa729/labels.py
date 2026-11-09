@@ -8,6 +8,8 @@ Local, $0 (the panel is Claude Code agents reading the pack, not a gateway call)
       --out fixture-1.2.0.json      # a calibration review of panel labels (S256, AA-919)
   python3 -m scripts.aa729.labels merge fixture-1.2.0.json addendum-labelled.json --approved-by <who> \
       --out fixture-1.3.0.json      # add a labelled addendum (select_samples --ids) as the next version (S258)
+  python3 -m scripts.aa729.labels revoke fixture-1.3.0.json --approved-by <who> --reason "<why>" \
+      --out fixture-1.4.0.json      # drop test-stub labels (t9b-002), list every label that flips (AA-1048)
 
 The pack holds, per needs_panel sample, the frozen output, the FULL writer source and the rubric — never the
 pipeline's own verdict (passed / held / score / failure codes), T9's gate_ledger / flags, nor the selection
@@ -24,34 +26,27 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
 
 from scripts.aa729.common import bump_minor, dumps, find_pii, flatten_text, make_label
+from services.quality import writing_policy as _wp
 
+# AA-1047: pass / fail / rules are the writing policy's label rubric (services/quality/writing_policy.yaml, compiled),
+# the same object the R2 judge reads (eval_judge.LABEL_RUBRIC). S256 calibration review (AA-919): the rules settle how a
+# one-phrase claim, the brief and reflection count; W1 (root ADR 0020, D1-D4, D13-D15) re-frames the brief as an
+# instruction, never a source, and adds place background, hypotheticals, rarity and suitability.
+_POLICY_RUBRIC = _wp.label_rubric()
 RUBRIC = {
-    "pass": "Publishable as is or after a light edit (minutes, no fact or structure change).",
-    "fail": "Needs a heavy edit or a rewrite: an invented or wrong fact, a promise the source does not make, "
-            "off-brand voice, broken structure, wrong scope, or anything a customer must not read.",
+    "pass": _POLICY_RUBRIC["pass"],
+    "fail": _POLICY_RUBRIC["fail"],
     "grades": {"as_is": "pass", "light": "pass", "heavy": "fail", "reject": "fail"},
     "post_edit": "When output_post_edit is true the text was already edited by a person: label the text you see.",
-    # S256 calibration review (AA-919): "minutes" and "no fact change" pulled panel votes apart on one-phrase claims
-    # (the same kind of flaw was labelled heavy on some texts and light on others). These rules settle it; the judge
-    # reads the same list (eval_judge.LABEL_RUBRIC, kept equal by a test).
-    "rules": (
-        "Every customer-facing field counts: body, title, SEO title, meta description and hashtags.",
-        "A claim the source does not support is a fact change, so the text fails even when one phrase would fix "
-        "it: a wrong or invented fact, a fact the source contradicts, or a promise about the trip (an activity, "
-        "access, time, view or service) that the itinerary does not make.",
-        "A light edit changes wording only: typos, repetition, stray blank lines, awkward or garbled phrasing that "
-        "still says something true, an imprecise but not false paraphrase, or a point of the brief left out.",
-        "Reflection that states no fact (what a place means, why its setting matters) is voice, not a fact claim.",
-        "The writer's brief and brand pack are part of the source: what they ask for is supported unless the facts "
-        "or the itinerary contradict it. Naming another part of the trip that the itinerary does include, because "
-        "the brief asked for it, is a light fix; promising one the itinerary does not include is a fail.",
-    ),
+    "rules": _POLICY_RUBRIC["rules"],
+    "policy_sha": _POLICY_RUBRIC["policy_sha"],
 }
 # Label sources a calibration review may relabel: the panel's own labels. Labels made from a person's edit or by hand
 # (admin_edit, tenant_edit, human_label) and synthetic traps are evidence of another kind and are never relabelled.
@@ -314,6 +309,72 @@ def merge(base: dict, addendum: dict, *, approved_by: str, drop_unlabelled: bool
                      for s in out["samples"] if s["sample_id"] in set(added)).items()))}
 
 
+# AA-1048 (W2): a label written as a test of the labelling UI, not as a judgement ("ZZ S239 test label" on t9b-002).
+STUB_REASON_RE = re.compile(r"\bZZ\s+S\d{3}\b|\btest\s+label\b", re.I)
+
+
+def is_stub_label(label: Optional[dict]) -> bool:
+    """A test stub, not a judgement: its reason carries the 'ZZ S<nnn>' test marker or says 'test label'."""
+    return bool(STUB_REASON_RE.search(str((label or {}).get("reason") or "")))
+
+
+def _splits(samples: list[dict], seed: int) -> dict[str, str]:
+    from services.golden_set.derive import FixtureError, assign_splits, writer_and_channel
+
+    rows = []
+    for s in samples:
+        try:
+            writer, _ = writer_and_channel(s)
+        except FixtureError:
+            continue
+        rows.append({"sample_id": s["sample_id"], "writer": writer, "trap": str(s.get("kind", "")).startswith(
+            "injection_"), "label_verdict": (s.get("label") or {}).get("verdict")})
+    return assign_splits(rows, seed)
+
+
+def revoke(fixture: dict, *, approved_by: str, reason: str, ids: Optional[list[str]] = None) -> tuple[dict, dict]:
+    """A new fixture (minor version bump) without the revoked samples: by default every sample whose label is a test
+    stub (`is_stub_label`; on 1.3.0 that is t9b-002), or the given ids. A human / edit label cannot be relabelled
+    (RELABEL_SOURCES), so a stub leaves the set; the sample may come back through `merge` with a real label.
+
+    The report lists every label that flips: the revoked labels (verdict -> revoked), the pass / fail count per
+    writer before and after, and every remaining item whose split (tune / holdout) moves because its stratum lost a
+    sample (derive.assign_splits recomputes the stratified holdout per (writer, verdict)). Nothing else changes."""
+    if not approved_by.strip():
+        raise ValueError("approved_by is required (the tech lead approves a golden-set version bump)")
+    if not reason.strip():
+        raise ValueError("reason is required (written into label_history)")
+    by_id = {s["sample_id"]: s for s in fixture["samples"]}
+    chosen = list(ids) if ids else [sid for sid, s in by_id.items() if is_stub_label(s.get("label"))]
+    unknown = [sid for sid in chosen if sid not in by_id]
+    if unknown:
+        raise ValueError(f"unknown sample(s): {unknown}")
+    if not chosen:
+        raise ValueError("nothing to revoke: no stub label found and no --ids given")
+    seed = fixture.get("seed")
+    before_split = _splits(fixture["samples"], seed) if isinstance(seed, int) else {}
+    out = copy.deepcopy(fixture)
+    out["samples"] = [s for s in out["samples"] if s["sample_id"] not in set(chosen)]
+    after_split = _splits(out["samples"], seed) if isinstance(seed, int) else {}
+
+    def counts(samples):
+        return dict(sorted(Counter(f"{s.get('stratum')}:{(s.get('label') or {}).get('verdict')}"
+                                   for s in samples).items()))
+    revoked = [{"sample_id": sid, "verdict": (by_id[sid].get("label") or {}).get("verdict"),
+                "label_source": by_id[sid].get("label_source"), "stub": is_stub_label(by_id[sid].get("label")),
+                "to": "revoked"} for sid in chosen]
+    moved = [{"sample_id": sid, "from": before_split[sid], "to": after_split[sid]}
+             for sid in sorted(after_split) if sid in before_split and before_split[sid] != after_split[sid]]
+    old = out["fixture_version"]
+    out["fixture_version"] = bump_minor(old)
+    out.setdefault("label_history", []).append({
+        "from_version": old, "to_version": out["fixture_version"], "source": "revoke", "approved_by": approved_by,
+        "reason": reason[:300], "revoked": [r["sample_id"] for r in revoked],
+        "at": datetime.now(timezone.utc).isoformat()})
+    return out, {"fixture_version": out["fixture_version"], "revoked": revoked, "split_moves": moved,
+                 "labels_before": counts(fixture["samples"]), "labels_after": counts(out["samples"])}
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -339,9 +400,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     m.add_argument("--approved-by", required=True)
     m.add_argument("--out", required=True)
     m.add_argument("--drop-unlabelled", action="store_true")
+    v = sub.add_parser("revoke")
+    v.add_argument("fixture")
+    v.add_argument("--approved-by", required=True)
+    v.add_argument("--reason", required=True)
+    v.add_argument("--ids", help="comma-separated sample ids (default: every stub label)")
+    v.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     with open(a.fixture, encoding="utf-8") as f:
         fixture = json.load(f)
+    if a.cmd == "revoke":
+        new, info = revoke(fixture, approved_by=a.approved_by, reason=a.reason,
+                           ids=[i.strip() for i in a.ids.split(",") if i.strip()] if a.ids else None)
+        with open(a.out, "w", encoding="utf-8") as f:
+            f.write(dumps(new))
+        print(json.dumps(info, indent=1))
+        return 0
     if a.cmd == "merge":
         with open(a.addendum, encoding="utf-8") as f:
             addendum = json.load(f)

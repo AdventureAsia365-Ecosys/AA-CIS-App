@@ -1,8 +1,8 @@
 # S242: Dependabot security updates arrived as one PR per transitive package (five or more a day), each
-# with a red "Vercel deploy" check because Dependabot PRs get no repository secrets. Version updates are
+# with a red "Vercel deploy" check because Dependabot PRs get no repository secrets. npm and pip version updates are
 # off (open-pull-requests-limit: 0); security updates are grouped into one PR per ecosystem. AA-903: the
-# Vercel deploy jobs (and the UI smoke behind them) are skipped on Dependabot runs, so those PRs are no
-# longer red; they get no preview either. To see a preview, push the same change from a normal branch.
+# Vercel deploy jobs (and the UI smoke behind them) were skipped on Dependabot runs; since the Vercel retirement
+# (AA-911, S272) there is no per-PR deploy at all: the per-PR UI check is Visual (next start), which needs no secret.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -28,6 +28,21 @@ updates:
     groups:
       python-security:
         applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+  # AA-1022 (S263): version updates for the GitHub Actions used in .github/workflows, weekly, grouped into one PR (the
+  # same setup as AA-CIS-Infra). Dependabot keeps a SHA pin and its "# vX.Y.Z" comment in step when it bumps one. Like
+  # the PRs above, these get no repository secrets.
+  - package-ecosystem: github-actions
+    # "/" reads .github/workflows; the composite actions in .github/actions/<name>/action.yml are read too (AA-1024)
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
         patterns: ["*"]
     commit-message:
       prefix: "chore(deps)"

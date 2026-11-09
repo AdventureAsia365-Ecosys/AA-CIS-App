@@ -2,8 +2,9 @@
 // app/admin/overview/_components/TripPlannerCard.tsx
 // AA-858 — "TripPlanner customers": how many travellers used the planner in the last 7 days (vs the 7 before)
 // and a 14-day chart. Data: tripplanner.v_ops_traffic_daily (TripPlanner's own aggregate view) + AI searches
-// from shared.llm_call_log; the on-screen source texts (plain words) are in ./sources.ts. Page visits are not in the console (they would need a Vercel token, which the
-// admin console must not hold — S241 design §6); the link opens Vercel Web Analytics instead.
+// from shared.llm_call_log; the on-screen source texts (plain words) are in ./sources.ts. Page visits are not in the
+// console. The link to Vercel Web Analytics left with the TripPlanner Vercel project (AA-1038: the site runs on ECS
+// behind CloudFront); the planner's own counters above are the traffic view.
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CHART_TOOLTIP, K, useLang, useT } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
@@ -12,9 +13,6 @@ import { SourceHint } from "./SourceHint";
 import { OPS } from "./ops.messages";
 import { useSources, type Sources } from "./sources";
 import type { Section, TpMetric, TripPlannerData } from "./opsTypes";
-
-/** Vercel Web Analytics of the TripPlanner project (needs a Vercel login on the team). Read-only link. */
-export const TRIPPLANNER_ANALYTICS_URL = "https://vercel.com/pqnghiep1354-5974s-projects/aa-tripplanner/analytics";
 
 const KPIS: { key: TpMetric & keyof Sources["TP_SRC"]; label: "plannersOpened" | "tripsStarted" | "sentToAdvisor" | "aiSearches" }[] = [
   { key: "planner_session_started", label: "plannersOpened" },
@@ -34,12 +32,6 @@ export function TripPlannerCard({ section }: { section: Section<TripPlannerData>
       title={t("tpTitle")}
       subtitle={t("tpSubtitle")}
       source={TP_SRC.card}
-      link={{
-        href: TRIPPLANNER_ANALYTICS_URL,
-        label: t("pageVisits"),
-        external: true,
-        hint: t("pageVisitsHint"),
-      }}
     >
       {!section ? null : section.status !== "ok" ? (
         <UnavailableNote section={section} />

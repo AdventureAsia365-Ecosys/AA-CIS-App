@@ -20,6 +20,8 @@ import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-re
 import {
   Button, Tabs, PageFrame, DataTable, PageHeader, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen,
   Section, mono,
+  Select,
+  LinkButton,
 } from "../../_kit";
 import { PL } from "./messages";
 import LinesTab from "./LinesTab";
@@ -52,7 +54,6 @@ type FixResult = {
 };
 
 const PAGE_SIZE = 50;
-const linkBtn = { border: 0, background: "none", color: K.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
 // Tab labels and check names are message keys (messages.ts).
 const TABS = [{ key: "coverage", label: "tabCoverage" }, { key: "validity", label: "tabValidity" },
               { key: "lines", label: "tabLines" },
@@ -173,9 +174,9 @@ export default function PlacesPage() {
         const it = row.original;
         return <span style={{ fontSize: 12, color: K.body }}>{it.detail ?? ""}
           {FIX_OF[it.reason] && (
-            <div><button disabled={!!busy} style={linkBtn}
+            <div><LinkButton size="sm" weight="regular" disabled={!!busy}
                          onClick={() => runFix({ check: FIX_OF[it.reason], source_id: it.source_id, country: it.country, dry_run: true })}>
-              {t("previewFixTour")}</button></div>
+              {t("previewFixTour")}</LinkButton></div>
           )}</span>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runFix only reads state setters and the loaders
@@ -199,7 +200,7 @@ export default function PlacesPage() {
       {error && (
         <Section style={{ marginBottom: 16, borderColor: K.dangerBorder, background: K.dangerTint }}>
           <span style={{ color: K.danger, fontSize: 13 }}>{error}</span>{" "}
-          <button onClick={() => setError(null)} style={{ border: 0, background: "none", cursor: "pointer", color: K.muted }}>{t("dismiss")}</button>
+          <LinkButton tone="muted" weight="regular" onClick={() => setError(null)}>{t("dismiss")}</LinkButton>
         </Section>
       )}
 
@@ -242,18 +243,18 @@ export default function PlacesPage() {
           </div>
 
           <Section style={{ marginBottom: 16 }} bodyStyle={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
+            <Select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
               <option value="">{t("allCountries")}</option>
               {countries.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select aria-label={t("check")} value={check} onChange={e => { setCheck(e.target.value); setReason(""); setPage(1); }} style={selectStyle}>
+            </Select>
+            <Select aria-label={t("check")} value={check} onChange={e => { setCheck(e.target.value); setReason(""); setPage(1); }} style={selectStyle}>
               <option value="">{t("allChecks")}</option>
               {validity.checks.map(c => <option key={c} value={c}>{checkLabel(c)}</option>)}
-            </select>
-            <select aria-label={t("reason")} value={reason} onChange={e => { setReason(e.target.value); setPage(1); }} style={selectStyle}>
+            </Select>
+            <Select aria-label={t("reason")} value={reason} onChange={e => { setReason(e.target.value); setPage(1); }} style={selectStyle}>
               <option value="">{t("allReasons")}</option>
               {reasons.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+            </Select>
             <span style={{ fontSize: 12.5, color: K.muted }}>{t("findings", validity.total)}</span>
             {reason && FIX_OF[reason] && (
               <Button size="sm" disabled={!!busy}

@@ -1,5 +1,6 @@
 """AA-911 decision D-1 (root ADR 0006a A11): a WORKFORCE token from the Preview-only ``cis-admin-preview`` client is
-always the viewer, whatever ``cis-*`` group the user holds and whatever owner flag the row has.
+always the viewer, whatever ``cis-*`` group the user holds and whatever owner flag the row has. Since the Vercel
+retirement (S272) no preview client is configured by default; the cap stays for one set through the env.
 
 Covers: api/core/identity_config (the preview client is accepted only when configured, and never equal to a
 production client), api/core/staff_identity.resolve_staff (role viewer, is_owner False), the staff bearer middleware
@@ -63,15 +64,23 @@ def _preview_admin_token(issuer: StaffIssuer) -> str:
 
 # ── identity_config ──────────────────────────────────────────────────────────────────────────────
 
+# The cis-admin-preview client id the Vercel Preview host used until the AA-911 Vercel retirement (S272).
+RETIRED_PREVIEW_CLIENT_ID = "3d6u7r00ljf4m80gjil20fp2kg"
+
+
 def test_preview_client_is_off_by_default(monkeypatch):
+    # AA-911 Vercel retirement: the Preview host and its client are gone, so no preview client is accepted unless an
+    # operator sets one through the env (the cap below still applies to it).
     monkeypatch.delenv(identity_config.ENV_CIS_ADMIN_PREVIEW_CLIENT_ID, raising=False)
-    assert identity_config.DEV_CIS_ADMIN_PREVIEW_CLIENT_ID == "" or identity_config.cis_admin_preview_client_id()
-    if not identity_config.cis_admin_preview_client_id():
-        (cfg,) = identity_config.cis_staff_issuers()
-        assert cfg.client_ids == frozenset({identity_config.cis_admin_client_id(),
-                                            identity_config.breakglass_client_id()})
-        assert not identity_config.is_preview_client("")
-        assert not identity_config.is_preview_client(None)
+    assert identity_config.DEV_CIS_ADMIN_PREVIEW_CLIENT_ID == ""
+    assert identity_config.cis_admin_preview_client_id() == ""
+    (cfg,) = identity_config.cis_staff_issuers()
+    assert cfg.client_ids == frozenset({identity_config.cis_admin_client_id(),
+                                        identity_config.breakglass_client_id()})
+    assert RETIRED_PREVIEW_CLIENT_ID not in cfg.client_ids
+    assert not identity_config.is_preview_client("")
+    assert not identity_config.is_preview_client(None)
+    assert not identity_config.is_preview_client(RETIRED_PREVIEW_CLIENT_ID)
 
 
 def test_configured_preview_client_is_accepted_and_flagged(monkeypatch):
@@ -199,11 +208,10 @@ def test_verify_admin_returns_viewer_for_a_preview_token(issuer, directory):
     assert (body["admin_id"], body["role"], body["auth"]) == (uid, "viewer", "cognito")
 
 
-# ── AA-816 P6a: the CIS to Booking bridge stays, and a preview session gets nothing from it ──────
+# ── AA-911 (S271): the CIS to Booking bridge is retired, whatever the session ──────────────────────
 
-def test_booking_bridge_refuses_a_preview_cognito_token(issuer, directory):
-    """/auth/booking-token mints only from an HS256 password session; a Cognito token (here the preview client's,
-    with cis-admin and booking-admin groups and an owner row) is 401 before any key or DB access."""
+def test_booking_bridge_is_gone_for_a_preview_cognito_token(issuer, directory):
+    """/auth/booking-token is not a route any more (404), so a preview session gets nothing from it."""
     _owner_admin(directory)
     real_app.dependency_overrides[get_pool] = lambda: directory
     try:
@@ -211,5 +219,5 @@ def test_booking_bridge_refuses_a_preview_cognito_token(issuer, directory):
                                         headers={"Authorization": f"Bearer {_preview_admin_token(issuer)}"})
     finally:
         real_app.dependency_overrides.pop(get_pool, None)
-    assert res.status_code == 401, res.text
+    assert res.status_code == 404, res.text
     assert directory.sql == []

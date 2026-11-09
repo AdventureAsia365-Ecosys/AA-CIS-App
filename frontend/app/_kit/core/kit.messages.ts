@@ -2,8 +2,8 @@
 // app/_kit/core/kit.messages.ts
 // AA-994 — the kit core components' own text (DataTable, Modal, Drawer, Toast, primitives, GuidePanel, LangSwitch,
 // and since S4a FilterBar, DateField, RowMenu, ConfirmModal, KpiTile, DateText; since S6a the form Field; since
-// AA-804 TraceTimeline and LatencyStrip), English and Vietnamese. Every app that renders an I18nProvider gets these
-// in its UI language; outside a provider they are English.
+// AA-804 TraceTimeline and LatencyStrip; since S264 NavGroup), English and Vietnamese. Every app that renders an
+// I18nProvider gets these in its UI language; outside a provider they are English.
 
 import { defineMessages } from "./i18n";
 
@@ -85,6 +85,9 @@ export const KIT_MESSAGES = defineMessages(
     latencyNone: "No call has a time",
     latencySummary: (p50: string, p95: string, max: string, n: number) =>
       `p50 ${p50} · p95 ${p95} · slowest ${max} · ${n} timed ${n === 1 ? "call" : "calls"}`,
+    showGroup: (label: string) => `Show ${label}`,
+    hideGroup: (label: string) => `Hide ${label}`,
+    groupBadge: (n: number) => `${n} in this group`,
   },
   {
     language: "Ngôn ngữ",
@@ -163,5 +166,8 @@ export const KIT_MESSAGES = defineMessages(
     latencyNone: "Không lệnh gọi nào có thời gian",
     latencySummary: (p50: string, p95: string, max: string, n: number) =>
       `p50 ${p50} · p95 ${p95} · chậm nhất ${max} · ${n} lệnh gọi có thời gian`,
+    showGroup: (label: string) => `Mở ${label}`,
+    hideGroup: (label: string) => `Thu gọn ${label}`,
+    groupBadge: (n: number) => `${n} trong nhóm này`,
   },
 );

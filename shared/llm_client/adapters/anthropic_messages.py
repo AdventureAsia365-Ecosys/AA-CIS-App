@@ -13,14 +13,24 @@ What the adapter guarantees, whatever the row says:
   a ``credential_env`` is refused before anything is read.
 - **Endpoint**: ``base_url`` must pass ``connections.check_base_url`` (host allowlist per kind, a code constant), and
   it is always passed to the SDK explicitly, so ``ANTHROPIC_BASE_URL`` in the environment cannot redirect a key.
-- **Timeout / retries**: per connection (``timeout_s``, ``max_retries``); a NULL column means ``DEFAULT_TIMEOUT_S`` /
-  ``DEFAULT_MAX_RETRIES``, never the SDK's 600 s and 2 retries. The SDK honours ``retry-after`` on the retries it
-  makes; the error the gateway sees carries ``retry_after_s`` for the breaker of slice S4.
+- **Timeout / retries**: the timeout per connection (``timeout_s``; NULL means ``DEFAULT_TIMEOUT_S``, never the SDK's
+  600 s). AA-642 A3 (root ADR 0009 decision 5): the SDK never retries (``SDK_MAX_RETRIES`` 0, the connection's
+  ``max_retries`` is not read); the gateway owns retries (the route's next deployment / model). The error the
+  gateway sees carries ``retry_after_s`` for the breaker of slice S4.
 - **Request shape** (``build_params``): no ``temperature`` / ``top_p`` / ``top_k`` (refused on API version 2026-10-21
-  and by Sonnet / Opus 5.5), no ``tools`` / ``tool_choice`` (Sonnet / Opus 5.5 refuse a forced tool), no ``thinking``
-  field (the model's default), no server-side ``fallbacks`` (it would switch the model unseen, ADR 0005 §4), no beta
-  header. Structured output goes through ``output_config.format`` (``json_schema``); ``output_config.effort`` is set
-  explicitly (``resolve_effort``) so the same model answers at the same effort on every way in.
+  and by Sonnet / Opus 5.5), no ``tools`` / ``tool_choice`` (Sonnet / Opus 5.5 refuse a forced tool), no server-side
+  ``fallbacks`` (it would switch the model unseen, ADR 0005 §4), no beta header. Structured output goes through
+  ``output_config.format`` (``json_schema``); ``output_config.effort`` is set explicitly (``resolve_effort``) so the
+  same model answers at the same effort on every way in. ``thinking`` is sent only when a stage x model row sets
+  ``reasoning_mode`` (``resolve_thinking``, AA-741 S271), in the one form each model family accepts; else none (the
+  model's default).
+- **Thinking budget** (AA-741 S271): the Claude 5.x models have no numeric thinking budget any more (``budget_tokens``
+  is a 400 on Sonnet / Haiku / Opus 5.5 and Fable 5 / 5.1); adaptive thinking is billed as output inside
+  ``max_tokens`` and bounded by ``output_config.effort``. So the gateway's thinking budget per stage is the effort of
+  the stage x model row (``shared.stage_model_params.effort``) plus, when a stage must not think, ``reasoning_mode``
+  'off': Sonnet 5.5 ``between_tools``, Haiku 5.5 / Opus 5 / Sonnet 5 / Opus 4.8 / 4.7 ``disabled``; Opus 5.5 and
+  Fable cannot turn thinking off (warned, nothing sent); Opus / Sonnet 4.6 and older think only when asked (nothing
+  sent). 'off' is sent only at effort high or below (a 400 above that on the models that take it).
 - **Errors**: an ``AnthropicAPIError`` (a RuntimeError) whose ``llm_error_class`` is the AA-900 class
   (errors.py): 401 / 403 → ``access_denied`` (account level: the gateway raises ``LLMAccessDenied`` when every model
   was refused that way), 402 / a credit or spend-limit refusal (wording read only on 400 / 402 / 403) →
@@ -48,7 +58,7 @@ logger = structlog.get_logger()
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 DEFAULT_TIMEOUT_S = 300            # the Bedrock client's read timeout (client.py)
-DEFAULT_MAX_RETRIES = 1            # the Bedrock client's max_attempts=2
+SDK_MAX_RETRIES = 0                # AA-642 A3: the gateway owns retries
 CONNECT_TIMEOUT_S = 10.0
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -72,6 +82,38 @@ _EFFORT_DEFAULTS: dict[str, Optional[str]] = {
     "claude-haiku-4-5": None,
     "claude-sonnet-4-5": None,
 }
+
+# AA-741 S271 — the ``thinking`` object each model family takes per ``reasoning_mode`` (Anthropic API, claude-api
+# reference cached 2026-10-06: the per-model thinking table). ``_OMIT``: the model already runs that way when the field
+# is left out, so nothing is sent; ``_REFUSED``: the model refuses every way to ask for it (a 400), so nothing is sent
+# and a warning says the row is not applied. Families not listed: nothing sent, warned once.
+_OMIT = "omit"
+_REFUSED = "refused"
+THINKING_MODES = ("off", "adaptive")
+_ADAPTIVE = {"type": "adaptive"}
+_THINKING_FACTS: dict[str, dict[str, Any]] = {
+    # adaptive by default, thinking cannot be turned off
+    "claude-fable-5-1": {"adaptive": _ADAPTIVE, "off": _REFUSED},
+    "claude-fable-5": {"adaptive": _ADAPTIVE, "off": _REFUSED},
+    "claude-opus-5-5": {"adaptive": _ADAPTIVE, "off": _REFUSED},
+    # adaptive by default; the lowest setting is between_tools (no extended thinking), Sonnet 5.5 only
+    "claude-sonnet-5-5": {"adaptive": _ADAPTIVE, "off": {"type": "between_tools"}},
+    # adaptive by default; disabled accepted
+    "claude-haiku-5-5": {"adaptive": _ADAPTIVE, "off": {"type": "disabled"}},
+    "claude-opus-5": {"adaptive": _ADAPTIVE, "off": {"type": "disabled"}},
+    "claude-sonnet-5": {"adaptive": _ADAPTIVE, "off": {"type": "disabled"}},
+    # no thinking unless asked; adaptive is the only on-mode
+    "claude-opus-4-8": {"adaptive": _ADAPTIVE, "off": _OMIT},
+    "claude-opus-4-7": {"adaptive": _ADAPTIVE, "off": _OMIT},
+    "claude-opus-4-6": {"adaptive": _ADAPTIVE, "off": _OMIT},
+    "claude-sonnet-4-6": {"adaptive": _ADAPTIVE, "off": _OMIT},
+    # no adaptive thinking (only a manual budget, which the gateway does not send)
+    "claude-opus-4-5": {"adaptive": _REFUSED, "off": _OMIT},
+    "claude-haiku-4-5": {"adaptive": _REFUSED, "off": _OMIT},
+    "claude-sonnet-4-5": {"adaptive": _REFUSED, "off": _OMIT},
+}
+# 'off' (between_tools / disabled) is a 400 at these efforts on the models that take it: adaptive is kept.
+_OFF_REFUSED_EFFORTS = frozenset({"xhigh", "max"})
 
 # JSON Schema keywords structured outputs do not take (numeric / string bounds, complex array bounds). They are
 # removed from the schema SENT; the reply is still conformed to the caller's full schema (client._checked_json).
@@ -118,6 +160,8 @@ class MessagesResult:
     # where inference ran (usage.inference_geo), for pricing.quote.
     cache_write_1h_tokens: int = 0
     inference_geo: Optional[str] = None
+    # AA-741 S271: the thinking type sent (adaptive | between_tools | disabled), None when no field was sent.
+    thinking: Optional[str] = None
 
 
 # ── request ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -172,6 +216,50 @@ def resolve_effort(wire_id: str, stage: Optional[str], request_defaults: Optiona
     return family_default
 
 
+def _thinking_facts(wire_id: str) -> Optional[dict]:
+    for family, facts in _THINKING_FACTS.items():
+        if re.fullmatch(re.escape(family) + r"(-\d{8})?", wire_id or ""):
+            return facts
+    return None
+
+
+_THINKING_WARNED: set[tuple[str, str, str]] = set()
+
+
+def _thinking_not_sent(wire_id: str, mode: str, reason: str) -> None:
+    key = (wire_id, mode, reason)
+    if key in _THINKING_WARNED:
+        return
+    _THINKING_WARNED.add(key)
+    logger.warning("llm_anthropic_thinking_not_sent", wire_id=wire_id, reasoning_mode=mode, reason=reason)
+
+
+def resolve_thinking(wire_id: str, reasoning_mode: Optional[str], effort: Optional[str]) -> Optional[dict]:
+    """AA-741 S271 — the ``thinking`` object to send for a stage x model ``reasoning_mode`` ('off' | 'adaptive'),
+    or None (send no field: no mode set, the model's default already is that mode, or the model refuses it). ``effort``
+    is the effort the request is sent with (``resolve_effort``): 'off' is never sent at xhigh / max (a 400 there).
+    Never raises; a mode that cannot be sent is warned once per (wire id, mode, reason)."""
+    if reasoning_mode is None:
+        return None
+    if reasoning_mode not in THINKING_MODES:
+        _thinking_not_sent(wire_id, str(reasoning_mode), "unknown reasoning_mode")
+        return None
+    facts = _thinking_facts(wire_id)
+    if facts is None:
+        _thinking_not_sent(wire_id, reasoning_mode, "unknown model family")
+        return None
+    value = facts[reasoning_mode]
+    if value == _OMIT:
+        return None
+    if value == _REFUSED:
+        _thinking_not_sent(wire_id, reasoning_mode, "this model refuses it (lower the stage's effort instead)")
+        return None
+    if reasoning_mode == "off" and effort in _OFF_REFUSED_EFFORTS:
+        _thinking_not_sent(wire_id, reasoning_mode, f"thinking cannot be off at effort {effort}")
+        return None
+    return dict(value)
+
+
 def api_schema(schema: dict) -> Optional[dict]:
     """The caller's JSON schema in the shape ``output_config.format`` takes: every object closed
     (``additionalProperties: false``) and the unsupported keywords removed. None when it cannot be expressed (an
@@ -224,14 +312,16 @@ def _schema_instruction(schema: dict) -> str:
 
 def build_params(*, wire_id: str, system: str, user: str, max_tokens: int, stage: Optional[str],
                  json_schema: Optional[dict] = None, request_defaults: Optional[dict] = None,
-                 capabilities: Optional[dict] = None) -> dict:
+                 capabilities: Optional[dict] = None, reasoning_mode: Optional[str] = None) -> dict:
     """The keyword arguments of ``messages.stream``. Only these keys can appear: model, max_tokens, system, messages,
-    output_config (format / effort). Pinned by tests/unit/test_aa1002_anthropic_messages.py."""
+    output_config (format / effort), thinking (only when ``reasoning_mode`` is set and the model takes it: AA-741
+    S271). Pinned by tests/unit/test_aa1002_anthropic_messages.py and tests/unit/test_s271_thinking_control.py."""
     defaults = request_defaults if isinstance(request_defaults, dict) else {}
     output_config: dict = {}
     effort = resolve_effort(wire_id, stage, defaults, capabilities)
     if effort:
         output_config["effort"] = effort
+    thinking = resolve_thinking(wire_id, reasoning_mode, effort)
     if json_schema:
         sent = api_schema(json_schema["schema"])
         if sent is not None:
@@ -252,6 +342,8 @@ def build_params(*, wire_id: str, system: str, user: str, max_tokens: int, stage
     }
     if output_config:
         params["output_config"] = output_config
+    if thinking is not None:
+        params["thinking"] = thinking
     return params
 
 
@@ -263,8 +355,9 @@ _clients_lock = threading.Lock()
 
 def _settings(conn: connections.ProviderConnection) -> tuple[int, int]:
     timeout_s = int(conn.timeout_s) if conn.timeout_s else DEFAULT_TIMEOUT_S
-    retries = int(conn.max_retries) if conn.max_retries is not None else DEFAULT_MAX_RETRIES
-    return timeout_s, retries
+    # AA-642 A3 (root ADR 0009 decision 5): the SDK never retries; the gateway owns retries (the route's next
+    # deployment / model, at most errors.MAX_CHAIN_ATTEMPTS attempts). The connection's max_retries is not read.
+    return timeout_s, SDK_MAX_RETRIES
 
 
 def _client_for(conn: connections.ProviderConnection, api_key: str, base_url: str):
@@ -375,11 +468,12 @@ def _wrap_status_error(conn_key: str, e) -> AnthropicAPIError:
 def send(*, connection: connections.ProviderConnection, wire_id: str, system: str, user: str, max_tokens: int,
          stage: Optional[str], json_schema: Optional[dict] = None, request_defaults: Optional[dict] = None,
          on_delta: Optional[Callable[[str], None]] = None, capabilities: Optional[dict] = None,
-         timeout: Optional[float] = None) -> MessagesResult:
+         timeout: Optional[float] = None, reasoning_mode: Optional[str] = None) -> MessagesResult:
     """One streamed Messages API request. Raises ConnectionCredentialError / ConnectionPolicyError before any
     network call when the connection may not be used, AnthropicAPIError when the API refuses or the request fails.
     A reply that arrived (any stop_reason, refusal included) is returned: the caller decides whether it is usable.
-    ``timeout`` (AA-1018 part 2): the route deadline's remaining seconds for this request; None = the client's own."""
+    ``timeout`` (AA-1018 part 2): the route deadline's remaining seconds for this request; None = the client's own.
+    ``reasoning_mode`` (AA-741 S271): the stage x model row's 'off' / 'adaptive' (``resolve_thinking``)."""
     import anthropic
 
     if connection.kind != "anthropic":
@@ -395,7 +489,8 @@ def send(*, connection: connections.ProviderConnection, wire_id: str, system: st
     connections.check_base_url("anthropic", base_url)
     client = _client_for(connection, api_key, base_url)
     params = build_params(wire_id=wire_id, system=system, user=user, max_tokens=max_tokens, stage=stage,
-                          json_schema=json_schema, request_defaults=request_defaults, capabilities=capabilities)
+                          json_schema=json_schema, request_defaults=request_defaults, capabilities=capabilities,
+                          reasoning_mode=reasoning_mode)
     try:
         with client.messages.stream(**params, **({"timeout": timeout} if timeout is not None else {})) as stream:
             for event in stream:
@@ -431,6 +526,7 @@ def send(*, connection: connections.ProviderConnection, wire_id: str, system: st
         params=params,
         cache_write_1h_tokens=_int_field(getattr(usage, "cache_creation", None), "ephemeral_1h_input_tokens"),
         inference_geo=_str_field(usage, "inference_geo"),
+        thinking=(params.get("thinking") or {}).get("type"),
     )
 
 

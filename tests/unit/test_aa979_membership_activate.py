@@ -181,6 +181,7 @@ def test_answers_conform_to_the_contract_1_1(m2m):
     conflict = _post(_client(FakeConn(_row(status="removed"))), m2m.token(scope=ACTIVATE_SCOPE), BODY)
     assert _contract_errors("Problem", conflict.json()) == []
     assert _contract_errors("ActivationRequest", BODY) == []
-    assert DOC["info"]["version"] in ("1.1", "1.2")  # 1.2 (S252) only adds is_synthetic to getTenantMembers
+    # 1.2 (S252) only adds is_synthetic to getTenantMembers; 1.3 (AA-1035) only adds getStaffTenantScope
+    assert DOC["info"]["version"] in ("1.1", "1.2", "1.3")
     op = DOC["paths"]["/invitations/{invitation_id}/activate"]["post"]
     assert op["security"] == [{"m2m": [m2m_auth.SCOPE_TENANT_ACTIVATE]}]

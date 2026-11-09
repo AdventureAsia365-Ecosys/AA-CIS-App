@@ -1,5 +1,5 @@
 // lib/crmConsole.messages.ts — AA-994: the words of lib/crmConsole.ts (Platform › Tenants › Agencies) in English and
-// Vietnamese. The English side is the lib's own constants; app/admin/platform/agencies/useCrmText.ts binds them to the
+// Vietnamese. The English side is the lib's own constants; app/admin/tenants/agencies/useCrmText.ts binds them to the
 // UI language. CRM codes (states, reasons, features, error codes) stay the catalogue keys.
 
 import { defineMessages } from "../app/_kit/core/i18n";
@@ -188,6 +188,7 @@ export const CRM_ERRORS = defineMessages(
     has_travellers: E.has_travellers,
     owner_exists: E.owner_exists,
     tenant_exists: E.tenant_exists,
+    tenant_deleted: E.tenant_deleted,
     owner_invite_pending: E.owner_invite_pending,
     member_limit_reached: E.member_limit_reached,
     invalid_feature: E.invalid_feature,
@@ -207,6 +208,10 @@ export const CRM_ERRORS = defineMessages(
     invalid_display_name: E.invalid_display_name,
     invalid_locale: E.invalid_locale,
     invalid_ticket_ref: E.invalid_ticket_ref,
+    owner_invite_not_found: E.owner_invite_not_found,
+    not_synthetic: E.not_synthetic,
+    agency_name_mismatch: E.agency_name_mismatch,
+    has_members: E.has_members,
   },
   {
     cognito_session_required: "Hãy đăng nhập bằng tài khoản nhân sự (Cognito) để dùng console CRM.",
@@ -221,6 +226,7 @@ export const CRM_ERRORS = defineMessages(
     has_travellers: "Đại lý đã có khách du lịch hoặc yêu cầu tư vấn, nên AA không thể mời chủ sở hữu đầu tiên.",
     owner_exists: "Đại lý đã có chủ sở hữu.",
     tenant_exists: "Trong CRM đã có một đại lý với id này. Không có gì thay đổi.",
+    tenant_deleted: "Đại lý thử nghiệm của tenant này đã bị xoá; không dùng lại được id của nó. Hãy tạo một tenant CIS mới.",
     owner_invite_pending: "Đã có một lời mời chủ sở hữu đang chờ.",
     member_limit_reached: "Đại lý không còn chỗ trống.",
     invalid_feature: "Một trong các tính năng không phải mã đã biết.",
@@ -241,5 +247,9 @@ export const CRM_ERRORS = defineMessages(
     invalid_display_name: "Tên đại lý không hợp lệ.",
     invalid_locale: "Ngôn ngữ và khu vực phải là en-AU, en-GB, en-US hoặc vi-VN.",
     invalid_ticket_ref: "Mã ticket phải có dạng SUP-1024.",
+    owner_invite_not_found: "Không có lời mời chủ sở hữu đầu tiên nào để rút lại (không có lời mời đang chờ, hoặc lời mời đã được chấp nhận).",
+    not_synthetic: "Ở đây chỉ xoá được đại lý thử nghiệm (giả lập). Đại lý thật do chính chủ sở hữu xoá.",
+    agency_name_mismatch: "Tên vừa nhập không phải tên đại lý. Hãy nhập đúng như đang hiển thị.",
+    has_members: "Đại lý vẫn còn thành viên đang hoạt động hoặc đang được mời.",
   },
 );

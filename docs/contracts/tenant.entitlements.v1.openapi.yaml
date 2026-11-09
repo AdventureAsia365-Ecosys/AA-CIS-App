@@ -1,0 +1,337 @@
+openapi: 3.1.0
+info:
+  title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
+  version: "1.5"
+  description: >-
+    CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
+    entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
+    are on and with which limit. Apps check feature keys, never plan names (ADR 0019 invariant 6): plan_key is served
+    for display and support only. Three parts: this HTTP API, the database view shared.v_tenant_entitlement_v1 (CIS
+    355; the same rows, granted to a consumer role by the CIS migration that adds the consumer) and the account event
+    feed below. Resolution (CIS shared.v_tenant_entitlement_resolved, computed live): a per-tenant override (unexpired)
+    wins over the plan of a live subscription (status active or past_due, or trialing: until the hourly
+    tenant_account_tick moves it after trial_ends_at, 1.2); an
+    override of a crm or
+    tripplanner key applies only while that product's subscription is live; a disabled override removes the key.
+    A key that is not listed is not entitled. limit null = no limit (for a flag, always null). A consumer serves the
+    tenant only while in_service is true (account_status trial, active or past_due) and refuses every feature
+    otherwise, whatever the entitlements say. Snapshot with ETag plus a cursor feed; the feed carries small typed
+    change bodies, and a consumer that needs the full state re-reads the snapshot. Feed cursor: opaque, oldest first;
+    only events whose writing transaction is older than every transaction still open are returned (a
+    transaction-id snapshot horizon, as tenant.membership.v1), so an event committed out of order is delivered later,
+    never skipped (contracts rule 4); a consumer stores event_id and applies each event once. No personal data, no
+    price and no billing field crosses the HTTP API or the feed (the bill-to fields stay in CIS; Booking reads them
+    through its own view part, 1.3). Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (the CRM client).
+    1.1 (AA-1028 R1 slice 2, additive; no HTTP shape change): (a) resolution, CIS 356: a platform key (ai.*, policy.*)
+    that is not the plan's own (an override, the legacy AI budget) needs a live content subscription, so an offboarded
+    tenant keeps no platform key; content.rate_limit_rpm is the CIS public API limiter's per-tenant value
+    (shared.tenants.rate_limit_rpm) when it differs from the content plan's, served with source override, and it wins
+    over an explicit override of that key; a trialing subscription is live only until its trial_ends_at (before,
+    an ended trial kept giving its keys while nothing moved it off trialing). (b) A second view part for Booking, catalog.v_tenant_account_v1 (CIS 357,
+    SELECT to role booking only): one row per tenant with tenant_id, name (the trading name, which Booking already
+    holds as booking.b2b_partners.agency_name), account_status, suspend_reason, in_service, kind, is_pilot and
+    trade_book (the trade.book entitlement is live); columns are only appended. Booking reads it instead of HTTP, so
+    Booking needs no M2M client (its bk_tenant_pull projects every tenant except kind internal into
+    booking.b2b_partners). (c) Consumers: the CRM reads the HTTP API (crm_entitlement_pull: the feed names the tenants
+    that changed, the CRM re-reads each one's snapshot); Booking reads catalog.v_tenant_account_v1; TripPlanner reads
+    a view of its own in R5. Every tenant holds a content subscription that follows plan_tier and the offboard /
+    restore lifecycle (CIS 355 bridge); CIS staff add or change add-ons with the tenant_provision saga (CIS
+    POST /admin/tenants/provision and /admin/tenants/{id}/provision).
+    1.2 (AA-1028 R1 slice 3, additive text; no HTTP shape change, no new field): (a) resolution, CIS 361: a trialing
+    subscription stays live past its trial_ends_at until CIS's hourly tenant_account_tick moves it (to active when a
+    payment is recorded, else past_due, both live), replacing 1.1's "live only until trial_ends_at", so a tenant never
+    loses its keys between the trial end and the tick. Until the tick the keys keep source trial and expires_at =
+    trial_ends_at (now in the past): a consumer that honours expires_at may stop a trial key at the trial end, CIS
+    keeps the plan's limits until the tick, and the tick's change arrives as usual on the feed (keys re-served with
+    source plan, expires_at null). Booking's catalog.v_tenant_account_v1 trade_book stays true through the trial end
+    until the tick, and becomes false when the subscription is canceled. (b) A platform key (ai.*, policy.*) is taken
+    from a plan only when that plan is the tenant's content subscription's plan; an add-on plan (crm, tripplanner)
+    never gives one (CIS refuses such a plan feature), and a tie between plan rows is broken by plan_key, so the
+    served value is deterministic.
+    1.3 (AA-1037 R4 slice 1, additive; no HTTP shape change): a third view part for Booking, catalog.v_tenant_billing_v1
+    (CIS 377, SELECT to role booking only), for the agency invoices Booking issues (root ADR 0019 d9): one row per
+    tenant and subscription (NULL subscription columns for a tenant without one) with tenant_id, name, kind, the
+    bill-to fields (legal_entity_name, tax_id, billing_email, billing_address, billing_country; personal data,
+    snapshotted on an issued invoice only), product, plan_key, plan_name, price_usd_monthly, price_unit,
+    seats_included, price_extra_seat_usd, seats and subscription_status; columns are only appended. Booking's
+    bk_saas_invoice_draft drafts the software fee from the live subscriptions (active, past_due). The way back is
+    Booking's contract view booking.v_tenant_billing_status (bk-042, SELECT to cis_app): CIS's hourly
+    tenant_billing_tick writes paid_through and moves the account (warn -> past_due, past the suspend days ->
+    suspended with suspend_reason billing, paid again -> back in service); CIS stays the only writer of account and
+    subscription state.
+    1.4 (AA-1038 R5 slice 2, additive; no HTTP shape change): a fourth view part for TripPlanner,
+    catalog.v_tenant_tripplanner_v1 (CIS 379, SELECT to role tripplanner only), for the /{slug} site of a tenant (root
+    ADR 0019 d10): one row per tenant that holds a TripPlanner subscription (any status; kind internal never shows)
+    with tenant_id, slug, name (the trading name, the site's brand label), kind, account_status, in_service, served
+    (in_service and the tp.hosted entitlement live: TripPlanner serves /{slug} only then and answers 404 otherwise,
+    the same 404 as an unknown slug), tp_launcher, tp_branding (the BO-8 badge flag), theme (an object of kit token
+    name -> '#rrggbb' lower-case colour, at most 4 kB, from CIS shared.tenant_tripplanner_site; '{}' = the kit
+    defaults) and locale ('en' | 'vi', default 'en'); columns are only appended. No personal data, no price. A tenant
+    bound on a TripPlanner connection (app.tenant_id) reads AA master catalogue rows only: the catalog tour views keep
+    the AA master tenant in their WHERE, so a bound tenant's own CIS rows never appear there; the tenant's own text is
+    a later view (catalog.v_tenant_tour_v1) with its own rule. CIS 379 also creates the demo tenant aa-tripplanner
+    (00000000-0000-0000-0000-000000000002, kind demo), the tenant of TripPlanner's bare path.
+    1.5 (AA-1038 R5 slice 3, additive; no HTTP shape change): catalog.v_tenant_tripplanner_v1 appends crm_core (the
+    crm.core entitlement is live), lead_channel (where the tenant's lead.submitted.v1 goes: crm when crm_core, else
+    webhook or email when the tenant's site settings name one with its target, else none = TripPlanner refuses the
+    request), lead_webhook_url and lead_email (the target of the resolved channel only, else null; the agency's own
+    endpoint and business inbox, never a traveller's, and no secret: the webhook key is TripPlanner's). New view
+    catalog.v_tenant_ai_budget_v1 (CIS 390, SELECT to tripplanner only), one row per tenant of the TripPlanner view:
+    tenant_id, budget_source (entitlement = the resolved ai.budget_usd_monthly, monthly_usd null = unlimited;
+    disabled = an active disabled override, served as 0; none = no key resolves, the consumer fails closed),
+    monthly_usd, month_spent_usd and month_calls (the tenant's ledger rows of the current UTC month on every app,
+    shadow rows out). Read by tenant_id. No personal data, no price.
+  x-aa-contract: tenant.entitlements.v1
+  x-aa-producer: AA-CIS-App
+  x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
+  x-aa-issues: [AA-1028, AA-1037, AA-1038]
+servers:
+  - url: /tenant/v1
+security:
+  - m2m: [cis.tenant/read]
+paths:
+  /tenants/{tenant_id}/account:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+      - name: If-None-Match
+        in: header
+        required: false
+        schema: {type: string, maxLength: 100}
+    get:
+      operationId: getTenantAccount
+      summary: Snapshot of one tenant's account, subscriptions and entitlements
+      responses:
+        "200":
+          description: Snapshot
+          headers:
+            ETag:
+              schema: {type: string, maxLength: 100}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TenantAccount"}
+        "304":
+          description: Not modified
+        "404": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /account-events:
+    get:
+      operationId: listAccountEvents
+      summary: Cursor feed of account, subscription and entitlement changes, oldest first
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema: {type: string, maxLength: 200}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 500, default: 200}
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AccountEventPage"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+components:
+  securitySchemes:
+    m2m:
+      type: oauth2
+      description: Cognito M2M pool aa-m2m-<env>, client credentials.
+      flows:
+        clientCredentials:
+          tokenUrl: https://m2m-auth.example.invalid/oauth2/token
+          scopes:
+            cis.tenant/read: Read tenants, memberships and tenant accounts
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error: {type: string, enum: [unauthorized, forbidden, not_found, invalid, unavailable]}
+        message: {type: string, maxLength: 500}
+    AccountStatus:
+      type: string
+      enum: [lead, applied, trial, active, past_due, suspended, offboarding, closed]
+    SuspendReason:
+      type: [string, "null"]
+      enum: [billing, compliance, security, tenant_request, null]
+      description: Set only while account_status is suspended.
+    Product:
+      type: string
+      enum: [content, crm, tripplanner]
+    SubscriptionStatus:
+      type: string
+      enum: [trialing, active, past_due, unpaid, canceled, paused]
+      description: Stripe's vocabulary (billing v1 is by hand). active and past_due give entitlements; trialing
+        gives them until trial_ends_at (1.1) and, from 1.2, until the hourly tenant_account_tick moves it after
+        trial_ends_at.
+    Decimal:
+      type: string
+      pattern: "^[0-9]{1,12}(\\.[0-9]{1,2})?$"
+      description: A non-negative decimal as a string (never a JSON number). For unit usd_month it is USD.
+    Subscription:
+      type: object
+      additionalProperties: false
+      required: [product, plan_key, status, trial_ends_at, seats]
+      properties:
+        product: {$ref: "#/components/schemas/Product"}
+        plan_key:
+          type: string
+          pattern: "^[a-z]+\\.[a-z][a-z0-9_]*$"
+          maxLength: 64
+          description: For display and support only; never branch on it (check feature keys).
+        status: {$ref: "#/components/schemas/SubscriptionStatus"}
+        trial_ends_at: {type: [string, "null"], format: date-time}
+        seats: {type: [integer, "null"], minimum: 1}
+    Entitlement:
+      type: object
+      additionalProperties: false
+      required: [feature_key, product, kind, unit, limit, source, expires_at]
+      properties:
+        feature_key:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+          maxLength: 64
+          description: >-
+            The key apps check, for example content.rewrite, crm.ai_assist, crm.seats, tp.hosted, trade.book,
+            ai.budget_usd_monthly, policy.notice_days. A consumer ignores a key it does not know (a minor adds keys).
+        product:
+          type: string
+          enum: [content, crm, tripplanner, platform]
+          description: platform keys (ai.*, policy.*) belong to no single product.
+        kind:
+          type: string
+          enum: [flag, limit, seats, policy]
+        unit:
+          type: [string, "null"]
+          enum: [count_month, usd_month, rpm, seats, days, null]
+          description: Null exactly for a flag.
+        limit:
+          oneOf:
+            - {$ref: "#/components/schemas/Decimal"}
+            - {type: "null"}
+          description: Null = no limit (always null for a flag).
+        source:
+          type: string
+          enum: [plan, trial, override]
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: The end of the trial (source trial) or of the override; null = no end.
+    TenantAccount:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, account_status, suspend_reason, in_service, kind, is_pilot, data_region, time_zone,
+                 subscriptions, entitlements, as_of]
+      properties:
+        tenant_id: {type: string, format: uuid}
+        account_status: {$ref: "#/components/schemas/AccountStatus"}
+        suspend_reason: {$ref: "#/components/schemas/SuspendReason"}
+        in_service:
+          type: boolean
+          description: account_status is trial, active or past_due. False = refuse every feature (read-only lock).
+        kind:
+          type: string
+          enum: [agency, demo, internal]
+          description: demo = synthetic (E2E, sales demo); internal = Adventure Asia itself.
+        is_pilot:
+          type: boolean
+          description: The one Dev pilot agency (ADR 0019 d16); clean-up, E2E and wave jobs skip it.
+        data_region:
+          type: string
+          enum: [us, eu]
+        time_zone: {type: string, maxLength: 64, description: IANA time zone name}
+        subscriptions:
+          type: array
+          items: {$ref: "#/components/schemas/Subscription"}
+        entitlements:
+          type: array
+          items: {$ref: "#/components/schemas/Entitlement"}
+        as_of: {type: string, format: date-time}
+    StatusChange:
+      type: object
+      additionalProperties: false
+      required: [status, previous_status, suspend_reason]
+      properties:
+        status: {$ref: "#/components/schemas/AccountStatus"}
+        previous_status:
+          oneOf:
+            - {$ref: "#/components/schemas/AccountStatus"}
+            - {type: "null"}
+          description: Null when the tenant was created.
+        suspend_reason: {$ref: "#/components/schemas/SuspendReason"}
+    SubscriptionChange:
+      type: object
+      additionalProperties: false
+      required: [op, product, plan_key, status, previous_status, previous_plan_key, seats, trial_ends_at]
+      properties:
+        op: {type: string, enum: [created, updated, deleted]}
+        product: {$ref: "#/components/schemas/Product"}
+        plan_key: {type: string, maxLength: 64}
+        status: {$ref: "#/components/schemas/SubscriptionStatus"}
+        previous_status:
+          oneOf:
+            - {$ref: "#/components/schemas/SubscriptionStatus"}
+            - {type: "null"}
+        previous_plan_key: {type: [string, "null"], maxLength: 64}
+        seats: {type: [integer, "null"], minimum: 1}
+        trial_ends_at: {type: [string, "null"], format: date-time}
+    EntitlementChange:
+      type: object
+      additionalProperties: false
+      required: [op, feature_key, product, limit, source, expires_at]
+      properties:
+        op: {type: string, enum: [added, updated, removed]}
+        feature_key: {type: string, maxLength: 64}
+        product:
+          type: string
+          enum: [content, crm, tripplanner, platform]
+        limit:
+          oneOf:
+            - {$ref: "#/components/schemas/Decimal"}
+            - {type: "null"}
+          description: The new limit; null on removed and for a flag or no limit.
+        source:
+          type: [string, "null"]
+          enum: [plan, trial, override, null]
+          description: Null on removed.
+        expires_at: {type: [string, "null"], format: date-time}
+    AccountEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, cursor, type, occurred_at, tenant_id, change]
+      properties:
+        event_id: {type: string, format: uuid}
+        cursor: {type: string, maxLength: 200}
+        type:
+          type: string
+          enum: [account.status_changed, subscription.changed, entitlement.changed]
+        occurred_at: {type: string, format: date-time}
+        tenant_id: {type: string, format: uuid}
+        change:
+          oneOf:
+            - {$ref: "#/components/schemas/StatusChange"}
+            - {$ref: "#/components/schemas/SubscriptionChange"}
+            - {$ref: "#/components/schemas/EntitlementChange"}
+          description: The body of the type (StatusChange, SubscriptionChange or EntitlementChange respectively).
+    AccountEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/AccountEvent"}
+        next_cursor: {type: string, maxLength: 200}

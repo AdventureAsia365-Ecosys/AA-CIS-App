@@ -125,6 +125,12 @@ async def test_enqueue_rerun_does_not_double_insert():
 
 # ── APPROVE / REJECT atomic-claim: real v1_pipeline endpoints ─────────────────
 
+# S271 W0: the approve gate reads the stored version before the claim (v1_pipeline._APPROVE_GATE_SQL).
+_GATE_CLEAN = {"generated_content_id": GCID, "human_edited": False, "fix_pass_applied": False,
+               "metadata": {"grounding": {"found": 0, "violations": []}}, "score_overall": 8.0,
+               "failure_codes": [], "brand_audit_status": "pass", "brand_audit_codes": []}
+
+
 def _make_pool(conn):
     ctx = AsyncMock()
     ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -153,7 +159,9 @@ async def test_approve_null_token_exports_once_then_409_on_second_call():
     conn = AsyncMock()
     # 1st approve: claim succeeds (pending row, NULL token). 2nd approve: claim returns nothing.
     conn.fetchrow = AsyncMock(side_effect=[
+        _GATE_CLEAN,
         {"generated_content_id": GCID, "step_fn_task_token": None},
+        None,    # 2nd approve, S271 W0 gate: the review is no longer pending
         None,    # 2nd approve: claim returns nothing (row already approved)
         None,    # AA-234: gate-disambiguation query → not gate-blocked → "already processed"
     ])
@@ -165,7 +173,7 @@ async def test_approve_null_token_exports_once_then_409_on_second_call():
         assert first["status"] == "approved"
         assert first["exported"] is True
         assert first["sf_notified"] is False
-        mock_export.assert_awaited_once_with(str(GCID))
+        mock_export.assert_awaited_once_with(str(GCID), contract_exit="approve")
 
         with pytest.raises(HTTPException) as exc:
             await v1_pipeline.approve_review(REVIEW_ID, req, TENANT)
@@ -180,9 +188,9 @@ async def test_approve_with_token_uses_sfn_not_export():
     from api.routers import v1_pipeline
 
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value={
+    conn.fetchrow = AsyncMock(side_effect=[_GATE_CLEAN, {
         "generated_content_id": GCID, "step_fn_task_token": "tok-123",
-    })
+    }])
     conn.execute = AsyncMock(return_value="UPDATE 1")
     req = _make_request(_make_pool(conn))
 

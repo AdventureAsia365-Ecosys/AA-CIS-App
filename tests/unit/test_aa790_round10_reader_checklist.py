@@ -8,6 +8,7 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import GOALS
 from services.acp_content_writing import brief_grounding as bg
 from services.acp_content_writing import prompts, service
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 from services.acp_content_writing import reader_checklist as rc
 from tests.unit.test_aa790_round9_brief_grounding import (PACKS, ROUND6_FIXTURE_SHA, SEED, SEED2, _row,
                                                           fixture_prompts, fixture_sha)
@@ -55,7 +56,9 @@ def test_off_leaves_the_grounded_prompt_unchanged(monkeypatch):
 
 
 def test_system_prompt_and_writer_version_unchanged():
-    assert service.WRITER_PROMPT_VERSION == "b5978839"
+    # AA-1047: cc9b4979 = b5978839 plus the writing policy lines (pre_aa1047 puts them back)
+    assert service.WRITER_PROMPT_VERSION == "cc9b4979"
+    assert service.prompt_version_of(pre_aa1047(prompts.SYSTEM_PROMPT)) == "b5978839"
 
 
 def test_block_is_empty_when_off():

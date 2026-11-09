@@ -7,7 +7,7 @@ cannot see a field disappear. Each model here names every field the route return
 - ``response_model=`` where the handler returns a dict (FastAPI validates and serializes it): ``Health``,
   ``TenantSession``, ``Quota``. Nullable where the value can be null today, so no new 500 is possible.
 - ``responses={code: {"model": ...}}`` (documentation only) where the handler returns a ``JSONResponse`` with its own
-  status or headers: ``Readiness`` (200 or 503), ``Jwks`` (Cache-Control header), and the ``Catalog*`` bodies of
+  status or headers: ``Readiness`` (200 or 503) and the ``Catalog*`` bodies of
   catalog.http.v1 (AA-976; ETag / 304).
 
 The rest of the public surface is listed in ``tests/unit/snapshots/aa899_untyped_public_routes.json``; that list may
@@ -38,23 +38,6 @@ class Readiness(BaseModel):
     registered_keys: Optional[List[str]] = None
     keys_baseline: Optional[str] = None
     missing_schema_versions: Optional[List[str]] = None
-
-
-class Jwk(BaseModel):
-    """One RSA public key of the Booking bridge token (RFC 7517)."""
-    model_config = ConfigDict(extra="allow")
-
-    kty: str
-    n: str
-    e: str
-    kid: str
-    use: str
-    alg: str
-
-
-class Jwks(BaseModel):
-    """GET /auth/.well-known/jwks.json — current key first, then previous, then next."""
-    keys: List[Jwk]
 
 
 class TenantSession(BaseModel):
@@ -139,24 +122,10 @@ class AccountActivityPage(BaseModel):
     actions: List[AccountActivityAction]
 
 
-class AccountApiKey(BaseModel):
-    """GET /v1/account/api-key — the key is never readable (only its sha256 is stored): a mask and its dates."""
-    has_key: bool
-    masked: Optional[str]
-    issued_at: Optional[str]
-    last_sign_in_at: Optional[str]
-    last_api_call_at: Optional[str]
-    # AA-825 rollup fallback: newest month (YYYY-MM) with calls when the 90-day raw window holds none
-    last_api_call_month: Optional[str]
-    last_used_at: Optional[str]
-    # set (and last_used_at null) when that month is newer than every exact use
-    last_used_month: Optional[str]
-
-
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────
 # The /catalog/v1 handlers (api/routers/catalog_http.py) return their own JSONResponse (ETag, Cache-Control, 304),
 # so these models are declared with ``responses={200: {"model": ...}}`` and never validate or filter a body. They
-# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.2), which stays the source of truth (its
+# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.3), which stays the source of truth (its
 # test: tests/unit/test_aa976_catalog_http_contract.py). Prefixed ``Catalog`` so no other CIS schema name collides.
 
 class _CatalogModel(BaseModel):
@@ -213,6 +182,15 @@ class CatalogPhoto(_CatalogModel):
     alt: Optional[str] = None
 
 
+class CatalogAiMark(_CatalogModel):
+    """The machine-readable mark of AI-generated text (contract 1.3, AA-1040, EU AI Act Art. 50(2))."""
+    ai_generated: bool
+    generator: str
+    model: Optional[str]
+    generated_at: Optional[str]
+    human_edited: Optional[bool]
+
+
 class CatalogTour(_CatalogModel):
     """GET /catalog/v1/tours/{source_system}/{source_id} — the served tour (ETag = ``content_hash``)."""
     source_system: Literal["cis"]
@@ -227,6 +205,7 @@ class CatalogTour(_CatalogModel):
     exclusions: List[CatalogExclusion]
     facets: CatalogFacets
     photos: List[CatalogPhoto] = []
+    ai: Optional[CatalogAiMark] = None
 
 
 class CatalogDestination(_CatalogModel):
@@ -319,6 +298,16 @@ class MembershipIdentityMemberships(_CatalogModel):
     memberships: List[MembershipItem]
 
 
+class StaffTenantScope(_CatalogModel):
+    """GET /tenant/membership/v1/staff-scope?iss=&sub=&desk_role= (contract 1.3, AA-1035): the tenants an AA desk
+    staff member (customer_success: its book; support: its book and the pool) may reach in the CRM L1 console."""
+    identity: MembershipIdentity
+    desk_role: Literal["customer_success", "support"]
+    scope: Literal["book", "book_pool", "none"]
+    tenant_ids: List[str]
+    as_of: str
+
+
 class MembershipEvent(_CatalogModel):
     event_id: str
     cursor: str
@@ -339,4 +328,63 @@ class MembershipActivated(_CatalogModel):
 class MembershipEventPage(_CatalogModel):
     """GET /tenant/membership/v1/events — oldest first; ``next_cursor`` is always set (store it and send it back)."""
     items: List[MembershipEvent]
+    next_cursor: str
+
+
+# ── tenant.entitlements.v1 (AA-1028 R1) ───────────────────────────────────────────────────────────────────────────────
+
+_AccountStatus = Literal["lead", "applied", "trial", "active", "past_due", "suspended", "offboarding", "closed"]
+_SuspendReason = Optional[Literal["billing", "compliance", "security", "tenant_request"]]
+_SubscriptionStatus = Literal["trialing", "active", "past_due", "unpaid", "canceled", "paused"]
+_Product = Literal["content", "crm", "tripplanner"]
+_FeatureProduct = Literal["content", "crm", "tripplanner", "platform"]
+
+
+class TenantSubscription(_CatalogModel):
+    product: _Product
+    plan_key: str
+    status: _SubscriptionStatus
+    trial_ends_at: Optional[str] = None
+    seats: Optional[int] = None
+
+
+class TenantEntitlement(_CatalogModel):
+    """One entitled feature key; ``limit`` is a decimal string, None = no limit (always None for a flag)."""
+    feature_key: str
+    product: _FeatureProduct
+    kind: Literal["flag", "limit", "seats", "policy"]
+    unit: Optional[Literal["count_month", "usd_month", "rpm", "seats", "days"]] = None
+    limit: Optional[str] = None
+    source: Literal["plan", "trial", "override"]
+    expires_at: Optional[str] = None
+
+
+class TenantAccountBody(_CatalogModel):
+    """GET /tenant/v1/tenants/{tenant_id}/account — the tenant's account, subscriptions and entitlements (ETag, 304).
+    Check feature keys, never plan names; refuse every feature while ``in_service`` is false."""
+    tenant_id: str
+    account_status: _AccountStatus
+    suspend_reason: _SuspendReason = None
+    in_service: bool
+    kind: Literal["agency", "demo", "internal"]
+    is_pilot: bool
+    data_region: Literal["us", "eu"]
+    time_zone: str
+    subscriptions: List[TenantSubscription]
+    entitlements: List[TenantEntitlement]
+    as_of: str
+
+
+class TenantAccountEvent(_CatalogModel):
+    event_id: str
+    cursor: str
+    type: Literal["account.status_changed", "subscription.changed", "entitlement.changed"]
+    occurred_at: str
+    tenant_id: str
+    change: dict
+
+
+class TenantAccountEventPage(_CatalogModel):
+    """GET /tenant/v1/account-events — oldest first; ``next_cursor`` is always set (store it and send it back)."""
+    items: List[TenantAccountEvent]
     next_cursor: str

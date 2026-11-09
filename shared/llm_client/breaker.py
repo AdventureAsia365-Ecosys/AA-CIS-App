@@ -31,6 +31,9 @@ Limiter. Per connection, in process (each ECS task enforces its own share): ``ma
 semaphore) and ``rpm_limit`` calls per rolling minute, both from the connection row (NULL = no limit). A call waits
 for a slot up to ``LIMIT_WAIT_S``; past that it fails with ``LimiterSaturated`` (class ``throttled``), which is not a
 provider failure (no breaker count) and lets the route move to its next deployment or model.
+AA-1025 H2: before that slot, the request's tokens are reserved on the TPM limits of the connection and of the model
+(``shared.llm_capacity_limit``, ``capacity.reserve``): a call that does not fit waits for the window (prod 65 s, bulk
+180 s) and only then fails with the same ``LimiterSaturated``.
 
 AA-1018 (reliability part 1) — the connection-level circuit. An account-wide refusal (Bedrock "Error 002" on the LLM
 account, a key that cannot be read, a provider spend cap) refuses every model of the connection alike, yet the
@@ -39,13 +42,30 @@ one circuit per connection (shown with ``model_key "*"``, ``CONNECTION_MODEL``) 
 already shares: it trips on account-wide signals only — a non-closed deployment circuit of class ``credential`` or
 ``quota_exhausted``, or ``access_denied`` on at least ``CONNECTION_DENIED_MODELS`` distinct models (one model's refusal,
 e.g. acc2 refusing one Claude model, never stops acc2's embeddings) — newer than the connection's last answered call
-(any success on the connection closes it). While it is OPEN (until the newest open period of its tripping rows ends)
+(any success on the connection closes it). AA-1026 (S267): an ``access_denied`` row whose refusal streak began before
+that answered call (its ``opened_at``, which a failed probe keeps: ``after_failure(keep_streak_start=True)``) is a
+refusal of that one model, not of the account, and never counts toward the trip. Without this, the acc3 models refused
+for weeks re-trip the connection on every half-open probe (two of them fail in the same request) and the siblings that
+answer behind them (Claude Sonnet 4.6 / Haiku 4.5 after the refused 5.x models) are never reached.
+While it is OPEN (until the newest open period of its tripping rows ends)
 ``connection_open`` makes ``vendor_route.deployment_plan`` and ``admit`` (every ``guarded`` call) skip every deployment
 of the connection; afterwards the per-deployment circuits decide alone (a failed probe reopens its row for twice as
 long, which reopens the connection). It is derived, not stored: ``llm_provider_health.model_key`` references the model
 catalog, so no ``"*"`` row can be written (a later migration may persist it). On the transition to OPEN,
 ``record_failure`` calls ``on_connection_open``: one admin bell (``shared.notifications``, ``llm_circuit_open``, at
 most one unread per connection per 24 h) and the ops alert e-mail (``ops_alerts.enqueue_llm_circuit_email``).
+
+AA-900 (S271 lane l11) — fewer refused probes of a model with no grant. ``access_denied`` of a known refusal (one
+model refused since before another model of its connection answered: ``known_refusal``) now doubles up to 6 h
+(``ACCESS_DENIED_MAX_OPEN_S``), so a model the account is not granted is re-probed by real traffic at most four times a
+day once its streak is long. Any other access_denied (nothing on the connection answered since the streak began: the
+account itself may be refusing, Error 002 / IAM) keeps the 30 min cap (``ACCOUNT_DENIED_RULES``, chosen per failure by
+``failure_rules``), so the connection circuit it trips half-opens within 30 min and real traffic finds a recovered
+account by itself. Two paths keep a grant from waiting that long: the daily connection probe and the admin's
+Test connection bypass the circuit and close it on success; and when any model of a connection answers, the OPEN
+circuits whose refusal began after the connection's previous answer (the ones the account itself may have caused) turn
+half-open at once (``_reprobe_after_account_recovery``). A refusal of one model since before another answered is a
+"known refusal" (``known_refusal``): its reopening logs at info, not as a warning.
 """
 from __future__ import annotations
 
@@ -114,13 +134,33 @@ class Rule:
 
 
 # Short open periods on purpose (blueprint S4 risk: "a breaker opened by mistake → half-open 1 request, short open").
+# AA-900 (S271 lane l11): access_denied of a known refusal doubles up to 6 h, was 30 min (``failure_rules``; any
+# other access_denied keeps 30 min, ``ACCOUNT_DENIED_RULES`` below). A model the account may not call (acc3 refusing
+# seven models since 29/10 until AWS grants them) is a human event, not a blip: every half-open probe of such a model is
+# a refused real call (a ledger row, a warning) and at 30 min that was 10-20 a day. The first periods stay short (5,
+# 10, 20 min, ...), so a transient refusal (an IAM change during a deploy, an STS hiccup) still costs minutes; only a
+# refusal that survived about seven failed probes (~10 h) reaches the cap. A grant is still picked up at once by the
+# daily connection probe and the admin's Test connection (``guarded(admit_call=False)``: an open circuit is not in
+# their way and their success closes it), and an account that answers again re-probes its other refused models at once
+# (``_reprobe_after_account_recovery``). CONTEXT.md "AI gateway: circuit breaker" says how long and how to force it.
+ACCESS_DENIED_MAX_OPEN_S = 6 * 3600
 RULES: dict[str, Rule] = {
-    ACCESS_DENIED: Rule(threshold=1, open_s=300, max_open_s=1800),     # Error 002 / IAM: a retry minutes later fails
+    ACCESS_DENIED: Rule(threshold=1, open_s=300, max_open_s=ACCESS_DENIED_MAX_OPEN_S),   # Error 002 / IAM / no grant
     QUOTA_EXHAUSTED: Rule(threshold=1, open_s=300, max_open_s=1800),   # no credit left
     CREDENTIAL: Rule(threshold=1, open_s=120, max_open_s=900),          # the secret is missing / unreadable
     THROTTLED: Rule(threshold=3, open_s=30, max_open_s=300),            # rate limit: back off, then probe
     OTHER: Rule(threshold=5, open_s=60, max_open_s=600),                # outage, timeout, 5xx
 }
+# The 30 min access_denied cap (the cap before AA-900) for a refusal that is not known (``failure_rules``): while no
+# model of the connection has answered since the streak began, the account itself may be refusing (Error 002, an IAM
+# block). The connection circuit stays OPEN until the newest open period of its member rows ends and ``admit`` turns
+# every real call away meanwhile, so a 6 h period here would hold a recovered account off real traffic for up to 6 h.
+ACCOUNT_DENIED_MAX_OPEN_S = 1800
+ACCOUNT_DENIED_RULES: dict[str, Rule] = {
+    **RULES, ACCESS_DENIED: Rule(threshold=1, open_s=300, max_open_s=ACCOUNT_DENIED_MAX_OPEN_S)}
+# The non-LLM provider circuits (shared/provider_circuit.py: Jev, DataForSEO, Geoapify) keep the 30 min access_denied
+# cap too: a 401 / 403 there is a key or plan problem with no daily probe of its own behind the circuit.
+PROVIDER_RULES: dict[str, Rule] = ACCOUNT_DENIED_RULES
 PROBE_LEASE_S = 180.0       # how long a half-open probe holds its lease (a probe that hangs longer frees it)
 ERROR_CHARS = 300
 READ_TTL_S = 10.0           # the snapshot of the table every task re-reads
@@ -154,28 +194,38 @@ def state_of(h: Optional[Health], now: datetime) -> str:
     return OPEN if now < h.circuit_open_until else HALF_OPEN
 
 
-def open_seconds(error_class: str, streak: int) -> float:
-    rule = RULES.get(error_class, RULES[OTHER])
+def open_seconds(error_class: str, streak: int, rules: Optional[dict[str, Rule]] = None) -> float:
+    rules = rules or RULES
+    rule = rules.get(error_class, rules[OTHER])
     return min(rule.open_s * (2 ** max(streak - 1, 0)), rule.max_open_s)
 
 
-def after_failure(h: Health, error_class: str, message: str, now: datetime) -> Health:
+def after_failure(h: Health, error_class: str, message: str, now: datetime, *,
+                  keep_streak_start: bool = False, rules: Optional[dict[str, Rule]] = None) -> Health:
     """A failed call. Open while open: nothing moves (a call that started before the circuit opened). Half-open: the
-    probe failed, open again for twice as long. Closed: open once the class's threshold of failures in a row is met."""
-    cls = error_class if error_class in RULES else OTHER
+    probe failed, open again for twice as long. Closed: open once the class's threshold of failures in a row is met.
+    ``keep_streak_start`` (the LLM breaker, AA-1026): a failed probe keeps ``opened_at`` = when the streak of
+    openings began, so the connection circuit can tell a model refused since before another model answered
+    (``_tripping``); the default moves it to the reopening (the provider circuit's alerts read that move).
+    ``rules``: the class rules (default ``RULES``; the provider circuit passes ``PROVIDER_RULES``)."""
+    rules = rules or RULES
+    cls = error_class if error_class in rules else OTHER
     before = state_of(h, now)
     base = replace(h, last_error_at=now, last_error_class=cls, last_error=(message or "")[:ERROR_CHARS],
                    consecutive_failures=h.consecutive_failures + 1, probe_until=None)
     if before == OPEN:
         return base
+    opened_at = now
     if before == HALF_OPEN:
         streak = h.open_streak + 1
-    elif base.consecutive_failures >= RULES[cls].threshold:
+        if keep_streak_start and h.opened_at is not None:
+            opened_at = h.opened_at
+    elif base.consecutive_failures >= rules[cls].threshold:
         streak = 1
     else:
         return base
-    return replace(base, circuit_open_until=now + timedelta(seconds=open_seconds(cls, streak)), open_streak=streak,
-                   opened_at=now)
+    return replace(base, circuit_open_until=now + timedelta(seconds=open_seconds(cls, streak, rules)),
+                   open_streak=streak, opened_at=opened_at)
 
 
 def after_success(h: Health, now: datetime) -> Health:
@@ -210,7 +260,10 @@ def _tripping(rows: Iterable[Health], connection_key: str, now: datetime) -> tup
                if h.last_error_class in CONNECTION_CLASSES and state_of(h, now) != CLOSED
                and h.last_error_at is not None and (last_ok is None or h.last_error_at > last_ok)]
     solo = [h for h in signals if h.last_error_class in CONNECTION_SOLO_CLASSES]
-    denied = [h for h in signals if h.last_error_class == ACCESS_DENIED]
+    # AA-1026: a model refused since before the connection last answered (its streak began earlier) is refused on its
+    # own; the account answered meanwhile, so it says nothing about the account.
+    denied = [h for h in signals if h.last_error_class == ACCESS_DENIED
+              and not (last_ok is not None and h.opened_at is not None and h.opened_at < last_ok)]
     if len({h.model_key for h in denied}) < CONNECTION_DENIED_MODELS:
         denied = []
     return solo + denied, last_ok
@@ -219,7 +272,9 @@ def _tripping(rows: Iterable[Health], connection_key: str, now: datetime) -> tup
 def connection_health(rows: Iterable[Health], connection_key: str, now: datetime) -> Optional[Health]:
     """The connection-level circuit of ``connection_key`` from its deployment rows, or None when nothing account-wide
     is on record. Tripping rows: a non-closed deployment circuit of a ``CONNECTION_CLASSES`` class whose failure is
-    newer than the connection's last answered call (any deployment). Trips on one ``CONNECTION_SOLO_CLASSES`` row, or
+    newer than the connection's last answered call (any deployment); an ``access_denied`` row refused since before that
+    call (its ``opened_at``, the start of its streak) is one model's refusal and does not count (AA-1026).
+    Trips on one ``CONNECTION_SOLO_CLASSES`` row, or
     on ``access_denied`` rows of at least ``CONNECTION_DENIED_MODELS`` distinct models. The result (``model_key "*"``,
     ``consecutive_failures`` = the number of tripping rows) is open until the newest open period of its tripping rows
     ends (``state_of``), then half-open: not blocking, the deployment circuits decide (module docstring)."""
@@ -535,13 +590,20 @@ def record_failure(connection_key: str, model_key: str, exc: BaseException) -> N
             return
         message = f"{type(exc).__name__}: {exc}"
         now_fn = _now
+        rows = _rows_of(connection_key)
+        # AA-900: the 6 h access_denied cap only for a known refusal, judged on the locked row before this failure.
         before, after = _transition((connection_key, model_key),
-                                    lambda cur: after_failure(cur, cls, message, now_fn()))
+                                    lambda cur: after_failure(cur, cls, message, now_fn(), keep_streak_start=True,
+                                                              rules=failure_rules(cur, rows)))
         opened = after is not None and after.opened_at is not None
-        if opened and (before is None or before.opened_at != after.opened_at):
-            logger.warning("llm_circuit_opened", connection=connection_key, model=model_key, error_class=cls,
-                           until=after.circuit_open_until.isoformat(), streak=after.open_streak,
-                           consecutive_failures=after.consecutive_failures)
+        if opened and (before is None or before.opened_at != after.opened_at
+                       or before.open_streak != after.open_streak):
+            # AA-900 (S271 l11): a failed probe of a model refused on its own since before the account last answered
+            # (a known no-access model) is the expected answer: info, not a warning.
+            log = logger.info if _known(after, _rows_of(connection_key)) else logger.warning
+            log("llm_circuit_opened", connection=connection_key, model=model_key, error_class=cls,
+                until=after.circuit_open_until.isoformat(), streak=after.open_streak,
+                consecutive_failures=after.consecutive_failures, known_refusal=log is logger.info)
         _check_connection_opened(connection_key, model_key, before)
     except Exception as e:  # noqa: BLE001
         logger.warning("llm_breaker_record_failed", connection=connection_key, model=model_key, error=str(e)[:200])
@@ -709,6 +771,7 @@ def record_success(connection_key: str, model_key: str) -> None:
     note_access_state(connection_key, "ok")
     key = (connection_key, model_key)
     try:
+        _reprobe_after_account_recovery(connection_key, model_key)
         h = _get(key)
         healthy = (h is not None and not h.consecutive_failures and h.circuit_open_until is None
                    and h.probe_until is None)
@@ -719,6 +782,92 @@ def record_success(connection_key: str, model_key: str) -> None:
         if before is not None and before.circuit_open_until is not None:
             logger.info("llm_circuit_closed", connection=connection_key, model=model_key,
                         was=before.last_error_class)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_breaker_record_failed", connection=connection_key, model=model_key, error=str(e)[:200])
+
+
+# ── AA-900 (S271 lane l11): known refusals and the re-probe after an account recovers ────────────────────────────
+
+def _connection_last_ok(rows: Iterable[Health], connection_key: str, *, without: Optional[str] = None
+                        ) -> Optional[datetime]:
+    return max((h.last_ok_at for h in rows if h.connection_key == connection_key and h.model_key != CONNECTION_MODEL
+                and h.model_key != without and h.last_ok_at is not None), default=None)
+
+
+def _known(h: Optional[Health], rows: Iterable[Health]) -> bool:
+    """A known refusal: an ``access_denied`` circuit (open or half-open) whose streak began before the connection
+    last answered a call of another model. The account works; this one model is not granted (the AA-1026 rule that
+    keeps such a row out of the connection circuit). Pure."""
+    if h is None or h.last_error_class != ACCESS_DENIED or h.circuit_open_until is None or h.opened_at is None:
+        return False
+    last_ok = _connection_last_ok(rows, h.connection_key, without=h.model_key)
+    return last_ok is not None and h.opened_at < last_ok
+
+
+def failure_rules(h: Optional[Health], rows: Iterable[Health]) -> dict[str, Rule]:
+    """The class rules for the next failure of deployment row ``h`` (before that failure): ``RULES`` (access_denied up
+    to 6 h) when ``h`` is a known refusal (``_known``: another model of the connection answered after its streak began,
+    so the account works and only this model has no grant), else ``ACCOUNT_DENIED_RULES`` (30 min cap: the refusal may
+    be the whole account's, and the connection circuit must half-open soon enough for real traffic to find a recovered
+    account). Pure."""
+    return RULES if _known(h, rows) else ACCOUNT_DENIED_RULES
+
+
+def known_refusal(connection_key: str, model_key: str) -> bool:
+    """Whether the deployment's circuit is a known refusal (``_known``) in the in-process copy. For log levels only:
+    never decides a call. Never raises."""
+    try:
+        return _known(_get((connection_key, model_key)), _rows_of(connection_key))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def known_model_refusal(model_key: str) -> bool:
+    """True when ``model_key`` has at least one non-closed circuit and every one of them is a known refusal. For log
+    levels only. Never raises."""
+    try:
+        with _lock:
+            rows = list(_rows.values())
+        now = _now()
+        mine = [h for h in rows if h.model_key == model_key and state_of(h, now) != CLOSED]
+        return bool(mine) and all(_known(h, rows) for h in mine)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def recovery_candidates(rows: Iterable[Health], connection_key: str, model_key: str, now: datetime) -> list[str]:
+    """The models of ``connection_key`` to re-probe now that ``model_key`` answered on it: OPEN circuits of an
+    account-wide class (``CONNECTION_CLASSES``) whose refusal streak began after the connection's previous answer (or
+    with no answer on record), i.e. refusals the account may have caused. A model refused on its own since before an
+    earlier answer (a known refusal: no grant yet) is not one: it keeps its open period. Pure."""
+    rows = list(rows)
+    prev_ok = _connection_last_ok(rows, connection_key)
+    return sorted(h.model_key for h in rows
+                  if h.connection_key == connection_key and h.model_key not in (model_key, CONNECTION_MODEL)
+                  and h.last_error_class in CONNECTION_CLASSES and state_of(h, now) == OPEN
+                  and (prev_ok is None or (h.opened_at or h.last_error_at or now) >= prev_ok))
+
+
+def _half_open_now(cur: Health) -> Optional[Health]:
+    now = _now()
+    if state_of(cur, now) != OPEN or cur.last_error_class not in CONNECTION_CLASSES:
+        return None
+    return replace(cur, circuit_open_until=now, probe_until=None)
+
+
+def _reprobe_after_account_recovery(connection_key: str, model_key: str) -> None:
+    """A call on ``connection_key`` answered: the refusals the account itself may have caused (``recovery_candidates``)
+    become half-open at once (open_streak and opened_at kept), so the next real call of each model probes it instead
+    of waiting out a long access_denied period. Called before the success is written (the previous answer is still the
+    one on record). Never raises."""
+    try:
+        now = _now()
+        models = recovery_candidates(_rows_of(connection_key), connection_key, model_key, now)
+        for m in models:
+            _transition((connection_key, m), _half_open_now)
+        if models:
+            logger.info("llm_circuit_reprobe_after_recovery", connection=connection_key, answered=model_key,
+                        models=models)
     except Exception as e:  # noqa: BLE001
         logger.warning("llm_breaker_record_failed", connection=connection_key, model=model_key, error=str(e)[:200])
 
@@ -736,8 +885,9 @@ def circuit_error(model_key: str, skips: list[tuple[str, Optional[str]]]) -> Cir
 # ── limiter ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 class LimiterSaturated(RuntimeError):
-    """The connection's own limit (max_concurrency / rpm_limit) had no slot within LIMIT_WAIT_S. Not a provider
-    failure: no breaker count; classified throttled so the route moves on and a job retries with backoff."""
+    """The connection's own limit (max_concurrency / rpm_limit) had no slot within LIMIT_WAIT_S, or (AA-1025 H2) a
+    TPM limit had no room within the line's wait (capacity.WAIT_S). Not a provider failure: no breaker count;
+    classified throttled so the route moves on and a job retries with backoff."""
 
     llm_error_class = THROTTLED
 
@@ -800,9 +950,23 @@ def _limiter_for(conn: connections.ProviderConnection) -> Optional[_Limiter]:
         return lim
 
 
+def _reserve_tokens(conn: connections.ProviderConnection, model_key: Optional[str]) -> None:
+    """AA-1025 H2: reserve the bound request's tokens on the connection's / model's TPM limits (capacity.reserve:
+    waits while they do not fit; no limit or no estimate = nothing). Past the line's wait: LimiterSaturated."""
+    from . import capacity  # lazy: capacity imports this module for its hold
+
+    try:
+        capacity.reserve(conn.connection_key, model_key or capacity.ANY_MODEL)
+    except capacity.TokenLimitSaturated as e:
+        raise LimiterSaturated(str(e)) from e
+
+
 @contextmanager
-def limit(conn: connections.ProviderConnection) -> Iterator[None]:
-    """Hold one of the connection's call slots for the duration of a provider call (no-op without limits)."""
+def limit(conn: connections.ProviderConnection, model_key: Optional[str] = None) -> Iterator[None]:
+    """Hold one of the connection's call slots for the duration of a provider call (no-op without limits). AA-1025
+    H2: first the request's tokens on the TPM limits of the connection and of ``model_key`` (capacity.reserve), so a
+    call waiting for tokens holds no concurrency slot."""
+    _reserve_tokens(conn, model_key)
     lim = _limiter_for(conn)
     if lim is None:
         yield
@@ -820,7 +984,7 @@ def guarded(conn: connections.ProviderConnection, model_key: str, call: Callable
     key = conn.connection_key
     if admit_call and not admit(key, model_key):
         raise circuit_error(model_key, [(key, open_class(key, model_key))])
-    with limit(conn):
+    with limit(conn, model_key):
         try:
             result = call()
         except Exception as e:

@@ -1,7 +1,7 @@
 // app/admin/overview/_components/opsUi.tsx
 // AA-858 — small building blocks shared by the four ops-overview cards (kit tokens only, inline styles).
 import { CloudOff, ExternalLink } from "lucide-react";
-import { Badge, K, ScrollX, sans, useIsPhone, useT } from "../../../_kit";
+import { Badge, K, sans, useIsPhone, useT } from "../../../_kit";
 import type { Lang } from "../../../_kit/core/i18n";
 import { SourceHint } from "./SourceHint";
 import { APP_STATUS_LABEL, type AppStatus } from "../../../../lib/platform";
@@ -219,29 +219,19 @@ export function ChangeLine({ pct, prev }: { pct: number | null | undefined; prev
   return <span>{t("vsBefore", sign, Math.abs(pct))}</span>;
 }
 
-export const TH: React.CSSProperties = {
-  textAlign: "left",
-  fontSize: 11,
-  fontWeight: 600,
-  color: K.muted,
-  padding: "6px 10px",
-  borderBottom: `1px solid ${K.line}`,
-  whiteSpace: "nowrap",
-};
-
-/** Tighter cells for phone width (< 768 px); tables wider than that scroll in their TableWrap (with a hint). */
-export const PHONE_CELL: React.CSSProperties = { padding: "6px 4px", fontSize: 12 };
-
-export const TD: React.CSSProperties = {
-  fontSize: 13,
-  color: K.body,
-  padding: "7px 10px",
-  borderBottom: `1px solid ${K.line2}`,
-  fontVariantNumeric: "tabular-nums",
-};
-
-/** Horizontal-scroll wrapper for a table (kit ScrollX): every column stays, the table scrolls inside its own box
- * with a visible hint when it is wider than the screen, and never widens the page (lessons S221/S239, S243). */
-export function TableWrap({ children, testId }: { children: React.ReactNode; testId?: string }) {
-  return <ScrollX testId={testId}>{children}</ScrollX>;
+/** A kit DataTable column whose head carries a source hint (AA-1006, was the TH / TD table styles). The column `id` is
+ *  the visible label: on a phone the kit table draws a card per row and labels each value with the column id, where
+ *  a head with a hint cannot be shown. Sorting is off (these tables keep the order the API sends). */
+export function hintColumn(label: string, source: string, align: "left" | "right" = "right") {
+  return {
+    id: label,
+    header: () => (
+      <span style={{ whiteSpace: "normal" }}>
+        {label}
+        <SourceHint source={source} size={11} />
+      </span>
+    ),
+    enableSorting: false,
+    meta: { align },
+  } as const;
 }

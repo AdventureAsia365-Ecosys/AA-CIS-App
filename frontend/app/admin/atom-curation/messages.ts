@@ -182,7 +182,7 @@ export const AT = defineMessages(
     colSeed: "Seed (place · country)",
     colProposed: "Proposed",
     // shell
-    title: "Social Content",
+    title: "Atoms & routes",
     descLead:
       "Platform-wide monitoring — Atomize is the only section AA acts on; 02–05 show what the pipeline has already produced across ALL tours, not just one. Per-tenant write/review/publish activity moved to",
     contentTrace: "Content Trace",
@@ -370,7 +370,7 @@ export const AT = defineMessages(
     topicSegments: (n: number) => ` · ${n} segment`,
     colSeed: "Seed (địa điểm · quốc gia)",
     colProposed: "Đề xuất lúc",
-    title: "Social Content",
+    title: "Atom & tuyến",
     descLead:
       "Giám sát toàn nền tảng — Atomize là mục duy nhất AA thao tác; 02–05 cho thấy những gì pipeline đã tạo trên MỌI tour, không chỉ một. Hoạt động viết/duyệt/đăng theo từng tenant đã chuyển sang",
     contentTrace: "Content Trace",

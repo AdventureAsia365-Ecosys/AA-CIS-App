@@ -37,6 +37,20 @@ BUDGET_ROWS = [
 ]
 DAY_SPEND = {"bedrock": 9.0, "dfs": 1.0, "jev": 1.5}
 KIND_SPEND = {"place_extract": 1.0}
+# AA-1025 A7: the central LLM caps (provider 'llm', migration 340) as to_jsonb rows, and the call sites.
+CENTRAL_ROWS = [
+    {"provider": "llm", "scope": "app:cis", "per_run_usd": None, "per_day_usd": 20.0, "per_month_usd": None,
+     "hard_stop": False, "alert_pct": 80, "updated_at": None, "updated_by": "migration-340-aa1025"},
+    {"provider": "llm", "scope": "stage:t9_write", "per_run_usd": None, "per_day_usd": 0.01, "per_month_usd": None,
+     "hard_stop": True, "alert_pct": 80, "updated_at": None, "updated_by": None},
+]
+CENTRAL_SPEND = {"app:cis": (12.0, 12.0), "stage:t9_write": (0.0, 0.0)}
+CALL_SITES = [
+    {"stage": "t9_write", "today_usd": 0.0, "month_usd": 0.4, "calls_7d": 3, "job_kinds": ["t9_write_piece"]},
+    {"stage": "adhoc_aa1099", "today_usd": 0.0, "month_usd": 0.01, "calls_7d": 1, "job_kinds": []},
+]
+ROUTES = [{"stage": "t9_write", "role": "writer", "is_active": True},
+          {"stage": "s1_judge", "role": "judge", "is_active": True}]
 
 
 class FakeConn:
@@ -54,10 +68,24 @@ class FakeConn:
 
     async def fetch(self, sql, *args):
         self._check(sql)
+        if sql == gw.CENTRAL_ROWS_SQL:
+            return [{"row": dict(r)} for r in CENTRAL_ROWS]
+        if sql == gw.CALL_SITES_SQL:
+            return [dict(r) for r in CALL_SITES]
+        if sql == gw.ROUTE_STAGES_SQL:
+            return [dict(r) for r in ROUTES]
         if "FROM shared.spend_budget" in sql:
             return [dict(r) for r in BUDGET_ROWS]
         if "FROM shared.tenant_ai_budget" in sql:       # AA-1016 C4: before migration 321 the table is missing
             raise asyncpg.exceptions.UndefinedTableError('relation "shared.tenant_ai_budget" does not exist')
+        raise AssertionError(f"unexpected SQL: {sql[:80]}")
+
+    async def fetchrow(self, sql, *args):
+        self._check(sql)
+        if "FROM shared.llm_call_log l" in sql:       # central_budget.read_spend: $3 names the scope's target
+            scope = {"cis": "app:cis", "t9_write": "stage:t9_write"}[args[2]]
+            day, win = CENTRAL_SPEND[scope]
+            return {"day": day, "win": win}
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
     async def fetchval(self, sql, *args):
@@ -258,11 +286,24 @@ def test_read_budgets_returns_every_tier(registry):
     assert set(out["spent_today_usd"]) == set(cost_guard.PROVIDERS)
     cov = {(c["tier"], c["key"]) for c in out["coverage"]}
     assert ("connection", "anthropic-direct") not in cov and ("connection", "openai-direct") in cov
+    # AA-1025 A7: the llm rows are their own tier (never in provider / job), with their scope's spend
+    central = {r["scope"]: r for r in tiers["central"]}
+    assert set(central) == {"app:cis", "stage:t9_write"} and out["central_provider"] == "llm"
+    assert central["app:cis"]["state"] == "ok" and central["app:cis"]["spent_today_usd"] == 12.0
+    assert central["app:cis"]["updated_by_name"] == "Migration 340"
+    assert central["stage:t9_write"]["hard_stop"] is True and central["stage:t9_write"]["state"] == "ok"
+    sites = {c["stage"]: c for c in out["call_sites"]}
+    assert set(sites) == {"t9_write", "adhoc_aa1099", "s1_judge"}
+    assert [c["scope"] for c in sites["t9_write"]["caps"]] == ["app:cis", "stage:t9_write"]
+    assert sites["t9_write"]["hard"] is True and sites["t9_write"]["job_kinds"] == ["t9_write_piece"]
+    assert sites["s1_judge"]["routed"] and sites["s1_judge"]["calls_7d"] == 0 and not sites["s1_judge"]["hard"]
+    assert not sites["adhoc_aa1099"]["routed"] and [c["scope"] for c in sites["adhoc_aa1099"]["caps"]] == ["app:cis"]
 
 
 def test_a_failing_tier_keeps_the_other(registry, monkeypatch):
     out = asyncio.run(gw.read_budgets(FakePool(FakeConn(fail=("FROM shared.spend_budget",))), now=NOW))
-    assert [e["source"] for e in out["errors"]] == ["spend_budgets"]
+    assert [e["source"] for e in out["errors"]] == ["spend_budgets", "central_budgets"]
+    assert out["tiers"]["central"] == [] and out["call_sites"] == []
     assert "Spend budgets read failed (ref " in out["errors"][0]["error"]
     assert out["tiers"]["provider"] == [] and out["coverage"] == []
     assert len(out["tiers"]["connection"]) == 3
@@ -283,3 +324,37 @@ def test_the_route_reads_budgets_and_writes_nothing(registry):
     out = asyncio.run(router_mod.get_budgets(req))
     assert out["tiers"]["tenant"] == []
     assert not any(w in sql.upper() for sql in conn.calls for w in ("INSERT", "UPDATE ", "DELETE"))
+
+
+# ── AA-1025 A7: the central tier and the coverage per call site ────────────────────────────────────────────────────
+
+def _central(scope, *, day=None, month=None, run=None, hard=False, pct=80):
+    from shared.llm_client import central_budget as cb
+    return cb.CentralBudget(scope=scope, per_run_usd=run, per_day_usd=day, per_month_usd=month, hard_stop=hard,
+                            alert_pct=pct)
+
+
+def test_central_row_states():
+    from shared.llm_client import central_budget as cb
+    assert gw.central_row_view(_central("adhoc", month=2.0), cb.Spend(0.1, 0.5))["state"] == "ok"
+    assert gw.central_row_view(_central("adhoc", month=2.0), cb.Spend(0.1, 1.7))["state"] == "alert"
+    assert gw.central_row_view(_central("adhoc", month=2.0), cb.Spend(0.1, 2.0))["state"] == "cap_reached"
+    assert gw.central_row_view(_central("adhoc", month=2.0), None)["state"] == "unknown"
+    assert gw.central_row_view(_central("adhoc"), cb.Spend())["state"] == "no_daily_cap"
+    v = gw.central_row_view(_central("job:place_extract", run=1.0), cb.Spend(3.0))
+    assert (v["scope_kind"], v["target"], v["spent_month_usd"]) == ("job", "place_extract", None)
+
+
+def test_call_site_coverage_names_every_cap_a_call_is_in():
+    from shared.llm_client import central_budget as cb
+    central = [gw.central_row_view(_central("job:place_extract", run=1.0, hard=True), cb.Spend()),
+               gw.central_row_view(_central("eval", month=25.0), cb.Spend(0, 0)),
+               gw.central_row_view(_central("stage:a3_place_days"), cb.Spend())]          # no amount: not a cap
+    sites = [{"stage": "a3_place_days", "today_usd": 0.2, "month_usd": 3.0, "calls_7d": 40,
+              "job_kinds": ["place_extract", None]},
+             {"stage": "writing_memory_eval", "today_usd": 0.0, "month_usd": 1.0, "calls_7d": 2, "job_kinds": []}]
+    out = gw.call_site_coverage(sites, [{"stage": "a3_place_days", "role": "validate", "is_active": False}], central)
+    assert [c["stage"] for c in out] == ["a3_place_days", "writing_memory_eval"]       # by month spend
+    days, ev = out
+    assert [c["scope"] for c in days["caps"]] == ["job:place_extract"] and days["hard"] and days["active"] is False
+    assert [c["scope"] for c in ev["caps"]] == ["eval"] and ev["capped"] and not ev["hard"] and ev["role"] is None

@@ -133,8 +133,9 @@ async def test_r2_run_writes_rows_the_triggers_accept(conn):
     set_id = await _golden(conn)
     await conn.execute("SET LOCAL ROLE cis_app")
     store = r2.PgStore(OneConnPool(conn))
-    out = await r2.run_r2(store, r2.R2Config(writer="a1"), writer_fn=_writer(), judge_fn=_judge(conn),
-                          flush=_flush)
+    # the invented fixture has 2 pass labels: too few to calibrate, so the run is an informative one (S271 W0)
+    out = await r2.run_r2(store, r2.R2Config(writer="a1", require_calibrated=False), writer_fn=_writer(),
+                          judge_fn=_judge(conn), flush=_flush)
     run = await conn.fetchrow("SELECT * FROM shared.prompt_eval_runs WHERE id = $1::uuid", out.run_id)
     assert run["pipeline"] == "writing_memory" and run["run_kind"] == "r2" and run["writer"] == "a1"
     assert str(run["golden_set_id"]) == set_id and run["finished_at"] is not None
@@ -161,7 +162,8 @@ async def test_seeded_failing_run_stops_at_tune(conn):
     await _golden(conn)
     await conn.execute("SET LOCAL ROLE cis_app")
     store = r2.PgStore(OneConnPool(conn))
-    out = await r2.run_r2(store, r2.R2Config(writer="a1", seed_fault="qa_trace", cap_usd=1.0),
+    out = await r2.run_r2(store, r2.R2Config(writer="a1", seed_fault="qa_trace", cap_usd=1.0,
+                                             require_calibrated=False),
                           writer_fn=_writer(), judge_fn=_judge(conn), flush=_flush)
     assert (out.verdict, out.stop_reason, out.stopped_phase) == ("fail", "hard_stop", "tune")
     n = await conn.fetchval("SELECT count(*) FROM shared.eval_item_result WHERE run_id = $1::uuid "
@@ -169,6 +171,47 @@ async def test_seeded_failing_run_stops_at_tune(conn):
     assert n == 1
     assert await conn.fetchval("SELECT count(*) FROM shared.eval_item_result WHERE run_id = $1::uuid "
                                "AND phase = 'holdout' AND arm = 'candidate'", out.run_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_r2_pairs_release_0_on_an_older_version_through_this_versions_baseline(conn):
+    """S271 W0 (RC3): release 0 still points at the baseline of the golden version it was made on. The stored rows of
+    that version pair with today's items on (sample_id, input_sha256) but belong to other item ids, so the run takes
+    this version's baseline: every planned control is found, the triggers accept every row, and the ledger reads
+    (run_info, item_cost_samples) work as cis_app."""
+    old_set = await _golden(conn)
+    new_set = await _golden(conn)
+    old_base, new_base = [await conn.fetchval(
+        "SELECT id::text FROM shared.prompt_eval_runs WHERE run_kind = 'baseline_import' AND writer = 'a1' "
+        "AND golden_set_id = $1::uuid", sid) for sid in (old_set, new_set)]
+    await conn.execute("SET LOCAL ROLE cis_app")
+    store = r2.PgStore(OneConnPool(conn))
+    assert (await store.run_info(old_base))["golden_set_id"] == old_set
+    items = await store.items(new_set, "a1", None)
+    assert items and all(len(it["input_sha256"]) == 64 for it in items)
+    srcs = await store.control_sources(old_base, items)
+    olds = {r["sample_id"]: r["item_id"] for r in await conn.fetch(
+        "SELECT sample_id, item_id::text AS item_id FROM shared.eval_golden_item WHERE set_id = $1::uuid "
+        "AND writer = 'a1'", old_set)}
+    by_id = {it["item_id"]: it for it in items}
+    assert srcs and all(src["source_item_id"] == olds[by_id[iid]["sample_id"]] != iid for iid, src in srcs.items())
+
+    async def release0_on_the_old_version(writer, tenant_id):
+        return {"platform": {"release_id": None, "release_no": 0, "content_class": "empty", "rule_ids": [],
+                             "eval_run_id": old_base, "scope": "platform"}, "tenant": None}
+    store.active_parts = release0_on_the_old_version
+    out = await r2.run_r2(store, r2.R2Config(writer="a1", require_calibrated=False), writer_fn=_writer(),
+                          judge_fn=_judge(conn), flush=_flush)
+    details = json.loads(await conn.fetchval("SELECT details::text FROM shared.prompt_eval_runs WHERE id = $1::uuid",
+                                             out.run_id))
+    assert details["control_run_id"] == new_base and details["control_run_stale"]["replaced_by"] == new_base
+    assert details["controls"]["planned"] == details["controls"]["found"] > 0
+    srcs_runs = {r["src_run"] for r in await conn.fetch(
+        "SELECT s.run_id::text AS src_run FROM shared.eval_item_result r JOIN shared.eval_item_result s "
+        "ON s.result_id = r.scored_result_id WHERE r.run_id = $1::uuid", out.run_id)}
+    assert srcs_runs == {new_base}
+    costs = await store.item_cost_samples("a1")
+    assert costs and all(c > 0 for c in costs)
 
 
 @pytest.mark.asyncio

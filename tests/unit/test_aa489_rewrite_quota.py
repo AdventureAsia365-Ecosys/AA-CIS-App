@@ -45,7 +45,7 @@ class TestRewriteQuota:
         conn = _make_conn(plan_tier="growth")
         plan, limit = await v1_tours._get_tenant_plan_limit(conn, "tenant-1")
         assert (plan, limit) == ("growth", 200)  # not PLAN_LIMITS' old 500
-        assert "tours_per_month" not in v1_tours.PLAN_LIMITS["growth"]
+        assert not hasattr(v1_tours, "PLAN_LIMITS")  # AA-1028 R1 slice 3: no hard-coded plan table at all
 
     async def test_unknown_plan_falls_back_to_starter(self):
         conn = _make_conn(plan_tier="some-future-tier")

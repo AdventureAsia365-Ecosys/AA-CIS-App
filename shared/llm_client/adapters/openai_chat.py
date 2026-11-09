@@ -16,9 +16,10 @@ talks to this connection", per connection and at call time (before S9 one ``open
   (``https://<resource>.openai.azure.com``) and calls ``openai.AzureOpenAI`` with ``api_version`` (the deployment's
   ``request_defaults.api_version``, else ``AZURE_API_VERSION``); the deployment's ``wire_id`` is the Azure deployment
   name.
-- **Timeout / retries**: per connection (``timeout_s``, ``max_retries``); NULL means ``DEFAULT_TIMEOUT_S`` /
-  ``DEFAULT_MAX_RETRIES`` (the Bedrock client's 300 s / 2 attempts, as the Anthropic adapter), never the SDK's 600 s
-  and 2 retries, so one attempt can no longer hold a route for ~30 minutes.
+- **Timeout / retries**: the timeout per connection (``timeout_s``; NULL means ``DEFAULT_TIMEOUT_S``, the Bedrock
+  client's 300 s, as the Anthropic adapter), never the SDK's 600 s, so one attempt can no longer hold a route for
+  ~30 minutes. AA-642 A3 (root ADR 0009 decision 5): the SDK never retries (``SDK_MAX_RETRIES`` 0, the connection's
+  ``max_retries`` is not read); the gateway owns retries.
 - One client per connection settings, rebuilt when the key changes (the key is kept beside the client and compared
   directly, never hashed: CodeQL py/weak-sensitive-data-hashing). ``forget_connection`` drops it (a 401, an admin
   edit).
@@ -34,7 +35,7 @@ from .. import connections
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_TIMEOUT_S = 300
-DEFAULT_MAX_RETRIES = 1
+SDK_MAX_RETRIES = 0      # AA-642 A3: the gateway owns retries
 CONNECT_TIMEOUT_S = 10.0
 # Azure OpenAI data-plane API version (GA). A deployment may pin another one in request_defaults.api_version.
 AZURE_API_VERSION = "2024-10-21"
@@ -50,8 +51,9 @@ _clients_lock = threading.Lock()
 
 def _settings(conn: connections.ProviderConnection) -> tuple[int, int]:
     timeout_s = int(conn.timeout_s) if conn.timeout_s else DEFAULT_TIMEOUT_S
-    retries = int(conn.max_retries) if conn.max_retries is not None else DEFAULT_MAX_RETRIES
-    return timeout_s, retries
+    # AA-642 A3 (root ADR 0009 decision 5): the SDK never retries; the gateway owns retries (the route's next
+    # deployment / model, at most errors.MAX_CHAIN_ATTEMPTS attempts). The connection's max_retries is not read.
+    return timeout_s, SDK_MAX_RETRIES
 
 
 def api_version_of(request_defaults: Optional[dict]) -> str:

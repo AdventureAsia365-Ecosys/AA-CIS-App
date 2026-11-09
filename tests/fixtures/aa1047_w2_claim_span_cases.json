@@ -1,0 +1,1662 @@
+{
+  "_about": "AA-1047 W1 counter-examples from the three adversarial review rounds of the reverted follow-ups #3 (F9 classifies the claim span) and #6 (elephant code split + issue reading). NOT asserted by any test: W2 input for claim-level ground truth and a calibrated instrument (root ADR 0020). The 'expected' values are the reviewers' intended labels, not what main does today. Invented places, no tour text.",
+  "f9_claim_span": {
+    "_about": "One judged F9 claim inside its quoted sentence. expected: 'hold' = a trip promise (activity / service / time / view / inclusion the source does not give), 'warn' = place background.",
+    "cases": [
+      {
+        "sentence": "You dine at a family lodge near the old Tarvo fort, which has guarded the valley for 900 years.",
+        "claim": "the fort has guarded the valley for 900 years",
+        "expected": "warn",
+        "from_test": "test_a_background_claim_next_to_a_supported_dinner_warns"
+      },
+      {
+        "sentence": "You dine at a family lodge near the old Tarvo fort, which has guarded the valley for 900 years.",
+        "claim": "dinner at a family lodge",
+        "expected": "hold",
+        "from_test": "test_the_dinner_claim_in_the_same_sentence_still_holds"
+      },
+      {
+        "sentence": "On day 3 you visit the Ondra market and taste fresh tea at sunrise.",
+        "claim": "taste fresh tea at sunrise",
+        "expected": "hold",
+        "from_test": "test_a_chained_clause_keeps_the_trip_subject"
+      },
+      {
+        "sentence": "Served on the terrace each evening, dinner is included for you at the lodge.",
+        "claim": "served on the terrace each evening",
+        "expected": "hold",
+        "from_test": "test_a_trip_term_span_with_its_subject_after_falls_back_to_the_sentence"
+      },
+      {
+        "sentence": "You take a sunset cruise past the fort, which has guarded the river for 900 years.",
+        "claim": "the fort has guarded the river for 900 years",
+        "expected": "warn",
+        "from_test": "test_the_fort_history_next_to_a_sunset_cruise_still_warns"
+      },
+      {
+        "sentence": "You board a boat at dawn.",
+        "claim": "x",
+        "expected": "hold",
+        "from_test": "test_a_paraphrased_or_empty_claim_falls_back_to_the_sentence"
+      },
+      {
+        "sentence": "You stay at a riverside lodge, where dinner is served on the terrace.",
+        "claim": "dinner served on the terrace",
+        "expected": "hold",
+        "from_test": "test_a_promise_in_an_attached_clause_still_holds"
+      },
+      {
+        "sentence": "You spend the night at the Ondra guesthouse, with breakfast on the veranda.",
+        "claim": "breakfast on the veranda",
+        "expected": "hold",
+        "from_test": "test_a_promise_in_an_attached_clause_still_holds"
+      },
+      {
+        "sentence": "Day 3 is a free day, with a cooking class at the homestay.",
+        "claim": "a cooking class at the homestay",
+        "expected": "hold",
+        "from_test": "test_a_promise_in_an_attached_clause_still_holds"
+      },
+      {
+        "sentence": "You reach the Tarvo ridge, which looks out over the valley at sunset.",
+        "claim": "looks out over the valley at sunset",
+        "expected": "hold",
+        "from_test": "test_a_promise_in_an_attached_clause_still_holds"
+      },
+      {
+        "sentence": "You dine at a family lodge near the old Tarvo fort, which has guarded the valley for 900 years.",
+        "claim": "the fort has guarded the valley for 900 years",
+        "expected": "warn",
+        "from_test": "test_a_background_relative_clause_still_warns"
+      },
+      {
+        "sentence": "You walk to the Ondra bridge, which was built by the old salt traders.",
+        "claim": "built by the old salt traders",
+        "expected": "warn",
+        "from_test": "test_a_background_relative_clause_still_warns"
+      },
+      {
+        "sentence": "You stay in the Ondra village, where a kayak excursion on the lake awaits.",
+        "claim": "a kayak excursion on the lake awaits",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You spend day 3 at the lake, with a kayak excursion to the island.",
+        "claim": "a kayak excursion to the island",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You visit the old market, the Ondra temple and the floating village.",
+        "claim": "the floating village",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "We stop at the Ondra market, then the hot springs.",
+        "claim": "the hot springs",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You visit the old market, the Ondra temple, the floating village.",
+        "claim": "the floating village",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You meet Ana, a local weaver who teaches you to dye silk.",
+        "claim": "teaches you to dye silk",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You stay in the Ondra village, where weaving lessons are held for guests.",
+        "claim": "weaving lessons are held for guests",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You overnight in Ondra, including a sunrise hike up the volcano.",
+        "claim": "a sunrise hike up the volcano",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You cross the river, before a short climb to the Tarvo caves.",
+        "claim": "a short climb to the Tarvo caves",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You board the boat, while a naturalist points out the birds.",
+        "claim": "a naturalist points out the birds",
+        "expected": "hold",
+        "from_test": "test_an_activity_promise_in_an_attached_or_list_clause_holds"
+      },
+      {
+        "sentence": "You dine at the lodge, near the Tarvo fort, which looks out over the valley.",
+        "claim": "the fort looks out over the valley",
+        "expected": "warn",
+        "from_test": "test_place_background_with_a_view_or_time_word_warns"
+      },
+      {
+        "sentence": "You dine at the lodge, near the temple, where monks have chanted at dawn for centuries.",
+        "claim": "monks have chanted at dawn for centuries",
+        "expected": "warn",
+        "from_test": "test_place_background_with_a_view_or_time_word_warns"
+      },
+      {
+        "sentence": "You dine at the lodge, near the temple famed for its views.",
+        "claim": "the temple famed for its views",
+        "expected": "warn",
+        "from_test": "test_place_background_with_a_view_or_time_word_warns"
+      },
+      {
+        "sentence": "You stay at the lodge, on Camp Road, which was paved in 1990.",
+        "claim": "Camp Road was paved",
+        "expected": "warn",
+        "from_test": "test_place_background_with_a_view_or_time_word_warns"
+      },
+      {
+        "sentence": "You visit the temple, which was built in 1200.",
+        "claim": "built in 1200",
+        "expected": "warn",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You visit the market, then the Ondra temple, which dates back to 1100.",
+        "claim": "dates back to 1100",
+        "expected": "warn",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You stay in Ondra, near the old fort, which comes alive with a lantern parade each evening.",
+        "claim": "lantern parade each evening",
+        "expected": "hold",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You stay in Ondra, near the old fort, which hosts a nightly dance show.",
+        "claim": "hosts a nightly dance show",
+        "expected": "hold",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You stay near the lake, where boat tours have run since 1990.",
+        "claim": "boat tours have run since 1990",
+        "expected": "hold",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You stay near the waterfall, famous for its sunrise boat rides.",
+        "claim": "famous for its sunrise boat rides",
+        "expected": "hold",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You stay near the waterfall, where swimming is possible.",
+        "claim": "swimming is possible",
+        "expected": "hold",
+        "from_test": "test_dated_history_warns_and_timed_events_hold"
+      },
+      {
+        "sentence": "You stay at the Bay Lodge, which was upgraded to sea-view rooms for this departure.",
+        "claim": "upgraded to sea-view rooms",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "You stay at the Bay Lodge, which was chosen for its sunset views over the bay.",
+        "claim": "chosen for its sunset views over the bay",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "You stay at the lodge, which was named for the sunrise views from its private hilltop deck.",
+        "claim": "named for the sunrise views from its private hilltop deck",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "You stay at Tarvo Lodge, which was built by villagers with every room overlooking the rapids.",
+        "claim": "every room overlooking the rapids",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "You stay at Tarvo Lodge, which sits above the rapids with sweeping views from every room.",
+        "claim": "sweeping views from every room",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "You stay at the Bay Lodge, which was restored in 2010 with a rooftop bar overlooking the river at sunset.",
+        "claim": "a rooftop bar overlooking the river at sunset",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "You stay at the Nam Ondra camp, which is famous for its dawn gibbon spotting from the treehouse.",
+        "claim": "dawn gibbon spotting from the treehouse",
+        "expected": "hold",
+        "from_test": "test_a_relative_clause_about_the_trips_stay_holds"
+      },
+      {
+        "sentence": "Lunch is served on a floating restaurant.",
+        "claim": "lunch served on a floating restaurant",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Bicycles are provided for the ride to the temples.",
+        "claim": "bicycles provided",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "The summit is reached just after dawn.",
+        "claim": "summit reached just after dawn",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "The caves are explored by torchlight.",
+        "claim": "caves explored by torchlight",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Sunrise is watched from the top of Tarvo Hill.",
+        "claim": "sunrise watched from the top of Tarvo Hill",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "A traditional dinner is enjoyed with a Hmong family.",
+        "claim": "dinner with a Hmong family",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Ondra Bay is cruised overnight on a traditional junk.",
+        "claim": "cruised overnight on a traditional junk",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "A sunrise balloon flight over the Tarvo plain opens the day.",
+        "claim": "a sunrise balloon flight over the Tarvo plain",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "A tuk-tuk takes the group to the night market.",
+        "claim": "a tuk-tuk to the night market",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Overnight in a stilt house, a homestay with a local family.",
+        "claim": "a homestay with a local family",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Mr Sok, our naturalist, points out hornbills along the trail.",
+        "claim": "points out hornbills along the trail",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Day 2 brings you to the village, where locals teach you to weave baskets.",
+        "claim": "locals teach you to weave baskets",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "Highlights: Tarvo Wat at sunrise, the Ondra gate and the Old Tower.",
+        "claim": "Tarvo Wat at sunrise",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "You take a sunset cruise past the fort, which has guarded the river for 900 years.",
+        "claim": "a sunset cruise past the fort",
+        "expected": "hold",
+        "from_test": "test_a_subjectless_promise_holds"
+      },
+      {
+        "sentence": "You stop in Tarvo, where a family famous for its noodles cooks a feast.",
+        "claim": "a family cooks a feast",
+        "expected": "hold",
+        "from_test": "test_a_fame_marker_with_another_verb_holds"
+      },
+      {
+        "sentence": "You visit Wat Ondra, where monks famous for their chanting bless every visitor with a red string.",
+        "claim": "monks bless every visitor with a red string",
+        "expected": "hold",
+        "from_test": "test_a_fame_marker_with_another_verb_holds"
+      },
+      {
+        "sentence": "You visit Bat Trang, where a potter renowned across Vietnam throws a vase for the visitors.",
+        "claim": "a potter throws a vase for the visitors",
+        "expected": "hold",
+        "from_test": "test_a_fame_marker_with_another_verb_holds"
+      },
+      {
+        "sentence": "You head to Tarvo village, where a famous master demonstrates calligraphy.",
+        "claim": "a famous master demonstrates calligraphy",
+        "expected": "hold",
+        "from_test": "test_a_fame_marker_with_another_verb_holds"
+      },
+      {
+        "sentence": "You stop in Tarvo, which is famous for its noodles.",
+        "claim": "Tarvo is famous for its noodles",
+        "expected": "warn",
+        "from_test": "test_a_fame_marker_in_a_copula_or_locative_frame_still_warns"
+      },
+      {
+        "sentence": "You visit Wat Ondra, which is renowned for its carved gables.",
+        "claim": "renowned for its carved gables",
+        "expected": "warn",
+        "from_test": "test_a_fame_marker_in_a_copula_or_locative_frame_still_warns"
+      },
+      {
+        "sentence": "You walk to the Ondra bridge, which was once a royal crossing.",
+        "claim": "once a royal crossing",
+        "expected": "warn",
+        "from_test": "test_a_fame_marker_in_a_copula_or_locative_frame_still_warns"
+      },
+      {
+        "sentence": "You visit Tarvo, near the temple famed for its murals.",
+        "claim": "the temple famed for its murals",
+        "expected": "warn",
+        "from_test": "test_a_fame_marker_in_a_copula_or_locative_frame_still_warns"
+      },
+      {
+        "sentence": "You board the Jasmine, which is renowned for its sundeck views at sunset.",
+        "claim": "sundeck views at sunset",
+        "expected": "hold",
+        "from_test": "test_a_named_stay_or_vessel_view_holds"
+      },
+      {
+        "sentence": "You spend two nights at the Mekong Riverside, which is famous for its sunset views from the infinity pool.",
+        "claim": "sunset views from the infinity pool",
+        "expected": "hold",
+        "from_test": "test_a_named_stay_or_vessel_view_holds"
+      },
+      {
+        "sentence": "You spend the night aboard the Ondra Queen, which is renowned for its candlelit sundeck at sunset.",
+        "claim": "candlelit sundeck at sunset",
+        "expected": "hold",
+        "from_test": "test_a_named_stay_or_vessel_view_holds"
+      },
+      {
+        "sentence": "You overnight at Ondra Retreat, which is known for its sunrise yoga overlooking the paddies.",
+        "claim": "sunrise yoga overlooking the paddies",
+        "expected": "hold",
+        "from_test": "test_a_named_stay_or_vessel_view_holds"
+      },
+      {
+        "sentence": "The caves are then explored by torchlight.",
+        "claim": "caves explored by torchlight",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "The summit is then reached at dawn.",
+        "claim": "summit reached at dawn",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "A private viewing of the royal collection has been arranged.",
+        "claim": "a private viewing of the royal collection",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "You relax in the village while locals prepare a seafood feast.",
+        "claim": "locals prepare a seafood feast",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "The morning starts at the market before a speedboat whisks everyone to Koh Rong.",
+        "claim": "a speedboat whisks everyone to Koh Rong",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "The day takes in the floating market, the cave temple and a cookery demo.",
+        "claim": "a cookery demo",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "The evening ends with a sunset sail around the islands.",
+        "claim": "a sunset sail around the islands",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "A welcome cocktail awaits on arrival.",
+        "claim": "a welcome cocktail awaits on arrival",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "A traditional massage rounds off the day.",
+        "claim": "a traditional massage rounds off the day",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "Inside the temple, which dates from 1100, a monk performs a private blessing for visitors.",
+        "claim": "a monk performs a private blessing for visitors",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "Outside the cave a local band plays traditional music.",
+        "claim": "a local band plays traditional music",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      },
+      {
+        "sentence": "Mr Sok, a former monk, leads a meditation session at dawn.",
+        "claim": "Mr Sok leads a meditation session at dawn",
+        "expected": "hold",
+        "from_test": "test_review_finding_3_promises_hold"
+      }
+    ]
+  },
+  "elephant_policy_keep": {
+    "_about": "A manual_check on a tour whose text names elephant riding. codes use the reverted split names (POLICY_ELEPHANT_RIDING = the detector's own code; main stores FACT_CHECK_MANUAL_CHECK for both). expected: 'keep' = held only by the elephant policy (approvable as policy_keep), 'hold' = another product-truth concern is present. issues=null means the row has no issue text.",
+    "cases": [
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [],
+        "expected": "keep",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2."
+        ],
+        "expected": "keep",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "SEO meta is 162 characters; keep it between 140 and 155.",
+          "The subtitle reads as a list of towns.",
+          "The summary leans on hype ('unforgettable')."
+        ],
+        "expected": "keep",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "A rare marsh cat is placed in the wrong valley."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "Wild elephant sightings at the Tarvo reserve are not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "The elephant sanctuary is placed in the wrong valley."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Wild elephant sightings at the Tarvo reserve are not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "SEO meta is 162 characters; keep it between 140 and 155.",
+          "The subtitle reads as a list of towns.",
+          "The summary leans on hype ('unforgettable')."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "PRODUCT_TRUTH_RISK"
+        ],
+        "issues": [],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [],
+        "expected": "keep",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Calm and precise overall; the second highlight could be more specific."
+        ],
+        "expected": "keep",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "SEO meta is 162 characters; keep it between 140 and 155.",
+          "The subtitle reads as a list of towns.",
+          "The summary leans on hype ('unforgettable')."
+        ],
+        "expected": "keep",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "A rare marsh cat is placed in the wrong valley."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "SEO meta is 162 characters; keep it between 140 and 155.",
+          "The subtitle reads as a list of towns.",
+          "The summary leans on hype ('unforgettable').",
+          "Wild elephant sightings at the Tarvo reserve are not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_policy_only_hold_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "The hotel on day 3 is a different property."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "Day 4 adds a hot-air balloon flight."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "A balloon flight at sunrise is promised."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2, and the hotel on day 3 is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "Highlights promise a private boat to the islands; the itinerary only lists a shared ferry."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Highlights promise a private boat to the islands; the itinerary only lists a shared ferry."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "The Day 3 cooking class is not listed in the itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "Cannot confirm the tour includes a visit to the Royal Palace."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "Sunrise at Mount Popa is mentioned in the summary but absent from the itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "The hot-air balloon flight is presented as included but is an optional extra at additional cost."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on day 2 and a rare clouded leopard sighting the source does not support need a fact check."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on day 2 and a rare clouded leopard sighting the source does not support need a fact check."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Fact check: elephant ride on Day 2; also the Day 4 hot-air balloon is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Fact check: elephant ride on Day 2; also the Day 4 hot-air balloon is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Calm voice; the 4-day duration reads well."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Faithful to the source and precise on location; calm voice."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": "Tiger sighting not in the source",
+        "expected": "hold",
+        "from_test": "test_an_unaccounted_issue_keeps_the_hold"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": "Elephant riding offered",
+        "expected": "keep",
+        "from_test": "test_a_riding_or_voice_only_issue_list_is_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Per policy, elephant riding stays as is and needs a human review."
+        ],
+        "expected": "keep",
+        "from_test": "test_a_riding_or_voice_only_issue_list_is_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "FACT_CHECK_MANUAL_CHECK: elephant riding on day 2 must be manually checked."
+        ],
+        "expected": "keep",
+        "from_test": "test_a_riding_or_voice_only_issue_list_is_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2; the SEO meta is 162 characters."
+        ],
+        "expected": "keep",
+        "from_test": "test_a_riding_or_voice_only_issue_list_is_the_policy"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [],
+        "expected": "keep",
+        "from_test": "test_a_riding_or_voice_only_issue_list_is_the_policy"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": null,
+        "expected": "keep",
+        "from_test": "test_a_riding_or_voice_only_issue_list_is_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Highlights mention elephant riding, which requires manual fact check per brand standards."
+        ],
+        "expected": "keep",
+        "from_test": "test_usual_riding_issue_wordings_are_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding mentioned in Day 2 itinerary - requires FACT_CHECK_MANUAL_CHECK per AA brand standards."
+        ],
+        "expected": "keep",
+        "from_test": "test_usual_riding_issue_wordings_are_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is included on Day 2; this requires a manual fact check."
+        ],
+        "expected": "keep",
+        "from_test": "test_usual_riding_issue_wordings_are_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Itinerary includes elephant riding (Day 3), which must be manually verified."
+        ],
+        "expected": "keep",
+        "from_test": "test_usual_riding_issue_wordings_are_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "The tour offers an elephant ride at the camp; flagged for human review per brand standards."
+        ],
+        "expected": "keep",
+        "from_test": "test_usual_riding_issue_wordings_are_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant back safari on Day 2 needs manual verification."
+        ],
+        "expected": "keep",
+        "from_test": "test_usual_riding_issue_wordings_are_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Itinerary includes elephant riding (Day 3), which is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_riding_issue_with_another_concern_in_a_relative_still_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on day 2, which must be verified, and the Day 4 sunset cruise is not listed."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_riding_issue_with_another_concern_in_a_relative_still_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2. Day 5 must be verified."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_separate_verification_request_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on day 2; the summary on day 4 must be verified."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_separate_verification_request_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding in the highlights. Fact-check the itinerary on day 4."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_separate_verification_request_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2, verify the summary."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_separate_verification_request_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding in highlights; check the description."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_separate_verification_request_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2. Day 2 must be verified."
+        ],
+        "expected": "keep",
+        "from_test": "test_a_locator_of_the_ride_itself_is_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding is included in the itinerary (Day 2); flagged for human review."
+        ],
+        "expected": "keep",
+        "from_test": "test_a_locator_of_the_ride_itself_is_the_policy"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding with a free spa massage the source does not list."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding including a private sunset cruise that the source lacks."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding followed by a night safari not listed in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant ride at the camp where guests get a complimentary hot-air balloon flight not in source."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Riding an elephant to the floating market with lunch included"
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Travel by elephant back to a village homestay dinner"
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding with free spa massage at the lodge."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_concern_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding & a sunrise hot-air balloon flight on Day 2"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding/bamboo rafting on Day 2 needs a manual check"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding after a private helicopter transfer"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding in the 5-star jungle lodge grounds on Day 2"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 was added by the writer."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 has no basis in the supplier itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding appears nowhere in the raw itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is hallucinated."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is unverifiable."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is unconfirmed by the operator."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding at Maesa Elephant Camp on Day 2 needs review."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding & a sunrise hot-air balloon flight on Day 2"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding/bamboo rafting on Day 2 needs a manual check"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding after a private helicopter transfer"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding in the 5-star jungle lodge grounds on Day 2"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 was added by the writer."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 has no basis in the supplier itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding appears nowhere in the raw itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is hallucinated."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is unverifiable."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is unconfirmed by the operator."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding at Maesa Elephant Camp on Day 2 needs review."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding & a sunrise hot-air balloon flight on Day 2"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding/bamboo rafting on Day 2 needs a manual check"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding after a private helicopter transfer"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding in the 5-star jungle lodge grounds on Day 2"
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 was added by the writer."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 has no basis in the supplier itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding appears nowhere in the raw itinerary."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is hallucinated."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is unverifiable."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 3 is unconfirmed by the operator."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding at Maesa Elephant Camp on Day 2 needs review."
+        ],
+        "expected": "hold",
+        "from_test": "test_an_unknown_word_in_the_riding_clause_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2 needs review.",
+          "The SEO title mentions a sunset helicopter flight over the gorge."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_content_noun_in_a_voice_issue_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING",
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2 needs review.",
+          "The meta description is too long and features a private yacht."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_content_noun_in_a_voice_issue_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2 needs review.",
+          "The SEO title mentions a sunset helicopter flight over the gorge."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_content_noun_in_a_voice_issue_holds"
+      },
+      {
+        "codes": [
+          "FACT_CHECK_MANUAL_CHECK"
+        ],
+        "issues": [
+          "Elephant riding on Day 2 needs review.",
+          "The meta description is too long and features a private yacht."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_content_noun_in_a_voice_issue_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 2 needs review.",
+          "The SEO title mentions a sunset helicopter flight over the gorge."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_content_noun_in_a_voice_issue_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding on Day 2 needs review.",
+          "The meta description is too long and features a private yacht."
+        ],
+        "expected": "hold",
+        "from_test": "test_a_content_noun_in_a_voice_issue_holds"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "The Day 4 hot-air balloon flight is not in the source."
+        ],
+        "expected": "hold",
+        "from_test": "test_the_policy_code_alone_reads_the_issues"
+      },
+      {
+        "codes": [
+          "POLICY_ELEPHANT_RIDING"
+        ],
+        "issues": [
+          "Elephant riding is offered on day 2.",
+          "SEO meta is 162 characters; keep it between 140 and 155.",
+          "The subtitle reads as a list of towns.",
+          "The summary leans on hype ('unforgettable')."
+        ],
+        "expected": "keep",
+        "from_test": "test_the_policy_code_alone_reads_the_issues"
+      }
+    ]
+  },
+  "elephant_issue_names_riding": {
+    "_about": "Is the audit issue about elephant RIDING (not the animal)?",
+    "cases": [
+      {
+        "text": "Elephant riding is offered on day 2.",
+        "names_riding": true
+      },
+      {
+        "text": "The page must not promote elephant rides.",
+        "names_riding": true
+      },
+      {
+        "text": "An elephant-back crossing of the Tarvo river.",
+        "names_riding": true
+      },
+      {
+        "text": "A morning elephant safari on the back of a trained elephant.",
+        "names_riding": true
+      },
+      {
+        "text": "Wild elephant sightings at the Tarvo reserve are not in the source.",
+        "names_riding": false
+      },
+      {
+        "text": "The elephant sanctuary is placed in the wrong valley.",
+        "names_riding": false
+      },
+      {
+        "text": "The elephant safari location does not match the source.",
+        "names_riding": false
+      }
+    ]
+  },
+  "elephant_issue_is_voice_only": {
+    "_about": "Is the audit issue only about voice / SEO / format (no product truth)?",
+    "cases": [
+      {
+        "text": "SEO meta is 162 characters; keep it between 140 and 155.",
+        "voice": true
+      },
+      {
+        "text": "The subtitle reads as a list of towns.",
+        "voice": true
+      },
+      {
+        "text": "The meta promises a private boat to the islands.",
+        "voice": false
+      },
+      {
+        "text": "Day 4 adds a hot-air balloon flight.",
+        "voice": false
+      },
+      {
+        "text": "SEO meta is 162 characters; keep it between 140 and 155.",
+        "voice": true
+      },
+      {
+        "text": "The subtitle reads as a list of towns.",
+        "voice": true
+      },
+      {
+        "text": "The summary leans on hype ('unforgettable').",
+        "voice": true
+      },
+      {
+        "text": "Calm and precise overall; the second highlight could be more specific.",
+        "voice": true
+      },
+      {
+        "text": "Highlights are too generic.",
+        "voice": true
+      },
+      {
+        "text": "The SEO title is 68 characters; trim it to 60.",
+        "voice": true
+      }
+    ]
+  }
+}

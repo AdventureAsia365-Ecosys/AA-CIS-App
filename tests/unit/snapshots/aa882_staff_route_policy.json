@@ -3,6 +3,18 @@
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
   },
+  "DELETE /admin/ai-gateway/capacity/{connection_key}/{model_key}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "DELETE /admin/ai-gateway/credit/entries/{entry_id}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "DELETE /admin/ai-gateway/route-policy/{stage}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route"
+  },
   "DELETE /admin/ai-gateway/tenant-budgets/{tenant_id}": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
@@ -10,6 +22,10 @@
   "DELETE /admin/brands/{brand_name}": {
     "capability": "content.settings.write",
     "module": "api.routers.admin_pipeline"
+  },
+  "DELETE /admin/budgets/llm/{scope}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_budgets"
   },
   "DELETE /admin/decisions/jev-credit/topups/{topup_id}": {
     "capability": "spend.write",
@@ -31,24 +47,36 @@
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
+  "DELETE /admin/tenants/{tenant_id}/assignments/{admin_user_id}": {
+    "capability": "tenant.assign",
+    "module": "api.routers.admin_tenant360"
+  },
+  "DELETE /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
+  "DELETE /admin/usage-explorer/views/{view_id}": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
   "GET /admin/a4/content-log": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/gate-telemetry": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/platform-stats": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/publish-log": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/review-log": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/aa-content": {
@@ -67,6 +95,14 @@
     "capability": null,
     "module": "api.routers.admin_aa_content"
   },
+  "GET /admin/ai-gateway/access": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/app-profiles": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/budgets": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
@@ -75,7 +111,19 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/capacity": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/credit": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/experiments": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/guide": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
@@ -83,8 +131,40 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
-  "GET /admin/ai-gateway/tenant-budgets/{tenant_id}": {
+  "GET /admin/ai-gateway/route-control": {
     "capability": "spend.read",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "GET /admin/ai-gateway/route-control/versions": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "GET /admin/ai-gateway/route-control/versions/{version}": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "GET /admin/ai-gateway/route-policy": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route"
+  },
+  "GET /admin/ai-gateway/route-trace/fallback-content": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route"
+  },
+  "GET /admin/ai-gateway/route-trace/requests": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route"
+  },
+  "GET /admin/ai-gateway/route-trace/requests/{trace_id}": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route"
+  },
+  "GET /admin/ai-gateway/route-trace/rungs": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route"
+  },
+  "GET /admin/ai-gateway/tenant-budgets/{tenant_id}": {
+    "capability": "spend.read|tenant.book.account.read",
     "module": "api.routers.admin_ai_gateway"
   },
   "GET /admin/ai-gateway/trace": {
@@ -92,15 +172,15 @@
     "module": "api.routers.admin_ai_gateway"
   },
   "GET /admin/atoms": {
-    "capability": "tenant.read",
+    "capability": "catalog.read",
     "module": "api.routers.admin_atoms"
   },
   "GET /admin/atoms/summary": {
-    "capability": "tenant.read",
+    "capability": "catalog.read",
     "module": "api.routers.admin_atoms"
   },
   "GET /admin/atoms/unatomized-tours": {
-    "capability": "tenant.read",
+    "capability": "catalog.read",
     "module": "api.routers.admin_atoms"
   },
   "GET /admin/aws-accounts": {
@@ -108,7 +188,7 @@
     "module": "api.routers.admin_llm_ops"
   },
   "GET /admin/billing": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|billing.read",
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/brand-identity": {
@@ -136,47 +216,51 @@
     "module": "api.routers.admin"
   },
   "GET /admin/content-quality/a1-content/{content_id}/label": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
+  "GET /admin/content-quality/fallback-writes": {
+    "capability": "tenant_content.read",
+    "module": "api.routers.admin_llm_route"
+  },
   "GET /admin/content-quality/pieces": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/pieces/{piece_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/pieces/{piece_id}/label": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/place-cards": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/place-cards/duplicates": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/place-cards/{card_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/stats": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}/label": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/cost-explorer": {
@@ -295,6 +379,10 @@
     "capability": null,
     "module": "api.routers.admin_job_runner"
   },
+  "GET /admin/job-runner/embedding-spaces": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
   "GET /admin/job-runner/erasure": {
     "capability": "tenant.read",
     "module": "api.routers.admin_job_runner"
@@ -380,11 +468,11 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/notifications": {
-    "capability": null,
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "GET /admin/notifications/count": {
-    "capability": null,
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "GET /admin/openapi.json": {
@@ -447,6 +535,14 @@
     "capability": null,
     "module": "api.routers.admin_places"
   },
+  "GET /admin/plans": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_plans"
+  },
+  "GET /admin/plans/features": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_plans"
+  },
   "GET /admin/platform/alert-recipients": {
     "capability": "ops.read",
     "module": "api.routers.admin_alert_recipients"
@@ -476,35 +572,35 @@
     "module": "api.routers.admin_platform_ops"
   },
   "GET /admin/platform/crm/agencies": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/data-requests": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/entitlements": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/jobs": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/members": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/usage": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/console": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/staff": {
@@ -522,6 +618,18 @@
   "GET /admin/progress/s1/{job_id}": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/quality/funnel": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_funnel"
+  },
+  "GET /admin/quality/lineage/coverage": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_lineage"
+  },
+  "GET /admin/quality/lineage/{workflow}/{object_id}": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_lineage"
   },
   "GET /admin/reports": {
     "capability": "ops.read",
@@ -579,44 +687,92 @@
     "capability": null,
     "module": "api.routers.admin_supply_content"
   },
-  "GET /admin/tenants": {
-    "capability": "tenant.read",
+  "GET /admin/tenant-assignments": {
+    "capability": "tenant.read|tenant.book.read",
+    "module": "api.routers.admin_tenant_assignments"
+  },
+  "GET /admin/tenant-assignments/staff": {
+    "capability": "tenant.assign",
+    "module": "api.routers.admin_tenant_assignments"
+  },
+  "GET /admin/tenant-names": {
+    "capability": "tenant.read|tenant_content.read|tenant.book.read|billing.read|lab.read|spend.read",
     "module": "api.routers.admin"
+  },
+  "GET /admin/tenant-qa/compliance": {
+    "capability": "tenant_content.read",
+    "module": "api.routers.admin_tenant_compliance"
+  },
+  "GET /admin/tenants": {
+    "capability": "tenant.read|tenant.book.read|billing.read",
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/provision/{job_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant_provision"
+  },
+  "GET /admin/tenants/{tenant_id}/addon-requests": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_addon_requests"
+  },
+  "GET /admin/tenants/{tenant_id}/addon-requests/{request_id}": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_addon_requests"
+  },
+  "GET /admin/tenants/{tenant_id}/assignments": {
+    "capability": "tenant.read|tenant.book.read",
+    "module": "api.routers.admin_tenant360"
   },
   "GET /admin/tenants/{tenant_id}/audit": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin"
   },
+  "GET /admin/tenants/{tenant_id}/booking-billing": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant360"
+  },
   "GET /admin/tenants/{tenant_id}/config": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin"
   },
   "GET /admin/tenants/{tenant_id}/cost": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_tenant360"
   },
   "GET /admin/tenants/{tenant_id}/details": {
-    "capability": null,
+    "capability": "content.read|tenant.read|tenant.book.read|billing.read",
     "module": "api.routers.admin"
   },
   "GET /admin/tenants/{tenant_id}/markets": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_tenant360"
   },
   "GET /admin/tenants/{tenant_id}/members": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
+    "module": "api.routers.admin_tenant360"
+  },
+  "GET /admin/tenants/{tenant_id}/members/access": {
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_tenant360"
   },
   "GET /admin/tenants/{tenant_id}/quality": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_tenant360"
   },
   "GET /admin/tenants/{tenant_id}/rewrite-activity": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin"
   },
+  "GET /admin/tenants/{tenant_id}/subscription": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_subscription"
+  },
+  "GET /admin/tenants/{tenant_id}/tripplanner-site/lead-route": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_subscription"
+  },
   "GET /admin/tenants/{tenant_id}/usage": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
     "module": "api.routers.admin"
   },
   "GET /admin/tours": {
@@ -683,72 +839,120 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/usage-explorer/invoices": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/options": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/query": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/rollup/check": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/views": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/view-as/sessions": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
+  },
+  "GET /admin/view-as/sessions/{session_id}": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
+  },
   "GET /admin/waves": {
-    "capability": "ops.read",
+    "capability": "ops.read|wave.run",
     "module": "api.routers.admin_waves"
   },
   "GET /admin/waves/{wave_id}/report": {
-    "capability": "ops.read",
+    "capability": "ops.read|wave.run",
     "module": "api.routers.admin_waves"
   },
   "GET /admin/writing-memory/candidates": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/candidates/{rule_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/claim-labels/split-plan": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "GET /admin/writing-memory/claim-labels/{set_id}/{set_version}/finals": {
+    "capability": "tenant_content.read|lab.tenant_text.read",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "GET /admin/writing-memory/claim-labels/{set_id}/{set_version}/report": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "GET /admin/writing-memory/claim-shadow/summary": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_claim_shadow"
+  },
   "GET /admin/writing-memory/disagreements": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/exemplars": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/exemplars/selection": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/lab/{writer}": {
+    "capability": "tenant_content.read|lab.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/metrics": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/releases": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/releases/active": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/releases/{release_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/signals": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/signals/clusters": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/signals/{signal_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/summary": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/tenants/{tenant_id}/voice": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/writers": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /v1/pipeline/execution/{execution_id:path}": {
@@ -762,6 +966,10 @@
   "GET /v1/pipeline/sources": {
     "capability": null,
     "module": "api.routers.v1_pipeline"
+  },
+  "PATCH /admin/ai-gateway/app-profiles/{app}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
   },
   "PATCH /admin/atoms/{atom_id}": {
     "capability": "atoms.write",
@@ -799,6 +1007,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"
   },
+  "PATCH /admin/llm-config/{stage}/switch": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
+  },
   "PATCH /admin/llm-connections/{connection_key}": {
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"
@@ -823,6 +1035,10 @@
     "capability": "master.admin",
     "module": "api.routers.admin"
   },
+  "PATCH /admin/plans/{plan_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_plans"
+  },
   "PATCH /admin/platform/staff/{staff_id}/roles": {
     "capability": "staff.write",
     "module": "api.routers.admin_platform"
@@ -832,11 +1048,11 @@
     "module": "api.routers.admin_settings"
   },
   "PATCH /admin/tenants/{tenant_id}": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|billing.write|tenant.book.write",
     "module": "api.routers.admin"
   },
   "PATCH /admin/tenants/{tenant_id}/members/{membership_id}": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.member.write",
     "module": "api.routers.admin_tenant360"
   },
   "PATCH /admin/tours/{tour_id}/country": {
@@ -890,6 +1106,38 @@
   "POST /admin/aa-content/{content_id}/retire": {
     "capability": "master.admin",
     "module": "api.routers.admin_aa_content"
+  },
+  "POST /admin/ai-gateway/credit/check": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "POST /admin/ai-gateway/credit/{connection_key}/entries": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "POST /admin/ai-gateway/route-control/presets/{preset}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-control/preview": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-control/save": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-control/versions/{version}/revert": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-trace/test": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route"
+  },
+  "POST /admin/ai-gateway/route-watch/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route"
   },
   "POST /admin/atoms/atomize": {
     "capability": "atoms.write",
@@ -995,6 +1243,10 @@
     "capability": "ops.write",
     "module": "api.routers.admin_llm_ops"
   },
+  "POST /admin/job-runner/embedding-reembed/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_job_runner"
+  },
   "POST /admin/job-runner/erasure/run": {
     "capability": "tenant.write",
     "module": "api.routers.admin_job_runner"
@@ -1009,6 +1261,14 @@
   },
   "POST /admin/job-runner/jobs/{job_id}/retry": {
     "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/llm-contract-smoke/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/llm-model-lifecycle/run": {
+    "capability": "ai.admin",
     "module": "api.routers.admin_job_runner"
   },
   "POST /admin/job-runner/llm-probe/run": {
@@ -1083,6 +1343,14 @@
     "capability": "ops.write",
     "module": "api.routers.admin_places"
   },
+  "POST /admin/plans": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_plans"
+  },
+  "POST /admin/plans/{plan_key}/retire": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_plans"
+  },
   "POST /admin/platform/alert-recipients": {
     "capability": "alerts.write",
     "module": "api.routers.admin_alert_recipients"
@@ -1107,6 +1375,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
   },
+  "POST /admin/platform/crm/agencies/{tenant_id}/delete": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
   "POST /admin/platform/crm/agencies/{tenant_id}/jobs/{job_id}/retry": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
@@ -1120,6 +1392,10 @@
     "module": "api.routers.admin_crm_console"
   },
   "POST /admin/platform/crm/agencies/{tenant_id}/owner-invite": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/owner-invite/withdraw": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
   },
@@ -1239,33 +1515,57 @@
     "capability": "review.act",
     "module": "api.routers.admin_supply_content"
   },
+  "POST /admin/tenant-qa/compliance/{flag_id}/release": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_tenant_compliance"
+  },
   "POST /admin/tenants": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
   },
-  "POST /admin/tenants/{tenant_id}/generate-key": {
+  "POST /admin/tenants/provision": {
     "capability": "tenant.write",
-    "module": "api.routers.admin"
+    "module": "api.routers.admin_tenant_provision"
+  },
+  "POST /admin/tenants/{tenant_id}/addon-requests/{request_id}/approve": {
+    "capability": "tenant.write|tenant.book.write",
+    "module": "api.routers.admin_tenant_addon_requests"
+  },
+  "POST /admin/tenants/{tenant_id}/addon-requests/{request_id}/decline": {
+    "capability": "tenant.write|tenant.book.write",
+    "module": "api.routers.admin_tenant_addon_requests"
   },
   "POST /admin/tenants/{tenant_id}/members/invitations": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.member.write",
     "module": "api.routers.admin_tenant360"
   },
   "POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.member.write|tenant.member.resend",
     "module": "api.routers.admin_tenant360"
   },
   "POST /admin/tenants/{tenant_id}/members/{membership_id}/remove": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.member.write",
     "module": "api.routers.admin_tenant360"
   },
   "POST /admin/tenants/{tenant_id}/offboard": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
   },
+  "POST /admin/tenants/{tenant_id}/provision": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_provision"
+  },
+  "POST /admin/tenants/{tenant_id}/provision/cancel": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_provision"
+  },
   "POST /admin/tenants/{tenant_id}/restore": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
+  },
+  "POST /admin/tenants/{tenant_id}/view-as": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
   },
   "POST /admin/tours/{tour_id}/generated/{content_id}/revalidate": {
     "capability": "content.write",
@@ -1291,8 +1591,20 @@
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
-  "POST /admin/waves": {
+  "POST /admin/usage-explorer/rollup/run": {
     "capability": "ops.write",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "POST /admin/usage-explorer/views": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "POST /admin/view-as/sessions/{session_id}/end": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
+  },
+  "POST /admin/waves": {
+    "capability": "ops.write|wave.run",
     "module": "api.routers.admin_waves"
   },
   "POST /admin/waves/check": {
@@ -1300,7 +1612,15 @@
     "module": "api.routers.admin_waves"
   },
   "POST /admin/waves/{wave_id}/close": {
-    "capability": "ops.write",
+    "capability": "ops.write|wave.run",
+    "module": "api.routers.admin_waves"
+  },
+  "POST /admin/waves/{wave_id}/pause": {
+    "capability": "ops.write|wave.run",
+    "module": "api.routers.admin_waves"
+  },
+  "POST /admin/waves/{wave_id}/resume": {
+    "capability": "ops.write|wave.run",
     "module": "api.routers.admin_waves"
   },
   "POST /admin/writing-memory/candidates/{rule_id}/activate": {
@@ -1318,6 +1638,18 @@
   "POST /admin/writing-memory/candidates/{rule_id}/rollback": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/claim-labels/import": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "POST /admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
+  },
+  "POST /admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
   },
   "POST /admin/writing-memory/disagreements/{item_id}/resolve": {
     "capability": "ai.admin",
@@ -1395,6 +1727,14 @@
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
   },
+  "PUT /admin/ai-gateway/capacity/{connection_key}/{model_key}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "PUT /admin/ai-gateway/route-policy/{stage}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route"
+  },
   "PUT /admin/ai-gateway/tenant-budgets/{tenant_id}": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
@@ -1412,11 +1752,11 @@
     "module": "api.routers.admin_decisions"
   },
   "PUT /admin/notifications/read-all": {
-    "capability": "content.read",
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "PUT /admin/notifications/{notif_id}/read": {
-    "capability": "content.read",
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "PUT /admin/places/{destination_id}/shape": {
@@ -1431,12 +1771,24 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
   },
+  "PUT /admin/tenants/{tenant_id}/assignments/{admin_user_id}": {
+    "capability": "tenant.assign",
+    "module": "api.routers.admin_tenant360"
+  },
   "PUT /admin/tenants/{tenant_id}/brand-identity": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.book.write",
     "module": "api.routers.admin"
   },
   "PUT /admin/tenants/{tenant_id}/config": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.book.write",
     "module": "api.routers.admin"
+  },
+  "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
+  "PUT /admin/tenants/{tenant_id}/tripplanner-site/lead-route": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
   }
 }

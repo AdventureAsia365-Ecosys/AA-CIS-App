@@ -5,6 +5,8 @@ Each validator returns (passed: bool, issue: str)
 """
 from typing import Callable
 
+from services.quality import writing_policy as _wp
+
 ValidatorFn = Callable[[dict], tuple[bool, str]]
 
 # ============================================================
@@ -112,7 +114,8 @@ def v17_highlights_are_strings(c: dict) -> tuple[bool, str]:
 
 def v18_seo_title_max_60(c: dict) -> tuple[bool, str]:
     t = c.get("seo_title", "")
-    return (len(t) <= 60), f"L3-18: seo_title {len(t)} chars (max 60)"
+    cap = _wp.band("title")[1]  # AA-1047: the policy title cap (writing_policy.yaml; the name keeps its old number)
+    return (len(t) <= cap), f"L3-18: seo_title {len(t)} chars (max {cap})"
 
 def v19_seo_title_min_20(c: dict) -> tuple[bool, str]:
     t = c.get("seo_title", "")

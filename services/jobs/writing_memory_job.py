@@ -161,10 +161,10 @@ async def _progress(ctx: JobContext, **fields) -> None:
 @job_kind(R2, concurrency=1, max_attempts=1, expected_seconds=5400, background=True, deploy_blocking=True)
 async def run_r2_job(ctx: JobContext) -> dict:
     from services.writing_memory.r2 import R2Refused, config_from_payload, run_with_pool
-    conf = config_from_payload(ctx.payload)
-    if not conf.triggered_by or conf.triggered_by == "manual":
-        conf.triggered_by = f"job:{ctx.job_id}"
     try:
+        conf = config_from_payload(ctx.payload)      # S271 W0: an unknown payload key is refused, never dropped
+        if not conf.triggered_by or conf.triggered_by == "manual":
+            conf.triggered_by = f"job:{ctx.job_id}"
         out = await run_with_pool(ctx.pool, conf, progress=lambda **f: _progress(ctx, **f))
     except R2Refused as e:
         raise NonRetryable(f"R2 refused: {e}")

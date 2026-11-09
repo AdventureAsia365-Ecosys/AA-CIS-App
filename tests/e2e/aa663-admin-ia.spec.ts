@@ -16,8 +16,8 @@ const NAV: { label: string; path: string }[] = [
   { label: 'Staff', path: '/admin/platform/staff' },
   { label: 'Tenants', path: '/admin/tenants' },
   { label: 'Jobs', path: '/admin/jobs' },
-  { label: 'AI providers', path: '/admin/ai-gateway' },   // AA-804
-  { label: 'Cost Operations', path: '/admin/cost-ops' },
+  { label: 'AI gateway', path: '/admin/ai-gateway' },   // AA-804
+  { label: 'Spend', path: '/admin/spend' },   // AA-1039 R6 slice 3
   { label: 'Jev Decisions', path: '/admin/decisions' },
   { label: 'API Docs', path: '/admin/api-docs' },
   { label: 'Data model', path: '/admin/data-model' },
@@ -32,7 +32,7 @@ const NAV: { label: string; path: string }[] = [
   { label: 'Content Trace', path: '/admin/tenant-activity' },
   { label: 'A4 Quality', path: '/admin/platform-stats' },
   { label: 'Content Quality', path: '/admin/content-quality' },
-  { label: 'Writing memory', path: '/admin/writing-memory' },   // AA-917
+  { label: 'Writing memory', path: '/admin/lab/writing-memory' },   // AA-917
   { label: 'Settings', path: '/admin/settings' },
 ];
 
@@ -58,13 +58,13 @@ const REDIRECTS: [string, RegExp][] = [
   ['/admin/settings?tab=models', /\/admin\/ai-gateway\?tab=routing$/],
   ['/admin/settings?tab=jev-credit', /\/admin\/ai-gateway\?tab=providers&view=jev-credit$/],
   ['/admin/cost-ops?tab=budgets', /\/admin\/ai-gateway\?tab=budgets$/],
-  ['/admin/llm-usage', /\/admin\/cost-ops\?tab=spend$/],
+  ['/admin/llm-usage', /\/admin\/spend\?tab=spend$/],
   ['/admin/llm-usage?tab=budgets', /\/admin\/ai-gateway\?tab=budgets$/],
   // AA-804 UI part 3 — the LLM, DataForSEO and Jev tabs became views of Cost Operations › AI & data spend.
-  ['/admin/cost-ops?tab=llm', /\/admin\/cost-ops\?tab=spend$/],
-  ['/admin/cost-ops?tab=dfs', /\/admin\/cost-ops\?tab=spend&view=dfs$/],
-  ['/admin/cost-ops?tab=jev', /\/admin\/cost-ops\?tab=spend&view=jev$/],
-  ['/admin/llm-usage?tab=jev', /\/admin\/cost-ops\?tab=spend&view=jev$/],
+  ['/admin/cost-ops?tab=llm', /\/admin\/spend\?tab=spend$/],
+  ['/admin/cost-ops?tab=dfs', /\/admin\/spend\?tab=spend&view=dfs$/],
+  ['/admin/cost-ops?tab=jev', /\/admin\/spend\?tab=spend&view=jev$/],
+  ['/admin/llm-usage?tab=jev', /\/admin\/spend\?tab=spend&view=jev$/],
 ];
 
 async function login(page: Page) {

@@ -33,7 +33,6 @@ from api.core import staff_authz
 from api.core.staff_authz import (
     AWAITING_ROUTE,
     CONTENT_READ,
-    NO_BOOKING_ROLES,
     POLICY,
     READ_ONLY_ROLES,
     ROLE_PERMS,
@@ -50,16 +49,22 @@ VIEWER = "viewer"
 ADMIN_ID = "6f1c2c4e-8a51-4c1e-9d0b-2f3c4d5e6f71"
 
 _WRITE_KEYS = sorted(k for k in POLICY if k[0] != "GET")
-_ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET")
+# AA-1035: the aa_internal details read is a POLICY GET the viewer passes (content.read; tenant_scope keeps it on the
+# aa_internal tenant), so it is not an admin-only GET.
+# AA-1035 slice 2: the bell reads (notifications.read, every role) are POLICY GETs the viewer passes too.
+_VIEWER_POLICY_GETS = {("GET", "/admin/tenants/{tenant_id}/details"), ("GET", "/admin/notifications"),
+                       ("GET", "/admin/notifications/count")}
+_ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k not in _VIEWER_POLICY_GETS)
 
 
 # ── Capability map ───────────────────────────────────────────────────────────────────────────────
 
 def test_viewer_holds_content_read_only():
-    assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ})
+    assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ, staff_authz.NOTIFICATIONS_READ})   # + the bell (AA-1035 s2)
     assert VIEWER in STAFF_ROLES
     assert READ_ONLY_ROLES == frozenset({VIEWER})
-    assert NO_BOOKING_ROLES == frozenset({VIEWER})
+    # AA-911: no role gets a Booking token from CIS any more (the bridge is retired; Booking reads booking-* groups)
+    assert not hasattr(staff_authz, "NO_BOOKING_ROLES")
 
 
 def test_viewer_is_a_staff_role_for_the_legacy_login():
@@ -73,7 +78,9 @@ def test_viewer_is_not_assignable_from_the_staff_page():
     from api.services import staff_directory
 
     assert VIEWER not in staff_directory.CIS_ROLES
+    # AA-1035: the reviewer alias is no role at all any more (CIS 375)
     assert set(staff_directory.CIS_ROLES) == set(ROLE_PERMS) - {VIEWER}
+    assert "reviewer" not in ROLE_PERMS
     with pytest.raises(staff_directory.StaffDirectoryError) as exc:
         staff_directory.require_cis_role(VIEWER)
     assert exc.value.status == 400
@@ -100,9 +107,9 @@ def test_viewer_is_refused_every_policy_write(key):
 
 def test_viewer_is_refused_the_notification_puts_although_it_holds_their_capability():
     for key in (("PUT", "/admin/notifications/read-all"), ("PUT", "/admin/notifications/{notif_id}/read")):
-        assert POLICY[key] == CONTENT_READ
+        assert POLICY[key] == staff_authz.NOTIFICATIONS_READ   # AA-1035 slice 2 (was content.read)
         assert denial_reason(principal_from_role(VIEWER), *key) == "Role 'viewer' is read-only"
-        assert denial_reason(principal_from_role("reviewer"), *key) is None
+        assert denial_reason(principal_from_role("content"), *key) is None
 
 
 @pytest.mark.parametrize("key", _ADMIN_GET_KEYS)
@@ -114,15 +121,20 @@ def test_viewer_is_refused_every_admin_only_read(key):
 def test_read_only_rule_covers_a_write_without_a_policy_entry(method):
     assert denial_reason(principal_from_role(VIEWER), method, "/admin/aa878-no-such-route") is not None
     # the other roles keep the old rule: no entry, no refusal (the route-policy test keeps every write listed)
-    assert denial_reason(principal_from_role("reviewer"), method, "/admin/aa878-no-such-route") is None
+    assert denial_reason(principal_from_role("content"), method, "/admin/aa878-no-such-route") is None
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
 def test_viewer_reads_the_open_routes(method):
-    for path in ("/admin/llm-config", "/admin/review-queue", "/admin/notifications", "/admin/search",
-                 "/admin/tenants/{tenant_id}/details", "/admin/tours/{tour_id}/detail"):
+    for path in ("/admin/llm-config", "/admin/review-queue", "/admin/search", "/admin/tours/{tour_id}/detail"):
         assert (method, path) not in POLICY
         assert denial_reason(principal_from_role(VIEWER), method, path) is None
+    # AA-1035 slice 2: the bell has its own capability, which the viewer holds
+    if method == "GET":
+        assert denial_reason(principal_from_role(VIEWER), method, "/admin/notifications") is None
+    # AA-1035: the aa_internal details read is in POLICY (content.read among its capabilities) and tenant-scoped
+    if method == "GET":
+        assert denial_reason(principal_from_role(VIEWER), method, "/admin/tenants/{tenant_id}/details") is None
 
 
 def test_padded_role_header_is_still_read_only():
@@ -157,7 +169,7 @@ def test_notification_bell_scope_for_viewer_is_the_content_scope():
     from api.routers.admin import _NOTIF_CONTENT_SCOPE, notification_scope
 
     assert notification_scope(VIEWER) == _NOTIF_CONTENT_SCOPE
-    assert notification_scope("reviewer") == _NOTIF_CONTENT_SCOPE
+    assert notification_scope("content") == _NOTIF_CONTENT_SCOPE
 
 
 def test_viewer_search_has_no_tenants_or_jobs():
@@ -230,21 +242,6 @@ def test_admin_login_returns_the_viewer_role(pool_client):
     assert res.json()["role"] == VIEWER
 
 
-@pytest.mark.parametrize("session_role", [VIEWER, "admin"])
-def test_booking_token_is_403_for_a_viewer_row(pool_client, monkeypatch, session_role):
-    """The DB role decides (a demoted admin session too); refused before any signing key is read."""
-    from api.core import booking_jwt
-    from api.routers.auth import _create_admin_jwt
-
-    monkeypatch.setattr(booking_jwt, "get_signing_keys_async",
-                        AsyncMock(side_effect=AssertionError("no key read for a viewer")))
-    c = pool_client(_viewer_row())
-    session = _create_admin_jwt(ADMIN_ID, "e2e-claude-code-viewer", session_role)
-    res = c.post("/auth/booking-token", headers={"Authorization": f"Bearer {session}"})
-    assert res.status_code == 403, res.text
-    assert res.json()["detail"] == "This staff role has no access to Booking"
-
-
 # ── Staff directory + reconcile ──────────────────────────────────────────────────────────────────
 
 def test_staff_list_counts_viewers():
@@ -255,8 +252,9 @@ def test_staff_list_counts_viewers():
 
 @pytest.mark.asyncio
 async def test_role_change_away_from_viewer_skips_the_missing_cognito_group(monkeypatch):
-    """A viewer row with an email (never created by the Staff page, but possible by hand) changed to reviewer:
-    Cognito gets add_group:cis-reviewer only, never remove_group:cis-viewer (no such group)."""
+    """A viewer row with an email (never created by the Staff page, but possible by hand) changed to content:
+    Cognito gets add_group:cis-content only, never remove_group:cis-viewer (no such group). (AA-1035: reviewer is no
+    longer assignable.)"""
     from api.services import staff_directory
 
     actor = "00000000-0000-0000-0000-0000000000a1"
@@ -291,8 +289,8 @@ async def test_role_change_away_from_viewer_skips_the_missing_cognito_group(monk
         async def acquire(self):
             yield _TxConn()
 
-    await staff_directory.change_roles(_P(), object(), actor_id=actor, staff_id=ADMIN_ID, role="reviewer")
-    assert captured["steps"] == ["add_group:cis-reviewer"]
+    await staff_directory.change_roles(_P(), object(), actor_id=actor, staff_id=ADMIN_ID, role="content")
+    assert captured["steps"] == ["add_group:cis-content"]
 
 
 def test_reconcile_serialises_a_viewer_row():

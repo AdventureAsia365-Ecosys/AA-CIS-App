@@ -17,6 +17,7 @@ import pytest
 from api.core.staff_authz import POLICY, STAFF_READ
 from api.main import app
 from api.routers import admin, admin_platform, admin_settings
+from api.services import staff_directory
 
 _SECRET = "aa883-test-admin-secret"
 _ID_A = "11111111-1111-1111-1111-111111111111"
@@ -26,15 +27,23 @@ _T1 = datetime(2026, 10, 17, 9, 30, tzinfo=timezone.utc)
 
 _ROWS = [
     {"id": _ID_A, "username": "nghiep", "role": "admin", "is_active": True, "created_at": _T0, "updated_at": _T1},
-    {"id": _ID_B, "username": "reviewer-1", "role": "reviewer", "is_active": False,
+    {"id": _ID_B, "username": "reviewer-1", "role": "content", "is_active": False,
      "created_at": _T0, "updated_at": _T0},
 ]
 
 
 class _Conn:
-    def __init__(self, rows):
+    """``crm_table``: whether shared.staff_crm_grant exists (AA-1031, migration 330)."""
+
+    def __init__(self, rows, crm_table=True):
         self.rows = rows
+        self.crm_table = crm_table
         self.sql: list[str] = []
+
+    async def fetchval(self, sql, *args):
+        self.sql.append(sql)
+        assert sql == staff_directory.SQL_CRM_TABLE
+        return self.crm_table
 
     async def fetch(self, sql, *args):
         self.sql.append(sql)
@@ -103,7 +112,7 @@ def test_both_routes_need_staff_read():
 
 
 @pytest.mark.parametrize("path", ["/admin/platform/staff", f"/admin/platform/staff/{_ID_A}"])
-@pytest.mark.parametrize("role", ["reviewer", "content", "tenant", "", None])
+@pytest.mark.parametrize("role", ["content", "tenant", "", None])
 def test_non_admin_and_machine_are_refused_before_the_db(no_db_client, role, path):
     resp = no_db_client.get(path, headers=_headers(role))
     assert resp.status_code == 403, (role, path, resp.text)
@@ -124,8 +133,8 @@ def test_machine_detail_names_the_reason(no_db_client):
 
 
 def test_reviewer_detail_names_the_capability(no_db_client):
-    resp = no_db_client.get("/admin/platform/staff", headers=_headers("reviewer"))
-    assert resp.json()["detail"] == "Role 'reviewer' lacks the 'staff.read' permission"
+    resp = no_db_client.get("/admin/platform/staff", headers=_headers("content"))
+    assert resp.json()["detail"] == "Role 'content' lacks the 'staff.read' permission"
 
 
 # ── List ─────────────────────────────────────────────────────────────────────────────────────────
@@ -135,18 +144,22 @@ def test_admin_lists_staff_with_counts(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["total"] == 2 and body["active"] == 1
-    assert body["active_by_role"] == {"admin": 1, "reviewer": 0, "content": 0, "viewer": 0}   # viewer: AA-878
+    assert body["active_by_role"] == {"admin": 1, "content": 0, "viewer": 0,   # viewer: AA-878
+                                      # AA-1035 R2
+                                      "content_lead": 0, "tenant_qa": 0, "customer_success": 0, "support": 0,
+                                      "finance": 0, "ai_ops": 0}
     first = body["staff"][0]
     assert first == {
         "id": _ID_A, "username": "nghiep", "role": "admin", "is_active": True,
         "created_at": _T0.isoformat(), "updated_at": _T1.isoformat(),
         # AA-816 C6 directory fields (absent from these fake rows): falsy / None, never a KeyError
         "email": None, "display_name": None, "is_owner": False, "last_login_at": None, "linked": False,
-        "booking_role": None, "breakglass": False,
+        "booking_role": None, "crm_roles": [], "breakglass": False,
         # S242 invitation e-mail fields (from the audit log; never invited -> None)
         "last_invited_at": None, "last_invite_requested_at": None, "last_invite_not_sent_at": None,
         "invite_status": None,
     }
+    assert body["crm_roles_available"] is True
     # A legacy (secret + x-admin-role) session may read but not write (AA-816 C6).
     assert body["viewer"] == {"auth": "legacy", "is_owner": False, "can_write": False, "admin_id": None}
 
@@ -183,3 +196,30 @@ def test_unknown_or_malformed_id_is_404(client, staff_id):
     resp = client.get(f"/admin/platform/staff/{staff_id}", headers=_headers("admin"))
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Staff account not found"
+
+
+# ── AA-1031: CRM roles ───────────────────────────────────────────────────────────────────────────
+
+def test_crm_roles_are_read_with_the_crm_select_and_kept_in_role_order(monkeypatch):
+    rows = [{**_ROWS[0], "crm_roles": ["support", "platform_admin"]}]
+    conn = _Conn(rows)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=_Acquire(conn))
+    body = _client(monkeypatch, pool).get("/admin/platform/staff", headers=_headers("admin")).json()
+    assert body["staff"][0]["crm_roles"] == ["platform_admin", "support"]
+    assert body["crm_roles_available"] is True
+    assert any(sql.startswith(admin_platform._SELECT_WITH_CRM) for sql in conn.sql)
+    assert "staff_crm_grant" in admin_platform._SELECT_WITH_CRM and "*" not in admin_platform._SELECT_WITH_CRM
+
+
+def test_before_migration_330_the_list_uses_the_plain_select(monkeypatch):
+    conn = _Conn(_ROWS, crm_table=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=_Acquire(conn))
+    client = _client(monkeypatch, pool)
+    body = client.get("/admin/platform/staff", headers=_headers("admin")).json()
+    assert body["crm_roles_available"] is False
+    assert all(s["crm_roles"] == [] for s in body["staff"])
+    assert not any("staff_crm_grant" in sql for sql in conn.sql if sql != staff_directory.SQL_CRM_TABLE)
+    one = client.get(f"/admin/platform/staff/{_ID_A}", headers=_headers("admin"))
+    assert one.status_code == 200 and one.json()["crm_roles"] == []

@@ -29,6 +29,10 @@ def cur():
     conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
     conn.autocommit = True
     c = conn.cursor()
+    # _undo deletes the catalog rows, which cascades to their deployments (304 / 306); keep them to put back (AA-1026:
+    # migration 327 and its test need the haiku-5-5 / sonnet-5-5 acc3 deployments the replay made).
+    c.execute("SELECT to_jsonb(d)::text FROM shared.llm_model_deployment d WHERE d.model_key = ANY (%s)", (list(NEW),))
+    deployments = [r[0] for r in c.fetchall()]
     try:
         yield c
     finally:
@@ -36,6 +40,9 @@ def cur():
         _undo(c)
         _run(c)                                 # back to the post-259 state ...
         c.execute(open(MIGRATION_295, encoding="utf-8").read())   # ... and the post-295 one (AA-998)
+        for row in deployments:
+            c.execute("INSERT INTO shared.llm_model_deployment SELECT (jsonb_populate_record("
+                      "NULL::shared.llm_model_deployment, %s::jsonb)).* ON CONFLICT DO NOTHING", (row,))
         conn.close()
 
 
@@ -91,11 +98,25 @@ def test_new_rows_from_pre_259_state(cur, key, prices):
 def test_new_rows_are_on_no_route(cur):
     _undo(cur)
     _run(cur)
-    cur.execute("SELECT stage FROM shared.llm_role_config WHERE model_id = ANY (%s) "
+    cur.execute("SELECT stage, updated_by FROM shared.llm_role_config WHERE model_id = ANY (%s) "
                 "OR shadow_model_id = ANY (%s) OR fallback_model_ids && %s::text[]",
                 (list(NEW), list(NEW), list(NEW)))
-    # 259 routes no stage; a later migration that routes one is listed here (282, S251: supply_content_writer).
-    assert sorted(r[0] for r in cur.fetchall()) == ["supply_content_writer"]
+    rows = cur.fetchall()
+    # 259 routes no stage; the later migrations that route one are listed here: 282 (S251, supply_content_writer) and
+    # 327 (AA-1026, every route that named the legacy haiku / sonnet keys, supply_content_writer included); 331
+    # (AA-1026 I6) appends an acc2 fallback to judge / validate routes that name these keys; 333 puts one before the
+    # OpenAI API hop of the judge routes; 335 (AA-1024 A2) routes the two segment research stages on haiku-5-5; 336
+    # (AA-1024 D8) switches off the dead s1_atom_writer / tp_extract routes; 344 (AA-1026, S264) puts the OpenAI API
+    # last on the six tenant writer routes; 366 (AA-1026, S267) sets the family fallback chains and opens every
+    # active text stage to vendor_direct; 376 (AA-1042, S269) fits 20 of those chains to six attempts; 383 (AA-900,
+    # S271 W0) takes the OpenAI API rung off the writers and Nova Lite off the judges.
+    assert "supply_content_writer" in {r[0] for r in rows}
+    # Rows a test admin switched (the AA-642 A1 stage-switch tests sign as admin:zz-*) are not migrations.
+    migrated = {r[1] for r in rows if not str(r[1]).startswith("admin:zz-")}
+    assert migrated <= {"migration-282-aa835", "migration-327-aa1026", "migration-331-aa1026", "migration-332-aa1026",
+                        "migration-333-aa1026", "migration-335-aa1024", "migration-336-aa1024",
+                        "migration-344-aa1026", "migration-366-aa1026", "migration-376-aa1042",
+                        "migration-383-aa900"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):

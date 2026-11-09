@@ -14,6 +14,9 @@ import pytest
 from api.routers import _tenant_projection as tp
 from api.routers import v1_marketplace, v1_tours
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 TENANT = {"sub": str(uuid.uuid4())}
 NOW = dt.datetime(2026, 10, 14, 9, 0, tzinfo=dt.timezone.utc)
 PT_ID = uuid.uuid4()
@@ -31,13 +34,13 @@ WM_GENERATION_META = {"writing_release": {"writer": "t2", "platform": {"release_
 # Every forbidden column a real row can carry (published_tours, tenant_tour_versions, raw_tours,
 # v_tenant_monthly_usage), plus the stored score-derived status. AA-920 WM-25: `generation_meta` (CIS 297) and the
 # writing-memory keys a later join could add (`rule_ids`, `writing_release`, `memory_enabled`): dropped by name or by
-# TENANT_FORBIDDEN_KEY_RE.
+# TENANT_FORBIDDEN_KEY_RE. AA-1047: `fs_id` (CIS 386), the admin FactSheet id a T2 version is stamped with.
 _POISON = {
     "status": "needs_review", "quality_score": Decimal("5.5"), "quality_score_id": uuid.uuid4(),
     "qa_status": "escalated", "qa_repair_count": 2, "qa_checked_at": NOW, "qa_auto_passed": True,
     "llm_cost_usd": Decimal("0.12"), "jev_cost_usd": Decimal("0.01"),
     "generation_meta": WM_GENERATION_META, "rule_ids": [WM_RULE_ID], "writing_release": WM_GENERATION_META[
-        "writing_release"], "memory_enabled": True,
+        "writing_release"], "memory_enabled": True, "fs_id": uuid.uuid4(),
 }
 
 
@@ -349,3 +352,19 @@ async def test_admin_corrected_version_reaches_the_tenant_clean(call):
     # the correction history (audit_log) and its gate names are admin-only: never read here
     assert not any("audit_log" in sql for sql, _ in conn.calls)
     assert "admin" not in flat and "T3_grounding" not in flat
+
+
+def test_fact_sheet_id_never_reaches_the_tenant():
+    """AA-1047: tenant_tour_versions.fs_id (CIS 386) is admin data; the version projection drops it and the key-walk
+    flags it at any depth, while a key that only contains the letters is not caught."""
+    assert "fs_id" in tp.TENANT_HIDDEN_VERSION_FIELDS
+    row = {"id": "v", "rewritten_content": "{}", "created_at": NOW, "fs_id": uuid.uuid4()}
+    assert "fs_id" not in tp.project_version(row)
+    assert tp.forbidden_keys({"v": [{"fs_id": "x"}], "offs_idx": 1}) == ["v[0].fs_id"]
+
+
+@pytest.mark.asyncio
+async def test_version_detail_drops_the_fact_sheet_id():
+    resp, _ = await _version()
+    assert "fs_id" not in resp
+    assert all("fs_id" not in h for h in resp["version_history"])

@@ -22,12 +22,10 @@
 /api/core/identity_*.py                       @pqnghiep1354
 /api/core/staff_*.py                          @pqnghiep1354
 /api/core/secret_compare.py                   @pqnghiep1354
-/api/core/booking_jwt.py                      @pqnghiep1354
 /api/core/login_throttle.py                   @pqnghiep1354
 /api/core/aa544_tenant_pool.py                @pqnghiep1354
 /api/middleware/staff_*.py                    @pqnghiep1354
 /api/middleware/rate_limit.py                 @pqnghiep1354
-/api/lambda_authorizer/                       @pqnghiep1354
 /shared/secrets.py                            @pqnghiep1354
 /scripts/link_staff_identity.py               @pqnghiep1354
 

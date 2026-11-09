@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: catalog.http.v1 (AA-CIS-App → AA-Partner CRM, published tour content and AA-authored content)
-  version: "1.2"
+  version: "1.3"
   description: >-
     Read-only HTTP view of CIS published content for the partner CRM (root ADR 0010 decision 4), because the CRM
     holds no grant on the catalog schema (root ADR 0008a decision 1). Two parts: (1) published tours with days,
@@ -33,10 +33,22 @@ info:
     version is published and after the item is retired (the CRM keeps the version it uses; only the list hides a
     retired item); a draft, an unknown version or a never-published item answers 404 `not_found`. A bad kind,
     locale, version or cursor answers 400 `invalid`.
+    v1.3 (AA-1040, additive; EU AI Act Art. 50(2), root ADR 0019 d19): `Tour.ai` is the machine-readable mark of the
+    AI-written Master text (title, summary and day text are written by the CIS catalog writer model and reviewed by
+    AA staff before they are served). Same shape and values as the mark of the CIS tenant tour reads:
+    `ai_generated` (always true for a served tour), `generator` ("Adventure Asia catalog writer"), `model` (null:
+    the writer model is recorded admin-side only), `generated_at` (the last Master publish of the text, else the
+    first; null when neither is known) and `human_edited` (null: not known at this read). `generated_at` comes from
+    catalog.v_tour.text_updated_at (CIS 359), which a photo change does not move; until 359 is applied on an
+    environment it falls back to v_tour.updated_at, the latest of the text publish and the photo updates (an upper
+    bound). `content_hash` covers `ai`, so every tour's hash and ETag change once when 1.3 ships and once more where
+    a photo changed after the last text publish when 359 lands (the CRM re-reads those tours once); after that they
+    move only with a Master publish. A consumer that copies the tour text keeps the mark with it; a 1.2 consumer
+    may ignore the field.
   x-aa-contract: catalog.http.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
-  x-aa-issues: [AA-928, AA-976, AA-977]
+  x-aa-issues: [AA-928, AA-976, AA-977, AA-1040]
 servers:
   - url: /catalog/v1
 security:
@@ -373,6 +385,31 @@ components:
         photos:
           type: array
           items: {$ref: "#/components/schemas/Photo"}
+        ai: {$ref: "#/components/schemas/AiMark"}
+    AiMark:
+      type: object
+      additionalProperties: false
+      description: >-
+        v1.3 (AA-1040): the machine-readable mark of AI-generated text (EU AI Act Art. 50(2)). The names match the
+        CIS tenant reads and the HTML marks (`ai-generated`, `ai-generator`, `ai-model`, `ai-generated-at`,
+        `ai-human-edited`); root docs/architecture/ai-use-register.md defines them.
+      required: [ai_generated, generator, model, generated_at, human_edited]
+      properties:
+        ai_generated: {type: boolean}
+        generator: {type: string, minLength: 1, maxLength: 200}
+        model:
+          type: [string, "null"]
+          maxLength: 200
+          description: The writer model key, null when it is not known at this read.
+        generated_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the text was generated (for a tour, the last Master publish of its text, never a photo change),
+            null when unknown.
+        human_edited:
+          type: [boolean, "null"]
+          description: True when a person edited the AI text after it was generated, null when not known.
     Destination:
       type: object
       additionalProperties: false

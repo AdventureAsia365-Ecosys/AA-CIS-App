@@ -82,7 +82,7 @@ async def test_create_queues_the_invite_and_the_worker_sends_it(env):
     email = f"aa816inv.{tag}@adventure.asia"
     emails.append(email)
     res = await sd.create_staff(pool, RecordingCognito(), actor_id=owner, email=email, display_name="Invited One",
-                                role="reviewer", booking_role="sales", send_invite=True)
+                                role="content", booking_role="sales", send_invite=True)
     assert res.created and res.invite == sd.INVITE_QUEUED
     jobs = await pool.fetch("SELECT id::text AS id, kind, payload, idempotency_key, max_attempts, status, created_by "
                             "FROM shared.job WHERE kind = $1 AND payload->>'staff_id' = $2", si.KIND, res.staff_id)

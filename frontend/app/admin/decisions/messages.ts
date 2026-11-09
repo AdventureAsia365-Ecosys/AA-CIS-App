@@ -74,7 +74,7 @@ export const DEC = defineMessages(
     termActedHelp: "How many Verdicts actually changed what the stage did (Enforce + Accept/Reject).",
     termCost: "Cost",
     termCostHelp:
-      "TypeSafe charges $0.042 per 1M input tokens (output free). Every call is also in Cost Operations under “Jev · TypeSafe”.",
+      "TypeSafe charges $0.042 per 1M input tokens (output free). Every call is also in Spend under “Jev · TypeSafe”.",
     // editor
     confirmEnforce: (key: string, stage: string) =>
       `Set ${key} to ENFORCE? The ${stage} stage will start acting on confident answers.`,
@@ -104,7 +104,7 @@ export const DEC = defineMessages(
     kpiCalls: (days: number) => `Jev calls · ${days}d`,
     kpiCallsSub: "billed API calls",
     kpiCost: (days: number) => `Cost · ${days}d`,
-    kpiCostSub: "also in Cost Operations",
+    kpiCostSub: "also in Spend",
     kpiVerdicts: "Verdicts",
     kpiVerdictsSub: (cached: number) => `one per question asked · ${cached} from cache`,
     kpiActed: "Acted on",
@@ -269,7 +269,7 @@ export const DEC = defineMessages(
     termActedHelp: "Số phán quyết thật sự đã thay đổi việc bước xử lý làm (Áp dụng + Chấp nhận/Từ chối).",
     termCost: "Chi phí",
     termCostHelp:
-      "TypeSafe tính $0.042 cho mỗi 1M token đầu vào (đầu ra miễn phí). Mọi lượt gọi cũng có trong Cost Operations ở mục “Jev · TypeSafe”.",
+      "TypeSafe tính $0.042 cho mỗi 1M token đầu vào (đầu ra miễn phí). Mọi lượt gọi cũng có trong Spend ở mục “Jev · TypeSafe”.",
     confirmEnforce: (key: string, stage: string) =>
       `Đặt ${key} sang ÁP DỤNG? Bước ${stage} sẽ bắt đầu hành động theo các câu trả lời chắc chắn.`,
     mode: "Chế độ",
@@ -297,7 +297,7 @@ export const DEC = defineMessages(
     kpiCalls: (days: number) => `Lượt gọi Jev · ${days} ngày`,
     kpiCallsSub: "lượt gọi API có tính phí",
     kpiCost: (days: number) => `Chi phí · ${days} ngày`,
-    kpiCostSub: "cũng có trong Cost Operations",
+    kpiCostSub: "cũng có trong Spend",
     kpiVerdicts: "Phán quyết",
     kpiVerdictsSub: (cached: number) => `mỗi câu hỏi một phán quyết · ${cached} từ bộ nhớ đệm`,
     kpiActed: "Đã hành động",

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.llm_client import catalog, connections, deployments, vendor_route
+from shared.llm_client import role_config
 from shared.llm_client.adapters import anthropic_messages
 from shared.llm_client.call_log import _normalize_model_provider, billed_record
 from shared.llm_client.catalog import CatalogModel
@@ -185,8 +186,12 @@ def test_api_only_model_without_a_deployment_fails_clearly(gw):
 
 # ── pinned probe ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_a_pin_reaches_a_deployment_behind_bedrock(gw):
+def test_a_pin_reaches_a_deployment_behind_bedrock(gw, monkeypatch):
     client, fake, state, rt, reset = gw
+    # AA-1039 (review S268): the stage read succeeds with no row (an adhoc_* stage): content. Left to the DB, a
+    # unit run (no DB) fails the read, which now fails closed as pii (no legacy chain, no vendor pin).
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync",
+                        lambda s: role_config.SAFE_DEFAULTS.get(s, role_config._GENERIC_FALLBACK))
     state["deps"] = _deps(priority=100, model="haiku-5-5", wire="claude-haiku-5-5")
     reset()
     resp = client.generate(_req(model_tier="haiku-5-5@anthropic-direct", stage="adhoc_aa1002", max_tokens=64))
@@ -247,7 +252,9 @@ def test_billed_but_unusable_replies_carry_their_usage(gw, reply, match):
     fake.replies.append(stream_reply(text, input_tokens=30, output_tokens=7, **reply))
     with patch("shared.llm_client.client.log_gateway_billed_failure") as logged:
         with pytest.raises(BilledUnusableReply, match=match) as e:
-            client.generate(_req(json_schema=SCHEMA))
+            # S271: budget_retry=False — this test reads one attempt's billed usage; the gateway's truncation retry
+            # of the cut (max_tokens) case is tests/unit/test_s271_gateway_token_budget.py
+            client.generate(_req(json_schema=SCHEMA, budget_retry=False))
     billed = e.value.billed_usage[0]
     assert billed["model"] == "anthropic-api-sonnet-5-5" and billed["tokens_in"] == 30 and billed["tokens_out"] == 7
     assert billed["cost_usd"] > 0
@@ -327,11 +334,15 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     import threading
     import time
 
-    loads = {"connections": 0, "deployments": 0, "aliases": 0}
+    from shared.llm_client import route_settings
+    loads = {"connections": 0, "deployments": 0, "aliases": 0, "route_settings": 0}
     gate = threading.Event()
 
     def slow_fetch(fn):
         gate.wait(2)
+        if fn is route_settings._fetch:               # AA-1042: the deployment read watches the route version first
+            loads["route_settings"] += 1
+            return None
         if fn is connections._fetch_all:
             loads["connections"] += 1
             return {"anthropic-direct": anthropic_connection()}
@@ -344,6 +355,7 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     monkeypatch.setattr(connections, "run_sync", slow_fetch)
     connections.invalidate()
     deployments.invalidate()
+    route_settings.invalidate()
     found = []
     threads = [threading.Thread(target=lambda: found.append(vendor_route.vendor_deployment_for(SONNET55)))
                for _ in range(8)]
@@ -353,5 +365,5 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     gate.set()
     for t in threads:
         t.join(5)
-    assert loads == {"connections": 1, "deployments": 1, "aliases": 1}
+    assert loads == {"connections": 1, "deployments": 1, "aliases": 1, "route_settings": 1}
     assert len(found) == 8 and all(f is not None and f.connection.connection_key == "anthropic-direct" for f in found)

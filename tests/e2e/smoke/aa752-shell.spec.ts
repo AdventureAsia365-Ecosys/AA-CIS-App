@@ -7,12 +7,16 @@
 //       table on the page, not hardcoded) returns ≥ 1 tour row;
 //   (d) at 390px the bottom nav is visible and the page has no horizontal overflow (prints the
 //       offending elements on failure);
-//   (e) AA-883: an admin sees the Platform and CIS Content sections with fold toggles, the Apps block
-//       links to Booking admin in a new tab (no Tenant portal link), and in the collapsed rail the
-//       section headers become plain dividers.
+//   (e) AA-1039 (S266, root ADR 0019 d13): an admin sees the seven nav groups in order (Home, Tenants,
+//       AA Catalogue, Tenant content QA, AI & spend, Writing Lab, Platform), each with a fold toggle, the Apps
+//       block links to Booking admin in a new tab (no Tenant portal link), and the collapsed rail has no group
+//       headers (AA-883's two sections are gone).
+//   (f) S264: the nav groups fold (kit NavGroup): the group of the current page is open on arrival, folding it
+//       hides its items, a reload opens it again, and (admin) an unfolded other group stays unfolded after a
+//       reload (localStorage aa_nav_groups:cis-admin).
 // AA-878 — viewer mode (the smoke account is the read-only viewer): the shell is checked on pages the viewer
 // may open (/admin/review, /admin/master-content), the logo lands on the viewer's landing page (Overview is
-// admin-only, the proxy redirects), and (e) — the admin Platform section — is skipped.
+// admin-only, the proxy redirects), and (e) — the admin groups — is skipped.
 import { test, expect } from '@playwright/test';
 import {
   ADMIN_STATE, baseUrl, installBypassRoute, isAdminRun, landingPathFor, smokeRole, waitForShellHydrated,
@@ -141,18 +145,23 @@ test.describe('AA-752 — admin shell', { tag: '@staff' }, () => {
     }
   });
 
-  test('(e) AA-883: Platform / CIS Content sections and the Apps links', async ({ browser }) => {
-    test.skip(!isAdminRun(), 'AA-878: the Platform section is admin-only');
+  test('(e) AA-1039: the seven nav groups and the Apps links', async ({ browser }) => {
+    test.skip(!isAdminRun(), 'AA-878: most groups are admin-only');
     const { context, page } = await adminPage(browser);
     try {
       await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
       await waitForShellHydrated(page);
       const rail = page.getByTestId('admin-sidebar');
       await expect(rail).toHaveAttribute('data-collapsed', 'false', { timeout: 5000 });
-      await expect(page.getByTestId('nav-section-platform')).toBeVisible({ timeout: 10000 });
-      await expect(page.getByTestId('nav-section-cis')).toBeVisible();
-      await expect(page.getByTestId('nav-section-toggle-platform')).toBeVisible();
-      await expect(page.getByTestId('nav-section-toggle-cis')).toBeVisible();
+      const ids = ['home', 'tenants', 'aa-catalogue', 'tenant-content-qa', 'ai-spend', 'writing-lab', 'platform'];
+      for (const id of ids) {
+        await expect(page.getByTestId(`nav-group-${id}-toggle`)).toBeVisible({ timeout: 10000 });
+      }
+      // In display order: the groups' top edges increase down the sidebar.
+      const tops: number[] = [];
+      for (const id of ids) tops.push((await page.getByTestId(`nav-group-${id}`).boundingBox())?.y ?? -1);
+      expect(tops, 'nav groups in the ADR 0019 d13 order').toEqual([...tops].sort((x, y) => x - y));
+      await expect(page.getByTestId('nav-section-toggle-platform')).toHaveCount(0);
 
       const booking = page.getByTestId('sidebar-app-booking');
       await expect(booking).toBeVisible();
@@ -160,11 +169,48 @@ test.describe('AA-752 — admin shell', { tag: '@staff' }, () => {
       await expect(booking).toHaveAttribute('target', '_blank');
       await expect(page.getByTestId('sidebar-app-portal')).toHaveCount(0);
 
-      // Collapsed rail: no clickable section header, a divider instead.
+      // Collapsed rail: no clickable group header, every item icon still there.
       await page.getByTestId('sidebar-collapse').click();
       await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 5000 });
-      await expect(page.getByTestId('nav-section-toggle-platform')).toHaveCount(0);
-      await expect(page.getByTestId('nav-section-divider-platform')).toHaveCount(1);
+      await expect(page.getByTestId('nav-group-platform-toggle')).toHaveCount(0);
+      await expect(page.getByTestId('nav-group-platform').getByRole('button', { name: 'Jobs' })).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('(f) S264: nav groups fold, the current page group opens on arrival, choices persist', async ({ browser }) => {
+    const { context, page } = await adminPage(browser);
+    try {
+      await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
+      await waitForShellHydrated(page);
+      await expect(page.getByTestId('admin-sidebar')).toHaveAttribute('data-collapsed', 'false', { timeout: 5000 });
+      // AA-1039: /admin/jobs sits in Platform, /admin/review in AA Catalogue.
+      const active = isAdminRun() ? 'platform' : 'aa-catalogue';
+      const toggle = page.getByTestId(`nav-group-${active}-toggle`);
+      const group = page.getByTestId(`nav-group-${active}`);
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
+      await expect(group.getByRole('group')).toBeVisible();
+
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false', { timeout: 5000 });
+      await expect(group.getByRole('group')).toBeHidden();
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForShellHydrated(page);
+      await expect(page.getByTestId(`nav-group-${active}-toggle`)).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
+
+      if (isAdminRun()) {
+        const lab = page.getByTestId('nav-group-writing-lab-toggle');
+        const was = await lab.getAttribute('aria-expanded');
+        if (was === 'false') {
+          await lab.click();
+          await expect(lab).toHaveAttribute('aria-expanded', 'true', { timeout: 5000 });
+        }
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await waitForShellHydrated(page);
+        await expect(page.getByTestId('nav-group-writing-lab-toggle')).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
+      }
     } finally {
       await context.close();
     }

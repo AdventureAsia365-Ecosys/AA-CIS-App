@@ -49,7 +49,8 @@ MIGRATION_244 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migr
 # skipped or fail there), plus the legacy entries registered "absent on Dev". Missing is fine (nothing to erase);
 # unregistered is not.
 CI_ABSENT = {"gold_aa_internal.tenant_tour_versions", "acp_shared.acp_output_rules", "acp_deliver.tenant_tour_pages"} \
-    | {t.table for t in inv.TENANT_TABLES if "absent on Dev" in t.reason}
+    | {t.table for t in inv.TENANT_TABLES if "absent on Dev" in t.reason} \
+    | {"shared.tenant_tripplanner_site"}    # AA-1038: CIS 379 (catalog recipe) is skipped by the replay
 
 # Live definition of gold_aa_internal.tenant_tour_versions (db-schema-reference.md, 22/10/2026): created by
 # migration 001, which the replay skips, so this module builds it for its own tests and drops it afterwards
@@ -211,6 +212,17 @@ async def _seed(pools, tid: str, stage: str) -> dict:
                                                calls, fallback_calls, tokens_in, tokens_out, cost_usd, updated_at)
             VALUES (DATE '2026-01-01', 'cis', $1::uuid, $2, 'writer', 'm1', 'bedrock', 'acc3', false,
                     $3, 0, 100, 10, 1.5, now())""", tenant, stage, calls)
+    # AA-1045 (372): the hourly usage rollup (merge). The tenant has an ok row whose NULL-tenant twin exists and an
+    # error row that has none (the merge inserts it).
+    for tenant, status, n in ((tid, "ok", 3), (None, "ok", 5), (tid, "error", 1)):
+        await admin.execute("""
+            INSERT INTO shared.ai_usage_hourly (hour, source, app, provider, account, model, stage, role, tenant_id,
+                                                status, traffic, requests, ledger_rows, tokens_in, cost_usd,
+                                                latency_ms_sum, latency_ms_count, latency_hist)
+            VALUES (TIMESTAMPTZ '2026-01-01 05:00+00', 'llm', 'cis', 'bedrock', 'acc3', 'm1', $2, 'writer',
+                    $1::uuid, $3, 'live', $4::integer, $4::integer, 10 * $4::integer, 0.5 * $4::integer,
+                    100 * $4::integer, $4::integer, array_fill(0, ARRAY[1]) || $4::integer || array_fill(0, ARRAY[18]))
+            """, tenant, stage, status, n)
     job_id, _ = await queue.enqueue(admin, "t9_write", {"tenant_id": tid, "piece_id": piece})
     await admin.execute("UPDATE shared.job SET status = 'succeeded', finished_at = now() WHERE id = $1::uuid", job_id)
     await admin.execute("""INSERT INTO acp_shared.audit_log (id, tenant_id, actor, action, resource_type, resource_id,
@@ -284,8 +296,10 @@ async def _seed_learned_writing(pools, tid: str) -> str:
     """AA-923 WM-33: one row in every learned-writing store a tenant leaves behind (ADR 0010 decision 11, tenant text
     only in deletable tables): a preference summary (writing_rule kind preference_summary, AA-921), a masked voice
     example pinned in a rules draft (writing_exemplar + writing_memory_release + writing_memory_release_exemplar), a
-    shadow output of a release run, a keep decision, a disagreement-queue item and a human label on a T2 version
-    (acp_shared.content_label, CIS 315). Returns a marker shared by the rows for the after-check."""
+    shadow output of a release run, a keep decision, a disagreement-queue item, a human label on a T2 version
+    (acp_shared.content_label, CIS 315) and a claim label of a T9 piece (shared.eval_claim_label, CIS 388; AA-1048),
+    plus one platform (A1) claim label that must stay (reason "<marker>-a1"). Returns a marker shared by the tenant
+    rows for the after-check."""
     from services.writing_memory import exemplars as ex
     admin, _ = pools
     mark = f"zz923-{tid[:8]}"
@@ -334,6 +348,16 @@ async def _seed_learned_writing(pools, tid: str) -> str:
         await c.execute(
             "INSERT INTO acp_shared.content_label (subject_type, subject_id, tenant_id, labelled_by, label, reason) "
             "VALUES ('t2_version', $1, $2::uuid, 'admin:pytest', 'light', $3)", version, tid, mark)
+        claim = "Fictional Valeport walks stay slow and small."
+        for scope, tenant, writer, reason in (("tenant", tid, "t9_blog", mark), ("platform", None, "a1", f"{mark}-a1")):
+            await c.execute(
+                "INSERT INTO shared.eval_claim_label (set_id, set_version, writer, scope, tenant_id, sample_id, "
+                "piece_id, content_sha256, field, span_start, span_end, claim_text, claim_hash, claim_class, label, "
+                "labeller_kind, labeller, lens, reason, split, adjudication) VALUES ('ZZ-839', '1.0.0', $1, $2, "
+                "$3::uuid, $4, CASE WHEN $2 = 'tenant' THEN gen_random_uuid() END, $5, 'content_text', 0, $6, $7, "
+                "encode(sha256(convert_to($4 || $8, 'UTF8')), 'hex'), 'fact.number', 'ok', 'agent_panel', "
+                "'pytest', 'source', $8, 'train', 'agreed')",
+                writer, scope, tenant, f"zz839-{writer.replace('_', '-')}", sha, len(claim), claim, reason)
     return mark
 
 
@@ -351,7 +375,10 @@ LEARNED_WRITING = {
     "shared.writing_memory_keep": "SELECT count(*) FROM shared.writing_memory_keep WHERE reason = $1",
     "shared.writing_memory_disagreement": "SELECT count(*) FROM shared.writing_memory_disagreement WHERE note = $1",
     "acp_shared.content_label": "SELECT count(*) FROM acp_shared.content_label WHERE reason = $1",
+    "shared.eval_claim_label": "SELECT count(*) FROM shared.eval_claim_label WHERE reason = $1",
 }
+# AA-1048: the platform (A1) claim label seeded next to the tenant's; an offboarding never deletes it.
+PLATFORM_CLAIM = "SELECT count(*) FROM shared.eval_claim_label WHERE reason = $1 || '-a1' AND scope = 'platform'"
 
 
 async def _learned_counts(admin, mark: str) -> dict:
@@ -404,6 +431,7 @@ async def test_tenant_dry_run_counts_and_writes_nothing(pool):
     assert rows[("acp_shared.quarter_plan", "null_first:current_version_id")] == 1
     assert rows[("shared.llm_call_log", "detach")] == 2
     assert rows[("shared.llm_call_daily", "merge")] == 1
+    assert rows[("shared.ai_usage_hourly", "merge")] == 2            # AA-1045: the ok and the error row
     assert rows[("shared.job", "delete")] == 1
     assert rows[("acp_shared.audit_log", "keep")] == 1
     # review round: T2 chain, its review row and A3 fingerprint, owner_scope + tour-path atoms, retired run-tour jobs
@@ -474,14 +502,22 @@ async def test_a_restore_after_the_first_checks_stops_the_apply_inside_the_trans
     # the restore lands after apply_refusals read the (still offboarded) row and before the transaction; it writes
     # no audit row here, so the counts (and the fingerprint) stay the same: only the locked re-check can stop it.
     # AA-978 (CIS 276): a real restore also writes a tenant.unlocked feed event, which alone changes the counts; the
-    # feed trigger is off for this one statement so the test still reaches the locked re-check.
+    # feed trigger is off for this one statement so the test still reaches the locked re-check. AA-1028 (CIS 354): so is
+    # the account.status_changed trigger, which a restore also fires, and (CIS 355) the content-subscription bridge,
+    # which makes the canceled subscription active again and re-materialises the entitlements.
     stale = dict(await admin.fetchrow("SELECT tenant_id, is_active, cancelled_at FROM shared.tenants "
                                       "WHERE tenant_id = $1::uuid", tid))
+    feeds = [r["tgname"] for r in await admin.fetch(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid = 'shared.tenants'::regclass "
+        "AND tgname IN ('tenants_membership_feed_upd', 'tenants_account_event_upd', "
+        "'tenants_content_subscription_upd')")]
     async with admin.acquire() as c, c.transaction():
-        await c.execute("ALTER TABLE shared.tenants DISABLE TRIGGER tenants_membership_feed_upd")
+        for name in feeds:
+            await c.execute(f"ALTER TABLE shared.tenants DISABLE TRIGGER {name}")
         await c.execute("UPDATE shared.tenants SET cancelled_at = NULL, is_active = true WHERE tenant_id = $1::uuid",
                         tid)
-        await c.execute("ALTER TABLE shared.tenants ENABLE TRIGGER tenants_membership_feed_upd")
+        for name in feeds:
+            await c.execute(f"ALTER TABLE shared.tenants ENABLE TRIGGER {name}")
     real = ej.apply_refusals
     monkeypatch.setattr(ej, "apply_refusals",
                         lambda payload, dry_job, tenant_row, now, env=None: real(payload, dry_job, stale, now, env))
@@ -526,6 +562,13 @@ async def test_tenant_apply_erases_children_first_and_leaves_other_tenants(pool)
     assert len(log) == 2 and all(r["tenant_id"] is None and r["content_piece_id"] is None for r in log)
     daily = await admin.fetch("SELECT tenant_id, calls FROM shared.llm_call_daily WHERE stage = $1", stage)
     assert [(r["tenant_id"], r["calls"]) for r in daily] == [(None, 8)]
+    # AA-1045: the hourly rollup summed into the NULL-tenant rows (histograms bucket by bucket), the tenant rows gone
+    hourly = await admin.fetch("SELECT tenant_id, status, requests, tokens_in, cost_usd, latency_ms_count, "
+                               "latency_hist[2] AS b2, cardinality(latency_hist) AS n FROM shared.ai_usage_hourly "
+                               "WHERE stage = $1 ORDER BY status", stage)
+    assert [(r["tenant_id"], r["status"], r["requests"], r["tokens_in"], float(r["cost_usd"]), r["latency_ms_count"],
+             r["b2"], r["n"]) for r in hourly] == [(None, "error", 1, 10, 0.5, 1, 1, 20),
+                                                    (None, "ok", 8, 80, 4.0, 8, 8, 20)]
     # audit chain kept + one erasure row, counts only
     actions = [r["action"] for r in await admin.fetch(
         "SELECT action FROM acp_shared.audit_log WHERE tenant_id = $1::text ORDER BY created_at", tid)]
@@ -796,3 +839,4 @@ async def test_offboarding_erases_every_learned_writing_store_and_no_other_tenan
     assert res["mode"] == "apply" and res["verified"] is True, res.get("verified_left")
     assert await _learned_counts(admin, mine) == {t: 0 for t in LEARNED_WRITING}
     assert await _learned_counts(admin, theirs) == {t: 1 for t in LEARNED_WRITING}   # the other tenant: untouched
+    assert await admin.fetchval(PLATFORM_CLAIM, mine) == 1               # AA-1048: platform claim labels stay

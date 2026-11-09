@@ -429,7 +429,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
 
 def _contract_revert(before: dict, after: dict, keys, forbidden, tour: dict) -> dict:
     """AA-925: the repair contract (services/quality/repair_contract.py) over the repaired fields — it wraps and
-    replaces the AA-641 revert below, keeping its behaviour: invariant 1's gate runner is the forbidden-word
+    replaces the AA-641 per-field revert, keeping its behaviour: invariant 1's gate runner is the forbidden-word
     scan, so a field whose repair ADDED a forbidden word gets its pre-repair value back. It also reverts a field
     whose repair added a figure the field and the source lack, cut its last sentence short ("...a
     20-kilometre."), broke a bracket / bold pair, or (AA-645, ``days_kept``) changed the itinerary's "Day N" blocks —
@@ -466,27 +466,23 @@ def _invariants(reverted: dict) -> list[str]:
     return sorted({why.split(":", 1)[0] for whys in reverted.values() for why in whys})
 
 
-def _revert_introduced_forbidden(before: dict, after: dict, keys, forbidden) -> dict:
-    """AA-641: restore, per field, the pre-repair value of any field whose repair ADDED a forbidden
-    word it did not have before. AA-925: production uses ``_contract_revert`` (same rule as invariant 1);
-    this stays as the reference the AA-641 tests pin. Mutates `after`; returns {field: [words added]}. A field that
-    already contained the word keeps its repair (the repair did not make it worse)."""
-    reverted = {}
-    for k in keys:
-        if k not in after or k not in before:
-            continue
-        added = forbidden_in(after[k], forbidden) - forbidden_in(before[k], forbidden)
-        if added:
-            after[k] = before[k]
-            reverted[k] = sorted(added)
-    return reverted
-
-
 def flag_fix_node(state: dict) -> dict:
     """AA-134: Fix only the flagged fields identified by brand_audit_node."""
     # AA-204: run if brand-flagged OR a deterministic SEO length/sentence code fired.
     # Pass-through a fully-clean pass ("pass"/"manual_check" with no det SEO codes) unchanged.
     if not _should_fix(state):
+        return {
+            **state,
+            "fix_pass_applied": False,
+            "fix_pass_fields":  [],
+        }
+    # S271 W0 (root ADR 0020 D8): an elephant-riding tour is kept as it is for a human; a whole-field rewrite here
+    # (source-blind) could take the ride out, which the policy forbids. No LLM edit; the tour stays manual_check.
+    # The code is shared with the LLM audit's other fact checks, so the detector must hit the page or the source too.
+    from services.quality import elephant_policy as _ep
+    if _ep.POLICY_CODE in (state.get("brand_audit_codes") or []) and _ep.scan(state.get("generated"),
+                                                                              state.get("tour")):
+        logger.info("flag_fix_skipped_policy_keep", reason="elephant_riding")
         return {
             **state,
             "fix_pass_applied": False,
@@ -593,13 +589,13 @@ def flag_fix_node(state: dict) -> dict:
             meta_rules = f"""
 
 SEO_META RULES:
-- SEO_META MUST be 140-155 characters and a COMPLETE sentence (ends with a period, \
+- SEO_META MUST be {SEO_META_MIN}-{SEO_META_MAX} characters and a COMPLETE sentence (ends with a period, \
 not ending on a preposition/conjunction, contains a clear verb).
 - Include the DFS primary topic + one intent clue + one practical reassurance when available.
 - Do NOT pad with filler to reach length; rewrite naturally to land in band.
-- NEVER return meta under 140 chars.
-- If the current SEO_META exceeds 155 chars, SHORTEN it to land within 140-155 as a COMPLETE \
-sentence ending in a period — do NOT truncate mid-phrase.
+- NEVER return meta under {SEO_META_MIN} chars.
+- If the current SEO_META exceeds {SEO_META_MAX} chars, SHORTEN it to land within {SEO_META_MIN}-{SEO_META_MAX} as a \
+COMPLETE sentence ending in a period — do NOT truncate mid-phrase.
 Current SEO_META ({len(_cur_meta)} chars): {json.dumps(_cur_meta)}"""
 
         user_prompt = f"""{fix_user_prompt_head(state)}

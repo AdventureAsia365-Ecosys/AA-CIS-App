@@ -17,7 +17,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
-from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
+from _acc2_routes import candidates_off_routes  # noqa: E402
+from conftest import APP_USER_356_GRANTS, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
+from _rls_fixture_helpers import key_hash_standin  # noqa: E402
 
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M320 = os.path.join(MIGRATIONS, "320_llm_registry_v2_families_params.sql")
@@ -25,6 +27,19 @@ M321 = os.path.join(MIGRATIONS, "321_tenant_ai_budget_prompt_registry.sql")
 # AA-1017 (324): the five acc2 candidate models are catalogued under the 320 families (vendor amazon / meta / moonshot),
 # which the pre-320 vendor CHECK refuses. The fixture sets them aside for the test and applies 324 again afterwards.
 M324 = os.path.join(MIGRATIONS, "324_llm_acc2_candidate_models.sql")
+# AA-1024: 334 fills the route_deadline_s that a 320 re-run from the pre-320 shape leaves NULL, and 337 records the
+# Llama 4 capabilities on the rows 324 re-creates; the teardown applies both again so later modules see the full chain.
+M334 = os.path.join(MIGRATIONS, "334_llm_route_deadlines.sql")
+M337 = os.path.join(MIGRATIONS, "337_llm_llama4_structured_prompt_mode.sql")
+# AA-1028 R1: 353 / 355 build views on shared.tenant_ai_budget (the entitlement resolver and the contract view) and a
+# re-sync trigger on it. A test that drops the table drops them too (CASCADE); the teardown applies both again.
+M353 = os.path.join(MIGRATIONS, "353_tenant_control_plane_tables.sql")
+M355 = os.path.join(MIGRATIONS, "355_tenant_plans_seed_and_entitlement_view.sql")
+# AA-1028 R1 slice 2: 356 restates the resolver on top of 353's (a 353 re-run puts the old one back), so it follows.
+M356 = os.path.join(MIGRATIONS, "356_tenant_entitlement_resolver_fixes.sql")
+# AA-1028 R1 slice 3: 361 restates the resolver on top of 356's (the trial grace, platform keys from the content plan).
+M361 = os.path.join(MIGRATIONS, "361_tenant_entitlement_trial_grace.sql")
+LATER_ON_TENANT_AI_BUDGET = (("353", M353), ("355", M355), ("356", M356), ("361", M361))
 FAMILIES = {"anthropic", "openai", "cohere", "typesafe", "amazon", "meta", "moonshot"}
 OLD_HEALTH_CLASSES = "('access_denied', 'quota_exhausted', 'throttled', 'credential', 'other')"
 OLD_VENDORS = "('anthropic', 'openai', 'cohere', 'typesafe')"
@@ -68,14 +83,30 @@ def cur():
         c.execute("DELETE FROM shared.tenant_ai_budget WHERE updated_by = 'zz-aa1017'")
         _run(c, M320)
         _run(c, M321)
-        _run(c, M324)
+        with candidates_off_routes(c):          # AA-1026 I6: 331 / 332 routes name 324's models; 324's guard refuses
+            _run(c, M324)
+        _run(c, M334)
+        _run(c, M337)
+        for version, path in LATER_ON_TENANT_AI_BUDGET:
+            c.execute("SELECT 1 FROM shared.schema_versions WHERE version = %s", (version,))
+            if c.fetchone():
+                if version == "356":
+                    c.execute(APP_USER_356_GRANTS)  # 353's re-run re-created the resolver without app_user's grant
+                if version == "355":
+                    with key_hash_standin(c):       # AA-1036: 355's probe INSERT names the column CIS 369 dropped
+                        _run(c, path)
+                else:
+                    _run(c, path)
         conn.close()
 
 
 def _set_324_aside(c):
     """Migration 324's rows out (they need the 320 families); the fixture applies 324 again at teardown."""
     c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = 'migration-324-aa1017'")
-    c.execute("DELETE FROM shared.llm_model_catalog WHERE updated_by = 'migration-324-aa1017'")
+    # 333 (AA-1026) re-signs the llama4-scout row when it records the model's forced tool choice, 337 (AA-1024) both
+    # Llama 4 rows when it records their structured output mode
+    c.execute("DELETE FROM shared.llm_model_catalog "
+              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024')")
     c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
 
 
@@ -193,8 +224,10 @@ def test_health_takes_truncated(cur):
                   "VALUES ('acc3', 'sonnet-5', 'nonsense')")
 
 
-def test_route_deadline_is_null_and_bounded(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE route_deadline_s IS NOT NULL")
+def test_route_deadline_is_bounded_and_set_by_334_only(cur):
+    # 320 adds the column with no value; 334 (AA-1024 A3) gives every row the deadline of its role
+    # (tests/integration/test_aa1024_migrations_334_338.py), so no row is NULL after the full chain.
+    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE route_deadline_s IS NULL")
     assert cur.fetchone()["n"] == 0
     _refused(cur, "UPDATE shared.llm_role_config SET route_deadline_s = 0")
     cur.execute("SELECT privilege_type FROM information_schema.column_privileges WHERE table_schema = 'shared' "
@@ -222,7 +255,7 @@ def test_320_321_grants_hold_under_the_owner_default_privileges(cur):
     assert cur.fetchone()["n"] == 0, "the test user already has default privileges in shared"
     cur.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA shared {_OWNER_DEFAULT}")
     try:
-        cur.execute("DROP TABLE shared.prompt_version, shared.tenant_ai_budget")
+        cur.execute("DROP TABLE shared.prompt_version, shared.tenant_ai_budget CASCADE")   # + the 353 / 355 views
         _undo_320(cur)
         cur.execute("CREATE TABLE shared.zz_aa1017_default_acl (x int)")      # the default really applies here
         assert _table_privs(cur, "zz_aa1017_default_acl", "cis_app") == {"SELECT", "INSERT", "UPDATE", "DELETE"}

@@ -22,14 +22,14 @@ import os
 
 import structlog
 
-from services.content_generation import t2_judge_breakdown as t2_breakdown
+from services.content_generation import t2_interim, t2_judge_breakdown as t2_breakdown
 from services.content_generation.stages import stage_for
 from services.content_generation.brand_fit import (
     _JUDGE_SEED, _JUDGE_TEMPERATURE, RUN_BILLING_KEYS, billed_calls, has_brand_signals, run_billing, runs_signal,
     score_brand_fit,
 )
 from shared.llm_client.call_log import (
-    V2_BILLED_KEYS, billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
+    ROUTE_KEYS, V2_BILLED_KEYS, billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
 )
 from services.quality.registry import threshold
 
@@ -151,6 +151,25 @@ def a1_brand_fit_rubric(state: dict) -> str:
         logger.info("judge_rubric_v2_without_source", fallback="v1")
         return "v1"
     return rubric
+
+
+# S271 W0 (root ADR 0020 D9, AA-900 l16) — the S1 brand judge leaves the live path. On a writer-v2 draft (the live A1
+# writer) it was report-only already (d02): it decided nothing, cost one judge call per draft (plus the revalidate
+# call) and fed only metadata.judge. Off (the default), judge_node makes no call on an A1 v2 draft and the brand audit
+# takes the deterministic pre-audit codes, as it did when the judge ran (brand_audit_node._audit_from_judge). The
+# s1_judge stage and route stay for the Writing Lab sampler (about 20 tours a week, pinned); the judge returns as a
+# live gate only at kappa >= 0.6 on >= 40 labelled pairs (D9). "on" (worker task def) restores the call (break
+# glass; A1_V2_BRAND_FIT_GATE=enforce only acts then). A v1 draft (legacy writer) is still judged: brand fit gates it.
+S1_JUDGE_LIVE_ENV = "S1_JUDGE_LIVE"
+
+
+def s1_judge_live() -> bool:
+    return os.environ.get(S1_JUDGE_LIVE_ENV, "").strip().lower() in _ON_VALUES
+
+
+def s1_judge_off_live_path(state: dict) -> bool:
+    """True when judge_node makes no call for this draft: an A1 writer-v2 draft with S1_JUDGE_LIVE off."""
+    return not state.get("is_tenant_rewrite") and is_v2_draft(state) and not s1_judge_live()
 
 
 def a1_v2_gate_enforced() -> bool:
@@ -277,6 +296,7 @@ def _judge_rows(stage: str, result, verdict_signal: dict) -> list[dict]:
             cache_read_tokens=r.get("cache_read_tokens"), cache_write_tokens=r.get("cache_write_tokens"),
             pricing_mode=r.get("pricing_mode"), connection_key=r.get("connection_key"),
             **{k: r.get(k) for k in V2_BILLED_KEYS},          # AA-804: the run's own attempt facts
+            **{k: r.get(k) for k in ROUTE_KEYS},              # AA-1042: the run's own route trace
             quality_signal={"judge_run": i, "of": n, "verdict_row": False, "brand_fit": r.get("brand_fit"),
                             "distinct": r.get("distinct"), "mission": r.get("mission")}))
     rows += billed_unusable_rows(stage=stage, role="judge", billed=failed, error="judge reply unusable",
@@ -313,6 +333,11 @@ def judge_node(state: dict) -> dict:
     validate_score = state.get("quality_score", 0.0)
     generated = state.get("generated", {})
 
+    # S271 W0 (D9): the S1 judge is off the live path for a writer-v2 draft (no call; validate's score stands).
+    if s1_judge_off_live_path(state):
+        logger.info("judge_skipped", reason="s1_judge_off_live_path")
+        return state
+
     # Skip judging when there is no brand differentiation profile (legacy/default brands): scoring
     # cross-brand distinctiveness against an empty profile is meaningless and would burn GPT cost.
     if not generated or not has_brand_signals(state):
@@ -326,14 +351,17 @@ def judge_node(state: dict) -> dict:
     log_stage = stage_for(state, "s1_judge")
     try:
         is_t2 = bool(state.get("is_tenant_rewrite"))
+        t2_report_only = is_t2 and t2_interim.enabled()   # S271 W0: T2 interim profile (t2_interim.py)
         if is_t2:
             mission = t2_mission(state)          # AA-792: the tenant's own core_idea, never AA's
-            repeat_mode = t2_judge_repeat()      # AA-801
+            # AA-801; S271 W0: the interim profile makes one call per draft (no median3, no near-band repeat)
+            repeat_mode = T2_JUDGE_REPEAT_DEFAULT if t2_report_only else t2_judge_repeat()
             anchors = t2_judge_anchors()         # AA-801 option (b)
             result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
                                      stage=stage_for(state, "s1_judge"), mission=mission or None,
                                      **({"repeat": T2_JUDGE_REPEATS[repeat_mode]}
                                         if repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),
+                                     **({"near_band_repeat": False} if t2_report_only else {}),
                                      **({"anchors": True} if anchors else {}))
             gate = t2_judge_gate()
             judge_score = t2_judge_score(result, gate, has_mission=bool(mission))
@@ -354,7 +382,8 @@ def judge_node(state: dict) -> dict:
             mission_source = None
             repeat_mode = None
             anchors = False
-        report_only = gate == A1_REPORT_ONLY_GATE
+        # S271 W0: a T2 verdict under the interim profile is report-only too (status from validate + T3 hard codes).
+        report_only = gate == A1_REPORT_ONLY_GATE or t2_report_only
         v2_signal = _v2_signal(result)
         tiebreak = None
         # The Jev tie-break Question (a1_brand_fit) was set up on v1 brand-angle scores: a v2 verdict skips it
@@ -398,6 +427,8 @@ def judge_node(state: dict) -> dict:
                 "mission_present": result.mission_present,
                 "passed": new_score >= _MIN_QUALITY,
                 "gate": gate,  # AA-792: what judge_score was gated on
+                # S271 W0: the verdict did not set the score (T2 interim profile)
+                **({"report_only": True} if t2_report_only else {}),
                 # AA-792: T2 only — "tenant_core_idea" (mission named in the prompt, may cap) or
                 # "none" (tenant has no core_idea: mission never caps). Absent for A1 (unchanged).
                 **({"mission_source": mission_source,

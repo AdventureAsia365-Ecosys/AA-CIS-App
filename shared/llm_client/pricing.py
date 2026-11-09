@@ -23,205 +23,83 @@ read 0.1x the input rate unless the catalog row states it (Opus 5.5 0.05x, Fable
 (5-minute TTL) or 2x (1-hour TTL); Message Batches 50% off every token, cache tokens included; ``inference_geo:
 "us"`` 1.1x; Claude Haiku 5.5 $0.10 / $0.50 per MTok up to 100K prompt tokens, $0.50 / $2.50 above. Bedrock and
 OpenAI rates are the catalog rows (``shared.llm_model_catalog``) and the deployment overrides.
+
+AA-1024 A10 (root ADR 0009 decision 13): the arithmetic, the tables and ``Usage`` / ``Quote`` are the shared core's
+(``shared/aa_llm/pricing.py``, the module TripPlanner and the CRM vendor). This module adds what only CIS does: it
+reads the catalog row itself (``_catalog_rates``), logs an estimate, finds a logged row's deployment.
 """
-from dataclasses import dataclass
 from typing import Optional
 
 import structlog
 
+from shared.aa_llm import pricing as core
+
 logger = structlog.get_logger()
 
-# Bedrock model IDs (cross-region inference profiles)
-# AA-348 — BEDROCK_SONNET names the acc2-NATIVE (T1) Sonnet model only. When a call falls
-# through to the satellite account (T1.5a, shared/llm_client/bedrock_satellite.py — the
-# common path in practice, native Sonnet is blocked for channel-program accounts, AA-291/AA-329),
-# the model actually invoked is a DIFFERENT, newer version: `global.anthropic.claude-sonnet-4-6`
-# (see bedrock_satellite.py's _PROFILE_ID_SONNET / the deployment sonnet@acc3). This is a
-# deliberate, live-verified difference between the two tiers (bedrock_satellite.py's own
-# 16/07/2026 STATUS note), NOT a copy-paste bug — investigated and confirmed still the real state
-# under AA-348. client.py still passes this constant into the satellite call path, but only as a
-# TIER SELECTOR / COST_TABLE key, never as a claim about the literal model string that tier
-# invokes — check bedrock_satellite.py directly if you need the real satellite model version.
-BEDROCK_SONNET = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-BEDROCK_HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-
-# $ per 1K tokens, {"in": ..., "out": ...}
-# AA-635 — Haiku was {"in": 0.00025, "out": 0.00125}, i.e. Claude *3* Haiku's $0.25/$1.25 per MTok.
-# The model actually invoked everywhere is Claude Haiku 4.5 ($1/$5 per MTok), so every Haiku call
-# was logged at 25% of what AWS bills. Sonnet 4.5 (acc2-native) and Sonnet 4.6 (satellite) share
-# $3/$15, so the one Sonnet entry prices both tiers correctly.
-COST_TABLE = {
-    BEDROCK_SONNET: {"in": 0.003, "out": 0.015},
-    BEDROCK_HAIKU: {"in": 0.001, "out": 0.005},
-    "gpt-4.1": {"in": 0.002, "out": 0.008},
-}
-
-# AA-635 — Anthropic prompt-cache pricing, as multiples of the model's base input rate. Anthropic
-# usage reports cache tokens SEPARATELY from `input_tokens` (which excludes them), so a caller that
-# prices only input/output tokens misses every cache write (billed at 1.25x) and read (0.1x).
-# 1.25x is the 5-minute-TTL write rate — the only TTL prompt_cache.py sets.
-CACHE_WRITE_MULTIPLIER = 1.25
-CACHE_READ_MULTIPLIER = 0.1
-
-# Mechanism-B callers (invoke_claude) pass the short model key ("sonnet"/"haiku"), not the full
-# Bedrock model id — this maps that key to the same COST_TABLE entry Mechanism A uses, so both
-# mechanisms price identically instead of drifting. AA-635: also maps the `model_used` labels
-# bedrock_satellite.py returns ("haiku-4-5"/"sonnet-4-6", optionally "satellite-"-prefixed), which
-# some log call sites pass straight through — those used to miss the table and fall back to Sonnet.
-_SHORT_KEY_TO_MODEL_ID = {
-    "sonnet": BEDROCK_SONNET, "haiku": BEDROCK_HAIKU,
-    "sonnet-4-6": BEDROCK_SONNET, "haiku-4-5": BEDROCK_HAIKU,
-    "satellite-sonnet-4-6": BEDROCK_SONNET, "satellite-haiku-4-5": BEDROCK_HAIKU,
-}
-
-
-_MODEL_ID_TO_CATALOG_KEY = {
-    BEDROCK_SONNET: "sonnet", BEDROCK_HAIKU: "haiku",
-    "sonnet-4-6": "sonnet", "haiku-4-5": "haiku",
-}
+# AA-1024 A10: the core's own objects (tests/unit/test_aa1024_a10_core_identity.py).
+#
+# AA-348 — BEDROCK_SONNET names the acc2-NATIVE (T1) Sonnet model only; a satellite call runs a newer Sonnet
+# (bedrock_satellite.py). The constant is a TIER SELECTOR / COST_TABLE key, never a claim about the literal model string
+# that tier invokes. AA-635 — Haiku 4.5 is $1/$5 per MTok; cache reads 0.1x, 5-minute writes 1.25x the input rate.
+# Mechanism-B callers (invoke_claude) pass the short key ("sonnet"/"haiku") or a satellite label: _SHORT_KEY_TO_MODEL_ID
+# maps them to the same COST_TABLE entry.
+BEDROCK_SONNET = core.BEDROCK_SONNET
+BEDROCK_HAIKU = core.BEDROCK_HAIKU
+COST_TABLE = core.COST_TABLE                       # $ per 1K tokens, {"in": ..., "out": ...}
+CACHE_WRITE_MULTIPLIER = core.CACHE_WRITE_MULTIPLIER
+CACHE_READ_MULTIPLIER = core.CACHE_READ_MULTIPLIER
+CACHE_WRITE_1H_MULTIPLIER = core.CACHE_WRITE_1H_MULTIPLIER
+BATCH_DISCOUNT = core.BATCH_DISCOUNT
+GEO_MULTIPLIERS = core.GEO_MULTIPLIERS
+LONG_PROMPT_TIERS = core.LONG_PROMPT_TIERS
+ESTIMATE_RATES = core.ESTIMATE_RATES
+PRICING_BASES = core.PRICING_BASES
+PRICING_MODE_RE = core.PRICING_MODE_RE              # = migration 312's CHECK
+_SHORT_KEY_TO_MODEL_ID = core._SHORT_KEY_TO_MODEL_ID
+_MODEL_ID_TO_CATALOG_KEY = core._MODEL_ID_TO_CATALOG_KEY
+Usage = core.Usage
+Quote = core.Quote
 
 
 def _catalog_rates(model: str) -> Optional[dict]:
     """AA-658 — $/1K rates from shared.llm_model_catalog, or None when the catalog is
     unreachable or has no price for this model."""
     from .catalog import get_model_sync
-    from .models import VENDOR_LABEL_PREFIXES
-    key = model[len("satellite-"):] if model and model.startswith("satellite-") else model
-    for prefix in VENDOR_LABEL_PREFIXES:            # AA-1002 S2 / S9: the Anthropic API / Azure OpenAI path labels
-        if key and key.startswith(prefix):
-            key = key[len(prefix):]
-    key = _MODEL_ID_TO_CATALOG_KEY.get(key, key)
     try:
-        m = get_model_sync(key)
+        m = get_model_sync(_catalog_key(model))
     except Exception:
         return None
-    if m is None or m.price_in_per_mtok is None or m.price_out_per_mtok is None:
+    if m is None:
         return None
-    rate_in = m.price_in_per_mtok / 1000
-    return {
-        "in": rate_in,
-        "out": m.price_out_per_mtok / 1000,
-        "cache_read": (m.price_cache_read_per_mtok / 1000 if m.price_cache_read_per_mtok is not None
-                       else rate_in * CACHE_READ_MULTIPLIER),
-        "cache_write": (m.price_cache_write_per_mtok / 1000 if m.price_cache_write_per_mtok is not None
-                        else rate_in * CACHE_WRITE_MULTIPLIER),
-    }
-
-
-# ── AA-1002 (S6) — one priced request ────────────────────────────────────────────────────────────────────────────
-
-CACHE_WRITE_1H_MULTIPLIER = 2.0         # 1-hour TTL writes (Anthropic: 2x the input rate)
-BATCH_DISCOUNT = 0.5                    # Message Batches / Bedrock batch: 50% off every token, cache tokens included
-GEO_MULTIPLIERS = {"us": 1.1}           # Anthropic API `inference_geo`; "global" / None = 1.0
-# Long-prompt tiers: catalog key -> (prompt tokens above which the tier applies, multiplier on every rate). Claude
-# Haiku 5.5: $0.10 / $0.50 -> $0.50 / $2.50 per MTok above 100K prompt tokens (input + cache read + cache write).
-LONG_PROMPT_TIERS: dict[str, tuple[int, float]] = {"haiku-5-5": (100_000, 5.0)}
-# The rates a model nobody can price is charged at (Sonnet 4.x list): high on purpose, never 0, always flagged.
-ESTIMATE_RATES = {"in": 0.003, "out": 0.015}
-
-PRICING_BASES = ("override", "catalog", "code_table", "estimate")
-PRICING_MODE_RE = r"^(override|catalog|code_table|estimate)(\+batch)?(\+geo_us)?$"   # = migration 312's CHECK
-
-
-@dataclass(frozen=True)
-class Usage:
-    """One billed request. ``input_tokens`` is the UNCACHED input (Anthropic / Converse convention); cache reads and
-    writes are separate. ``cache_write_1h_tokens`` is the part of the writes made with the 1-hour TTL (the rest of
-    ``cache_write_tokens`` is 5-minute)."""
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-    cache_write_1h_tokens: int = 0
-    batch: bool = False
-    inference_geo: Optional[str] = None
-
-    @property
-    def prompt_tokens(self) -> int:
-        return (self.input_tokens or 0) + (self.cache_read_tokens or 0) + (self.cache_write_tokens or 0)
-
-
-@dataclass(frozen=True)
-class Quote:
-    cost_usd: float
-    pricing_mode: str
-    rates: dict            # $ per 1K tokens actually applied: in, out, cache_read, cache_write, cache_write_1h
-
-    @property
-    def estimated(self) -> bool:
-        return self.pricing_mode.startswith("estimate")
+    return core.catalog_rates(m.price_in_per_mtok, m.price_out_per_mtok, m.price_cache_read_per_mtok,
+                              m.price_cache_write_per_mtok)
 
 
 def _catalog_key(model: str) -> str:
-    from .models import VENDOR_LABEL_PREFIXES
-    key = model[len("satellite-"):] if model and model.startswith("satellite-") else (model or "")
-    for prefix in VENDOR_LABEL_PREFIXES:
-        if key.startswith(prefix):
-            key = key[len(prefix):]
-    return _MODEL_ID_TO_CATALOG_KEY.get(key, key)
+    """The catalog key behind a gateway label (satellite / vendor prefixes and the legacy ids removed): the core's."""
+    return core.catalog_key(model)
 
 
 def _base_rates(model: str) -> tuple[dict, str]:
     """($/1K rates, basis) from the catalog, else COST_TABLE, else the flagged estimate. Never raises."""
-    rates = _catalog_rates(model)
-    if rates is not None:
-        return dict(rates), "catalog"
-    resolved = _SHORT_KEY_TO_MODEL_ID.get(model, model)
-    base = COST_TABLE.get(resolved)
-    basis = "code_table"
-    if base is None:
-        base, basis = ESTIMATE_RATES, "estimate"
-    return {"in": base["in"], "out": base["out"], "cache_read": base["in"] * CACHE_READ_MULTIPLIER,
-            "cache_write": base["in"] * CACHE_WRITE_MULTIPLIER}, basis
+    return core.base_rates(model, _catalog_rates(model))
 
 
 def _apply_override(rates: dict, deployment) -> bool:
     """Deployment price overrides ($ per MTok, migration 304) replace the matching rate. True when any applied."""
-    if deployment is None:
-        return False
-    applied = False
-    for field, key in (("price_in_override", "in"), ("price_out_override", "out"),
-                       ("price_cache_read_override", "cache_read"), ("price_cache_write_override", "cache_write"),
-                       ("price_cache_write_1h_override", "cache_write_1h")):
-        value = getattr(deployment, field, None)
-        if value is not None:
-            rates[key] = float(value) / 1000
-            applied = True
-    return applied
+    return core.apply_override(rates, deployment)
+
+
+def _warn_estimate(model: str) -> None:
+    logger.warning("llm_price_unknown_model", model=model, hint="priced at Sonnet rates, row flagged estimate")
 
 
 def quote(model: str, usage: Usage, deployment=None) -> Quote:
     """AA-1002 (S6) — the cost of one billed request of ``model`` (a catalog key or any label ``calc_cost`` accepts)
     with ``usage``, on ``deployment`` (a ``deployments.ModelDeployment`` or None). Never raises: pricing must never be
     the reason a call fails; a model no source can price is charged ``ESTIMATE_RATES``, warned and flagged
-    ``estimate``."""
-    rates, basis = _base_rates(model)
-    if _apply_override(rates, deployment):
-        basis = "override"
-    if basis == "estimate":
-        logger.warning("llm_price_unknown_model", model=model, hint="priced at Sonnet rates, row flagged estimate")
-    if rates.get("cache_write_1h") is None:
-        rates["cache_write_1h"] = rates["in"] * CACHE_WRITE_1H_MULTIPLIER
-    factor = 1.0
-    tier = LONG_PROMPT_TIERS.get(_catalog_key(model))
-    if tier and basis != "estimate" and usage.prompt_tokens > tier[0]:     # an estimate is already the high rate
-        factor *= tier[1]
-    mode = basis
-    if usage.batch:
-        factor *= BATCH_DISCOUNT
-        mode += "+batch"
-    geo = GEO_MULTIPLIERS.get((usage.inference_geo or "").lower())
-    if geo:
-        factor *= geo
-        mode += "+geo_us"
-    write_1h = min(usage.cache_write_1h_tokens or 0, usage.cache_write_tokens or 0)
-    write_5m = (usage.cache_write_tokens or 0) - write_1h
-    # Same order of operations as the pre-S6 formula, so calc_cost's numbers do not move by a float ulp.
-    cache_cost = (write_5m * rates["cache_write"] + (usage.cache_read_tokens or 0) * rates["cache_read"]
-                  + write_1h * rates["cache_write_1h"])
-    raw = (usage.input_tokens or 0) * rates["in"] + (usage.output_tokens or 0) * rates["out"] + cache_cost
-    applied = {k: v * factor for k, v in rates.items()}
-    return Quote(cost_usd=round(raw * factor / 1000, 6), pricing_mode=mode, rates=applied)
+    ``estimate``. AA-1024 A10: the core's ``quote`` with the catalog row this module read."""
+    return core.quote(model, usage, deployment, catalog=_catalog_rates(model), on_estimate=_warn_estimate)
 
 
 def deployment_for(model: str, connection_key: Optional[str]):

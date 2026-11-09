@@ -3,14 +3,16 @@
   TP-01  weekly (ISO week): sessions, trips started, trips edited, inquiries sent per UTC day from TripPlanner's
          contract view tripplanner.v_ops_traffic_daily (tp-015, ops.overview.v1, granted to cis_app), with the four
          weeks before for the trend; step conversion (K-TP-S2T trip_started / sessions, K-TP-T2I inquiry_sent /
-         trip_started); AI searches (shared.llm_call_log stage tp_search_embed: cache misses only, the ops overview's
+         trip_started, historical since the R0 hotfix: the advisor hand-off is off, root ADR 0019 B2B-only model, so
+         inquiries sent and K-TP-T2I carry status historical, never red or amber; services/reports/b2b_only.py); AI
+         searches (shared.llm_call_log stage tp_search_embed: cache misses only, the ops overview's
          rule); the customer-facing LLM spend per UTC day (TripPlanner's online stages in shared.llm_call_log,
          quality_signal.app = tripplanner) against the mirrored default daily cap (K-TP-LLMCAP).
 
 The keyword-fallback share and the top pinned components live in TripPlanner tables that are not granted to cis_app
-(no contract view): the report names them "not readable from CIS". tripplanner.llm_spend_daily (the TripPlanner
-gateway's own daily roll-up, the KPI's registry source) is not granted either; the CIS ledger rows TripPlanner writes
-are the same calls (api/core/app_registry.py, the /admin/platform/apps card reads them the same way).
+(no contract view): the report names them "not readable from CIS". TripPlanner's spend is the CIS ledger rows it
+writes (api/core/app_registry.py, the /admin/platform/apps card reads them the same way); its own daily roll-up
+(tripplanner.llm_spend_daily) is dropped by tp-024 (AA-1027 E5).
 
 Days are UTC here, like the contract view and the ledger; the report period is the ISO week. Stored rows only; no
 LLM, no paid API.
@@ -22,6 +24,7 @@ from typing import Any
 
 from api.core.app_registry import TP_DEFAULT_DAILY_CAP_USD, TP_ONLINE_STAGES
 from api.services.ops_overview import activity
+from services.reports import b2b_only
 from services.reports import money_sources as src
 from services.reports.generate import Rendered
 from services.reports.money import _kpi_line, failed, pct, ratio, table, usd
@@ -32,7 +35,7 @@ TREND_WEEKS = 4
 CAP_SHARE_FLAG = 0.80            # K-TP-LLMCAP: < 80 % of the cap any day
 METRICS = activity.TP_METRICS    # planner_session_started, trip_started, trip_edited, inquiry_sent
 LABEL = {"planner_session_started": "Sessions", "trip_started": "Trips started", "trip_edited": "Trips edited",
-         "inquiry_sent": "Inquiries sent", "ai_search": "AI searches"}
+         "inquiry_sent": "Inquiries sent (historical)", "ai_search": "AI searches"}
 UTC_NOTE = ("Days are UTC calendar days (TripPlanner's contract view and the LLM ledger count per UTC day); the "
             "period is the ISO week.")
 
@@ -134,10 +137,9 @@ def tp01_kpis(f: dict, sp: dict) -> list[dict]:
                       "no session this week" if s2t is None else
                       f"{t['trip_started']} trips / {t['planner_session_started']} sessions; target set after the "
                       "first prod month"),
-            _kpi_line("K-TP-T2I", t2i, "no_data" if t2i is None else "info",
-                      "no trip started this week" if t2i is None else
-                      f"{t['inquiry_sent']} inquiries / {t['trip_started']} trips; target set after the first prod "
-                      "month"),
+            _kpi_line("K-TP-T2I", t2i, b2b_only.HISTORICAL,
+                      b2b_only.NOTE + ("; no trip started this week" if t2i is None else
+                                       f"; {t['inquiry_sent']} inquiries / {t['trip_started']} trips")),
         ]
     if "error" in sp:
         cap_line = _kpi_line("K-TP-LLMCAP", None, "no_data", f"not readable: {sp['error']}")
@@ -161,7 +163,7 @@ def render_tp01(reg: Registry, report: Report, first: date, last: date, facts: d
     else:
         t = f["this"]
         headline = (f"TripPlanner funnel {first.isoformat()} to {last.isoformat()}: {t['planner_session_started']} "
-                    f"sessions, {t['trip_started']} trips started, {t['inquiry_sent']} inquiries sent")
+                    f"sessions, {t['trip_started']} trips started, {t['trip_edited']} trips edited")
     body = ["## Sessions, trips and inquiries (this week and the four before)", ""]
     if "error" in f:
         body += [f"- Not readable: {f['error']}", ""]
@@ -174,7 +176,7 @@ def render_tp01(reg: Registry, report: Report, first: date, last: date, facts: d
         body += table(["Step", "This week", "Week before"], [
             ["Session to trip", pct(ratio(t["trip_started"], t["planner_session_started"])),
              pct(ratio(p["trip_started"], p["planner_session_started"]))],
-            ["Trip to inquiry", pct(ratio(t["inquiry_sent"], t["trip_started"])),
+            ["Trip to inquiry (historical)", pct(ratio(t["inquiry_sent"], t["trip_started"])),
              pct(ratio(p["inquiry_sent"], p["trip_started"]))],
             ["Trips edited per trip started", pct(ratio(t["trip_edited"], t["trip_started"])),
              pct(ratio(p["trip_edited"], p["trip_started"]))]])
@@ -193,11 +195,13 @@ def render_tp01(reg: Registry, report: Report, first: date, last: date, facts: d
                       [[d["day"], d["calls"], usd(d["cost_usd"]), pct(d["cap_share"])] for d in sp["days"]])
         body += ["", f"- Week total {usd(sp['total_usd'])}; by stage: "
                  + (", ".join(f"{k} {usd(v)}" for k, v in sorted(sp["by_stage"].items())) or "no call") + ".", ""]
+    body += ["## Inquiries (historical)", "",
+             f"- The advisor hand-off is off since {b2b_only.B2C_OFF_DAY.isoformat()} (B2B-only model: send-to-advisor "
+             "answers 410), so inquiries sent stay at zero; the column and the trip to inquiry step are kept for "
+             "history. Tenant leads will be counted from lead.submitted.v1 once it has a producer.", ""]
     body += ["## Not readable from CIS", "",
              "- Top pinned components and the keyword-fallback share: TripPlanner tables without a contract view for "
-             "the CIS role (a tp- contract view would add them).",
-             "- tripplanner.llm_spend_daily (TripPlanner's own spend roll-up): not granted; the ledger rows above are "
-             "the same calls.", ""]
+             "the CIS role (a tp- contract view would add them).", ""]
     return _render(reg, report, first, last, generated_at, f"TripPlanner funnel {first.isoformat()} to "
                    f"{last.isoformat()}", headline, kpis, body, UTC_NOTE, funnel=f, llm_spend=sp,
                    sources_unreadable=_unreadable(facts))

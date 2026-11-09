@@ -90,6 +90,7 @@ def _outcome(passed, gate="F9_cta_fact", violations=None):
     return {"passed": passed, "gate_ledger": [g], "first_failure": None if passed else g, "flags": []}
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_attempt_three_is_a_sentence_repair_only():
     claim = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): '

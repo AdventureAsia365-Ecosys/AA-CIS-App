@@ -10,9 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from api.core import view_as
 from api.routers import admin
 from services.acp_shared.audit_log import AdminTenantAuditAction
 from shared.llm_client.bedrock_satellite import ACC3_ACCOUNT_ID
+
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
 
 _SECRET = "test-admin-secret"
 TENANT_ID = uuid.uuid4()
@@ -92,13 +96,18 @@ class TestUpdateTenant:
 
     @pytest.mark.asyncio
     async def test_invalid_plan_tier_is_400(self):
+        # AA-1028 R1 slice 3: a tier no live content plan serves (shared.plan, not PLAN_LIMITS) is refused, and
+        # the message lists the assignable tiers
+        conn = _conn()
+        conn.fetchrow.return_value = _before()
         with pytest.raises(HTTPException) as e:
-            await self._patch(_conn(), {"plan_tier": "platinum"})
-        assert e.value.status_code == 400
+            await self._patch(conn, {"plan_tier": "platinum"})
+        assert e.value.status_code == 400 and "business" in e.value.detail
+        conn.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_non_admin_role_is_403(self):
-        for role in (None, "reviewer", "content"):
+        for role in (None, "content", "content"):
             with pytest.raises(HTTPException) as e:
                 await self._patch(_conn(), {"is_active": False}, role=role)
             assert e.value.status_code == 403
@@ -203,26 +212,16 @@ class TestListTenants:
         assert out["tenants"][2]["cancelled_at"] == CANCELLED.isoformat()
 
 
-class TestGenerateKey:
-    @pytest.mark.asyncio
-    async def test_offboarded_is_409(self):
-        conn = _conn()
-        conn.fetchrow.return_value = {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": CANCELLED}
-        with pytest.raises(HTTPException) as e:
-            await admin.generate_api_key(TENANT_ID, _request(conn), x_admin_secret=_SECRET,
-                                         x_admin_user_id="u", x_admin_role="admin")
-        assert e.value.status_code == 409
-        assert "restore" in e.value.detail
-        assert conn.execute.call_count == 0
+class TestNoApiKey:
+    """AA-1036 R3 slice 3: generate-key is gone; offboard and restore never touch a tenant key."""
 
-    @pytest.mark.asyncio
-    async def test_rotation_is_audited(self):
-        conn = _conn()
-        conn.fetchrow.return_value = {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None}
-        out = await admin.generate_api_key(TENANT_ID, _request(conn), x_admin_secret=_SECRET,
-                                           x_admin_user_id="u-9", x_admin_role="admin")
-        assert out.api_key.startswith("cis_")
-        assert _audit_rows(conn) == [(AdminTenantAuditAction.KEY_ROTATED, "admin:u-9", {"name": "T"})]
+    def test_generate_key_route_is_gone(self):
+        from api import main
+
+        assert not hasattr(admin, "generate_api_key")
+        assert "/admin/tenants/{tenant_id}/generate-key" not in main.app.openapi()["paths"]
+        assert "api_key" not in admin.CreateTenantResponse.model_fields
+        assert "api_key" not in admin.RestoreTenantResponse.model_fields
 
 
 class TestOffboard:
@@ -237,7 +236,7 @@ class TestOffboard:
     async def test_requires_admin_role(self):
         with pytest.raises(HTTPException) as e:
             await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="x"),
-                                        _request(_conn()), x_admin_secret=_SECRET, x_admin_role="reviewer")
+                                        _request(_conn()), x_admin_secret=_SECRET, x_admin_role="content")
         assert e.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -247,17 +246,25 @@ class TestOffboard:
             {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None},
             {"reason": "AA test tenant", "added_at": CANCELLED, "added_by": "migration-181"},
         ]
-        conn.fetch.return_value = [{"id": "j1", "kind": "t2_rewrite"}]
+        view = {"session_id": "s-1", "tenant_id": str(TENANT_ID), "session_staff": "u-9", "end_reason": "revoked"}
+        conn.fetch.side_effect = lambda sql, *a: (
+            [view] if sql == view_as.CLOSE_TENANT_SESSIONS_SQL else [{"id": "j1", "kind": "t2_rewrite"}])
         hook = AsyncMock()
         monkeypatch.setattr("shared.jobs.registry.run_terminal_hook", hook)
         out = await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="left"),
                                           _request(conn), x_admin_secret=_SECRET,
                                           x_admin_user_id="u-2", x_admin_role="admin")
-        assert out["cancelled_jobs"] == 1
+        assert out["cancelled_jobs"] == 1 and out["ended_view_as_sessions"] == 1
         assert ACC3_ACCOUNT_ID not in json.dumps(out) and "acp-cis" not in json.dumps(out)
-        cancel_sql = conn.fetch.call_args.args[0]
+        cancel_sql = conn.fetch.call_args_list[0].args[0]
         assert "WHERE status = 'queued'" in cancel_sql and "running" not in cancel_sql
-        [(action, actor, details)] = _audit_rows(conn)
+        # AA-1035 follow-up (S268): the open view-as sessions on the tenant end in the same transaction
+        assert conn.fetch.call_args_list[1].args == (view_as.CLOSE_TENANT_SESSIONS_SQL, str(TENANT_ID), "revoked")
+        [(ended_action, ended_actor, ended), (action, actor, details)] = _audit_rows(conn)
+        assert ended_action == AdminTenantAuditAction.VIEW_AS_ENDED and ended_actor == "admin:u-2"
+        assert ended == {"session_id": "s-1", "end_reason": "revoked", "cause": "tenant_offboarded",
+                         "session_staff": "u-9"}
+        assert details["ended_view_as_sessions"] == ["s-1"]
         assert action == AdminTenantAuditAction.OFFBOARD and actor == "admin:u-2"
         assert ACC3_ACCOUNT_ID not in json.dumps(details)
         assert details["cancelled_jobs"] == [{"id": "j1", "kind": "t2_rewrite"}]
@@ -279,10 +286,14 @@ class TestOffboard:
         deletes = [q for q in sqls if "DELETE" in q.upper()]
         assert deletes == ["DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid"]
         updates = [q for q in sqls if "UPDATE" in q.upper()]
-        assert len(updates) == 2 and "shared.tenants" in updates[0] and "shared.job" in updates[1]
+        # the tenant, its queued jobs and (AA-1035) its open view-as sessions: nothing else
+        assert len(updates) == 3 and "shared.tenants" in updates[0] and "shared.job" in updates[1]
+        assert updates[2] == view_as.CLOSE_TENANT_SESSIONS_SQL
         tenant_upd = updates[0]
         for kept in ("plan_id", "plan_tier", "posts_per_week", "rate_limit_rpm"):
             assert kept not in tenant_upd
+        # AA-1036: account_status is the offboarded marker; no key column is written
+        assert "account_status      = 'offboarding'" in tenant_upd and "api_key" not in tenant_upd
         for table in ("brand_rules", "tenant_config", "tenant_tour_versions", "content_piece", "users"):
             assert not any(table in q for q in sqls)
 
@@ -317,7 +328,7 @@ class TestRestore:
     @pytest.mark.asyncio
     async def test_requires_admin_role(self):
         with pytest.raises(HTTPException) as e:
-            await self._restore(_conn(), role="reviewer")
+            await self._restore(_conn(), role="content")
         assert e.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -340,7 +351,7 @@ class TestRestore:
         assert conn.execute.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_happy_path_new_key_markers_cleared_settings_untouched(self):
+    async def test_happy_path_markers_cleared_settings_untouched(self):
         conn = _conn()
         conn.fetchrow.return_value = self._offboarded()
         conn.fetch.return_value = [{"id": "j1", "kind": "t9_write"}]
@@ -350,16 +361,16 @@ class TestRestore:
         redis = AsyncMock()
         out = await self._restore(conn, redis=redis)
 
-        assert out.status == "active" and out.api_key.startswith("cis_")
+        assert out.status == "active" and "api_key" not in out.model_dump()
         assert out.previous_offboarded_at == CANCELLED.isoformat() and out.previous_reason == "contract ended"
         assert out.jev_allowlist_restored is True
         assert out.cancelled_jobs == [{"id": "j1", "kind": "t9_write"}]
         [upd] = [c for c in conn.execute.call_args_list if "UPDATE shared.tenants" in c.args[0]]
         sql = upd.args[0]
-        assert "cancelled_at = NULL" in sql and "is_active = TRUE" in sql
-        for kept in ("plan_id", "plan_tier", "rate_limit_rpm", "posts_per_week"):
+        assert "cancelled_at = NULL" in sql and "is_active = TRUE" in sql and "account_status = 'active'" in sql
+        for kept in ("plan_id", "plan_tier", "rate_limit_rpm", "posts_per_week", "api_key"):
             assert kept not in sql
-        assert upd.args[2] != "" and not upd.args[2].startswith("REVOKED_")
+        assert len(upd.args) == 2  # the SQL and the tenant id: no key hash
         [(action, actor, details)] = _audit_rows(conn)
         assert action == AdminTenantAuditAction.RESTORED == "tenant.restored" and actor == "admin:u-5"
         assert details["previous_offboarded_at"] == CANCELLED.isoformat()

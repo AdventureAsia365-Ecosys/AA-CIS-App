@@ -28,7 +28,8 @@ The reads, all $0 (database only; no provider is called):
   (``llm_call_log.content_piece_id``) and the ``tour_id`` columns of ``llm_call_log`` and ``dfs_call_log``.
 - ``read_budgets(pool)`` — ``GET /admin/ai-gateway/budgets``: every spending cap by tier (provider daily caps and
   job caps from ``shared.spend_budget``, the monthly budget of each LLM connection, the tenant tier still empty),
-  today's spend per provider, and a coverage checklist (does every paid source have a cap).
+  today's spend per provider, and a coverage checklist (does every paid source have a cap). AA-1025 A7: the central
+  LLM caps (``spend_budget`` provider ``llm``) as their own tier and the coverage per call site.
 
 Since ledger v2 (migration 319, CIS #1201) every attempt has a row with its ``status`` (ok, refused, error,
 billed_unusable, truncated), ``error_class`` and ``latency_ms``; older rows have none of them (the trace says so with
@@ -39,10 +40,30 @@ AA-1017 (registry v2, migration 322): Jev, DataForSEO and Geoapify are rows of `
 failure domain, access state and balance source, and their thresholds come from the row (Jev / DataForSEO
 ``low_balance_usd``, Geoapify ``daily_credit_limit``), with the env / constant default when the row is missing (before
 322: the rows of today). The LLM rows are the LLM kinds only (``connections.fetch_connections``).
+
+AA-1025 C1 (S263 gateway plan): every row carries ``stats`` — calls, errors, refused, error % and p50 / p95 latency of
+the last 24 h and 7 d (``LLM_STATS_SQL`` / ``DFS_STATS_SQL`` / ``GEO_STATS_SQL``; Jev from its ledger rows with
+connection_key ``typesafe``) — with the 24 h figures at the top (``latency_p50_ms``, ``latency_p95_ms``,
+``error_pct``). Jev / DataForSEO / Geoapify carry their real switch (``enabled``, ``switchable``: the B1 clients read
+it; the page calls PATCH /admin/llm-connections/{key}); Geoapify's "is the configured geocoder" is ``configured``.
+Three more rows: **Partner CRM AI** and **Bedrock Guardrails (CRM scrub)** from one crm.ops.v1 ``GET /llm/usage``
+read (the CRM's daily rollup, no per-agency access) with the caller's own staff token
+(``read_providers(crm_usage_rows=)``; the guard rows are the CRM's stage ``crm_scrub``): spend, and calls / failed calls
+over whole UTC days (today, last 7 days; the rollup counts a refusal as a failed call and holds no latency, so the rows
+say ``stats_basis = "utc_days"``). The row-level ledger ``GET /llm/calls`` is never read here: it writes an
+``ops_read`` event into every agency's access log. And a static **Mapbox** row (TripPlanner maps, free tier, nothing
+logged).
+
+AA-1025 B3 / B5: the Jev / DataForSEO / Geoapify rows carry ``circuit`` (their shared circuit,
+``shared.provider_health`` through shared/provider_circuit.read_views; open or half-open makes the row "open" unless
+it is switched off), and every LLM connection whose ``balance_source`` is ``topups_minus_spend`` (the vendor APIs,
+migration 343) carries ``balance`` estimated from the credit ledger (shared/provider_credit.balances: recorded balance
+minus the spend logged since), "low" below its ``low_balance_usd``.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -52,6 +73,7 @@ import asyncpg
 import structlog
 
 from api.core.error_ref import log_exception_ref, public_error
+from shared.llm_client.expected_refusal import EXPECTED_SQL
 
 logger = structlog.get_logger()
 
@@ -170,6 +192,260 @@ GEO_SQL = """
 """
 
 
+# ── AA-1025 C1: latency and error rate per connection, last 24 h and last 7 days ────────────────────────────────────
+# One grouped scan per ledger, both windows in it (FILTER): $1 = now - 24 h, $2 = now - 7 d, $3 = now (the created_at
+# indexes serve the 7 d range). ``calls`` = attempts that reached the provider (not refused), ``errors`` = the failed
+# ones (error, billed_unusable, truncated), ``refused`` = our own guard or a switch said no (nothing sent; not in the
+# error rate). p50 / p95 over the non-refused attempts' latency (percentile_cont ignores NULL).
+STATS_WINDOWS = (("24h", "$1"), ("7d", "$2"))
+FAILED_STATUSES = ("error", "billed_unusable", "truncated")
+
+
+def _stats_columns(ts: str, attempt: str, error: str, refused: str, latency: Optional[str],
+                   expected: Optional[str] = None) -> str:
+    """The select list of one stats query: calls / errors / refused / p50 / p95 per window. ``attempt``, ``error`` and
+    ``refused`` are SQL conditions on one row; ``latency`` its latency column (None: the ledger has none). AA-900
+    (S271 l11): ``expected`` (the LLM ledger's expected refusal, ``shared/llm_client/expected_refusal.py``) is counted
+    as ``expected_refused`` and left out of ``refused``; other ledgers have none (0)."""
+    cols = []
+    for w, since in STATS_WINDOWS:
+        inside = f"{ts} >= {since}"
+        cols += [f"count(*) FILTER (WHERE {inside} AND {attempt})::int AS calls_{w}",
+                 f"count(*) FILTER (WHERE {inside} AND {error})::int AS errors_{w}"]
+        if expected:
+            cols += [f"count(*) FILTER (WHERE {inside} AND {refused} AND NOT {expected})::int AS refused_{w}",
+                     f"count(*) FILTER (WHERE {inside} AND {expected})::int AS expected_refused_{w}"]
+        else:
+            cols += [f"count(*) FILTER (WHERE {inside} AND {refused})::int AS refused_{w}"]
+        for name, q in (("p50", "0.5"), ("p95", "0.95")):
+            cols.append(f"percentile_cont({q}) WITHIN GROUP (ORDER BY {latency}) "
+                        f"FILTER (WHERE {inside} AND {attempt})::float AS {name}_{w}" if latency
+                        else f"NULL::float AS {name}_{w}")
+    return ",\n           ".join(cols)
+
+
+_FAILED_SQL = "(" + ", ".join(f"'{st}'" for st in FAILED_STATUSES) + ")"
+
+# Every LLM connection and Jev (its rows carry connection_key 'typesafe' since B1); ledger v2 rows only.
+LLM_STATS_SQL = f"""
+    SELECT coalesce(connection_key, account) AS connection_key,
+           {_stats_columns("created_at", "status <> 'refused'", f"status IN {_FAILED_SQL}", "status = 'refused'",
+                           "latency_ms", expected=EXPECTED_SQL)}
+      FROM shared.llm_call_log
+     WHERE created_at >= $2 AND created_at < $3 AND status IS NOT NULL
+       AND coalesce(connection_key, account) IS NOT NULL
+     GROUP BY 1
+"""
+
+# DataForSEO: cache hits made no provider call and are left out.
+DFS_STATS_SQL = f"""
+    SELECT {_stats_columns("created_at", "status <> 'refused'", "status = 'error'", "status = 'refused'",
+                           "latency_ms")}
+      FROM shared.dfs_call_log
+     WHERE created_at >= $2 AND created_at < $3 AND status IS NOT NULL AND NOT cache_hit
+"""
+
+# Geoapify: one row per batch of requests with its failed ones. AA-1025 D3 (migration 346): a batch written since 346
+# carries latency_ms (the sum over its requests), so p50 / p95 are of the mean request latency of each batch; older
+# batches have none (percentile_cont ignores NULL). Read through to_jsonb so this runs before 346 is applied.
+_GEO_PER_REQUEST_MS = ("((to_jsonb(geocode_call) ->> 'latency_ms')::float / nullif(requests, 0))")
+GEO_STATS_SQL = f"""
+    SELECT coalesce(sum(requests) FILTER (WHERE called_at >= $1), 0)::int AS calls_24h,
+           coalesce(sum(coalesce(failed_requests, 0)) FILTER (WHERE called_at >= $1), 0)::int AS errors_24h,
+           0 AS refused_24h,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})
+               FILTER (WHERE called_at >= $1)::float AS p50_24h,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})
+               FILTER (WHERE called_at >= $1)::float AS p95_24h,
+           coalesce(sum(requests), 0)::int AS calls_7d,
+           coalesce(sum(coalesce(failed_requests, 0)), 0)::int AS errors_7d,
+           0 AS refused_7d,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})::float AS p50_7d,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})::float AS p95_7d
+      FROM geo.geocode_call
+     WHERE provider = $4 AND called_at >= $2 AND called_at < $3
+"""
+
+
+def window_stats(r: Optional[dict], window: str) -> dict:
+    """One window of a stats row (None or no call: zeros, null rates). Pure."""
+    r = r or {}
+    calls = int(r.get(f"calls_{window}") or 0)
+    errors = int(r.get(f"errors_{window}") or 0)
+
+    def ms(v: Any) -> Optional[int]:
+        return None if v is None else int(round(float(v)))
+
+    out = {"calls": calls, "errors": errors, "refused": int(r.get(f"refused_{window}") or 0),
+           # AA-900 (S271 l11): refused rows of a model with no grant yet on an account that answers (not in refused)
+           "expected_refused": int(r.get(f"expected_refused_{window}") or 0),
+           "error_pct": _pct(errors, calls), "latency_p50_ms": ms(r.get(f"p50_{window}")),
+           "latency_p95_ms": ms(r.get(f"p95_{window}"))}
+    return out
+
+
+def with_stats(row: dict, r: Optional[dict]) -> dict:
+    """``row`` with ``stats`` (24 h and 7 d) and the 24 h figures at the top (latency_p50_ms, latency_p95_ms,
+    error_pct). ``r`` None and the source unreadable is the caller's ``stats_unreadable``. Pure."""
+    stats = {w: window_stats(r, w) for w, _ in STATS_WINDOWS}
+    day = stats["24h"]
+    return {**row, "stats": stats, "latency_p50_ms": day["latency_p50_ms"], "latency_p95_ms": day["latency_p95_ms"],
+            "error_pct": day["error_pct"]}
+
+
+def stats_unreadable(row: dict) -> dict:
+    return {**row, "stats": None, "latency_p50_ms": None, "latency_p95_ms": None, "error_pct": None}
+
+
+async def _read_llm_stats(pool, now: datetime) -> dict[str, dict]:
+    """{connection_key: stats row} of every LLM connection and Jev."""
+    rows = await _fetch(pool, LLM_STATS_SQL, now - timedelta(hours=24), now - timedelta(days=7), now)
+    return {r["connection_key"]: r for r in rows}
+
+
+# ── AA-1025 C1: the partner CRM's AI path and its guardrail (crm.ops.v1, the caller's own staff token) ─────────────
+
+CRM_GUARD_STAGE = "crm_scrub"            # the CRM's ApplyGuardrail rows (AA-Partner app/privacy/guardrails.py)
+CRM_STATS_DAYS = 7                       # the "7 d" window of the CRM rows: today and the six UTC days before it
+MAPBOX_USAGE_URL = "https://console.mapbox.com/"
+CrmRead = Callable[..., Awaitable[tuple[Optional[dict], dict]]]
+
+
+def crm_part(stage: Optional[str]) -> str:
+    """Which CRM row a rollup stage belongs to: ``guard`` (the scrub's guardrail rows) or ``llm``. Pure."""
+    return "guard" if stage == CRM_GUARD_STAGE else "llm"
+
+
+def _usage_rows(rows: Any):
+    """(UTC day text, part, calls, failed calls, cost) of each crm.ops.v1 /llm/usage row that parses. Pure."""
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            cost, calls = float(r.get("cost_usd") or 0), int(r.get("calls") or 0)
+            failed = int(r.get("failed_calls") or 0)
+        except (TypeError, ValueError):
+            continue
+        yield str(r.get("day") or "")[:10], crm_part(r.get("stage")), calls, failed, cost
+
+
+def crm_usage_spend(rows: list, today: datetime) -> dict[str, dict]:
+    """{"llm" | "guard": {today, month, calls, last}} over crm.ops.v1 /llm/usage rows (day, stage, calls, cost_usd as
+    text); only the days of ``today``'s month count (the read may start earlier for the 7 d window). Rows that do not
+    parse are skipped; ``last`` stays None (the rollup has no call time). Pure."""
+    out = {p: {"today": 0.0, "month": 0.0, "calls": 0, "last": None} for p in ("llm", "guard")}
+    day, month = today.date().isoformat(), today.date().replace(day=1).isoformat()
+    for d, part, calls, _failed, cost in _usage_rows(rows):
+        if d < month or d > day:
+            continue
+        acc = out[part]
+        acc["month"] += cost
+        acc["calls"] += calls
+        if d == day:
+            acc["today"] += cost
+    return out
+
+
+def crm_usage_stats(rows: list, today: datetime) -> dict[str, dict]:
+    """{"llm" | "guard": a stats row like the SQL ones (calls_24h … p95_7d)} over crm.ops.v1 /llm/usage rows, by whole
+    UTC days: "24h" is today's UTC day, "7d" today and the six days before. ``errors`` are the rollup's failed calls,
+    which include refusals (the rollup does not tell them apart), so ``refused`` is 0; the rollup holds no latency, so
+    p50 / p95 are None. Pure."""
+    day = today.date()
+    first = {"24h": day.isoformat(), "7d": (day - timedelta(days=CRM_STATS_DAYS - 1)).isoformat()}
+    out = {p: {f"{k}_{w}": 0 for k in ("calls", "errors", "refused") for w in first}
+           | {f"{k}_{w}": None for k in ("p50", "p95") for w in first} for p in ("llm", "guard")}
+    for d, part, calls, failed, _cost in _usage_rows(rows):
+        for w, start in first.items():
+            if start <= d <= day.isoformat():
+                out[part][f"calls_{w}"] += calls
+                out[part][f"errors_{w}"] += failed
+    return out
+
+
+def crm_problem_reason(problem: Optional[dict]) -> str:
+    """Why the CRM could not be asked, as a page reason. Pure."""
+    p = problem or {}
+    if p.get("reason") == "cognito_session_required":
+        return "crm_sign_in_needed"
+    if p.get("status") == "refused":
+        return "crm_refused"
+    return "crm_unreachable"
+
+
+def crm_status(day: dict, problem: Optional[dict]) -> tuple[str, Optional[str]]:
+    """Status of a CRM row from its figures of today (UTC): unknown with a reason when the CRM could not be read;
+    Degraded when most attempts failed; OK with calls; no call = unknown without a reason ("No recent calls"). Pure."""
+    if problem is not None:
+        return "unknown", crm_problem_reason(problem)
+    calls, errors = day.get("calls") or 0, day.get("errors") or 0
+    if calls and errors * 2 > calls:
+        return "degraded", "most_calls_failed"
+    return ("ok", None) if calls else ("unknown", None)
+
+
+def crm_row(part: str, spend: Optional[dict], stats: Optional[dict], problem: Optional[dict], *,
+            registry=None) -> dict:
+    """The Partner CRM AI row (``part`` llm) or the Bedrock Guardrails row (``part`` guard). ``spend`` / ``stats``:
+    this part of crm_usage_spend / crm_usage_stats (None when unread); ``problem``: why the CRM could not be read.
+    ``registry``: the bedrock-guardrails connection row (guard only) for its facts. Pure."""
+    guard = part == "guard"
+    base = {
+        "key": "guardrails" if guard else "crm:llm", "group": "guard" if guard else "llm",
+        "provider": "bedrock_guardrails" if guard else "crm",
+        "label": "Bedrock Guardrails (CRM scrub)" if guard else "Partner CRM AI",
+        "connection_key": None, "account_id": None, "enabled": True, "data_scope": "aws_only",
+        "health": None, "monthly_budget": None, "daily_cap": None, "balance": None, "credits": None, "error": None,
+        "app": "crm", "switch": "crm_settings", "switchable": False, "stats_basis": "utc_days",
+        "spend": None if spend is None else _spend(spend["today"], spend["month"], spend["calls"], spend["last"]),
+    }
+    row = with_stats(base, stats) if stats is not None else stats_unreadable(base)
+    row["status"], row["status_reason"] = crm_status(row["stats"]["24h"] if row["stats"] else {}, problem)
+    if guard:
+        view = registry_view(registry)
+        # the CRM's client reads its own settings (SCRUB_GUARDRAIL_*), not the registry switch: keep the row "in use"
+        row |= {k: v for k, v in view.items() if k not in ("enabled", "switchable", "label")}
+        row["from_registry"] = bool(view)
+    return row
+
+
+async def _read_crm(now: datetime, crm_usage_rows: Optional[CrmRead]) -> dict:
+    """The CRM's daily usage rollup from the earlier of the month start and six days ago, to today: one aggregate read
+    (crm.ops.v1 GET /llm/usage, no per-agency access, no audit write in the CRM). Never raises: a read that cannot be
+    made gives ``problem``."""
+    if crm_usage_rows is None:
+        return {"usage": None, "problem": {"status": "unavailable", "reason": "not_asked"}}
+    day, month = day_and_month_start(now)
+    start = min(month.date(), day.date() - timedelta(days=CRM_STATS_DAYS - 1))
+    usage, problem = await crm_usage_rows(start, day.date())
+    if usage is None:
+        return {"usage": None, "problem": problem or {"status": "error"}}
+    return {"usage": usage.get("rows"), "problem": None}
+
+
+def crm_rows(crm: dict, now: datetime, registry_guard=None) -> list[dict]:
+    """The two CRM rows (Partner CRM AI, Bedrock Guardrails) from a _read_crm result. Pure."""
+    if crm.get("problem") is not None:
+        return [crm_row("llm", None, None, crm["problem"]),
+                crm_row("guard", None, None, crm["problem"], registry=registry_guard)]
+    day, _ = day_and_month_start(now)
+    usage = crm.get("usage") or []
+    spend, stats = crm_usage_spend(usage, day), crm_usage_stats(usage, day)
+    return [crm_row("llm", spend["llm"], stats["llm"], None),
+            crm_row("guard", spend["guard"], stats["guard"], None, registry=registry_guard)]
+
+
+def mapbox_row() -> dict:
+    """TripPlanner's Mapbox maps (T-13): a static row. The free tier covers it and nothing is logged, so it has no
+    spend, status ``untracked`` (never "Need a look") and a link to the Mapbox console for usage. Pure."""
+    return {"key": "mapbox", "group": "data", "provider": "mapbox", "label": "Mapbox (TripPlanner maps)",
+            "connection_key": None, "account_id": None, "enabled": True, "data_scope": "vendor_direct",
+            "status": "untracked", "status_reason": "free_tier_not_logged", "health": None, "spend": None,
+            "monthly_budget": None, "daily_cap": None, "balance": None, "credits": None, "error": None,
+            "app": "tripplanner", "switchable": False, "usage_url": MAPBOX_USAGE_URL,
+            "stats": None, "latency_p50_ms": None, "latency_p95_ms": None, "error_pct": None}
+
+
 def _spend(today: float = 0.0, month: float = 0.0, calls: int = 0, last: Any = None) -> dict:
     return {"today_usd": _f(today) or 0.0, "month_usd": _f(month) or 0.0, "month_calls": int(calls or 0),
             "last_call_at": _iso(last)}
@@ -246,7 +522,10 @@ def llm_rows(connections: list[dict], health: dict[str, dict], by_account: dict[
                 "last_ok_at": h.get("last_ok_at"), "last_error_at": h.get("last_error_at"),
                 "last_error_class": h.get("last_error_class"), "open_models": h.get("open_models", 0),
                 "models": len(h.get("models") or []),
-                "failing_models": sum(1 for m in (h.get("models") or []) if m.get("consecutive_failures"))},
+                "failing_models": sum(1 for m in (h.get("models") or [])
+                                      if m.get("consecutive_failures") and not m.get("expected_refusal")),
+                # AA-900 (S271 l11): models with no access yet on an account that answers (expected, not failing)
+                "known_refused_models": len(h.get("known_refused_models") or [])},
             "spend": _spend(spend.get("today", 0.0), spend.get("month", 0.0), spend.get("calls", 0),
                             spend.get("last")),
             "monthly_budget": monthly,
@@ -335,9 +614,12 @@ def geo_row(configured: bool, geo: dict, daily_limit: int, budgets: Optional[dic
         status, reason = "low", "daily_credits_low"
     else:
         status, reason = "ok", None
+    # AA-1025 C1: ``enabled`` is the provider switch (the registry row, laid over by _with_registry); whether the place
+    # pipeline uses Geoapify at all is ``configured``.
     return {
         "key": "geoapify", "group": "data", "provider": "geoapify", "label": "Geoapify (geocoder)",
-        "connection_key": None, "account_id": None, "enabled": configured, "data_scope": "vendor_direct",
+        "connection_key": None, "account_id": None, "enabled": True, "configured": configured,
+        "data_scope": "vendor_direct",
         "status": status, "status_reason": reason, "health": None,
         "spend": _spend(geo.get("today_usd", 0.0), geo.get("month_usd", 0.0), geo.get("month_requests", 0),
                         geo.get("last_call_at")),
@@ -387,26 +669,69 @@ async def _read_connections(pool, now: datetime) -> dict:
 
 
 def registry_view(row) -> dict:
-    """AA-1017: the registry facts of a decide / data provider row (a connections.ProviderConnection), or {} when the
-    registry has no row for it (the page then shows today's fixed row). Pure."""
+    """AA-1017: the registry facts of a decide / data / guard provider row (a connections.ProviderConnection), or {}
+    when the registry has no row for it (the page then shows today's fixed row). AA-1025 C1: ``switchable`` = its
+    client reads the row's ``enabled`` (connections.PROVIDER_SWITCH_KINDS), so the page offers the switch. Pure."""
+    from shared.llm_client.connections import PROVIDER_SWITCH_KINDS
+
     if row is None:
         return {}
     return {"connection_key": row.connection_key, "label": row.label, "enabled": bool(row.enabled),
             "data_scope": row.data_scope, "failure_domain": row.failure_domain, "access_state": row.access_state,
-            "balance_source": row.balance_source, "from_registry": True}
+            "last_probe_at": row.last_probe_at, "balance_source": row.balance_source,
+            "switchable": row.kind in PROVIDER_SWITCH_KINDS, "from_registry": True}
 
 
 def _with_registry(provider: dict, row) -> dict:
-    """``provider`` (a jev / dfs / geo row) with the registry row's facts laid over it (enabled from the row only when
-    the source did not already decide it: Geoapify's 'configured' stays the geocoder's own answer)."""
+    """``provider`` (a jev / dfs / geo row) with the registry row's facts laid over it. AA-1025 C1: ``enabled`` is the
+    row's switch for all three (B1: each client reads it); switched off wins over the row's own status, except a
+    failed read (unknown with source_unreadable keeps its reason)."""
     view = registry_view(row)
     if not view:
-        return {**provider, "from_registry": False}
-    keep_enabled = provider.get("key") == "geoapify"
-    out = {**provider, **{k: v for k, v in view.items() if not (k == "enabled" and keep_enabled)}}
-    if not out["enabled"] and out.get("status") in ("ok", "low", "unknown", "degraded"):
+        return {**provider, "from_registry": False, "switchable": False}
+    out = {**provider, **view}
+    if not out["enabled"] and out.get("status_reason") != "source_unreadable":
         out["status"], out["status_reason"] = "disabled", "switched_off_in_registry"
     return out
+
+
+def with_circuit(row: dict, circuit: Optional[dict]) -> dict:
+    """AA-1025 B3: a Jev / DataForSEO / Geoapify row with its shared circuit (shared/provider_circuit.view; None = no
+    row = closed). An open or half-open circuit makes the row "open" (reason circuit_open) unless it is switched off
+    or unreadable (Off wins: nothing is sent either way). Pure."""
+    out = {**row, "circuit": circuit}
+    if circuit and circuit.get("state") in ("open", "half_open") and out.get("status") != "disabled" \
+            and out.get("status_reason") != "source_unreadable":
+        out["status"], out["status_reason"] = "open", "circuit_open"
+    return out
+
+
+def with_credit(row: dict, balance: Optional[dict]) -> dict:
+    """AA-1025 B5: an LLM connection row with its estimated balance from the credit ledger (shared/provider_credit;
+    only for a topups_minus_spend connection). Below the threshold an OK row becomes "low" (reason below_threshold);
+    nothing left becomes "cap_reached" (credit_used_up), like the Jev row. Pure."""
+    if balance is None:
+        return row
+    out = {**row, "balance": balance}
+    left = balance.get("usd")
+    if out.get("status") in ("ok", "no_recent_calls", "unknown") and left is not None:
+        if left <= 0:
+            out["status"], out["status_reason"] = "cap_reached", "credit_used_up"
+        elif balance.get("below_threshold"):
+            out["status"], out["status_reason"] = "low", "below_threshold"
+    return out
+
+
+async def _read_circuits(pool, now: datetime) -> dict:
+    from shared import provider_circuit
+
+    return await provider_circuit.read_views(pool, now)
+
+
+async def _read_credit(pool) -> dict:
+    from shared import provider_credit
+
+    return await provider_credit.balances(pool)
 
 
 async def _read_budgets(pool) -> dict:
@@ -437,8 +762,9 @@ async def geo_settings(pool) -> tuple[bool, int]:
     return geocoder.provider_name() == "geoapify", limit
 
 
-async def read_providers(pool, *, now: Optional[datetime] = None) -> dict:
-    """``GET /admin/ai-gateway/providers`` (see the module docstring)."""
+async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows: Optional[CrmRead] = None) -> dict:
+    """``GET /admin/ai-gateway/providers`` (see the module docstring). AA-1025 C1: ``crm_usage_rows(start, end)`` is the
+    crm.ops.v1 GET /llm/usage read bound to the caller's token (None: the CRM rows say it was not asked)."""
     now = now or datetime.now(timezone.utc)
     day, month = day_and_month_start(now)
     results = await asyncio.gather(
@@ -449,12 +775,23 @@ async def read_providers(pool, *, now: Optional[datetime] = None) -> dict:
         _guard("DataForSEO", lambda: asyncio.gather(_fetchrow(pool, DFS_BALANCE_SQL),
                                                     _fetchrow(pool, DFS_SPEND_SQL, day, month, now))),
         _guard("Geoapify", lambda: _fetchrow(pool, GEO_SQL, day, month, now, "geoapify")),
+        _guard("LLM call stats", lambda: _read_llm_stats(pool, now)),
+        _guard("DataForSEO call stats", lambda: _fetchrow(pool, DFS_STATS_SQL, now - timedelta(hours=24),
+                                                          now - timedelta(days=7), now)),
+        _guard("Geoapify call stats", lambda: _fetchrow(pool, GEO_STATS_SQL, now - timedelta(hours=24),
+                                                        now - timedelta(days=7), now, "geoapify")),
+        _guard("CRM", lambda: _read_crm(now, crm_usage_rows)),
+        _guard("Provider circuits", lambda: _read_circuits(pool, now)),
+        _guard("Provider credit", lambda: _read_credit(pool)),
     )
     (conns, conns_err), (ledger, ledger_err), (budgets, budgets_err), (jev, jev_err), (dfs, dfs_err), \
-        (geo, geo_err) = results
+        (geo, geo_err), (llm_stats, llm_stats_err), (dfs_stats, dfs_stats_err), (geo_stats, geo_stats_err), \
+        (crm, crm_err), (circuits, circuits_err), (credit, credit_err) = results
     errors = [{"source": s, "error": e} for s, e in (
         ("llm_connections", conns_err), ("llm_ledger", ledger_err), ("spend_budgets", budgets_err),
-        ("jev", jev_err), ("dataforseo", dfs_err), ("geoapify", geo_err)) if e]
+        ("jev", jev_err), ("dataforseo", dfs_err), ("geoapify", geo_err), ("llm_stats", llm_stats_err),
+        ("dataforseo_stats", dfs_stats_err), ("geoapify_stats", geo_stats_err), ("crm", crm_err),
+        ("provider_circuits", circuits_err), ("provider_credit", credit_err)) if e]
 
     ledger = ledger or []
     by_account = ledger_by_account(ledger)
@@ -466,6 +803,10 @@ async def read_providers(pool, *, now: Optional[datetime] = None) -> dict:
     if geo:
         spent_today["geocoder"] = float(geo.get("today_usd") or 0.0)
 
+    def stats_of(row: dict, r: Optional[dict], unreadable: Optional[str]) -> dict:
+        return stats_unreadable(row) if unreadable else with_stats(row, r)
+
+    llm_stats = llm_stats or {}
     registry_rows = (conns or {}).get("providers") or {}
     providers: list[dict] = []
     if conns is not None:
@@ -475,27 +816,37 @@ async def read_providers(pool, *, now: Optional[datetime] = None) -> dict:
             for r in providers:
                 r["spend"] = None
                 r["error"] = ledger_err
+        providers = [stats_of(r, llm_stats.get(r["connection_key"]), llm_stats_err) for r in providers]
+        providers = [with_credit(r, (credit or {}).get(r["connection_key"])) for r in providers]
     else:
-        providers.append(failed_row("llm", "llm", "llm", "LLM connections", conns_err))
+        providers.append(stats_unreadable(failed_row("llm", "llm", "llm", "LLM connections", conns_err)))
     if jev is not None:
         row = jev_row(jev["estimate"], jev["threshold"], by_provider.get("jev", {}), jev["decisions"], budgets,
                       spent_today)
         if ledger_err:
             row["spend"], row["error"] = None, ledger_err
-        providers.append(_with_registry(row, registry_rows.get("typesafe")))
     else:
-        providers.append(failed_row("jev", "decide", "typesafe", "Jev (TypeSafe decisions)", jev_err))
+        row = failed_row("jev", "decide", "typesafe", "Jev (TypeSafe decisions)", jev_err)
+    jev_out = with_circuit(_with_registry(row, registry_rows.get("typesafe")), (circuits or {}).get("typesafe"))
     if dfs is not None:
-        providers.append(_with_registry(dfs_row(dfs_balance, await dfs_threshold(pool), dfs_spend or {}, budgets,
-                                                spent_today), registry_rows.get("dataforseo")))
+        row = dfs_row(dfs_balance, await dfs_threshold(pool), dfs_spend or {}, budgets, spent_today)
     else:
-        providers.append(failed_row("dataforseo", "data", "dataforseo", "DataForSEO", dfs_err))
+        row = failed_row("dataforseo", "data", "dataforseo", "DataForSEO", dfs_err)
+    dfs_out = with_circuit(_with_registry(row, registry_rows.get("dataforseo")), (circuits or {}).get("dataforseo"))
     if geo is not None:
         configured, limit = await geo_settings(pool)
-        providers.append(_with_registry(geo_row(configured, geo, limit, budgets, spent_today),
-                                        registry_rows.get("geoapify")))
+        row = geo_row(configured, geo, limit, budgets, spent_today)
     else:
-        providers.append(failed_row("geoapify", "data", "geoapify", "Geoapify (geocoder)", geo_err))
+        row = failed_row("geoapify", "data", "geoapify", "Geoapify (geocoder)", geo_err)
+    geo_out = with_circuit(_with_registry(row, registry_rows.get("geoapify")), (circuits or {}).get("geoapify"))
+
+    # CRM (partner app): its AI path joins the LLM section, its guardrail gets its own row (AA-1025 C1).
+    crm_llm, crm_guard = crm_rows(crm or {"problem": {"status": "error"}}, now, registry_rows.get("bedrock-guardrails"))
+    providers.append(crm_llm)
+    providers += [stats_of(jev_out, llm_stats.get(jev_out.get("connection_key") or "typesafe"), llm_stats_err),
+                  stats_of(dfs_out, dfs_stats, dfs_stats_err),
+                  stats_of(geo_out, geo_stats, geo_stats_err),
+                  mapbox_row(), crm_guard]
 
     # LLM spend whose account names no connection (older rows from before the S6 connection keys, an unknown key):
     # shown apart so the page's totals match the ledger.
@@ -552,12 +903,18 @@ _LLM_COLS = """created_at AS at, stage, role, model, provider, account, connecti
            tour_id::text AS tour_id, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens,
            cost_usd::float AS cost_usd, stop_reason, fallback_used, pricing_mode, status, error_class, latency_ms,
            attempt_no, coalesce(app, quality_signal ->> 'app', 'cis') AS app,
-           coalesce(is_shadow, coalesce(quality_signal ->> 'shadow', '') = 'true') AS shadow"""
+           quality_signal ->> 'route_trace' AS route_trace,
+           coalesce(is_shadow, coalesce(quality_signal ->> 'shadow', '') = 'true') AS shadow,
+           """ + EXPECTED_SQL + """ AS expected_refusal"""
 _DFS_COLS = """created_at AS at, endpoint, keyword, location_code, keyword_count, cost_usd::float AS cost_usd,
            cache_hit, fetched_live, tour_id::text AS tour_id, job_id::text AS job_id, status, latency_ms, error,
            stage"""
+# AA-1025 D3 (migration 346): the ledger columns of geo.geocode_call, read through to_jsonb so the reads run before 346
+# is applied (a missing column is NULL, like a row written before it).
 _GEO_COLS = """called_at AS at, provider, endpoint, requests, credits, failed_requests, cost_usd::float AS cost_usd,
-           job_id::text AS job_id"""
+           job_id::text AS job_id, to_jsonb(geocode_call) ->> 'status' AS status,
+           (to_jsonb(geocode_call) ->> 'latency_ms')::int AS latency_ms,
+           to_jsonb(geocode_call) ->> 'app' AS app, to_jsonb(geocode_call) ->> 'stage' AS stage"""
 _DECISION_COLS = """created_at AS at, stage, question_key, subject_key, mode, zone, model, latency_ms,
            cost_usd::float AS cost_usd, error, outcome, cached, job_id::text AS job_id"""
 _COUNTS = "count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost"
@@ -668,18 +1025,41 @@ def llm_event(r: dict) -> dict:
             "model": r.get("model"), "provider": r.get("provider"),
             "account": r.get("account") or r.get("connection_key"),
             "outcome": outcome, "status": status, "error_class": r.get("error_class"),
+            # AA-900 (S271 l11): a refusal of a model with no grant yet on an account that answers (not an error)
+            "expected_refusal": bool(r.get("expected_refusal")),
             "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
             "tokens_in": r.get("tokens_in"), "tokens_out": r.get("tokens_out"), "job_id": r.get("job_id"),
             "app": r.get("app"),
             "detail": {"stop_reason": r.get("stop_reason"), "pricing_mode": r.get("pricing_mode"),
                        "cache_read_tokens": r.get("cache_read_tokens"),
                        "cache_write_tokens": r.get("cache_write_tokens"), "attempt_no": r.get("attempt_no"),
-                       "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id")}}
+                       "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id"),
+                       # AA-1042: the gateway request of the row (AI gateway > Trace opens it)
+                       "route_trace": r.get("route_trace")}}
+
+
+# AA-1025 D3: the decision_log error texts of a Jev ask that the gateway or the provider refused with nothing answered
+# (shared/llm_client/decide.py: the Jev switch, the app profile and the circuit end with the suffix; the daily cap, the
+# credit breaker and a 402 are the exact texts). Their llm_call_log row says status refused; the Calls tab says so too.
+JEV_REFUSED_SUFFIX = "nothing was sent to the provider"
+JEV_REFUSED_ERRORS = ("budget_exceeded", "credit_exhausted", "credit_exhausted (breaker open)")
 
 
 def jev_verdict_status(r: dict) -> str:
-    """decision_log has no status column: a verdict with an error (zone ``error`` or an error text) is ``error``."""
-    return "error" if r.get("error") or r.get("zone") == "error" else "ok"
+    """decision_log has no status column. AA-1025 D3: an ask refused before an answer (``JEV_REFUSED_*``, or a
+    ``skipped`` verdict with a reason: the tenant guard) is ``refused``; another verdict with an error (zone
+    ``error`` or an error text) is ``error``; else ``ok``. The SQL twin is ``JEV_STATUS_SQL``. Pure."""
+    error = r.get("error")
+    if error and (str(error).endswith(JEV_REFUSED_SUFFIX) or error in JEV_REFUSED_ERRORS
+                  or r.get("zone") == "skipped"):
+        return "refused"
+    return "error" if error or r.get("zone") == "error" else "ok"
+
+
+JEV_STATUS_SQL = (
+    "CASE WHEN error IS NOT NULL AND (error LIKE '%" + JEV_REFUSED_SUFFIX + "' OR error IN ("
+    + ", ".join(f"'{e}'" for e in JEV_REFUSED_ERRORS) + ") OR zone = 'skipped') THEN 'refused' "
+    "WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END")
 
 
 def jev_event(r: dict) -> dict:
@@ -687,7 +1067,7 @@ def jev_event(r: dict) -> dict:
     status = jev_verdict_status(r)
     return {"at": _iso(r["at"]), "source": "jev", "stage": r.get("stage"), "what": r.get("question_key"),
             "model": r.get("model"), "provider": "typesafe", "account": None,
-            "outcome": "error" if status == "error" else r.get("zone"), "status": status, "error_class": None,
+            "outcome": r.get("zone") if status == "ok" else status, "status": status, "error_class": None,
             "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"), "tokens_in": None,
             "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
             "detail": {"mode": r.get("mode"), "subject_key": r.get("subject_key"), "cached": r.get("cached"),
@@ -709,18 +1089,24 @@ def dfs_event(r: dict) -> dict:
                        "error": _err(r.get("error"))}}
 
 
+GEO_STATUSES = ("ok", "refused", "error")
+
+
 def geo_status(r: dict) -> str:
-    """geocode_call has no status column: a row whose every request failed is ``error``."""
+    """The row's ``status`` (migration 346, AA-1025 D3); a row written before it has none: a row whose every request
+    failed is ``error``, else ``ok``. Pure."""
+    if r.get("status") in GEO_STATUSES:
+        return r["status"]
     failed, requests = int(r.get("failed_requests") or 0), int(r.get("requests") or 0)
     return "error" if failed > 0 and failed >= requests else "ok"
 
 
 def geo_event(r: dict) -> dict:
     status = geo_status(r)
-    return {"at": _iso(r["at"]), "source": "geocoder", "stage": None, "what": r.get("endpoint"), "model": None,
-            "provider": r.get("provider"), "account": None, "outcome": status, "status": status,
-            "error_class": None, "cost_usd": _f(r.get("cost_usd")), "latency_ms": None, "tokens_in": None,
-            "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
+    return {"at": _iso(r["at"]), "source": "geocoder", "stage": r.get("stage"), "what": r.get("endpoint"),
+            "model": None, "provider": r.get("provider"), "account": None, "outcome": status, "status": status,
+            "error_class": None, "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
+            "tokens_in": None, "tokens_out": None, "job_id": r.get("job_id"), "app": r.get("app") or "cis",
             "detail": {"requests": r.get("requests"), "credits": r.get("credits"),
                        "failed_requests": r.get("failed_requests")}}
 
@@ -1049,6 +1435,118 @@ async def _read_connection_budgets(pool) -> list[dict]:
     return connection_budget_rows(connections, {k: b.summary() for k, b in monthly.items()}, spend, policies)
 
 
+# ── AA-1025 A7: the central LLM caps (spend_budget provider 'llm', migration 340) and the coverage per call site ──
+# The central tier lists every 'llm' row with its scope's spend, read with the query the gateway's check uses
+# (shared/llm_client/central_budget.read_spend), so the state shown is the state enforced. The coverage per call site
+# answers "which cap would stop or ring for this call": one line per CIS stage (the llm_role_config rows and the stages
+# seen in the ledger this month or in the last 7 days, ad-hoc and eval labels included) with its spend, the job kinds
+# that called it in the window, and the central caps whose scope it is in (app, stage, job kind, eval, ad-hoc).
+# TripPlanner rows (llm_call_log.app 'tripplanner') are left out: this gateway does not check them (slice H1).
+
+CENTRAL_ROWS_SQL = """
+    SELECT to_jsonb(b) AS row
+      FROM shared.spend_budget b
+     WHERE b.provider = 'llm'
+     ORDER BY b.scope
+"""
+
+CALL_SITES_SQL = """
+    SELECT l.stage,
+           coalesce(sum(l.cost_usd) FILTER (WHERE l.created_at >= $1), 0)::float AS today_usd,
+           coalesce(sum(l.cost_usd) FILTER (WHERE l.created_at >= $2), 0)::float AS month_usd,
+           count(*) FILTER (WHERE l.created_at >= $3)::int AS calls_7d,
+           coalesce(array_agg(DISTINCT j.kind) FILTER (WHERE j.kind IS NOT NULL), ARRAY[]::text[]) AS job_kinds
+      FROM shared.llm_call_log l
+      LEFT JOIN shared.job j ON j.id = l.job_id
+     WHERE l.created_at >= least($2, $3) AND coalesce(l.app, 'cis') = 'cis'
+     GROUP BY l.stage
+"""
+
+ROUTE_STAGES_SQL = "SELECT stage, role, is_active FROM shared.llm_role_config"
+
+
+def central_row_view(row, spend, names: Optional[dict] = None, raw: Optional[dict] = None) -> dict:
+    """One central cap with its scope's spend (central_budget.Spend, None = unreadable) and its state. Pure."""
+    from shared.llm_client import central_budget as cb
+
+    pct = None if spend is None else cb.used_pct(row, spend)
+    if spend is None:
+        state = "unknown"
+    elif not row.capped:
+        state = "no_daily_cap"
+    elif cb.breaches(row, spend, 0.0) or (pct is not None and pct >= 100):
+        state = "cap_reached"
+    elif pct is not None and pct >= row.alert_pct:
+        state = "alert"
+    else:
+        state = "ok"
+    raw = raw or {}
+    return {"provider": cb.PROVIDER, "scope": row.scope, "scope_kind": row.kind, "target": row.target,
+            "per_run_usd": row.per_run_usd, "per_day_usd": row.per_day_usd, "per_month_usd": row.per_month_usd,
+            "hard_stop": row.hard_stop, "alert_pct": row.alert_pct,
+            "updated_at": _iso(raw.get("updated_at")), "updated_by": raw.get("updated_by"),
+            **actor_view(raw.get("updated_by"), names),
+            "spent_today_usd": None if spend is None else round(spend.day_usd, 4),
+            "spent_month_usd": None if spend is None or spend.month_usd is None else round(spend.month_usd, 4),
+            "used_pct": None if pct is None else round(pct, 1), "state": state}
+
+
+def call_site_coverage(sites: list[dict], routes: list[dict], central: list[dict]) -> list[dict]:
+    """The coverage per call site (section comment). ``sites``: CALL_SITES_SQL rows; ``routes``: ROUTE_STAGES_SQL rows;
+    ``central``: central_row_view rows. Pure."""
+    from shared.llm_client import central_budget as cb
+    from shared.llm_client.call_log import APP
+
+    caps = {c["scope"]: c for c in central if any(c.get(k) is not None
+                                                   for k in ("per_run_usd", "per_day_usd", "per_month_usd"))}
+    seen = {s["stage"]: s for s in sites if s.get("stage")}
+    role = {r["stage"]: r for r in routes}
+    out = []
+    for stage in sorted(set(seen) | set(role)):
+        s, r = seen.get(stage, {}), role.get(stage, {})
+        kinds = sorted(k for k in (s.get("job_kinds") or []) if k)
+        scopes = cb.scopes_for(stage, app=APP, eval_stage=stage if stage in cb.EVAL_STAGES else None)
+        scopes += [f"job:{k}" for k in kinds]
+        covered = [{"scope": sc, "hard_stop": bool(caps[sc]["hard_stop"]), "state": caps[sc]["state"]}
+                   for sc in dict.fromkeys(scopes) if sc in caps]
+        out.append({"stage": stage, "role": r.get("role"), "routed": bool(r), "active": r.get("is_active", True)
+                    if r else None, "today_usd": round(float(s.get("today_usd") or 0.0), 4),
+                    "month_usd": round(float(s.get("month_usd") or 0.0), 4), "calls_7d": int(s.get("calls_7d") or 0),
+                    "job_kinds": kinds, "caps": covered, "capped": bool(covered),
+                    "hard": any(c["hard_stop"] for c in covered)})
+    out.sort(key=lambda x: (-x["month_usd"], x["stage"]))
+    return out
+
+
+async def _read_central(pool, *, now: datetime) -> dict:
+    """The central caps with their spend, and the call sites (one connection; a cap whose spend read fails shows
+    state unknown)."""
+    from shared.llm_client import central_budget as cb
+
+    day, month = day_and_month_start(now)
+    async with pool.acquire() as conn:
+        raws = []
+        for r in await conn.fetch(CENTRAL_ROWS_SQL):
+            raws.append(json.loads(r["row"]) if isinstance(r["row"], str) else dict(r["row"]))
+        try:
+            names = await actor_names(conn, [r.get("updated_by") for r in raws])
+        except asyncpg.PostgresError:
+            names = {}
+        rows = []
+        for raw in raws:
+            row = cb.row_of(raw)
+            if row is None:
+                continue
+            try:
+                spend = await cb.read_spend(conn, row, now=now)
+            except asyncpg.PostgresError:
+                spend = None
+            rows.append(central_row_view(row, spend, names, raw))
+        sites = [dict(r) for r in await conn.fetch(CALL_SITES_SQL, day, month, now - timedelta(days=7))]
+        routes = [dict(r) for r in await conn.fetch(ROUTE_STAGES_SQL)]
+    return {"rows": rows, "call_sites": call_site_coverage(sites, routes, rows)}
+
+
 async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
     """``GET /admin/ai-gateway/budgets``: every cap by tier (see the section comment). Each source is read on its own;
     a failing one leaves its tier empty and names itself in ``errors``."""
@@ -1058,26 +1556,34 @@ async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
     day, month = day_and_month_start(now)
     from api.services import tenant_ai_budget
 
-    (sb, sb_err), (conns, conns_err), (tenants, tenants_err) = await asyncio.gather(
+    (sb, sb_err), (conns, conns_err), (tenants, tenants_err), (central, central_err) = await asyncio.gather(
         _guard("Spend budgets", lambda: _read_spend_budgets(pool)),
         _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
         _guard("Tenant AI budgets", lambda: tenant_ai_budget.read_tier(pool, now=now)),
+        _guard("Central LLM budgets", lambda: _read_central(pool, now=now)),
     )
     spent_today = (sb or {}).get("spent_today", {})
     kind_spent_today = (sb or {}).get("kind_spent_today", {})
     names = (sb or {}).get("names", {})
-    rows = [spend_budget_row(r, spent_today, kind_spent_today, names) for r in (sb or {}).get("rows", [])]
+    rows = [spend_budget_row(r, spent_today, kind_spent_today, names) for r in (sb or {}).get("rows", [])
+            if r.get("provider") != cost_guard.CENTRAL_PROVIDER]       # AA-1025 A7: the llm rows have their own tier
     provider_rows = [r for r in rows if r["scope"] == "global"]
     job_rows = [r for r in rows if r["scope"] != "global"]
     errors = [{"source": s, "error": e} for s, e in (("spend_budgets", sb_err), ("llm_connections", conns_err),
-                                                       ("tenant_budgets", tenants_err)) if e]
+                                                       ("tenant_budgets", tenants_err),
+                                                       ("central_budgets", central_err)) if e]
     return {
         "generated_at": now.isoformat(), "day_start": day.isoformat(), "month_start": month.isoformat(),
         "providers": list(cost_guard.PROVIDERS),
         # AA-1016 (C4): the tenant tier from shared.tenant_ai_budget (migration 321); tenant_ready False before it.
         "tenant_ready": bool(tenants and tenants.get("ready")),
         "tiers": {"provider": provider_rows, "job": job_rows, "connection": conns or [],
-                  "tenant": (tenants or {}).get("rows", [])},
+                  "tenant": (tenants or {}).get("rows", []),
+                  # AA-1025 A7: the central LLM caps (provider 'llm'); empty before migration 340.
+                  "central": (central or {}).get("rows", [])},
+        "central_provider": cost_guard.CENTRAL_PROVIDER,
+        # AA-1025 A7: which central cap covers each CIS call site (stage); empty when the read failed.
+        "call_sites": (central or {}).get("call_sites", []),
         "coverage": [] if sb is None else budget_coverage(provider_rows, conns, cost_guard.PROVIDERS),
         "spent_today_usd": spent_today,
         "errors": errors,

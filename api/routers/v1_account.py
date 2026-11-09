@@ -1,9 +1,10 @@
 """
-/v1/account — AA-761, the tenant portal's Account pages (Activity, Integrations › API key).
+/v1/account — AA-761, the tenant portal's Account pages (Activity).
 
   GET /v1/account/activity          the tenant's own activity trail (acp_shared.audit_log), newest first, paged
   GET /v1/account/activity/export   the same filtered set as CSV (text/csv)
-  GET /v1/account/api-key           masked key, issue date, last sign-in / API call with it
+
+AA-1036 R3 slice 3 (root ADR 0019 d6): GET /v1/account/api-key went with the tenant API keys.
 
 Tenant-JWT-gated (``get_tenant``, the dependency every /v1 tenant route shares; a staff token is 403). The tenant id
 comes ONLY from the verified token; no route takes one from the query string. The reads run on the main pool with
@@ -22,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from api.routers.v1_tours import get_tenant
-from api.schemas.public_api import AccountActivityPage, AccountApiKey
+from api.schemas.public_api import AccountActivityPage
 from api.services import tenant_account
 
 logger = structlog.get_logger()
@@ -88,8 +89,3 @@ async def list_activity(
     tenant_id = _tenant_id(tenant)
     f = _filters(category, action, since, until)
     return await tenant_account.list_activity(request.app.state.pool, tenant_id, f, page=page, page_size=page_size)
-
-
-@router.get("/api-key", summary="Masked API key, issue date and last use", response_model=AccountApiKey)
-async def get_api_key(request: Request, tenant=Depends(get_tenant)):
-    return await tenant_account.api_key_facts(request.app.state.pool, _tenant_id(tenant))

@@ -8,7 +8,7 @@ import pytest
 from shared.llm_client.catalog import CatalogModel
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest, LLMResponse
-from shared.llm_client.role_config import StageConfig
+from shared.llm_client.role_config import _GENERIC_FALLBACK, StageConfig
 
 
 def _model(key, **kw):
@@ -36,6 +36,10 @@ JUDGE_ROUTE = StageConfig(
 
 def _resp(model="x", **kw):
     return LLMResponse(content='{"ok": true}', model_used=model, provider="p", **kw)
+
+
+# A stage read that succeeded with no row and no SAFE_DEFAULTS entry: no stage policy, content (AA-1039).
+_GENERIC_STAGE = _GENERIC_FALLBACK
 
 
 def _client():
@@ -163,6 +167,10 @@ def _openai_completion(content='{"a": 1}', finish="stop"):
 
 
 @patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
+# AA-1039 (review S268): the adapter checks the stage's data class itself, and a failed read of a stage never read
+# fails closed (pii, aws_only). This unit run has no DB: state the read "OK, no stage policy" (content, no scopes),
+# what the read failure used to give these adapter tests.
+@patch("shared.llm_client.client.get_stage_config_sync", new=lambda _stage: _GENERIC_STAGE)
 def test_openai_catalog_model_uses_reasoning_params_and_schema():
     c = _client()
     c._openai = MagicMock()
@@ -183,6 +191,10 @@ def test_openai_catalog_model_uses_reasoning_params_and_schema():
 
 
 @patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
+# AA-1039 (review S268): the adapter checks the stage's data class itself, and a failed read of a stage never read
+# fails closed (pii, aws_only). This unit run has no DB: state the read "OK, no stage policy" (content, no scopes),
+# what the read failure used to give these adapter tests.
+@patch("shared.llm_client.client.get_stage_config_sync", new=lambda _stage: _GENERIC_STAGE)
 def test_legacy_gpt41_call_is_unchanged():
     c = _client()
     c._openai = MagicMock()
@@ -194,6 +206,10 @@ def test_legacy_gpt41_call_is_unchanged():
 
 
 @patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
+# AA-1039 (review S268): the adapter checks the stage's data class itself, and a failed read of a stage never read
+# fails closed (pii, aws_only). This unit run has no DB: state the read "OK, no stage policy" (content, no scopes),
+# what the read failure used to give these adapter tests.
+@patch("shared.llm_client.client.get_stage_config_sync", new=lambda _stage: _GENERIC_STAGE)
 def test_empty_reasoning_output_raises_so_the_route_moves_on():
     c = _client()
     c._openai = MagicMock()

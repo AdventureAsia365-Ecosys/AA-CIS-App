@@ -39,6 +39,23 @@ export const MODELS = defineMessages(
       `${n} connection${n === 1 ? " has" : "s have"} an open circuit: calls skip ${n === 1 ? "it" : "them"} for now (Providers shows which). Other connections still answer.`,
     invariantSummary: (ok: number, total: number) =>
       `Failure-domain rule (report only): ${ok} of ${total} stages can fall back to another failure domain.`,
+    invariantDegrade: (n: number) => `${n} more declare a degrade mode instead (no breach).`,
+    invariantRoleSkipped: (n: number) =>
+      `${n} stage${n === 1 ? " names" : "s name"} a model on a connection that does not serve the stage's role; the gateway never calls it there:`,
+    // StageCoverageCard (AA-1026)
+    coverageTitle: "Stage coverage",
+    coverageIntro: (hours: number) =>
+      `For every active stage, the model that answers now: it answered within ${hours} h (a real call or the probe), with no refusal or open circuit since. No test call is made here.`,
+    coverageAllLive: (n: number) => `All ${n} stages have a live model`,
+    coverageMissing: (n: number) => `${n} stage${n === 1 ? "" : "s"} with no live model`,
+    coverageNoLiveModel: "NO LIVE MODEL",
+    coverageStage: "Stage",
+    coverageRole: "Role",
+    coverageLiveNow: "Live model now",
+    coverageNotes: "Why",
+    coverageUnproven: (n: number) => `${n} model${n === 1 ? "" : "s"} not tested recently`,
+    coverageNotReady: "The stage coverage report is not available on this API yet.",
+    coverageEmpty: "No active stage",
     staffMember: "a staff member",
     staffLogin: (ref: string) => `staff (${ref})`,
     domainOk: "Fallback in another failure domain",
@@ -47,6 +64,17 @@ export const MODELS = defineMessages(
     domainBreachOne: (domain: string) =>
       `Every usable model on this route runs in one failure domain (${domain}): if it is blocked, the stage stops.`,
     domainBreachNone: "No switched-on, funded model on this route can run now.",
+    domainDegrade: "Declared degrade mode",
+    domainDegradeWhy: (mode: string) =>
+      `No fallback in another failure domain; when the route is blocked the product degrades on purpose: ${mode}.`,
+    degradeMode: (mode: string) => ({
+      queue_retry: "jobs wait and run again later",
+      basic_narration: "basic narration without AI",
+      last_saved_text: "the last saved text is shown",
+      manual_reply_needed: "staff reply by hand",
+    } as Record<string, string>)[mode] ?? mode,
+    stageOff: "Switched off",
+    stageOffWhy: (reason: string) => `Every call of this stage is refused before any model runs. Reason: ${reason}`,
     availDegraded: "Throttled",
     availBlocked: "Refused",
     availUnknown: "No recent calls",
@@ -170,6 +198,30 @@ export const MODELS = defineMessages(
     searchStages: "Search stages…",
     noShadowTitle: "No shadow comparisons in this window",
     noShadowBody: "Turn on a stage's shadow on the Routing tab, then come back after it has run on some calls.",
+    // ChangeEvidenceFields (route governance: a writer / judge model change needs evidence)
+    evidenceTitle: "Evidence for this change",
+    evidenceHint:
+      "A writer or judge model change needs the eval run that backs it. When no eval can run (an outage), give a break-glass reason instead: it is kept in the audit log and raises an admin alert.",
+    evalRunId: "Eval run id",
+    evalRunPlaceholder: "ID of a finished eval run",
+    breakGlass: "Break-glass reason",
+    breakGlassPlaceholder: "Why this change cannot wait for an eval run",
+    evidenceMissing: (min: number) => `Give an eval run id, or a break-glass reason of at least ${min} characters.`,
+    savedWithWarning: (warning: string) => `Saved. ${warning}`,
+    // RoutingTab — routing by data class (AA-1039)
+    dataClassTitle: "Routing by data class",
+    dataClassIntro:
+      "The rule: a stage that handles personal data runs only on our own AWS accounts, on routes kept in the United States; a stage that handles content only may also use a global route or a vendor API its data scopes allow. A stage's class is set by a database change, not on this page.",
+    dataClassPii: "Personal data",
+    dataClassPiiNote: "US routes only",
+    dataClassContent: "Content only",
+    dataClassContentNote: "global routes allowed",
+    dataClassUnset: "No class yet",
+    dataClassUnsetNote: "class not set",
+    dataClassNone: "None",
+    dataClassEmptyTitle: "No stage has a data class yet",
+    dataClassEmptyBody:
+      "The database does not hold a data class per stage yet (its update is not applied), so every stage is treated as content only. This card lists the stages per class once it does.",
   },
   {
     route: "Tuyến:",
@@ -203,6 +255,23 @@ export const MODELS = defineMessages(
       `${n} kết nối đang ngắt: các lượt gọi tạm bỏ qua (tab Nhà cung cấp cho biết kết nối nào). Các kết nối khác vẫn trả lời.`,
     invariantSummary: (ok: number, total: number) =>
       `Quy tắc miền lỗi (chỉ báo cáo): ${ok} trên ${total} stage có đường dự phòng ở miền lỗi khác.`,
+    invariantDegrade: (n: number) => `${n} stage khác khai báo chế độ suy giảm thay thế (không tính là vi phạm).`,
+    invariantRoleSkipped: (n: number) =>
+      `${n} stage có model nằm trên kết nối không phục vụ vai trò của stage; gateway không bao giờ gọi model đó ở kết nối này:`,
+    // StageCoverageCard (AA-1026)
+    coverageTitle: "Độ phủ theo stage",
+    coverageIntro: (hours: number) =>
+      `Với mỗi stage đang bật: model đang trả lời được, tức đã trả lời trong ${hours} giờ qua (lượt gọi thật hoặc probe) và từ đó không bị từ chối hay ngắt mạch. Thẻ này không gọi thử.`,
+    coverageAllLive: (n: number) => `Cả ${n} stage đều có model đang trả lời`,
+    coverageMissing: (n: number) => `${n} stage không có model nào đang trả lời`,
+    coverageNoLiveModel: "KHÔNG CÓ MODEL TRẢ LỜI",
+    coverageStage: "Stage",
+    coverageRole: "Vai trò",
+    coverageLiveNow: "Model đang trả lời",
+    coverageNotes: "Lý do",
+    coverageUnproven: (n: number) => `${n} model chưa được kiểm gần đây`,
+    coverageNotReady: "API này chưa có báo cáo độ phủ theo stage.",
+    coverageEmpty: "Không có stage nào đang bật",
     staffMember: "một nhân viên",
     staffLogin: (ref: string) => `nhân viên (${ref})`,
     domainOk: "Có dự phòng ở miền lỗi khác",
@@ -211,6 +280,17 @@ export const MODELS = defineMessages(
     domainBreachOne: (domain: string) =>
       `Mọi model dùng được trên tuyến này chạy trong một miền lỗi (${domain}): nếu nó bị chặn, stage dừng.`,
     domainBreachNone: "Không có model nào trên tuyến này đang bật và có tiền để chạy lúc này.",
+    domainDegrade: "Đã khai báo chế độ suy giảm",
+    domainDegradeWhy: (mode: string) =>
+      `Không có dự phòng ở miền lỗi khác; khi tuyến bị chặn, sản phẩm chủ động chạy ở chế độ suy giảm: ${mode}.`,
+    degradeMode: (mode: string) => ({
+      queue_retry: "job chờ và chạy lại sau",
+      basic_narration: "lời dẫn cơ bản không dùng AI",
+      last_saved_text: "hiện bản đã lưu gần nhất",
+      manual_reply_needed: "nhân viên trả lời tay",
+    } as Record<string, string>)[mode] ?? mode,
+    stageOff: "Đã tắt",
+    stageOffWhy: (reason: string) => `Mọi lượt gọi của stage này bị từ chối trước khi chạy model. Lý do: ${reason}`,
     availDegraded: "Bị giới hạn tốc độ",
     availBlocked: "Bị từ chối",
     availUnknown: "Chưa có lượt gọi gần đây",
@@ -332,5 +412,27 @@ export const MODELS = defineMessages(
     searchStages: "Tìm bước…",
     noShadowTitle: "Không có so sánh chạy bóng nào trong khoảng này",
     noShadowBody: "Bật chạy bóng cho một bước ở tab Điều hướng, rồi quay lại sau khi nó đã chạy trên một số lượt gọi.",
+    evidenceTitle: "Bằng chứng cho thay đổi này",
+    evidenceHint:
+      "Đổi model của một bước viết hoặc chấm cần lượt đánh giá (eval run) làm căn cứ. Khi không chạy được đánh giá (sự cố), hãy ghi lý do khẩn cấp: lý do được lưu trong nhật ký kiểm tra và tạo một cảnh báo cho quản trị.",
+    evalRunId: "Mã lượt đánh giá",
+    evalRunPlaceholder: "Mã của một lượt đánh giá đã xong",
+    breakGlass: "Lý do khẩn cấp",
+    breakGlassPlaceholder: "Vì sao thay đổi này không chờ được lượt đánh giá",
+    evidenceMissing: (min: number) => `Nhập mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} ký tự.`,
+    savedWithWarning: (warning: string) => `Đã lưu. ${warning}`,
+    dataClassTitle: "Định tuyến theo loại dữ liệu",
+    dataClassIntro:
+      "Quy tắc: stage xử lý dữ liệu cá nhân chỉ chạy trên tài khoản AWS của mình, với route giữ ở Hoa Kỳ; stage chỉ xử lý nội dung được dùng thêm route toàn cầu hoặc API của nhà cung cấp mà phạm vi dữ liệu của nó cho phép. Loại của stage được đặt bằng thay đổi cơ sở dữ liệu, không đặt ở trang này.",
+    dataClassPii: "Dữ liệu cá nhân",
+    dataClassPiiNote: "chỉ route Hoa Kỳ",
+    dataClassContent: "Chỉ nội dung",
+    dataClassContentNote: "được dùng route toàn cầu",
+    dataClassUnset: "Chưa có loại",
+    dataClassUnsetNote: "chưa đặt loại",
+    dataClassNone: "Không có",
+    dataClassEmptyTitle: "Chưa stage nào có loại dữ liệu",
+    dataClassEmptyBody:
+      "Cơ sở dữ liệu chưa có loại dữ liệu cho từng stage (bản cập nhật chưa được áp), nên mọi stage được coi là chỉ nội dung. Khi có, thẻ này liệt kê stage theo từng loại.",
   },
 );

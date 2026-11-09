@@ -212,7 +212,8 @@ async def _apply_locked(ctx: JobContext, p: dict, inner) -> dict:
                                       limit=p["limit"], hide_unconfirmed=p["hide_unconfirmed"],
                                       progress=ctx.progress, recheck=p.get("recheck"),
                                       strategy=p.get("strategy", "v1"), max_requests=cap,
-                                      accept_rule=p.get("accept_rule", "v1"))
+                                      accept_rule=p.get("accept_rule", "v1"),
+                                      actor=(getattr(ctx.job, "created_by", None) or KIND)[:64], job_id=ctx.job_id)
     except BudgetExceeded as e:
         stopped = {"status": "stopped_budget", **result}
         if p.get("max_requests"):       # the next run reads the chain's geo.geocode_call rows; shown here too
@@ -226,7 +227,8 @@ async def _apply_locked(ctx: JobContext, p: dict, inner) -> dict:
         try:
             async with ctx.pool.acquire() as conn:
                 await store.log_geocode_calls(conn, inner.name, inner.requests, cost, ctx.job_id,
-                                              failed_requests=getattr(inner, "failed_requests", None))
+                                              failed_requests=getattr(inner, "failed_requests", None),
+                                              stage=KIND, latency_ms=getattr(inner, "latency_ms", None))
         except Exception as e:  # noqa: BLE001 — the spend is also on the job row
             logger.warning("geocode_call_log_failed", error=str(e)[:200])
         await inner.aclose()

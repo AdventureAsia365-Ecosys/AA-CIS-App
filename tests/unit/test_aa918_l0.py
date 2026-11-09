@@ -167,7 +167,8 @@ def test_release_zero_is_a_no_op():
     assert "writing_rules" not in svc.writer_input_snapshot({"brand_audience": pack, "channel": "facebook"})
 
 
-def test_applied_rules_reach_the_prompt_and_the_gate():
+def test_applied_rules_reach_the_prompt_and_the_gate(monkeypatch):
+    monkeypatch.setenv("WRITING_MEMORY_L0_ENFORCE", "on")    # AA-900 W0: L0 blocks only with the switch on
     pack = {**fs.PACK, "forbidden_words": ["dreamy"]}
     applied, _ = l0.select_rules([_rule("truly special"), _rule("must-see", replacement="worth seeing", rid="r2")],
                                  pack=pack, cta=fs.CTA, brand_name=fs.BRAND, trip_name=fs.TRIP)
@@ -283,7 +284,9 @@ def test_activation_needs_a_passing_r0():
     assert l0.activation_problem({**_ready(), "status": "approved"}) is None
 
 
-def test_run_quality_gates_takes_stored_f9_without_a_judge_call():
+def test_run_quality_gates_takes_stored_f9_without_a_judge_call(monkeypatch):
+    # AA-900 W0 — an unclassified stored reason warns under the interim F9 policy; this test pins the replay plumbing
+    monkeypatch.setenv("T10_F9_POLICY_MODE", "legacy")
     f9 = [qg._result(qr.F9_CTA_FACT, ["stored verdict"]), qg._result(qr.F9_BRAND_STYLE, [], blocking=False)]
     with patch.object(qg, "gate_brand_voice", side_effect=AssertionError("judge called")):
         out = qg.run_quality_gates(content_text=fs.CLEAN, atom_text=fs.SEED, cta=fs.CTA, brand_rubric_text="",

@@ -87,7 +87,7 @@ def test_the_scan_sees_runtime_code():
     # A path refactor must not turn the guard into a no-op.
     scanned = {p.relative_to(REPO).as_posix() for p in _files()}
     assert "shared/llm_client/bedrock_satellite.py" in scanned
-    assert "frontend/app/admin/cost-ops/page.tsx" in scanned
+    assert "frontend/app/admin/spend/page.tsx" in scanned
     assert not any(s.startswith("api/migrations/") for s in scanned)
 
 

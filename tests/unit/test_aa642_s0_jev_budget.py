@@ -194,7 +194,7 @@ async def test_a_successful_jev_canary_writes_one_ledger_row(monkeypatch):
     m_log.assert_awaited_once()
     assert m_log.await_args.args[0] is pool
     row = m_log.await_args.kwargs
-    assert row["stage"] == "adhoc_jev_canary" and row["role"] == "validate" and row["provider"] == "typesafe"
+    assert row["stage"] == "adhoc_jev_canary" and row["role"] == "decide" and row["provider"] == "typesafe"
     assert row["model"] == "jev-1.13.0" and row["tokens_in"] == 120 and row["tokens_out"] == 0
     assert row["cost_usd"] == pytest.approx(120 * 0.042 / 1_000_000)
 

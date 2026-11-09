@@ -12,7 +12,7 @@ Subcommands:
           is idempotent, so the cost of a wrong "changed" is one no-op run).
   sync    --repo <consumer repo> --dest <checkout> --ref <CIS sha> [--dry-run] [--run-url <url>]
           In the consumer checkout (on its `main`): regenerate branch `bot/kit-sync` from `origin/main`, copy core
-          at <ref> into every consumer of that repo (AA-Partner: portal and crm-web, one PR), commit, force-push the
+          at <ref> into every consumer of that repo (AA-Partner: crm-web, one app since AA-1036), commit, force-push the
           branch only when its tree changed and open or update the one PR `chore: sync UI kit core to AA-CIS-App
           <sha7>`. No-op (exit 0) when no copied file other than MANIFEST.json changes: the consumer already has
           these bytes; an open sync PR is then closed as superseded. --dry-run does everything up to the local

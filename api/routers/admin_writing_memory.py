@@ -83,6 +83,13 @@ AA-922 (WM-30 / WM-31) — the weekly KPIs (services/writing_memory/kpi.py) and 
   GET   /admin/writing-memory/disagreements?status=open|resolved   the queue
   POST  /admin/writing-memory/disagreements/{item_id}/resolve   {resolution: judge_right | human_right | unclear, note?}
 
+AA-1039 R6 slice 3 — Writing Lab (root ADR 0019 d13, TL-13 `regroup_lab`; services/writing_memory/lab.py): one read per
+stage over the existing tables, $0, no text (ids, labels, counts, hashes); no new learning logic (TL-11 freeze):
+  GET   /admin/writing-memory/lab/{writer}            samples (active golden sets), labels, experiments (eval runs,
+                                                      release shadow runs, model shadow of its prompt stages), prompt
+                                                      versions and the eval gate of one writer; each section read on
+                                                      its own (`sections[name]` {ready, error})
+
 Who may call (api/core/staff_authz.py POLICY): every read needs tenant.read and every write ai.admin (admin only).
 Approval of a non-lexicon rule is not here: it reaches a writer only through a release (AA-919), one human click. A
 lexicon rule may take the L0 path (ADR 0010 decision 6, D11): R0 + the activate click, no release.
@@ -93,6 +100,7 @@ The router is included without an include prefix (staff_policy reads the route t
 """
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from typing import Literal, Optional
@@ -103,7 +111,9 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.core.lab_read_log import LAB_TEXT_LOGGED
 from api.core.staff_authz import staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from services.writing_memory import config as cfg
 from services.writing_memory import fact_filter as ff
@@ -165,7 +175,7 @@ _LAST_JOBS_SQL = """
 """
 
 
-@router.get("/summary")
+@router.get("/summary", dependencies=LAB_TEXT_LOGGED)
 async def summary(request: Request):
     from services.writing_memory.budget import month_spend
     pool = _pool(request)
@@ -216,7 +226,7 @@ def _signal_out(r: dict, full: bool = False) -> dict:
     return out
 
 
-@router.get("/signals")
+@router.get("/signals", dependencies=LAB_TEXT_LOGGED)
 async def list_signals(request: Request, writer: Optional[str] = None, scope: Optional[str] = None,
                        tenant_id: Optional[str] = None, fact_status: Optional[str] = None,
                        actor_type: Optional[str] = None, action: Optional[str] = None,
@@ -249,7 +259,7 @@ _WEEKS_SQL = """
 """
 
 
-@router.get("/signals/clusters")
+@router.get("/signals/clusters", dependencies=LAB_TEXT_LOGGED)
 async def signal_clusters(request: Request):
     """The miner's view right now ($0): every cluster over threshold, its basis and support, whether it already has an
     open rule, and two masked samples (what the drafter would see)."""
@@ -280,7 +290,7 @@ async def signal_clusters(request: Request):
                            "min_cluster_for_draft": cfg.MIN_CLUSTER_FOR_DRAFT}}
 
 
-@router.get("/signals/{signal_id}")
+@router.get("/signals/{signal_id}", dependencies=LAB_TEXT_LOGGED)
 async def get_signal(signal_id: str, request: Request):
     sid = _uuid(signal_id, "signal")
     try:
@@ -330,7 +340,7 @@ async def set_signal_fact(signal_id: str, body: FactBody, request: Request,
 
 # ── candidates ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=LAB_TEXT_LOGGED)
 async def list_candidates(request: Request, status: Optional[str] = None, writer: Optional[str] = None,
                           scope: Optional[str] = None, tenant_id: Optional[str] = None,
                           limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
@@ -351,7 +361,23 @@ _PROVENANCE_SQL = f"SELECT {_SIGNAL_COLS} FROM shared.writing_signal WHERE signa
                   "ORDER BY created_at DESC"
 
 
-@router.get("/candidates/{rule_id}")
+async def _l0_r1_problem(conn, rule: dict) -> Optional[tuple[str, str]]:
+    """AA-900 W0 (ADR 0020, critic F4): an L0 activation changes the writer's prompt, so it waits for the writer's R1
+    record like a release (only for a lexicon rule the L0 path takes; other refusals come first)."""
+    from services.writing_memory import r1_gate
+    if rule.get("kind") != "lexicon" or rule.get("writer") not in l0_mod.L0_WRITERS:
+        return None
+    return await r1_gate.check(conn, rule["writer"], "Activating a learned lexicon rule")
+
+
+async def _reverify_after_rule_change(request: Request, actor: str) -> None:
+    """AA-900 W0: an active L0 lexicon rule is part of the t9 releases' config_fp (l0_lexicon): scan at once after an
+    activation or a rollback (own transaction, never fails the action)."""
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(_pool(request), actor=f"admin:{actor}"[:128])
+
+
+@router.get("/candidates/{rule_id}", dependencies=LAB_TEXT_LOGGED)
 async def get_candidate(rule_id: str, request: Request):
     rid = _uuid(rule_id, "rule")
     try:
@@ -360,12 +386,12 @@ async def get_candidate(rule_id: str, request: Request):
             if rule is None:
                 raise HTTPException(status_code=404, detail="Unknown rule")
             sigs = [dict(r) for r in await conn.fetch(_PROVENANCE_SQL, rule["signal_ids"] or [])]
+            out = rules_mod.serialise(rule)
+            # AA-918 — what stands between this rule and the L0 path now (None = it may be activated), and whether its
+            # stored R0 result is for its current text. AA-900 W0: frozen until the writer has an R1 record.
+            problem = l0_mod.activation_problem(out) or await _l0_r1_problem(conn, out)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    out = rules_mod.serialise(rule)
-    # AA-918 — what stands between this rule and the L0 path now (None = it may be activated), and whether its stored
-    # R0 result is for its current text
-    problem = l0_mod.activation_problem(out)
     r0 = out.get("lint", {}).get("r0") if isinstance(out.get("lint"), dict) else None
     return {**out, "provenance": [_signal_out(s) for s in sigs],
             "l0_activation": None if problem is None else {"code": problem[0], "detail": problem[1]},
@@ -496,7 +522,8 @@ async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optiona
                     rule = await rules_mod.get_rule(conn, rid, for_update=True)
                     if rule is None:
                         raise HTTPException(status_code=404, detail="Unknown rule")
-                    problem = l0_mod.activation_problem(rules_mod.serialise(rule))
+                    problem = (l0_mod.activation_problem(rules_mod.serialise(rule))
+                               or await _l0_r1_problem(conn, rules_mod.serialise(rule)))   # AA-900 W0
                     if problem:
                         raise HTTPException(status_code=409, detail={"detail": problem[1], "code": problem[0]})
                     row = await rules_mod.activate_l0(conn, rid, approved_by=actor)
@@ -509,6 +536,7 @@ async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optiona
     if row is None:
         raise HTTPException(status_code=409, detail={"detail": "The rule changed meanwhile; reload", "code": "stale"})
     logger.info("aa918_l0_activated", rule_id=rid, writer=row["writer"], scope=row["scope"], actor=actor)
+    await _reverify_after_rule_change(request, actor)
     return rules_mod.serialise(row)
 
 
@@ -536,6 +564,7 @@ async def rollback_rule(rule_id: str, body: RollbackBody, request: Request,
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     logger.info("aa918_l0_rolled_back", rule_id=rid, actor=actor)
+    await _reverify_after_rule_change(request, actor)
     return rules_mod.serialise(row)
 
 
@@ -575,6 +604,16 @@ async def run(body: RunBody, request: Request, x_admin_user_id: Optional[str] = 
             raise HTTPException(status_code=409, detail={
                 "detail": "Preference summaries need the LLM path, which is switched off "
                           f"({preference.PREF_ENV} is not set on the worker)", "code": preference.STATE_OFF})
+        from services.writing_memory import r1_gate
+        if r1_gate.gate_on():                  # AA-900 W0: the drafter is mining too; frozen at $0 until R1
+            try:
+                async with pool.acquire() as conn:
+                    r1 = await r1_gate.records(conn)
+            except asyncpg.UndefinedTableError as e:
+                raise _unavailable(e)
+            if not r1:
+                raise HTTPException(status_code=409, detail={
+                    "detail": r1_gate.detail("any writer", "Preference-summary drafting"), "code": r1_gate.CODE})
         payload["mode"] = "preference_summary"
     now = _job_stamp()
     job_id, created = await enqueue(pool, kind, payload, idempotency_key=f"{kind}:admin:{now}",
@@ -629,6 +668,20 @@ async def active_releases(request: Request):
     return {"items": [rel.serialise(r) for r in items], "writers": [rel.serialise(w) for w in switches]}
 
 
+async def _config_drift(conn, rel, row: dict) -> Optional[dict]:
+    """AA-900 W0: which config_fp components / path stages differ from the release's fingerprint now ($0). None when
+    the current fingerprint cannot be read (the drawer still opens)."""
+    try:
+        fp = row["fingerprint"]
+        stored = fp if isinstance(fp, dict) else json.loads(fp or "{}")
+        now = await rel.current_fingerprint(conn, row["writer"], scope=row.get("scope") or "platform",
+                                            tenant_id=row.get("tenant_id"))
+        return rel.config_drift(stored, now)
+    except Exception as e:  # noqa: BLE001
+        logger.info("wm_release_drift_unavailable", error=f"{type(e).__name__}: {str(e)[:160]}")
+        return None
+
+
 @router.get("/releases/{release_id}")
 async def get_release(release_id: str, request: Request):
     from services.writing_memory import releases as rel
@@ -644,9 +697,11 @@ async def get_release(release_id: str, request: Request):
             problem = None
             if row["status"] == "approved":
                 problem = rel.wiring_problem(row) or await rel.check(conn, row, first_activation=True)
+            # AA-900 W0: which config_fp components / path stages differ from the release's fingerprint now ($0)
+            drift = await _config_drift(conn, rel, row)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    return {**rel.serialise(row),
+    return {**rel.serialise(row), "config_drift": drift,
             "runs": {k: ({**rel.serialise({kk: vv for kk, vv in v.items() if kk != "details"}),
                           "summary": rel.run_summary(v.get("details"))} if v else None)
                      for k, v in runs.items()},
@@ -837,7 +892,7 @@ async def reject_release(release_id: str, body: ReleaseReasonBody, request: Requ
     return rel.serialise(row)
 
 
-@router.get("/writers")
+@router.get("/writers", dependencies=LAB_TEXT_LOGGED)
 async def writer_switches(request: Request):
     from services.writing_memory import releases as rel
     try:
@@ -896,7 +951,7 @@ def _owner(scope: str, tenant_id: Optional[str]) -> tuple[str, Optional[str]]:
     return scope, (_uuid(tenant_id, "tenant") if tenant_id else None)
 
 
-@router.get("/exemplars")
+@router.get("/exemplars", dependencies=LAB_TEXT_LOGGED)
 async def list_exemplars(request: Request, writer: Optional[_EXEMPLAR_WRITERS] = None, channel: Optional[str] = None,
                          scope: Optional[Literal["platform", "tenant"]] = None, tenant_id: Optional[str] = None,
                          status: Optional[Literal["candidate", "pinned", "never"]] = None,
@@ -918,7 +973,7 @@ async def list_exemplars(request: Request, writer: Optional[_EXEMPLAR_WRITERS] =
             "total": total, "limit": limit, "offset": offset}
 
 
-@router.get("/exemplars/selection")
+@router.get("/exemplars/selection", dependencies=LAB_TEXT_LOGGED)
 async def exemplar_selection(request: Request, writer: _EXEMPLAR_WRITERS,
                              scope: Literal["platform", "tenant"] = "platform", tenant_id: Optional[str] = None):
     """What a rules draft of this writer and owner would pin now (the function the draft itself calls)."""
@@ -1014,7 +1069,7 @@ _VOICE_RELEASES_SQL = """
 """
 
 
-@router.get("/tenants/{tenant_id}/voice")
+@router.get("/tenants/{tenant_id}/voice", dependencies=TENANT_SCOPED)
 async def tenant_voice(tenant_id: str, request: Request):
     """The Tenant 360 "Voice memory" card (admin only): what the writers learned for this tenant. Every read filters
     tenant_id explicitly (cis_app's policies are USING (true))."""
@@ -1045,7 +1100,7 @@ async def tenant_voice(tenant_id: str, request: Request):
 
 # ── weekly KPIs, keeps and the disagreement queue (AA-922 WM-30 / WM-31) ────────────────────────────────────────────
 
-@router.get("/metrics")
+@router.get("/metrics", dependencies=LAB_TEXT_LOGGED)
 async def metrics(request: Request):
     """The stored weekly reports, newest first."""
     from services.writing_memory import kpi
@@ -1117,7 +1172,7 @@ async def keep_release(release_id: str, body: KeepBody, request: Request,
     return row
 
 
-@router.get("/disagreements")
+@router.get("/disagreements", dependencies=LAB_TEXT_LOGGED)
 async def list_disagreements(request: Request, status: Optional[Literal["open", "resolved"]] = "open",
                              limit: int = Query(50, ge=1, le=200)):
     from services.writing_memory import disagreements as dis
@@ -1150,3 +1205,15 @@ async def resolve_disagreement(item_id: str, body: ResolveBody, request: Request
     except dis.DisagreementError as e:
         raise HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
     return row
+
+
+# ── Writing Lab (AA-1039 R6 slice 3) ───────────────────────────────────────────────────────────────────────────────
+
+@router.get("/lab/{writer}")
+async def lab_stage(writer: str, request: Request):
+    """One Writing Lab stage: samples, labels, experiments, prompt versions and the eval gate of a writer ($0, read
+    only; no tenant text). Each section is read on its own: a missing table empties only that section."""
+    from services.writing_memory import lab
+    if writer not in lab.WRITERS:
+        raise HTTPException(status_code=404, detail="Unknown writer")
+    return await lab.stage_view(_pool(request), writer)

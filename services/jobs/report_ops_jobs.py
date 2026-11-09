@@ -1,14 +1,9 @@
-"""AA-1003 R2 — the daily safety net's job kinds (root AA-1001 catalog: OPS-12, TP-03).
+"""AA-1003 R2 — the daily safety net's job kinds (root AA-1001 catalog: OPS-12; TP-03 retired by the R0 hotfix).
 
-  inquiry_handoff_check  payload {"hour": "YYYY-MM-DDTHH" (UTC)}
-                         TP-03 hourly check (services/reports/handoff.py): TripPlanner inquiries sent vs received by
-                         the Booking inbox over the last WINDOW_DAYS UTC days, from the two ops.overview.v1 contract
-                         views (aggregates, no PII). The result is the check (window, sent, received, gap, per day);
-                         a gap seen at this check AND at the previous hour's check raises the admin bell
-                         platform.inquiry_handoff.gap (again only when the gap grew, within 24 h) and queues one ops
-                         alert e-mail per UTC day (template inquiry_handoff_gap); INQUIRY_HANDOFF_ALERTS=off on the
-                         worker switches both off (result alert.disabled). Queued by the api's ops metrics sampler once
-                         per UTC hour (idempotency key inquiry_handoff_check:<hour>).
+  inquiry_handoff_check  RETIRED (R0 hotfix, root ADR 0019 B2B-only model; services/reports/handoff.py). Nothing
+                         queues it any more (the ops metrics sampler stopped); the kind stays registered as a no-op so
+                         a check queued by an api task of the previous release finishes ({"status": "retired"})
+                         instead of staying queued. It reads no view, raises no bell and sends no e-mail.
   report_email           payload {"run_id", "report_id"}
                          Sends a succeeded report run (its Markdown) through the existing SES path
                          (shared/aws_client/ses_mailer.py) to that report's opt-in list only, never to the alert
@@ -25,7 +20,6 @@ import html
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
@@ -48,67 +42,16 @@ MAX_REPORT_RECIPIENTS = 10
 _SPLIT = re.compile(r"[,;\s]+")
 
 
-# ── TP-03 hourly check ──────────────────────────────────────────────────────────────────────────────────────────
+# ── TP-03 hourly check (retired) ──────────────────────────────────────────────────────────────────────────────
 
 
-def _parse_hour(raw) -> datetime:
-    try:
-        return datetime.strptime(str(raw), "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        raise NonRetryable(f"hour {raw!r} is not YYYY-MM-DDTHH (UTC)")
-
-
-async def _alert(pool, result: dict, hour: datetime) -> dict:
-    """Bell + e-mail for a persistent gap; each part best effort and noted in the result."""
-    out: dict = {}
-    try:
-        async with pool.acquire() as conn:
-            out["bell"] = await handoff.maybe_raise_gap_bell(conn, result)
-    except Exception as e:
-        out["bell_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-        logger.warning("inquiry_handoff_bell_failed", error=out["bell_error"])
-    try:
-        details = {k: result[k] for k in ("gap", "sent", "received", "parked", "failed", "window")}
-        out["email_job"] = await ops_alerts.enqueue_inquiry_handoff_email(
-            pool, details={**details, "checked_at": hour.isoformat()}, now=hour)
-    except Exception as e:
-        out["email_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-        logger.warning("inquiry_handoff_email_enqueue_failed", error=out["email_error"])
-    return out
-
-
-@job_kind(CHECK_KIND, concurrency=1, max_attempts=2, expected_seconds=30, background=True)
+@job_kind(CHECK_KIND, concurrency=1, max_attempts=1, expected_seconds=5, background=True)
 async def run_handoff_check(ctx: JobContext) -> dict:
-    hour = _parse_hour((ctx.payload or {}).get("hour"))
-    today = hour.date()
-    first = today - timedelta(days=handoff.WINDOW_DAYS - 1)
-    async with ctx.pool.acquire() as conn:
-        days = await handoff.read_days(conn, first, today)
-        previous = await handoff.previous_result(conn, hour)
-    result = {"kind": CHECK_KIND, "hour": hour.isoformat(), **handoff.evaluate(days, previous)}
-    if result["persistent"]:
-        if handoff.alerts_enabled():
-            result["alert"] = await _alert(ctx.pool, result, hour)
-        else:
-            result["alert"] = {"disabled": f"{handoff.ALERTS_ENV} is off"}
-    logger.info("inquiry_handoff_checked", hour=hour.isoformat(), gap=result["gap"], persistent=result["persistent"])
+    """No-op since the R0 hotfix: TP-03 is retired (the B2C inquiry hand-off is off)."""
+    result = {"kind": CHECK_KIND, "status": "retired", "hour": (ctx.payload or {}).get("hour"),
+              "reason": "TP-03 retired: the TripPlanner to Booking inquiry hand-off is off (B2B-only model)"}
     ctx.set_result(result)
     return result
-
-
-_CHECK_EXISTS_SQL = "SELECT EXISTS (SELECT 1 FROM shared.job WHERE idempotency_key = $1)"
-
-
-async def enqueue_hourly_check(pool, now: Optional[datetime] = None) -> tuple[Optional[str], bool, datetime]:
-    """This UTC hour's check (idempotent per hour). Called by the ops metrics sampler every tick: one indexed EXISTS
-    first, so only the first tick of the hour INSERTs."""
-    hour = handoff.hour_of(now)
-    key = handoff.check_key(hour)
-    if await pool.fetchval(_CHECK_EXISTS_SQL, key):
-        return None, False, hour
-    job_id, created = await enqueue(pool, CHECK_KIND, {"hour": f"{hour:%Y-%m-%dT%H}"}, idempotency_key=key,
-                                    created_by=SCHEDULER)
-    return job_id, created, hour
 
 
 # ── report e-mail ───────────────────────────────────────────────────────────────────────────────────────────────

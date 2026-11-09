@@ -7,6 +7,7 @@ reply writes one llm_call_log row on stage t9_faq_answer_fit, role validate (AA-
 """
 import asyncio
 import json
+import inspect
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -308,8 +309,8 @@ def test_writer_input_carries_the_fit_record_only_when_present():
 
 
 def test_run_write_background_calls_the_step_after_the_tag_strip_and_before_final_integrity():
-    src = Path(svc.__file__).read_text()
-    i_strip = src.index("content_text = strip_citation_tags(content_text)\n        gate_ledger = deep_strip")
+    src = inspect.getsource(svc._normalize_final_text)   # AA-1047 W1: the post-loop steps live in the normalizer
+    i_strip = src.index("content_text = strip_citation_tags(content_text)\n    gate_ledger = deep_strip")
     i_fit = src.index("await _apply_faq_answer_fit(")
     i_final = src.index("content_text, gate_ledger, flags, status, held_reason = _final_integrity(")
     assert i_strip < i_fit < i_final
@@ -459,29 +460,74 @@ def test_isolated_default_bound_is_fit_concurrency(monkeypatch):
     assert inflight["peak"] == 2
 
 
+def _blocking_client(slow_q):
+    """generate() as _pair_client, except the call for `slow_q` blocks until the test sets the returned event."""
+    import threading
+    started, release = threading.Event(), threading.Event()
+    inner = _pair_client()
+
+    def generate(request):
+        if f"1. Q: {slow_q}" in request.user_prompt:
+            started.set()
+            release.wait(timeout=30)
+        return inner.generate(request)
+    client = MagicMock()
+    client.generate.side_effect = generate
+    return client, started, release
+
+
+def _deadline_after(ready, started, futures_seen, deadline_s):
+    """A stand-in for faq_answer_fit.futures_wait: the deadline "passes" once the pairs at indexes `ready` replied and
+    the slow call has started, so no assertion depends on the wall clock (S273: the old 0.45 s budget read 0.96 s
+    under merge-queue load and failed a CIS PR). The real wait keeps the production code path unchanged otherwise."""
+    from concurrent.futures import wait as real_wait
+
+    def fake_wait(futures, timeout=None):
+        assert timeout == deadline_s
+        futures_seen.extend(futures)
+        done, _not_done = real_wait([futures[i] for i in ready], timeout=30)
+        assert len(done) == len(ready) and started.wait(timeout=30)
+        return done, set(futures) - done
+    return fake_wait
+
+
 def test_isolated_a_pair_past_the_deadline_is_kept():
-    client = _pair_client(delay={PAIRS[2][0]: 0.5})
-    import time
-    with patch.object(fit, "record_call_sync"):
-        t0 = time.monotonic()
-        out = fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client, deadline_s=0.2)
-        assert time.monotonic() - t0 < 0.45  # returned at the deadline, not after the slow pair
-        time.sleep(0.5)  # let the late call finish (and write its row) while record_call_sync is still patched
+    from concurrent.futures import wait as real_wait
+    client, started, release = _blocking_client(PAIRS[2][0])
+    futures: list = []
+    with patch.object(fit, "record_call_sync"), \
+            patch.object(fit, "futures_wait", _deadline_after([0, 1, 3], started, futures, 0.2)):
+        try:
+            out = fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client, concurrency=len(PAIRS),
+                                       deadline_s=0.2)
+            # returned at the deadline while the slow pair is still running: it did not wait for it
+            assert not futures[2].done()
+        finally:
+            release.set()
+            real_wait([futures[2]], timeout=30)  # the late call finishes (and writes its row) while still patched
     assert [v["verdict"] for v in out.verdicts] == ["ANSWERS", "NON_ANSWER", None, "WRONG_SUBJECT"]
     assert out.errors[0]["n"] == 3 and "TimeoutError" in out.errors[0]["error"]
+    assert out.calls == 4 and futures[2].done() and futures[2].exception() is None
 
 
 def test_isolated_calls_count_only_the_calls_started_before_the_deadline():
     # one call at a time: pair 1 replies, pair 2 is still running at the deadline, pairs 3-4 are queued and
     # cancelled, so they are never called and not counted.
-    client = _pair_client(delay={PAIRS[1][0]: 0.5})
-    import time
-    with patch.object(fit, "record_call_sync"):
-        out = fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client, concurrency=1, deadline_s=0.2)
-        time.sleep(0.5)  # let the late call finish while record_call_sync is still patched
+    from concurrent.futures import wait as real_wait
+    client, started, release = _blocking_client(PAIRS[1][0])
+    futures: list = []
+    with patch.object(fit, "record_call_sync"), \
+            patch.object(fit, "futures_wait", _deadline_after([0], started, futures, 0.2)):
+        try:
+            out = fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client, concurrency=1, deadline_s=0.2)
+            assert not futures[1].done()
+        finally:
+            release.set()
+            real_wait([futures[1]], timeout=30)  # let the late call finish while record_call_sync is still patched
     assert out.calls == 2 and client.generate.call_count == 2
     assert [e["n"] for e in out.errors] == [2, 3, 4]
     assert [v["verdict"] for v in out.verdicts] == ["ANSWERS", None, None, None]
+    assert futures[2].cancelled() and futures[3].cancelled()
 
 
 def test_isolated_calls_see_the_callers_contextvars():

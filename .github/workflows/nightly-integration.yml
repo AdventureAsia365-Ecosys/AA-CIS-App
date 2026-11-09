@@ -1,0 +1,174 @@
+# AA-1024 l22 (S271 lessons guard G8): the integration suite once a night in ONE job with the modules in a random
+# order (seed printed in the summary), to surface modules that lean on an earlier module's leftovers before a shard
+# split or a new file moves them (lessons S252..S270: a dropped geo schema, shared seed rows, self-FK leftovers, the
+# 304 replay run before 322). Not a required check and never on a PR: a red run is a finding to fix, not a merge block.
+# Replay a red order: Run workflow with its seed. Same Postgres / Redis / env as ci.yml "Integration shard i/4".
+# A red run is visible beyond GitHub's e-mail (AA-1024 follow-up; lesson S255: the full-history Secret Scan was red three
+# times and nobody saw it): job "report" keeps ONE open issue labelled nightly-red, opened on the first red night,
+# commented on each further red night, closed by the next green one. `gh issue list --label nightly-red` is the probe.
+name: Nightly integration (random order)
+
+on:
+  schedule:
+    - cron: "41 19 * * *"    # 02:41 Asia/Ho_Chi_Minh, after the 4-shard runs of the day
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Module order seed (empty: a new one)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-integration
+  cancel-in-progress: true
+
+jobs:
+  random-order:
+    name: Integration (random module order)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      seed: ${{ steps.suite.outputs.seed }}
+    # The dummy values of ci.yml's integration shards, by reference: a literal credential-shaped value on a new line
+    # trips the PR gitleaks check (ci.yml's own lines are in the baseline).
+    env:
+      CI_DB_PASS: cistest
+      CI_DUMMY_OPENAI: sk-test-dummy
+      CI_DUMMY_JWT: test-jwt-secret-ci-only-not-real
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: cistest
+          POSTGRES_PASSWORD: cistest    # services cannot read the env context
+          POSTGRES_DB: cis_integration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          # S273 (workflow_lint WL4): a scheduled run is on main, so this saves the entry every PR / queue run restores.
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      # S273: same as ci.yml. A scheduled run is on main, so its cache entry is readable by every PR and queue run.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
+      - name: Install dependencies
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
+        run: |
+          uv pip install --system -r "$REQ"
+          uv pip install --system -r tests/integration/requirements-integration.txt
+
+      - name: Setup test DB user
+        run: |
+          PGPASSWORD=cistest psql -h localhost -U cistest -d cis_integration_test \
+            -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN CREATE ROLE app_user LOGIN PASSWORD 'appuser123'; END IF; END \$\$;"
+
+      - name: Run the integration suite in a random module order
+        id: suite
+        env:
+          INPUT_SEED: ${{ inputs.seed }}
+          ENVIRONMENT: test
+          REDIS_URL: redis://localhost:6379
+          AWS_REGION: us-west-1
+          AWS_DEFAULT_REGION: us-west-1
+          OPENAI_API_KEY: ${{ env.CI_DUMMY_OPENAI }}
+          JWT_SECRET: ${{ env.CI_DUMMY_JWT }}
+          DATAFORSEO_LOGIN: test
+          DATAFORSEO_PASSWORD: test
+          LANGFUSE_SECRET_KEY: test
+          LANGFUSE_PUBLIC_KEY: test
+          LANGFUSE_HOST: http://localhost:3000
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="postgresql://cistest:${CI_DB_PASS}@localhost:5432/cis_integration_test"
+          SEED="${INPUT_SEED:-}"
+          [ -n "$SEED" ] || SEED=$(( $(date +%s) % 1000000 ))
+          [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "::error::seed must be a number"; exit 2; }
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --shards 1 --index 1 --shuffle "$SEED" \
+            --exclude tests/integration/test_007_rls_isolation.py tests/integration)
+          {
+            echo "### Nightly integration, random module order"
+            echo "- seed: \`$SEED\` (replay: Run workflow with this seed), ${#FILES[@]} test files"
+            echo "- first files: ${FILES[*]:0:5}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "seed=$SEED, ${#FILES[@]} test files"
+          pytest "${FILES[@]}" -v --tb=short -p no:cacheprovider
+
+  # One open issue labelled nightly-red while the nightly is red (opened, then commented on), closed by a green run.
+  # Only this job may write, and only issues; it reads nothing from the repository (no checkout).
+  report:
+    name: Report the result (issue nightly-red)
+    needs: random-order
+    # Only a run of main speaks for main: a manual replay from a feature branch must not open or close the issue.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RESULT: ${{ needs.random-order.result }}
+      SEED: ${{ needs.random-order.outputs.seed }}
+      EVENT: ${{ github.event_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, comment on or close the nightly-red issue
+        run: |
+          set -euo pipefail
+          N=$(gh issue list --label nightly-red --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$N" ]; then
+              gh issue close "$N" --comment "Green again ($EVENT, seed \`${SEED:-?}\`): $RUN_URL"
+              echo "- nightly green: closed #$N" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          BODY="Nightly integration (random module order) ended **$RESULT** ($EVENT, seed \`${SEED:-?}\`): $RUN_URL
+
+          Replay the same module order: Actions > Nightly integration (random order) > Run workflow, with this seed.
+          A module that passes alone but fails here leans on an earlier module's leftovers (lessons S252..S270).
+          The next green run closes this issue."
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --body "$BODY"
+          else
+            gh label create nightly-red --color B60205 --force \
+              --description "The nightly random-order integration run is red (nightly-integration.yml)"
+            N=$(gh issue create --title "Nightly integration (random order) is red" --label nightly-red --body "$BODY" \
+              | sed -nE 's#.*/issues/([0-9]+)$#\1#p')
+          fi
+          echo "::warning::nightly integration $RESULT: issue #$N (label nightly-red)"
+          echo "- nightly $RESULT: issue #$N (label nightly-red)" >> "$GITHUB_STEP_SUMMARY"

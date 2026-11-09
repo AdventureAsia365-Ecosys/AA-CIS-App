@@ -3,13 +3,12 @@
 // them to the client form:
 //   - LEGACY_ADMIN_LOGIN_ENABLED (default OFF since AA-816 S2): whether the username/password form is shown at all;
 //   - whether Cognito sign-in works on THIS host: only allowlisted hosts (production, localhost in
-//     development) have registered callback URLs, and the client secret must be configured. On a
-//     Vercel preview the company-email button is shown disabled with a note. AA-911: the fixed Preview host
-//     aa-cis-preview.lumiguides.it.com has company sign-in and never shows the password form.
+//     development) have registered callback URLs, and the client secret must be configured. On any other
+//     host the company-email button is shown disabled with a note.
 // The page never redirects to Cognito by itself (ADR 0006 §7): after a logout, an automatic redirect
 // would sign the user straight back in through the managed-login session cookie.
 import { cookies, headers } from "next/headers";
-import { cognitoSignInAvailable, isPreviewSignInHost, workforceSignInHost } from "@/lib/cognito";
+import { cognitoSignInAvailable, workforceSignInHost } from "@/lib/cognito";
 import { legacyAdminLoginEnabled } from "@/lib/staffSession";
 import { langFromCookie } from "../_kit/core/i18n";
 import { LANG_COOKIE } from "../_kit/i18n";
@@ -29,7 +28,7 @@ export default async function LoginPage({
   const lang = langFromCookie((await cookies()).get(LANG_COOKIE)?.value);
   return (
     <LoginForm
-      legacyEnabled={legacyAdminLoginEnabled() && !isPreviewSignInHost(host)}
+      legacyEnabled={legacyAdminLoginEnabled()}
       cognitoAvailable={cognitoSignInAvailable(host, "cis-admin")}
       signInHost={workforceSignInHost()}
       initialError={Object.hasOwn(LOGIN_ERRORS, errorKey) ? LOGIN_ERRORS[errorKey as keyof typeof LOGIN_ERRORS] : null}

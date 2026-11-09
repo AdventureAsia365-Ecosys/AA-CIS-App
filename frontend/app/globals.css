@@ -13,9 +13,9 @@
      - no stored choice  → follow `prefers-color-scheme`
      - 'light' | 'dark'  → that explicit choice wins
    The resolved value is written to <html data-theme="light|dark"> before paint,
-   so there is no flash of the wrong theme. The admin token object `A`
-   (admin/_components/adminUi.tsx) and the kit object `K` (_kit/core/tokens.ts)
-   read the `--aa-*` variables of _kit/core/tokens.css via `var()`.
+   so there is no flash of the wrong theme. The kit object `K` (_kit/core/tokens.ts)
+   and the CIS-local `KX` (_kit/adminTokens.ts) read the `--aa-*` variables of
+   _kit/core/tokens.css via `var()`.
    ────────────────────────────────────────────────────────────────────────── */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -113,60 +113,11 @@ body {
    as the inline styles define them.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* The hamburger that opens the drawer. Hidden ≥ 768px; shown only on small screens. */
-.aa-admin-hamburger { display: none; }
-.aa-admin-backdrop { display: none; }
+/* AA-1008 (S6e): the phone drawer (off-canvas sidebar, backdrop, Esc) is the kit core ShellFrame's
+   (app/_kit/core/ShellFrame.tsx, its own style element keyed on data-kit-shell); the rules below are the
+   admin's own look inside it. */
 
 @media (max-width: 767px) {
-  /* Take the sidebar out of the flex row so it no longer eats ~60% of a 390px screen:
-     fixed + off-canvas by default, slid in when open. */
-  .aa-admin-sidebar {
-    position: fixed !important;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    height: 100% !important;
-    z-index: 1000;
-    transform: translateX(-100%);
-    transition: transform 0.22s ease, visibility 0.22s ease;
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
-    /* Closed drawer must not be keyboard-focusable (its nav buttons would otherwise be in the tab
-       order while off-canvas). visibility:hidden takes it out of the tab order; it only applies
-       < 768px, so >= 768px is unaffected. */
-    visibility: hidden;
-  }
-  .aa-admin-sidebar.aa-admin-sidebar--open {
-    transform: translateX(0);
-    visibility: visible;
-  }
-
-  /* Fixed top-left hamburger, ≥ 40×40 touch target. */
-  .aa-admin-hamburger {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    position: fixed;
-    top: 10px;
-    left: 10px;
-    z-index: 1001;
-    width: 42px;
-    height: 42px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: var(--brand-blackblue, #1F2933);
-    color: #F4F1EC;
-    cursor: pointer;
-  }
-
-  /* Backdrop behind the open drawer; click to close. */
-  .aa-admin-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 999;
-    background: rgba(0, 0, 0, 0.45);
-  }
-
   /* AA-752 — the shell's topbar is in-flow now (no fixed hamburger), so the old 56px top gap is
      gone; the bottom padding clears the fixed BottomNav so page content is never hidden behind it. */
   .aa-admin-main {

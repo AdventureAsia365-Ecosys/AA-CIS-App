@@ -73,14 +73,21 @@ COLOR_LINE = "#e9e4db"
 # What each role means, in plain words (api/core/staff_authz.py ROLE_PERMS; Booking roles: staff_app_grant).
 CIS_ROLE_TEXT: dict[str, str] = {
     "admin": "Administrator (every page of the content admin, including settings and spend)",
-    "reviewer": "Reviewer (tour content work and reviews)",
-    "content": "Content team (tour content work)",
+    "content": "Content team (tour content work and reviews)",
+    # AA-1035 R2 (root ADR 0019 d3)
+    "content_lead": "Content lead (catalogue, waves, review, master content, atoms and photos, tenant content QA)",
+    "tenant_qa": "Tenant content QA (held pieces, labels, place cards, content trace)",
+    "customer_success": "Customer success (the tenants assigned to you: health, members, invitations)",
+    "support": "Support (assigned and unassigned tenants: members and invitations)",
+    "finance": "Finance (plans, billing and spend figures of every tenant)",
+    "ai_ops": "AI operations (model routing, AI budgets, Writing Lab)",
 }
 BOOKING_ROLE_TEXT: dict[str, str] = {
     "admin": "Booking administrator",
     "sales": "Sales",
     "contracting": "Contracting",
     "content_creator": "Content creator",
+    "finance": "Finance (invoices and payments)",
 }
 NO_BOOKING_TEXT = "No access to Booking"
 UNKNOWN_ACTOR = "An Adventure Asia platform owner"   # sentence start, when the actor's name is unknown

@@ -341,7 +341,7 @@ async def test_a_policy_hidden_row_the_day_backs_is_shown_again(monkeypatch):
                                  _Geo(_refused("0:day_disagree", "1:off_route")), hide_unconfirmed=False,
                                  accept_rule=V4)
     assert r["outcome"] == "kept_model" and r["unhidden"] is True
-    reveal = [a for s, a in conn.sql if "SET geo_status = 'ok'" in s][0]
+    reveal = [a for s, a in conn.sql if "SET geo_status = coalesce($2::jsonb ->> 'prev_geo_status'" in s][0]
     assert json.loads(reveal[1])["unhidden_by"] == "relocate:kept_model"
 
 
@@ -370,7 +370,7 @@ def _hidden(by, reason):
 
 
 def _reveals(conn):
-    return [a for s, a in conn.sql if "SET geo_status = 'ok'" in s]
+    return [a for s, a in conn.sql if "SET geo_status = coalesce($2::jsonb ->> 'prev_geo_status'" in s]
 
 
 @pytest.mark.parametrize("reason,current,want_reason,want_shown", [

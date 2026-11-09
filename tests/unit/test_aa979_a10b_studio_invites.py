@@ -52,7 +52,9 @@ def test_the_invitation_routes_are_on_the_allow_list():
 
 def test_synthetic_sql_needs_an_explicit_true():
     # is_canary is nullable on Dev (migration 281): NULL must not count as synthetic.
-    assert e2e_staff.SYNTHETIC_TENANT_SQL == "SELECT is_canary IS TRUE FROM shared.tenants WHERE tenant_id = $1"
+    assert e2e_staff.SYNTHETIC_TENANT_SQL == (
+        "SELECT is_canary IS TRUE AND is_pilot IS NOT TRUE FROM shared.tenants WHERE tenant_id = $1"
+    )
 
 
 class _Val:
@@ -104,7 +106,6 @@ def test_invitation_paths_are_allowed_writes(method, path):
     ("PATCH", f"/admin/tenants/{SYNTHETIC}/members/{REAL}"),
     ("POST", "/admin/tenants"),
     ("PATCH", f"/admin/tenants/{SYNTHETIC}"),
-    ("POST", f"/admin/tenants/{SYNTHETIC}/generate-key"),
     ("POST", f"/admin/tenants/{SYNTHETIC}/offboard"),
     ("PUT", f"/admin/tenants/{SYNTHETIC}/config"),
 ])
@@ -270,6 +271,16 @@ def test_send_again_on_a_synthetic_tenant_is_allowed(real, issuer):  # noqa: F81
     assert relays[0][3]["cis_invitation_id"] == str(directory.invited["invitation_id"])
 
 
+def test_send_again_to_the_kept_address_is_refused_for_the_e2e_admin(real, issuer):  # noqa: F811
+    """AA-1035 close-out: the A10b session names an E2E mailbox address; it never uses the CRM's kept address (which a
+    real admin's invitation on a synthetic tenant may hold)."""
+    client, directory, relays, _ = real
+    res = client.post(f"/admin/tenants/{SYNTHETIC}/members/{directory.invited['membership_id']}/invitation/send",
+                      json={"locale": "en"}, headers=_headers(issuer))
+    assert (res.status_code, res.json()) == (403, {"detail": "e2e_read_only"})
+    assert relays == [] and directory.writes == []
+
+
 @pytest.mark.parametrize("tenant", [REAL, NULL_FLAG])
 def test_send_again_on_a_real_tenant_is_refused(real, issuer, tenant):  # noqa: F811
     client, directory, relays, _ = real
@@ -323,7 +334,6 @@ def test_send_again_to_another_address_is_refused(real, issuer):  # noqa: F811
     ("POST", f"/admin/tenants/{SYNTHETIC}/members/{REAL}/remove", None),
     ("PATCH", f"/admin/tenants/{SYNTHETIC}/members/{REAL}", {"content_studio_role": "owner"}),
     ("PATCH", f"/admin/tenants/{SYNTHETIC}", {"is_active": False}),
-    ("POST", f"/admin/tenants/{SYNTHETIC}/generate-key", {}),
     ("POST", f"/admin/tenants/{SYNTHETIC}/offboard", {}),
     ("PUT", f"/admin/tenants/{SYNTHETIC}/config", {}),
     ("POST", "/admin/tenants", {"name": "x"}),

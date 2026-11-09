@@ -12,6 +12,15 @@ from services.acp_produce import tenant_pipeline as tp
 from services.acp_produce.t3_background import is_background_number
 from services.content_generation import t2_repair
 
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+
+
 YEAR = 2026
 
 
@@ -451,4 +460,6 @@ async def test_job_result_records_the_chosen_draft_and_every_score():
     assert diag["t3"] == {"chosen_attempt": 1, "chosen_via": "sentence_repair", "drafts": qa["drafts"],
                           "sentence_repairs": 1, "background_cleared": 0,
                           "graph_draft_scores": [{"attempt": 0, "score": 7.0}], "best_draft_restored": True,
-                          "degraded": qa["degraded"]}
+                          "degraded": qa["degraded"],
+                          # AA-1042: the writer graph's own degraded[] sits next to T3's
+                          "graph_degraded": _res(GROUNDING_BAD, 7.0).get("degraded") or []}

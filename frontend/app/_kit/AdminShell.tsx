@@ -3,78 +3,42 @@
 // AA-752 — the single admin shell. The admin layout (app/admin/layout.tsx) renders it once around
 // every admin page; no page renders a sidebar itself any more.
 //
-// Layout: a flex row of [Sidebar | (Topbar over the page content)]. Every page renders the kit AdminMain
-// (S252; the standard padding, phone rule and its own scroll), which is the scroll region. On
-// phones (< 768px, globals.css media query) the sidebar becomes an off-canvas drawer opened by the
-// topbar ☰ or the BottomNav "More", and the fixed BottomNav appears.
-//
-// The shell owns three bits of interaction state: the ⌘K / Ctrl K palette, the mobile drawer, and
-// the backdrop. All are driven by explicit handlers (no setState-in-effect); the only effect is the
-// global keydown listener for ⌘K.
+// AA-1008 (S6e, root ADR 0016 decision 1): the frame is the kit core ShellFrame; this file is the CIS
+// configuration of it. Layout: [Sidebar | (Topbar over the page content)]. Every page renders the kit
+// AdminMain / PageFrame (the standard padding, phone rule and its own scroll), which is the scroll region
+// (`main="page"`). Below 768px the ShellFrame turns the sidebar into an off-canvas drawer opened by the
+// topbar ☰ or the BottomNav "More", with the backdrop and Esc; the fixed BottomNav appears (globals.css).
+// The ⌘K / Ctrl K palette state is the ShellFrame's too.
 //
 // AA-994: the shell renders the one I18nProvider of the admin (language from the `cis_lang` cookie, English by
 // default), so the topbar switch changes the text of the shell and of every page below it.
 
-import { useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BottomNav } from "./BottomNav";
 import { CommandPalette } from "./CommandPalette";
 import { SessionKeepAlive } from "./SessionKeepAlive";
-import { K } from "./core/tokens";
+import { ShellFrame } from "./core/ShellFrame";
 import { I18nProvider } from "./core/useI18n";
 import { langStore } from "./i18n";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  // ⌘K / Ctrl K toggles the palette (ignored while the user is mid-typing is unnecessary — the
-  // shortcut is modifier-gated). Esc on the palette is handled inside CommandPalette.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
-        e.preventDefault();
-        setPaletteOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // Esc closes the drawer.
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drawerOpen]);
-
   return (
     <I18nProvider store={langStore}>
-      <div style={{ display: "flex", minHeight: "100vh", background: K.bg }}>
-        {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
-        <SessionKeepAlive />
-        <Sidebar drawerOpen={drawerOpen} onNavigate={() => setDrawerOpen(false)} />
-
-        {/* Backdrop behind the open drawer (< 768px only; CSS shows it). */}
-        {drawerOpen && (
-          <div className="aa-admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
-        )}
-
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
-          <Topbar
-            onOpenSearch={() => setPaletteOpen(true)}
-            onOpenMenu={() => setDrawerOpen(true)}
-          />
-          {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
-          {children}
-        </div>
-
-        <BottomNav onOpenMore={() => setDrawerOpen(true)} />
-
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      </div>
+      {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
+      <SessionKeepAlive />
+      <ShellFrame
+        drawerBelow={768}
+        main="page"
+        sidebarId="admin-sidebar-drawer"
+        sidebar={(c) => <Sidebar drawerOpen={c.drawerOpen} onNavigate={c.closeDrawer} />}
+        topbar={(c) => <Topbar onOpenSearch={c.openPalette} onOpenMenu={c.openDrawer} />}
+        bottomNav={(c) => <BottomNav onOpenMore={c.openDrawer} />}
+        palette={(c) => <CommandPalette open={c.paletteOpen} onClose={c.closePalette} />}
+      >
+        {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
+        {children}
+      </ShellFrame>
     </I18nProvider>
   );
 }

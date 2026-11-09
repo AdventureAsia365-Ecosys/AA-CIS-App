@@ -23,7 +23,7 @@ import pytest
 from botocore.stub import Stubber
 from fastapi.testclient import TestClient
 
-from api.core import identity_config, staff_identity
+from api.core import identity_config, staff_identity, view_as
 from api.main import app
 from api.routers import admin, admin_platform, admin_settings
 from api.services import staff_directory as sd
@@ -36,31 +36,46 @@ NEW_EMAIL = "new.person@adventure.asia"
 
 # ── Fakes ────────────────────────────────────────────────────────────────────────────────────────
 
+def _is_staff_select(sql: str) -> bool:
+    return sql.startswith(admin_platform._SELECT) or sql.startswith(admin_platform._SELECT_WITH_CRM)
+
+
 class StaffDB(Directory):
-    """shared.admin_users + shared.staff_app_grant + acp_shared.audit_log, answering the staff_identity SQL (via
-    Directory), the staff_directory SQL and the admin_platform reads. ``transaction()`` rolls back on error."""
+    """shared.admin_users + shared.staff_app_grant + shared.staff_crm_grant (AA-1031) + acp_shared.audit_log,
+    answering the staff_identity SQL (via Directory), the staff_directory SQL and the admin_platform reads.
+    ``transaction()`` rolls back on error. ``crm_table = False`` plays a database before migration 330."""
 
     def __init__(self) -> None:
         super().__init__()
         self.grants: dict[tuple[str, str], str] = {}
+        self.crm: dict[str, set[str]] = {}
+        self.crm_table = True
         self.audit: list[dict[str, Any]] = []
         self.locked_owners = 0
+        self.view_as: list[dict[str, Any]] = []     # open view-as sessions (AA-1035: closed by disable / sign-out)
 
-    def add(self, *, owner: bool = False, booking: Optional[str] = None, **kw: Any) -> str:  # type: ignore[override]
+    def add(self, *, owner: bool = False, booking: Optional[str] = None,  # type: ignore[override]
+            crm: tuple[str, ...] = (), **kw: Any) -> str:
         kw.setdefault("username", f"user-{len(self.rows) + 1}")
         uid = super().add(**kw)
         self.row(uid)["is_owner"] = owner
         if booking:
             self.grants[(uid, "booking")] = booking
+        if crm:
+            self.crm[uid] = set(crm)
         return uid
+
+    def crm_roles(self, uid: str) -> list[str]:
+        return [r for r in sd.CRM_ROLES if r in self.crm.get(str(uid), set())]
 
     @asynccontextmanager
     async def transaction(self):
-        snapshot = ([dict(r) for r in self.rows], dict(self.grants), list(self.audit))
+        snapshot = ([dict(r) for r in self.rows], dict(self.grants), {k: set(v) for k, v in self.crm.items()},
+                    list(self.audit))
         try:
             yield
         except BaseException:
-            self.rows, self.grants, self.audit = snapshot
+            self.rows, self.grants, self.crm, self.audit = snapshot
             raise
 
     def _find(self, uid: Any) -> Optional[dict[str, Any]]:
@@ -76,14 +91,23 @@ class StaffDB(Directory):
         return {**{k: r.get(k) for k in ("id", "username", "role", "is_active", "email", "display_name",
                                          "last_login_at")},
                 "is_owner": r.get("is_owner", False), "created_at": None, "updated_at": None,
-                "linked": r.get("cognito_sub") is not None, "booking_role": self.grants.get((r["id"], "booking"))}
+                "linked": r.get("cognito_sub") is not None, "booking_role": self.grants.get((r["id"], "booking")),
+                "crm_roles": self.crm_roles(r["id"])}
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         self.sql.append(sql)
+        if sql == view_as.CLOSE_STAFF_SESSIONS_SQL:
+            closed = [{**v, "end_reason": args[1]} for v in self.view_as if v["session_staff"] == args[0]]
+            self.view_as = [v for v in self.view_as if v["session_staff"] != args[0]]
+            return closed
         if sql == sd.SQL_LOCK_OWNERS:
             self.locked_owners += 1
             return [{"id": r["id"]} for r in self.rows if r.get("is_owner")]
-        if sql.startswith(admin_platform._SELECT):
+        if sql == sd.SQL_CRM_GRANTS:
+            assert self.crm_table, "staff_crm_grant read before the table check"
+            return [{"role": r} for r in self.crm_roles(args[0])]
+        if _is_staff_select(sql):
+            assert self.crm_table or sql.startswith(admin_platform._SELECT)
             return [self._listed(r) for r in self.rows]
         raise AssertionError(f"unexpected fetch SQL: {sql}")
 
@@ -99,7 +123,7 @@ class StaffDB(Directory):
         if sql == sd.SQL_TARGET_BY_EMAIL:
             self.sql.append(sql)
             return self._target(next((r for r in self.rows if (r["email"] or "").lower() == args[0]), None))
-        if sql.startswith(admin_platform._SELECT):
+        if _is_staff_select(sql):
             self.sql.append(sql)
             r = self._find(args[0])
             return None if r is None else self._listed(r)
@@ -109,6 +133,8 @@ class StaffDB(Directory):
         self.sql.append(sql)
         if sql == sd.SQL_GRANT:
             return self.grants.get((str(args[0]), args[1]))
+        if sql == sd.SQL_CRM_TABLE:
+            return self.crm_table
         if sql == sd.SQL_OTHER_ACTIVE_OWNERS:
             return sum(1 for r in self.rows if r.get("is_owner") and r["is_active"] and r["role"] == "admin"
                        and r["id"] != str(args[0]))
@@ -147,6 +173,16 @@ class StaffDB(Directory):
             self.sql.append(sql)
             self.grants.pop((str(args[0]), args[1]), None)
             return "DELETE 1"
+        if sql == sd.SQL_INSERT_CRM_GRANT:
+            assert self.crm_table
+            self.sql.append(sql)
+            self.crm.setdefault(str(args[0]), set()).add(args[1])
+            return "INSERT 0 1"
+        if sql == sd.SQL_DELETE_CRM_GRANT:
+            assert self.crm_table
+            self.sql.append(sql)
+            self.crm.get(str(args[0]), set()).discard(args[1])
+            return "DELETE 1"
         return await super().execute(sql, *args)
 
     def actions(self) -> list[str]:
@@ -177,6 +213,12 @@ def _group(email: str, group: str) -> dict:
 
 def _user(email: str) -> dict:
     return {"UserPoolId": POOL, "Username": email}
+
+
+def _cis_but(group: str) -> tuple[str, ...]:
+    """Every CIS staff group the directory removes, in its order, but ``group`` (AA-1035: the R2 groups and the
+    retired cis-reviewer group are in sd.CIS_GROUPS)."""
+    return tuple(g for g in sd.CIS_GROUPS if g != group)
 
 
 def _expect(stub: Stubber, op: str, params: dict, response: Optional[dict] = None) -> None:
@@ -242,6 +284,24 @@ def test_missing_user_is_fine_for_disable_sign_out_and_group_removal(stubbed):
     cognito.remove_from_group(NEW_EMAIL, "cis-admin")
 
 
+def test_missing_group_is_fine_for_removal_only(stubbed):
+    """AA-1035 fix pass 2: Cognito answers ResourceNotFoundException for a group the pool does not have (the R2
+    groups before the AA-CIS-Infra apply). Removing a person from it is done; adding still fails, and any other
+    error on removal still raises."""
+    from botocore.exceptions import ClientError
+
+    cognito, stub = stubbed
+    _expect_error(stub, "admin_remove_user_from_group", "ResourceNotFoundException",
+                  _group(NEW_EMAIL, "cis-content_lead"))
+    cognito.remove_from_group(NEW_EMAIL, "cis-content_lead")
+    _expect_error(stub, "admin_add_user_to_group", "ResourceNotFoundException", _group(NEW_EMAIL, "cis-support"))
+    with pytest.raises(ClientError):
+        cognito.add_to_group(NEW_EMAIL, "cis-support")
+    _expect_error(stub, "admin_remove_user_from_group", "InternalErrorException", _group(NEW_EMAIL, "cis-admin"))
+    with pytest.raises(ClientError):
+        cognito.remove_from_group(NEW_EMAIL, "cis-admin")
+
+
 def test_sign_out_after_disable_tolerates_user_is_disabled_only_when_asked(stubbed):
     from botocore.exceptions import ClientError
 
@@ -292,15 +352,15 @@ def test_get_cognito_builds_no_client():
 async def test_create_writes_the_row_then_creates_the_user_then_the_groups(db, stubbed):
     cognito, stub = stubbed
     _expect(stub, "admin_create_user", _create(), {"User": {"Username": NEW_EMAIL}})
-    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email="  New.Person@Adventure.Asia ",
-                                   display_name="  New   Person ", role="reviewer", booking_role="sales")
+                                   display_name="  New   Person ", role="content", booking_role="sales")
     assert result.status == sd.STATUS_OK and result.created and result.cognito == sd.COGNITO_DONE
-    assert result.steps == ["create_user", "add_group:cis-reviewer", "add_group:booking-sales"]
+    assert result.steps == ["create_user", "add_group:cis-content", "add_group:booking-sales"]
     row = db.row(result.staff_id)
     assert (row["username"], row["email"], row["display_name"], row["role"], row["is_owner"]) == (
-        "new.person", NEW_EMAIL, "New Person", "reviewer", False)
+        "new.person", NEW_EMAIL, "New Person", "content", False)
     assert row["password_hash"] is None
     assert db.grants[(result.staff_id, "booking")] == "sales"
     assert db.actions() == [sd.StaffAudit.CREATED]
@@ -368,15 +428,16 @@ async def test_cognito_failure_keeps_the_row_and_reports_pending(db, stubbed):
 @pytest.mark.asyncio
 async def test_re_post_of_the_same_create_is_an_idempotent_retry(db, stubbed):
     cognito, stub = stubbed
-    uid = db.add(email=NEW_EMAIL, role="reviewer", booking="sales", username="new.person")
+    uid = db.add(email=NEW_EMAIL, role="content", booking="sales", username="new.person")
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
-    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator"):
+    for g in _cis_but("cis-content") + tuple(g for g in sd.BOOKING_GROUPS if g != "booking-sales") \
+            + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
-                                   role="reviewer", booking_role="sales")
+                                   role="content", booking_role="sales")
     assert result.staff_id == uid and not result.created and result.status == sd.STATUS_OK
     assert len(db.rows) == 2 and db.audit == []
 
@@ -389,7 +450,7 @@ async def test_create_over_an_existing_cognito_user_drops_its_stale_groups_and_e
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))   # add before any remove
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS:
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
                                    role="content")
@@ -401,7 +462,7 @@ async def test_create_over_an_existing_cognito_user_drops_its_stale_groups_and_e
 @pytest.mark.asyncio
 async def test_same_address_with_other_roles_is_409(db, stubbed):
     cognito, _ = stubbed
-    db.add(email=NEW_EMAIL, role="reviewer")
+    db.add(email=NEW_EMAIL, role="content")
     with pytest.raises(sd.StaffDirectoryError) as err:
         await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N", role="admin")
     assert err.value.status == 409
@@ -422,9 +483,9 @@ async def test_a_stale_owner_flag_is_refused_inside_the_transaction(db, stubbed)
 @pytest.mark.asyncio
 async def test_role_change_adds_the_new_group_before_removing_the_old(db, stubbed):
     cognito, stub = stubbed
-    uid = db.add(email=NEW_EMAIL, role="reviewer", booking="sales")
+    uid = db.add(email=NEW_EMAIL, role="content", booking="sales")
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-admin"))
-    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "cis-reviewer"))
+    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "cis-content"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-contracting"))
     _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "booking-sales"))
     result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, role="admin",
@@ -432,7 +493,7 @@ async def test_role_change_adds_the_new_group_before_removing_the_old(db, stubbe
     assert result.status == sd.STATUS_OK
     assert db.row(uid)["role"] == "admin" and db.grants[(uid, "booking")] == "contracting"
     assert db.actions() == [sd.StaffAudit.ROLES_CHANGED]
-    assert db.audit[0]["details"] == {"role": {"before": "reviewer", "after": "admin"},
+    assert db.audit[0]["details"] == {"role": {"before": "content", "after": "admin"},
                                       "booking_role": {"before": "sales", "after": "contracting"}}
 
 
@@ -450,8 +511,8 @@ async def test_booking_grant_removed_and_added(db, stubbed):
 async def test_role_change_on_a_row_without_email_is_db_only(db, stubbed):
     cognito, _ = stubbed
     uid = db.add(email=None, role="content")
-    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, role="reviewer")
-    assert result.cognito == sd.COGNITO_NOT_APPLICABLE and db.row(uid)["role"] == "reviewer"
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, role="content")
+    assert result.cognito == sd.COGNITO_NOT_APPLICABLE and db.row(uid)["role"] == "content"
 
 
 @pytest.mark.asyncio
@@ -459,7 +520,7 @@ async def test_you_can_not_demote_yourself(db, stubbed):
     cognito, _ = stubbed
     db.add(owner=True, email="other.owner@adventure.asia", role="admin")
     with pytest.raises(sd.StaffDirectoryError) as err:
-        await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=db.owner, role="reviewer")
+        await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=db.owner, role="content")
     assert err.value.status == 400 and db.row(db.owner)["role"] == "admin"
 
 
@@ -468,9 +529,9 @@ async def test_the_last_active_owner_can_not_be_demoted_or_disabled(db, stubbed)
     cognito, stub = stubbed
     other = db.add(owner=True, email="other.owner@adventure.asia", role="admin")
     # Two active admin owners: one may demote the other (an owner remains).
-    _expect(stub, "admin_add_user_to_group", _group("other.owner@adventure.asia", "cis-reviewer"))
+    _expect(stub, "admin_add_user_to_group", _group("other.owner@adventure.asia", "cis-content"))
     _expect(stub, "admin_remove_user_from_group", _group("other.owner@adventure.asia", "cis-admin"))
-    await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=other, role="reviewer")
+    await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=other, role="content")
     # Now db.owner is the last active admin owner. "other" is still an owner row but no longer a CIS admin, while
     # its access token may still carry cis-admin for up to 15 minutes (review finding 3): the actor re-read
     # refuses it before any guard runs, so it can neither demote nor disable the last owner.
@@ -500,7 +561,7 @@ async def test_last_owner_guard_directly(db, stubbed):
     target_row = db._target(db.row(target))
     await sd._guard_last_owner(db, target_row)
     # make actor non-admin: target is now the last active owner
-    db.row(actor)["role"] = "reviewer"
+    db.row(actor)["role"] = "content"
     with pytest.raises(sd.StaffDirectoryError) as err:
         await sd._guard_last_owner(db, target_row)
     assert err.value.status == 409 and err.value.code == "last_owner"
@@ -598,6 +659,32 @@ async def test_sign_out_ends_sessions_and_re_enables_a_disabled_account(db, stub
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("op,cause,action", [("disable_staff", "staff_disabled", sd.StaffAudit.DISABLED),
+                                             ("sign_out_staff", "staff_signed_out", sd.StaffAudit.SIGNED_OUT)])
+async def test_disable_and_sign_out_end_the_members_open_view_as_session(db, stubbed, op, cause, action):
+    """AA-1035 follow-up (S268): the member's open view-as sessions end with the write (one tenant.view_as_ended row
+    each, before the staff row); another member's stay open."""
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="support")
+    other = db.add(email="someone.else@adventure.asia", role="support")
+    db.view_as = [{"session_id": "s-mine", "tenant_id": "t-1", "session_staff": uid},
+                  {"session_id": "s-other", "tenant_id": "t-2", "session_staff": other}]
+    if op == "disable_staff":
+        _expect(stub, "admin_disable_user", _user(NEW_EMAIL))
+    else:
+        _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_user_global_sign_out", _user(NEW_EMAIL))
+    await getattr(sd, op)(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert db.actions() == ["tenant.view_as_ended", action]
+    ended = db.audit[0]
+    assert ended["actor"] == f"admin:{db.owner}" and ended["tenant_id"] == "t-1" and ended["resource_id"] == "s-mine"
+    assert ended["details"] == {"session_id": "s-mine", "end_reason": "revoked", "cause": cause,
+                                "session_staff": uid}
+    assert db.audit[1]["details"]["ended_view_as_sessions"] == ["s-mine"]
+    assert [v["session_id"] for v in db.view_as] == ["s-other"]
+
+
+@pytest.mark.asyncio
 async def test_reset_of_a_disabled_account_enables_it_even_when_sign_out_fails(db, stubbed):
     """Review finding 2: enable runs first, so a failed sign-out never leaves the row active and the pool
     disabled."""
@@ -613,21 +700,71 @@ async def test_reset_of_a_disabled_account_enables_it_even_when_sign_out_fails(d
 @pytest.mark.asyncio
 async def test_sync_makes_cognito_match_an_active_row(db, stubbed):
     cognito, stub = stubbed
-    uid = db.add(email=NEW_EMAIL, role="reviewer", booking="sales")
+    uid = db.add(email=NEW_EMAIL, role="content", booking="sales")
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
-    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator"):
+    for g in _cis_but("cis-content") + tuple(g for g in sd.BOOKING_GROUPS if g != "booking-sales") \
+            + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
     assert result.status == sd.STATUS_OK and db.actions() == [sd.StaffAudit.COGNITO_SYNCED]
 
 
+R2_GROUPS = ("cis-content_lead", "cis-tenant_qa", "cis-customer_success", "cis-support", "cis-finance",
+             "cis-ai_ops", "booking-finance")
+
+
+@pytest.mark.asyncio
+async def test_sync_and_existing_user_create_succeed_before_the_r2_groups_exist(db, stubbed):
+    """AA-1035 fix pass 2 (deploy order): if this code rolls before AA-CIS-Infra creates the R2 groups, a Sync or a
+    re-create of an existing user (neither giving an R2 role) still ends ok, not "saved, Cognito pending"."""
+    assert set(R2_GROUPS) <= set(sd.CIS_GROUPS + sd.BOOKING_GROUPS)
+    cognito, stub = stubbed
+
+    def _removals(wanted: tuple[str, ...]) -> None:
+        for g in sd.CIS_GROUPS + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
+            if g in wanted:
+                continue
+            if g in R2_GROUPS:
+                _expect_error(stub, "admin_remove_user_from_group", "ResourceNotFoundException",
+                              _group(NEW_EMAIL, g))
+            else:
+                _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
+
+    uid = db.add(email=NEW_EMAIL, role="content")   # a merged reviewer: Sync removes the retired cis-reviewer too
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
+    _removals(("cis-content",))
+    result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert result.status == sd.STATUS_OK and not result.pending
+    assert db.actions() == [sd.StaffAudit.COGNITO_SYNCED]
+
+    stub.assert_no_pending_responses()
+    other = "existing.person@adventure.asia"
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create(other))
+
+    def _other(g: str) -> dict:
+        return _group(other, g)
+
+    _expect(stub, "admin_add_user_to_group", _other("cis-content"))   # add before any remove
+    _expect(stub, "admin_enable_user", _user(other))
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
+        if g in R2_GROUPS:
+            _expect_error(stub, "admin_remove_user_from_group", "ResourceNotFoundException", _other(g))
+        else:
+            _expect(stub, "admin_remove_user_from_group", _other(g))
+    created = await sd.create_staff(db, cognito, actor_id=db.owner, email=other, display_name="E", role="content")
+    assert created.status == sd.STATUS_OK and not created.pending
+    assert "remove_group:cis-content_lead" in created.steps
+
+
 @pytest.mark.asyncio
 async def test_sync_of_an_inactive_row_disables_and_never_creates(db, stubbed):
     cognito, stub = stubbed
-    uid = db.add(email=NEW_EMAIL, role="reviewer", active=False)
+    uid = db.add(email=NEW_EMAIL, role="content", active=False)
     _expect(stub, "admin_disable_user", _user(NEW_EMAIL))
     _expect_error(stub, "admin_user_global_sign_out", "NotAuthorizedException", _user(NEW_EMAIL))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
@@ -731,7 +868,7 @@ def test_non_owner_cognito_admin_is_refused(api, db, issuer):
 def test_owner_with_only_a_reviewer_group_is_refused(api, db, issuer):
     client, _, _ = api
     token = issuer.token(sub=db.row(db.owner)["cognito_sub"], email="owner@adventure.asia",
-                         **{"cognito:groups": ["cis-reviewer"]})
+                         **{"cognito:groups": ["cis-content"]})
     resp = client.post("/admin/platform/staff", headers=_h(token),
                        json={"email": NEW_EMAIL, "display_name": "N", "role": "content"})
     assert resp.status_code == 403 and "staff.write" in resp.json()["detail"]
@@ -740,8 +877,8 @@ def test_owner_with_only_a_reviewer_group_is_refused(api, db, issuer):
 def test_forged_role_header_does_not_help_a_reviewer(api, db, issuer):
     client, _, _ = api
     sub = "cccccccc-0000-4000-8000-00000000000c"
-    db.add(owner=True, email="rev@adventure.asia", role="reviewer", iss=ISS, sub=sub)
-    token = issuer.token(sub=sub, email="rev@adventure.asia", **{"cognito:groups": ["cis-reviewer"]})
+    db.add(owner=True, email="rev@adventure.asia", role="content", iss=ISS, sub=sub)
+    token = issuer.token(sub=sub, email="rev@adventure.asia", **{"cognito:groups": ["cis-content"]})
     resp = client.post("/admin/platform/staff", headers=_h(token, role="admin"),
                        json={"email": NEW_EMAIL, "display_name": "N", "role": "content"})
     assert resp.status_code == 403
@@ -792,3 +929,237 @@ def test_list_tells_the_ui_who_may_write(api, db, issuer):
     assert body["viewer"] == {"auth": "cognito", "is_owner": True, "can_write": True, "admin_id": db.owner}
     legacy = client.get("/admin/platform/staff", headers=_h(None, role="admin")).json()
     assert legacy["viewer"]["can_write"] is False and legacy["viewer"]["auth"] == "legacy"
+
+
+# ── AA-1031: CRM roles (shared.staff_crm_grant) and the "Platform owner" preset ──────────────────
+
+def test_crm_role_validation_orders_and_dedupes():
+    assert sd.require_crm_roles(None) == ()
+    assert sd.require_crm_roles(["support", "ops", "support"]) == ("ops", "support")
+    assert sd.CRM_GROUPS == ("crm-platform-admin", "crm-ops", "crm-support")
+    for bad in (["boss"], "ops", ["crm-ops"], 3):
+        with pytest.raises(sd.StaffDirectoryError) as err:
+            sd.require_crm_roles(bad)
+        assert err.value.status == 400 and err.value.code == "crm_role"
+
+
+@pytest.mark.asyncio
+async def test_create_with_crm_roles_stores_them_audits_them_and_adds_their_groups(db, stubbed):
+    cognito, stub = stubbed
+    _expect(stub, "admin_create_user", _create(), {"User": {"Username": NEW_EMAIL}})
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-ops"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-support"))
+    result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
+                                   role="content", crm_roles=["support", "ops"])
+    assert result.status == sd.STATUS_OK
+    assert result.steps == ["create_user", "add_group:cis-content", "add_group:crm-ops", "add_group:crm-support"]
+    assert db.crm_roles(result.staff_id) == ["ops", "support"]
+    assert db.audit[0]["details"]["crm_roles"] == ["ops", "support"]
+
+
+@pytest.mark.asyncio
+async def test_re_post_with_other_crm_roles_is_409(db, stubbed):
+    cognito, _ = stubbed
+    db.add(email=NEW_EMAIL, role="content", crm=("ops",))
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N", role="content")
+    assert err.value.status == 409
+
+
+@pytest.mark.asyncio
+async def test_crm_roles_change_adds_new_groups_then_removes_old_ones(db, stubbed):
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content", crm=("ops", "support"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-platform-admin"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-ops"))
+    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "crm-support"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid,
+                                   crm_roles=["ops", "platform_admin"])
+    assert result.status == sd.STATUS_OK
+    assert result.steps == ["add_group:crm-platform-admin", "add_group:crm-ops", "remove_group:crm-support"]
+    assert db.crm_roles(uid) == ["platform_admin", "ops"]
+    assert db.audit[-1]["action"] == sd.StaffAudit.ROLES_CHANGED
+    assert db.audit[-1]["details"] == {"crm_roles": {"before": ["ops", "support"], "after": ["platform_admin", "ops"]}}
+    assert db.row(uid)["role"] == "content" and (uid, "booking") not in db.grants
+
+
+@pytest.mark.asyncio
+async def test_removing_every_crm_role(db, stubbed):
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content", crm=("platform_admin",))
+    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "crm-platform-admin"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, crm_roles=[])
+    assert result.steps == ["remove_group:crm-platform-admin"] and db.crm_roles(uid) == []
+
+
+@pytest.mark.asyncio
+async def test_an_owner_may_grant_themself_crm_roles_like_a_booking_role(db, stubbed):
+    cognito, stub = stubbed
+    _expect(stub, "admin_add_user_to_group", _group("owner@adventure.asia", "crm-platform-admin"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=db.owner, crm_roles=["platform_admin"])
+    assert result.status == sd.STATUS_OK and db.crm_roles(db.owner) == ["platform_admin"]
+
+
+@pytest.mark.asyncio
+async def test_platform_owner_preset_sets_every_admin_role_in_one_audit_row(db, stubbed):
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content", booking="sales", crm=("support",))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-admin"))
+    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "cis-content"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-admin"))
+    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "booking-sales"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-platform-admin"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-support"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, preset="platform_owner")
+    assert result.status == sd.STATUS_OK
+    assert db.row(uid)["role"] == "admin" and db.grants[(uid, "booking")] == "admin"
+    assert db.crm_roles(uid) == ["platform_admin", "support"]   # Support kept: the preset only adds
+    assert db.row(uid)["is_owner"] is False                     # never sets the owner flag
+    assert db.actions() == [sd.StaffAudit.ROLES_CHANGED]
+    assert db.audit[0]["details"] == {
+        "role": {"before": "content", "after": "admin"},
+        "booking_role": {"before": "sales", "after": "admin"},
+        "crm_roles": {"before": ["support"], "after": ["platform_admin", "support"]},
+        "preset": "platform_owner"}
+
+
+@pytest.mark.asyncio
+async def test_platform_owner_preset_on_oneself_keeps_the_cis_role(db, stubbed):
+    cognito, stub = stubbed
+    _expect(stub, "admin_add_user_to_group", _group("owner@adventure.asia", "cis-admin"))
+    _expect(stub, "admin_add_user_to_group", _group("owner@adventure.asia", "booking-admin"))
+    _expect(stub, "admin_add_user_to_group", _group("owner@adventure.asia", "crm-platform-admin"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=db.owner, preset="platform_owner")
+    assert result.status == sd.STATUS_OK and db.row(db.owner)["role"] == "admin"
+    assert db.audit[0]["details"] == {"booking_role": {"before": None, "after": "admin"},
+                                      "crm_roles": {"before": [], "after": ["platform_admin"]},
+                                      "preset": "platform_owner"}
+
+
+@pytest.mark.asyncio
+async def test_preset_is_sent_alone_and_only_by_an_owner(db, stubbed):
+    cognito, _ = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content")
+    for kwargs in ({"role": "admin"}, {"booking_role": None}, {"crm_roles": []}):
+        with pytest.raises(sd.StaffDirectoryError) as err:
+            await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, preset="platform_owner", **kwargs)
+        assert (err.value.status, err.value.code) == (400, "preset_conflict")
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, preset="god_mode")
+    assert err.value.code == "preset"
+    plain = db.add(email="plain.admin@adventure.asia", role="admin")   # a CIS admin, not an owner
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sd.change_roles(db, cognito, actor_id=plain, staff_id=uid, preset="platform_owner")
+    assert (err.value.status, err.value.code) == (403, "not_owner")
+    assert db.row(uid)["role"] == "content" and db.audit == []
+
+
+@pytest.mark.asyncio
+async def test_sync_adds_the_granted_crm_groups_and_removes_the_others(db, stubbed):
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content", crm=("support",))
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-support"))
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + ("crm-platform-admin", "crm-ops"):
+        _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
+    result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert result.status == sd.STATUS_OK
+
+
+# ── AA-1031: before migration 330 (no shared.staff_crm_grant) ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_without_the_table_crm_writes_are_503_and_nothing_changes(db, stubbed):
+    cognito, _ = stubbed
+    db.crm_table = False
+    uid = db.add(email=NEW_EMAIL, role="content")
+    for call in (lambda: sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, crm_roles=["ops"]),
+                 lambda: sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, preset="platform_owner"),
+                 lambda: sd.create_staff(db, cognito, actor_id=db.owner, email="other@adventure.asia",
+                                         display_name="O", role="content", crm_roles=["ops"])):
+        with pytest.raises(sd.StaffDirectoryError) as err:
+            await call()
+        assert (err.value.status, err.value.code) == (503, "crm_unavailable")
+    assert db.row(uid)["role"] == "content" and len(db.rows) == 2 and db.audit == []
+
+
+@pytest.mark.asyncio
+async def test_without_the_table_sync_and_role_changes_leave_crm_groups_alone(db, stubbed):
+    cognito, stub = stubbed
+    db.crm_table = False
+    uid = db.add(email=NEW_EMAIL, role="content")
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS:   # no crm-* removal
+        _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
+    assert (await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)).status == sd.STATUS_OK
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, booking_role="sales")
+    assert result.steps == ["add_group:booking-sales"]
+
+
+# ── AA-1031 routes ──────────────────────────────────────────────────────────────────────────────
+
+def test_roles_route_sets_crm_roles_and_the_row_shows_them(api, db):
+    client, stub, token = api
+    uid = db.add(email=NEW_EMAIL, role="content")
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-ops"))
+    resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json={"crm_roles": ["ops"]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["staff"]["crm_roles"] == ["ops"] and resp.json()["staff"]["role"] == "content"
+    _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, "crm-ops"))
+    resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json={"crm_roles": None})
+    assert resp.status_code == 200 and resp.json()["staff"]["crm_roles"] == []
+    stub.assert_no_pending_responses()
+
+
+def test_roles_route_applies_the_platform_owner_preset(api, db):
+    client, stub, token = api
+    uid = db.add(email=NEW_EMAIL, role="content")
+    for op, g in (("admin_add_user_to_group", "cis-admin"), ("admin_remove_user_from_group", "cis-content"),
+                  ("admin_add_user_to_group", "booking-admin"), ("admin_add_user_to_group", "crm-platform-admin")):
+        _expect(stub, op, _group(NEW_EMAIL, g))
+    resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json={"preset": "platform_owner"})
+    assert resp.status_code == 200, resp.text
+    staff = resp.json()["staff"]
+    assert (staff["role"], staff["booking_role"], staff["crm_roles"], staff["is_owner"]) == (
+        "admin", "admin", ["platform_admin"], False)
+    stub.assert_no_pending_responses()
+
+
+def test_roles_route_refuses_bad_crm_input(api, db):
+    client, _, token = api
+    uid = db.add(email=NEW_EMAIL, role="content")
+    for body, status in (({"crm_roles": ["boss"]}, 422), ({"crm_roles": "ops"}, 422), ({"preset": "boss"}, 422),
+                         ({"preset": "platform_owner", "role": "admin"}, 400)):
+        resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json=body)
+        assert resp.status_code == status, (body, resp.text)
+    assert db.audit == [] or all(a["action"] != sd.StaffAudit.ROLES_CHANGED for a in db.audit)
+
+
+def test_create_route_takes_crm_roles_and_the_list_says_they_are_available(api, db):
+    client, stub, token = api
+    _expect(stub, "admin_create_user", _create(), {"User": {"Username": NEW_EMAIL}})
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-support"))
+    resp = client.post("/admin/platform/staff", headers=_h(token),
+                       json={"email": NEW_EMAIL, "display_name": "N", "role": "content", "crm_roles": ["support"]})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["staff"]["crm_roles"] == ["support"]
+    body = client.get("/admin/platform/staff", headers=_h(token)).json()
+    assert body["crm_roles_available"] is True
+    assert {s["email"]: s["crm_roles"] for s in body["staff"]}[NEW_EMAIL] == ["support"]
+
+
+def test_without_the_table_the_route_answers_503(api, db):
+    client, _, token = api
+    db.crm_table = False
+    uid = db.add(email=NEW_EMAIL, role="content")
+    resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json={"crm_roles": ["ops"]})
+    assert resp.status_code == 503 and "330" in resp.json()["detail"]
+    body = client.get("/admin/platform/staff", headers=_h(token)).json()
+    assert body["crm_roles_available"] is False and all(s["crm_roles"] == [] for s in body["staff"])

@@ -1,0 +1,133 @@
+// app/admin/ai-gateway/appProfiles.messages.ts — AA-1025 H1a: the App profiles card of AI providers › Providers (the AI
+// switch, bulk pause, default daily budget and degrade mode of each app), English and Vietnamese. Reasons and API
+// errors stay as sent.
+
+import { defineMessages } from "../../_kit/core/i18n";
+
+/** App names as people read them (backend shared/llm_client/app_profile.py APPS). */
+export const PROFILE_APP = defineMessages(
+  { cis: "CIS (admin and Content studio)", tripplanner: "TripPlanner", crm: "Partner CRM", booking: "AA-Booking" },
+  { cis: "CIS (admin và Content studio)", tripplanner: "TripPlanner", crm: "CRM đối tác", booking: "AA-Booking" },
+);
+
+/** What an app shows when AI is unavailable (lib/aiGateway DEGRADE_MODES). */
+export const DEGRADE = defineMessages(
+  { queue_retry: "Jobs wait and run again", basic_narration: "Basic text, no AI", last_saved_text: "Last saved text",
+    manual_reply_needed: "Staff reply by hand", none: "No AI features" },
+  { queue_retry: "Job chờ rồi chạy lại", basic_narration: "Văn bản cơ bản, không AI",
+    last_saved_text: "Văn bản đã lưu gần nhất", manual_reply_needed: "Nhân viên trả lời thủ công",
+    none: "Không có tính năng AI" },
+);
+
+export const PROFILES = defineMessages(
+  {
+    title: "App profiles",
+    help: "The AI switch of each app. AI off: every AI call of the app is refused before it is sent (a 0 USD "
+      + "refused row on the Calls tab) and its jobs wait until AI is back on. The default daily budget is the daily "
+      + "cap of TripPlanner and the Partner CRM (an alert at 80 % and 100 %); CIS uses its cap on the Budgets tab. "
+      + "A Partner CRM change is sent to the CRM first.",
+    loadError: "Could not load the app profiles.",
+    notDeployed: "App profiles are not set up on this server yet.",
+    colApp: "App",
+    colAi: "AI",
+    colBulk: "Bulk work",
+    colBudget: "Default daily budget",
+    colDegrade: "When AI is unavailable",
+    colApplies: "Takes effect",
+    colChanged: "Last changed",
+    aiOn: "On",
+    aiOff: "Off",
+    running: "Running",
+    paused: "Paused",
+    noBudget: "Not set",
+    centralCap: (v: string) => `Enforced cap ${v} a day (Budgets)`,
+    appliesHere: "Now, in the app's own gateway (TripPlanner within 20 s)",
+    appliesLater: "Not used (the app makes no AI call)",
+    edit: "Edit",
+    editTitle: (app: string) => `App profile · ${app}`,
+    fieldAi: "AI for this app",
+    aiOnOption: "On: AI calls are sent",
+    aiOffOption: "Off: every AI call is refused",
+    fieldReason: "Why AI is switched off",
+    reasonHint: "Required when switching off, 3 to 500 characters. Shown on the card and in the audit log.",
+    reasonBad: "Say why AI is switched off (3 to 500 characters).",
+    fieldBulk: "Bulk work",
+    bulkRun: "Running",
+    bulkPause: "Paused",
+    bulkHint: "Recorded for the app's waves and bulk re-queues.",
+    fieldBudget: "Default daily budget (USD)",
+    budgetHint: "Empty = not set. Apps without their own central cap use it as their daily cap.",
+    budgetBad: "Enter an amount from 0 to 100000, or leave it empty.",
+    fieldDegrade: "When AI is unavailable",
+    unchanged: "Nothing changed.",
+    cancel: "Cancel",
+    save: "Save",
+    saving: "Saving…",
+    saved: (app: string) => `Profile of ${app} saved`,
+    offTitle: (app: string) => `Switch AI off for ${app}?`,
+    offBody: "Every AI call of this app will be refused before it is sent, until someone switches it back on. "
+      + "Running jobs fail at their next AI call and wait to be re-queued.",
+    offConfirm: "Switch AI off",
+    onTitle: (app: string) => `Switch AI back on for ${app}?`,
+    onBody: "AI calls are sent again within about 20 seconds. Re-queue the jobs that waited from Providers.",
+    onConfirm: "Switch AI on",
+    saveTitle: (app: string) => `Save the profile of ${app}?`,
+    saveBody: "The change is audited.",
+    readOnly: "Read-only session: the profile cannot be changed from this account.",
+  },
+  {
+    title: "Hồ sơ ứng dụng",
+    help: "Công tắc AI của từng ứng dụng. Tắt AI: mọi lời gọi AI của ứng dụng bị từ chối trước khi gửi đi (một dòng "
+      + "bị từ chối 0 USD ở tab Calls) và job của nó chờ tới khi bật lại AI. Ngân sách ngày mặc định là trần ngày của "
+      + "TripPlanner và CRM đối tác (cảnh báo ở 80 % và 100 %); CIS dùng trần ở tab Budgets. Thay đổi cho CRM đối "
+      + "tác được gửi tới CRM trước.",
+    loadError: "Không tải được hồ sơ ứng dụng.",
+    notDeployed: "Máy chủ này chưa có hồ sơ ứng dụng.",
+    colApp: "Ứng dụng",
+    colAi: "AI",
+    colBulk: "Tác vụ hàng loạt",
+    colBudget: "Ngân sách ngày mặc định",
+    colDegrade: "Khi AI không dùng được",
+    colApplies: "Có hiệu lực",
+    colChanged: "Sửa lần cuối",
+    aiOn: "Bật",
+    aiOff: "Tắt",
+    running: "Đang chạy",
+    paused: "Tạm dừng",
+    noBudget: "Chưa đặt",
+    centralCap: (v: string) => `Trần đang áp dụng ${v} một ngày (Budgets)`,
+    appliesHere: "Ngay, trong gateway của ứng dụng (TripPlanner trong 20 giây)",
+    appliesLater: "Không dùng (ứng dụng không gọi AI)",
+    edit: "Sửa",
+    editTitle: (app: string) => `Hồ sơ ứng dụng · ${app}`,
+    fieldAi: "AI của ứng dụng này",
+    aiOnOption: "Bật: lời gọi AI được gửi",
+    aiOffOption: "Tắt: mọi lời gọi AI bị từ chối",
+    fieldReason: "Lý do tắt AI",
+    reasonHint: "Bắt buộc khi tắt, 3 đến 500 ký tự. Hiện trên thẻ và trong nhật ký kiểm toán.",
+    reasonBad: "Ghi lý do tắt AI (3 đến 500 ký tự).",
+    fieldBulk: "Tác vụ hàng loạt",
+    bulkRun: "Đang chạy",
+    bulkPause: "Tạm dừng",
+    bulkHint: "Ghi cho các wave và lượt chạy lại hàng loạt của ứng dụng.",
+    fieldBudget: "Ngân sách ngày mặc định (USD)",
+    budgetHint: "Để trống = chưa đặt. Ứng dụng chưa có trần trung tâm riêng dùng số này làm trần ngày.",
+    budgetBad: "Nhập số tiền từ 0 đến 100000, hoặc để trống.",
+    fieldDegrade: "Khi AI không dùng được",
+    unchanged: "Chưa có thay đổi.",
+    cancel: "Huỷ",
+    save: "Lưu",
+    saving: "Đang lưu…",
+    saved: (app: string) => `Đã lưu hồ sơ của ${app}`,
+    offTitle: (app: string) => `Tắt AI cho ${app}?`,
+    offBody: "Mọi lời gọi AI của ứng dụng này sẽ bị từ chối trước khi gửi đi, cho tới khi có người bật lại. Job đang "
+      + "chạy sẽ dừng ở lời gọi AI kế tiếp và chờ được xếp lại hàng.",
+    offConfirm: "Tắt AI",
+    onTitle: (app: string) => `Bật lại AI cho ${app}?`,
+    onBody: "Lời gọi AI được gửi lại sau khoảng 20 giây. Xếp lại các job đã chờ từ Providers.",
+    onConfirm: "Bật AI",
+    saveTitle: (app: string) => `Lưu hồ sơ của ${app}?`,
+    saveBody: "Thay đổi được ghi nhật ký kiểm toán.",
+    readOnly: "Phiên chỉ xem: tài khoản này không sửa được hồ sơ.",
+  },
+);

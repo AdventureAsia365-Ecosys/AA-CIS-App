@@ -105,6 +105,8 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "shared.tenant_api_usage_monthly": f"API metering roll-up; {_CIS_ONLY}",
         "shared.llm_call_log": f"cost log of every app; tenant_id is attribution; {_CIS_ONLY}",
         "shared.llm_call_daily": f"cost log roll-up; tenant_id is attribution; {_CIS_ONLY}",
+        "shared.ai_usage_hourly": f"AI usage hourly roll-up (AA-1045, 372); tenant_id is attribution; {_CIS_ONLY}",
+        "shared.llm_cassette": f"AI gateway raw replies (AA-900, 385); tenant_id is attribution; {_CIS_ONLY}",
         "shared.dfs_call_log": f"DataForSEO cost log; tenant_id is attribution; {_CIS_ONLY}",
         "geo.geocode_call": f"Geoapify cost log (CIS 319, AA-804); tenant_id is attribution; {_CIS_ONLY}",
         "shared.decision_log": f"Jev decision audit; tenant_id is attribution; {_CIS_ONLY}",
@@ -115,6 +117,19 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "shared.unmapped_market_requests": f"admin triage list of market requests; {_CIS_ONLY}",
         "shared.tenant_members": f"CIS membership directory (AA-978, 276), served over HTTP only; {_CIS_ONLY}",
         "shared.tenant_membership_event": f"tenant.membership.v1 feed (AA-978, 276), HTTP only; {_CIS_ONLY}",
+        # AA-1028 R1 (CIS 353): the tenant control plane, served over HTTP (tenant.entitlements.v1) only.
+        "shared.tenant_subscription": f"tenant product subscriptions (AA-1028, 353; admin-managed); {_CIS_ONLY}",
+        "shared.tenant_entitlement_override": f"per-tenant entitlement exceptions (AA-1028, 353); {_CIS_ONLY}",
+        "shared.tenant_entitlement": f"materialised entitlements (AA-1028, 353), HTTP only; {_CIS_ONLY}",
+        "shared.tenant_account_event": f"tenant.entitlements.v1 feed (AA-1028, 353), HTTP only; {_CIS_ONLY}",
+        # AA-1035 R2 (CIS 364): staff tables, read and written only by the staff API.
+        "shared.staff_tenant_assignment": f"staff -> tenant assignment, staff API only (AA-1035, 364); {_CIS_ONLY}",
+        "shared.staff_view_as_session": f"staff view-as access log, staff API only (AA-1035, 364); {_CIS_ONLY}",
+        # AA-1036 R3 (CIS 374): the agency's add-on requests, read and written only by the CIS API (tenant id from the
+        # verified token or the staff path).
+        "shared.tenant_addon_request": f"add-on requests and staff decisions (AA-1036, 374); {_CIS_ONLY}",
+        # AA-1038 R5 slice 2 (CIS 379): TripPlanner site settings, read by TripPlanner only through the catalog view.
+        "shared.tenant_tripplanner_site": f"TripPlanner site theme and locale (AA-1038, 379); {_CIS_ONLY}",
         "acp_shared.acp_output_rules": "RLS on with the X1 cis_app parity policy only (CIS 244); no tenant-pool grant",
         # AA-923 WM-34 (CIS 316): the same table quarantined in `retired` (no grant to any role), dropped after 14 days.
         # The acp_shared key above goes stale once 316 is applied on Dev (reported, not fatal); remove both with the
@@ -188,8 +203,13 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "booking.v_ops_data_totals:cis_app": "contract: CIS data coverage page, counts only (bk-025)",
         "booking.v_ops_trip_plan_keys:cis_app": "contract: CIS data coverage page, plan catalog keys only (bk-025)",
         "booking.v_ops_inquiry_inbox:cis_app": "contract: CIS TP-03 handoff check, keys and states (bk-035)",
-        "tripplanner:booking": "contract: schema USAGE for the inquiry outbox (tp-009)",
-        "tripplanner.v_inquiry_outbox:booking": "contract: Booking inquiry intake (tp-009)",
+        "booking.v_from_prices:cis_app": "contract: price.from.v1, the Content studio Marketplace from price (bk-040)",
+        "booking.v_tenant_billing_status:cis_app":
+            "contract: agency billing status for the CIS tenant_billing_tick (bk-042)",
+        "booking:tripplanner": "contract: schema USAGE for the public from price view (bk-039)",
+        "booking.v_from_prices:tripplanner": "contract: price.from.v1, the tour page from price, RRP only (bk-039)",
+        # AA-1046: tripplanner:booking and tripplanner.v_inquiry_outbox:booking (tp-009, the retired inquiry.submitted
+        # contract) left with tp-027, which revokes both; a grant back is a violation again.
         "tripplanner:cis_app": "contract: schema USAGE for the CIS ops view (tp-015)",
         "tripplanner.v_ops_traffic_daily:cis_app": "contract: CIS ops dashboard (tp-015)",
         "tripplanner.v_ops_data_totals:cis_app": "contract: CIS data coverage page, totals only (tp-020)",

@@ -9,7 +9,7 @@ Content studio role from ``shared.tenant_members``) and this middleware enforces
   load, e.g. the brand page's live CTA check). The list is exact (method + full path), never a blanket POST exemption.
 - ``csr = editor``: everything except account writes: a non-read method on :data:`ACCOUNT_WRITE_PREFIXES`
   (channel connections, the API key, members, webhooks) -> 403 ``studio_role_forbidden``.
-- ``csr = owner`` and every API-key token (no ``csr``; machines and the window's API-key sign-in): unchanged.
+- ``csr = owner`` and a token without ``csr`` (the legacy shape; no route mints it since AA-1036): unchanged.
 
 The token is verified with the tenant JWT rules (``api.routers.auth.verify_jwt`` + ``role == tenant``) only to READ the
 claim; a request whose Authorization header carries no valid tenant JWT passes through untouched and gets its real
@@ -33,6 +33,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.security.utils import get_authorization_scheme_param
 
+from api.core import view_as as _view_as
 from api.routers.auth import studio_role_of, verify_jwt
 
 logger = structlog.get_logger()
@@ -96,6 +97,12 @@ def enforce(request: Request | None, payload: dict) -> None:
     route just accepted may not make this request. ``request`` is None on a direct call (tests): no check."""
     if request is None:
         return
+    # AA-1035 R2 slice 2: a view-as token (staff "view as tenant", api/core/view_as.py) reaches only the allowed reads.
+    # ViewAsGateMiddleware refuses the rest first (and checks the session); this holds for a header shape it missed.
+    if _view_as.refusal(request.method, request.url.path, payload):
+        logger.warning("view_as_refused", reason="read_only", at="dependency", method=request.method,
+                       path=request.url.path)
+        raise HTTPException(status_code=403, detail=_view_as.READ_ONLY_DETAIL)
     role = studio_role_of(payload)
     if refusal(request.method, request.url.path, role):
         logger.info("tenant_role_refused", tenant_id=str(payload.get("sub")), role=role, method=request.method,

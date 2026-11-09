@@ -11,7 +11,7 @@ from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.schemas.public_api import Quota  # AA-899
 from api.core.secret_compare import secrets_equal
-from api.routers.admin import PLAN_LIMITS
+from services.tenant_account import plans as tenant_plans
 from api.routers._billing import no_plan_usage, usage_row_to_dict
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
@@ -19,6 +19,7 @@ from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
 from services.photos import covers as _covers
 from services.photos.sync import public_base
+from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
     tenant_status_filter, tenant_version_status,
@@ -129,8 +130,9 @@ _POOL_ROWS_SQL = """
     SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
            pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
-           pt.published_at,
+           pt.published_at, pt.updated_at,
            rt.country, rt.duration, rt.price_raw,
+           (COALESCE(rt.source_group_id, rt.tour_id))::text AS catalog_source_id,
            EXISTS(
                SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
                WHERE ttv.published_tour_id = pt.id
@@ -199,6 +201,56 @@ def _pool_facets(row: dict) -> dict:
     return row
 
 
+# AA-1029 R4 (root ADR 0005 d1 / d6 as amended by ADR 0019 b15) — the public "from" price of each pool tour comes only
+# from AA-Booking's contract view booking.v_from_prices (price.from.v1, root docs/contracts/price.from.v1.md; SELECT to
+# cis_app by Booking bk-040): the suggested retail price per person for 2 travellers. CIS never computes a price and
+# never shows raw_tours.price_raw as one (ADR 0005 d7: reference only). Read on MAIN (cis_app) after the tenant block,
+# keyed by the catalog key (raw_tours.source_key = COALESCE(source_group_id, tour_id)::text, written as the expression
+# so the SQL does not depend on 258's stored column), like the job statuses above: aa_app_user holds nothing on schema
+# booking. Fail soft: the view not there yet (bk-039), no grant (bk-040 not applied), any other error, or no row = no
+# price (`from_price: null`), never a failed page. Per-tenant prices (AA-1030) are out of scope.
+_FROM_PRICE_SQL = """
+    SELECT source_id, amount::text AS amount, currency, basis, pax, season, valid_to
+      FROM booking.v_from_prices
+     WHERE source_system = 'cis' AND source_id = ANY($1::text[])
+"""
+
+
+async def _from_prices(pool, keys) -> dict:
+    """{catalog source_id: price.from.v1 dict} for the given keys (None ignored); {} when none or unreadable."""
+    ids = sorted({k for k in keys if k})
+    if not ids:
+        return {}
+    try:
+        # A transaction of its own: on a shared connection (tests) a failed read is a savepoint rollback, not an
+        # aborted outer transaction.
+        async with pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(_FROM_PRICE_SQL, ids)
+    except Exception as exc:  # noqa: BLE001 — degrade to "no price shown"
+        logger.warning("aa1029_from_price_unreadable", error=type(exc).__name__)
+        return {}
+    out = {}
+    for r in rows:
+        if r["amount"] is None:
+            continue
+        valid_to = r["valid_to"]
+        out[r["source_id"]] = {
+            "amount": str(r["amount"]), "currency": str(r["currency"]).strip(), "basis": r["basis"],
+            "pax": r["pax"], "season": r["season"],
+            "valid_to": valid_to.isoformat() if hasattr(valid_to, "isoformat") else valid_to,
+        }
+    return out
+
+
+async def _with_from_prices(pool, rows: list) -> list:
+    """Each pool row gets `from_price` (price.from.v1 or None); the internal catalog key is dropped."""
+    keys = [r.pop("catalog_source_id", None) for r in rows]
+    prices = await _from_prices(pool, keys)
+    for row, key in zip(rows, keys):
+        row["from_price"] = prices.get(key) if key else None
+    return rows
+
+
 # Countries for the filter dropdown: same master_status/deleted_at gate as the listing, so a
 # trashed/deactivated tour's country doesn't show as a filterable option.
 _POOL_COUNTRIES_SQL = f"""
@@ -237,6 +289,10 @@ async def browse_pool(
     tour's first photo on the public photo route, 600 / 1600 px; else a photo of the place the tour spends the most
     days in; null when neither exists). Filters `activity`, `intensity` (exact
     level) and `added_within_days` (published in the last N days); the answer's `facets` lists the accepted values.
+
+    AA-1029: each row also carries `from_price`, the public suggested retail price per person of AA-Booking's
+    contract price.from.v1 ({amount, currency, basis, pax, season, valid_to}), or null when Booking has no price for
+    the tour (or the view cannot be read).
 
     AA-796: no A1 quality score on the tenant side — the `min_quality` filter, the
     `sort=quality` order and the `quality_score` column are gone. An old client still sending
@@ -307,6 +363,7 @@ async def browse_pool(
         countries = await conn.fetch(_POOL_COUNTRIES_SQL)
         data = await _annotate_served(conn, [_pool_facets(project_tour(r)) for r in rows])   # AA-986 L3
     _log_t2_read("pool", tenant_id, used_tenant_pool, count=len(rows))
+    data = await _with_from_prices(request.app.state.pool, data)   # AA-1029: on MAIN, after the tenant block
 
     return {
         "data": data,
@@ -319,7 +376,8 @@ async def browse_pool(
 
 
 # ── AA-489: rewrite quota (shared helpers + GET /v1/quota) ────────────────────
-# STEP0 found nothing enforces a tenant's monthly rewrite count: PLAN_LIMITS.tours_per_month
+# STEP0 found nothing enforces a tenant's monthly rewrite count: PLAN_LIMITS.tours_per_month (PLAN_LIMITS is gone
+# since AA-1028 R1 slice 3)
 # (admin.py) was defined but only ever displayed, never checked; raw_tours.rewrite_count
 # (migration 033) is dead, 0 callers; rate_limit_middleware throttles requests/minute across
 # ALL /v1/*, not a monthly count. Deliberately NOT reusing acp_quota_ledger — that's ACPv1
@@ -348,10 +406,22 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     """(plan_tier str, tours_quota_monthly int) — plan read live from shared.tenants, not the
     JWT's own plan_tier claim (same rationale AA-432 established for rate_limit_rpm/is_active: a
     plan change shouldn't take up to 24h, the JWT's TTL, to take effect). The quota comes from
-    shared.membership_plans (AA-640); a plan with no row falls back to the starter row."""
+    shared.membership_plans (AA-640); a plan with no row falls back to the starter row.
+    AA-1028 R1 slice 3 (root ADR 0019 d2): the tenant's resolved entitlement ``content.rewrite`` comes first (its
+    plan's value, edited on Tenants › Plans & add-ons, or an override; CIS 355 seeded the same 50 / 200 / 500); the
+    membership_plans read stays only for a tenant with no numeric key (no live content subscription, or a plan
+    without a rewrite limit such as Enterprise / AA internal), so no existing tenant's number changes.
+    S266 review: an override is honoured. Tenant 360 › Subscription refuses "off" and "no limit" for this key
+    (services/tenant_account/subscription.py: the quota is published as a number), so an override always carries a
+    number; an active disabled override that exists anyway counts as 0 (never falls back to the plan's quota)."""
     row = await conn.fetchrow("""
         SELECT t.plan_tier::text AS plan,
-               COALESCE(mp.tours_quota_monthly,
+               COALESCE((SELECT 0 FROM shared.tenant_entitlement_override o
+                          WHERE o.tenant_id = t.tenant_id AND o.feature_key = 'content.rewrite' AND NOT o.enabled
+                            AND (o.expires_at IS NULL OR o.expires_at > now())),
+                        (SELECT LEAST(e.limit_value, 2147483647)::int FROM shared.v_tenant_entitlement_resolved e
+                          WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'),
+                        mp.tours_quota_monthly,
                         (SELECT tours_quota_monthly FROM shared.membership_plans
                          WHERE plan_name = 'starter')) AS quota
         FROM shared.tenants t
@@ -465,6 +535,8 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             WHERE is_active AND plan_name <> 'internal'
             ORDER BY (price_usd_monthly IS NULL OR price_usd_monthly <= 0), price_usd_monthly, tours_quota_monthly
         """)
+        # AA-1028 R1 slice 3: each plan's RPM from its live content plan (content.rate_limit_rpm), not PLAN_LIMITS
+        rpm_by_tier = await tenant_plans.rate_limits_by_tier(conn)
         # AA-638 — per-day API calls + tour rewrites for the current month (Dashboard sparkline).
         daily_rows = await conn.fetch("""
             WITH days AS (
@@ -502,7 +574,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             "price_usd_monthly": (
                 float(p["price_usd_monthly"]) if p["price_usd_monthly"] and p["price_usd_monthly"] > 0 else None
             ),
-            "rate_limit_rpm": PLAN_LIMITS.get(p["plan_name"], {}).get("rpm"),
+            "rate_limit_rpm": rpm_by_tier.get(p["plan_name"]),
         }
         for p in plan_rows
     ]
@@ -1054,6 +1126,7 @@ async def get_version(
 _EXPORT_VERSION_TENANT_COND = "ttv.tenant_id = $2::uuid"
 _EXPORT_VERSION_SQL = """
             SELECT ttv.version_number, ttv.rewritten_content, ttv.rewrite_language,
+                   ttv.edit_source, ttv.created_at,
                    pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_highlights,
                    pt.aa_itineraries,
                    rt.country, rt.duration, rt.inclusions, rt.exclusions
@@ -1132,6 +1205,11 @@ async def export_version_docx(
     GRAY = RGBColor(0x33, 0x36, 0x3D)
 
     doc = Document()
+    # AA-1040 — the machine-readable AI mark in the file's own metadata (File > Properties: keywords, comments).
+    from services.acp_content_writing.ai_marking import docx_properties, response_headers, version_mark
+    _ai_mark = version_mark(row.get("edit_source"), row.get("created_at"))
+    for _prop, _value in docx_properties(_ai_mark).items():
+        setattr(doc.core_properties, _prop, _value)
 
     def _section(text):
         p = doc.add_paragraph()
@@ -1209,7 +1287,9 @@ async def export_version_docx(
     return StreamingResponse(
         iter([buf.read()]),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename=tour_{short}_v{row['version_number']}.docx"},
+        # AA-1040 (S272): the download also carries the X-AI-* headers, like the T9 piece exports.
+        headers={"Content-Disposition": f"attachment; filename=tour_{short}_v{row['version_number']}.docx",
+                 **response_headers(_ai_mark)},
     )
 
 
@@ -1315,6 +1395,9 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
                 raise HTTPException(status_code=409, detail=VERSION_CONFLICT_DETAIL) from exc
         else:
             new_id = await conn.fetchval(_VERSION_EDIT_INSERT_SQL, *args)
+        # AA-1047 W1: the tenant's own text through the REPORT-mode final contract (log only; tenant-owned, BYO)
+        final_contract.log_tenant_edit(final_contract.T2, "tenant_edit", content=body.edited_content,
+                                       actual="pending")
         return {
             "status": "edited",
             "new_version_id": str(new_id),
@@ -1323,6 +1406,14 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
 
     new_status = "approved" if body.action == "approve" else "rejected"
     await conn.execute(_VERSION_STATUS_UPDATE_SQL, new_status, version_id, tenant_id)
+    if new_status == "approved":   # AA-1047 W1: the tenant's approve is an exit too (REPORT mode, log only)
+        rc = row["rewritten_content"]
+        if isinstance(rc, str):
+            try:
+                rc = _json.loads(rc)
+            except ValueError:
+                rc = {}
+        final_contract.log_tenant_edit(final_contract.T2, "tenant_approve", content=rc, actual="approved")
     return {"status": new_status, "version_id": version_id}
 # P3 complete Tue May  5 11:42:07 +07 2026
 

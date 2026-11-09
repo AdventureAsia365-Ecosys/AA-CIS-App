@@ -1,4 +1,5 @@
-"""AA-876 — login throttle on /auth/admin-login and /auth/tenant-login (api/core/login_throttle.py).
+"""AA-876 — login throttle on /auth/admin-login (api/core/login_throttle.py). AA-1036: /auth/tenant-login is 410
+Gone for any body and never reaches the throttle or the DB (the last test here).
 
 Per-IP failure limit (20 per 15 min) + all-attempt ceiling, per-(username, IP) exponential backoff from 5
 failures and a high cross-IP username limit (admin only), all checked before the DB read and bcrypt;
@@ -16,12 +17,10 @@ from starlette.datastructures import Headers
 import api.main as main
 from api.core import login_throttle as lt
 from api.main import app, get_pool
-from api.routers.auth import _hash_api_key
 
 ADMIN_ID = "00000000-0000-0000-0000-000000000876"
 PASSWORD = "correct horse battery staple"
 GOOD_HASH = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(4)).decode()
-TENANT_KEY = "cis_" + "k" * 28
 
 
 class Clock:
@@ -138,7 +137,6 @@ class BrokenPipeline:
 class _Pool:
     def __init__(self):
         self.admin_rows: dict[str, dict] = {}
-        self.tenant_rows: dict[str, dict] = {}
         self.reads = 0
 
     @asynccontextmanager
@@ -149,8 +147,6 @@ class _Pool:
         self.reads += 1
         if "shared.admin_users" in sql:
             return self.admin_rows.get(arg)
-        if "shared.tenants" in sql:
-            return self.tenant_rows.get(arg)
         raise AssertionError(sql)
 
 
@@ -171,7 +167,6 @@ def pool():
     fake = _Pool()
     fake.admin_rows["alice"] = {"id": ADMIN_ID, "username": "alice", "password_hash": GOOD_HASH,
                                 "role": "admin", "is_active": True}
-    fake.tenant_rows[_hash_api_key(TENANT_KEY)] = {"tenant_id": "t-876", "name": "T", "plan_tier": "starter"}
     app.dependency_overrides[get_pool] = lambda: fake
     yield fake
     app.dependency_overrides.pop(get_pool, None)
@@ -185,7 +180,6 @@ def with_redis(redis, monkeypatch):
 
 @pytest.fixture
 def client(pool, monkeypatch):
-    monkeypatch.setattr(main, "write_audit_log", AsyncMock())
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -207,7 +201,7 @@ def _admin(client, username="mallory", password="wrong", xff=None):
     return client.post("/auth/admin-login", json={"username": username, "password": password}, headers=headers)
 
 
-def _tenant(client, key="cis_" + "z" * 28, xff=None):
+def _tenant(client, key="x" * 28, xff=None):
     headers = {"X-Forwarded-For": xff} if xff else {}
     return client.post("/auth/tenant-login", json={"api_key": key}, headers=headers)
 
@@ -258,28 +252,15 @@ def test_spoofed_leftmost_xff_does_not_escape_the_bucket(client, with_redis):
     assert _admin(client, username="x", xff="9.9.9.9, 34.120.0.50, 10.0.3.7").status_code == 429
 
 
-def test_tenant_login_per_ip_429(client, with_redis, pool):
-    for _ in range(lt.LOGIN_IP_FAIL_LIMIT):
-        assert _tenant(client, xff="34.120.0.8").status_code == 401
-    res = _tenant(client, key=TENANT_KEY, xff="34.120.0.8")
-    assert res.status_code == 429 and "Retry-After" in res.headers
-    # the admin scope has its own bucket for the same IP
+def test_tenant_login_is_gone_and_never_throttled(client, with_redis, pool):
+    """AA-1036: 410 for every attempt, however many; no throttle bucket and no DB read for the tenant scope."""
+    for _ in range(lt.LOGIN_IP_FAIL_LIMIT + 5):
+        res = _tenant(client, xff="34.120.0.8")
+        assert res.status_code == 410 and res.json()["detail"] == "tenant_api_key_removed"
+    assert pool.reads == 0
+    assert not any("tenant" in k for k in with_redis.store)
+    # the admin scope is unaffected for the same IP
     assert _admin(client, xff="34.120.0.8").status_code == 401
-    # a good key from another IP still logs in
-    assert _tenant(client, key=TENANT_KEY, xff="52.8.100.1").status_code == 200
-
-
-def test_tenant_throttle_runs_before_the_db_read(client, with_redis, pool):
-    for _ in range(lt.LOGIN_IP_FAIL_LIMIT):
-        _tenant(client, xff="34.120.0.9")
-    reads = pool.reads
-    assert _tenant(client, xff="34.120.0.9").status_code == 429
-    assert pool.reads == reads
-
-
-def test_good_tenant_logins_do_not_fill_the_bucket(client, with_redis):
-    for _ in range(30):
-        assert _tenant(client, key=TENANT_KEY, xff="34.120.0.10").status_code == 200
 
 
 # ── per (username, IP) and per username ──────────────────────────────────────
@@ -355,7 +336,7 @@ def test_redis_problems_fail_open(client, monkeypatch, verify_calls, state):
         monkeypatch.setattr(app.state, "redis", value, raising=False)
     for _ in range(lt.LOGIN_IP_FAIL_LIMIT + lt.LOGIN_FAIL_THRESHOLD + 2):
         assert _admin(client, username="alice", xff="34.120.0.30").status_code == 401
-        assert _tenant(client, xff="34.120.0.30").status_code == 401
+        assert _tenant(client, xff="34.120.0.30").status_code == 410
     assert _admin(client, username="alice", password=PASSWORD, xff="34.120.0.30").status_code == 200
 
 

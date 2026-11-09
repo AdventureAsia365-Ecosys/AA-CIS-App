@@ -55,25 +55,59 @@ def _assignment_lines(tree: ast.AST, name: str) -> list[int]:
     return sorted(n.lineno for n in ast.walk(tree) if name in _assigned_names(n))
 
 
+def _norm_unpack(node: ast.AST) -> bool:
+    """``x = norm["..."]`` / ``a, b = norm["a"], norm["b"]``: the unpack of the normalizer's result (AA-1047)."""
+    if not isinstance(node, ast.Assign):
+        return False
+    vals = node.value.elts if isinstance(node.value, ast.Tuple) else [node.value]
+    return all(isinstance(v, ast.Subscript) and isinstance(v.value, ast.Name) and v.value.id == "norm" for v in vals)
+
+
 def test_t9_nothing_rewrites_content_text_after_final_integrity():
+    """AA-1047 W1: the post-loop edits live in ONE normalizer (_normalize_final_text) whose last step is
+    _final_integrity; run_write_background calls it once and assigns content_text after it only from its result."""
+    norm_tree = _tree(service._normalize_final_text)
+    final = _call_lines(norm_tree, "_final_integrity")
+    assert len(final) == 1, "_normalize_final_text calls _final_integrity exactly once"
+    late = [ln for ln in _assignment_lines(norm_tree, "content_text") if ln > final[0]]
+    assert not late, f"content_text is assigned after _final_integrity in the normalizer (line(s) {late})"
+
     tree = _tree(service.run_write_background)
-    final = _call_lines(tree, "_final_integrity")
-    assert len(final) == 1, "run_write_background calls _final_integrity exactly once"
-    late = [ln for ln in _assignment_lines(tree, "content_text") if ln > final[0]]
-    assert not late, (f"content_text is assigned at line(s) {late} of run_write_background, after "
-                      f"_final_integrity (line {final[0]}): a fixer after the last integrity pass ships text "
-                      "no gate checked")
+    assert not _call_lines(tree, "_final_integrity"), "the final integrity pass belongs to _normalize_final_text"
+    norm = _call_lines(tree, "_normalize_final_text")
+    assert len(norm) == 1, "run_write_background calls _normalize_final_text exactly once"
+    late = [n.lineno for n in ast.walk(tree) if "content_text" in _assigned_names(n) and n.lineno > norm[0]
+            and not _norm_unpack(n)]
+    assert not late, (f"content_text is assigned at line(s) {late} of run_write_background, after the normalizer "
+                      f"(line {norm[0]}): a fixer after the last integrity pass ships text no gate checked")
 
 
 def test_t9_post_loop_fixers_sit_between_final_pass_and_final_integrity():
     tree = _tree(service.run_write_background)
     final_pass = _call_lines(tree, "final_pass")
-    final = _call_lines(tree, "_final_integrity")[0]
-    assert final_pass and max(final_pass) < final
-    for fixer in ("_enforce_authenticity", "_cut_truth_items"):
-        lines = _call_lines(tree, fixer)
+    norm = _call_lines(tree, "_normalize_final_text")[0]
+    assert final_pass and max(final_pass) < norm
+    lines = _call_lines(tree, "_cut_truth_items")
+    assert lines and min(final_pass) < max(lines) < norm, "_cut_truth_items"
+    norm_tree = _tree(service._normalize_final_text)
+    final = _call_lines(norm_tree, "_final_integrity")[0]
+    for fixer in ("_cut_stock_lines", "_enforce_authenticity", "strip_citation_tags", "_apply_faq_answer_fit"):
+        lines = _call_lines(norm_tree, fixer)
         assert lines, f"{fixer} is no longer called — update this test and design §4.4"
-        assert max(lines) > min(final_pass) and max(lines) < final, fixer
+        assert max(lines) < final, fixer
+
+
+def test_t9_final_contract_checks_the_stored_text():
+    """AA-1047 W1: the contract runs after the normalizer, on the variable _finalize_piece stores."""
+    tree = _tree(service.run_write_background)
+    norm = _call_lines(tree, "_normalize_final_text")[0]
+    contract = _call_lines(tree, "_t9_final_contract")
+    finalize = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "_finalize_piece" and any(k.arg == "final_contract" for k in n.keywords)]
+    assert len(contract) == 1 and norm < contract[0], "the contract runs once, after the normalizer"
+    assert len(finalize) == 1 and finalize[0].lineno > contract[0]
+    kw = {k.arg: k.value for k in finalize[0].keywords}
+    assert isinstance(kw["content_text"], ast.Name) and kw["content_text"].id == "content_text"
 
 
 def test_a1_revalidate_strips_and_fits_before_it_validates():
@@ -108,9 +142,10 @@ def test_a1_degraded_hold_is_the_last_step():
 
 
 def test_t9_degraded_hold_follows_final_integrity():
-    """AA-925: the T9 degraded hold is computed after the last integrity pass, from the final attempt."""
+    """AA-925: the T9 degraded hold is computed after the last integrity pass (the normalizer, AA-1047), from the
+    final attempt."""
     tree = _tree(service.run_write_background)
-    final = _call_lines(tree, "_final_integrity")[0]
+    final = _call_lines(tree, "_normalize_final_text")[0]
     hold = _call_lines(tree, "_degraded_final")
     assert hold and min(hold) > final
 
@@ -128,4 +163,7 @@ def test_graphs_ground_then_fix_then_revalidate(builder):
     edges = _edges(builder())
     for edge in (("brand_audit", "grounding"), ("grounding", "flag_fix"), ("flag_fix", "revalidate")):
         assert edge in edges, f"missing edge {edge}"
-    assert not any(src == "revalidate" and dst != "__end__" for src, dst in edges), "revalidate is the last node"
+    # AA-1047 W1: revalidate leads only to the final contract, the one edge to END
+    assert not any(src == "revalidate" and dst != "final_contract" for src, dst in edges), \
+        "revalidate is the last check node"
+    assert ("final_contract", "__end__") in edges

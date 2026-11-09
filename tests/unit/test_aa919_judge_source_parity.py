@@ -88,30 +88,23 @@ def test_route_moments_the_seed_already_holds_are_not_repeated():
     assert src.count("Zz moment one.") == 1 and "ROUTE:" not in src
 
 
-def test_judge_source_is_bounded_deterministic_and_never_cut_by_the_prompt():
+def test_judge_source_is_deterministic_never_cut_and_over_the_cap_excluded():
+    """AA-1047 (W1): the judge reads the panel's uncut text; an item over the evidence cap is excluded."""
     big = _ctx(atom_text="Zz seed sentence. " * 3000, facts_text="Zz fact sentence.\n" * 5000,
                chosen={**ANGLE, "best_final_style": "Zz style words " * 1000})
     src = ej.judge_source_text("t9_blog", {"context": big})
-    assert len(src) <= ej.SOURCE_CHARS
-    assert src == ej.judge_source_text("t9_blog", {"context": big})
-    assert src.count(ej.CUT_MARK.strip()) == 3                       # seed, brief and facts each cut once
-    # the brand pack after the long seed and brief is kept whole; the facts come last with the space left
+    assert src == ej.judge_source_text("t9_blog", {"context": big}) == ej.panel_source_text("t9_blog", {"context": big})
+    assert "cut for length" not in src and len(src) > ej.SOURCE_CHARS
     assert "Zz private journeys with expert guiding." in src and src.rindex("FACTS:") > src.rindex("BRAND PACK:")
-    seed_cap = dict(ej.T9_SOURCE_SECTIONS)["SEED"]
-    seed = src.split("\n\n", 1)[0]
-    assert len(seed) <= len("SEED:\n") + seed_cap
-    prompt = ej.build_user_prompt(writer="t9_blog", source_text=src, output_text="x")
-    assert f"<SOURCE>\n{src}\n</SOURCE>" in prompt
-
-
-def test_clip_cuts_at_a_line_then_a_word_boundary():
-    text = "first line here\nsecond line is longer than the cap allows"
-    out = ej.clip(text, 40)
-    assert out == "first line here" + ej.CUT_MARK and len(out) <= 40
-    words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda"
-    out = ej.clip(words, 45)
-    assert out.endswith(ej.CUT_MARK) and len(out) <= 45 and not out[:-len(ej.CUT_MARK)].endswith(("alp", "et"))
-    assert ej.clip("short", 45) == "short"
+    with pytest.raises(ej.InputOverCap):
+        ej.build_user_prompt(writer="t9_blog", source_text=src, output_text="x")
+    with pytest.raises(ej.InputOverCap):
+        ej.evidence_view("t9_blog", {"context": big}, {"content_text": "x"})
+    small = {"context": _ctx()}
+    view = ej.evidence_view("t9_blog", small, {"content_text": "Zz body."})
+    prompt = ej.build_user_prompt(writer="t9_blog", source_text=view.source, output_text=view.output)
+    assert f"<SOURCE>\n{view.source}\n</SOURCE>" in prompt and view.source == ej.panel_source_text("t9_blog", small)
+    assert view.sha == ej.evidence_sha(view.source, view.output) and len(view.sha) == 16
 
 
 def test_isolation_source_text_is_unchanged_and_a1_t2_judge_source_is_it():
@@ -136,7 +129,7 @@ def test_judge_version_covers_the_source_layout(monkeypatch):
 def test_system_prompt_names_the_sections_and_asks_for_the_quoted_phrase():
     sp = ej.system_prompt()
     assert "BRAND PACK" in sp and "ANGLE BRIEF" in sp and "unsupported_claims" in sp
-    assert ej.CUT_MARK.strip() in sp
+    assert "cut for length" not in sp           # AA-1047: nothing is cut any more
 
 
 def test_reply_schema_is_strict_at_every_level():
@@ -174,15 +167,17 @@ def test_only_the_r2_runner_imports_the_eval_judge():
     """Live pipelines never call the eval judge: the only non-test module that imports it is the R2 runner (the
     writing_memory_r2 job / CLI), plus the AA-919 operator scripts (S257: the $0 kappa diag and the judge-model
     comparison, both exec'd by hand, never imported by a pipeline; S258: the AA-729 label pack, which reads only
-    `panel_source_text`, the judge's source layout uncut, and never calls the judge). A new importer must be a
-    deliberate change of this test."""
+    `panel_source_text`, the judge's source layout uncut, and never calls the judge; S263: the AA-1026 acc2 contract
+    smoke job, which sends one invented fixture through the judge's prompt and parser on stage adhoc_aa1026, by an
+    admin's request, never from a pipeline). A new importer must be a deliberate change of this test."""
     importers = set()
     for top in ("api", "services", "shared", "worker", "scripts"):
         for f in (REPO / top).rglob("*.py"):
             if _IMPORT.search(f.read_text(encoding="utf-8", errors="ignore")):
                 importers.add(f.relative_to(REPO).as_posix())
     assert importers == {"services/writing_memory/r2.py", "scripts/aa919/kappa_diag.py",
-                         "scripts/aa919/judge_compare.py", "scripts/aa729/labels.py"}
+                         "scripts/aa919/judge_compare.py", "scripts/aa729/labels.py",
+                         "services/jobs/llm_contract_smoke_job.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):
@@ -217,8 +212,8 @@ def test_panel_source_is_the_judge_layout_never_cut():
     panel = ej.panel_source_text("t9_social", inp)
     judge = ej.judge_source_text("t9_social", inp)
     assert panel.rstrip().endswith("Zz fact block.") and "Zz the last line of the seed." in panel
-    assert ej.CUT_MARK.strip() not in panel and len(panel) > ej.SOURCE_CHARS
-    assert ej.CUT_MARK.strip() in judge          # the judge's own source is still bounded
+    assert "cut for length" not in panel and len(panel) > ej.SOURCE_CHARS
+    assert judge == panel                        # AA-1047: the judge reads the panel's bytes (over the cap: excluded)
     heads = [ln[:-1] for ln in panel.splitlines() if ln.endswith(":") and ln[:-1] in dict(ej.T9_SOURCE_SECTIONS)]
     assert heads == ["SEED", "SCOPE", "TRIP", "ANGLE BRIEF", "GOAL", "BRAND PACK", "CHANNEL", "WRITER ASKS", "FACTS"]
     assert "ZZ SIBLING OPENER" not in panel and "Zz invented question?" not in panel

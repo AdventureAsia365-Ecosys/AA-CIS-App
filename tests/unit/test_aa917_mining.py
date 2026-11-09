@@ -194,7 +194,8 @@ class _Pool:
 
 
 @pytest.mark.asyncio
-async def test_run_mine_makes_no_call_when_the_month_is_over_cap():
+async def test_run_mine_makes_no_call_when_the_month_is_over_cap(monkeypatch):
+    monkeypatch.setenv("WRITING_MEMORY_R1_GATE", "off")      # AA-900 W0: the budget path, without the R1 freeze
     rows = [sig(piece=f"p{i}") for i in range(6)]
     # fetch: signals, open rules, lint-rejected rules, corpus, names, forbidden words
     conn = SimpleNamespace(execute=AsyncMock(return_value="UPDATE 0"),

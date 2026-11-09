@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { Server } from "lucide-react";
 import { ago, fmtSeconds, type Kind, type Worker, type WorkerHealthResp } from "./jobsShared";
-import { ScrollX, useFormat, useT, Badge, Eyebrow, K, Section, mono } from "../../_kit";
+import { Badge, Button, DataTable, Eyebrow, K, Section, mono, useFormat, useT } from "../../_kit";
 import { JOBS } from "./messages";
 
 function WorkerRow({ w, now }: { w: Worker; now: number }) {
@@ -84,12 +84,10 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <Eyebrow>{t("workers")}</Eyebrow>
             {stopped.length > 0 && (
-              <button
-                onClick={() => setShowStopped(v => !v)}
-                style={{ marginLeft: "auto", fontSize: 11.5, padding: "3px 9px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card, color: K.muted, cursor: "pointer" }}
-              >
+              <Button size="sm" variant="ghost" aria-expanded={showStopped} onClick={() => setShowStopped(v => !v)}
+                style={{ marginLeft: "auto" }}>
                 {showStopped ? t("hideStopped") : t("showStopped", stopped.length)}
-              </button>
+              </Button>
             )}
           </div>
 
@@ -121,33 +119,31 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
 
         <div style={{ flex: "1 1 340px", minWidth: 0 }}>
           <Eyebrow>{t("queueByKind")}</Eyebrow>
-          <ScrollX>
-          <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
-            <thead>
-              <tr style={{ color: K.muted2, textAlign: "left" }}>
-                <th style={{ fontWeight: 500, padding: "2px 8px 4px 0" }}>{t("colKind")}</th>
-                <th style={{ fontWeight: 500, padding: "2px 8px 4px 0" }}>{t("runningCap")}</th>
-                <th style={{ fontWeight: 500, padding: "2px 8px 4px 0" }}>{t("queuedReady")}</th>
-                <th style={{ fontWeight: 500, padding: "2px 0 4px 0" }}>{t("oldestQueued")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {kindNames.map(k => {
-                const cap = kinds.find(x => x.kind === k)?.concurrency;
-                const q = queuedByKind[k];
-                const run = runningByKind[k] ?? 0;
-                return (
-                  <tr key={k}>
-                    <td style={{ fontFamily: mono, color: K.ink3, padding: "3px 8px 3px 0" }}>{k}</td>
-                    <td style={{ fontFamily: mono, padding: "3px 8px 3px 0", color: cap != null && run >= cap ? K.amber : K.body }}>{run}/{cap ?? "?"}</td>
-                    <td style={{ fontFamily: mono, padding: "3px 8px 3px 0" }}>{q ? `${q.n} (${q.ready})` : "0"}</td>
-                    <td style={{ padding: "3px 0", color: K.muted }}>{q?.oldest_created_at ? ago(q.oldest_created_at, now, (d) => t("ago", d)) : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </ScrollX>
+          <DataTable<{ kind: string }>
+            tableId="jobs-queue-by-kind"
+            data={kindNames.map(kind => ({ kind }))}
+            getRowId={(r) => r.kind}
+            searchable={false}
+            paginate={false}
+            compact
+            columns={[
+              { id: "kind", header: t("colKind"), accessorKey: "kind",
+                cell: ({ row }) => <span style={{ fontFamily: mono, fontSize: 12, color: K.ink3 }}>{row.original.kind}</span> },
+              { id: "running", header: t("runningCap"), accessorFn: (r) => runningByKind[r.kind] ?? 0, cell: ({ row }) => {
+                const cap = kinds.find(x => x.kind === row.original.kind)?.concurrency;
+                const run = runningByKind[row.original.kind] ?? 0;
+                return <span style={{ fontFamily: mono, fontSize: 12, color: cap != null && run >= cap ? K.amber : K.body }}>{run}/{cap ?? "?"}</span>;
+              } },
+              { id: "queued", header: t("queuedReady"), accessorFn: (r) => queuedByKind[r.kind]?.n ?? 0, cell: ({ row }) => {
+                const q = queuedByKind[row.original.kind];
+                return <span style={{ fontFamily: mono, fontSize: 12 }}>{q ? `${q.n} (${q.ready})` : "0"}</span>;
+              } },
+              { id: "oldest", header: t("oldestQueued"), accessorFn: (r) => queuedByKind[r.kind]?.oldest_created_at ?? "", cell: ({ row }) => {
+                const q = queuedByKind[row.original.kind];
+                return <span style={{ fontSize: 12, color: K.muted }}>{q?.oldest_created_at ? ago(q.oldest_created_at, now, (d) => t("ago", d)) : "—"}</span>;
+              } },
+            ]}
+          />
         </div>
       </div>
     </Section>

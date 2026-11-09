@@ -16,10 +16,12 @@ from typing import Optional
 
 import structlog
 
+from services.quality import writing_policy as _wp
+
 logger = structlog.get_logger()
 
-SEO_META_MIN = 140
-SEO_META_MAX = 155
+# AA-1047 (root ADR 0020 D5): the one meta band of every workflow, from services/quality/writing_policy.yaml.
+SEO_META_MIN, SEO_META_MAX = _wp.band("meta")
 
 # AA-201: seo_meta must be a complete sentence (port of v5 repair_seo_fields)
 BAD_META_ENDINGS = {
@@ -138,22 +140,6 @@ def meta_in_band(meta: str, forbidden=None) -> bool:
     return True
 
 
-def _trim_to_sentence(text: str, limit: int) -> str:
-    """Trim to <= limit, preferring last sentence terminator within limit.
-    Trims DOWN only — never pads up. Local mirror of admin_pipeline trim (no cross-import)."""
-    t = (text or "").strip()
-    if len(t) <= limit:
-        return t
-    window = t[:limit]
-    cut = max(window.rfind("."), window.rfind("!"), window.rfind("?"))
-    if cut != -1:
-        return window[:cut + 1].rstrip()
-    space = window.rfind(" ")
-    if space != -1:
-        return window[:space].rstrip()
-    return window.rstrip()
-
-
 def _salvage_to_band(text: str, forbidden=None):
     """AA-239: largest complete-sentence prefix in [MIN, MAX], forbidden-free.
     Returns the prefix, or None when no sentence boundary lands in band (caller escalates).
@@ -208,7 +194,7 @@ def fit_seo_meta(meta: str, tenant_forbidden=None) -> str:
 
 
 # ── AA-740: seo_title fit (moved from tenant_pipeline, AA-639) ───────────────────────────────────
-SEO_TITLE_MAX = 60  # same limit graph.py validate_node applies (SEO_TITLE_TOO_LONG)
+SEO_TITLE_MAX = _wp.band("title")[1]  # AA-1047: the policy title band (graph.py validate_node: SEO_TITLE_TOO_LONG)
 _TITLE_SEPARATORS = (" — ", " – ", " | ", ": ", " - ")
 _TITLE_DANGLING = {"and", "&", "with", "of", "in", "to", "for", "the", "a", "an", "—", "–", "-", "|", ":", ","}
 

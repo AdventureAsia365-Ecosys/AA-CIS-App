@@ -12,23 +12,24 @@ from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.errors import is_llm_access_denied
-from shared.llm_client.tenant_budget import approval_stop_in
+from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
 from services.quality.registry import threshold
 from .prompts import parse_source_day_word_counts
 from .batch_prompt import (
-    build_brand_diff_block, build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
+    build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
 )
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
 from .grounding import degraded_entries as grounding_degraded_entries, source_text as grounding_source_text
 from .judge_node import judge_node
+from . import t2_interim
 from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
-from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
+from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta_final, fit_seo_title, meta_cut_signature, tour_days)
-from services.quality import day_oracle, degraded, repair_contract
+from services.quality import day_oracle, degraded, repair_contract, route_guard
 from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
                               state_forbidden)
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
@@ -36,7 +37,7 @@ from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
     clamp_distance, nudge_itinerary_day, nudge_voice_hint, generated_day_word_counts,
 )
-from .day_parse import CANONICAL_HEAD_NC, day_range
+from .day_parse import CANONICAL_HEAD_NC, day_range, written_day_word_counts
 
 logger = structlog.get_logger()
 
@@ -244,12 +245,18 @@ V2_HARD_BLOCK_CODES = frozenset({"ITINERARY_DAY_COUNT_MISMATCH"})
 DAY_COUNT_CODE = "ITINERARY_DAY_COUNT_MISMATCH"
 
 
-def itinerary_day_gap(tour: dict, itinerary) -> Optional[dict]:
+def itinerary_day_gap(tour: dict, itinerary, *, any_form: bool = False) -> Optional[dict]:
     """AA-329a, the one source-vs-output day check (validate_node and final_day_guard): the source itinerary's
     "Day N" blocks (``parse_source_day_word_counts``, the splitter the writer v2 day plan and the day oracle read)
     against the written itinerary's canonical "Day N — Title" blocks. None when the source has no reliable day
     markers (the splitter fell back to an even split): nothing trustworthy to compare. Otherwise
-    {"source_day_words", "generated_day_words", "missing": sorted source days absent from the output}."""
+    {"source_day_words", "generated_day_words", "missing": sorted source days absent from the output}.
+
+    AA-1049 (S273 review): ``any_form=True`` (validate_node on a T2 tenant rewrite) reads the written side with
+    ``day_parse.written_day_word_counts`` — the shared written-day reader of the T2 final contract and the T2 slot
+    check — because T3 and the linear orchestrator validate the dash-fixed "Day N: Title" text, which the canonical
+    reader read as no day (a phantom ITINERARY_DAY_COUNT_MISMATCH on every multi-day T2 candidate). S1 / A1 (where
+    the code is hard on writer v2) and the final day guard stay on the canonical reader: it is S1's storage contract."""
     src_raw = (tour or {}).get('itineraries') or (tour or {}).get('itinerary') or ""
     parsed = parse_source_day_word_counts(src_raw, (tour or {}).get('duration'))
     if parsed["used_fallback"]:
@@ -263,7 +270,11 @@ def itinerary_day_gap(tour: dict, itinerary) -> Optional[dict]:
     # this is a hard block on writer v2, and "Day 3 - 5 temples of Hue" in a 3-day source is day 3, not days 3-5.
     source_days = sorted({d for first, last in (parsed.get("day_ranges") or {}).items()
                           for d in range(first, last + 1)} | set(source_day_words))
-    generated_day_words = generated_day_word_counts(itinerary if isinstance(itinerary, str) else str(itinerary or ""))
+    if any_form:
+        generated_day_words = written_day_word_counts(itinerary)
+    else:
+        generated_day_words = generated_day_word_counts(
+            itinerary if isinstance(itinerary, str) else str(itinerary or ""))
     missing = sorted(set(source_days) - set(generated_day_words))
     return {"source_day_words": source_day_words, "source_days": source_days,
             "generated_day_words": generated_day_words, "missing": missing}
@@ -431,6 +442,10 @@ class ContentState(TypedDict):
     draft_scores:           list
     previous_draft:         Optional[dict]
     best_draft_restored:    bool
+    # S271 W0 (root ADR 0020, AA-900 l16): which exit the draft left by — "hitl" when the retries ran out below the
+    # line. Before S271 that exit went straight to END and skipped brand_audit, grounding, final_day_guard, the route
+    # guard and the degraded hold; now it goes through them (flag_fix skipped). Recorded in metadata.exit_path.
+    exit_path:              Optional[str]
     # AA-993 G2: the graph-state keys a writer node changed, saved by an s1_rewrite job (s1_checkpoint) and merged
     # back by resume_writer_node (build_graph_resumed) when a released job is re-claimed. Declared so LangGraph keeps it
     # until the entry node reads it.
@@ -450,6 +465,10 @@ class ContentState(TypedDict):
     # LangGraph keeps them (AA-209 gotcha).
     writing_memory:         Optional[dict]
     writing_release:        Optional[dict]
+    # AA-1047 W1 (root ADR 0020 "one exit"): the REPORT-mode final contract record of this run's exit
+    # (services/quality/final_contract.py), set by final_contract_node, the last node before END. Declared so LangGraph
+    # keeps it (AA-209 gotcha); generated_content.metadata.final_contract stores it.
+    final_contract:         Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -503,12 +522,6 @@ _CODE_FIELD_MAP = {
     "BRAND_SEO_META_VIOLATION":  "seo_meta",
     "DFS_INTENT_UNDERUSED":      "seo_meta",
 }
-
-def _build_brand_diff_block(state: ContentState) -> str:
-    """AA-202: brand-differentiation system block. AA-606: moved to batch_prompt.build_brand_diff_block
-    (single source of truth) so the Bedrock Batch manifest and the synchronous generate_node produce
-    byte-identical system prompts. Thin re-export kept so existing importers/tests still resolve here."""
-    return build_brand_diff_block(state)
 
 def _writer_sampling() -> dict:
     """S224 (AA-748 follow-up): the S1 writer has always run at the provider default temperature
@@ -703,6 +716,10 @@ def generate_node(state: ContentState) -> ContentState:
             # AA-1016 (review S262): the tenant's AI budget needs staff approval; the job must end stopped_budget
             # and wait (shared/llm_client/tenant_budget), not turn into a failed draft.
             raise
+        if resp is None and counter_unavailable_in(e) is not None:
+            # AA-642 A8 (review S263): the tenant's AI budget counter could not be read (fail closed); the job retries
+            # with its backoff, a failed draft would only send the graph into the same refusal again.
+            raise
         if resp is not None and not logged:
             # AA-927: billed, then the post-call code raised — a billed_unusable row (no json_parsed).
             record_unusable_sync(resp, stage=gen_stage, role="writer", error=e, tenant_id=tenant_id)
@@ -835,7 +852,7 @@ def _apply_seo_meta_fit(generated: dict, state: ContentState) -> bool:
         if new != meta:
             generated["seo_meta"], changed = new, True
     title = generated.get("seo_title")
-    if isinstance(title, str) and len(title) > 60:
+    if isinstance(title, str) and len(title) > SEO_TITLE_MAX:
         new = fit_seo_title(title)
         if new != title:
             generated["seo_title"], changed = new, True
@@ -1069,18 +1086,18 @@ def validate_node(state: ContentState) -> ContentState:
             break  # one violation is enough
 
     # SEO field lengths
-    if len(generated.get("seo_title", "")) > 60:
-        issues.append("seo_title exceeds 60 chars")
+    if len(generated.get("seo_title", "")) > SEO_TITLE_MAX:
+        issues.append(f"seo_title exceeds {SEO_TITLE_MAX} chars")
         fired.append("SEO_TITLE_TOO_LONG")
         score -= 0.5
     if len(generated.get("seo_meta", "")) > SEO_META_MAX:
-        issues.append("seo_meta exceeds 155 chars")
+        issues.append(f"seo_meta exceeds {SEO_META_MAX} chars")
         fired.append("SEO_META_TOO_LONG")
         score -= 0.5
     # AA-201: enforce lower band — no under-length meta
     _meta_len = generated.get("seo_meta", "").strip()
     if _meta_len and len(_meta_len) < SEO_META_MIN:
-        issues.append("seo_meta under 140 chars")
+        issues.append(f"seo_meta under {SEO_META_MIN} chars")
         fired.append("META_TOO_SHORT")
         score -= 0.5
 
@@ -1126,7 +1143,9 @@ def validate_node(state: ContentState) -> ContentState:
     _src_raw = tour.get('itineraries') or tour.get('itinerary') or ""
     # AA-990 N3: one function for this check and the final day guard (final_day_guard), which re-runs it on the
     # text that is persisted after every later edit.
-    _gap = itinerary_day_gap(tour, itinerary)
+    # AA-1049 (S273 review): a T2 tenant rewrite is validated on its dash-fixed text too (T3 on main, the linear
+    # orchestrator's verify), so its written days are read in any form, by the reader the T2 contract uses.
+    _gap = itinerary_day_gap(tour, itinerary, any_form=bool(state.get("is_tenant_rewrite")))
     if _gap is not None:
         _source_day_words = _gap["source_day_words"]
         _source_days = set(_source_day_words)
@@ -1197,6 +1216,13 @@ def validate_node(state: ContentState) -> ContentState:
     # B1: handle both flat {"top_keywords": [...]} and nested {"keywords": {"top_keywords": [...]}}
     _seo    = state.get("seo", {})
     seo_kws = _seo.get("top_keywords", []) or _seo.get("keywords", {}).get("top_keywords", [])
+    if state.get("is_tenant_rewrite"):
+        # AA-1055 PR 1 (S273 design decision 7): a T2 draft is judged only on a keyword it could have used — one
+        # the shared filter keeps (not transactional, every content word in the source it rewrites) for an English
+        # rewrite. A raw US query the source never covers, or any English query on a German rewrite, is no longer
+        # a 1.0 deduction. T2's SEO step gives the writer the same list (t2_rewrite_job.t2_seo).
+        from services.seo_intelligence.keyword_fit import writer_keywords
+        seo_kws = writer_keywords(_seo, state.get("tour") or {}, state.get("rewrite_language"))
     if seo_kws:
         kw_texts = [
             (kw["keyword"] if isinstance(kw, dict) else str(kw)).lower()
@@ -1281,7 +1307,8 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
 
     AA-990 N3: and where the day structure of the final text is checked (final_day_guard), after the sentence
     re-repair below — the last edit of the graph."""
-    return degraded.apply_a1_hold(final_day_guard(_grounding_recheck(state)))
+    # AA-1042 (Quality guard): a writer answered by a fallback model is marked (or held, per the stage's policy)
+    return degraded.apply_a1_hold(route_guard.with_a1_entries(final_day_guard(_grounding_recheck(state))))
 
 
 def _grounding_recheck(state: ContentState) -> ContentState:
@@ -1385,7 +1412,9 @@ def revalidate_node(state: ContentState) -> ContentState:
     # Re-run in the same order as the main graph: validate sets quality_score that judge then
     # min()'s against. Calling judge alone would min against the stale pre-fix validate score.
     s = validate_node(state)
-    s = judge_node(s)
+    # S271 W0: the T2 interim profile has no revalidate judge (report-only, one judge call per draft is enough).
+    if not t2_interim.active_for(s):
+        s = judge_node(s)
 
     score = s.get("quality_score", 0.0)
     audit_status = s.get("brand_audit_status", "")
@@ -1412,24 +1441,128 @@ def human_edit_gate_node(state: ContentState) -> ContentState:
     deliberately NOT in this graph — the human edit is final, the system only re-scores and
     gates. Pass = validate+judge score clears MIN_QUALITY AND brand_audit isn't manual_check.
     On fail the reviewer must fix and re-validate again before approve is allowed.
+
+    S271 W0 (root ADR 0020 D8, AA-900 l16): a manual_check held ONLY by the elephant-riding policy
+    (``elephant_policy.is_policy_only_hold``: its code is the only brand code and the detector hits the edited text
+    or the source) does not fail the gate: the policy asks for a human review, and this edit is it. Before, an
+    edited elephant tour could never pass (the detector re-hits the source on every re-validation), so the only way
+    out was an API-only override. Any other manual_check still fails.
     """
+    from services.quality import elephant_policy
     score = state.get("quality_score", 0.0)
     audit_status = state.get("brand_audit_status", "")
     codes = state.get("failure_codes", []) or []
     hard_hits = sorted(set(codes) & hard_block_codes(state))   # AA-645: v2 drafts add V2_HARD_BLOCK_CODES
+    policy_keep = audit_status == "manual_check" and elephant_policy.is_policy_only_hold(
+        audit_status, state.get("brand_audit_codes") or [], state.get("generated"), state.get("tour"))
     passed = (
         score >= MIN_QUALITY
-        and audit_status != "manual_check"
+        and (audit_status != "manual_check" or policy_keep)
         and not hard_hits
     )
     logger.info("human_edit_revalidate_done", passed=passed, score=score,
                 brand_audit_status=audit_status, hard_block_hits=hard_hits,
-                failure_codes=codes)
+                failure_codes=codes, policy_keep=policy_keep)
     return {
         **state,
         "revalidate_ran":    True,
         "revalidate_passed": passed,
     }
+
+
+HITL_EXIT = "hitl"
+
+
+def hitl_exit_node(state: ContentState) -> ContentState:
+    """S271 W0 (AA-900 l16): the ``hitl`` exit (retries used up, still below the line) no longer ends the graph. It
+    marks the draft and goes on to brand_audit → grounding → revalidate, so a version that leaves this way has been
+    through the same checks as one that passed (elephant / meal / clock codes, grounding against the source with its
+    sentence repair, final_day_guard, the route guard and the degraded hold). No LLM call here."""
+    logger.info("hitl_exit_checked", retry_count=state.get("retry_count", 0),
+                score=state.get("quality_score"))
+    return {**state, "exit_path": HITL_EXIT}
+
+
+def after_grounding(state: ContentState) -> str:
+    """S271 W0: a hitl draft skips flag_fix (a source-blind whole-field LLM rewrite of a draft that goes to a human
+    anyway) and goes straight to revalidate, whose last step is the final check chain (_apply_grounding_recheck)."""
+    return "revalidate" if state.get("exit_path") == HITL_EXIT else "flag_fix"
+
+
+# AA-1047 W1: which graph a run left by (the exit recorded by the final contract); the hitl path adds "_hitl"
+# except on the live graph, where it is the "hitl" exit.
+ENTRY_LIVE, ENTRY_RESUMED, ENTRY_BATCH, ENTRY_REVALIDATION = "done", "resumed", "batch", "revalidation"
+FINAL_CONTRACT_NODE = "final_contract"
+
+
+def contract_exit(entry: str, state: dict) -> str:
+    """The exit name a run records: the graph's entry, or the hitl exit (``hitl`` on the live graph,
+    ``<entry>_hitl`` on a resumed / batch one). A re-validation has no hitl exit."""
+    if entry != ENTRY_REVALIDATION and state.get("exit_path") == HITL_EXIT:
+        return HITL_EXIT if entry == ENTRY_LIVE else f"{entry}_{HITL_EXIT}"
+    return entry
+
+
+def final_contract_node(state: ContentState, entry: str = ENTRY_LIVE) -> ContentState:
+    """AA-1047 W1 (root ADR 0020 invariant 4): the last node of every A1 graph, the one edge to END.
+
+    1. The S1 text normalizer (normalize.normalize_generated: title-case an all-caps name, flatten and clean the
+       itinerary, string highlights) — it used to run after the graph, on text no check had seen.
+    2. The REPORT-mode final contract over the text as it will be stored (services/quality/final_contract.py):
+       the verdict the target design gives (publish / policy_hold / review / source_hold / degraded) next to what
+       today's gates decided, recorded in ``state["final_contract"]``. It changes no status, score or code.
+
+    A tenant rewrite (T2) passes through unchanged: its exit is the T2 job's save, after T3 (t2_rewrite_job). A
+    contract error is logged and recorded as such; it never fails the run (report mode). No LLM call."""
+    if state.get("is_tenant_rewrite"):
+        return state
+    from services.content_generation.normalize import normalize_generated
+    from services.quality import final_contract as fc
+
+    generated = state.get("generated")
+    # A re-validation stores no text (the reviewer's text is already the stored one): checked as it is.
+    if entry != ENTRY_REVALIDATION and isinstance(generated, dict) and generated:
+        generated = normalize_generated(dict(generated), state.get("tour") or {})
+        state = {**state, "generated": generated}
+    exit_name = contract_exit(entry, state)
+    try:
+        record = fc.check_s1(fc.s1_input_from_state(state), exit=exit_name).record()
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the run
+        logger.warning("final_contract_failed", workflow=fc.S1, exit=exit_name, tour_id=state.get("tour_id"),
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        record = {"version": fc.CONTRACT_VERSION, "mode": fc.MODE, "workflow": fc.S1, "exit": exit_name,
+                  "verdict": None, "error": f"{type(exc).__name__}: {exc}"[:300],
+                  "text_sha": fc.tour_text_sha(generated if isinstance(generated, dict) else {})}
+    return {**state, "final_contract": record}
+
+
+def _final_contract_for(entry: str):
+    def node(state: ContentState) -> ContentState:
+        return final_contract_node(state, entry)
+    node.__name__ = f"final_contract_{entry}"
+    return node
+
+
+def _wire_exit(graph: StateGraph, last: str, entry: str) -> None:
+    """AA-1047 W1: ``last`` → final_contract → END. The only edge to END of every A1 graph (topology test)."""
+    graph.add_node(FINAL_CONTRACT_NODE, _final_contract_for(entry))
+    graph.add_edge(last, FINAL_CONTRACT_NODE)
+    graph.add_edge(FINAL_CONTRACT_NODE, END)
+
+
+def _wire_checks_tail(graph: StateGraph, *, hitl_from: Optional[str] = None, entry: str = ENTRY_LIVE) -> None:
+    """The tail every A1 / T2 entry shares (S271 W0: one exit chain): brand_audit → grounding → flag_fix (skipped
+    on a hitl draft) → revalidate → final_contract → END (AA-1047 W1; ``entry`` names the exit it records). The
+    ``hitl`` exit reaches it through hitl_exit (the should_retry branch
+    targets it directly, or ``hitl_from`` — T2's restore_best — leads to it)."""
+    graph.add_node("hitl_exit", hitl_exit_node)
+    if hitl_from:
+        graph.add_edge(hitl_from, "hitl_exit")
+    graph.add_edge("hitl_exit", "brand_audit")
+    graph.add_edge("brand_audit", "grounding")
+    graph.add_conditional_edges("grounding", after_grounding, {"flag_fix": "flag_fix", "revalidate": "revalidate"})
+    graph.add_edge("flag_fix", "revalidate")
+    _wire_exit(graph, "revalidate", entry)   # AA-1047 W1: revalidate → final_contract → END
 
 
 def build_revalidation_graph() -> StateGraph:
@@ -1449,7 +1582,7 @@ def build_revalidation_graph() -> StateGraph:
     graph.add_edge("validate", "llm_judge")
     graph.add_edge("llm_judge", "brand_audit")
     graph.add_edge("brand_audit", "human_edit_gate")
-    graph.add_edge("human_edit_gate", END)
+    _wire_exit(graph, "human_edit_gate", ENTRY_REVALIDATION)   # AA-1047 W1: → final_contract → END
 
     return graph.compile()
 
@@ -1475,6 +1608,7 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
     # AA-206: the judge sits between validate and the retry decision so should_retry routes on
     # the judge-adjusted quality_score (the writer fixes against judge feedback via the retry loop).
     graph.add_edge("validate", "llm_judge")
+    # S271 W0: the hitl exit goes through the checks (hitl_exit → brand_audit → grounding → revalidate), never to END.
     if t2_drafts:
         graph.add_node("track_best", track_best_node)
         graph.add_node("restore_best", restore_best_node)
@@ -1484,17 +1618,14 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
             "retry": "increment_retry",
             "hitl":  "restore_best",
         })
-        graph.add_edge("restore_best", END)
+        _wire_checks_tail(graph, hitl_from="restore_best")
     else:
         graph.add_conditional_edges("llm_judge", should_retry, {
             "done":  "brand_audit",
             "retry": "increment_retry",
-            "hitl":  END,
+            "hitl":  "hitl_exit",
         })
-    graph.add_edge("brand_audit", "grounding")
-    graph.add_edge("grounding", "flag_fix")
-    graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+        _wire_checks_tail(graph)
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()
@@ -1536,12 +1667,9 @@ def build_graph_resumed() -> StateGraph:
     graph.add_conditional_edges("llm_judge", should_retry, {
         "done":  "brand_audit",
         "retry": "increment_retry",
-        "hitl":  END,
+        "hitl":  "hitl_exit",
     })
-    graph.add_edge("brand_audit", "grounding")
-    graph.add_edge("grounding", "flag_fix")
-    graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+    _wire_checks_tail(graph, entry=ENTRY_RESUMED)   # S271 W0: the hitl exit goes through the checks
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()
@@ -1568,16 +1696,17 @@ def build_graph_from_generated() -> StateGraph:
 
     graph.set_entry_point("seed_generated")
     graph.add_edge("seed_generated", "validate")
+    # AA-1047 W1 (found by the exit topology test): the retry writer had no edge, so LangGraph ended the run right
+    # after it — a retried batch draft was stored with no validate, judge, grounding or day guard. It now loops back
+    # to validate like build_graph() / build_graph_resumed().
+    graph.add_edge("generate", "validate")
     graph.add_edge("validate", "llm_judge")
     graph.add_conditional_edges("llm_judge", should_retry, {
         "done":  "brand_audit",
         "retry": "increment_retry",
-        "hitl":  END,
+        "hitl":  "hitl_exit",
     })
-    graph.add_edge("brand_audit", "grounding")
-    graph.add_edge("grounding", "flag_fix")
-    graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+    _wire_checks_tail(graph, entry=ENTRY_BATCH)   # S271 W0: the hitl exit goes through the checks
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()

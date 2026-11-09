@@ -12,6 +12,7 @@ Modules (standard library only, relative imports only, no I/O, no secrets, no pr
 - ``budget``: ``BudgetDecision`` (fail closed).
 - ``ports``: the Protocols an app implements (config source, ledger sink, budget store, client factory).
 - ``contract``: names and SELECTs of the CIS contract views for TripPlanner (CIS migration 323).
+- ``tokens``: the output-token floor of a reasoning-capable model and the one truncation retry's ceiling (S271).
 """
 
-CORE_VERSION = "1.0.0"
+CORE_VERSION = "1.2.0"

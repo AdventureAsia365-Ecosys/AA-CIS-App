@@ -1,17 +1,30 @@
 name: CI
 
+# S271 (CI minutes, AA-889 merge queue): what runs on which event. Main is protected by the merge queue: every commit
+# that lands on main is a queue group commit (gh-readonly-queue/main/*) that passed the FULL run below first, so a run
+# on `push` to main tested the same tree a second time and is gone (Deploy Dev and the other main workflows trigger on
+# push themselves, never on this workflow).
+#   merge_group, workflow_dispatch: every job, no path filter, no skip. The merge queue's guarantee is unchanged.
+#   pull_request: the fast checks only (Lint, Security Audit, Unit Tests, Migration preflight, Frontend Lint with the
+#     type check). The heavy jobs (Integration Tests, Docker Build Check, Frontend Build; Visual in visual.yml) run on
+#     the queue, unless the PR touches their area (job "Quality Paths (report)", step Scope, .github/scripts/ci_scope.py):
+#     migrations or integration tests -> Integration Tests, Dockerfile / requirements -> Docker Build Check. A docs-only
+#     PR (every path under docs/ or *.md) skips the test jobs; a PR that changes .github/ runs everything.
+#   A skipped job reports "skipped", which counts as passed for a required check, so every required check still
+#   reports on a PR and the PR can enter the queue. Trade-off: a heavy failure is now found in the queue (the group
+#   fails, the PR leaves the queue) instead of on the PR. To see the heavy jobs before queueing, dispatch this
+#   workflow on the PR branch (gh workflow run ci.yml --ref <branch>): its checks land on the PR head.
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main, "feature/**"]
   # AA-889 (merge queue): the queue tests each group on a temporary gh-readonly-queue/main/* commit and waits for
   # every required check there. All jobs run on it, with no path filter, so no required check is left unreported.
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
 
-# AA-993 (CIS-4): a new push to a PR cancels that PR's older run. Every other event (push, merge_group) gets its own
-# group keyed on run_id, so main pushes are never serialised or cancelled.
+# AA-993 (CIS-4): a new push to a PR cancels that PR's older run. Every other event (merge_group, dispatch) gets its
+# own group keyed on run_id, so queue groups are never serialised or cancelled.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -27,13 +40,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # S273 (workflow_lint WL4): no pip cache here (three small pinned packages; setup-python's cache saved a copy on
+      # every pull request and merge-queue ref).
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-          cache: "pip"
 
       - name: Install lint deps
         # AA-926: PyYAML for the quality registry lint, pinned to the requirements.txt version.
@@ -60,7 +74,7 @@ jobs:
         env:
           GOLDEN_GUARD_KEY: ${{ secrets.GOLDEN_GUARD_KEY }}
           GOLDEN_GUARD_REQUIRE_KEY: >-
-            ${{ github.actor != 'dependabot[bot]' && (github.event_name == 'push'
+            ${{ github.actor != 'dependabot[bot]' && (github.event_name == 'workflow_dispatch'
             || github.event_name == 'merge_group'
             || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: python3 -m services.golden_set.text_guard scan
@@ -76,18 +90,37 @@ jobs:
   # AA-926 (design §4.6): report which quality tiers a change touches and the hash of its diff on the
   # quality paths (services/quality/paths.yaml). Report only — always green, not a required check; AA-919
   # makes it enforce `quality/q2`. Least privilege: no id-token, read-only contents.
+  # S271: the same job (already on every event, full history) carries the CI scope of a pull request: its outputs
+  # gate the test and build jobs below. The step never fails the job (continue-on-error): a broken scope leaves the
+  # outputs empty and every gated job runs (they test `!= 'false'`).
   quality-paths:
     name: Quality Paths (report)
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      tests: ${{ steps.scope.outputs.tests }}
+      integration: ${{ steps.scope.outputs.integration }}
+      docker: ${{ steps.scope.outputs.docker }}
+      frontend: ${{ steps.scope.outputs.frontend }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
+      - name: Scope (what this pull request needs)
+        id: scope
+        continue-on-error: true
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 .github/scripts/ci_scope.py --event "$EVENT" \
+            --area integration=api/migrations/,tests/integration/ \
+            --area docker=Dockerfile,.dockerignore,requirements.txt,.trivyignore,.url-wheels/ \
+            --area frontend=frontend/ | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -104,52 +137,84 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install pip-audit
         run: pip install pip-audit==2.10.1 --quiet
 
+      # S273: the URL-pinned spaCy model wheel comes from the actions cache (keyed on its URL + sha256), downloaded with
+      # retries only on a miss and always checked against the pin; install from the step's rewritten requirements file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
       # AA-868: failing. Accepted findings live in .github/pip-audit-ignore.txt with an expiry date;
       # an expired entry or any finding not on the list turns this check red.
       - name: Audit main requirements (failing)
-        run: bash .github/scripts/pip_audit_gate.sh requirements.txt
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
+        run: bash .github/scripts/pip_audit_gate.sh "$REQ"
 
 
-  test-unit:
-    name: Unit Tests
+  # AA-1032 (faster CI): the unit suite runs as UNIT_SHARDS parallel jobs ("Unit shard i/N"), each on 4 pytest-xdist
+  # workers; the required check keeps its name: "Unit Tests" below combines the shards' coverage, then runs the same
+  # ratchet and Q0 steps as before. The split is by test file, balanced on .github/test-durations/unit.json
+  # (.github/scripts/ci_shards.py; every file lands in exactly one shard, a new file weighs the median). Before
+  # (10 main runs, 01/11/2026): one job, ~4.5-5 min, of which ~45 s was every worker importing all 667 files.
+  # S271: skipped only for a docs-only pull request (scope output tests=false); a failed scope job runs them.
+  test-unit-shard:
+    name: Unit shard ${{ matrix.shard }}/3
+    needs: quality-paths
+    if: ${{ !cancelled() && needs.quality-paths.outputs.tests != 'false' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      UNIT_SHARDS: 3
+      SHARD: ${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          # AA-925: the Q0 red-on-base step needs the PR merge commit's first parent (the base tip).
-          fetch-depth: 2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       # AA-993 (CIS-3): uv installs the same requirements faster than pip; its cache replaces setup-python's pip cache.
       - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
+          # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      # S273: the URL-pinned spaCy model wheel comes from the actions cache (keyed on its URL + sha256), downloaded with
+      # retries only on a miss and always checked against the pin; install from the step's rewritten requirements file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
 
       - name: Install dependencies
         # requirements-dev.txt pins the coverage version (CI only; requirements.txt feeds the production image).
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
         run: |
-          uv pip install --system -r requirements.txt -r requirements-dev.txt
+          uv pip install --system -r "$REQ" -r requirements-dev.txt
 
-      - name: Run unit tests
+      - name: Run unit tests (this shard)
         env:
           # AA-993 (CIS-1): Python 3.12 sys.monitoring tracer, about 2x faster than the C tracer with the same
           # covered lines. Needs the coverage pin in requirements-dev.txt.
           COVERAGE_CORE: sysmon
+          # The shard's coverage data; "Unit Tests" combines the shards' files (coverage combine) into the one report.
+          COVERAGE_FILE: coverage-shards/.coverage.unit-${{ matrix.shard }}
           ENVIRONMENT: test
           AWS_REGION: us-west-1
           AWS_DEFAULT_REGION: us-west-1
@@ -161,18 +226,104 @@ jobs:
           LANGFUSE_SECRET_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_HOST: http://localhost:3000
-        # AA-993 (CIS-2): one invocation on 4 pytest-xdist workers (pinned in requirements-dev.txt). `--dist loadfile`
-        # keeps each test file on one worker (module fixtures and module state stay per file); -n 4, not auto. The
-        # coverage targets and reports are unchanged; tests/acp is now measured too (it was a separate run without
-        # --cov), so the ratchet total can only go up.
+        # AA-993 (CIS-2): 4 pytest-xdist workers (pinned in requirements-dev.txt), `--dist loadfile` keeps each test file
+        # on one worker (module fixtures and module state stay per file). Same coverage targets as before; the terminal
+        # and XML reports are written once, from the combined data, in "Unit Tests".
         run: |
-          pytest tests/unit/ tests/acp/ -v \
+          set -euo pipefail
+          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --shards "$UNIT_SHARDS" --index "$SHARD" \
+            --workers 4 --file-overhead 0.07 --durations .github/test-durations/unit.json tests/unit tests/acp)
+          echo "Unit shard $SHARD/$UNIT_SHARDS: ${#FILES[@]} test files"
+          mkdir -p coverage-shards
+          pytest "${FILES[@]}" -v \
             -n 4 --dist loadfile \
             --tb=short \
             --cov=services \
             --cov=shared \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml
+            --cov-report= \
+            --junitxml="junit-unit-$SHARD.xml" -o junit_family=xunit1
+
+      - name: Upload the shard's coverage data and junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-shard-${{ matrix.shard }}
+          path: |
+            coverage-shards/
+            junit-unit-${{ matrix.shard }}.xml
+          include-hidden-files: true    # the coverage data file is .coverage.unit-N
+          if-no-files-found: error
+          retention-days: 5
+
+  test-unit:
+    name: Unit Tests
+    needs: [quality-paths, test-unit-shard]
+    # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
+    # counts as passed). Skipped (= passed) only with the shards, on a docs-only pull request (S271).
+    if: ${{ !cancelled() && needs.quality-paths.outputs.tests != 'false' }}
+    runs-on: ubuntu-latest
+    env:
+      UNIT_SHARDS: 3
+    steps:
+      - name: Every unit shard passed
+        env:
+          RESULT: ${{ needs.test-unit-shard.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::a unit shard did not pass (result: $RESULT); see the 'Unit shard i/N' jobs"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # AA-925: the Q0 red-on-base step needs the PR merge commit's first parent (the base tip).
+          fetch-depth: 2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      # S273: the spaCy model wheel from the actions cache (see "Unit shard"); install from the rewritten file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
+
+      - name: Install dependencies
+        # Q0 red on base runs pytest on the base tip; coverage comes from the pinned requirements-dev.txt.
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
+        run: |
+          uv pip install --system -r "$REQ" -r requirements-dev.txt
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: unit-shard-*
+          merge-multiple: true
+          path: shards
+
+      # The shards ran on the same checkout path, so their data files combine as one run's would (same TOTAL; checked
+      # on a two-shard split against a single run, AA-1032 notes). [tool.coverage.run] omit in pyproject.toml applies.
+      - name: Combine coverage of the shards
+        run: |
+          set -euo pipefail
+          FOUND=$(find shards/coverage-shards -name '.coverage.unit-*' | wc -l)
+          if [ "$FOUND" -ne "$UNIT_SHARDS" ]; then
+            echo "::error::expected $UNIT_SHARDS shard coverage files, found $FOUND"
+            exit 1
+          fi
+          coverage combine --keep shards/coverage-shards
+          # -i as pytest-cov reports (ignore_errors): a unit test builds a throwaway "services" package under /tmp
+          # (test_collection_error_on_base); --cov=services measures it and its source is gone by now.
+          coverage report -i --show-missing
+          coverage xml -i -o coverage.xml
 
       # AA-879: coverage ratchet (replaces --cov-fail-under=30; the real total was ~86%). Fails below the
       # floor in .github/coverage-ratchet.json, or when a PR lowers that floor against the base tip (HEAD^1
@@ -200,9 +351,45 @@ jobs:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python .github/scripts/q0_red_on_base.py --base "$(git rev-parse HEAD^1)"
 
-  test-integration:
-    name: Integration Tests
+      # Report only: each shard's real seconds, and the per-file durations of this run as an artifact to refresh
+      # .github/test-durations/unit.json when the shards drift apart.
+      - name: Shard balance (report)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 .github/scripts/ci_shards.py durations --out unit-durations.json shards/junit-unit-*.xml \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: test-durations-unit
+          path: unit-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # AA-1032 (faster CI): the integration suite runs as INTEGRATION_SHARDS parallel jobs ("Integration shard i/N"), each
+  # with its OWN Postgres and Redis service, so each shard's conftest replays every migration on an empty database
+  # (the session fixture) exactly as the single job did. Each shard is one CONSECUTIVE range of the path-ordered files
+  # (--contiguous, balanced on .github/test-durations/integration.json): the modules are not independent (e.g.
+  # test_aa712_migration_226 drops schema catalog and test_aa712_migration_228, next in order, re-creates it for every
+  # later module), so a file keeps the predecessors it had in the single job; a longest-first split by file broke 9
+  # modules that way (AA-1032 notes). A shard red on main at its FIRST files means a module leans on an earlier one's
+  # leftovers: fix that module's setup. The required check keeps its name: "Integration Tests" below passes only when
+  # every shard passed. Before (10 main runs, 01/11/2026): one job, ~4-4.5 min.
+  # S271: merge_group and dispatch always; a pull request only when it touches migrations or the integration tests
+  # (scope output integration). A failed scope job runs them.
+  test-integration-shard:
+    name: Integration shard ${{ matrix.shard }}/4
+    needs: quality-paths
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.integration != 'false') }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      INTEGRATION_SHARDS: 4
+      SHARD: ${{ matrix.shard }}
     services:
       postgres:
         image: postgres:15
@@ -229,22 +416,31 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       # AA-993 (CIS-3): same uv install as Unit Tests, two installs in the same order as before.
       - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
+          # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      # S273: the spaCy model wheel from the actions cache (see "Unit shard"); install from the rewritten file.
+      - name: URL-pinned wheels (cached, hash-checked)
+        id: wheels
+        uses: ./.github/actions/url-wheels
 
       - name: Install dependencies
+        env:
+          REQ: ${{ steps.wheels.outputs.requirements }}
         run: |
-          uv pip install --system -r requirements.txt
+          uv pip install --system -r "$REQ"
           uv pip install --system -r tests/integration/requirements-integration.txt
 
       - name: Setup test DB user
@@ -258,7 +454,7 @@ jobs:
           PGPASSWORD=cistest psql -h localhost -U cistest -d cis_integration_test \
             -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN CREATE ROLE app_user LOGIN PASSWORD 'appuser123'; END IF; END \$\$;" || true
 
-      - name: Run integration tests
+      - name: Run integration tests (this shard)
         env:
           ENVIRONMENT: test
           DATABASE_URL: postgresql://cistest:cistest@localhost:5432/cis_integration_test
@@ -272,10 +468,64 @@ jobs:
           LANGFUSE_SECRET_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_HOST: http://localhost:3000
+        # test_007_rls_isolation.py stays out, as before (--ignore then, --exclude now).
         run: |
-          pytest tests/integration/ \
-            --ignore=tests/integration/test_007_rls_isolation.py \
-            -v --tb=short -p no:cacheprovider
+          set -euo pipefail
+          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --contiguous --shards "$INTEGRATION_SHARDS" \
+            --index "$SHARD" --durations .github/test-durations/integration.json \
+            --exclude tests/integration/test_007_rls_isolation.py tests/integration)
+          echo "Integration shard $SHARD/$INTEGRATION_SHARDS: ${#FILES[@]} test files"
+          pytest "${FILES[@]}" -v --tb=short -p no:cacheprovider \
+            --junitxml="junit-integration-$SHARD.xml" -o junit_family=xunit1
+
+      - name: Upload the shard's junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-shard-${{ matrix.shard }}
+          path: junit-integration-${{ matrix.shard }}.xml
+          if-no-files-found: ignore
+          retention-days: 5
+
+  test-integration:
+    name: Integration Tests
+    needs: [quality-paths, test-integration-shard]
+    # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
+    # counts as passed). Skipped (= passed) only with the shards, on a pull request outside their area (S271).
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.integration != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every integration shard passed
+        env:
+          RESULT: ${{ needs.test-integration-shard.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::an integration shard did not pass (result: $RESULT); see the 'Integration shard i/N' jobs"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: integration-shard-*
+          merge-multiple: true
+          path: shards
+
+      # Report only, as for the unit shards: real seconds per shard and the per-file durations of this run.
+      # tests/integration/pytest.ini makes that folder pytest's rootdir, so the junit paths lack it: --prefix puts it
+      # back, or the refreshed file would match no discovered file and the split would fall back to file counts.
+      - name: Shard balance (report)
+        run: |
+          python3 .github/scripts/ci_shards.py durations --prefix tests/integration/ \
+            --out integration-durations.json shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-durations-integration
+          path: integration-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # AA-993 M4b (root ADR 0017 d1, design D2.1; critic 7, 17): "Migration preflight". Tells the author of a PR that
   # adds a migration whether it will be auto-applied (header `-- migrate: expand`, lint clean, classify evidence
@@ -285,12 +535,15 @@ jobs:
   # contradicts. Tools: AA-CIS-Infra db/run_migration.py --inspect, db/check_migration_ownership.py and
   # db/expand_check.py --classify at the pinned INFRA_TOOLS_SHA (public repo, anonymous clone; bump the pin when the
   # Infra runner changes). The Infra copy PR's required "Expand classify" and Migration Apply's re-classify stay the
-  # authority. Runs on pull_request and merge_group (the queue re-checks the number on the latest main); exits at once
-  # when the PR touches no migration and no readiness key. Logic: .github/scripts/migration_preflight.py.
+  # authority. Runs on pull_request and merge_group (the queue re-checks the number on the latest main). A PR that
+  # touches no migration and no readiness key skips the Infra tools and the classify replay, but "Preflight verdict"
+  # always runs (no `if:`): its dangling-reference check (migration_refs.py) reads the added lines of EVERY PR, so a
+  # PR that only adds a doc / test line naming a renumbered migration's old number is refused too (AA-1024; pinned by
+  # test_migration_refs.py). Logic: .github/scripts/migration_preflight.py.
   # Same steps in AA-CIS-App, AA-Booking and AA-Partner; only the env block differs.
   migration-preflight:
     name: Migration preflight
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -311,11 +564,11 @@ jobs:
       # pgvector/pgvector:0.8.1-pg15, the image of the Infra classify and DB Schema Dump replay.
       REPLAY_IMAGE: pgvector/pgvector@sha256:94aee7e88f98125114657cab98e28c5dfa8dd517a6bf83fd98b503439f1e3de6
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -433,11 +686,21 @@ jobs:
           [ "$OOO" = "true" ] && ARGS+=(--allow-out-of-order)
           python3 .github/scripts/migration_preflight.py "${ARGS[@]}" --ready-url "$READY_URL"
 
+  # S271: merge_group and dispatch always; a pull request only when it changes the image inputs (scope output docker).
   docker-build:
     name: Docker Build Check
+    needs: quality-paths
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.docker != 'false') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # S273: the verified spaCy model wheel goes into the build context's .url-wheels/ seed (bind-mounted by the
+      # Dockerfile), so the image build does not download it from github.com.
+      - name: URL-pinned wheels (cached, hash-checked)
+        uses: ./.github/actions/url-wheels
+        with:
+          copy-to: .url-wheels
 
       - name: Build Docker image
         run: |
@@ -459,8 +722,28 @@ jobs:
       - name: Trivy ignore entries carry a reason and an expiry
         run: python3 .github/scripts/check_trivyignore.py .trivyignore
 
+      # S273 (AA-1024): trivy from the cached, sha256-pinned release-bin action (pins.txt), not setup-trivy's
+      # download on every run; the vulnerability DB restores from the default branch's daily entry (the Cache
+      # warm workflow saves it; trivy-action's own DB cache saved a copy on every ref). A missing or stale DB
+      # is downloaded by trivy itself, as before.
+      - name: Install trivy (pinned, cached)
+        uses: ./.github/actions/release-bin
+        with:
+          tool: trivy
+
+      - name: Trivy DB cache key (UTC day)
+        id: trivy-day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore trivy DB
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.cache/trivy
+          key: trivy-db-${{ steps.trivy-day.outputs.day }}
+          restore-keys: trivy-db-
+
       - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: "aa-cis-api:ci-${{ github.sha }}"
           format: "table"
@@ -468,17 +751,34 @@ jobs:
           ignore-unfixed: true
           trivyignores: ".trivyignore"
           exit-code: "1"
+          cache: "false"
+          skip-setup-trivy: "true"
 
       # sbom-action auto-uploads its own GitHub Actions artifact when it detects it's running
       # in a GHA workflow (its documented default behavior) -- artifact-name below controls
       # that upload's name directly, no separate actions/upload-artifact step needed.
-      - name: Generate SBOM (syft, CycloneDX)
-        uses: anchore/sbom-action@v0.24.2
+      # S273 (AA-1024): syft from the cached, sha256-pinned release-bin action (pins.txt): anchore/sbom-action
+      # downloaded syft through an install script on every run ("The Syft installer failed", HTTP 504). Same
+      # syft version (v1.54.0), same CycloneDX JSON file, same artifact name.
+      - name: Install syft (pinned, cached)
+        uses: ./.github/actions/release-bin
         with:
-          image: "aa-cis-api:ci-${{ github.sha }}"
-          format: cyclonedx-json
-          output-file: sbom-${{ github.sha }}.cdx.json
-          artifact-name: sbom-${{ github.sha }}.cdx.json
+          tool: syft
+
+      - name: Generate SBOM (syft, CycloneDX)
+        working-directory: .
+        env:
+          IMAGE: "aa-cis-api:ci-${{ github.sha }}"
+          OUT: sbom-${{ github.sha }}.cdx.json
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+        run: syft scan "docker:${IMAGE}" --output "cyclonedx-json=${OUT}"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ github.sha }}.cdx.json
+          path: sbom-${{ github.sha }}.cdx.json
+          if-no-files-found: error
 
   # AA-732 — frontend ESLint (UI-kit conventions). AA-994 S1c (root ADR 0016 decision 7, plan guards G1-G9, G11): a
   # real gate now, no continue-on-error, meant to be a REQUIRED check (branch protection, plan hand step H2). Page code
@@ -495,21 +795,34 @@ jobs:
   #   5. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code: the suppressions file is the
   #      only baseline.
   # Steps 3-5 run even when step 2 fails, so one run shows every reason.
+  # S271: on a pull request this job also runs the kit checks and the type check of "Frontend Build" (which runs on the
+  # queue only), and it is skipped for a pull request that does not touch frontend/ (scope output frontend).
   frontend-lint:
     name: Frontend Lint
+    needs: quality-paths
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.frontend != 'false') }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install frontend dependencies
         run: npm ci
@@ -571,26 +884,50 @@ jobs:
         if: ${{ !cancelled() }}
         run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit
 
+      # S271: the fast part of "Frontend Build" (same commands), on pull requests only: the queue runs that job whole.
+      - name: Kit core self-check and kit render tests (pull request)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: |
+          node app/_kit/core/check-kit-copy.mjs --self
+          node app/_kit/core/check-kit-copy.mjs --css .
+          node --test --experimental-strip-types --no-warnings lib/kitCore.test.mjs lib/tokensContrast.test.mjs
+          node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
+
+      - name: Type-check (tsc --noEmit, pull request)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: npx tsc --noEmit -p .
+
   # AA-879 — type-check and production build of the admin app (frontend/). NEW job, meant to become a
   # required check: tsc catches prop/type errors ESLint misses, and `next build` catches what only a build
   # sees (server/client boundaries, route config, Turbopack). Builds without any secret or env var (the
   # app reads its API URL and Cognito settings at runtime); Sentry source-map upload is skipped without
   # SENTRY_AUTH_TOKEN. ESLint runs in the separate "Frontend Lint" job (a gate since AA-994 S1c).
+  # S271: merge_group and dispatch only; on a pull request "Frontend Lint" runs its kit checks and type check.
   frontend-build:
     name: Frontend Build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
+
+      # S273 (workflow_lint WL4): restore on every ref; only the default branch saves this cache
+      # (a pull request or merge-queue copy is readable only by that ref).
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       # AA-994 S1a (root ADR 0016 decision 5): the canonical UI kit core (app/_kit/core) — MANIFEST.json current,
       # every file with the header line, imports closed (only ./ files of core and the allowed packages). Then its
@@ -609,8 +946,10 @@ jobs:
       # AA-994 (button variants): render the kit core with react-dom/server and check the accessible markup (roles,
       # aria-checked / selected / pressed, one tab stop), the focus styles, and that primitives re-exports every
       # Buttons export (the consumer barrels `export *` from primitives). Needs typescript + react, so after npm ci.
+      # AA-1008: the ShellFrame (markup, drawer CSS, CIS AdminShell is a configuration of it) and the visual run's
+      # page list (every app route listed or excluded, changed-pages mapping, run selection).
       - name: Kit button render tests
-        run: node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs
+        run: node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
 
       - name: Type-check (tsc --noEmit)
         run: npx tsc --noEmit -p .

@@ -352,6 +352,111 @@ async def llm_probe_run(body: LlmProbeRunRequest, request: Request, x_admin_secr
             "switch_on": llm_probe_job.schedule_enabled()}
 
 
+# ── AA-1024 D2 — the nightly model lifecycle sync (services/jobs/llm_model_lifecycle_job.py) ─────────────────────
+
+class LlmModelLifecycleRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = False
+
+
+@router.post("/llm-model-lifecycle/run", summary="Enqueue the model lifecycle sync (Bedrock ListFoundationModels, $0)")
+async def llm_model_lifecycle_run(body: LlmModelLifecycleRunRequest, request: Request,
+                                  x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1024 D2 — one `llm_model_lifecycle_sync` job: a free control-plane list per Bedrock connection, then the
+    lifecycle columns of every catalog row and a bell for a routed model near its end of life. `dry_run` computes
+    the rows without writing them."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import llm_model_lifecycle_job
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    job_id, _ = await llm_model_lifecycle_job.enqueue_manual(request.app.state.pool, dry_run=body.dry_run,
+                                                             actor=actor)
+    logger.info("admin_llm_model_lifecycle_run", job_id=job_id, dry_run=body.dry_run, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": llm_model_lifecycle_job.KIND, "dry_run": body.dry_run,
+            "switch_on": llm_model_lifecycle_job.schedule_enabled()}
+
+
+# ── AA-1026 I6 — the contract smoke of the acc2 fallback models (services/jobs/llm_contract_smoke_job.py) ───────────
+
+class LlmContractSmokeRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = True
+    stages: Optional[list[str]] = Field(None, max_length=50,
+                                        description="judge / validate stages to smoke (default: every known stage)")
+    models: Optional[dict[str, str]] = Field(None, max_length=50,
+                                             description="stage -> model key to smoke instead of the route's acc2 "
+                                                         "model or the planned one (a re-pick before it is applied)")
+
+
+@router.post("/llm-contract-smoke/run", summary="Enqueue the acc2 fallback contract smoke (DRY RUN by default)")
+async def llm_contract_smoke_run(body: LlmContractSmokeRunRequest, request: Request,
+                                 x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1026 I6 — one `llm_contract_smoke` job: per stage, one fixture through the stage's own prompt and parser on
+    its acc2 fallback model (or the model named in `models` for that stage). DRY RUN by default (stages, model,
+    deployment state and estimated cost, no call); a live run makes one small paid call per stage (about 0.01 USD for
+    all of them, refused over 0.10 USD). Migration 331 / 332 gives a stage its acc2 fallback only after this smoke
+    passed for it. 422 for an unknown stage name or an override for a stage the run leaves out."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import llm_contract_smoke_job
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    try:
+        job_id, _ = await llm_contract_smoke_job.enqueue_manual(request.app.state.pool, dry_run=body.dry_run,
+                                                                stages=body.stages, actor=actor, models=body.models)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_llm_contract_smoke_run", job_id=job_id, dry_run=body.dry_run, stages=body.stages,
+                models=body.models, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": llm_contract_smoke_job.KIND, "dry_run": body.dry_run, "stages": body.stages,
+            "models": body.models}
+
+
+# ── AA-1026 D5 — embedding spaces and the re-embed job (services/jobs/embedding_reembed_job.py) ───────────────────
+
+class EmbeddingReembedRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["dry_run", "fill", "probe"] = "dry_run"
+    column: Optional[str] = Field(None, max_length=200, description="schema.table.column (dry_run, fill)")
+    space_key: Optional[str] = Field(None, max_length=100, description="target space (dry_run before prepare, probe)")
+    cost_cap_usd: Optional[float] = Field(None, gt=0, le=25, description="fill: stop before crossing this spend")
+    batch_size: Optional[int] = Field(None, ge=1, le=96)
+    max_rows: Optional[int] = Field(None, ge=1, le=10_000_000)
+
+
+@router.get("/embedding-spaces", summary="Embedding spaces and the space of every vector column")
+async def embedding_spaces():
+    """AA-1026 D5 — shared.embedding_space and shared.embedding_column (CIS 328), read fresh; ``source`` = registry
+    or builtin (the mirror of 328, when the tables cannot be read)."""
+    import asyncio
+    from dataclasses import asdict
+
+    from shared.llm_client import embedding_space as es
+    es.invalidate()
+    spaces, columns = await asyncio.to_thread(es.registry_sync)
+    builtin = spaces == es.BUILTIN_SPACES and columns == es.BUILTIN_COLUMNS
+    return {"source": "builtin" if builtin else "registry",
+            "spaces": [asdict(s) for s in sorted(spaces.values(), key=lambda s: s.space_key)],
+            "columns": [{**asdict(c), "column": c.qualified} for c in sorted(columns.values(),
+                                                                             key=lambda c: c.qualified)]}
+
+
+@router.post("/embedding-reembed/run", summary="Enqueue an embedding re-embed (DRY RUN by default)")
+async def embedding_reembed_run(body: EmbeddingReembedRunRequest, request: Request,
+                                x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1026 D5 — one `embedding_reembed` job. DRY RUN by default: rows to embed, estimated tokens and USD, no
+    provider call. `fill` (needs the shadow prepared by the table owner and a `cost_cap_usd`) writes the shadow
+    column; `probe` makes one tiny call in `space_key`. The swap is an owner SQL step (runbook), never this route."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import embedding_reembed_job
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    try:
+        job_id, _ = await embedding_reembed_job.enqueue_manual(request.app.state.pool,
+                                                              body.model_dump(exclude_none=True), actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_embedding_reembed_run", job_id=job_id, mode=body.mode, column=body.column,
+                admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": embedding_reembed_job.KIND, "mode": body.mode}
+
+
 # ── AA-825 — retention kinds (services/jobs/retention_job.py) ─────────────────────────────────
 
 

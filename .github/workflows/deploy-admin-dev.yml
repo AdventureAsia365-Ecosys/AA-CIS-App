@@ -1,0 +1,274 @@
+name: Deploy Admin Dev
+
+# AA-911 (root ADR 0019 d23 + S271 amendment) — the CIS admin (frontend/, Next.js standalone) to ECS Dev, as its own
+# service aa-cis-dev-admin (AA-CIS-Infra modules/environment/staff_web.tf: one Fargate Spot service per staff app; the
+# Booking admin is a separate service that AA-Booking deploys). Same model as AA-Partner deploy-web-dev.yml: build on a
+# native arm64 runner -> push to ECR aa-cis-dev-admin with the immutable tag dev-<git sha> -> copy the family's latest
+# revision with only the image swapped (env, secrets and size come from that revision, so a Terraform change reaches
+# the task on the next deploy) -> update the service -> wait stable -> check the running task has this image -> verify.
+#
+# The only deploy of the CIS admin since the Vercel retirement (AA-911, S272; root runbook
+# docs/ops/runbooks/staff-web-ecs-cutover.md section 4): aa-cis.lumiguides.it.com points at the shared ALB.
+#
+# After a verified deploy from main (AA-816 S2 path and AA-1008, moved here from the retired vercel-deploy.yml):
+#   smoke-production   ui-smoke.yml on https://aa-cis.lumiguides.it.com: the public specs and the signed-in specs as the
+#                      Cognito E2E user (a reviewer: read-only checks; mailbox role, environment e2e).
+#   visual-production  visual.yml job `deployed` on the pages the push changed (github.event.before...sha), signed in.
+#                      Report-only.
+# Per-PR checks need no deployment: Visual (next start) is the required per-PR UI check (root ADR 0019 d23 R7).
+#
+# Configuration (GitHub environment `dev`):
+#   secrets.AWS_ROLE_ARN    the CIS deploy role (shared with Deploy Dev; AA-CIS-Infra cicd_split.tf
+#                           cis_app_deploy_staff_web grants this family, service and execution role only)
+#   vars.STAFF_WEB_ENABLED  "true" once staff_web.tf is applied; otherwise a push run is red (nothing to deploy to)
+#   vars.STAFF_WEB_ALB_DNS  the shared ALB's DNS name (not secret). The verify resolves aa-cis. to it on this runner
+#                           only, so the ECS copy is checked before the cut-over (no effect after it)
+#   vars.ADMIN_PUBLIC_SENTRY_DSN  browser Sentry DSN baked in at build time (public by design; empty = off)
+# The cluster, service, family, container and repository names are fixed below (Terraform outputs staff_web_*["cis"]).
+#
+# Pull requests that touch the Dockerfile or this workflow run only the image build (no AWS, no push).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "!frontend/**/*.test.mjs"
+      - ".github/workflows/deploy-admin-dev.yml"
+  pull_request:
+    paths:
+      - "frontend/Dockerfile"
+      - "frontend/.dockerignore"
+      - "frontend/next.config.ts"
+      - "frontend/package-lock.json"
+      - ".github/workflows/deploy-admin-dev.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-admin-dev-cis
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-west-1
+  ECR_REPOSITORY: aa-cis-dev-admin
+  ECS_CLUSTER: aa-cis-dev-cluster
+  ECS_SERVICE: aa-cis-dev-admin
+  ECS_TASK_FAMILY: aa-cis-dev-admin
+  CONTAINER: cis-admin
+  PUBLIC_HOST: aa-cis.lumiguides.it.com
+
+jobs:
+  build-check:
+    name: Admin Docker Build Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image (no push)
+        run: |
+          set -euo pipefail
+          docker build --build-arg GIT_SHA="${GITHUB_SHA}" -t cis-admin:check frontend
+          docker image inspect cis-admin:check --format '{{.Architecture}}' | grep -qx arm64
+          # The standalone server must answer /api/healthz on its port with the commit it was built from.
+          docker run -d --name cis-admin-check -p 3000:3000 cis-admin:check >/dev/null
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/healthz -o /tmp/h.json; then break; fi
+            sleep 2
+          done
+          docker logs cis-admin-check 2>&1 | tail -20
+          jq -e --arg sha "$GITHUB_SHA" '.status == "ok" and .sha == $sha' /tmp/h.json
+
+  config:
+    name: Deploy configuration
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Check AWS_ROLE_ARN and STAFF_WEB_ENABLED
+        env:
+          ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ENABLED: ${{ vars.STAFF_WEB_ENABLED }}
+        run: |
+          if [ -z "${ROLE_ARN}" ] || [ "${ENABLED}" != "true" ]; then
+            echo "::error::AWS_ROLE_ARN unset or STAFF_WEB_ENABLED != true on environment 'dev': the staff web service is not applied yet (AA-CIS-Infra staff_web.tf)."
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy CIS admin to ECS Dev
+    needs: config
+    runs-on: ubuntu-24.04-arm
+    environment: dev
+    outputs:
+      running: ${{ steps.running.outputs.running }}
+    env:
+      PUBLIC_SENTRY_DSN: ${{ vars.ADMIN_PUBLIC_SENTRY_DSN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Build and push image (dev-<sha> tag only)
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="dev-${GITHUB_SHA}"
+          IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          # IMMUTABLE repository: a re-run of the same commit reuses the image already pushed.
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "image ${IMAGE_TAG} already in ECR: reusing it (no build, no push)"
+          else
+            docker build --build-arg GIT_SHA="${GITHUB_SHA}" \
+              --build-arg NEXT_PUBLIC_SENTRY_DSN="${PUBLIC_SENTRY_DSN}" -t "$IMAGE" frontend
+            docker image inspect "$IMAGE" --format '{{.Architecture}}' | grep -qx arm64
+            docker push "$IMAGE"
+          fi
+          echo "DEPLOY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Register task definition (new image) and update service
+        run: |
+          set -euo pipefail
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].serviceName' --output text | grep -qx "$ECS_SERVICE" \
+            || { echo "::error::service $ECS_SERVICE not found"; exit 1; }
+          aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" --query 'taskDefinition' --output json > /tmp/td.json
+          # family:revision only: the full ARN names the AWS account (public logs).
+          echo "base task definition: $(jq -r '.taskDefinitionArn | split("/") | last' /tmp/td.json)"
+          jq -e --arg c "$CONTAINER" '(.containerDefinitions | length) == 1 and .containerDefinitions[0].name == $c' /tmp/td.json >/dev/null \
+            || { echo "::error::$ECS_TASK_FAMILY must have exactly one container, $CONTAINER"; exit 1; }
+          jq --arg img "$DEPLOY_IMAGE" --arg c "$CONTAINER" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+             | .containerDefinitions |= map(if .name == $c then .image = $img else . end)' \
+            /tmp/td.json > /tmp/td_new.json
+          NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "registered: ${NEW_TD##*/}"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$NEW_TD" >/dev/null
+
+      - name: Wait for the service to be stable
+        run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      - name: Running task carries this image
+        id: running
+        run: |
+          set -euo pipefail
+          DESIRED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].desiredCount' --output text)
+          if [ "$DESIRED" = "0" ]; then
+            echo "::warning::$ECS_SERVICE has desired count 0: deployed, nothing running to verify (scaling Dev up is a separate step)."
+            echo "running=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TASKS=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --desired-status RUNNING --query 'taskArns' --output text)
+          [ -n "$TASKS" ] || { echo "::error::no running task"; exit 1; }
+          # shellcheck disable=SC2086
+          IMAGES=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $TASKS \
+            --query "tasks[].containers[?name=='${CONTAINER}'].image[]" --output text)
+          for img in $IMAGES; do
+            [ "$img" = "$DEPLOY_IMAGE" ] || { echo "::error::a running task has ${img##*/}, expected ${DEPLOY_IMAGE##*/} (the circuit breaker may have rolled the service back: read the service events)"; exit 1; }
+          done
+          echo "every running task has ${DEPLOY_IMAGE##*/}"
+          echo "running=true" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Post-deploy verify (ALB host rule)
+    needs: deploy
+    if: needs.deploy.outputs.running == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: /api/healthz and /login on the CIS admin host, served by ECS
+        env:
+          ALB_DNS: ${{ vars.STAFF_WEB_ALB_DNS }}
+        run: |
+          set -euo pipefail
+          RESOLVE=()
+          if [ -n "${ALB_DNS}" ]; then
+            IP=$(getent ahostsv4 "$ALB_DNS" | awk 'NR==1{print $1}')
+            [ -n "$IP" ] || { echo "::error::cannot resolve STAFF_WEB_ALB_DNS"; exit 1; }
+            RESOLVE=(--resolve "${PUBLIC_HOST}:443:${IP}")
+          fi
+          ok=""
+          for i in $(seq 1 10); do
+            if curl -fsS "${RESOLVE[@]}" "https://${PUBLIC_HOST}/api/healthz" -o /tmp/h.json \
+               && jq -e --arg sha "$GITHUB_SHA" '.status == "ok" and .app == "cis-admin" and .sha == $sha' /tmp/h.json >/dev/null; then
+              ok=1; break
+            fi
+            sleep 15
+          done
+          [ -n "$ok" ] || { echo "::error::https://${PUBLIC_HOST}/api/healthz does not answer this commit from ECS"; cat /tmp/h.json 2>/dev/null || true; exit 1; }
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" "https://${PUBLIC_HOST}/login")
+          [ "$CODE" = "200" ] || { echo "::error::/login answered $CODE"; exit 1; }
+          echo "ECS serves ${PUBLIC_HOST}: healthz on ${GITHUB_SHA::7}, /login 200"
+
+  # AA-816 S2 path — after a verified deploy from main: public + signed-in smoke on the production host as the Cognito
+  # E2E user. GitHub validates nested-job permissions at startup even for skipped jobs, so this job grants everything
+  # ui-smoke.yml's jobs ask for (S247 startup_failure).
+  smoke-production:
+    name: UI smoke (production, signed in)
+    needs: verify
+    if: needs.verify.result == 'success' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/ui-smoke.yml
+    with:
+      base_url: https://aa-cis.lumiguides.it.com
+      sha: ${{ github.sha }}
+      staff_session: true
+    secrets: inherit
+
+  # AA-1008 (root ADR 0016 decision 9) — after the smoke: the visual run (visual.yml job `deployed`) of the pages the
+  # push changed, signed in as the Cognito E2E user. Report-only: the `result` verdict does not wait on it.
+  visual-production:
+    name: Visual (production, signed in)
+    needs: [verify, smoke-production]
+    if: always() && needs.verify.result == 'success' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/visual.yml
+    with:
+      base_url: https://aa-cis.lumiguides.it.com
+      sha: ${{ github.sha }}
+      base_sha: ${{ github.event_name == 'push' && github.event.before || '' }}
+    secrets: inherit
+
+  result:
+    name: Deploy Admin Dev result
+    runs-on: ubuntu-latest
+    if: always() && github.event_name != 'pull_request'
+    needs: [config, deploy, verify]
+    steps:
+      - name: Every job succeeded (verify may skip only when the service runs no task)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          RUNNING: ${{ needs.deploy.outputs.running }}
+        run: |
+          set -uo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          BAD=$(echo "$NEEDS" | jq -r --arg running "$RUNNING" '[to_entries[]
+            | select(.value.result != "success" and ((.key == "verify" and .value.result == "skipped" and $running == "false") | not))
+            | "\(.key)=\(.value.result)"] | join(", ")')
+          if [ -n "$BAD" ]; then
+            echo "::error::Deploy Admin Dev is not verified: $BAD"
+            exit 1
+          fi
+          if [ "$RUNNING" = "false" ]; then echo "Deployed at desired count 0: scale the service to 1 and re-run to verify."; else echo "Deployed and verified."; fi

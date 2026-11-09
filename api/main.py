@@ -19,13 +19,11 @@ from api.routers._served import tour_not_served_handler
 from shared.tour_liveness import TourNotServedError
 from services.acp_shared.atom_replaced import AtomReplaced
 from api.routers.auth import (
-    _hash_api_key, _create_jwt, verify_jwt, verify_tenant_jwt,
-    TenantLoginRequest, TenantLoginResponse,
+    verify_jwt, verify_tenant_jwt, tenant_login_gone, TENANT_LOGIN_GONE,
     _verify_password, _create_admin_jwt,
     AdminLoginRequest, AdminLoginResponse, VerifyAdminResponse,
-    STAFF_ROLES, BookingTokenResponse,
+    STAFF_ROLES,
 )
-from api.core import booking_jwt  # AA-680
 from api.routers.v1_tours import router as v1_tours_router
 from api.routers.v1_tours import quota_router as v1_quota_router
 from api.routers.v1_marketplace import router as v1_marketplace_router
@@ -39,9 +37,14 @@ from api.routers.v1_integrations import router as v1_integrations_router
 from api.routers.v1_facts import router as v1_facts_router  # AA-814
 from api.routers.v1_account import router as v1_account_router
 from api.routers.v1_account_members import router as v1_account_members_router  # AA-978
+from api.routers.v1_account_addons import router as v1_account_addons_router  # AA-1036 R3 add-on requests
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
 from api.routers.v1_trip_page import admin_router as admin_trip_page_router  # AA-482
 from api.routers.admin import router as admin_router
+from api.routers.admin_tenant_provision import router as admin_tenant_provision_router  # AA-1028 R1 slice 2
+from api.routers.admin_tenant_subscription import router as admin_tenant_subscription_router  # AA-1028 R1 slice 3
+from api.routers.admin_tenant_addon_requests import router as admin_tenant_addon_requests_router  # AA-1036 R3
+from api.routers.admin_plans import router as admin_plans_router  # AA-1028 R1 slice 3
 from api.routers.admin_api_docs import router as admin_api_docs_router  # AA-577 — /admin/openapi.json
 from api.routers.admin_data_model import router as admin_data_model_router  # AA-894 — /admin/data-model
 from api.routers.admin_docs import router as admin_docs_router  # AA-898 — /admin/docs/*
@@ -59,6 +62,10 @@ from api.routers.admin_segment_research import router as admin_segment_research_
 from api.routers.admin_job_runner import router as admin_job_runner_router  # AA-650
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.admin_ai_gateway import router as admin_ai_gateway_router  # AA-804
+from api.routers.admin_llm_route_control import router as admin_llm_route_control_router  # AA-1042
+from api.routers.admin_llm_route import router as admin_llm_route_router  # AA-1042 (Trace tab)
+from api.routers.admin_llm_route import quality_router as admin_llm_route_quality_router  # AA-1042 (Tenant QA list)
+from api.routers.admin_usage_explorer import router as admin_usage_explorer_router  # AA-1045
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
 from api.routers.admin_platform import router as admin_platform_router  # AA-883
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
@@ -67,21 +74,31 @@ from api.routers.admin_supply_content import router as admin_supply_content_rout
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
 from api.routers.admin_waves import router as admin_waves_router  # AA-727 — rerun waves as objects
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
+from api.routers.admin_tenant_compliance import router as admin_tenant_compliance_router  # AA-1039 R6
 from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-766
+from api.routers.admin_view_as import router as admin_view_as_router  # AA-1035 R2 slice 2 — view as tenant
+from api.routers.admin_tenant_assignments import router as admin_tenant_assignments_router  # AA-1035 R2 slice 2
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_crm_console import router as admin_crm_console_router  # AA-941
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
 from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.admin_writing_memory import router as admin_writing_memory_router  # AA-917
+from api.routers.admin_claim_labels import router as admin_claim_labels_router  # AA-1048 W2
+from api.routers.admin_claim_shadow import router as admin_claim_shadow_router  # AA-1050 W4
 from api.routers.admin_facts import router as admin_facts_router  # AA-814
 from api.routers.admin_reports import router as admin_reports_router  # AA-1003
+from api.routers.admin_quality_funnel import router as admin_quality_funnel_router  # AA-900 W0
+from api.routers.admin_quality_lineage import router as admin_quality_lineage_router  # AA-1052 W6
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the partner CRM (M2M)
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
 )
 from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
+from api.routers.tenant_account import router as tenant_account_router  # AA-1028 — tenant.entitlements.v1
+from api.routers.tenant_addons import router as tenant_addons_router  # AA-1036 — tenant.addons.v1
 from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
 from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
+from api.middleware.view_as import ViewAsGateMiddleware  # AA-1035 R2 slice 2 — read-only view-as tokens
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
@@ -91,10 +108,11 @@ from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.version import __version__  # AA-891 — release version (release-please bumps it)
 from api.core import staff_identity  # AA-816 C3
 from api.core import login_throttle  # AA-876
-from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
+from api.core import view_as  # AA-1035 — a view-as token is not a tenant session (verify-tenant)
 from api.core.sentry import init_sentry
-from api.schemas.public_api import Health, Jwks, Readiness, TenantSession  # AA-899
-from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from api.schemas.public_api import Health, Readiness, TenantSession  # AA-899
+# AA-1036: the tenant.login audit row was written here by the retired API-key sign-in; the partner sign-in writes it
+# (api/routers/tenant_session.py).
 from shared.log_config import configure_for_process  # AA-871
 
 # AA-871 — JSON lines (structlog + stdlib + uvicorn) with request_id / tenant_id / job ids; skipped under unit tests.
@@ -134,9 +152,10 @@ async def lifespan(app: FastAPI):
     # baseline for the wave-4 main-pool shrink decision. api only; cancelled before the pool closes.
     main_pool_gauge_task = start_main_pool_gauge(app)
 
-    # AA-751 / AA-832 — every 300 s publish AA/RDS per-role connections and AA/Jobs/CIS backlog metrics
-    # (one PutMetricData per namespace, line `ops_metrics_sampled`). Replaces the Lambda -> endpoint ->
-    # job chain. AA-913: the same tick reconciles the platform alert recipients with SNS. api only, off when
+    # AA-751 / AA-832 / S263 — every 300 s read per-role connections, XID age and the shared.job backlog (line
+    # `ops_metrics_sampled`) and run the in-app ops checks on them (shared/ops_checks.py: admin bell + alert
+    # e-mail on the SNS topic; no CloudWatch metric since the S263 alert diet). AA-913: the same tick reconciles
+    # the platform alert recipients with SNS. api only, off when
     # ENVIRONMENT == "test", never raises; cancelled before the pool closes.
     from api.core.ops_metrics_sampler import start_ops_metrics_sampler, stop_ops_metrics_sampler
     ops_metrics_task = start_ops_metrics_sampler(app)
@@ -168,6 +187,8 @@ async def lifespan(app: FastAPI):
     if in_api_enabled():
         try:
             load_kinds()
+            from services.writing_memory import config_fp   # AA-900 W0: the writers run in this process too
+            config_fp.set_service(config_fp.WRITER_SERVICE)
             job_worker = Worker(pool, resources={"redis": redis})
             job_worker_task = asyncio.create_task(job_worker.run(), name="job-worker")
         except Exception as e:
@@ -182,7 +203,8 @@ async def lifespan(app: FastAPI):
         if job_worker_task is not None:
             await asyncio.gather(job_worker_task, return_exceptions=True)
 
-    await stop_ops_metrics_sampler(ops_metrics_task)
+    # S263 review: the stop also flushes the ops log events counted since the last tick (bounded, 5 s).
+    await stop_ops_metrics_sampler(ops_metrics_task, pool=pool)
     await stop_cis_staff_jwks_prefetch(identity_prefetch_task)
     await stop_m2m_jwks_prefetch(m2m_prefetch_task)
     await stop_partner_jwks_prefetch(partner_prefetch_task)
@@ -308,8 +330,15 @@ app.include_router(v1_integrations_router)  # AA-457 [T11 PR1] — tenant WordPr
 app.include_router(v1_facts_router)  # AA-814 — tenant Facts Entries: /v1/facts (tenant pool)
 app.include_router(v1_account_router)  # AA-761 — tenant Account pages: activity trail + CSV, API key facts
 app.include_router(v1_account_members_router)  # AA-978 — tenant Account › Members (CIS 276 directory)
+app.include_router(v1_account_addons_router)  # AA-1036 R3 — the agency app's add-ons and "Request add-on"
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
+app.include_router(admin_tenant_provision_router)  # before admin_router: /tenants/provision is no tenant id
+app.include_router(admin_view_as_router)  # AA-1035 R2 slice 2 — /admin/tenants/{id}/view-as, /admin/view-as/sessions
+app.include_router(admin_tenant_assignments_router)  # AA-1035 R2 slice 2 — /admin/tenant-assignments (Assignments page)
+app.include_router(admin_tenant_subscription_router)  # AA-1028 R1 slice 3 (Tenant 360 › Subscription)
+app.include_router(admin_tenant_addon_requests_router)  # AA-1036 R3 (Tenant 360 › Subscription › requests)
+app.include_router(admin_plans_router)  # AA-1028 R1 slice 3 (Tenants › Plans & add-ons)
 app.include_router(admin_router)
 app.include_router(admin_pipeline_router)
 app.include_router(admin_settings_router)
@@ -324,6 +353,10 @@ app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-r
 app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_ai_gateway_router)  # AA-804 — /admin/ai-gateway/{providers,trace} (AI providers page)
+app.include_router(admin_llm_route_control_router)  # AA-1042 — /admin/ai-gateway/route-control/* (Route control tab)
+app.include_router(admin_llm_route_router)  # AA-1042 — /admin/ai-gateway/route-* (Trace tab: trace, alerts)
+app.include_router(admin_llm_route_quality_router)  # AA-1042 — /admin/content-quality/fallback-writes (tenant_content)
+app.include_router(admin_usage_explorer_router)  # AA-1045 — /admin/usage-explorer/* (AI & spend › Usage explorer)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}
@@ -331,25 +364,36 @@ app.include_router(admin_crm_console_router)  # AA-941 — /admin/platform/crm/*
 app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-memory (no include prefix)
+app.include_router(admin_claim_labels_router)  # AA-1048 W2 — /admin/writing-memory/claim-labels (no include prefix)
+app.include_router(admin_claim_shadow_router)  # AA-1050 W4 — /admin/writing-memory/claim-shadow (no include prefix)
 app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
 app.include_router(admin_reports_router)  # AA-1003 — /admin/reports (report register, runs; no include prefix)
+app.include_router(admin_quality_funnel_router)  # AA-900 W0 — GET /admin/quality/funnel (CIS-08 snapshot, $0)
+app.include_router(admin_quality_lineage_router)  # AA-1052 W6 — GET /admin/quality/lineage/* (stored fields, $0)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_supply_content_router)  # AA-835 — /admin/supply-content (Booking supply content review)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
 app.include_router(admin_waves_router)  # AA-727 — /admin/waves (expected set, report, check)
 app.include_router(admin_content_quality_router)  # AA-769 — /admin/content-quality (T2/T9 quality, place cards)
+app.include_router(admin_tenant_compliance_router)  # AA-1039 R6 — /admin/tenant-qa/compliance (d20 / d21 flags)
 app.include_router(admin_tenant360_router)  # AA-766 — /admin/tenants/{id}/{cost,quality,markets}
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
 app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
+app.include_router(tenant_account_router)  # AA-1028 — /tenant/v1 (M2M cis.tenant/read)
+app.include_router(tenant_addons_router)  # AA-1036 R3 — /tenant/v1 add-ons (M2M cis.tenant/addons)
 app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
 
 app.middleware("http")(rate_limit_middleware)
 # AA-979 P2b — registered after the rate limiter so it wraps it: a viewer / editor token refused for its Content studio
 # role (csr claim) is answered 403 before it reaches the rate limiter, the meter or the route.
 app.middleware("http")(tenant_role_middleware)
+# AA-1035 R2 slice 2 — registered after the tenant role middleware so it wraps it and the rate limiter: a request with a
+# staff view-as token (api/core/view_as.py) is refused unless it is an allowed read of an open session, and every
+# request it serves is logged before the route runs.
+app.add_middleware(ViewAsGateMiddleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
 # Cognito Bearer on a staff path rewrites x-admin-role / x-admin-user-id before the rate limiter's admin
 # tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched, except the
@@ -370,7 +414,7 @@ app.add_exception_handler(TourNotServedError, tour_not_served_handler)
 # (same status_code / detail / headers shape as TourNotServedError, so the same handler answers it).
 app.add_exception_handler(AtomReplaced, tour_not_served_handler)
 # AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
-# /tenant/membership/v1.
+# /tenant/membership/v1 and (AA-1028) /tenant/v1.
 app.add_exception_handler(CatalogProblem, catalog_problem_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
@@ -380,49 +424,18 @@ def get_pool() -> asyncpg.Pool:
         raise HTTPException(status_code=503, detail="DB not ready")
     return pool
 
-@app.post("/auth/tenant-login", response_model=TenantLoginResponse, tags=["auth"])
-async def tenant_login(
-    request: Request,
-    body: TenantLoginRequest,
-    db: asyncpg.Pool = Depends(get_pool),
-):
-    # AA-876 — per-IP failure + attempt limits before any DB read (api/core/login_throttle.py). No per-key
-    # backoff: an API key has far too much entropy to guess, and a per-key wait would let anyone lock a tenant out.
-    await login_throttle.check(request, "tenant")
-    if not body.api_key or len(body.api_key) < 10:
-        raise HTTPException(status_code=400, detail="Invalid API key format")
-    key_hash = _hash_api_key(body.api_key)
-    async with db.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT tenant_id::text, name, plan_tier FROM shared.tenants "
-            "WHERE api_key_hash = $1 AND is_active = true",
-            key_hash,
-        )
-    if not row:
-        await login_throttle.record_failure(request, "tenant")
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    token = _create_jwt(row["tenant_id"], row["name"], row["plan_tier"], client=body.client)
-
-    # AA-559 — semantic tenant-activity log. Best-effort/swallowed (unlike every other new call
-    # site this issue adds): login has no pre-existing DB write of its own to be atomic with, and
-    # a real tenant must never be locked out of the portal because an audit INSERT hiccuped.
-    try:
-        await write_audit_log(
-            db, tenant_id=row["tenant_id"], actor=f"tenant:{row['tenant_id']}",
-            action=TenantAuditAction.TENANT_LOGIN, resource_type="tenant",
-            resource_id=row["tenant_id"],
-            # AA-760 — a portal sign-in says so (its token is a portal session, not metered as API calls).
-            details={"login_method": "api_key", **({"client": body.client} if body.client else {})},
-        )
-    except Exception as exc:
-        logger.error("tenant_login_audit_log_failed", tenant_id=row["tenant_id"], error=str(exc))
-
-    return TenantLoginResponse(
-        token=token,
-        tenant_id=row["tenant_id"],
-        tenant_name=row["name"],
-        plan_tier=row["plan_tier"],
-    )
+# AA-1036 R3 slice 3 (root ADR 0019 d6): tenant API keys are gone. Any body answers 410 Gone with a short JSON body
+# naming the partner sign-in (POST /auth/tenant-session through the agency web). The body is never parsed, the login
+# throttle and the DB are never touched, and no tenant.login audit row is written. The API Gateway resource of this
+# path (AA-876) still forwards here, so a caller sees the 410, not a 403 / 404 from the edge.
+@app.post(
+    "/auth/tenant-login", tags=["auth"], deprecated=True, status_code=410,
+    summary="Removed: tenant API keys are gone (410 Gone)",
+    responses={410: {"description": "Always: tenant API keys were removed; sign in with the partner pool.",
+                     "content": {"application/json": {"example": TENANT_LOGIN_GONE}}}},
+)
+async def tenant_login():
+    return tenant_login_gone()
 
 async def _session_token_from_body(request: Request) -> str:
     """The ``token`` of a ``{"token": "..."}`` body (verify-tenant / verify-admin), or "" when it is missing or not
@@ -445,6 +458,11 @@ async def verify_tenant(request: Request):
     # verify_tenant_jwt, not verify_jwt: staff HS256 tokens share JWT_SECRET but carry no name / plan_tier, so a
     # staff token used to end in a KeyError (500); it is now refused with 403 "Tenant token required".
     payload = verify_tenant_jwt(await _session_token_from_body(request))
+    # AA-1035 follow-up (S268): a staff view-as token (amr staff_view_as, root ADR 0019 d5) is a read-only staff view,
+    # not a tenant session: whatever asks "is this a tenant session?" must not be told yes. The gate never sees it here
+    # (the token is in the body, not the Authorization header).
+    if view_as.is_view_as(payload) or payload.get("amr") == view_as.VIEW_AS_AMR:
+        raise HTTPException(status_code=403, detail=view_as.NOT_A_TENANT_SESSION)
     return {
         "valid": True,
         "tenant_id": payload["sub"],
@@ -501,6 +519,21 @@ _STAFF_STATE_MAX = 2048
 # Legacy (HS256) path only; the Cognito path has its own (iss, sub) cache with the same TTL in
 # api/core/staff_identity.py (shared with the staff bearer middleware, which can not import this module).
 _staff_state_cache: dict[str, tuple[float, Optional[tuple[str, str, Optional[str], Optional[str]]]]] = {}
+
+
+async def _load_active_staff(db: asyncpg.Pool, admin_id: str):
+    """The staff row behind a legacy session, or None when it is gone or deactivated (the legacy verify-admin path)."""
+    try:
+        uid = uuid.UUID(admin_id)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id::text AS id, username, role::text AS role, email, display_name "
+            "FROM shared.admin_users WHERE id = $1 AND is_active",
+            uid,
+        )
+    return row
 
 
 async def _current_staff(
@@ -579,79 +612,9 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
         auth=staff_identity.AUTH_LEGACY,
     )
 
-# ── AA-680 — CIS as staff identity provider for AA-Booking (root ADR 0004, O1) ──────────────
-# POST /auth/booking-token swaps a valid CIS staff session (cis_admin_token cookie or a Bearer
-# header holding the same HS256 staff JWT) for a 15-minute RS256 JWT with aud=booking. The JWKS that
-# Booking verifies it with is public. Key material: api/core/booking_jwt.py (Secrets Manager).
-
-_BOOKING_JWKS_CACHE_CONTROL = "public, max-age=600"
-
-
-def _staff_session_token(request: Request) -> str:
-    auth = request.headers.get("Authorization", "")
-    if auth[:7].lower() == "bearer " and auth[7:].strip():
-        return auth[7:].strip()
-    return request.cookies.get("cis_admin_token", "")
-
-
-async def _load_active_staff(db: asyncpg.Pool, admin_id: str):
-    """The staff row behind a session, or None when it is gone or deactivated. Re-read on every
-    Booking token so a deactivated user or a changed role stops at the next mint (<= 15 min),
-    not at the 24 h CIS session expiry."""
-    try:
-        uid = uuid.UUID(admin_id)
-    except (ValueError, TypeError, AttributeError):
-        return None
-    async with db.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT id::text AS id, username, role::text AS role, email, display_name "
-            "FROM shared.admin_users WHERE id = $1 AND is_active",
-            uid,
-        )
-    return row
-
-
-@app.post("/auth/booking-token", response_model=BookingTokenResponse, tags=["auth"])
-async def booking_token(request: Request, db: asyncpg.Pool = Depends(get_pool)):
-    token = _staff_session_token(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="Staff session required")
-    payload = verify_jwt(token)
-    if payload.get("role") not in STAFF_ROLES:
-        raise HTTPException(status_code=401, detail="Not a staff session")
-    row = await _load_active_staff(db, payload.get("sub"))
-    if not row or row["role"] not in STAFF_ROLES:
-        # Visible trail for repeated mint attempts by a deactivated, demoted or unknown user.
-        logger.warning("booking_token_refused", admin_id=str(payload.get("sub")),
-                       session_role=payload.get("role"),
-                       reason="inactive_or_unknown" if not row else "role_not_staff")
-        raise HTTPException(status_code=401, detail="Staff user is inactive or unknown")
-    if row["role"] in NO_BOOKING_ROLES:
-        # AA-878: a read-only CIS role has no Booking access; Booking has no mapping for it, so never mint one.
-        logger.warning("booking_token_refused", admin_id=row["id"], cis_role=row["role"], reason="role_no_booking")
-        raise HTTPException(status_code=403, detail="This staff role has no access to Booking")
-    try:
-        # Off the event loop: a cache refresh is a blocking Secrets Manager call.
-        keys = await booking_jwt.get_signing_keys_async()
-    except booking_jwt.SigningKeyUnavailable:
-        raise HTTPException(status_code=503, detail="Booking token signing key is not configured")
-    jti = str(uuid.uuid4())
-    access_token, expires_in = booking_jwt.mint_booking_token(
-        admin_id=row["id"], username=row["username"], role=row["role"], jti=jti, keys=keys,
-    )
-    # jti + kid let a token Booking sees be traced back to this mint.
-    logger.info("booking_token_issued", admin_id=row["id"], cis_role=row["role"], jti=jti,
-                kid=keys.kid)
-    return BookingTokenResponse(access_token=access_token, token_type="Bearer", expires_in=expires_in)
-
-
-@app.get("/auth/.well-known/jwks.json", tags=["auth"], responses={200: {"model": Jwks}})  # AA-899: doc
-async def booking_jwks():
-    try:
-        body = booking_jwt.jwks(await booking_jwt.get_signing_keys_async())
-    except booking_jwt.SigningKeyUnavailable:
-        raise HTTPException(status_code=503, detail="Booking token signing key is not configured")
-    return JSONResponse(body, headers={"Cache-Control": _BOOKING_JWKS_CACHE_CONTROL})
+# AA-911 (root ADR 0019 d23, S271): the CIS -> AA-Booking sign-in bridge is retired. POST /auth/booking-token and
+# GET /auth/.well-known/jwks.json are gone (404): Booking staff sign in with the Cognito WORKFORCE booking-staff client
+# only, on the Booking admin's own host, and Booking accepts only the WORKFORCE issuer (AA-Booking identity_config).
 
 
 @app.get("/health", response_model=Health)  # AA-899: model

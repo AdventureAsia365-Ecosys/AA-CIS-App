@@ -59,7 +59,7 @@ def db(monkeypatch):
     d = AlertDB()
     d.admin_id = d.add(role="admin", email="nghiep@adventure.asia", iss=ISS, sub=ADMIN_SUB, username="nghiep",
                        display_name="Nghiep Pham")
-    d.add(role="reviewer", email="rev@adventure.asia", iss=ISS, sub=REVIEWER_SUB, username="rev")
+    d.add(role="content", email="rev@adventure.asia", iss=ISS, sub=REVIEWER_SUB, username="rev")
     monkeypatch.setattr(app.state, "pool", d, raising=False)
     return d
 
@@ -187,7 +187,7 @@ def test_legacy_admin_session_cannot_change(client, db, sns, method, path, body)
     assert db.actions() == []
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content", "viewer", "tenant", ""])
+@pytest.mark.parametrize("role", ["content", "viewer", "tenant", ""])
 @pytest.mark.parametrize("method,path,body", [("get", BASE, None), *WRITES, ("post", BASE + "/refresh", None)])
 def test_other_roles_are_refused(client, sns, role, method, path, body):
     resp = getattr(client, method)(path, headers=_h(role=role), **({"json": body} if body else {}))
@@ -202,7 +202,7 @@ def test_machine_is_refused(client, method, path, body):
 
 
 def test_cognito_reviewer_is_refused(client, issuer, sns):
-    tok = issuer.token(sub=REVIEWER_SUB, email="rev@adventure.asia", **{"cognito:groups": ["cis-reviewer"]})
+    tok = issuer.token(sub=REVIEWER_SUB, email="rev@adventure.asia", **{"cognito:groups": ["cis-content"]})
     assert client.post(BASE, headers=_h(tok, role="admin"), json={"email": "x@adventure.asia"}).status_code == 403
     assert sns.subscribed == []
 

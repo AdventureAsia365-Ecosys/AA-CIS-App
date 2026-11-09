@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -73,6 +74,25 @@ class BatchUnavailable(Exception):
     """Batch submit/poll/read failed. Caller falls back to the synchronous per-tour path (the
     existing LLMClient.generate flow), so a batch outage never blocks a rerun — just makes it slow."""
     pass
+
+
+# AA-642 (D4, root plan S263 T-7 / TL-13): Bedrock Batch is a paid path with no pre-submit guard (no budget, route or
+# data-scope check runs before CreateModelInvocationJob), so it is CLOSED until the T-BATCH trigger (batch spend above
+# 100 USD a month, or a whole-catalogue rerun) is met and the guard is built. Switch: the ECS env BATCH_SUBMIT_SWITCH
+# (⚠️ underscore name — task definition), on / true / 1 / yes opens it; unset or anything else keeps it closed. Polling
+# and ingesting a job submitted before stay open (they spend nothing new).
+BATCH_SWITCH_ENV = "BATCH_SUBMIT_SWITCH"
+BATCH_CLOSED_REASON = (
+    "Bedrock Batch submit is switched off (kill switch until the T-BATCH trigger: batch spend above 100 USD a month "
+    "or a whole-catalogue rerun, and its pre-submit guard). Rewrite through the per-tour path instead; an operator "
+    f"opens it with {BATCH_SWITCH_ENV}=on on the task definition.")
+
+
+def batch_submit_closed_reason() -> Optional[str]:
+    """None when Batch submit is switched on (``BATCH_SUBMIT_SWITCH``), else the reason it is refused (the default)."""
+    if (os.environ.get(BATCH_SWITCH_ENV) or "").strip().lower() in ("on", "true", "1", "yes"):
+        return None
+    return BATCH_CLOSED_REASON
 
 
 @dataclass
@@ -171,6 +191,9 @@ def submit_batch_job(
         raise BatchUnavailable(f"unknown account {account!r}") from None
     if account not in _BATCH_SERVICE_ROLE_ARN:
         raise BatchUnavailable(f"account {account!r} has no batch service role configured")
+    closed = batch_submit_closed_reason()       # AA-642 (D4): the kill switch, also for a caller other than the API
+    if closed:
+        raise BatchUnavailable(closed)
     slug = job_slug or uuid.uuid4().hex[:12]
     name = job_name or f"s1-rewrite-{slug}"
     output_uri = f"s3://{bronze.bronze_bucket()}/{OUTPUT_PREFIX}/{slug}/"

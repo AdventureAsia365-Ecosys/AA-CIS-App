@@ -1,0 +1,79 @@
+# AA-1049 W3 (root ADR 0020 S5) — the T9 route table's mechanics: how the attempt loop handles each failed T10 gate.
+#
+# The POLICY half of every row (`repair`: cheap | fix_step | default, and `style_only`) is decided in
+# services/quality/writing_policy.yaml route_rows (policy_sha) and never restated here; this file adds the loop
+# mechanics the policy does not decide, joined on `gate` by services/acp_content_writing/route_table.py. Kept out of
+# the policy file on purpose: the policy_sha is hashed into 16 registered prompt versions, and a change of loop
+# mechanics is not a prompt change (no version bump, no migration). The lint tests/unit/quality/
+# test_aa1049_route_table.py checks exactly one row per T10 gate id here and in the policy, and that the two agree
+# (a cheap row is a sentence repair, a fix_step row a faq / first-line section).
+#
+#   action  repair_sentence     one sentence repair (sentence_repair.plan); `parse` names the violation format:
+#                               quoted "<problem>: '<sentence>'" | f1 (the F1 number quote) | f9 (the judge's claims)
+#                               | brand_style (the F9 brand-style phrases);
+#           regenerate_section  a deterministic / one-call step owns it (`section`: faq | first_line | seo_fields) and
+#                               it never sends the piece to a rewrite; `slug: rewrite` sends a slug violation to the
+#                               rewrite (the SEO fit never writes a slug);
+#           rewrite             the full rewrite (attempt 2 only; attempt 3 never rewrites, AA-770).
+#   cut     truth (an F1 / F9 product-truth item the last attempt may cut in code; merge preference in row order) |
+#           cut_finding (cut only when the finding itself says to cut).
+# Left after the repair budget, a failed gate is cut (its `cut`) or holds (quality_gates.hold_failure; never a
+# style_only row; the F9 classes by writing_policy f9_class_rows).
+version: t9-route-table-v1
+rows:
+  - {gate: F6_cta_present, action: rewrite}
+  - {gate: F1_grounding, action: repair_sentence, parse: f1, cut: truth}
+  - {gate: F2_lexicon, action: rewrite}
+  - {gate: F2_banned_patterns, action: rewrite}
+  - {gate: F2_brand_forbidden, action: repair_sentence, parse: quoted}
+  - {gate: F2_platform_truth, action: repair_sentence, parse: quoted}
+  - {gate: F2_superlatives, action: repair_sentence, parse: quoted}
+  - {gate: F2_style_warn, action: rewrite}
+  - {gate: F11_brand_name, action: repair_sentence, parse: quoted}
+  - {gate: F19_authenticity, action: repair_sentence, parse: quoted}
+  - {gate: F10_cannibalization_cross_tenant, action: rewrite}
+  - {gate: F4_extreme_length, action: rewrite}
+  - {gate: F0_complete, action: rewrite}
+  - {gate: F12_scope, action: repair_sentence, parse: quoted}
+  - {gate: F13_hygiene, action: repair_sentence, parse: quoted}
+  - {gate: F13_leak, action: repair_sentence, parse: quoted}
+  - {gate: F13_repeat, action: repair_sentence, parse: quoted}
+  - {gate: F17_trip_fact, action: repair_sentence, parse: quoted, cut: cut_finding}
+  - {gate: F18_rarity, action: repair_sentence, parse: quoted}
+  - {gate: F14_social_shape, action: rewrite}
+  - {gate: F14_first_line, action: regenerate_section, section: first_line}
+  - {gate: F15_voice, action: repair_sentence, parse: quoted}
+  - {gate: F15_voice_warn, action: rewrite}
+  - {gate: F4_seo_surface, action: regenerate_section, section: seo_fields, slug: rewrite}
+  - {gate: F9_cta_fact, action: repair_sentence, parse: f9, cut: truth}
+  - {gate: F9_brand_style, action: repair_sentence, parse: brand_style}
+  - {gate: F16_faq, action: regenerate_section, section: faq}
+# Channels whose F9 product-truth failure left after the last attempt is cut in code instead of held (AA-786).
+# Not the `truth_cut` row of writing_policy.yaml (D6, in policy_sha): this file is in neither policy_sha nor config_fp,
+# so a change here (hold vs cut) is versioned by git only, as the Python literal it replaced; the lint pins {linkedin}.
+truth_cut:
+  cut_not_hold_channels: [linkedin]
+# AA-1049 W3 (T2 train) — the T2 linear orchestrator's rows (opt-in T2_ORCHESTRATOR=linear; the default T2 path is the
+# LangGraph + T3 loop of main and reads none of this). One row per enforce code the T2 verifier
+# (services/content_generation/t2_orchestrator.py verify) can raise: the T3 hard codes (graph._HARD_BLOCK_CODES, as
+# T3 filters them), the T3 grounding finding and the Master day-slot check. Same action vocabulary as the T9 rows:
+#   repair_sentence     one local sentence repair (tenant_pipeline._t3_sentence_repair + repair_contract);
+#   regenerate_section  seo_fields: the meta-only regenerate (tenant_pipeline._t3_meta_regenerate + repair_contract);
+#   rewrite             one field-scoped writer call with the deterministic feedback (writer budget);
+#   hold                no repair can clear it (an outage): kept for review.
+# Mechanics only: the status rule (any enforce finding left = needs_review) does not read this table, so no row can
+# make a version pass. A code with no row routes to `default` (fail closed: still an enforce finding).
+t2:
+  version: t2-route-table-v1
+  default: rewrite
+  rows:
+    - {code: T3_grounding, action: repair_sentence, parse: t3_grounding}
+    - {code: SEO_META_TOO_LONG, action: regenerate_section, section: seo_fields}
+    - {code: META_TOO_SHORT, action: regenerate_section, section: seo_fields}
+    - {code: META_INCOMPLETE_SENTENCE, action: regenerate_section, section: seo_fields}
+    - {code: BRAND_SEO_META_VIOLATION, action: regenerate_section, section: seo_fields}
+    - {code: SEO_TITLE_TOO_LONG, action: rewrite}
+    - {code: FORBIDDEN_WORD, action: rewrite}
+    - {code: MISSING_FIELD, action: rewrite}
+    - {code: T2_DAY_COUNT_VS_MASTER, action: rewrite}
+    - {code: DEGRADED_DETECTOR, action: hold}

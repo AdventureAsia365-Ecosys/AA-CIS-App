@@ -21,13 +21,15 @@ from datetime import date, datetime, timedelta
 from statistics import mean
 from typing import Any, Iterable, Optional
 
+from services.reports import b2b_only
 from services.reports import money_sources as src
 from services.reports import periods
 from services.reports.generate import GENERATED_BY, Rendered, fmt
 from services.reports.registry import Registry, Report
 
-COST_PAGE = "/admin/cost-ops"
-PLATFORM_COST_PAGE = "/admin/platform/cost"
+# AA-1039 R6 slice 3: Cost Operations and Cost per app are one Spend page (the old URLs answer 307 there).
+COST_PAGE = "/admin/spend"
+PLATFORM_COST_PAGE = "/admin/spend?tab=apps"
 WOW_FLAG_RATIO = 0.30            # K-COST-WOW: flag a change > 30 % ...
 WOW_FLAG_USD = 5.0               # ... and > 5 USD
 LLM_WEEK_FACTOR = 1.3            # K-LLM-COST-WEEK: flag > 1.3 x the 4-week average ...
@@ -476,8 +478,8 @@ def render_fi02(reg: Registry, report: Report, first: date, last: date, facts: d
     md += ["## Needs a look", ""] + ([f"- {i}" for i in attention] or ["- Nothing flagged."]) + [""]
     md += ["## KPIs", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis, {"K-COST-FCST": "ratio", "K-COST-WOW": "count"}))
     md += [""] + _money_week_md(w, first, last)
-    md += ["## 6. More", "", f"Platform › Cost operations ({COST_PAGE}) has the forecast, the budgets and the "
-           f"DataForSEO runs; Platform › Cost per app ({PLATFORM_COST_PAGE}) refreshes Cost Explorer.", ""]
+    md += ["## 6. More", "", f"AI & spend › Spend ({COST_PAGE}) has the forecast, the budgets and the "
+           f"DataForSEO runs; its By app tab ({PLATFORM_COST_PAGE}) refreshes Cost Explorer.", ""]
     out = _output(report, first, last, generated_at, headline, kpis=kpis, attention=attention, week=w,
                   sources_unreadable={k: failed(v) for k, v in facts.items() if failed(v)})
     return Rendered(headline[:1000], out, "\n".join(md))
@@ -581,11 +583,12 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
                   "" if "error" in lw else f"shadow {usd(lw['shadow_usd'])}; 4-week average {usd(lw['avg_4w_usd'])}"),
         _kpi_line("K-CAT-LIVE", tl.get("value"), "no_data" if tl.get("value") is None else
                   ("amber" if tl["flag"] else "ok"), _tours_live_note(tl)),
-        _kpi_line("K-DEM-INQ", None if "error" in dm else dm.get("inquiry_sent"), "info",
-                  "" if "error" in dm else (f"trips started {fmt(dm.get('trip_started'), 'count')}, inquiries sent "
-                                            f"{fmt(dm.get('inquiry_sent'), 'count')}, received "
-                                            f"{fmt(dm.get('inquiry_received'), 'count')}, confirmed "
-                                            f"{fmt(dm.get('confirmed'), 'count')}")),
+        # AA-1003 R0 hotfix: the B2C inquiry funnel is historical (root ADR 0019 B2B-only model; b2b_only.py)
+        _kpi_line("K-DEM-INQ", None if "error" in dm else dm.get("inquiry_sent"), b2b_only.HISTORICAL,
+                  b2b_only.NOTE if "error" in dm else
+                  (f"{b2b_only.NOTE}; trips started {fmt(dm.get('trip_started'), 'count')}, inquiries sent "
+                   f"{fmt(dm.get('inquiry_sent'), 'count')}, received {fmt(dm.get('inquiry_received'), 'count')}, "
+                   f"confirmed {fmt(dm.get('confirmed'), 'count')}")),
         _kpi_line("K-REL-SEV", None, NOT_WIRED, "SEV1-2 incidents: from the postmortem folder when writing"),
     ]
     headline = (f"Business review draft {first.isoformat()} to {last.isoformat()}: spend {usd(w['total_usd'])}, "
@@ -608,7 +611,8 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
     md += ["Facts for the narrative:", ""] + [f"- {x}" for x in facts_for_narrative] + [""]
     md += ["## 2. How to read this report", "",
            "- Status: red = act now, amber = watch, ok = on target, info = trend only (Dev), not wired = the "
-           "platform does not hold the number yet (fill it in when writing).",
+           "platform does not hold the number yet (fill it in when writing), historical = the B2C inquiry path "
+           f"switched off on {b2b_only.B2C_OFF_DAY.isoformat()} (B2B-only model), kept for history.",
            "- Week over week compares with the ISO week before; money is per UTC day, tours live per ICT day.", ""]
     md += ["## 3. Scorecard", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis, {"K-DEM-INQ": "count",
                                                                            "K-COST-MTD": "ratio"})) + [""]
@@ -625,9 +629,17 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
     if "error" in dm:
         md += [f"- Demand not readable: {dm['error']}"]
     else:
+        prev = (lambda m: None) if "error" in dm_prev else dm_prev.get
         md += table(["Metric", "This week", "Week before"],
-                    [[m, dm.get(m), None if "error" in dm_prev else dm_prev.get(m)]
-                     for m in ("trip_started", "inquiry_sent", "inquiry_received", "confirmed")])
+                    [[label, dm.get(m), prev(m)] for m, label in (
+                        ("trip_started", "Trips started (TripPlanner)"),
+                        ("confirmed", "Trip cases confirmed (Booking, every source)"))])
+        md += ["", f"B2C inquiry funnel (historical: the TripPlanner to Booking hand-off is off since "
+               f"{b2b_only.B2C_OFF_DAY.isoformat()}, B2B-only model; agency demand comes with the B2B reports):", ""]
+        md += table(["Metric", "This week", "Week before"],
+                    [[label, dm.get(m), prev(m)] for m, label in (
+                        ("inquiry_sent", "Inquiries sent (TripPlanner, historical)"),
+                        ("inquiry_received", "Inquiries received (Booking, historical)"))])
         md.append("")
         for side in ("tripplanner_error", "booking_error"):
             if dm.get(side):
@@ -1267,7 +1279,7 @@ def capacity_md(c: dict) -> list[str]:
 
 def _aws_line(status: str, covered_to: Any, fetched_at: Any, month: str) -> str:
     note = AWS_STATUS_NOTE[status]
-    tail = "" if status == "final" else (f" Open Platform › Cost per app ({PLATFORM_COST_PAGE}?month={month}) once to "
+    tail = "" if status == "final" else (f" Open Spend › By app ({PLATFORM_COST_PAGE}&month={month}) once to "
                                          "refresh it (one Cost Explorer request, about 0.01 USD), then generate this "
                                          "report again.")
     return (f"AWS data: **{status}** ({note}; covered to {covered_to or '—'}, fetched "
@@ -1353,7 +1365,7 @@ def render_fi01(reg, report, first, last, facts, generated_at) -> Rendered:
            "## Sources", "", "Stored rows only: the Cost Explorer snapshots, the LLM ledger, the vendor ledgers, "
            "shared.spend_budget and the budget bells (services/reports/money_sources.py). "
            + (f"Not readable this run: {', '.join(unreadable)}. " if unreadable else "")
-           + f"Pages: {PLATFORM_COST_PAGE}?month={key}, {COST_PAGE}.", ""]
+           + f"Pages: {PLATFORM_COST_PAGE}&month={key}, {COST_PAGE}.", ""]
     out = _output(report, first, last, generated_at, headline, draft=True, kpis=kpis, aws_status=status,
                   accounts=ac, by_app=ab, movers=mv, llm=lm, vendors=vd, units=un, budgets=bd,
                   sources_unreadable={k: failed(v) for k, v in facts.items() if failed(v)})

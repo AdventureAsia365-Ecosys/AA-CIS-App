@@ -1,9 +1,11 @@
 // lib/tenants.ts — AA-919: the admin tenant list, shared by every page that picks a tenant or prints one.
 //
-// One source: GET /admin/tenants?include_inactive=true (api/routers/admin.py list_tenants) through the BFF. It returns
-// active, suspended and offboarded tenants with their name, slug and derived status, so a page that only needs to NAME
-// a tenant (a release of an offboarded tenant still has an owner) and a picker that offers only active ones read the
-// same cached query (TENANTS_QUERY_KEY, also the key of /admin/data-erasure). The hook and the picker live in
+// One source: GET /admin/tenant-names (api/routers/admin.py list_tenant_names) through the BFF. AA-1035: names only
+// (id, name, slug, derived status), filtered to the caller's tenant scope, open to every role whose pages pick a
+// tenant (the Tenants directory GET /admin/tenants is not: content_lead, tenant_qa and ai_ops are refused there). It
+// returns active, suspended and offboarded tenants, so a page that only needs to NAME a tenant (a release of an
+// offboarded tenant still has an owner) and a picker that offers only active ones read the same cached query
+// (TENANTS_QUERY_KEY, also the key of /admin/tenants/data-erasure). The hook and the picker live in
 // app/admin/_components/TenantSelect.tsx; this file holds the pure parts so node --test can load them.
 
 export interface TenantRef {
@@ -15,7 +17,7 @@ export interface TenantRef {
   cancelled_at?: string | null;
 }
 
-export const TENANTS_API = "/api/admin/tenants?include_inactive=true";
+export const TENANTS_API = "/api/admin/tenant-names";
 export const TENANTS_QUERY_KEY = ["admin-tenants", "include-inactive"] as const;
 
 /** Above this many choices the picker shows a search box over name, slug and id. */

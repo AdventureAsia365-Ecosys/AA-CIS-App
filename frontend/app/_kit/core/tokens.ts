@@ -61,6 +61,26 @@ export const K = {
   // Panel band (a dialog footer, a toolbar strip): one step off the card colour in both themes (AA-994 S4a, from the
   // Booking ConfirmDialog footer).
   panel: "var(--aa-panel-bg0)",
+  // AA-1008 (S6e/S6f): the tokens app shells and their pages read as raw var() strings before (aa-kit/no-raw-aa-var):
+  // the dark sidebar (ground, card band, text levels, titles), text on the accent and on a solid fill, the hero
+  // ground, the dialog scrim, the stronger semantic borders, the deep amber text and the three elevation shadows.
+  sideBg: "var(--aa-side-bg)",
+  sidePanel: "var(--aa-side-panel)",
+  sideText: "var(--aa-side-text)",
+  sideText2: "var(--aa-side-text2)",
+  sideText3: "var(--aa-side-text3)",
+  sideTitle: "var(--aa-side-title)",
+  onAccent: "var(--aa-on-accent)",
+  onSolid: "var(--aa-on-solid)",
+  heroBg: "var(--aa-hero-bg)",
+  scrim: "var(--aa-scrim)",
+  successBorder: "var(--aa-green-border)",
+  successBg2: "var(--aa-green-bg2)",
+  amberDeep: "var(--aa-amber-deep)",
+  // Elevation (both themes: a soft ink shadow in light, a deeper black one in dark).
+  shadowSm: "var(--aa-shadow-sm)",
+  shadowMd: "var(--aa-shadow-md)",
+  shadowLg: "var(--aa-shadow-lg)",
 } as const;
 
 // AA-601 part B — alpha(color, pct): a translucent version of a colour that works with CSS

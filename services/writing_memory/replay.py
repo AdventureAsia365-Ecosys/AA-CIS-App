@@ -115,6 +115,11 @@ def signal_matches(sig: dict, phrases: list[str]) -> bool:
     return matches_text(sig.get("before_text"), phrases) or matches_text(sig.get("problem"), phrases)
 
 
+# AA-900 W0 (service._stop_label): the repair_log entry that labels a held piece / stops a paid attempt 3 at $0. It
+# carries the hold's reason codes, not a gate failure of an attempt.
+LABEL_REPAIR_MODES = frozenset({"stop_and_label", "label"})
+
+
 def stored_failures(piece: dict) -> list[tuple[str, bool, str]]:
     """(gate, blocking, violation) of every failed entry stored on a piece: the final ledger, each repair_log attempt
     (its violations and its ledger snapshot) and each discarded attempt's ledger, on the legacy view."""
@@ -124,6 +129,8 @@ def stored_failures(piece: dict) -> list[tuple[str, bool, str]]:
     for e in piece.get("repair_log") or []:
         if not isinstance(e, dict):
             continue
+        if e.get("repair_mode") in LABEL_REPAIR_MODES:
+            continue   # AA-1047 (W0 review #1356): a $0 stop-and-label entry records a held piece's label, no failure
         if e.get("gate_targeted") and e.get("violations"):
             ledgers.append([{"gate": e["gate_targeted"], "passed": False, "blocking": True,
                              "violations": e["violations"]}])
@@ -223,8 +230,10 @@ class PieceReplay:
 
     def run(self, text: str, *, pack: Optional[dict], f9: list[dict], stock_blocking: bool) -> list[dict]:
         from services.acp_content_writing.quality_gates import run_quality_gates
-        out = run_quality_gates(content_text=text or "", brand_pack=pack, f9_results=f9,
-                                stock_blocking=stock_blocking, **self._kw)
+        # AA-900 W0: R0 measures the rule as a blocking lexicon finding, whatever the live warn-only L0 mode
+        with l0.measuring_as_blocking():
+            out = run_quality_gates(content_text=text or "", brand_pack=pack, f9_results=f9,
+                                    stock_blocking=stock_blocking, **self._kw)
         return out["gate_ledger"]
 
 

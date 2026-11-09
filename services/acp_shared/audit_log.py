@@ -55,6 +55,8 @@ class TenantAuditAction:
     FACT_CREATED = "fact.created"
     FACT_UPDATED = "fact.updated"
     FACT_DELETED = "fact.deleted"
+    # AA-1036 R3 (root ADR 0019 d7) — the Content studio owner asked for an add-on (shared.tenant_addon_request)
+    ADDON_REQUESTED = "tenant.addon_requested"
 
 
 class PlatformAuditAction:
@@ -120,6 +122,31 @@ class AdminTenantAuditAction:
     # identity or an e-mail).
     MEMBER_INVITED = "tenant.member_invited"
     MEMBER_ACTIVATED = "tenant.member_activated"
+    # AA-1028 R1 slice 2 — the tenant_provision saga added or changed add-on subscriptions of an existing tenant
+    # (details: the request key, the steps and the resulting subscriptions; a create logs ONBOARD instead).
+    SUBSCRIPTION_CHANGED = "tenant.subscription_changed"
+    # AA-1028 R1 slice 3 — Tenant 360 › Subscription: a per-tenant entitlement override set / removed (details: the
+    # feature key, before / after, whether it applies, the resolved value; services/tenant_account/subscription.py)
+    ENTITLEMENT_OVERRIDE_SET = "tenant.entitlement_override_set"
+    ENTITLEMENT_OVERRIDE_REMOVED = "tenant.entitlement_override_removed"
+    # AA-1038 R5 slice 3 follow-up (S272) — Tenant 360 › Subscription: the lead route of the tenant's TripPlanner site
+    # (CIS 390 columns; services/tenant_account/tripplanner_site.py). details: before / after of the channel and its
+    # targets (the agency's business URL / address, never a traveller's).
+    TRIPPLANNER_LEAD_ROUTE_CHANGED = "tenant.tripplanner_lead_route_changed"
+    # AA-1035 R2 (CIS 364, root ADR 0019 d4) — who looks after the tenant: a staff assignment set (added or its kind
+    # changed) / removed (details: the staff id, the kind before / after; no name, no e-mail).
+    ASSIGNMENT_SET = "tenant.assignment_set"
+    ASSIGNMENT_REMOVED = "tenant.assignment_removed"
+    # AA-1035 R2 slice 2 (root ADR 0019 d5) — a staff member started / ended a read-only "view as tenant" session
+    # (details: session id, minutes, ticket reference, end reason; never the reason text, which stays in
+    # shared.staff_view_as_session). Each request made in the session is a tenant.view_as_request row
+    # (api/core/view_as.py AUDIT_ACTION_REQUEST, written by api/middleware/view_as.py).
+    VIEW_AS_STARTED = "tenant.view_as_started"
+    VIEW_AS_ENDED = "tenant.view_as_ended"
+    # AA-1036 R3 (root ADR 0019 d7): the staff decision on a tenant's add-on request (shared.tenant_addon_request, CIS
+    # 374); an approval attaches the plan through the tenant_provision saga (its own tenant.subscription_changed rows)
+    ADDON_REQUEST_APPROVED = "tenant.addon_request_approved"
+    ADDON_REQUEST_DECLINED = "tenant.addon_request_declined"
 
 
 async def write_audit_log(

@@ -42,7 +42,8 @@ from api import main
 from api.core import staff_authz, staff_secret
 from api.main import app
 from api.routers import (
-    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, tenant_membership, v1_pipeline, v1_tours,
+    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, tenant_account, tenant_addons, tenant_membership,
+    v1_pipeline, v1_tours,
 )
 
 # Dependencies that admit staff only (the X-Admin-Secret held by the staff BFF).
@@ -67,6 +68,8 @@ M2M_DEPENDENCIES = {
     catalog_http.require_catalog_reader,       # /catalog/v1: CRM client + cis.catalog/read
     tenant_membership.require_tenant_reader,   # /tenant/membership/v1: CRM client + cis.tenant/read (AA-978)
     tenant_membership.require_tenant_activator,  # POST .../invitations/{id}/activate: + cis.tenant/activate (AA-979)
+    tenant_account.require_account_reader,     # /tenant/v1: CRM client + cis.tenant/read (AA-1028, tenant.entitlements.v1)
+    tenant_addons.require_addons,              # /tenant/v1 add-ons: CRM client + cis.tenant/addons (AA-1036, tenant.addons.v1)
 }
 # Functions accepted as an inline staff check at the top of an endpoint body (identity, not name).
 STAFF_INLINE_CHECKS = {admin.verify_admin_secret, admin_settings.verify_admin}
@@ -85,18 +88,16 @@ ADMIN_TENANT_OR_STAFF: dict[tuple[str, str], str] = {
 ALLOWED_PUBLIC: dict[tuple[str, str], str] = {
     ("GET", "/health"): "ALB / deploy health check",
     ("GET", "/health/ready"): "AA-884 readiness probe (DB + schema version; 5 s in-process cache, no data)",
-    ("POST", "/auth/tenant-login"): "login: trades a tenant API key for a JWT",
+    ("POST", "/auth/tenant-login"): "removed: answers 410 Gone for any body (AA-1036, no tenant API keys)",
     ("POST", "/auth/admin-login"): "login: staff username + password",
     ("POST", "/auth/verify-tenant"): "verifies the JWT in the request body (portal middleware)",
     ("POST", "/auth/verify-admin"):
         "verifies the staff token in the request body (admin middleware): a WORKFORCE access token (C2 verifier, "
         "cis-* group, active directory row; AA-816 C3) or a legacy HS256 JWT (LEGACY_ADMIN_LOGIN_ENABLED)",
-    ("POST", "/auth/booking-token"): "AA-Booking token exchange; authenticates by body credentials",
     ("POST", "/auth/tenant-session"):
         "AA-979: Content studio sign-in; authenticates by the partner-pool Bearer (own verifier, partner-web only; "
         "staff / EXTERNAL / M2M tokens 403), checked inline before any DB read",
     ("GET", "/auth/tenant-memberships"): "AA-979: same partner-pool Bearer check as /auth/tenant-session",
-    ("GET", "/auth/.well-known/jwks.json"): "public signing keys",
     ("GET", "/v1/trip/{tour_id}"): "AA-482: public trip page data",
     ("GET", "/content/photos/{photo_id}"): "AA-708: public image redirect (TripPlanner, published pages)",
     ("GET", "/v1/angle-gate/goals"): "AA-449: static list of content goals",

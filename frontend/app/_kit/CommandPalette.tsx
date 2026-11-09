@@ -8,7 +8,7 @@
 //
 // Deep-link targets:
 //   tour   → /admin/master-content?tour=<tour_id>   (opens TourDetailPanelV2)
-//   tenant → /admin/tenants?tenant=<tenant_id>       (expands the tenant's inline 360 panel)
+//   tenant → /admin/tenants/<tenant_id>              (its Tenant 360 route, AA-1039 R6 rest)
 //   job    → /admin/jobs?job=<id>                    (already supported)
 //
 // No external dependency (no cmdk): built on a small modal + the kit tokens. The debounce lives in
@@ -20,11 +20,12 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Search, FileText, Users, ListChecks, CornerDownLeft } from "lucide-react";
 import { K, RADIUS, sans, serif, alpha } from "./core/tokens";
-import { allEntries, useNavLabel, type NavEntry } from "./adminNav";
+import { allEntries, followExternal, useNavLabel, type NavEntry } from "./adminNav";
 import { useT } from "./core/useI18n";
 import { SHELL_MESSAGES } from "./shell.messages";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { apiGet } from "./api";
+import { tenant360Href } from "@/lib/adminIa";
 
 interface TourHit { tour_id: string; name: string; src_name: string; country: string | null; master: boolean; trashed: boolean; }
 interface TenantHit { tenant_id: string; name: string; slug: string; is_active: boolean; }
@@ -32,7 +33,7 @@ interface JobHit { id: string; kind: string; status: string; created_at: string 
 interface SearchResult { tours: TourHit[]; tenants: TenantHit[]; jobs: JobHit[]; }
 
 type Row =
-  | { kind: "page"; label: string; href: string; icon: React.ReactNode }
+  | { kind: "page"; label: string; href: string; icon: React.ReactNode; external?: boolean }
   | { kind: "tour"; label: string; sub: string; href: string }
   | { kind: "tenant"; label: string; sub: string; href: string }
   | { kind: "job"; label: string; sub: string; href: string };
@@ -82,7 +83,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       ? allEntries(role).filter((e) => e.label.toLowerCase().includes(q) || navLabel(e.label).toLowerCase().includes(q))
       : [];
     const pages: Row[] = pageEntries.map((e) => ({
-      kind: "page" as const, label: navLabel(e.label), href: e.href, icon: e.icon,
+      kind: "page" as const, label: navLabel(e.label), href: e.href, icon: e.icon, ...(e.external ? { external: true } : {}),
     }));
     const tours: Row[] = (data?.tours ?? []).map((tr) => ({
       kind: "tour" as const,
@@ -94,7 +95,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       kind: "tenant" as const,
       label: tn.name,
       sub: [tn.slug, tn.is_active ? t("tenantActive") : t("tenantInactive")].filter(Boolean).join(" · "),
-      href: `/admin/tenants?tenant=${encodeURIComponent(tn.tenant_id)}`,
+      href: tenant360Href(tn.tenant_id),
     }));
     const jobs: Row[] = (data?.jobs ?? []).map((j) => ({
       kind: "job" as const,
@@ -118,6 +119,8 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   function activate(row: Row | undefined) {
     if (!row) return;
     onClose();
+    // AA-1037: a Trade entry is a page of Booking admin: same tab, full page load (not the Next router).
+    if (row.kind === "page" && followExternal(row)) return;
     router.push(row.href);
   }
 

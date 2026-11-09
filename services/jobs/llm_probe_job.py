@@ -14,6 +14,26 @@ circuit: a success closes it, a refusal opens it and, account-wide, the connecti
 ``shared.llm_call_log`` row for an answered call (stage ``adhoc_conn_test``), one ``acp_shared.audit_log`` row per
 probe. A refused probe costs 0 USD.
 
+AA-642 (S263 lane L2, B2): two more probes in the same run, inside the same approved probe budget (< 0.01 USD a
+month together): every ENABLED embedding deployment (cohere-embed-v4 on acc2 / acc3 today) gets one embedding of a
+few words through ``embed.probe`` (the deployment's circuit counts it, like a text probe; a ``shared.llm_call_log`` row
+stage ``adhoc_conn_test`` role ``embed``, answered or refused at 0 USD), and the Geoapify connection gets ONE geocode
+search (``probe_geoapify``: free plan credit, logged in ``geo.geocode_call`` so the daily credit guard counts it, its
+access_state and last_probe_at written). Geoapify is skipped when it is switched off, not the configured geocoder,
+out of daily credits, or a place job holds the Geoapify lock.
+
+AA-1026 (S267, the availability matrix): a MANUAL run with ``"mode": "candidates"`` probes the DISABLED deployments
+instead (a disabled deployment, or any deployment of a switched-off connection: the candidates of CIS 367 and the rows
+kept for the record), optionally narrowed by ``connection_keys`` / ``model_keys``, at most ``MAX_PROBES``, each with
+``CANDIDATE_MAX_TOKENS`` output tokens. Such a probe never counts on the circuit breaker (``count_outcome=False``: two
+refused candidates would otherwise trip the connection circuit and pause the models that still answer); a refused call
+is still a 0 USD ``shared.llm_call_log`` row (stage ``adhoc_conn_test``) and an audit row. Every probe of either mode
+writes its outcome on the deployment row (CIS 367: ``access_state``, ``last_probe_at``, ``last_probe_error``; best
+effort, skipped before 367), and a live run returns ``matrix``: one line per call {model_key, connection_key, wire_id,
+ok, error_class, error (first 200 characters, ARNs / account IDs masked)}, plus ``stage_coverage`` (the summary of
+``shared/llm_client/stage_coverage.py`` after the run). The manual sweep script is
+``scripts/llm_ops/llm_availability_sweep.py`` (queues this job and prints the matrix).
+
 Switch: ``LLM_DAILY_PROBE`` (ECS env, default OFF). Off: the api's ops metrics sampler queues nothing, and a manual
 live run is refused (``NonRetryable``); a DRY RUN always works: it lists the deployments, the reason any is skipped and
 the estimated cost (catalog or deployment price x ``EST_INPUT_TOKENS`` in + the test's output cap), and makes no call.
@@ -24,7 +44,9 @@ across a deploy; a re-run is harmless).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -38,10 +60,31 @@ KIND = "llm_connection_probe"
 SCHEDULER = "scheduler:aa-1018"
 SWITCH_ENV = "LLM_DAILY_PROBE"
 SCHEDULE_HOUR_UTC = 5
-MAX_PROBES = 30
+# AA-1042 (S269): 50, was 30. CIS 376 brings the enabled text + embedding deployments on enabled connections to 33
+# (nine Anthropic API rows); build_plan walks connections in name order, so a cap under the count silently left the
+# last rows (openai-direct, the last-resort writer rung) unprobed with a stale access_state. Headroom for the next rows.
+MAX_PROBES = 50
 ACTOR = f"job:{KIND}"
+# AA-1026 (S267): the availability sweep of disabled candidate deployments (payload "mode": "candidates", manual only).
+MODE_DAILY = "daily"
+MODE_CANDIDATES = "candidates"
+MODES = (MODE_DAILY, MODE_CANDIDATES)
+# A candidate only has to answer: 16 output tokens (a reasoning model may spend them thinking; an unusable reply still
+# proves the deployment answers). Keeps a sweep of every CIS 367 candidate under 0.01 USD (implementation notes).
+CANDIDATE_MAX_TOKENS = 16
+MATRIX_ERROR_CHARS = 200
+# The breaker class of a probe's failure -> the deployment's access_state (CIS 367). Anything else is 'error'.
+DEPLOYMENT_STATE_OF_CLASS = {"access_denied": "access_denied", "quota_exhausted": "quota_exhausted",
+                             "throttled": "throttled", "credential": "unconfigured"}
 # The test prompt (llm_connections.TEST_SYSTEM + TEST_USER) is a few dozen tokens; a generous round figure.
 EST_INPUT_TOKENS = 60
+# AA-642 (S263 L2, B2): the embedding probe text (a few tokens) and the Geoapify probe query (one search = one credit
+# of the free plan). A plain public place name: the answer is not stored anywhere, only whether the call worked.
+EMBED_PROBE_TEXT = "connectivity test"
+EST_EMBED_TOKENS = 8
+GEOAPIFY_KEY = "geoapify"
+GEOAPIFY_PROBE_QUERY = ("Bangkok", "th")
+GEOAPIFY_PROBE_LABEL = "geocode-search"
 
 
 def schedule_enabled() -> bool:
@@ -63,10 +106,19 @@ def estimate_usd(dep, model, max_tokens: int) -> Optional[float]:
     return round((EST_INPUT_TOKENS * p_in + max_tokens * p_out) / 1_000_000, 6)
 
 
-def build_plan(connections: dict, deployments: list, testable) -> dict:
-    """The probe plan (pure but for ``testable``, the catalog-reading filter): ``probes`` (connection, model, wire,
-    estimated USD) and ``skipped`` (connection, model or None, why). ``testable(conn, deployments)`` returns the
-    (deployment, catalog model) pairs the gateway can call for a text test."""
+def estimate_embed_usd(dep, model) -> Optional[float]:
+    """The estimated cost of one embedding probe (None when neither the deployment nor the catalog has a price)."""
+    p_in = _price(dep, model, "price_in_override", "price_in_per_mtok")
+    return None if p_in is None else round(EST_EMBED_TOKENS * p_in / 1_000_000, 6)
+
+
+def build_plan(connections: dict, deployments: list, testable, embeddable=None,
+               geoapify: Optional[dict] = None) -> dict:
+    """The probe plan (pure but for ``testable`` / ``embeddable``, the catalog-reading filters): ``probes``
+    (connection, model, wire, estimated USD; ``probe`` = text | embed | geocode) and ``skipped`` (connection, model or
+    None, why). ``testable(conn, deployments)`` returns the (deployment, catalog model) pairs the gateway can call for
+    a text test; AA-642 (S263 L2): ``embeddable(conn, deployments)`` the embedding pairs, and ``geoapify`` (from
+    ``load_geoapify_state``) whether the one Geoapify search runs."""
     from api.services.llm_connections import TEST_MAX_TOKENS
 
     probes: list[dict] = []
@@ -88,7 +140,61 @@ def build_plan(connections: dict, deployments: list, testable) -> dict:
                 continue
             max_tokens = min(TEST_MAX_TOKENS, model.max_output_tokens or TEST_MAX_TOKENS)
             entry = {"connection_key": key, "model_key": dep.model_key, "wire_id": dep.wire_id,
-                     "kind": conn.kind, "estimated_usd": estimate_usd(dep, model, max_tokens)}
+                     "kind": conn.kind, "probe": "text", "estimated_usd": estimate_usd(dep, model, max_tokens)}
+            if len(probes) >= MAX_PROBES:
+                skipped.append({**entry, "why": f"over_limit ({MAX_PROBES} per run)"})
+            else:
+                probes.append(entry)
+        for dep, model in (embeddable(conn, mine) if embeddable is not None else []):
+            if not dep.enabled:
+                skipped.append({"connection_key": key, "model_key": dep.model_key, "why": "deployment disabled"})
+                continue
+            entry = {"connection_key": key, "model_key": dep.model_key, "wire_id": dep.wire_id,
+                     "kind": conn.kind, "probe": "embed", "estimated_usd": estimate_embed_usd(dep, model)}
+            if len(probes) >= MAX_PROBES:
+                skipped.append({**entry, "why": f"over_limit ({MAX_PROBES} per run)"})
+            else:
+                probes.append(entry)
+    if geoapify is not None:
+        entry = {"connection_key": GEOAPIFY_KEY, "model_key": GEOAPIFY_PROBE_LABEL, "wire_id": None,
+                 "kind": GEOAPIFY_KEY, "probe": "geocode", "estimated_usd": 0.0}
+        why = geoapify.get("skip")
+        if why:
+            skipped.append({**entry, "why": why})
+        else:
+            probes.append(entry)
+    known = [p["estimated_usd"] for p in probes if p["estimated_usd"] is not None]
+    return {"probes": probes, "skipped": skipped, "estimated_usd": round(sum(known), 6),
+            "unpriced": sum(1 for p in probes if p["estimated_usd"] is None)}
+
+
+def build_candidate_plan(connections: dict, deployments: list, testable, *,
+                         connection_keys: Optional[list] = None, model_keys: Optional[list] = None) -> dict:
+    """AA-1026 (S267): the plan of a candidate sweep (pure but for ``testable``): every text deployment the gateway can
+    call that is DISABLED, or sits on a switched-off connection, narrowed to ``connection_keys`` / ``model_keys`` when
+    given. A connection whose row has a policy problem (even switched on) is skipped with why. Same shape as
+    ``build_plan``; each probe has ``candidate: True`` and the estimate uses ``CANDIDATE_MAX_TOKENS``."""
+    import dataclasses
+
+    probes: list[dict] = []
+    skipped: list[dict] = []
+    for key in sorted(connections):
+        if connection_keys and key not in connection_keys:
+            continue
+        conn = connections[key]
+        mine = [d for d in deployments if d.connection_key == key and (not d.enabled or not conn.enabled)
+                and (not model_keys or d.model_key in model_keys)]
+        if not mine:
+            continue
+        problems = dataclasses.replace(conn, enabled=True).policy_problems()
+        if problems:
+            skipped.append({"connection_key": key, "model_key": None,
+                            "why": "unconfigured: " + "; ".join(problems)})
+            continue
+        for dep, model in testable(conn, mine):
+            max_tokens = min(CANDIDATE_MAX_TOKENS, model.max_output_tokens or CANDIDATE_MAX_TOKENS)
+            entry = {"connection_key": key, "model_key": dep.model_key, "wire_id": dep.wire_id, "kind": conn.kind,
+                     "probe": "text", "candidate": True, "estimated_usd": estimate_usd(dep, model, max_tokens)}
             if len(probes) >= MAX_PROBES:
                 skipped.append({**entry, "why": f"over_limit ({MAX_PROBES} per run)"})
             else:
@@ -96,6 +202,117 @@ def build_plan(connections: dict, deployments: list, testable) -> dict:
     known = [p["estimated_usd"] for p in probes if p["estimated_usd"] is not None]
     return {"probes": probes, "skipped": skipped, "estimated_usd": round(sum(known), 6),
             "unpriced": sum(1 for p in probes if p["estimated_usd"] is None)}
+
+
+async def load_candidate_plan(pool, *, connection_keys: Optional[list] = None,
+                              model_keys: Optional[list] = None) -> dict:
+    from api.services import llm_connections as svc
+    from shared.llm_client import connections as conn_registry
+    from shared.llm_client import deployments as dep_registry
+
+    async with pool.acquire() as db:
+        conns = await conn_registry.fetch_connections(db)
+        deps = await dep_registry.fetch_deployments(db)
+    return await asyncio.to_thread(build_candidate_plan, conns, deps, svc._testable,
+                                   connection_keys=connection_keys, model_keys=model_keys)
+
+
+def deployment_state(ok: Optional[bool], error_class: Optional[str]) -> str:
+    """The CIS 367 access_state of a probe outcome: 'ok' for an answer (an unusable reply is one too), else the
+    breaker class it maps to, else 'error'."""
+    if ok:
+        return "ok"
+    return DEPLOYMENT_STATE_OF_CLASS.get(error_class or "", "error")
+
+
+def _masked(text: Optional[str], limit: int) -> Optional[str]:
+    from shared.llm_client.errors import redact_ids
+
+    return redact_ids(text[:limit]) if text else None
+
+
+_DEPLOYMENT_STATE_SQL = ("UPDATE shared.llm_model_deployment SET access_state = $3, last_probe_at = now(), "
+                         "last_probe_error = $4 WHERE model_key = $1 AND connection_key = $2")
+
+
+async def record_deployment_states(pool, results: list[dict]) -> int:
+    """AA-1026 (S267): write each probe's outcome on its deployment row (CIS 367 columns; cis_app has column UPDATE).
+    A probe that could not start (``unavailable``) or a Geoapify search is not a deployment outcome and is skipped.
+    Best effort: before migration 367 (no column) or on a DB error, one warning and nothing written. Returns the rows
+    written."""
+    rows = [(r["model_key"], r["connection_key"], deployment_state(r.get("ok"), r.get("error_class")),
+             None if r.get("ok") else _masked(r.get("error"), 300))
+            for r in results
+            if r.get("probe") != "geocode" and r.get("error_class") != "unavailable" and r.get("ok") is not None]
+    if not rows:
+        return 0
+    try:
+        async with pool.acquire() as db:
+            await db.executemany(_DEPLOYMENT_STATE_SQL, rows)
+    except Exception as e:  # noqa: BLE001 — the outcome is in the job result either way
+        logger.warning("llm_probe_deployment_state_failed", error=str(e)[:200])
+        return 0
+    return len(rows)
+
+
+def matrix(results: list[dict]) -> list[dict]:
+    """AA-1026 (S267): the availability matrix of a live run, one line per call: model, connection, wire id, ok, error
+    class, the first ``MATRIX_ERROR_CHARS`` characters of the error (ARNs / account IDs masked)."""
+    return [{"model_key": r.get("model_key"), "connection_key": r.get("connection_key"), "wire_id": r.get("wire_id"),
+             "ok": r.get("ok"), "error_class": r.get("error_class"),
+             "error": _masked(r.get("error"), MATRIX_ERROR_CHARS)}
+            for r in results if r.get("probe") != "geocode"]
+
+
+async def coverage_summary(pool) -> Optional[dict]:
+    """AA-1026 (S267): the stage coverage after a live run (``stage_coverage.read``), short form. None when it cannot
+    be read (never fails the probe)."""
+    from shared.llm_client import stage_coverage
+
+    try:
+        async with pool.acquire() as db:
+            report = await stage_coverage.read(db)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_probe_stage_coverage_failed", error=str(e)[:200])
+        return None
+    return stage_coverage.summary(report)
+
+
+def _embeddable(conn, deployments: list) -> list:
+    """(deployment, catalog model) pairs of ``conn`` the embedding probe can call: Bedrock, an enabled catalog row with
+    api_style embed, a Cohere request shape (the only one embed.py builds)."""
+    from shared.llm_client.catalog import get_model_sync
+    from shared.llm_client.embed import EMBED_VENDORS
+
+    if conn.kind != "bedrock":
+        return []
+    out = []
+    for d in deployments:
+        model = get_model_sync(d.model_key)
+        # AA-1026: Amazon (Titan V2, the fallback embedding model) has a request shape too (embed.EMBED_VENDORS).
+        if model is not None and model.enabled and model.api_style == "embed" and model.vendor in EMBED_VENDORS:
+            out.append((d, model))
+    return out
+
+
+async def load_geoapify_state(db) -> dict:
+    """Whether the Geoapify probe runs: ``{"skip": why}`` when it must not (switched off, not the configured geocoder,
+    no credit left today), else ``{"credits_left": n}``. Never raises (an unreadable row = the row's defaults)."""
+    from services.places import geocoder
+    from services.places import store as place_store
+
+    if geocoder.provider_name() != GEOAPIFY_KEY:
+        return {"skip": f"not the configured geocoder ({geocoder.provider_name()})"}
+    limit = await geocoder.refresh_daily_credit_limit(db)
+    if geocoder.connection_switched_off():
+        return {"skip": "disabled"}
+    try:
+        used = await place_store.geocoder_requests_today(db, GEOAPIFY_KEY)
+    except Exception as e:  # noqa: BLE001 — the guard cannot be read: do not spend
+        return {"skip": f"credit count unreadable ({type(e).__name__})"}
+    if used >= limit:
+        return {"skip": f"daily credit limit reached ({used} of {limit})"}
+    return {"credits_left": limit - used, "credits_used_today": used, "daily_credit_limit": limit}
 
 
 async def load_plan(pool) -> dict:
@@ -106,7 +323,8 @@ async def load_plan(pool) -> dict:
     async with pool.acquire() as db:
         conns = await conn_registry.fetch_connections(db)
         deps = await dep_registry.fetch_deployments(db)
-    return await asyncio.to_thread(build_plan, conns, deps, svc._testable)
+        geo = await load_geoapify_state(db)
+    return await asyncio.to_thread(build_plan, conns, deps, svc._testable, _embeddable, geo)
 
 
 # AA-1018 part 2: the probe stamps each connection it probed (migration 322 column; cis_app has UPDATE on it). The
@@ -126,25 +344,158 @@ async def stamp_probed(pool, connection_keys: list[str]) -> None:
         logger.warning("llm_probe_stamp_failed", error=str(e)[:200])
 
 
-async def run_probes(pool, plan: dict, *, test=None) -> list[dict]:
-    """One ``test_connection`` per planned deployment, sequential (a few calls; no burst on one account). AA-1018
-    part 2: then ``last_probe_at`` on every connection a probe reached (started, whatever its outcome)."""
+def _bedrock_provider(conn) -> str:
+    return "bedrock-native" if conn.auth_mode == "task_role" else "bedrock-satellite"
+
+
+async def _audit(pool, connection_key: str, details: dict) -> None:
+    async with pool.acquire() as db:
+        await db.execute(
+            "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
+            "VALUES ($1, $2, $3, $4, $5::jsonb)",
+            ACTOR, "llm_connection_tested", "llm_provider_connection", connection_key, json.dumps(details))
+
+
+async def probe_embedding(pool, connection_key: str, model_key: str, wire_id: str) -> dict:
+    """AA-642 (S263 L2, B2): one embedding call on one deployment (``embed.probe``), its llm_call_log row (answered:
+    its cost; refused / failed: 0 USD) and its audit row. A provider failure is the result, not an exception."""
+    from api.services import llm_connections as svc
+    from shared.llm_client import breaker, embed
+    from shared.llm_client import connections as conn_registry
+    from shared.llm_client.call_log import billed_fields, gateway_failure_row, record_call_with_pool
+    from shared.llm_client.catalog import get_model_sync
+    from shared.llm_client.errors import classify
+
+    async with pool.acquire() as db:
+        conn = (await conn_registry.fetch_connections(db)).get(connection_key)
+    model = await asyncio.to_thread(get_model_sync, model_key)
+    if conn is None or model is None:
+        raise LookupError(f"no embedding deployment {model_key!r} on {connection_key!r}")
+    started = time.monotonic()
+    out = {"connection_key": connection_key, "model_key": model_key, "probe": "embed", "wire_id": wire_id}
+    signal = {"connection_test": connection_key, "actor": ACTOR, "probe": "embed"}
+    try:
+        resp = await asyncio.to_thread(embed.probe, model, conn, wire_id, [EMBED_PROBE_TEXT])
+    except Exception as e:  # noqa: BLE001 — a failed provider call is the probe's answer
+        cls = breaker.failure_class(e)
+        latency = int((time.monotonic() - started) * 1000)
+        out.update(ok=False, error_class=cls, error=f"{type(e).__name__}: {e}"[:300], cost_usd=0.0, latency_ms=latency)
+        ledger_class = classify(e)
+        row = gateway_failure_row(
+            stage=svc.TEST_STAGE, role="embed", model=model_key,
+            # AA-1025 H1a: 'disabled' = the app's AI is off in its app profile (nothing was sent)
+            status="refused" if ledger_class in ("access_denied", "quota_exhausted", "throttled", "disabled")
+            else "error",
+            error_class=ledger_class, error=out["error"], provider=_bedrock_provider(conn),
+            connection_key=connection_key, latency_ms=latency, attempt_no=1, deployment_wire_id=wire_id,
+            quality_signal_extra=signal)       # AA-642 A9: one attempt, numbered like every gateway attempt row
+        await record_call_with_pool(pool, **row)
+    else:
+        out.update(ok=True, error_class=None, error=None, cost_usd=round(resp.cost_usd, 6),
+                   tokens_in=resp.input_tokens, latency_ms=int((time.monotonic() - started) * 1000))
+        await record_call_with_pool(
+            pool, stage=svc.TEST_STAGE, role="embed", model=resp.model_used, tokens_in=resp.input_tokens,
+            tokens_out=0, cost_usd=resp.cost_usd, quality_signal={**signal, "tokens_estimated": resp.tokens_estimated},
+            account=connection_key, fallback_used=False, provider=_bedrock_provider(conn), **billed_fields(resp))
+    await _audit(pool, connection_key, {k: out.get(k) for k in ("model_key", "probe", "ok", "error_class", "cost_usd",
+                                                                 "latency_ms")})
+    return out
+
+
+async def probe_geoapify(pool, job_id: Optional[str] = None) -> dict:
+    """AA-642 (S263 L2, B2): ONE Geoapify geocode search (free plan credit), under the Geoapify lock (a place job that
+    holds it is not disturbed: the probe is skipped), logged in geo.geocode_call (the daily credit guard counts it),
+    with Geoapify's access_state and last_probe_at. No retry: a 429 / 5xx is the answer."""
+    from api.services import llm_connections as svc
+    from services.places import geocoder
+    from services.places import store as place_store
+    from services.places.geolock import geoapify_lock
+    from shared.llm_client import connections as conn_registry
+
+    out = {"connection_key": GEOAPIFY_KEY, "model_key": GEOAPIFY_PROBE_LABEL, "probe": "geocode", "cost_usd": 0.0}
+    async with geoapify_lock(pool) as held:
+        if not held:
+            return {**out, "ok": None, "skipped": "a place job holds the Geoapify lock", "error_class": None}
+        async with pool.acquire() as db:
+            used = await place_store.geocoder_requests_today(db, GEOAPIFY_KEY)
+            limit = await geocoder.refresh_daily_credit_limit(db)
+        g = geocoder.get_geocoder(GEOAPIFY_KEY, max_retries=0, credits_used_today=used, daily_credit_limit=limit)
+        started = time.monotonic()
+        state = None
+        try:
+            await g.search(*GEOAPIFY_PROBE_QUERY)
+            out.update(ok=True, error_class=None, error=None)
+            state = "ok"
+        except geocoder.GeocoderUnavailable as e:
+            out.update(ok=False, error_class="access_denied" if "HTTP" in str(e) else "unconfigured",
+                       error=str(e)[:300])
+            state = None if conn_registry.switched_off_reason(GEOAPIFY_KEY) in str(e) else out["error_class"]
+        except geocoder.GeocoderError as e:
+            out.update(ok=False, error_class="other", error=str(e)[:300])
+        finally:
+            out["latency_ms"] = int((time.monotonic() - started) * 1000)
+            cost = round(g.requests * g.cost_per_request, 6)
+            try:
+                async with pool.acquire() as db:
+                    await place_store.log_geocode_calls(db, GEOAPIFY_KEY, g.requests, cost, job_id,
+                                                        failed_requests=g.failed_requests, stage=svc.TEST_STAGE,
+                                                        latency_ms=getattr(g, "latency_ms", None))
+            except Exception as e:  # noqa: BLE001 — the credit is spent either way; the job result shows it
+                logger.warning("llm_probe_geocode_log_failed", error=str(e)[:200])
+            await g.aclose()
+        out["requests"], out["cost_usd"] = g.requests, cost
+    await conn_registry.note_provider_access(GEOAPIFY_KEY, state, probed=True)
+    return out
+
+
+async def run_probes(pool, plan: dict, *, test=None, embed_test=None, geo_test=None,
+                     job_id: Optional[str] = None) -> list[dict]:
+    """One ``test_connection`` per planned text deployment, sequential (a few calls; no burst on one account). AA-1018
+    part 2: then ``last_probe_at`` on every connection a probe reached (started, whatever its outcome). AA-642 (S263
+    L2): an embedding probe per planned embedding deployment, and the one Geoapify search."""
     from api.services import llm_connections as svc
 
     test = test or svc.test_connection
+    embed_test = embed_test or probe_embedding
+    geo_test = geo_test or probe_geoapify
     results = []
     reached: list[str] = []
     for p in plan["probes"]:
+        if p.get("probe") == "geocode":
+            try:
+                results.append(await geo_test(pool, job_id))
+            except Exception as e:  # noqa: BLE001 — a probe that cannot even start is a result too
+                results.append({"connection_key": p["connection_key"], "model_key": p["model_key"], "ok": False,
+                                "probe": "geocode", "error_class": "unavailable",
+                                "error": f"{type(e).__name__}: {e}"[:200]})
+            continue
+        if p.get("probe") == "embed":
+            try:
+                results.append(await embed_test(pool, p["connection_key"], p["model_key"], p["wire_id"]))
+                reached.append(p["connection_key"])
+            except Exception as e:  # noqa: BLE001
+                results.append({"connection_key": p["connection_key"], "model_key": p["model_key"], "ok": False,
+                                "probe": "embed", "error_class": "unavailable",
+                                "error": f"{type(e).__name__}: {e}"[:200]})
+            continue
+        candidate = bool(p.get("candidate"))
         try:
-            r = await test(pool, p["connection_key"], model_key=p["model_key"], actor=ACTOR)
-            reached.append(p["connection_key"])
+            # AA-1026 (S267): a candidate is called with a small budget and never counts on the breaker
+            extra = {"count_outcome": False, "max_tokens": CANDIDATE_MAX_TOKENS} if candidate else {}
+            r = await test(pool, p["connection_key"], model_key=p["model_key"], actor=ACTOR, **extra)
+            if not candidate:
+                reached.append(p["connection_key"])
             results.append({"connection_key": p["connection_key"], "model_key": p["model_key"], "ok": bool(r["ok"]),
                             "error_class": r.get("error_class"), "cost_usd": r.get("cost_usd"),
-                            "latency_ms": r.get("latency_ms")})
+                            "latency_ms": r.get("latency_ms"), "wire_id": r.get("wire_id", p.get("wire_id")),
+                            "error": r.get("error"), "reply_usable": r.get("reply_usable"), "probe": "text",
+                            "candidate": candidate})
         except Exception as e:  # noqa: BLE001 — a probe that cannot even start is a result too
             results.append({"connection_key": p["connection_key"], "model_key": p["model_key"], "ok": False,
-                            "error_class": "unavailable", "error": f"{type(e).__name__}: {e}"[:200]})
+                            "error_class": "unavailable", "error": f"{type(e).__name__}: {e}"[:200],
+                            "wire_id": p.get("wire_id"), "probe": "text", "candidate": candidate})
     await stamp_probed(pool, reached)
+    await record_deployment_states(pool, results)
     return results
 
 
@@ -153,10 +504,17 @@ async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     trigger = payload.get("trigger", "manual")
     dry_run = bool(payload.get("dry_run", trigger != "schedule"))
+    mode = payload.get("mode") or MODE_DAILY
+    if mode not in MODES or (mode == MODE_CANDIDATES and trigger == "schedule"):
+        raise NonRetryable(f"unknown probe mode {mode!r} for trigger {trigger!r}")
     if not dry_run and not schedule_enabled():
         raise NonRetryable(f"live probes are off ({SWITCH_ENV} is not on); run a dry run, or switch it on first")
-    plan = await load_plan(ctx.pool)
-    result = {"kind": KIND, "trigger": trigger, "dry_run": dry_run, "switch_on": schedule_enabled(),
+    if mode == MODE_CANDIDATES:
+        plan = await load_candidate_plan(ctx.pool, connection_keys=payload.get("connection_keys") or None,
+                                         model_keys=payload.get("model_keys") or None)
+    else:
+        plan = await load_plan(ctx.pool)
+    result = {"kind": KIND, "trigger": trigger, "mode": mode, "dry_run": dry_run, "switch_on": schedule_enabled(),
               "estimated_usd": plan["estimated_usd"], "unpriced": plan["unpriced"],
               "planned": plan["probes"], "skipped": plan["skipped"], "calls_made": 0}
     if dry_run:
@@ -165,11 +523,13 @@ async def run(ctx: JobContext) -> dict:
                     estimated_usd=plan["estimated_usd"])
         ctx.set_result(result)
         return result
-    results = await run_probes(ctx.pool, plan)
+    results = await run_probes(ctx.pool, plan, job_id=ctx.job_id)
     cost = round(sum(float(r.get("cost_usd") or 0) for r in results), 6)
-    result.update(probed=len(results), ok=sum(1 for r in results if r["ok"]),
-                  failed=sum(1 for r in results if not r["ok"]), results=results, calls_made=len(results),
-                  cost_usd=cost)
+    ran = [r for r in results if not r.get("skipped")]          # AA-642 (S263 L2): a Geoapify probe left to a place job
+    result.update(probed=len(ran), ok=sum(1 for r in ran if r["ok"]),
+                  failed=sum(1 for r in ran if not r["ok"]), results=results, calls_made=len(ran),
+                  cost_usd=cost, matrix=matrix(results),
+                  stage_coverage=await coverage_summary(ctx.pool))      # AA-1026 (S267)
     logger.info("llm_probe_done", job_id=ctx.job_id, probed=result["probed"], ok=result["ok"],
                 failed=result["failed"], cost_usd=cost)
     ctx.set_result(result)
@@ -198,9 +558,16 @@ async def enqueue_daily(pool, now: Optional[datetime] = None) -> tuple[Optional[
     return job_id, created, today
 
 
-async def enqueue_manual(pool, *, dry_run: bool, actor: str) -> tuple[str, bool]:
-    """An admin's run (no idempotency key). A live run needs the switch on (checked here and again in the job)."""
+async def enqueue_manual(pool, *, dry_run: bool, actor: str, mode: str = MODE_DAILY,
+                         connection_keys: Optional[list] = None,
+                         model_keys: Optional[list] = None) -> tuple[str, bool]:
+    """An admin's run (no idempotency key). A live run needs the switch on (checked here and again in the job).
+    AA-1026 (S267): ``mode="candidates"`` is the availability sweep of the disabled deployments (optional filters)."""
+    if mode not in MODES:
+        raise ValueError(f"unknown probe mode {mode!r}")
     if not dry_run and not schedule_enabled():
         raise PermissionError(f"live probes are off ({SWITCH_ENV} is not on)")
-    return await enqueue(pool, KIND, {"trigger": "manual", "dry_run": dry_run, "requested_by": actor[:64]},
-                         created_by=actor[:64])
+    payload = {"trigger": "manual", "dry_run": dry_run, "requested_by": actor[:64]}
+    if mode != MODE_DAILY:
+        payload.update(mode=mode, connection_keys=list(connection_keys or []), model_keys=list(model_keys or []))
+    return await enqueue(pool, KIND, payload, created_by=actor[:64])

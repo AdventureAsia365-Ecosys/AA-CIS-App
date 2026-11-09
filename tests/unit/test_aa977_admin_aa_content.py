@@ -105,7 +105,7 @@ def test_policy_entries():
         assert POLICY[("POST", f"{BASE}/{{content_id}}/{action}")] == MASTER_ADMIN
 
 
-@pytest.mark.parametrize("role", ["content", "reviewer"])
+@pytest.mark.parametrize("role", ["content"])
 @pytest.mark.parametrize("method, path, body, op", WRITES)
 def test_content_team_drafts_but_never_publishes(client, calls, role, method, path, body, op):
     r = _call(client, method, path, body, _h(role))
@@ -137,7 +137,7 @@ def test_viewer_and_machine_never_write(client, calls, method, path, body, op):
 
 @pytest.mark.parametrize("path", [BASE, f"{BASE}/{CID}", f"{BASE}/{CID}/versions/2", f"{BASE}/groups/prep-vietnam"])
 def test_every_staff_role_reads(client, calls, path):
-    for role in ("viewer", "content", "reviewer", "admin"):
+    for role in ("viewer", "content", "admin"):
         assert client.get(path, headers=_h(role)).status_code == 200, (role, path)
 
 

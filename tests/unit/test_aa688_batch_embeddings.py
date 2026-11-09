@@ -4,6 +4,7 @@ pre-pass in precompute_question_landings(), and the A3 job's progress forwarding
 
 Mocked Bedrock/DB only — no real call."""
 import asyncio
+import dataclasses
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,6 +20,7 @@ from services.acp_contract.atom_ranking import land_questions_for_segment, preco
 from services.acp_shared import content_embedding as ce_mod
 from services.acp_shared.content_embedding import MAX_TEXTS_PER_CALL, compute_embeddings
 from shared.llm_client import embed as embed_mod
+from shared.llm_client.embedding_space import BUILTIN_SPACES, COHERE_V4_1536
 from shared.llm_client.role_config import SAFE_DEFAULTS
 
 
@@ -43,11 +45,16 @@ def _client_echoing_batch(fail_calls: set[int] = frozenset()):
     return client
 
 
+# AA-1026: the writer's dimension comes from the column's space; the fake client answers 4 floats per text.
+_FOUR_DIM_SPACE = dataclasses.replace(BUILTIN_SPACES[COHERE_V4_1536], dimension=4)
+
+
 @pytest.fixture
 def gateway_offline():
     with patch.object(embed_mod, "get_stage_config_sync", return_value=SAFE_DEFAULTS["f10_embed"]), \
          patch.object(embed_mod, "get_model_sync", return_value=None), \
          patch.object(ce_mod, "EMBEDDING_DIMENSIONS", None), \
+         patch.object(ce_mod.embedding_space, "space_for", return_value=_FOUR_DIM_SPACE), \
          patch.object(ce_mod, "record_call_sync") as m_log, \
          patch.object(ce_mod, "time") as m_time:
         m_time.monotonic.return_value = 0.0

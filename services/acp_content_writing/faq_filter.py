@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -35,9 +34,13 @@ from typing import Optional, Sequence
 import structlog
 
 from services.acp_content_writing.hygiene import fold, names_place
-from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
+from services.acp_content_writing.quality_gates import (PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope,
+                                                       unanswerable_faq_topics)
+from services.acp_shared.token_budget import (T9_FAQ_FILTER_MAX_TOKENS, ReplyStillCut,
+                                              generate_with_budget_retry)
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -52,7 +55,9 @@ LLM_MAX_QUESTIONS = 30   # = real_questions.CHAIN_MAX: every raw question of one
 SOURCE_MAX = 3000        # chars of the moment's own seed + Facts sent as the source text
 PLACES_MAX = 20
 OUTSIDE_MAX = 30
-MAX_TOKENS = 3000        # ~45 output tokens per question x 30 + the JSON envelope
+# ~45 output tokens per question x 30 + the JSON envelope; AA-741 (S270): 3000 -> 6000, the S270 ledger had this
+# stage cut at 3000 on haiku-5-5 (services/acp_shared/token_budget.py).
+MAX_TOKENS = T9_FAQ_FILTER_MAX_TOKENS
 TIMEOUT_S = 60.0         # the whole step; on timeout the writer gets the deterministic list
 
 KEEP, DROP = "KEEP", "DROP"
@@ -78,6 +83,11 @@ def faq_filter_mode() -> str:
 # near a site (sensitive_no_travel_use), country trivia that answers with another place (off_scope_other_place).
 # Its examples are NOT questions of the 200-question labelled set (keep it that way, or the re-measure on that
 # set stops being a fair test). Kept short on purpose: the system prompt is most of the input tokens.
+# AA-1047 (S272 review 2): the KEEP list below is intentionally broader than the writing policy — it keeps practical
+# questions on money, weather / best season and booking ahead, which writing_policy.yaml faq.topics_need_source says
+# need a source line. The code post-filter owns that rule (`policy_dropped` in select_faq_questions, through
+# quality_gates.unanswerable_faq_topics, the same list the FAQ dropper reads); the prompt only classifies relevance.
+# Rendering the policy topics here would move this stage's prompt_version and the measured S247 calibration.
 SYSTEM_PROMPT = """You decide which real search questions (Google "People Also Ask") may appear in the \
 customer-facing FAQ of one travel blog post. The post covers ONE scope: a moment, a few days of a trip, or a tour. \
 You get the scope (what the post covers, its places, the trip's other places that are NOT in this post, and the \
@@ -219,16 +229,16 @@ def build_user_prompt(scope: FaqScope, questions: Sequence[str]) -> str:
 
 
 def parse_verdicts(content: str, n: int) -> list[dict]:
-    """One verdict per question 1..n, or FaqFilterReplyError. An unknown reason code reads as 'other', an
-    unknown confidence as 'low'; a missing answer or label is an error (never guessed)."""
-    m = re.search(r"\{.*\}", (content or "").strip(), re.S)
-    if not m:
-        raise FaqFilterReplyError("no JSON object in the reply")
+    """One verdict per question 1..n, or FaqFilterReplyError. The reply's first complete JSON value is read (prose
+    or a fence before it and any text after it are ignored): the {"items": [...]} object the prompt asks for, or the
+    bare items list (AA-1026: both acc2 models answered with the list alone, which the old first-"{"-to-last-"}"
+    slice read as one item followed by "Extra data"). Each item is checked as before: an unknown reason code reads
+    as 'other', an unknown confidence as 'low'; a missing answer or label is an error (never guessed)."""
     try:
-        obj = json.loads(m.group(0))
-    except json.JSONDecodeError as e:
-        raise FaqFilterReplyError(f"invalid JSON: {e}") from e
-    items = obj.get("items") if isinstance(obj, dict) else None
+        obj = first_json_value(content, kinds=(dict, list))
+    except JsonReplyError as e:
+        raise FaqFilterReplyError(str(e)) from e
+    items = obj.get("items") if isinstance(obj, dict) else obj
     if not isinstance(items, list):
         raise FaqFilterReplyError("no items list")
     by_n: dict[int, dict] = {}
@@ -270,18 +280,25 @@ def llm_filter_questions(questions, scope: FaqScope, *, out_of_scope=(), limit: 
         return FilterOutcome(kept=[])
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=build_user_prompt(scope, cands),
                          max_tokens=MAX_TOKENS, temperature=0.0, stage=stage, model_tier=model_tier)
-    resp = (client or LLMClient()).generate(request)
     ids = {"tenant_id": tenant_id, "content_piece_id": content_piece_id,
            "angle_gate_request_id": angle_gate_request_id}
     signal = {"issue": "AA-779", "n_questions": len(cands), **(quality_signal or {})}
+
+    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling (by the gateway since S271
+    # W0, which writes the cut row), never a third time.
+    reply = generate_with_budget_retry((client or LLMClient()).generate, request)
+    resp = reply.resp
+    signal |= reply.signal()
     try:
+        if reply.still_cut:
+            raise FaqFilterReplyError(str(ReplyStillCut(stage, reply.max_tokens, reply.retry_max_tokens)))
         verdicts = parse_verdicts(resp.content, len(cands))
         rows = [{"q": q, **v} for q, v in zip(cands, verdicts)]
         model_keep = [r["q"] for r in rows if r["label"] == KEEP]
         gazetteer_dropped = [q for q in model_keep if any(names_place(q, g) for g in out_of_scope or ())]
         kept = [q for q in model_keep if q not in gazetteer_dropped][:limit]
         drop_reasons = dict(collections.Counter(v["reason_code"] for v in verdicts if v["label"] == DROP))
-        cost = float(resp.cost_usd or 0.0)
+        cost = reply.cost_usd
     except Exception as e:
         # AA-927: the reply was billed; its billed_unusable row (no ok-rate key) before the caller falls back.
         record_unusable_sync(resp, stage=stage, role=role, error=e, quality_signal_extra=signal, **ids)
@@ -323,7 +340,12 @@ async def select_faq_questions(questions, *, own_seed: str, facts_text: Optional
         logger.warning("t9_faq_filter_fallback", mode=mode, error=f"{type(e).__name__}: {str(e)[:200]}",
                        request_id=str(request_id) if request_id else None)
         return deterministic, record | {"fallback": True, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    # AA-1047 (writing policy faq.topics_need_source): a question the model keeps on a topic that needs a source line
+    # the moment's own seed and Facts do not have is dropped here, as paa_for_scope and drop_unanswerable_faq drop it
+    # (before, the writer answered it and the dropper then removed the pair, starving F16_faq).
+    policy_dropped = [q for q in outcome.kept if unanswerable_faq_topics(q, own_seed, facts_text)]
+    kept = [q for q in outcome.kept if q not in policy_dropped]
     record |= {"fallback": False, "model": outcome.model, "cost_usd": round(outcome.cost_usd, 6),
                "llm_kept": outcome.kept, "gazetteer_dropped": outcome.gazetteer_dropped,
-               "verdicts": outcome.verdicts}
-    return (outcome.kept if mode == MODE_ON else deterministic), record
+               "policy_dropped": policy_dropped, "verdicts": outcome.verdicts}
+    return (kept if mode == MODE_ON else deterministic), record

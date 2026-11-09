@@ -17,16 +17,17 @@ import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from api.core.aa544_tenant_pool import BRAND_IDENTITY_FLAG, acquire_scoped_conn
 from api.core.error_ref import log_exception_ref, public_error
+from api.core.model_tier import refuse_model_tier
 from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Awaitable, Callable, Optional, List, Literal
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
-from api.routers.v1_pipeline import _rewrite_tour
+from api.routers.v1_pipeline import ReviewApproveBody, _rewrite_tour
 from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
@@ -36,6 +37,9 @@ from shared.tour_liveness import (
     source_state,
 )
 from services.quality.registry import threshold
+from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
+from services.quality import lineage as _lineage  # AA-1052 W6 (writer-time lineage stamp)
+from services.quality import final_contract_store as _fc_store  # AA-1047 W1
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -375,6 +379,10 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
     # metadata.judge.brand_fit is report-only (it did not gate the version) — the per-wave report reads both.
     if result.get("writer_version"):
         metadata["writer_version"] = result["writer_version"]
+    # S271 W0 (AA-900 l16): "hitl" = the draft left through the hitl exit (retries used up); since S271 that exit runs
+    # the same checks (brand audit, grounding, day guard, degraded hold). Absent = the normal exit, or an older row.
+    if result.get("exit_path"):
+        metadata["exit_path"] = result["exit_path"]
     # AA-919 (WM-18 / WM-20): the writing-memory release the v2 writer wrote this version with (ids and numbers);
     # absent when memory is off for A1 or the v1 writer wrote it (no hook there).
     if result.get("writing_release"):
@@ -400,6 +408,20 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
             ],
         }
     return metadata
+
+
+def _final_contract_at_store(result: dict, generated: dict, status: str) -> Optional[dict]:
+    """AA-1047 W1: the run's final-contract record as the version INSERT stores it (``metadata.final_contract``):
+    the current gate's status and the stored text's sha stamped on it, one ``final_contract`` log event. None when
+    the run has no record (a T2 result, a graph that failed before its last node)."""
+    record = result.get("final_contract")
+    if not isinstance(record, dict):
+        return None
+    stored = {**generated, "name": (generated.get("name") or "")[:500],
+              "subtitle": (generated.get("subtitle") or "")[:500]}
+    out = _fcon.stamp_stored(record, _fcon.tour_text_sha(stored), actual=status)
+    _fcon.log_record(out, tour_id=result.get("tour_id"))
+    return out
 
 
 def _extract_judge_score(metadata):
@@ -429,10 +451,10 @@ class TourRunRequest(BaseModel):
     validation_feedback: list = []
     seo_mode: str = "standard"
     rewrite_language: str = "en-US"
-    # AA-518: was "haiku" — None now means "no explicit per-request choice, defer to the admin's
-    # s1_generate stage config" (LLMClient.generate()'s own new fallback chain). An explicit
-    # value (including AA-237's "sonnet" auto-upgrade re-run below) still wins, unchanged.
-    model_tier: Optional[str] = None
+    # AA-1024 A2 (ADR 0009 decision 5): no model_tier. The run uses the s1_generate stage route; a body that sends a
+    # model_tier value gets a 422 (api/core/model_tier.py). The AA-237 / AA-736 one-shot "sonnet" re-run below is
+    # internal (_sonnet_upgrade), not a request field. A queued job payload that still carries the key is filtered by
+    # s1_rewrite_job (only model_fields are read).
     subtitle_focus: str = "standard"
     brand_rules_version: Optional[int] = None
     brand_name: Optional[str] = None
@@ -442,6 +464,11 @@ class TourRunRequest(BaseModel):
     # Not part of the job payload.
     review_id: Optional[str] = None
     reason_code: Optional[ReasonCode] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):          # AA-1024 A2 (api/core/model_tier.py)
+        return refuse_model_tier(data)
 
 
 class UploadUrlRequest(BaseModel):
@@ -460,11 +487,15 @@ class IngestS3Request(BaseModel):
     s3_key: str
     bucket: str = ""
     seo_mode: str = "dataforseo"
-    model_tier: Optional[str] = None  # AA-518 — see RewriteRequest's own comment above
     subtitle_focus: str = "standard"
     dry_run: bool = False
     tenant_id: str = "00000000-0000-0000-0000-000000000001"
     max_tours: int = 500
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):          # AA-1024 A2: the route picks the model
+        return refuse_model_tier(data)
 
 
 class BrandIdentityUpdate(BaseModel):
@@ -527,6 +558,23 @@ async def _resolve_brand_rule(conn, tenant_uuid, brand_identity_id, brand_name):
         " LIMIT 1",
         tenant_uuid,
     )
+
+
+async def _stamp_fact_sheet(conn, row, tenant_uuid, version_id) -> Optional[str]:
+    """AA-1047 — store the S1 FactSheet of `row` (the raw_tours row) and set generated_content.fs_id; the fs_id or
+    None (switched off, or the best-effort write failed)."""
+    from services.quality import factsheet_store
+    if not factsheet_store.enabled() or row is None:
+        return None
+    try:
+        fs_id = await factsheet_store.save_tour_sheet(conn, row, tenant_id=tenant_uuid, workflow="s1",
+                                                      tour_id=row.get("tour_id"))
+        if fs_id:
+            await factsheet_store.stamp_generated_content(conn, version_id, fs_id)
+        return fs_id
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the rewrite
+        logger.warning("s1_factsheet_store_failed", version_id=str(version_id), error=str(e)[:200])
+        return None
 
 
 async def _version_of_job(conn, tour_id: str, job_id: str) -> Optional[str]:
@@ -743,7 +791,6 @@ async def _execute_run_tour(
                 tour, idx=0, total=1,
                 brand_rules=brand_rules,
                 seo=seo_data,
-                model_tier=req.model_tier,
                 subtitle_focus=req.subtitle_focus,
                 seo_mode=effective_seo_mode,
                 on_stage=on_stage,
@@ -835,6 +882,15 @@ async def _execute_run_tour(
                 # AA-993 G2: ties the version to its job, so a resume finds it even when the release fell between the
                 # INSERT and its checkpoint write.
                 _metadata[_ckpt.JOB_MARKER_KEY] = checkpoint.job_id
+            # AA-1047 W1 (root ADR 0020 invariant 4): the graph's REPORT-mode final contract, with the status the
+            # gate above gave and the sha of the text stored below (stored == gated, else POST_GATE_EDIT).
+            _fc_record = _final_contract_at_store(result, generated, status)
+            if _fc_record is not None:
+                _metadata["final_contract"] = _fc_record
+                _metadata["final_contract_log"] = [_fcon.compact(_fc_record)]
+            # AA-1052 W6: the writer-time lineage (policy_sha, route version), next to the contract; a later exit
+            # (re-validation, human edit, approve, publish) replaces only metadata.final_contract, never this key.
+            _metadata[_lineage.KEY] = _lineage.writer_lineage(_fc_record)
             metadata_val = json.dumps(_metadata, default=str)
             _itin = generated.get("itineraries", "")
             if not isinstance(_itin, str):
@@ -885,7 +941,7 @@ async def _execute_run_tour(
                     og_tags_val,
                     metadata_val,
                     brand_rule_version,
-                    req.model_tier,                          # AA-224: requested_tier
+                    None,                                    # AA-224 requested_tier; AA-1024 A2: never per request
                     bool(result.get("fallback_used", False)),  # AA-224: fallback_used
                     # AA-397: satellite_used (bool) giữ nguyên cho backward-compat, derive từ
                     # satellite_account is not None thay vì đọc field bool cũ (đã xoá khỏi LLMResponse).
@@ -908,6 +964,9 @@ async def _execute_run_tour(
                 raise
             if version_id:
                 await _ckpt.mark(checkpoint, "content_inserted", version_id=str(version_id))
+                # AA-1047 (Quality W1): the FactSheet of the raw source the writer read (tour builder;
+                # acp_shared.fact_sheet, CIS 386), stamped on the version. Best-effort: a failure changes nothing.
+                await _stamp_fact_sheet(conn, row, tenant_uuid, version_id)
 
         # AA-993 G2: one score row per version — quality_scores has no unique key on generated_content_id (the old
         # ON CONFLICT DO NOTHING never fired), so the insert skips a version that already has its row.
@@ -987,7 +1046,7 @@ async def _execute_run_tour(
         if _route and status == "approved":
             from services.export.handler import process_export
             try:
-                await process_export(str(version_id))
+                await process_export(str(version_id), contract_exit="auto_publish")
             except SourceNotLiveError as _dead:
                 # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
                 # (no Sentry event): process_export already moved the version approved → hitl; file the
@@ -1352,6 +1411,13 @@ async def _revalidate_tour(content_id: str) -> dict:
             await conn.execute(
                 "UPDATE silver_aa_internal.generated_content SET revalidate_passed = $1 WHERE id = $2::uuid",
                 passed, content_id)
+        # AA-1047 W1: the re-validation graph's REPORT-mode final contract (its last node), with the gate's outcome
+        # (passed = approvable) and the stored text's sha; best-effort, never fails the re-validation.
+        _reval_fc = result.get("final_contract")
+        if isinstance(_reval_fc, dict):
+            _reval_fc = _fcon.stamp_stored(_reval_fc, _fcon.tour_text_sha(initial_state.get("generated") or {}),
+                                         actual="approved" if passed else "hitl")
+            await _fc_store.attach_s1(conn, content_id, _reval_fc)
 
         published_repointed = _rowcount(repointed)
         logger.info("revalidate_tour_done", content_id=content_id,
@@ -1413,9 +1479,9 @@ async def run_tour_async(req: TourRunRequest, request: Request, x_admin_secret: 
     # tenant for every LLM log row and Jev decision of the job; the slug made each llm_call_log write fail.
     if str(payload.get("tenant_id") or "").strip().lower() == "aa_internal":
         payload["tenant_id"] = _MASTER_TENANT_ID
-    # Dedup key = the same triple find_active_duplicate used (tour + model_tier + batch), so a
-    # double-click or an overlapping wave reuses the in-flight job instead of writing a 2nd version.
-    idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('model_tier')}:{payload.get('batch_id')}"
+    # Dedup key = tour + batch (AA-1024 A2: model_tier left the request, so it left the key), so a double-click or an
+    # overlapping wave reuses the in-flight job instead of writing a 2nd version.
+    idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('batch_id')}"
     job_id, created = await enqueue(
         request.app.state.pool, "s1_rewrite", payload,
         idempotency_key=idem, created_by=f"admin:{x_admin_user_id or 'unknown'}")
@@ -1505,8 +1571,13 @@ class S1BatchSubmitRequest(BaseModel):
     # satellite account owning Batch perms (AA-399); AA-998: acc3 only, anything else is a 422
     account: Literal["acc3"] = "acc3"
     seo_mode: str = "standard"
-    model_tier: Optional[str] = "haiku"
     enforce_min: bool = True                   # reject sub-minimum batches (Bedrock rejects them)
+
+    # AA-1024 A2: no model_tier (it was "haiku"): a tour the batch could not write falls back to the s1_generate route.
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):
+        return refuse_model_tier(data)
 
 
 @router.post("/s1-batch/submit")
@@ -1520,6 +1591,15 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
     persisted by the existing _execute_run_tour path (gate misses fall to the on-demand retry loop).
     The submit step stays in the request (it returns the ARN); the long poll+ingest is the job."""
     verify_admin_secret(x_admin_secret)
+    # AA-642 (D4): 503 with the reason while the Batch kill switch is closed (the default; bedrock_batch.py).
+    from shared.llm_client.bedrock_batch import batch_submit_closed_reason
+    # S271 W0 (root ADR 0020): refused while the S1 writer v2 is live (the batch would seed v1 drafts), whatever the
+    # kill switch says.
+    from services.content_generation.s1_batch import writer_v2_refusal
+    if (refused := writer_v2_refusal()) is not None:
+        raise HTTPException(status_code=409, detail=refused)
+    if (closed := batch_submit_closed_reason()) is not None:
+        raise HTTPException(status_code=503, detail=closed)
     from fastapi.responses import JSONResponse
     from shared.jobs.registry import enqueue
     from services.content_generation.s1_batch import submit_s1_batch
@@ -1536,7 +1616,7 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
         request.app.state.pool, "s1_batch_ingest",
         {"job_arn": submit["job_arn"], "output_uri": submit["output_uri"],
          "account": submit["account"], "tour_ids": submit["tour_ids"],
-         "batch_id": req.batch_id, "seo_mode": req.seo_mode, "model_tier": req.model_tier,
+         "batch_id": req.batch_id, "seo_mode": req.seo_mode,
          "record_count": submit["record_count"]},
         idempotency_key=f"s1_batch_ingest:{submit['job_arn']}",
         created_by="admin:s1-batch")
@@ -2527,7 +2607,7 @@ def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
     from services.content_generation.forbidden_words import has_word
     from services.content_generation.graph import _CODE_FIELD_MAP, _VALIDATE_FORBIDDEN
     from services.content_generation.seo_meta_utils import (
-        SEO_META_MIN, SEO_META_MAX, SEO_META_FORBIDDEN, meta_complete_sentence,
+        SEO_META_MIN, SEO_META_MAX, SEO_META_FORBIDDEN, SEO_TITLE_MAX, meta_complete_sentence,
     )
 
     seen = set(codes or [])
@@ -2559,8 +2639,8 @@ def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
         add("seo_meta", "META_TOO_SHORT", f"meta {len(meta)}<{SEO_META_MIN}")
     if "SEO_META_TOO_LONG" in seen and len(meta) > SEO_META_MAX:
         add("seo_meta", "SEO_META_TOO_LONG", f"meta {len(meta)}>{SEO_META_MAX}")
-    if "SEO_TITLE_TOO_LONG" in seen and len(title) > 60:
-        add("seo_title", "SEO_TITLE_TOO_LONG", f"title {len(title)}>60")
+    if "SEO_TITLE_TOO_LONG" in seen and len(title) > SEO_TITLE_MAX:
+        add("seo_title", "SEO_TITLE_TOO_LONG", f"title {len(title)}>{SEO_TITLE_MAX}")
     if "META_INCOMPLETE_SENTENCE" in seen and meta.strip() and not meta_complete_sentence(meta):
         add("seo_meta", "META_INCOMPLETE_SENTENCE", "meta does not end in a complete sentence")
     if "BRAND_SEO_META_VIOLATION" in seen:
@@ -2871,11 +2951,13 @@ async def admin_review_queue(
 async def admin_approve_review(
     review_id: str,
     request: Request,
+    body: Optional[ReviewApproveBody] = None,
     x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     from api.routers.v1_pipeline import approve_review
-    result = await approve_review(review_id=review_id, request=request, tenant=None)
+    # S271 W0: the body (optional) carries an override reason for an unedited version the publish checks refuse.
+    result = await approve_review(review_id=review_id, request=request, tenant=None, body=body)
     # AA-756 — best-effort: after the approve commits, stamp the ground truth for grounding. Every
     # grounded sentence of the approved master version is now human-confirmed as supported, so
     # a1_claim_supported truth=True for each. Never block or fail the approve on this.
@@ -3159,7 +3241,7 @@ async def promote_tour_version(
     from services.tour_lifecycle import LifecycleError
     try:
         exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
-                                        atomize_created_by="admin:promote_version")
+                                        atomize_created_by="admin:promote_version", contract_exit="promote")
     except SourceNotLiveError as e:   # the source was retired between the check and the (locked) publish
         raise HTTPException(status_code=409, detail=source_not_live_message(e.state, "promote this version"),
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})
@@ -4238,6 +4320,10 @@ async def update_generated_content_fields(
             )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
+    # AA-1047 W1: the edited text through the REPORT-mode final contract (it needs a re-validation before an approve;
+    # recorded, never blocks). Best-effort: its own connection, after the edit committed.
+    async with pool.acquire() as conn:
+        await _fc_store.record_s1_exit(conn, content_id, "human_edit")
     return {"content_id": content_id, "updated": fields, "human_edited": True,
             "revalidate_required": True}
 
@@ -4955,6 +5041,14 @@ async def get_brand(brand_name: str, request: Request, x_admin_secret: str = Hea
     }
 
 
+async def _wm_reverify_after_brand_save(pool, what: str) -> None:
+    """AA-900 W0: the AA house style (tenant_brand_rules / tenant_seo_config of the AA master tenant) is part of the
+    A1 releases' config_fp (brand_config): scan the writing-memory releases at once after a save (own transaction,
+    never fails the save). Other tenants' saves are caught by the same scan for their tenant releases."""
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(pool, actor=f"brand_save:{what}"[:128])
+
+
 @router.post("/brands")
 async def create_brand(
     body: BrandCreateRequest,
@@ -4992,6 +5086,7 @@ async def create_brand(
             json.dumps(body.forbidden_words or []),
             body.target_markets or [], body.rewrite_language,
         )
+    await _wm_reverify_after_brand_save(pool, "create")
     return {"status": "created", "brand_name": body.brand_name, "version": row["version"]}
 
 
@@ -5035,6 +5130,7 @@ async def update_brand(
             body_raw.get("rewrite_language", "en"),
             current_ver + 1,
         )
+    await _wm_reverify_after_brand_save(pool, "update")
     return {"status": "updated", "brand_name": brand_name, "version": row["version"]}
 
 
@@ -5065,6 +5161,7 @@ async def activate_brand_version(brand_name: str, request: Request, x_admin_secr
             " WHERE tenant_id=$1 AND COALESCE(brand_name,'default')=$2 AND version=$3",
             tenant_id, brand_name, int(version),
         )
+    await _wm_reverify_after_brand_save(pool, "activate")
     return {"status": "activated", "brand_name": brand_name, "version": version}
 
 
@@ -5081,6 +5178,7 @@ async def delete_brand(brand_name: str, request: Request, x_admin_secret: str = 
         """, tenant_id, brand_name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Brand '{brand_name}' not found")
+    await _wm_reverify_after_brand_save(pool, "delete")
     return {"status": "deleted", "brand_name": brand_name}
 
 
@@ -5335,6 +5433,10 @@ async def update_brand_identity(
         # AA-859 MAIN exception (plan D2): the X-Admin-Secret staff branch (AA master brand).
         async with pool.acquire() as conn, conn.transaction():
             current = await _save_brand_rows(conn, tenant_id, *args, guarded=False)
+            # AA-900 W0: the AA master brand is the A1 releases' config_fp brand_config: scan on this connection.
+            # A tenant save stays off MAIN (AA-859): the worker's hourly reverify tick catches its tenant releases.
+            from services.writing_memory.releases import reverify_scan_in_tx
+            await reverify_scan_in_tx(conn, actor="brand_save:brand_identity")
     out = {"status": "updated", "version": current + 1,
            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
     # AA-819 follow-up (S237): a default CTA that claims reviews or ratings is saved as typed (F19

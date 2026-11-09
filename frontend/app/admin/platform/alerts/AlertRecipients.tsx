@@ -39,6 +39,7 @@ import {
   useT,
   useToast,
   type ColumnDef, PageFrame,
+  Checkbox, Input,
 } from "../../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
@@ -210,7 +211,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
         </p>
         <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
           {t("email")}
-          <input
+          <Input
             type="email"
             autoComplete="off"
             value={email}
@@ -237,7 +238,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
                   {t("use", suggestion)}
                 </Button>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
-                  <input id="alert-keep-typo" type="checkbox" checked={keepTypo} onChange={(e) => setKeepTypo(e.target.checked)} />
+                  <Checkbox id="alert-keep-typo" checked={keepTypo} onChange={(e) => setKeepTypo(e.target.checked)} />
                   {t("keepTyped")}
                 </label>
               </div>
@@ -251,7 +252,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
         )}
         <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
           {t("note")}
-          <input
+          <Input
             type="text"
             value={note}
             onChange={(e) => setNote(e.target.value)}

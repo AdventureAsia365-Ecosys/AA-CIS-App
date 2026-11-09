@@ -97,7 +97,7 @@ def test_rows_read_only_their_declared_sources():
 
 
 def test_every_drill_link_is_an_admin_nav_route():
-    nav = (ROOT / "frontend" / "app" / "_kit" / "adminNav.tsx").read_text(encoding="utf-8")
+    nav = (ROOT / "frontend" / "lib" / "adminIa.ts").read_text(encoding="utf-8")  # AA-1039: the nav model
     hrefs = set(re.findall(r'href: "([^"]+)"', nav))
     for r in reg.ROWS:
         if r.drill is not None:
@@ -105,7 +105,7 @@ def test_every_drill_link_is_an_admin_nav_route():
 
 
 def test_the_page_entry_is_in_the_nav_and_rbac_admin_only():
-    nav = (ROOT / "frontend" / "app" / "_kit" / "adminNav.tsx").read_text(encoding="utf-8")
+    nav = (ROOT / "frontend" / "lib" / "adminIa.ts").read_text(encoding="utf-8")  # AA-1039: the nav model
     rbac = (ROOT / "frontend" / "lib" / "rbac.ts").read_text(encoding="utf-8")
     assert 'href: "/admin/data-coverage"' in nav
     assert re.search(r'\{\s*prefix:\s*"/admin/data-coverage",\s*roles:\s*\["admin"\]\s*\}', rbac)
@@ -595,7 +595,7 @@ def client(monkeypatch):
     return client
 
 
-@pytest.mark.parametrize("role,status", [("admin", 200), ("reviewer", 403), ("content", 403), ("viewer", 403),
+@pytest.mark.parametrize("role,status", [("admin", 200), ("content", 403), ("content", 403), ("viewer", 403),
                                          (None, 403)])
 def test_route_policy(client, role, status):
     headers = {"X-Admin-Secret": _SECRET, "x-admin-user-id": "aa992"}

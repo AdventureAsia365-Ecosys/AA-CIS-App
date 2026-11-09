@@ -22,6 +22,8 @@
                       success (failed after its retries, cancelled) leaves the run failed (on_terminal).
                       R2: a scheduled run of an e-mailed report (OPS-12) queues report_email for its run once it
                       succeeded (services/jobs/report_ops_jobs.py).
+                      AA-900: a scheduled CIS-08 run (content quality funnel) queues quality_funnel_watch for its
+                      run once it succeeded (services/jobs/quality_funnel_watch_job.py: the watchdog alerts).
 
 Both are background kinds (never take the worker's last free slots) and cost $0 (DB reads only).
 """
@@ -33,7 +35,7 @@ from typing import Optional
 
 import structlog
 
-from services.jobs import report_ops_jobs
+from services.jobs import quality_funnel_watch_job, report_ops_jobs
 from services.reports import generate, periods, store
 from services.reports.kpis import COMPUTERS, DayContext, KpiValue, Unavailable
 from services.reports.registry import Report, load
@@ -209,11 +211,20 @@ async def run_report(ctx: JobContext) -> dict:
         except Exception as e:
             email = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
             logger.warning("report_email_enqueue_failed", run_id=run_id, report_id=report.id, error=email["error"])
+    watch = None
+    if run.get("trigger") == "schedule" and report.id in quality_funnel_watch_job.WATCHED_REPORTS:
+        try:        # AA-900: the run is stored; a failed enqueue must not fail it (the snapshot is still served)
+            watch = await quality_funnel_watch_job.enqueue_for_run(ctx.pool, run_id, parent_job_id=ctx.job_id)
+        except Exception as e:
+            watch = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+            logger.warning("quality_funnel_watch_enqueue_failed", run_id=run_id, error=watch["error"])
     result = {"kind": REPORT_KIND, "run_id": run_id, "report_id": report.id,
               "period_start": run["period_start"].isoformat(), "period_end": run["period_end"].isoformat(),
               "summary": out.summary}
     if email is not None:
         result["email"] = email
+    if watch is not None:
+        result["watch"] = watch
     ctx.set_result(result)
     logger.info("report_generated", run_id=run_id, report_id=report.id, summary=out.summary)
     return result

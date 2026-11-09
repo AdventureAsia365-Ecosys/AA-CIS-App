@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
+from _acc2_routes import candidates_off_routes  # noqa: E402
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 M324 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "324_llm_acc2_candidate_models.sql")
@@ -39,7 +40,9 @@ Q0_LINES = """
 
 
 def _run(c):
-    c.execute(open(M324, encoding="utf-8").read())
+    # AA-1026 I6: 331 / 332 end some judge / validate routes on a candidate, which 324's guard refuses on a re-run.
+    with candidates_off_routes(c):
+        c.execute(open(M324, encoding="utf-8").read())
 
 
 def _q0_lines(c) -> set:
@@ -80,7 +83,15 @@ def test_five_enabled_priced_catalog_rows_with_their_family(cur):
         assert r["price_in_per_mtok"] > 0 and r["price_out_per_mtok"] > 0
         assert set(r["bedrock_profile_ids"]) == {"acc2"}
         assert r["bedrock_profile_ids"]["acc2"].startswith("us.")    # an inference profile id, never an ARN
-        assert r["capabilities"] == {}
+        # CIS 333 (AA-1026) records that Llama 4 Scout refuses a forced tool choice (live contract smoke, S263), CIS 337
+        # (AA-1024 I6) the same for Maverick and the structured output mode of both; a test that sets 324's rows aside
+        # re-creates the rows without them, so the keys may be missing here
+        later = ("forced_tool_choice", "structured_output") if key.startswith("llama4-") else ()
+        caps = {k: v for k, v in r["capabilities"].items() if k not in later}
+        assert caps == {}, key
+    for key in ("llama4-scout", "llama4-maverick"):
+        assert rows[key]["capabilities"].get("forced_tool_choice") in (None, False)
+        assert rows[key]["capabilities"].get("structured_output") in (None, "prompt")
     assert rows["kimi-k3"]["supports_temperature"] is False
 
 
@@ -88,7 +99,7 @@ def test_each_model_has_one_enabled_acc2_deployment_on_its_profile(cur):
     cur.execute("SELECT d.model_key, d.connection_key, d.wire_id, d.priority, d.enabled, d.origin, "
                 "c.bedrock_profile_ids ->> 'acc2' AS profile "
                 "FROM shared.llm_model_deployment d JOIN shared.llm_model_catalog c USING (model_key) "
-                "WHERE d.model_key = ANY (%s)", (list(KEYS),))
+                "WHERE d.model_key = ANY (%s) AND d.connection_key = 'acc2'", (list(KEYS),))   # 367: acc3 rows
     rows = cur.fetchall()
     assert sorted(r["model_key"] for r in rows) == sorted(KEYS)
     for r in rows:
@@ -98,10 +109,23 @@ def test_each_model_has_one_enabled_acc2_deployment_on_its_profile(cur):
 
 
 def test_no_route_alias_or_stage_names_a_candidate(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config "
-                "WHERE model_id = ANY (%(k)s) OR fallback_model_ids && %(k)s::text[] OR shadow_model_id = ANY (%(k)s)",
-                {"k": list(KEYS)})
+    """324 routes nothing. Since CIS 331 / 332 (AA-1026 I6) a candidate may END the route of a judge / validate stage,
+    and since 333 it may stand right before the OpenAI API hop that ends one; never a primary, a shadow, a writer's
+    model or an earlier fallback. Since 366 (AA-1026 S267, model first) the OpenAI API hop is GPT-6 Luna's twin and
+    sits right behind GPT-6 Luna, so it may also come before the candidate. (The route without its OpenAI API hop ends
+    on the one candidate.)"""
+    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config r "
+                "CROSS JOIN LATERAL (SELECT array_remove(r.fallback_model_ids, %(v)s) AS g) x "
+                "WHERE r.model_id = ANY (%(k)s) OR r.shadow_model_id = ANY (%(k)s) "
+                "OR (r.fallback_model_ids && %(k)s::text[] AND (r.role NOT IN ('judge', 'validate') "
+                "    OR NOT (x.g[cardinality(x.g)] = ANY (%(k)s)) "
+                "    OR x.g[1:cardinality(x.g) - 1] && %(k)s::text[]))",
+                {"k": list(KEYS), "v": "gpt-6-luna-openai"})
     assert cur.fetchone()["n"] == 0
+    with candidates_off_routes(cur):
+        cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE fallback_model_ids && %s::text[]",
+                    (list(KEYS),))
+        assert cur.fetchone()["n"] == 0                                   # only fallbacks, so the helper clears them
     cur.execute("SELECT count(*) AS n FROM shared.llm_model_alias WHERE model_key = ANY (%s)", (list(KEYS),))
     assert cur.fetchone()["n"] == 0
 
@@ -115,7 +139,9 @@ def test_route_snapshot_gains_exactly_the_ten_candidate_lines(cur):
         without = _q0_lines(cur)
     finally:
         cur.execute("ROLLBACK")
-    added = with_rows - without
+    # CIS 367 (AA-1026) adds disabled acc3 deployments of kimi-k3 / llama4-maverick, which the catalog DELETE above
+    # cascades too: they are 367's lines, not 324's
+    added = {t for t in with_rows - without if not t.startswith("dp|") or t.split("|")[2] != "acc3"}
     assert without <= with_rows
     assert len(added) == 10
     assert {t.split("|")[0] for t in added} == {"ct", "dp"}

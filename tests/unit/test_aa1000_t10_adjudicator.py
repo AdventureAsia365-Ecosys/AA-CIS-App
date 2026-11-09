@@ -431,6 +431,7 @@ def test_regression_guard_ignores_a_tier2_only_result_on_the_merged_ledger():
     assert svc._regression_failures(cur) == set() and svc._regression_failures(prev) == {qr.F1_GROUNDING}
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_a_tier2_finding_new_on_attempt_2_does_not_revert_the_f1_fix(monkeypatch):
     """Attempt 1 fails F1; attempt 2 fixes F1 and tier 2 flags a hype sentence for the first time. The AA-528 guard

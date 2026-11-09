@@ -489,20 +489,21 @@ def _staff(role):
 
 
 def test_admin_write_routes_need_quality_write_which_only_admin_holds():
+    """AA-1035 R2: quality.write also belongs to content_lead and tenant_qa (Tenant QA W)."""
     for key in (("POST", "/admin/facts"), ("PATCH", "/admin/facts/{fact_id}"), ("DELETE", "/admin/facts/{fact_id}")):
         assert staff_authz.POLICY[key] == staff_authz.QUALITY_WRITE
     holders = {r for r, perms in staff_authz.ROLE_PERMS.items() if staff_authz.QUALITY_WRITE in perms}
-    assert holders == {"admin"}
+    assert holders == {"admin", "content_lead", "tenant_qa"}
 
 
-@pytest.mark.parametrize("role", ["admin", "reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", ["admin", "content", "viewer"])
 def test_every_staff_role_lists_platform_facts_only(admin_api, role):
     r = admin_api.get("/admin/facts", headers=_staff(role))
     assert r.status_code == 200, r.text
     assert [f["fact_id"] for f in r.json()["facts"]] == ["fact_platvisa"]     # never a tenant's fact
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 def test_non_admin_staff_cannot_write(admin_api, role):
     body = {"kind": "price", "title": "t", "body": "b", "provenance": "p"}
     assert admin_api.post("/admin/facts", json=body, headers=_staff(role)).status_code == 403

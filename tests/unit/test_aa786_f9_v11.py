@@ -320,6 +320,7 @@ def _failing_gates(**kw):
     return {"passed": False, "gate_ledger": [f9], "first_failure": f9, "flags": []}
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel,expect", [("linkedin", "approved"), ("facebook", "held")])
 async def test_service_linkedin_f9_is_never_held(channel, expect):

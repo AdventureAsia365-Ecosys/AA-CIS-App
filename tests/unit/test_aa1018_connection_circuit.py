@@ -98,6 +98,39 @@ def test_an_answered_call_after_the_refusals_closes_it():
     assert connection_health(rows, "acc3", T0 + timedelta(seconds=30)).last_error_class == QUOTA_EXHAUSTED
 
 
+def test_a_model_refused_since_before_the_last_answer_is_refused_on_its_own():
+    """AA-1026: two models refused since T0 (failed probes keep opened_at), another model answered at T0 + 60 s, both
+    probed and refused again at T0 + 400 s: model-scoped refusals, the connection stays closed."""
+    ok = Health("acc3", "c", last_ok_at=T0 + timedelta(seconds=60))
+    rows = [replace(_row(m, ACCESS_DENIED, at=T0 + timedelta(seconds=400), open_s=600), open_streak=2, opened_at=T0)
+            for m in ("a", "b")]
+    assert connection_health([*rows, ok], "acc3", T0 + timedelta(seconds=400)) is None
+    # a streak that began after the answer still counts
+    fresh = [_row(m, ACCESS_DENIED, at=T0 + timedelta(seconds=400)) for m in ("d", "e")]
+    assert connection_health([*rows, ok, *fresh], "acc3", T0 + timedelta(seconds=400)).consecutive_failures == 2
+
+
+def test_a_failed_probe_keeps_the_streak_start_only_when_asked():
+    first = breaker.after_failure(Health("acc3", "a"), ACCESS_DENIED, "refused", T0)
+    later = T0 + timedelta(seconds=300)
+    kept = breaker.after_failure(first, ACCESS_DENIED, "refused", later, keep_streak_start=True)
+    moved = breaker.after_failure(first, ACCESS_DENIED, "refused", later)
+    assert (kept.open_streak, kept.opened_at, kept.circuit_open_until) == (2, T0, later + timedelta(seconds=600))
+    assert (moved.open_streak, moved.opened_at) == (2, later)                # provider_circuit's reopen alerts
+
+
+@pytest.mark.real_breaker
+def test_the_llm_breaker_keeps_the_streak_start_on_a_failed_probe(monkeypatch):
+    clock = {"now": T0}
+    monkeypatch.setattr(breaker, "_now", lambda: clock["now"])
+    breaker.record_failure("acc3", "gpt-6-luna", ERROR_002)
+    clock["now"] = T0 + timedelta(seconds=301)
+    assert breaker.admit("acc3", "gpt-6-luna") is True                  # the probe
+    breaker.record_failure("acc3", "gpt-6-luna", ERROR_002)
+    h = breaker._get(("acc3", "gpt-6-luna"))
+    assert h.open_streak == 2 and h.opened_at == T0
+
+
 def test_closed_deployment_rows_never_count():
     closed = Health("acc3", "a", last_error_at=T0, last_error_class=ACCESS_DENIED, consecutive_failures=0)
     assert connection_health([closed, _row("b", ACCESS_DENIED)], "acc3", T0) is None
@@ -198,7 +231,11 @@ def test_a_success_closes_the_connection_at_once(alerts):
         breaker.record_failure("acc3", model, ERROR_002)
     breaker.record_success("acc3", "haiku")                             # e.g. the admin's Test connection
     assert breaker.connection_open("acc3") is None
-    assert breaker.is_open("acc3", "gpt-6-luna")                       # the model's own circuit stays open
+    # AA-900 (S271 l11): refusals the account itself may have caused (no answer on the connection since they began)
+    # turn half-open at once, streak kept: the next real call of each model probes it (it used to stay open).
+    h = breaker._get(("acc3", "gpt-6-luna"))
+    assert breaker.state_of(h, breaker._now()) == breaker.HALF_OPEN and h.open_streak == 1
+    assert not breaker.is_open("acc3", "gpt-6-luna")
 
 
 def test_the_switch_off_answers_closed(monkeypatch):

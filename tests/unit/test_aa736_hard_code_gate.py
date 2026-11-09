@@ -100,7 +100,7 @@ def _result(score, model, codes=None):
 
 
 def _req(**over):
-    base = dict(tour_id=FAKE_UUID, batch_id="b-1", tenant_id="aa_internal", model_tier="haiku")
+    base = dict(tour_id=FAKE_UUID, batch_id="b-1", tenant_id="aa_internal")  # AA-1024 A2: no model_tier
     base.update(over)
     return admin_pipeline.TourRunRequest(**base)
 

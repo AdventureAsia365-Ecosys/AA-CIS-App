@@ -9,8 +9,11 @@
 import { LLM_ACCOUNT, VENDOR_CONNECTION_LABELS } from "./awsAccounts.ts";
 
 export type ProviderStatus =
-  | "ok" | "degraded" | "open" | "low" | "cap_reached" | "disabled" | "unknown";
-export type ProviderGroup = "llm" | "decide" | "data";
+  | "ok" | "degraded" | "open" | "low" | "cap_reached" | "disabled" | "unknown"
+  // AA-1025 C1: a source we list but do not log (TripPlanner's Mapbox maps, free tier): never "Need a look"
+  | "untracked";
+/** AA-1025 C1: `guard` = the CRM's Bedrock Guardrails scrub. */
+export type ProviderGroup = "llm" | "decide" | "data" | "guard";
 export type Tone = "neutral" | "accent" | "success" | "warning" | "danger" | "info" | "purple";
 
 export interface Spend {
@@ -42,10 +45,36 @@ export interface Balance {
   usd: number | null;
   /** true for Jev: recorded top-ups minus the logged spend (TypeSafe has no balance API) */
   estimated: boolean;
-  threshold_usd: number;
+  /** null: no low-balance alert is set (AA-1025 B5: a vendor API connection whose low_balance_usd is empty) */
+  threshold_usd: number | null;
   below_threshold: boolean;
   as_of: string | null;
   source: string;
+}
+
+/** AA-1025 B3: the shared circuit of a Jev / DataForSEO / Geoapify connection (backend shared/provider_circuit.view);
+ *  null = no row = closed and never failed. */
+export interface ProviderCircuit {
+  state: "closed" | "open" | "half_open";
+  error_class: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  open_streak: number;
+  opened_at: string | null;
+  open_until: string | null;
+  last_ok_at: string | null;
+  last_error_at: string | null;
+}
+
+/** The line the Health cell shows for a provider circuit, or null when there is nothing to say (closed, no failure). */
+export function circuitLine(c: ProviderCircuit | null | undefined): { kind: "open" | "half_open" | "failing";
+  until: string | null; cls: string | null; failures: number } | null {
+  if (!c) return null;
+  if (c.state === "open" || c.state === "half_open") {
+    return { kind: c.state, until: c.open_until, cls: c.error_class, failures: c.consecutive_failures };
+  }
+  return c.consecutive_failures > 0
+    ? { kind: "failing", until: null, cls: c.error_class, failures: c.consecutive_failures } : null;
 }
 
 export interface Credits {
@@ -63,6 +92,8 @@ export interface ProviderHealth {
   open_models?: number;
   models?: number;
   failing_models?: number;
+  /** AA-900: models with no access yet on an account that answers (expected refusals, not failing). */
+  known_refused_models?: number;
   // Jev (last 24 h of decision_log)
   window_hours?: number;
   calls?: number;
@@ -71,6 +102,22 @@ export interface ProviderHealth {
   mean_latency_ms?: number | null;
   last_at?: string | null;
 }
+
+/** AA-1025 C1: one window of a row's calls (backend ai_gateway.window_stats). `calls` reached the provider; `refused`
+ *  (our own guard or a switch said no, nothing sent) is counted apart and is not in the error rate. */
+export interface WindowStats {
+  calls: number;
+  errors: number;
+  refused: number;
+  /** AA-900: refused rows of a model with no access yet on an account that answers; not in `refused`, not errors. */
+  expected_refused?: number;
+  error_pct: number | null;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+}
+
+export const STATS_WINDOWS = ["24h", "7d"] as const;
+export type StatsWindow = (typeof STATS_WINDOWS)[number];
 
 export interface ProviderRow {
   key: string;
@@ -97,6 +144,27 @@ export interface ProviderRow {
   failure_domain?: string | null;
   access_state?: string | null;
   last_probe_at?: string | null;
+  // AA-1025 C1 (absent on an older API: the cells say "—")
+  /** calls, errors and latency of the last 24 h and 7 d; null when the ledger could not be read */
+  stats?: Record<StatsWindow, WindowStats> | null;
+  latency_p50_ms?: number | null;
+  latency_p95_ms?: number | null;
+  error_pct?: number | null;
+  /** the page may switch this provider on / off (PATCH /admin/llm-connections/{connection_key}) */
+  switchable?: boolean;
+  /** `crm_settings`: switched in the CRM's own settings, not here */
+  switch?: string | null;
+  /** Geoapify: the place pipeline uses it as its geocoder */
+  configured?: boolean;
+  /** Mapbox: where its usage is read (the vendor's console) */
+  usage_url?: string | null;
+  /** AA-1025 B3: the shared circuit of a Jev / DataForSEO / Geoapify row (absent on an older API) */
+  circuit?: ProviderCircuit | null;
+  /** the app whose calls the row counts when it is not CIS (crm, tripplanner) */
+  app?: string | null;
+  /** `utc_days`: the CRM rows, counted from the CRM's daily totals: "24h" is today (UTC) and "7d" the last seven UTC
+   *  days; failed calls include refusals and there is no latency */
+  stats_basis?: string | null;
 }
 
 export interface ProvidersResp {
@@ -132,6 +200,8 @@ export interface TraceEvent {
   /** Ledger v2 status; null on an older row (the outcome still says ok / shadow / fallback / cache / live). */
   status: CallStatus | null;
   error_class: string | null;
+  /** AA-900: a refusal of a model with no access yet (its last probe found none) on an account that answers. */
+  expected_refusal?: boolean;
   job_id: string | null;
   app: string | null;
   detail: Record<string, unknown>;
@@ -170,7 +240,7 @@ export const TRACE_SOURCES: readonly TraceSource[] = ["llm", "jev", "dfs", "geoc
 
 const STATUS_TONE: Record<ProviderStatus, Tone> = {
   ok: "success", degraded: "warning", open: "danger", low: "warning", cap_reached: "danger",
-  disabled: "neutral", unknown: "neutral",
+  disabled: "neutral", unknown: "neutral", untracked: "info",
 };
 
 export function statusTone(status: string | null | undefined): Tone {
@@ -182,21 +252,44 @@ export function statusTone(status: string | null | undefined): Tone {
  *  DataForSEO row is "unknown" because no top-up or balance is known (its reason line says so), and an unreadable
  *  source stays "unknown". */
 export function statusWordKey(row: Pick<ProviderRow, "group" | "status" | "status_reason">): ProviderStatus | "no_recent_calls" {
-  return row.group === "llm" && row.status === "unknown" && !row.status_reason ? "no_recent_calls" : row.status;
+  // AA-1025 C1: the CRM rows (LLM section, Guardrails) read the same way
+  const quiet = (row.group === "llm" || row.group === "guard") && row.status === "unknown" && !row.status_reason;
+  return quiet ? "no_recent_calls" : row.status;
 }
 
 /** Worst first: what needs a look sits at the top of the summary tile. */
 const SEVERITY: Record<ProviderStatus, number> = {
-  open: 0, cap_reached: 1, degraded: 2, low: 3, unknown: 4, ok: 5, disabled: 6,
+  open: 0, cap_reached: 1, degraded: 2, low: 3, unknown: 4, ok: 5, untracked: 6, disabled: 7,
 };
 
 export function severity(status: string | null | undefined): number {
   return SEVERITY[(status ?? "unknown") as ProviderStatus] ?? 4;
 }
 
-/** How many providers need a look (not ok, not switched off). */
+/** How many providers need a look (not ok, not switched off, not a source we do not log). */
 export function needsLook(rows: readonly Pick<ProviderRow, "status">[]): number {
-  return rows.filter((r) => r.status !== "ok" && r.status !== "disabled").length;
+  return rows.filter((r) => r.status !== "ok" && r.status !== "disabled" && r.status !== "untracked").length;
+}
+
+/** A latency as people read it: whole milliseconds below one second, else seconds with one decimal. */
+export function latencyText(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(ms)) return "—";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Tone of an error rate: none or under 5 % fine, under 50 % a warning, else danger (most calls failed). */
+export function errorRateTone(pct: number | null | undefined): Tone {
+  if (pct == null || pct === 0) return "neutral";
+  return pct < 5 ? "neutral" : pct < 50 ? "warning" : "danger";
+}
+
+/** AA-1025 C1: the PATCH of a provider's switch (B1: Jev, DataForSEO and Geoapify read it), or null when the row
+ *  cannot be switched here (an LLM connection uses the Connections view; the CRM rows switch in the CRM). */
+export function providerSwitch(row: Pick<ProviderRow, "switchable" | "connection_key" | "enabled">):
+  { path: string; body: { enabled: boolean } } | null {
+  if (!row.switchable || !row.connection_key) return null;
+  return { path: `/api/admin/llm-connections/${encodeURIComponent(row.connection_key)}`,
+    body: { enabled: !row.enabled } };
 }
 
 /** A USD amount: two decimals from one dollar up, more below (a call costs fractions of a cent). */
@@ -257,9 +350,9 @@ export function traceParam(t: TraceTarget): string {
   return `${t.kind}:${t.id}`;
 }
 
-/** Rows grouped as the page lists them: LLM connections, then Jev, then the data providers. */
+/** Rows grouped as the page lists them: LLM connections, then Jev, then the data providers, then the guards. */
 export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R[]): Record<ProviderGroup, R[]> {
-  const out: Record<ProviderGroup, R[]> = { llm: [], decide: [], data: [] };
+  const out: Record<ProviderGroup, R[]> = { llm: [], decide: [], data: [], guard: [] };
   for (const r of rows) (out[r.group] ?? out.data).push(r);
   return out;
 }
@@ -267,10 +360,13 @@ export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R
 // ── tabs, views and the links of retired tabs (AA-804 UI part 2) ──────────────────────────────────────────────────
 
 /** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
-export const TAB_KEYS = ["providers", "routing", "models", "budgets", "calls", "guide"] as const;
+// AA-1042 (S268): "controls" = Route control (order mode, presets, chain editor, provider order, versions);
+// "trace" = Trace (route trace, route alerts, fallback quality guard).
+export const TAB_KEYS = ["providers", "routing", "controls", "models", "budgets", "calls", "trace", "guide"] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
-/** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger. */
-export const PROVIDER_VIEWS = ["overview", "connections", "jev-credit"] as const;
+/** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger and
+ *  (AA-1025 B5) the credit ledger of the vendor API connections. */
+export const PROVIDER_VIEWS = ["overview", "connections", "jev-credit", "credit"] as const;
 export type ProviderView = (typeof PROVIDER_VIEWS)[number];
 
 export function parseTab(value: string | null | undefined): TabKey {
@@ -293,10 +389,13 @@ export const RETIRED_SETTINGS_TABS: Readonly<Record<string, string>> = {
   models: aiGatewayHref("routing"),
   "jev-credit": aiGatewayHref("providers", "jev-credit"),
 };
-/** The Cost Operations page and its merged "AI & data spend" tab (UI part 3: the LLM, DataForSEO and Jev tabs became
- *  views of one tab). */
-export const COST_OPS_PATH = "/admin/cost-ops";
+/** The Spend page (was Cost Operations at /admin/cost-ops, AA-1039 R6 slice 3: it also holds the "Cost per app" page
+ *  as its By app tab) and its merged "AI & data spend" tab (UI part 3: the LLM, DataForSEO and Jev tabs became views
+ *  of one tab). The old URLs answer 307 here (lib/adminIa.ts ADMIN_ROUTE_MOVES). */
+export const COST_OPS_PATH = "/admin/spend";
 export const SPEND_TAB = "spend";
+/** The By app tab of the Spend page (was /admin/platform/cost). */
+export const SPEND_APPS_TAB = "apps";
 export const SPEND_VIEWS = ["llm", "dfs", "jev"] as const;
 export type SpendView = (typeof SPEND_VIEWS)[number];
 
@@ -386,6 +485,49 @@ export interface CoverageRow {
   hard_stop: boolean | null;
 }
 
+/** AA-1025 A7: a central LLM cap (spend_budget provider "llm", CIS migration 340), checked by the gateway before
+ *  every LLM call of its scope, whatever provider answers. */
+export type CentralScopeKind = "app" | "stage" | "job" | "eval" | "adhoc";
+
+export interface CentralBudgetRow {
+  provider: string;
+  scope: string;
+  scope_kind: CentralScopeKind;
+  /** The app / stage / job kind of the scope (null for eval and adhoc). */
+  target: string | null;
+  per_run_usd: number | null;
+  per_day_usd: number | null;
+  per_month_usd: number | null;
+  hard_stop: boolean;
+  alert_pct: number;
+  updated_at: string | null;
+  updated_by: string | null;
+  updated_by_kind?: ActorKind;
+  updated_by_name?: string | null;
+  /** null when the scope's spend could not be read (state "unknown"). */
+  spent_today_usd: number | null;
+  /** read only when the cap has a month amount */
+  spent_month_usd: number | null;
+  used_pct: number | null;
+  state: BudgetState | "unknown";
+}
+
+/** AA-1025 A7: one CIS call site (a stage) and the central caps whose scope it is in. */
+export interface CallSiteRow {
+  stage: string;
+  role: string | null;
+  /** false: seen in the ledger only (an ad-hoc script, an eval label), no route row */
+  routed: boolean;
+  active: boolean | null;
+  today_usd: number;
+  month_usd: number;
+  calls_7d: number;
+  job_kinds: string[];
+  caps: { scope: string; hard_stop: boolean; state: string }[];
+  capped: boolean;
+  hard: boolean;
+}
+
 export interface BudgetsResp {
   generated_at: string;
   day_start: string;
@@ -398,7 +540,12 @@ export interface BudgetsResp {
     job: SpendBudgetRow[];
     connection: ConnectionBudgetRow[];
     tenant: TenantBudgetRow[];
+    /** AA-1025 A7; absent on an older API, empty before CIS migration 340. */
+    central?: CentralBudgetRow[];
   };
+  central_provider?: string;
+  /** AA-1025 A7: the coverage per call site; absent on an older API. */
+  call_sites?: CallSiteRow[];
   coverage: CoverageRow[];
   spent_today_usd: Record<string, number>;
   errors: { source: string; error: string }[];
@@ -409,7 +556,7 @@ export const BUDGETS_API = "/api/admin/ai-gateway/budgets";
 /** The spend_budget providers (shared/cost_guard.py PROVIDERS) and their product names. */
 export const BUDGET_PROVIDER_LABEL: Readonly<Record<string, string>> = {
   dfs: "DataForSEO", bedrock: "Bedrock", openai: "OpenAI API", jev: "Jev", geocoder: "Geocoder (Geoapify)",
-  anthropic: "Anthropic API", azure_openai: "Azure OpenAI",
+  anthropic: "Anthropic API", azure_openai: "Azure OpenAI", llm: "All LLM providers",
 };
 
 export function budgetProviderLabel(provider: string): string {
@@ -488,6 +635,79 @@ export function budgetPutPath(provider: string, scope: string): string {
   return `/api/admin/budgets/${encodeURIComponent(provider)}/${encodeURIComponent(scope)}`;
 }
 
+// ── AA-1025 A7: central LLM caps (PUT / DELETE /api/admin/budgets/llm/{scope}) ─────────────────────────────────────
+
+export const CENTRAL_PROVIDER = "llm";
+export const CENTRAL_SCOPE_KINDS: readonly CentralScopeKind[] = ["app", "stage", "job", "eval", "adhoc"];
+/** = the backend central_budget.SCOPE_RE and migration 340's CHECK for an llm row. */
+const CENTRAL_SCOPE_RE = /^(?:(?:app|stage|job):[a-z0-9][a-z0-9_.-]{0,99}|eval|adhoc)$/;
+
+/** The scope of a kind and its target (app, stage or job kind; eval and adhoc have none). */
+export function centralScope(kind: CentralScopeKind, target: string): string {
+  return kind === "eval" || kind === "adhoc" ? kind : `${kind}:${target.trim()}`;
+}
+
+export function validCentralScope(scope: string): boolean {
+  return CENTRAL_SCOPE_RE.test(scope);
+}
+
+export interface CentralDraft {
+  kind: CentralScopeKind;
+  target: string;
+  per_run: string;
+  per_day: string;
+  per_month: string;
+  hard_stop: boolean;
+  alert_pct: string;
+}
+
+export interface CentralBody {
+  per_run_usd: number | null;
+  per_day_usd: number | null;
+  per_month_usd: number | null;
+  hard_stop: boolean;
+  alert_pct: number;
+}
+
+export type CentralError = "cap" | "alertPct" | "scope" | "runScope" | "noCap";
+
+/** A new cap starts alert-only (tech lead T-8: Dev caps never stop normal traffic). */
+export function centralDraftOf(r?: Pick<CentralBudgetRow, "scope_kind" | "target" | "per_run_usd" | "per_day_usd"
+  | "per_month_usd" | "hard_stop" | "alert_pct"> | null): CentralDraft {
+  const str = (v: number | null | undefined) => (v == null ? "" : String(v));
+  if (!r) return { kind: "stage", target: "", per_run: "", per_day: "", per_month: "", hard_stop: false, alert_pct: "80" };
+  return { kind: r.scope_kind, target: r.target ?? "", per_run: str(r.per_run_usd), per_day: str(r.per_day_usd),
+    per_month: str(r.per_month_usd), hard_stop: r.hard_stop, alert_pct: String(r.alert_pct ?? 80) };
+}
+
+export function sameCentralDraft(a: CentralDraft, b: CentralDraft): boolean {
+  return a.kind === b.kind && a.target.trim() === b.target.trim() && a.per_run.trim() === b.per_run.trim()
+    && a.per_day.trim() === b.per_day.trim() && a.per_month.trim() === b.per_month.trim()
+    && a.hard_stop === b.hard_stop && a.alert_pct.trim() === b.alert_pct.trim();
+}
+
+/** The scope and PUT body of a central draft (the backend rules: a run cap on a job scope only, at least one
+ *  amount), or the first problem. */
+export function centralBody(d: CentralDraft): { scope?: string; body?: CentralBody; error?: CentralError } {
+  const scope = centralScope(d.kind, d.target);
+  if (!validCentralScope(scope)) return { error: "scope" };
+  const run = cap(d.per_run);
+  const day = cap(d.per_day);
+  const month = cap(d.per_month);
+  if (run === undefined || day === undefined || month === undefined) return { error: "cap" };
+  if (run !== null && d.kind !== "job") return { error: "runScope" };
+  if (run === null && day === null && month === null) return { error: "noCap" };
+  const pct = Number(d.alert_pct.trim());
+  if (!Number.isInteger(pct) || pct < 1 || pct > 100) return { error: "alertPct" };
+  return { scope, body: { per_run_usd: run, per_day_usd: day, per_month_usd: month, hard_stop: d.hard_stop,
+    alert_pct: pct } };
+}
+
+/** The PUT / DELETE path of one central cap. */
+export function centralPath(scope: string): string {
+  return `/api/admin/budgets/${CENTRAL_PROVIDER}/${encodeURIComponent(scope)}`;
+}
+
 // ── calls (GET /api/admin/ai-gateway/calls, UI part 3) ─────────────────────────────────────────────────────────────
 
 export const CALLS_API = "/api/admin/ai-gateway/calls";
@@ -539,10 +759,23 @@ export interface CallFilters {
   stage?: string;
   source?: string;
   window?: string;
+  /** AA-1045: the usage explorer's drill-down — a custom range (ISO with an offset, replaces the window) and the
+   *  explorer's dimensions ("(none)" = rows without a value). */
+  since?: string;
+  until?: string;
+  tenant?: string;
+  model?: string;
+  account?: string;
+  role?: string;
+  error_class?: string;
+  product?: string;
 }
 
 export const CALL_FILTER_KEYS = ["job_id", "tour_id", "app", "provider", "status", "stage", "source",
-  "window"] as const;
+  "window", "since", "until", "tenant", "model", "account", "role", "error_class", "product"] as const;
+/** AA-1045: the Calls filters only the usage explorer's drill-down sets (no select of their own on the tab). */
+export const CALL_DRILL_KEYS = ["since", "until", "tenant", "model", "account", "role", "error_class",
+  "product"] as const;
 
 /** The API path of one page of calls: only the filters that are set, then the cursor. */
 export function callsPath(f: CallFilters, cursor?: string | null, limit?: number): string {
@@ -572,6 +805,8 @@ export function callTone(outcome: string | null | undefined): Tone {
 export const CALL_PARAM: Readonly<Record<(typeof CALL_FILTER_KEYS)[number], string>> = {
   job_id: "c_job", tour_id: "c_tour", app: "c_app", provider: "c_provider", status: "c_status", stage: "c_stage",
   source: "c_source", window: "c_window",
+  since: "c_since", until: "c_until", tenant: "c_tenant", model: "c_model", account: "c_account", role: "c_role",
+  error_class: "c_error_class", product: "c_product",
 };
 
 /** The Calls filters read from the address (`get` returns "" for a missing key); a bad job / tour id is dropped. */
@@ -643,11 +878,27 @@ export interface TenantBudgetRow {
 }
 
 /** GET /api/admin/ai-gateway/tenant-budgets/{tenant_id} (Tenant 360 › Cost). */
+/** Where the budget the gateway applies comes from (api/services/tenant_ai_budget.effective_source). */
+export type TenantBudgetSource = "subscription_override" | "budget_row" | "plan" | "none";
+
+/** What the gateway applies this month (AA-1028: override > the row edited here > the plan's included spend). */
+export interface TenantBudgetEffective {
+  source: TenantBudgetSource;
+  monthly_usd: number | null;
+  alert_pct: number | null;
+  approval_pct: number | null;
+  hard_stop: boolean | null;
+  used_pct: number | null;
+  state: TenantBudgetState;
+}
+
 export interface TenantBudgetResp {
   ready: boolean;
   tenant_id: string;
   tenant_name: string | null;
   budget: TenantBudgetRow | null;
+  /** null before the plan catalogue exists in the database: ``budget`` alone decides then. */
+  effective?: TenantBudgetEffective | null;
   month_spent_usd: number;
   month_calls: number;
   month_start: string;
@@ -692,7 +943,7 @@ export function tenantBudgetDraftOf(b: Pick<TenantBudgetRow, "monthly_usd" | "al
     monthly: b?.monthly_usd == null ? "" : String(b.monthly_usd),
     alert_pct: String(b?.alert_pct ?? 100),
     approval_pct: String(b?.approval_pct ?? 150),
-    hard_stop: b?.hard_stop ?? false,
+    hard_stop: b?.hard_stop ?? true,   // a new budget holds jobs at the approval threshold by default
     notes: b?.notes ?? "",
   };
 }
@@ -724,9 +975,10 @@ export function sameTenantDraft(a: TenantBudgetDraft, b: TenantBudgetDraft): boo
     && a.notes.trim() === b.notes.trim();
 }
 
-/** The Tenant 360 link of a tenant's Cost tab (the Budgets tab's tenant rows). */
+/** The Tenant 360 link of a tenant's Cost tab (the Budgets tab's tenant rows; AA-1039 R6 rest: Tenant 360 is the
+ *  route /admin/tenants/<id>, lib/adminIa.ts tenant360Href). */
 export function tenantCostHref(tenantId: string): string {
-  return `/admin/tenants?tenant=${encodeURIComponent(tenantId)}&tab=cost`;
+  return `/admin/tenants/${encodeURIComponent(tenantId)}?tab=cost`;
 }
 
 /** The warm independent paths of root ADR 0009 (decision 2, accepted 31/10/2026): both direct vendor APIs. A row is a
@@ -758,10 +1010,12 @@ export function isAccessState(state: string | null | undefined): state is Access
 
 // ── C4 polish (N4): raw codes in plain words ─────────────────────────────────────────────────────────────────────
 
-/** The ledger's error classes (shared/llm_client/call_log.py ERROR_CLASSES, migration 319 CHECK; a unit test keeps
+/** The ledger's error classes (shared/aa_llm/errors.py LEDGER_ERROR_CLASSES, migration 319 CHECK; a unit test keeps
  *  the two lists equal). The page prints each one in words (messages.ts ERROR_CLASS), never the code. */
 export const ERROR_CLASSES = [
   "access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget", "truncated",
+  "disabled",                     // AA-642 A1 (migration 326): the stage kill switch refused the call
+  "role_not_served",              // AA-642 A5 (migration 338): no connection may serve the stage's role
 ] as const;
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
 
@@ -839,6 +1093,9 @@ export interface InvariantStage {
   primary_domain: string | null;
   other_domains: string[];
   reason: string | null;
+  /** AA-642 A1: ok (another failure domain), degrade (one domain only, declared degrade mode) or breach; absent before. */
+  status?: "ok" | "degrade" | "breach";
+  degrade_mode?: string | null;
 }
 
 export interface Invariant {
@@ -847,6 +1104,9 @@ export interface Invariant {
   ok?: boolean;
   stages_checked?: number;
   breaches?: number;
+  /** AA-642 A1: stages that pass through a declared degrade mode, and the switched-off stages (not checked). */
+  declared_degrade?: number;
+  disabled?: string[];
   stages?: InvariantStage[];
 }
 
@@ -1045,4 +1305,229 @@ export function priceSourceText(source: string | null | undefined, fallback: str
   const parts = source.replace(SESSION_TAG, " ").split(/;\s*|\.\s+(?=[A-Z])/)
     .map((p) => tidy(p)).filter((p) => p && !INTERNAL_PART.test(p));
   return parts.length ? parts.join("; ") : fallback;
+}
+
+// ── AA-1025 C1 follow-up: which write controls of the page this session may use (GET /api/admin/ai-gateway/access) ──
+// The API answers each control with staff_authz.denial_reason on that control's own write route (backend
+// api/routers/admin_ai_gateway.py PAGE_WRITES), so the page hides exactly what the API would refuse: a read-only
+// session (the Dev E2E admin, a viewer) sees no write button. UI hint only: every write keeps its own 403.
+
+export const ACCESS_API = "/api/admin/ai-gateway/access";
+
+export const PAGE_ACTIONS = [
+  "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
+  "credit", "app_profiles", "route_control", "route_policy", "route_test",
+] as const;
+export type PageAction = (typeof PAGE_ACTIONS)[number];
+
+export interface PageAccess {
+  read_only: boolean;
+  actions: Partial<Record<PageAction, boolean>>;
+}
+
+/** The staff capability each control needs (lib/rbac.ts ROLE_PERMS; backend staff_authz POLICY of its route). Used
+ *  only when the access read failed: the role cookie then decides, and the API still refuses what it must. */
+export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "spend.write"> = {
+  provider_switch: "ai.admin",
+  connections: "ai.admin",
+  connection_test: "ai.admin",
+  requeue: "ops.write",
+  routing: "ai.admin",
+  catalog: "ai.admin",
+  budgets: "spend.write",
+  jev_credit: "spend.write",
+  credit: "spend.write",
+  app_profiles: "ai.admin",
+  route_control: "ai.admin",
+  route_policy: "ai.admin",   // AA-1042 Trace tab: the route alert settings and the fallback hold switch
+  route_test: "ai.admin",     // AA-1042 Trace tab: the route test (a few tiny paid calls) and Run check now
+};
+
+/**
+ * May this session use `action`? `access` = the API's answer (undefined while it loads), `failed` = the read failed,
+ * `roleCan` = the role check used only then. While the answer loads a control stays hidden (no flash of a button a
+ * read-only session cannot use); an answer without the action (an older API) hides it too.
+ */
+export function mayUse(
+  access: PageAccess | undefined, action: PageAction, failed = false, roleCan?: (a: PageAction) => boolean,
+): boolean {
+  if (access) return access.actions?.[action] === true;
+  return failed && !!roleCan && roleCan(action);
+}
+
+// ── AA-1025 B5: the credit ledger of the vendor API connections (GET /api/admin/ai-gateway/credit) ────────────────
+
+export const CREDIT_API = "/api/admin/ai-gateway/credit";
+
+export type CreditEntryKind = "topup" | "opening_balance";
+
+export interface CreditEntry {
+  id: number;
+  connection_key: string;
+  kind: CreditEntryKind;
+  effective_at: string;
+  amount_usd: number;
+  note: string | null;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export interface CreditConnection {
+  connection_key: string;
+  label: string;
+  kind: string;
+  enabled: boolean;
+  low_balance_usd: number | null;
+  recorded_usd: number | null;
+  since: string | null;
+  spent_usd: number | null;
+  estimated_left_usd: number | null;
+  anchor_kind: CreditEntryKind | null;
+  below_threshold: boolean;
+  last_low_alert_at: string | null;
+  entries: CreditEntry[];
+}
+
+export interface CreditResp {
+  connections: CreditConnection[];
+}
+
+/** The body of POST /api/admin/ai-gateway/credit/{key}/entries from the form's text fields; a string = the error
+ *  key of the first wrong field. */
+export function creditEntryBody(kind: CreditEntryKind, amount: string, effectiveOn: string, note: string):
+  { kind: CreditEntryKind; amount_usd: number; effective_at?: string; note?: string } | "amount" | "date" {
+  const value = Number(amount.trim());
+  if (!amount.trim() || !Number.isFinite(value) || value < 0 || (kind === "topup" && value <= 0) || value > 100000) {
+    return "amount";
+  }
+  const body: { kind: CreditEntryKind; amount_usd: number; effective_at?: string; note?: string } =
+    { kind, amount_usd: Math.round(value * 100) / 100 };
+  if (effectiveOn.trim()) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveOn.trim())) return "date";
+    body.effective_at = `${effectiveOn.trim()}T00:00:00Z`;
+  }
+  if (note.trim()) body.note = note.trim().slice(0, 500);
+  return body;
+}
+
+/** The low-balance threshold field: "" = no alert (null), else a number of 0 or more; undefined = not a number. */
+export function thresholdValue(text: string): number | null | undefined {
+  if (!text.trim()) return null;
+  const v = Number(text.trim());
+  return Number.isFinite(v) && v >= 0 ? Math.round(v * 100) / 100 : undefined;
+}
+
+// ── AA-1025 H1a: the app profile of each app (GET / PATCH /api/admin/ai-gateway/app-profiles) ─────────────────────
+// Backend shared/llm_client/app_profile.py (migration 345). AI off for an app: the CIS gateway refuses every AI call of
+// that app before it is sent (a 0 USD refused row on the Calls tab); TripPlanner and the CRM read their row later.
+
+export const APP_PROFILES_API = "/api/admin/ai-gateway/app-profiles";
+export const APP_PROFILES_KEY = ["ai-gateway", "app-profiles"] as const;
+export const PROFILE_APPS = ["cis", "tripplanner", "crm", "booking"] as const;
+export type ProfileApp = (typeof PROFILE_APPS)[number];
+export const DEGRADE_MODES = ["queue_retry", "basic_narration", "last_saved_text", "manual_reply_needed",
+  "none"] as const;
+export type DegradeMode = (typeof DEGRADE_MODES)[number];
+/** The table's limits (migration 345 CHECKs). */
+export const PROFILE_REASON_MAX = 500;
+export const PROFILE_BUDGET_MAX = 100000;
+
+export interface AppProfile {
+  app: ProfileApp;
+  ai_enabled: boolean;
+  bulk_paused: boolean;
+  default_daily_budget_usd: number | null;
+  degrade_mode: DegradeMode;
+  disabled_reason: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  /** The central LLM cap llm/app:<app> (Budgets tab), when one exists. */
+  central_cap: { per_day_usd: number | null; per_month_usd: number | null; hard_stop: boolean } | null;
+  /** True for the app whose gateway acts on the profile today (CIS). */
+  enforced_here: boolean;
+}
+
+export interface AppProfilesResp {
+  profiles: AppProfile[];
+  degrade_modes: DegradeMode[];
+}
+
+/** The editor's fields as typed. */
+export interface AppProfileDraft {
+  ai_enabled: boolean;
+  bulk_paused: boolean;
+  budget: string;
+  degrade_mode: DegradeMode;
+  reason: string;
+}
+
+export function appProfileDraft(p: AppProfile): AppProfileDraft {
+  return { ai_enabled: p.ai_enabled, bulk_paused: p.bulk_paused,
+    budget: p.default_daily_budget_usd == null ? "" : String(p.default_daily_budget_usd),
+    degrade_mode: p.degrade_mode, reason: p.disabled_reason ?? "" };
+}
+
+export type AppProfileError = "budget" | "reason" | "unchanged";
+
+/**
+ * The PATCH body from the editor: only the fields that changed (the API keeps the rest). Switching AI off needs a
+ * reason of 3 to 500 characters (sent as `reason`); a budget is "" (cleared) or a number from 0 to 100000. A string
+ * is the error key of the first wrong field. Pure.
+ */
+export function appProfileBody(before: AppProfile, d: AppProfileDraft): Record<string, unknown> | AppProfileError {
+  const body: Record<string, unknown> = {};
+  const text = d.budget.trim();
+  let budget: number | null = null;
+  if (text) {
+    const v = Number(text);
+    if (!Number.isFinite(v) || v < 0 || v > PROFILE_BUDGET_MAX) return "budget";
+    budget = Math.round(v * 10000) / 10000;
+  }
+  const reason = d.reason.trim();
+  if (!d.ai_enabled && (reason.length < 3 || reason.length > PROFILE_REASON_MAX)) return "reason";
+  if (d.ai_enabled !== before.ai_enabled) body.ai_enabled = d.ai_enabled;
+  if (!d.ai_enabled && reason !== (before.disabled_reason ?? "")) body.reason = reason;
+  if (d.bulk_paused !== before.bulk_paused) body.bulk_paused = d.bulk_paused;
+  if (budget !== before.default_daily_budget_usd) body.default_daily_budget_usd = budget;
+  if (d.degrade_mode !== before.degrade_mode) body.degrade_mode = d.degrade_mode;
+  if (Object.keys(body).length === 0) return "unchanged";
+  if ("reason" in body && !("ai_enabled" in body) && Object.keys(body).length === 1) {
+    // only the stored reason of an app already off: the API takes a reason only with another field
+    body.ai_enabled = false;
+  }
+  return body;
+}
+
+/** The PATCH path of one app's profile. */
+export function appProfilePath(app: string): string {
+  return `${APP_PROFILES_API}/${encodeURIComponent(app)}`;
+}
+
+// ── AA-1039 R6 slice 1 (S266): routing by data class ───────────────────────────────────────────────────────────────
+// Root ADR 0019 (TL-12): each stage gets a `pii_class` — `content` (AA or tenant content, no personal data: a global
+// route is fine) or `pii` (personal data: our AWS accounts, US-only routes). CIS 373 adds the column
+// (shared.llm_role_config.pii_class, migration-only); GET /api/admin/llm-config sends it (null before 373: the Routing
+// tab shows its empty state), and the gateway calls a pii stage only on US deployments (vendor_route.deployment_plan).
+
+export type PiiClass = "content" | "pii";
+
+export interface DataClassSummary {
+  content: string[];
+  pii: string[];
+  /** Stages the API sent without a class while others have one. */
+  unclassified: string[];
+}
+
+/** Stages per data class, or null when no stage carries a `pii_class` (the empty state). Order kept from `rows`. */
+export function stagesByDataClass(
+  rows: readonly { stage: string; pii_class?: string | null }[],
+): DataClassSummary | null {
+  if (!rows.some((r) => r.pii_class === "content" || r.pii_class === "pii")) return null;
+  const out: DataClassSummary = { content: [], pii: [], unclassified: [] };
+  for (const r of rows) {
+    if (r.pii_class === "content") out.content.push(r.stage);
+    else if (r.pii_class === "pii") out.pii.push(r.stage);
+    else out.unclassified.push(r.stage);
+  }
+  return out;
 }

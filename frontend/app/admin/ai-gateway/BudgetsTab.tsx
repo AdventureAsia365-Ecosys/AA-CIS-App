@@ -10,11 +10,16 @@
 //                                    this month's spend; set on the tenant (Tenants › the tenant › Cost). Before 321
 //                                    (tenant_ready false or absent) the designed empty state.
 //   Coverage                         does every paid provider and switched-on connection have a cap.
+//   Central LLM caps (AA-1025 A7)    spend_budget provider "llm" (CIS migration 340): app / stage / job kind / eval /
+//                                    ad-hoc caps checked by the gateway before each call; edited in their own Drawer
+//                                    (PUT / DELETE /api/admin/budgets/llm/{scope}, spend.write, confirm first). New
+//                                    caps start alert only (tech lead T-8). Coverage per call site: which central cap
+//                                    each CIS stage is under.
 // C4 live findings: "Last changed" names a person, never a raw id (F5, lib/aiGateway actorLabel); state badges do not
 // wrap (F5); a connection without a budget says "no cap set" instead of "Stops at the cap · 80 %" (F6).
 // Built on the kit only (KpiTile, Section, DataTable, Drawer, Field/Input/Select, ConfirmModal, Badge, Toast).
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Wallet } from "lucide-react";
 import {
@@ -22,14 +27,16 @@ import {
   Select, apiGet, apiSend, mono, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  BUDGETS_API, actorLabel, budgetBody, budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, isReadOnlyRefusal,
-  pct, sameDraft,
+  BUDGETS_API, CENTRAL_SCOPE_KINDS, actorLabel, budgetBody, budgetDraftOf, budgetProviderLabel, budgetPutPath,
+  budgetTone, centralBody, centralDraftOf, centralPath, isReadOnlyRefusal, pct, sameCentralDraft, sameDraft,
   tenantBudgetTone, tenantCostHref, usd, validScope, type BudgetDraft, type BudgetError, type BudgetsResp,
+  type CallSiteRow, type CentralBudgetRow, type CentralDraft, type CentralError, type CentralScopeKind,
   type ConnectionBudgetRow, type CoverageRow, type SpendBudgetRow, type TenantBudgetRow,
 } from "@/lib/aiGateway";
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
-import { BUDGETS, BUDGET_STATE } from "./budgets.messages";
+import { BUDGETS, BUDGET_STATE, CENTRAL } from "./budgets.messages";
+import { usePageAccess } from "./usePageAccess";
 
 export const BUDGETS_KEY = ["ai-gateway", "budgets"] as const;
 
@@ -172,7 +179,7 @@ function cap(v: string): boolean {
 // ── tables ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 function SpendBudgetTable({ id, rows, loading, onEdit }: {
-  id: string; rows: SpendBudgetRow[]; loading: boolean; onEdit: (r: SpendBudgetRow) => void;
+  id: string; rows: SpendBudgetRow[]; loading: boolean; onEdit?: (r: SpendBudgetRow) => void;
 }) {
   const t = useT(BUDGETS);
   const columns = useMemo<ColumnDef<SpendBudgetRow, unknown>[]>(() => [
@@ -208,12 +215,12 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
     { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
       cell: (c) => <ChangedCell row={c.row.original} /> },
     { id: "actions", header: "", enableSorting: false, enableHiding: false,
-      cell: (c) => (
+      cell: (c) => onEdit ? (
         <span onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onEdit(c.row.original)}
             testId={`budget-edit-${c.row.original.provider}-${c.row.original.scope}`}>{t("edit")}</Button>
         </span>
-      ) },
+      ) : null },
   ], [t, onEdit]);
   return (
     <DataTable<SpendBudgetRow>
@@ -363,10 +370,271 @@ function TenantBudgetTable({ rows, loading }: { rows: TenantBudgetRow[]; loading
   );
 }
 
+// ── AA-1025 A7: central LLM caps ───────────────────────────────────────────────────────────────────────────────────
+
+const KIND_LABEL = {
+  app: "kindApp", stage: "kindStage", job: "kindJob", eval: "kindEval", adhoc: "kindAdhoc",
+} as const satisfies Record<CentralScopeKind, keyof typeof CENTRAL.en>;
+
+/** The label of a scope's kind and target ("Stage: t9_write"). */
+function useScopeLabel() {
+  const tc = useT(CENTRAL);
+  return useCallback((kind: CentralScopeKind, target: string | null) =>
+    kind === "app" ? tc("scopeApp", target ?? "") : kind === "stage" ? tc("scopeStage", target ?? "")
+      : kind === "job" ? tc("scopeJob", target ?? "") : kind === "eval" ? tc("scopeEval") : tc("scopeAdhoc"), [tc]);
+}
+
+/** "app:cis" -> its kind and target; null for a scope the page does not know (shown as sent). */
+function scopeParts(scope: string): [CentralScopeKind, string | null] | null {
+  const [k, ...rest] = scope.split(":");
+  if (!(CENTRAL_SCOPE_KINDS as readonly string[]).includes(k)) return null;
+  return [k as CentralScopeKind, rest.length ? rest.join(":") : null];
+}
+
+const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 12 } as const;
+
+function CentralEditor({ row, existing, onClose }: {
+  row: CentralBudgetRow | null; existing: Set<string>; onClose: () => void;
+}) {
+  const t = useT(BUDGETS);
+  const tc = useT(CENTRAL);
+  const toast = useToast();
+  const qc = useQueryClient();
+  const start = useMemo<CentralDraft>(() => centralDraftOf(row), [row]);
+  const [draft, setDraft] = useState<CentralDraft>(start);
+  const [confirming, setConfirming] = useState<"save" | "remove" | null>(null);
+  const [apiError, setApiError] = useState("");
+  const { scope, body, error } = centralBody(draft);
+  const duplicate = !row && !!scope && existing.has(scope);
+  const changed = !row || !sameCentralDraft(draft, start);
+  const name = row?.scope ?? scope ?? "";
+  const errText = (e: CentralError | undefined) =>
+    e === "cap" ? t("errCap") : e === "alertPct" ? t("errAlertPct") : e === "scope" ? tc("errScope")
+      : e === "runScope" ? tc("errRunScope") : e === "noCap" ? tc("errNoCap") : undefined;
+  const done = (msg: string) => {
+    toast.success(msg);
+    qc.invalidateQueries({ queryKey: BUDGETS_KEY });
+    onClose();
+  };
+  const fail = (e: unknown) => {
+    setConfirming(null);
+    setApiError(isReadOnlyRefusal(e) ? t("readOnlySession") : e instanceof Error ? e.message : String(e));
+  };
+  const save = useMutation({
+    mutationFn: () => apiSend(centralPath(scope ?? ""), { method: "PUT", body, admin: true }),
+    onSuccess: () => done(t("saved", name)),
+    onError: fail,
+  });
+  const remove = useMutation({
+    mutationFn: () => apiSend(centralPath(row?.scope ?? ""), { method: "DELETE", admin: true }),
+    onSuccess: () => done(tc("removed", name)),
+    onError: fail,
+  });
+  const busy = save.isPending || remove.isPending;
+  const set = (p: Partial<CentralDraft>) => setDraft((d) => ({ ...d, ...p }));
+  const needsTarget = draft.kind === "app" || draft.kind === "stage" || draft.kind === "job";
+  // A scope problem is shown under the name field once something is typed; the other problems below the fields.
+  const scopeErr = needsTarget && draft.target.trim() && error === "scope" ? tc("errScope")
+    : duplicate ? tc("errExists") : undefined;
+  const otherErr = error && error !== "scope" ? errText(error) : undefined;
+  const blocked = !body || duplicate || !changed || busy;
+
+  return (
+    <Drawer open onClose={onClose} title={row ? tc("editTitle", row.scope) : tc("addTitle")} width={520}
+      footer={
+        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span>
+            {row && (
+              <Button variant="ghost" onClick={() => setConfirming("remove")} disabled={busy}
+                testId="central-remove">{tc("remove")}</Button>
+            )}
+          </span>
+          <span style={{ display: "flex", gap: 8 }}>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>{t("cancel")}</Button>
+            <Button variant="primary" disabled={blocked} onClick={() => setConfirming("save")} testId="central-save">
+              {save.isPending ? t("saving") : t("save")}
+            </Button>
+          </span>
+        </div>
+      }>
+      <div data-testid="central-editor" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {row ? null : (
+          <div style={grid}>
+            <Field label={tc("fieldKind")}>
+              <Select value={draft.kind} disabled={busy}
+                onChange={(e) => set({ kind: e.target.value as CentralScopeKind })}
+                options={CENTRAL_SCOPE_KINDS.map((k) => ({ value: k, label: tc(KIND_LABEL[k]) }))} />
+            </Field>
+            {needsTarget && (
+              <Field label={tc("fieldTarget")} hint={tc("fieldTargetHint")} error={scopeErr}>
+                <Input value={draft.target} onChange={(e) => set({ target: e.target.value })} disabled={busy}
+                  spellCheck={false} autoComplete="off" style={{ fontFamily: mono }} data-testid="central-target" />
+              </Field>
+            )}
+          </div>
+        )}
+        <div style={grid}>
+          {draft.kind === "job" && (
+            <Field label={tc("fieldPerRun")} hint={tc("fieldPerRunHint")}>
+              <Input inputMode="decimal" value={draft.per_run} placeholder={t("noCap")} disabled={busy}
+                onChange={(e) => set({ per_run: e.target.value })} />
+            </Field>
+          )}
+          <Field label={t("fieldPerDay")} hint={t("fieldCapHint")}>
+            <Input inputMode="decimal" value={draft.per_day} placeholder={t("noCap")} disabled={busy}
+              onChange={(e) => set({ per_day: e.target.value })} data-testid="central-per-day" />
+          </Field>
+          <Field label={tc("fieldPerMonth")} hint={t("fieldCapHint")}>
+            <Input inputMode="decimal" value={draft.per_month} placeholder={t("noCap")} disabled={busy}
+              onChange={(e) => set({ per_month: e.target.value })} data-testid="central-per-month" />
+          </Field>
+          <Field label={t("fieldAtCap")}>
+            <Select value={draft.hard_stop ? "stop" : "alert"} disabled={busy}
+              onChange={(e) => set({ hard_stop: e.target.value === "stop" })}
+              options={[{ value: "alert", label: t("alertOnly") }, { value: "stop", label: t("stopsAtCap") }]} />
+          </Field>
+          <Field label={t("fieldAlertPct")}>
+            <Input inputMode="numeric" value={draft.alert_pct} disabled={busy}
+              onChange={(e) => set({ alert_pct: e.target.value })} />
+          </Field>
+        </div>
+        {otherErr && changed && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{otherErr}</span>}
+        {apiError && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{apiError}</span>}
+      </div>
+      <ConfirmModal open={confirming === "save"} onClose={() => setConfirming(null)} onConfirm={() => save.mutate()}
+        title={t("confirmTitle", name)} body={tc("confirmBody")} confirmLabel={t("save")} busy={save.isPending}
+        testId="central-confirm" />
+      <ConfirmModal open={confirming === "remove"} onClose={() => setConfirming(null)} onConfirm={() => remove.mutate()}
+        title={tc("removeTitle", name)} body={tc("removeBody")} confirmLabel={tc("remove")} busy={remove.isPending}
+        testId="central-remove-confirm" />
+    </Drawer>
+  );
+}
+
+function Money({ value }: { value: number | null }) {
+  const t = useT(BUDGETS);
+  return <span style={{ fontFamily: mono }}>{value == null ? t("noCap") : usd(value, 2)}</span>;
+}
+
+function CentralTable({ rows, loading, onEdit }: {
+  rows: CentralBudgetRow[]; loading: boolean; onEdit?: (r: CentralBudgetRow) => void;
+}) {
+  const t = useT(BUDGETS);
+  const tc = useT(CENTRAL);
+  const label = useScopeLabel();
+  const columns = useMemo<ColumnDef<CentralBudgetRow, unknown>[]>(() => [
+    { id: "scope", header: tc("colScope"), accessorKey: "scope",
+      cell: (c) => (
+        <Lines>
+          <span style={{ fontWeight: 600, color: K.ink }}>{label(c.row.original.scope_kind, c.row.original.target)}</span>
+          <span style={{ fontFamily: mono, fontSize: 12, color: K.muted2 }}>{c.row.original.scope}</span>
+        </Lines>
+      ) },
+    { id: "per_run", header: t("colPerRun"), accessorFn: (r) => r.per_run_usd ?? -1, meta: { align: "right" },
+      cell: (c) => <Money value={c.row.original.per_run_usd} /> },
+    { id: "per_day", header: t("colPerDay"), accessorFn: (r) => r.per_day_usd ?? -1, meta: { align: "right" },
+      cell: (c) => <Money value={c.row.original.per_day_usd} /> },
+    { id: "per_month", header: tc("colPerMonth"), accessorFn: (r) => r.per_month_usd ?? -1, meta: { align: "right" },
+      cell: (c) => <Money value={c.row.original.per_month_usd} /> },
+    { id: "at_cap", header: t("colAtCap"), accessorKey: "hard_stop",
+      cell: (c) => (
+        <Badge tone={c.row.original.hard_stop ? "danger" : "warning"} dot={false} style={{ whiteSpace: "nowrap" }}>
+          {c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")} · {c.row.original.alert_pct} %
+        </Badge>
+      ) },
+    { id: "spent", header: t("colSpentToday"), accessorFn: (r) => r.spent_today_usd ?? -1, meta: { align: "right" },
+      cell: (c) => {
+        const r = c.row.original;
+        if (r.spent_today_usd == null) return <span style={small}>{tc("unknown")}</span>;
+        return (
+          <Lines>
+            <span style={{ fontFamily: mono }}>{usd(r.spent_today_usd)}</span>
+            {r.spent_month_usd != null && <span style={small}>{tc("colSpentMonth")}: {usd(r.spent_month_usd)}</span>}
+            {r.used_pct != null && <span style={small}>{t("ofCap", pct(r.used_pct))}</span>}
+          </Lines>
+        );
+      } },
+    { id: "state", header: t("colState"), accessorKey: "state",
+      cell: (c) => c.row.original.state === "unknown"
+        ? <Badge tone="neutral" dot={false} style={{ whiteSpace: "nowrap" }}>{tc("unknown")}</Badge>
+        : <StateBadge state={c.row.original.state} /> },
+    { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
+      cell: (c) => <ChangedCell row={c.row.original} /> },
+    { id: "actions", header: "", enableSorting: false, enableHiding: false,
+      cell: (c) => onEdit ? (
+        <span onClick={(e) => e.stopPropagation()}>
+          <Button size="sm" variant="secondary" onClick={() => onEdit(c.row.original)}
+            testId={`central-edit-${c.row.original.scope}`}>{t("edit")}</Button>
+        </span>
+      ) : null },
+  ], [t, tc, label, onEdit]);
+  return (
+    <DataTable<CentralBudgetRow>
+      tableId="ai-gateway-budgets-central" data={rows} columns={columns} getRowId={(r) => r.scope} loading={loading}
+      onRowClick={onEdit} searchable={false} paginate={false} stickyHeader={false} tableMinWidth={1040}
+      emptyTitle={t("emptyRows")}
+    />
+  );
+}
+
+function CallSiteTable({ rows, loading }: { rows: CallSiteRow[]; loading: boolean }) {
+  const t = useT(BUDGETS);
+  const tc = useT(CENTRAL);
+  const label = useScopeLabel();
+  const columns = useMemo<ColumnDef<CallSiteRow, unknown>[]>(() => [
+    { id: "stage", header: tc("colStage"), accessorKey: "stage",
+      cell: (c) => {
+        const r = c.row.original;
+        return (
+          <Lines>
+            <span style={{ fontFamily: mono, fontWeight: 600, color: K.ink }}>{r.stage}</span>
+            <span style={small}>
+              {r.role ?? "—"}
+              {!r.routed ? ` · ${tc("notRouted")}` : r.active === false ? ` · ${tc("switchedOff")}` : ""}
+            </span>
+          </Lines>
+        );
+      } },
+    { id: "caps", header: tc("colCaps"), accessorFn: (r) => r.caps.length,
+      cell: (c) => c.row.original.caps.length === 0
+        ? <Badge tone="warning" dot={false} style={{ whiteSpace: "nowrap" }}>{tc("noCentralCap")}</Badge>
+        : (
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {c.row.original.caps.map((cap) => {
+              const parts = scopeParts(cap.scope);
+              return (
+                <Badge key={cap.scope} tone={cap.hard_stop ? "danger" : budgetTone(cap.state)} dot={false}
+                  style={{ whiteSpace: "nowrap" }}>
+                  {parts ? label(parts[0], parts[1]) : cap.scope} · {cap.hard_stop ? t("stopsAtCap") : t("alertOnly")}
+                </Badge>
+              );
+            })}
+          </span>
+        ) },
+    { id: "jobs", header: tc("colJobKinds"), enableSorting: false,
+      cell: (c) => <span style={{ ...small, fontFamily: mono }}>{c.row.original.job_kinds.join(", ") || "—"}</span> },
+    { id: "today", header: t("colSpentToday"), accessorKey: "today_usd", meta: { align: "right" },
+      cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.today_usd)}</span> },
+    { id: "month", header: tc("colMonthSpend"), accessorKey: "month_usd", meta: { align: "right" },
+      cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.month_usd)}</span> },
+    { id: "calls", header: tc("colCalls7d"), accessorKey: "calls_7d", meta: { align: "right" },
+      cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.calls_7d}</span> },
+  ], [t, tc, label]);
+  return (
+    <DataTable<CallSiteRow>
+      tableId="ai-gateway-budgets-call-sites" data={rows} columns={columns} getRowId={(r) => r.stage}
+      loading={loading} paginate={false} stickyHeader={false} tableMinWidth={900}
+      emptyTitle={t("emptyRows")}
+    />
+  );
+}
+
 // ── the tab ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: () => void }) {
   const t = useT(BUDGETS);
+  // AA-1025 C1 follow-up: Add / Edit only when the API says this session may write budgets (usePageAccess).
+  const canEdit = usePageAccess().can("budgets");
   const q = useQuery({
     queryKey: BUDGETS_KEY,
     queryFn: () => apiGet<BudgetsResp>(BUDGETS_API, { admin: true }),
@@ -374,6 +642,8 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
     refetchIntervalInBackground: false,
   });
   const [editing, setEditing] = useState<Editing | null>(null);
+  const [centralEditing, setCentralEditing] = useState<{ row: CentralBudgetRow | null } | null>(null);
+  const tc = useT(CENTRAL);
   const data = q.data;
   const tiers = data?.tiers;
   const existing = useMemo(
@@ -387,7 +657,10 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
   const loading = !data;
   const capped = (data?.coverage ?? []).filter((c) => c.tier === "provider" && c.capped).length;
   const enabledConns = (tiers?.connection ?? []).filter((c) => c.enabled);
-  const near = [...(tiers?.provider ?? []), ...(tiers?.job ?? [])].filter((r) => r.state === "alert" || r.state === "cap_reached").length
+  const central = tiers?.central ?? [];
+  const sites = data?.call_sites ?? [];
+  const near = [...(tiers?.provider ?? []), ...(tiers?.job ?? []), ...central]
+    .filter((r) => r.state === "alert" || r.state === "cap_reached").length
     + (tiers?.connection ?? []).filter((c) => c.state === "alert" || c.state === "stopped").length;
 
   return (
@@ -402,21 +675,31 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
           hint={data ? t("tileConnectionsHint", enabledConns.length) : undefined} />
         <KpiTile label={t("tileNear")} value={data ? near : undefined} valueTone={near ? "warning" : undefined}
           hint={t("tileNearHint")} />
+        <KpiTile label={tc("tileCovered")}
+          value={data ? `${sites.filter((x) => x.capped).length} / ${sites.length}` : undefined}
+          hint={data ? tc("tileCoveredHint", sites.length) : undefined} />
       </div>
       {data && data.errors.length > 0 && (
         <div role="status" style={{ ...small, color: K.danger }}>{t("sourceErrors")}</div>
       )}
       <Section title={t("groupProvider")} description={t("groupProviderHelp")} padded={false}
-        actions={
+        actions={canEdit ? (
           <Button size="sm" variant="secondary" disabled={!data} onClick={() => setEditing({ row: null })}
             testId="budget-add"><Plus size={13} /> {t("addBudget")}</Button>
-        }>
+        ) : undefined}>
         <SpendBudgetTable id="ai-gateway-budgets-provider" rows={tiers?.provider ?? []} loading={loading}
-          onEdit={(row) => setEditing({ row })} />
+          onEdit={canEdit ? (row) => setEditing({ row }) : undefined} />
       </Section>
       <Section title={t("groupJob")} description={t("groupJobHelp")} padded={false}>
         <SpendBudgetTable id="ai-gateway-budgets-job" rows={tiers?.job ?? []} loading={loading}
-          onEdit={(row) => setEditing({ row })} />
+          onEdit={canEdit ? (row) => setEditing({ row }) : undefined} />
+      </Section>
+      <Section title={tc("group")} description={tc("groupHelp")} padded={false} testId="ai-gateway-budgets-central-tier"
+        actions={canEdit ? (
+          <Button size="sm" variant="secondary" disabled={!data} onClick={() => setCentralEditing({ row: null })}
+            testId="central-add"><Plus size={13} /> {tc("add")}</Button>
+        ) : undefined}>
+        <CentralTable rows={central} loading={loading} onEdit={canEdit ? (row) => setCentralEditing({ row }) : undefined} />
       </Section>
       <Section title={t("groupConnection")} description={t("groupConnectionHelp")} padded={false}
         actions={<Button size="sm" variant="secondary" onClick={onOpenConnections}>{t("editConnections")}</Button>}>
@@ -435,6 +718,13 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
       <Section title={t("groupCoverage")} description={t("groupCoverageHelp")} padded={false}>
         <CoverageTable rows={data?.coverage ?? []} loading={loading} />
       </Section>
+      <Section title={tc("sites")} description={tc("sitesHelp")} padded={false} testId="ai-gateway-budgets-call-sites">
+        <CallSiteTable rows={sites} loading={loading} />
+      </Section>
+      {centralEditing && data && (
+        <CentralEditor key={centralEditing.row?.scope ?? "new"} row={centralEditing.row}
+          existing={new Set(central.map((r) => r.scope))} onClose={() => setCentralEditing(null)} />
+      )}
       {editing && data && (
         <BudgetEditor key={editing.row ? `${editing.row.provider}/${editing.row.scope}` : "new"} editing={editing}
           providers={data.providers} existing={existing} onClose={() => setEditing(null)} />

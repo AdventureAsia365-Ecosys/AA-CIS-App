@@ -445,7 +445,7 @@ def render_cis06(reg: Registry, report: Report, first: date, last: date, facts: 
                   [[r["run_id"][:8], r["item_id"][:8], f"{r['writer']} / {r['arm']}", r["verdict"], r.get("score"),
                     ", ".join(r.get("failure_codes") or []) or "—", "yes" if r["hard_stop"] else "no"]
                    for r in items]) if items else ["- No failed or hard-stopped item in these runs."]
-    body += ["", "Decision: approve, reject or roll back each release above on /admin/writing-memory; this report "
+    body += ["", "Decision: approve, reject or roll back each release above on /admin/lab/writing-memory; this report "
                  "only collects the evidence.", ""]
     return _render(reg, report, first, last, generated_at, f"Eval and release report {first.isoformat()} to "
                    f"{last.isoformat()}", headline, kpis, body, ICT_NOTE, runs=runs, releases=releases, items=items,

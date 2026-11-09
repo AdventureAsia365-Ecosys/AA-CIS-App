@@ -3,13 +3,17 @@ acquire logs `aa859_main_pool_wait` with the wait, the gauge line carries the in
 with no timeout of its own gives up after MAIN_POOL_ACQUIRE_TIMEOUT_S with `aa859_main_pool_acquire_timeout`.
 No schema needed (SELECT 1 only)."""
 import asyncio
+import os
+import sys
 
 import asyncpg
 import pytest
 from structlog.testing import capture_logs
 
-from api.core import aa859_main_pool_gauge as gauge
-from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from api.core import aa859_main_pool_gauge as gauge  # noqa: E402
+from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 

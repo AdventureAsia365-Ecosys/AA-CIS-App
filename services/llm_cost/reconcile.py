@@ -492,13 +492,13 @@ async def reconcile(pool, *, days: int = DEFAULT_DAYS, end_day: Optional[date] =
         summary["rows_written"] = rows
         summary["pruned"] = int(str(pruned).rsplit(" ", 1)[-1]) if pruned else 0
         if summary["mismatches"]:
-            summary["bell"] = await _mismatch_bell(conn, summary["mismatches"])
+            summary["bell"] = await _mismatch_bell(conn, summary["mismatches"], summary["window"])
     logger.info("llm_cost_reconciled", window=summary["window"], rows=rows, mismatches=len(summary["mismatches"]))
     return summary
 
 
-async def _mismatch_bell(conn, mismatches: list[dict]) -> bool:
-    """One admin bell per 24 h for the run's settled mismatches. Best effort."""
+async def _mismatch_bell(conn, mismatches: list[dict], window: Optional[dict] = None) -> bool:
+    """One admin bell per 24 h for the run's settled mismatches, and (AA-642 S263 L2) its e-mail. Best effort."""
     try:
         if await conn.fetchval(_RECENT_BELL_SQL, MISMATCH_EVENT, "llm_cost_reconcile"):
             return False
@@ -507,10 +507,21 @@ async def _mismatch_bell(conn, mismatches: list[dict]) -> bool:
                    f"{len(mismatches)} connection-day(s) ({', '.join(keys)}). Settings › LLM Models › Connections.")
         await conn.execute(_INSERT_BELL_SQL, _PLATFORM_TENANT_ID, MISMATCH_EVENT, "llm_cost_reconcile",
                            json.dumps({"message": message, "mismatches": mismatches[:20]}, default=str))
-        return True
     except Exception as e:  # noqa: BLE001
         logger.warning("llm_cost_reconcile_bell_failed", error=str(e)[:300])
         return False
+    await _mismatch_email(conn, mismatches, window)
+    return True
+
+
+async def _mismatch_email(conn, mismatches: list[dict], window: Optional[dict]) -> None:
+    """AA-642 (S263 L2, B4): the operator e-mail of a new mismatch bell (at most one per UTC day). Best effort."""
+    try:
+        from shared import ops_alerts
+        await ops_alerts.enqueue_llm_cost_mismatch_email(conn, details={
+            "window": window or {}, "mismatches": json.loads(json.dumps(mismatches, default=str))})
+    except Exception as e:  # noqa: BLE001 — the bell is written; a failed e-mail enqueue is logged only
+        logger.warning("llm_cost_reconcile_email_failed", error=str(e)[:300])
 
 
 # ── the admin read ───────────────────────────────────────────────────────────────────────────────────────────────

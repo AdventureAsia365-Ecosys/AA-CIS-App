@@ -44,9 +44,10 @@ test("actorLabel: a '<username>:<reference>' value is never printed raw (N4)", (
 });
 
 test("error classes: the list matches the ledger's, every class has words in EN and VI (N4)", () => {
-  const py = readFileSync(fileURLToPath(new URL("../../shared/llm_client/call_log.py", import.meta.url)), "utf8");
-  const m = /ERROR_CLASSES = \(([^)]*)\)/s.exec(py);
-  assert.ok(m, "call_log.py ERROR_CLASSES not found");
+  // AA-1024 A10: the ledger's list is the shared core's (call_log.py imports it).
+  const py = readFileSync(fileURLToPath(new URL("../../shared/aa_llm/errors.py", import.meta.url)), "utf8");
+  const m = /LEDGER_ERROR_CLASSES = \(([^)]*)\)/s.exec(py);
+  assert.ok(m, "aa_llm/errors.py LEDGER_ERROR_CLASSES not found");
   const backend = [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
   assert.deepEqual([...ERROR_CLASSES].sort(), backend.sort());
 
@@ -113,14 +114,14 @@ test("the Calls table has no inner height cap (N2)", () => {
 });
 
 test("the Cost Operations tree keeps the cost on the right of a wrapping row (N1)", () => {
-  const src = read(APP_DIR, "cost-ops/page.tsx");
+  const src = read(APP_DIR, "spend/page.tsx");
   assert.match(src, /const TREE_MID = \{[^}]*minWidth: 0[^}]*flexWrap: "wrap"/s);
   assert.match(src, /const TREE_COST = \{[^}]*flexShrink: 0[^}]*whiteSpace: "nowrap"/s);
   assert.equal([...src.matchAll(/style=\{\{ \.\.\.TREE_COST/g)].length, 2, "group and node cost both use TREE_COST");
 });
 
 test("the Tenants detail tab strip is the kit Tabs (N3)", () => {
-  const src = read(APP_DIR, "tenants/page.tsx");
+  const src = read(APP_DIR, "tenants/_components/TenantDetail.tsx");  // AA-1039 R6 rest: the panel moved there
   assert.match(src, /<Tabs variant="underline"[\s\S]{0,400}?active=\{tab\}/);
   assert.doesNotMatch(src, /TABS\.map\(t => \(\s*<button/);
 });

@@ -51,7 +51,12 @@ export {
   formatMoney, minorUnits, formatDay, isIsoDay, parseDayInput, relativeParts, type RelativeParts,
 } from "./core/format";
 export { KitGallery } from "./core/KitGallery";
-export { useSidebarCollapsed } from "./core/useSidebar";
+// AA-1008 (S6e): the shell frame every app shell configures (CIS: ./AdminShell).
+export { ShellFrame, useShell, isPaletteShortcut, type ShellControls, type ShellFrameProps, type ShellBreakpoint } from "./core/ShellFrame";
+export { useSidebarCollapsed, useNavGroups, type NavGroups } from "./core/useSidebar";
+// S264 — collapsible sidebar nav groups (the same component and store in every app's sidebar).
+export { NavGroup, NavGroupHeader, navBadgeText, type NavGroupProps, type NavGroupHeaderProps } from "./core/NavGroup";
+export { navGroupId, resolveNavGroupOpen, type NavGroupState } from "./core/sidebarStore";
 // AA-994 — UI language (EN default, VI second): one typed catalogue per area (`messages.ts`), `useT(M)` in components.
 export {
   defineMessages, localized, missingTranslations, parseLang, translator, DEFAULT_LANG, LANGS, LANG_LABEL,
@@ -60,6 +65,10 @@ export {
 export { I18nProvider, useLang, useSetLang, useT, useLocalized, useFormat } from "./core/useI18n";
 export { KIT_MESSAGES } from "./core/kit.messages";
 export { LangSwitch } from "./core/LangSwitch";
+export { AiNotice, type AiNoticeForm } from "./core/AiNotice";
+export {
+  AI_BADGE_MESSAGES, AI_NOTICE_MESSAGES, AI_NOTICE_VARIANTS, aiBadgeText, aiNoticeText, type AiNoticeVariant,
+} from "./core/aiNotice.messages";
 
 // ── CIS-local ──────────────────────────────────────────────────────────────────────────────────────────────
 export * from "./api";
@@ -67,6 +76,8 @@ export { langStore, LANG_COOKIE } from "./i18n";
 export { SHELL_MESSAGES } from "./shell.messages";
 export { NAV_MESSAGES } from "./nav.messages";
 export { CHART_TOOLTIP } from "./chart";
+// AA-1006 — CIS-local names for the `--aa-*` colours K does not name (on-solid, dark surface, link blue…).
+export { KX } from "./adminTokens";
 
 // AA-752 — admin shell (collapsible sidebar, topbar, ⌘K command palette, phone bottom nav).
 export { AdminShell } from "./AdminShell";

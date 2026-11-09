@@ -16,6 +16,14 @@ from tests.unit import test_aa293_revalidate_jsonb_codec as rv
 from tests.unit.test_aa645_writer_v2_live import _judge
 
 
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    S1_JUDGE_LIVE=on (the S1 judge called on a writer-v2 draft; D9 takes it off the live path).
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("S1_JUDGE_LIVE", "on")
+
+
 def _revalidate_state(metadata: dict) -> dict:
     row = rv._gc_row()
     row["metadata"] = json.dumps(metadata)

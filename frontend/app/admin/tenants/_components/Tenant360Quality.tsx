@@ -8,7 +8,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { K, mono, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
+import {
+  K, mono, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator, ChipButton,
+} from "../../../_kit";
 import { type TenantQuality, pct } from "./tenant360";
 import { T360 } from "./tenant360.messages";
 
@@ -49,10 +51,7 @@ export function Tenant360Quality({ tenantId, byChannel }: { tenantId: string; by
       <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 11.5, color: K.muted }}>{t("window")}</span>
         {WINDOWS.map(d => (
-          <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)}
-            style={{ padding: "4px 11px", borderRadius: 20, fontSize: 12, cursor: "pointer",
-              border: `1px solid ${days === d ? K.accent : K.line}`, background: days === d ? K.accentTint : K.bg,
-              color: days === d ? K.accentDeep : K.muted, fontWeight: days === d ? 700 : 400 }}>{t("days", d)}</button>
+          <ChipButton key={d} size="sm" selected={days === d} onClick={() => setDays(d)}>{t("days", d)}</ChipButton>
         ))}
       </div>
 

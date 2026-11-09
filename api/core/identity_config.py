@@ -1,18 +1,20 @@
 """CIS staff-surface issuer configuration for the multi-issuer verifier (root ADR 0006 §8, AA-816 / AA-854).
 
-CIS staff routes accept exactly WORKFORCE x {cis-admin, breakglass, cis-admin-preview} (ADR 0006 §8 rule 6;
-cis-admin-preview: AA-911 decision D-1, root ADR 0006a A11). The Dev values are code constants with an env
+CIS staff routes accept exactly WORKFORCE x {cis-admin, breakglass} (ADR 0006 §8 rule 6). The Preview-only
+cis-admin-preview client (AA-911 decision D-1, root ADR 0006a A11) is no longer accepted: the Vercel Preview host it
+served was retired with the aa-cis-frontend project (AA-911, S272; root ADR 0006a A13). The Dev values are code
+constants with an env
 override, following Booking's settings defaults, so the ECS task definitions need no new variables (S242 plan,
 stage B / C2):
 
 - ``COGNITO_WORKFORCE_ISSUER``       default :data:`DEV_WORKFORCE_ISSUER`
 - ``COGNITO_CIS_ADMIN_CLIENT_ID``    default :data:`DEV_CIS_ADMIN_CLIENT_ID`
 - ``COGNITO_BREAKGLASS_CLIENT_ID``   default :data:`DEV_BREAKGLASS_CLIENT_ID`
-- ``COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`` default :data:`DEV_CIS_ADMIN_PREVIEW_CLIENT_ID` (the
-  AA-CIS-Infra client; an empty value = no preview client accepted). The client of the fixed Preview
-  host ``aa-cis-preview.lumiguides.it.com`` only: ``api/core/staff_identity.resolve_staff`` caps every token of it
-  at the viewer role (:func:`is_preview_client`), whatever ``cis-*`` group the user holds. It must differ from the
-  two clients above (the verifier build fails otherwise, so every staff token answers 503: fail closed).
+- ``COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`` default :data:`DEV_CIS_ADMIN_PREVIEW_CLIENT_ID`, empty since the Vercel
+  retirement (no preview client accepted, a token of the deleted client is 401). The viewer cap stays in place for
+  a client set through this variable: ``api/core/staff_identity.resolve_staff`` caps every token of it at the
+  viewer role (:func:`is_preview_client`), whatever ``cis-*`` group the user holds. It must differ from the two
+  clients above (the verifier build fails otherwise, so every staff token answers 503: fail closed).
 - ``COGNITO_WORKFORCE_POOL_ID``      default: the pool id at the end of the WORKFORCE issuer
   (:data:`DEV_WORKFORCE_POOL_ID` on Dev). Used by the staff directory writer (C6,
   ``api/services/staff_directory.py``); the region is the pool id's prefix.
@@ -42,9 +44,9 @@ log = structlog.get_logger(__name__)
 DEV_WORKFORCE_ISSUER = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS"
 DEV_CIS_ADMIN_CLIENT_ID = "3oqkumijh04cp81k3nlnub6qtv"
 DEV_BREAKGLASS_CLIENT_ID = "2g3f3ncfuqdiuu1o5b70o4h0lq"
-# AA-911 D-1: the Preview-only cis-admin-preview client (AA-CIS-Infra identity.tf, created by Infra #260). Empty = no
-# preview client accepted (a preview token is then 401).
-DEV_CIS_ADMIN_PREVIEW_CLIENT_ID = "3d6u7r00ljf4m80gjil20fp2kg"
+# AA-911 D-1: the Preview-only cis-admin-preview client. Empty since the Vercel retirement (S272): AA-CIS-Infra deletes
+# the client with the aa-cis-preview. host, so no preview client is accepted (a preview token is 401).
+DEV_CIS_ADMIN_PREVIEW_CLIENT_ID = ""
 DEV_WORKFORCE_POOL_ID = "us-west-1_bCcFvbSOS"
 
 ENV_WORKFORCE_ISSUER = "COGNITO_WORKFORCE_ISSUER"

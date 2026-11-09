@@ -13,6 +13,8 @@ cancelled), `on_terminal` marks the version 'failed' so the portal shows Failed 
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
+
 import structlog
 
 from services.acp_shared.writing_progress import (
@@ -20,7 +22,9 @@ from services.acp_shared.writing_progress import (
 )
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
+from shared.llm_client.errors import is_stage_switch_hold, stage_disabled_in
 from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
+from services.quality import route_guard
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -32,7 +36,14 @@ _PT_SQL = """
            pt.aa_summary, pt.aa_description, pt.aa_highlights,
            pt.aa_itineraries, pt.seo_title, pt.seo_meta,
            pt.seo_keywords_used,
-           rt.country, rt.duration
+           rt.country, rt.duration,
+           -- S271 W0 (D8): the raw source fields the elephant-riding policy reads (never the writer's input)
+           rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
+           rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
+           rt.activities::text AS activities, rt.price_raw,
+           -- AA-1047 (Quality W1): the rest of the raw source the T2 FactSheet is built from (tour builder, the same
+           -- fields S1 reads: exclusions and the agency fields group_size / best_time_to_go)
+           rt.exclusions, rt.group_size, rt.best_time_to_go
     FROM gold_aa_internal.published_tours pt
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     WHERE pt.id = $1::uuid
@@ -42,13 +53,17 @@ _PT_SQL = """
 _T2_STATUS_PASS = threshold("t2.status_pass")  # services/quality/thresholds.yaml (AA-926)
 
 
-def _t2_status(rewrite_score: float) -> str:
+def _t2_status(rewrite_score: float, hard_codes=()) -> str:
     """AA-436: the stored T2 version status is purely score-based (same formula for a real T3 pass and
-    an auto-pass). AA-926: pure seam so the pass line is pinned by the gate-outcome snapshot."""
-    if rewrite_score >= _T2_STATUS_PASS:
+    an auto-pass). AA-926: pure seam so the pass line is pinned by the gate-outcome snapshot.
+
+    S271 W0 (T2 interim, t2_interim.py): the score is validate's alone (the judge is report-only) and a hard code T3
+    left on the kept draft (``hard_codes``, qa structural_issues) is needs_review too. With the switch off the
+    caller passes no codes: the pre-S271 rule."""
+    if rewrite_score >= _T2_STATUS_PASS and not hard_codes:
         return "ai_generated"   # ready for tenant to review
     if rewrite_score > 0:
-        return "needs_review"   # LLM finished but low quality
+        return "needs_review"   # LLM finished but low quality, or a hard code survived T3
     return "needs_review"       # hitl / score=0 — needs human
 
 
@@ -131,9 +146,14 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
     return tour_dict, brand_rules
 
 
-async def t2_seo(pool, pt, tenant_id: str) -> tuple[dict, dict]:
+async def t2_seo(pool, pt, tenant_id: str, *, tour_dict: "dict | None" = None,
+                 rewrite_language: "str | None" = None) -> tuple[dict, dict]:
     """(seo_data, diag): the SEO the T2 rewrite passes to the graph, read from the caches only (moved out of
-    `_rewrite_and_save`, AA-919, so the WM-20 release-0 replay rebuilds the same T2 prompt)."""
+    `_rewrite_and_save`, AA-919, so the WM-20 release-0 replay rebuilds the same T2 prompt).
+
+    AA-1055 PR 1: the keywords are then filtered by the shared rule (`keyword_fit.writer_keywords`): only those the
+    source it rewrites (``tour_dict``, default `source_tour_dict(pt)`) covers and that are not transactional, at most
+    5, and none when ``rewrite_language`` is not English. validate_node judges DFS_INTENT_UNDERUSED on the same list."""
     # AA-445-02 — T2 passes the tour's SEO context to the shared rewrite graph (it used to reach it
     # as {}). AA-646 follow-up (KAN-90, 29/09/2026): a tenant action never buys DataForSEO, so T2
     # only READS the cached seo_context row; it no longer calls process_seo() on a miss (~$0.18
@@ -185,7 +205,22 @@ async def t2_seo(pool, pt, tenant_id: str) -> tuple[dict, dict]:
         _sl_seo.get_logger().warning("t2_seo_step_failed", tour_id=pt["tour_id"], error=str(_seo_err))
         diag["seo_source"] = "error"
         diag["seo_error"] = str(_seo_err)[:300]
+    if seo_data:
+        seo_data = _fit_keywords(seo_data, tour_dict if tour_dict is not None else source_tour_dict(pt),
+                                 rewrite_language, diag)
     return seo_data, diag
+
+
+def _fit_keywords(seo_data: dict, tour_dict: dict, rewrite_language: "str | None", diag: dict) -> dict:
+    """AA-1055 PR 1 (S273 design decision 7): `seo_data` with its keyword list (flat and nested) replaced by the ones
+    the T2 writer may use (`keyword_fit.writer_keywords`). PAA questions are left as they are. Records in ``diag``
+    how many keywords came in, how many were kept and whether the rewrite language blocked them all."""
+    from services.seo_intelligence.keyword_fit import is_english, seo_keyword_texts, writer_keywords
+    before = seo_keyword_texts(seo_data)
+    kept = writer_keywords(seo_data, tour_dict, rewrite_language)
+    diag["seo_keywords"] = {"in": len(before), "kept": len(kept),
+                            "language_blocked": bool(before) and not is_english(rewrite_language)}
+    return {**seo_data, "top_keywords": kept, "keywords": {**(seo_data.get("keywords") or {}), "top_keywords": kept}}
 
 
 def t2_judge_breakdown(result: dict, rewritten: dict, tour_dict: dict, brand_rules: dict, *,
@@ -208,23 +243,160 @@ def t2_judge_breakdown(result: dict, rewritten: dict, tour_dict: dict, brand_rul
         return None
 
 
+def policy_hold_hits(pt, tour_dict: dict) -> list[dict]:
+    """S271 W0 (root ADR 0020 D8): the elephant-riding mentions in the Master text the writer would read
+    (``tour_dict``) or in the raw source row (``pt``'s src_* columns). Non-empty = this version is a policy hold."""
+    from services.quality import elephant_policy
+    hits = elephant_policy.scan(tour_dict, elephant_policy.raw_source_from_row(pt))
+    return [{**h, "where": "master" if h["where"] == "generated" else h["where"]} for h in hits]
+
+
+def final_contract_record(rewritten: dict, tour_dict: dict, pt, *, exit: str, actual: str, qa: "dict | None" = None,
+                          fallback_held: bool = False, score: "float | None" = None, gated: "dict | None" = None,
+                          policy_hold: bool = False) -> "dict | None":
+    """AA-1047 W1 (root ADR 0020 "one exit", T10): the REPORT-mode final contract of a T2 version as it is saved —
+    the verdict the target design gives (ai_generated / needs_review / policy_hold) next to the status the current
+    gates gave (``actual``), the sha of the saved text and, when ``gated`` (the draft T3 checked) is given, whether a
+    code step changed it after T3. Recorded admin-only in judge_breakdown.final_contract; never changes the status.
+    Fails open: an error logs and returns None."""
+    from services.quality import elephant_policy
+    from services.quality import final_contract as fc
+    try:
+        inp = fc.T2Input(
+            content=rewritten, master=tour_dict, raw_source=elephant_policy.raw_source_from_row(pt),
+            structural_issues=list((qa or {}).get("structural_issues") or []),
+            grounding_issues=list((qa or {}).get("grounding_issues") or []),
+            fallback_writer_held=fallback_held, policy_hold=policy_hold, score=score,
+            gated_sha=fc.tour_text_sha(gated) if gated is not None else None)
+        record = fc.stamp_stored(fc.check_t2(inp, exit=exit, actual=actual).record(), fc.tour_text_sha(rewritten))
+        fc.log_record(record)
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the save
+        logger.warning("final_contract_failed", workflow="t2", exit=exit, error_type=type(exc).__name__,
+                       error=str(exc)[:300])
+        return None
+
+
+def _as_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip().startswith("["):
+        import json as _json
+        try:
+            parsed = _json.loads(value)
+        except ValueError:
+            return [value]
+        return parsed if isinstance(parsed, list) else [value]
+    return [value] if value else []
+
+
+def policy_hold_content(tour_dict: dict, brand_rules: dict) -> tuple[dict, list[str]]:
+    """S271 W0 (D8) — policy_hold v0: the version of an elephant-riding tour, built by code with 0 LLM calls.
+
+    The prose is the Master text verbatim (name, subtitle, summary, highlights, itinerary). The fields T2 tailors for
+    the agency's page, the SEO title and meta, are composed by code from the Master's with the deterministic fitters
+    (``fit_seo_title`` / ``fit_seo_meta_final`` with the tenant's forbidden words); no brand claim is added. The
+    AA-778 em-dash rule for tenant copy applies (``fix_t2_dashes``: the Master name keeps its dash). Returns
+    (rewritten_content, dash log)."""
+    from services.content_generation.seo_meta_utils import fit_seo_meta_final, fit_seo_title
+    from services.content_generation.t2_dashes import fix_t2_dashes
+    seo_meta = fit_seo_meta_final(
+        str(tour_dict.get("seo_meta") or ""),
+        {"duration": tour_dict.get("duration"), "country": tour_dict.get("country"), "name": tour_dict.get("name")},
+        brand_rules.get("forbidden_words"))
+    rewritten = {
+        "name":        tour_dict.get("name") or "",
+        "subtitle":    tour_dict.get("subtitle") or "",
+        "summary":     tour_dict.get("summary") or "",
+        "highlights":  _as_list(tour_dict.get("highlights")),
+        "itineraries": tour_dict.get("itineraries") or "",
+        "seo_title":   fit_seo_title(str(tour_dict.get("seo_title") or "")),
+        "seo_meta":    seo_meta,
+        "trip_type":   "",
+        "status":      "done",
+    }
+    return fix_t2_dashes(rewritten, tour_dict)
+
+
+async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str, version_id: str,
+                            hits: list[dict]) -> dict:
+    """S271 W0 (D8): write the policy_hold version (needs_review, so the agency still receives it as ready), its
+    admin-only mark (judge_breakdown.policy_hold) and a review row. No writer, judge, T3 or Jev call."""
+    import json as _j
+    from services.quality import elephant_policy, lineage
+    rewritten, dash_log = policy_hold_content(tour_dict, brand_rules)
+    mark = {"reason": elephant_policy.POLICY_HOLD, "decision": "ADR 0020 D8", "llm_calls": 0,
+            "hits": hits[:10]}
+    # AA-1047 W1: the REPORT-mode final contract of this exit (admin-only, judge_breakdown.final_contract)
+    contract = final_contract_record(rewritten, tour_dict, pt, exit="policy_hold", actual="needs_review",
+                                     policy_hold=True)
+    progress_show(rewritten)
+    progress_step("save")
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE gold_aa_internal.tenant_tour_versions
+            SET rewritten_content = $1::jsonb,
+                status = 'needs_review',
+                quality_score = NULL,
+                qa_status = 'escalated',
+                qa_repair_count = 0,
+                qa_checked_at = now(),
+                qa_auto_passed = true,
+                judge_breakdown = $2::jsonb
+            WHERE id = $3::uuid
+        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark, "final_contract": contract,
+                                            lineage.KEY: lineage.writer_lineage(contract)}, default=str),
+            version_id)
+        detail = [{"check_id": f"policy:{elephant_policy.POLICY_HOLD}", "field": h["field"],
+                   "description": f"Elephant riding in the {h['where']} {h['field']}: the Master text is kept "
+                                  "verbatim for a human review (policy, no rewrite)",
+                   "source_span": str(h["mention"])[:500], "suggested_fix": None} for h in hits[:10]]
+        await conn.execute("""
+            INSERT INTO silver_aa_internal.review_queue
+                (tour_id, tenant_id, tenant_tour_version_id, failure_summary, escalate_detail)
+            VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb)
+        """, pt["tour_id"], tenant_id, version_id,
+            "POLICY_HOLD elephant_riding: Master text kept verbatim, 0 LLM calls (ADR 0020 D8); review the tour",
+            _j.dumps(detail))
+    logger.info("t2_policy_hold", version_id=str(version_id), tenant_id=tenant_id, reason=elephant_policy.POLICY_HOLD,
+                hits=len(hits))
+    return {"policy_hold": mark, "em_dashes": {"fields": dash_log}}
+
+
 async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str,
                             version_id: str, published_tour_id: str) -> dict:
     """SEO lookup, rewrite, T3 QA gate, save — unchanged from the pre-AA-652 router closure
-    except that a failure raises (so the job retries) instead of silently marking the version."""
+    except that a failure raises (so the job retries) instead of silently marking the version.
+
+    S271 W0 (D8): an elephant-riding tour is a policy hold instead (``_save_policy_hold``, 0 LLM calls)."""
+    hits = policy_hold_hits(pt, tour_dict)
+    if hits:
+        return await _save_policy_hold(pool, pt, tour_dict, brand_rules, tenant_id, version_id, hits)
+    # AA-1049 W3 (T2 train): the linear orchestrator, OPT-IN only (T2_ORCHESTRATOR=linear with the T2 interim profile
+    # on). Unset / "graph" / any other value: main's path below, unchanged (parity: test_aa1049_t2_orchestrator.py).
+    from services.content_generation import t2_orchestrator
+    if t2_orchestrator.mode() == t2_orchestrator.LINEAR:
+        return await t2_orchestrator.run_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
+                                                  published_tour_id)
+
     from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
 
-    seo_data, diag = await t2_seo(pool, pt, tenant_id)
+    seo_data, diag = await t2_seo(pool, pt, tenant_id, tour_dict=tour_dict,
+                                  rewrite_language=brand_rules.get("rewrite_language"))
     # AA-919 (WM-18 / WM-20): the T2 writing-memory release of this tenant (platform + tenant pointer; None = memory
     # off, fails open). Every T2 write (the first and the T3 repair rounds) goes through build_t2_system_prompt, which
     # consumes it; the job result records it (`writing_release`). Release 0 changes no prompt byte.
     # AA-920 (WM-25): the version row records it too (`generation_meta`, CIS 297; hidden from every tenant read).
     from services.writing_memory.insertion import (generation_meta as _wm_meta, resolve as _wm_resolve,
-                                                   stamp as _wm_stamp)
+                                                   stamp as _wm_stamp, writer_answer as _wm_answer)
     writing_memory = await _wm_resolve(pool, "t2", tenant_id)
     if writing_memory:
         diag["writing_release"] = _wm_stamp(writing_memory)
 
+    # AA-1042 (Quality guard): this version's collector of writer calls a fallback model answered (the graph's writer
+    # and every T3 repair round); the version stores the admin-only mark in judge_breakdown.fallback_writer.
+    fb_scope = ExitStack()
+    fb_notes = fb_scope.enter_context(route_guard.collect_output())
     try:
         result = await _do_rewrite(
             tour_dict, idx=0, total=1,
@@ -242,6 +414,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # tenant rewrite must not introduce new numbers/measurements beyond.
             from services.acp_produce.tenant_pipeline import run_t3_qa_gate
             source_texts = [str(v) for v in tour_dict.values() if v]
+            graph_degraded = result.get("degraded") or []   # AA-1042: the writer graph's own degraded[] entries
             progress_step("check")  # AA-637
             qa = await run_t3_qa_gate(
                 tour_dict, source_texts, result, brand_rules,
@@ -261,12 +434,16 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 # AA-925: T3's fail-open paths (Jev outages while clearing hits, repair-contract reverts) —
                 # job.result is where they are read; the log event alone was invisible outside CloudWatch.
                 "degraded": qa.get("degraded") or [],
+                # AA-1042: the writer graph's degraded[] (fallback_writer and the fail-open detectors)
+                "graph_degraded": graph_degraded,
             }
 
             import json as _j3
             # AA-920 (WM-25): the version's own record of how it was written (CIS 297, admin-only): the release stamp
             # + rule ids, and the prompt hash of the kept draft (T3 may keep a repair round's output).
-            generation_meta = _wm_meta(writing_memory, prompt_version=result.get("prompt_version"))
+            # AA-900 W0: + the kept draft's answered model and fallback_used (generation_meta.writer_answer).
+            generation_meta = _wm_meta(writing_memory, prompt_version=result.get("prompt_version"),
+                                       answer=_wm_answer(result))
             gen = result["generated"]
             rewritten = {
                 "name":        gen.get("name", tour_dict["name"]),
@@ -282,10 +459,16 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # AA-778 (S238): no em-dash in tenant copy. The last text step: after the writer, judge,
             # flag-fix and T3 (which all read the draft as written), right before the save. T2 only:
             # this job is the one writer of AI-generated tenant_tour_versions; A1 never runs here.
+            # S271 W0 (T2 interim): T3 already fixed the dashes on the kept draft BEFORE its checks, so this call
+            # changes nothing then (kept as the AA-778 guarantee for the switch-off path).
+            from services.content_generation import t2_interim
             from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes
+            interim = t2_interim.enabled()
             dashes_before = em_dash_count(rewritten)
+            gated_text = dict(rewritten)   # AA-1047 W1: the kept draft as T3 checked it (before the last code fix)
             rewritten, dash_log = fix_t2_dashes(rewritten, tour_dict)
-            diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log}
+            diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log,
+                                 **({"fixed_in_t3": qa.get("em_dash_fixes", 0)} if interim else {})}
             rewrite_score = float(result.get("quality_score") or 0)
             # AA-436: status is now purely score-based, same formula for a real T3 pass
             # and an auto-pass — T3 no longer forces needs_review on its own (see
@@ -293,24 +476,51 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # happened). ADR-2026-038 §0.1 (amend §10.3): escalate-and-stop broke the
             # single-job T2->T3->T5 chain and made the tenant fix wording themselves —
             # both rejected 22/08.
-            new_status = _t2_status(rewrite_score)
-            # Never write 0.0 — fall back to source published_tours quality_score
-            async with pool.acquire() as _conn_qs:
-                source_score = await _conn_qs.fetchval(
-                    "SELECT quality_score FROM gold_aa_internal.published_tours WHERE id = $1::uuid",
-                    published_tour_id
-                )
-            final_score = rewrite_score if rewrite_score else float(source_score or 0)
+            new_status = _t2_status(rewrite_score, (qa.get("structural_issues") or ()) if interim else ())
+            if interim:
+                # S271 W0: no copy of the Master's score onto tenant text that has none of its own (NULL instead).
+                final_score = rewrite_score or None
+            else:
+                # Never write 0.0 — fall back to source published_tours quality_score
+                async with pool.acquire() as _conn_qs:
+                    source_score = await _conn_qs.fetchval(
+                        "SELECT quality_score FROM gold_aa_internal.published_tours WHERE id = $1::uuid",
+                        published_tour_id
+                    )
+                final_score = rewrite_score if rewrite_score else float(source_score or 0)
             # AA-795: the kept draft's judge verdict + the brand-claim fidelity check of the saved text (CIS 300,
             # admin-only, report-only: nothing above changes because of it).
             judge_breakdown = t2_judge_breakdown(
                 result, rewritten, tour_dict, brand_rules, final_score=final_score,
-                score_source="rewrite" if rewrite_score else "source_fallback",
+                score_source="rewrite" if rewrite_score else ("none" if interim else "source_fallback"),
                 chosen_attempt=qa.get("chosen_attempt"))
+            # AA-1042 (Quality guard): a fallback model wrote this version (marked; held for review when the stage
+            # holds fallback writes). Admin-only like the rest of judge_breakdown: the tenant still receives the text.
+            fb_mark = route_guard.t2_mark(fb_notes)
+            if fb_mark is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "fallback_writer": fb_mark}
+                diag["fallback_writer"] = fb_mark
+            # S271 W0 (AA-900 l13): its judge / validate calls answered by a fallback or uncalibrated model, or a judge
+            # of the writer's own family. Marked only (admin-only, never the version's held label).
+            inst_mark = route_guard.t2_instrument_mark(fb_notes)
+            if inst_mark is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "route_degraded": inst_mark}
+                diag["route_degraded"] = inst_mark
             if judge_breakdown is not None:
                 diag["judge"] = {"binding": judge_breakdown.get("binding"),
                                  "brand_claims_unsupported": len(
                                      (judge_breakdown.get("brand_claims") or {}).get("unsupported") or [])}
+            # AA-1047 W1 (root ADR 0020 "one exit"): the REPORT-mode final contract of this save (admin-only).
+            contract = final_contract_record(
+                rewritten, tour_dict, pt, exit="done", actual=new_status, qa=qa,
+                fallback_held=bool((fb_mark or {}).get("held")), score=rewrite_score, gated=gated_text)
+            if contract is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "final_contract": contract}
+                diag["final_contract"] = {k: contract.get(k) for k in ("verdict", "agrees", "flip", "sha_match")}
+            # AA-1052 W6: the writer-time lineage next to the contract; an admin sentence apply replaces only
+            # judge_breakdown.final_contract, never this key.
+            from services.quality import lineage as _lineage
+            judge_breakdown = {**(judge_breakdown or {}), _lineage.KEY: _lineage.writer_lineage(contract)}
             # qa_status keeps its migration-107 meaning unchanged (the real QA verdict,
             # 'escalated' still means the gate did NOT actually clear) — qa_auto_passed
             # (migration 109) is the new, separate tenant-facing badge flag: true means
@@ -386,19 +596,41 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     except Exception:
         progress_fail()  # AA-637
         raise
+    finally:
+        fb_scope.close()
     return diag
+
+
+async def _store_fact_sheet(pool, pt, tenant_id: str, published_tour_id: str):
+    """AA-1047 — fs_id of the T2 FactSheet (the raw source of the published tour, ``_PT_SQL`` row), or None."""
+    from services.quality import factsheet_store
+    if not factsheet_store.enabled():
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await factsheet_store.save_tour_sheet(
+                conn, pt, tenant_id=tenant_id, workflow="t2", tour_id=pt.get("tour_id"),
+                meta={"published_tour_id": str(published_tour_id)})
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the rewrite
+        logger.warning("t2_factsheet_store_failed", published_tour_id=str(published_tour_id), error=str(e)[:200])
+        return None
 
 
 async def mark_version_failed(pool, job_row: dict) -> None:
     """on_terminal: the job ended without success, so the version must not stay 'pending'. Except a job that waits
     for staff approval of its tenant's AI budget (AA-1016, review S262): the version stays 'pending' so the approval
     re-queue writes it (a 'failed' version would make the re-run skip it); a Cancel of that job (decline) marks it
-    failed."""
+    failed. AA-642 A1 (review S263): the same for a job the stage kill switch failed (declared degrade mode
+    queue_retry): the version stays 'pending' until "Re-queue refused jobs" runs it once the stage is on."""
     version_id = (job_row.get("payload") or {}).get("version_id")
     if not version_id:
         return
     if is_approval_stop(job_row):
         logger.warning("tenant_rewrite_job_waits_for_approval", version_id=version_id, job_id=job_row.get("id"),
+                       error=(job_row.get("error") or "")[:300])
+        return
+    if is_stage_switch_hold(job_row):   # AA-642 A1 (review S263): queue_retry, re-queued once the stage is on
+        logger.warning("tenant_rewrite_job_waits_for_stage_switch", version_id=version_id, job_id=job_row.get("id"),
                        error=(job_row.get("error") or "")[:300])
         return
     async with pool.acquire() as conn:
@@ -407,6 +639,16 @@ async def mark_version_failed(pool, job_row: dict) -> None:
             "WHERE id = $1::uuid AND status = 'pending'", version_id)
     logger.warning("tenant_rewrite_job_failed", version_id=version_id, job_id=job_row.get("id"),
                    job_status=job_row.get("status"), error=(job_row.get("error") or "")[:300])
+
+
+async def _claim_shadow(pool, **kw) -> "dict | None":
+    """AA-1050 W4: the claim-instrument shadow of the saved version (never raises; unit tests stub it)."""
+    try:
+        from services.quality import claim_shadow
+        return await claim_shadow.after_t2_version(pool, **kw)
+    except Exception as e:  # noqa: BLE001 — the version is saved: the shadow never fails the job
+        logger.warning("t2_claim_shadow_hook_failed", error_type=type(e).__name__, error=str(e)[:200])
+        return None
 
 
 # Live T2 rewrite ≈ 35 s (S201); 5 min means something is stuck.
@@ -440,6 +682,10 @@ async def run(ctx: JobContext) -> dict:
     from services.content_generation.t2_facts import with_facts
     tour_dict, facts_diag = await with_facts(pool, tour_dict, tenant_id)
 
+    # AA-1047 (Quality W1): the FactSheet of this version's raw source (tour builder; acp_shared.fact_sheet, CIS 386),
+    # stored once per distinct source and stamped on the version after its save. Best-effort: None changes nothing.
+    fs_id = await _store_fact_sheet(pool, pt, tenant_id, published_tour_id)
+
     # AA-637 — live progress (steps + streamed tour fields), read by GET /v1/progress/tour/{id}.
     progress = WritingProgress(
         ctx.resources.get("redis"), tenant_id=str(tenant_id), kind="tour", job_id=str(version_id),
@@ -450,13 +696,18 @@ async def run(ctx: JobContext) -> dict:
     progress.step("research")
     await ctx.progress(phase="writing", version_id=version_id)
     on_hold = False
+    # AA-1049 W3: a paid trial may switch T2_ORCHESTRATOR on for THIS job only (payload trial_flags, audit tenants
+    # only; services/quality/trial_flags.py). No payload key = main's path, no extra read.
+    from services.quality import trial_flags
     try:
-        with stream_sink.bind(progress):
-            diag = await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
-                                           published_tour_id)
+        async with trial_flags.scope(pool, KIND, p, tenant_id) as trial:
+            with stream_sink.bind(progress):
+                diag = await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
+                                               published_tour_id)
     except Exception as e:
         progress.fail()
-        on_hold = approval_stop_in(e) is not None  # AA-1016: waits for staff approval, resumes on its own
+        # AA-1016: waits for staff approval; AA-642 A1: waits for its stage to be switched on (then re-queued).
+        on_hold = approval_stop_in(e) is not None or stage_disabled_in(e) is not None
         raise
     finally:
         await progress.finish(not progress.failed,
@@ -464,9 +715,19 @@ async def run(ctx: JobContext) -> dict:
                               ON_HOLD_MESSAGE if on_hold else "Writing didn't finish. Please try again.")
 
     async with pool.acquire() as conn:
+        if fs_id:
+            from services.quality import factsheet_store
+            await factsheet_store.stamp_tenant_version(conn, version_id, fs_id)
         final = await conn.fetchrow(
             "SELECT status, quality_score::float AS score, qa_status FROM "
             "gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
     await ctx.progress(phase="done")
+    # AA-1050 W4 (root ADR 0020 D7): the pinned claim instrument in shadow on the SAVED version (either T2 path), after
+    # its status is written; writes only shared.claim_shadow_verdict + the ledger, never raises, never changes the
+    # status. Off by default (CLAIM_SHADOW unset: no read, no key in the job result).
+    shadow = await _claim_shadow(pool, version_id=version_id, tenant_id=tenant_id, job_id=getattr(ctx, "job_id", None),
+                                 tour_dict=tour_dict, brand_rules=brand_rules)
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
-            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag, **(diag or {})}
+            **({"claim_shadow": shadow} if shadow else {}),
+            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag,
+            **({"fs_id": fs_id} if fs_id else {}), **({"trial_flags": trial} if trial else {}), **(diag or {})}

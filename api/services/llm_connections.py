@@ -33,7 +33,14 @@ AA-1017 (registry v2, migration 322; design D9) — the secret NAME and the base
 admin keeps the switch, the limits, the budget and notes, plus the two provider limits of 322 (``daily_credit_limit``,
 ``low_balance_usd``). The listing stays the LLM kinds (``fetch_connections``); a decide / data / guard row (typesafe,
 dataforseo, geoapify, bedrock_guardrails) can be edited by key (its limits; Jev reads its timeout / retries from its
-row) but never switched (its client does not read ``enabled``). Each listed row also carries the 322 fields.
+row). Each listed row also carries the 322 fields.
+
+AA-642 (S263 lane L2, B1) — the typesafe / dataforseo / geoapify rows can be switched too (``PROVIDER_TOGGLE_KINDS``):
+their clients read ``enabled`` now (decide.py, dataforseo_client._request, geocoder / shape_sources) and refuse every
+call while it is off, writing the 0 USD refusal in their own ledger. Enabling one reads no secret here: the provider
+keys are read by the worker's own getters (shared/secrets.py), which the api task role may not be granted, and a
+denied read would raise the "Denied secret access" alarm; a key that cannot be read shows on the first call (fail
+closed, access_state ``unconfigured``). bedrock_guardrails stays migration-only (the CRM's client does not read it).
 
 AA-1002 (S4) — ``test_connection`` backs ``POST /admin/llm-connections/{connection_key}/test``: one small real call
 through ``LLMClient.probe``, logged in ``shared.llm_call_log`` (stage ``adhoc_conn_test``) and audited
@@ -43,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import os
 import re
@@ -72,7 +80,9 @@ EDITABLE = ("enabled", "timeout_s", "max_retries", "max_concurrency", "rpm_limit
 # The fields a credential check depends on, as an edit could move them (none since AA-1017: kept for the check below).
 CREDENTIAL_EDITS: tuple = ()
 # AA-1017: the fields a decide / data / guard row (connections.PROVIDER_KINDS) may change through this PATCH.
-PROVIDER_EDITABLE = ("timeout_s", "max_retries", "notes", "daily_credit_limit", "low_balance_usd")
+# AA-642 (S263 L2, B1): plus the switch, for the kinds whose client reads it (PROVIDER_TOGGLE_KINDS).
+PROVIDER_EDITABLE = ("enabled", "timeout_s", "max_retries", "notes", "daily_credit_limit", "low_balance_usd")
+PROVIDER_TOGGLE_KINDS = conn_registry.PROVIDER_SWITCH_KINDS
 # Fields that need migration 322 (the column grant); before it the UPDATE answers permission denied -> 503.
 V2_FIELDS = ("daily_credit_limit", "low_balance_usd")
 
@@ -203,7 +213,11 @@ def _validate(c: conn_registry.ProviderConnection, changes: dict) -> conn_regist
             raise ConnectionToggleRefused(
                 f"connection {c.connection_key!r} is a {c.kind!r} provider: only {', '.join(PROVIDER_EDITABLE)} can "
                 f"be changed here (not {', '.join(refused)})")
-    if changes.get("enabled") and c.kind not in TOGGLE_KINDS:
+    if "enabled" in changes and not c.is_llm and c.kind not in PROVIDER_TOGGLE_KINDS:
+        raise ConnectionToggleRefused(
+            f"connection {c.connection_key!r} is a {c.kind!r} provider: its client does not read the switch, so it "
+            "changes by migration only")
+    if changes.get("enabled") and c.is_llm and c.kind not in TOGGLE_KINDS:
         raise ConnectionToggleRefused(
             f"connection {c.connection_key!r} is a {c.kind!r} connection: the gateway has no adapter for it yet, so "
             "switching it on would change nothing")
@@ -216,8 +230,10 @@ def _validate(c: conn_registry.ProviderConnection, changes: dict) -> conn_regist
 
 
 def _needs_credential_check(before: conn_registry.ProviderConnection, after: conn_registry.ProviderConnection) -> bool:
-    """An API-key connection that is (or stays) on after the change and was off, or whose secret / endpoint moved."""
-    if not after.enabled or after.auth_mode not in ("api_key", "bedrock_api_key"):
+    """An API-key connection that is (or stays) on after the change and was off, or whose secret / endpoint moved.
+    AA-642 (S263 L2): never a decide / data provider (no secret is read in the api task for those, see the module
+    docstring)."""
+    if not after.enabled or after.auth_mode not in ("api_key", "bedrock_api_key") or not after.is_llm:
         return False
     return not before.enabled or any(getattr(before, f) != getattr(after, f) for f in CREDENTIAL_EDITS)
 
@@ -373,6 +389,7 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
     if diff:
         # this process reads the new state at once; the other processes (worker) within the 5-minute registry cache
         conn_registry.invalidate()
+        conn_registry.invalidate_providers()                   # AA-642 (S263 L2): the provider switch, at once here
         dep_registry.invalidate()
         from shared.llm_client.adapters import anthropic_messages, openai_chat
         anthropic_messages.forget_connection(connection_key)
@@ -426,14 +443,16 @@ def _pick(pairs: list, model_key: Optional[str]):
 
 
 async def test_connection(pool, connection_key: str, *, model_key: Optional[str] = None, actor: str,
-                          client=None, max_tokens: Optional[int] = None) -> dict:
+                          client=None, max_tokens: Optional[int] = None, count_outcome: bool = True) -> dict:
     """AA-1002 (S4): one small real call (``TEST_MAX_TOKENS`` output tokens) of one text model on the connection,
     through ``LLMClient.probe`` (the gateway's own adapters: same credential resolver, same limiter; the outcome
     counts on the deployment's circuit, a success closes it). Works on a switched-off connection or deployment: the
     point is to test before enabling. An answered call writes its ``shared.llm_call_log`` row (stage
     ``adhoc_conn_test``, role ``validate``, account = the connection); a billed but unusable reply is logged by the
     gateway. One audit row (``llm_connection_tested``). Raises LookupError (404) and ConnectionToggleRefused (422);
-    a provider failure is the result (``ok: false`` + its class), not an exception."""
+    a provider failure is the result (``ok: false`` + its class), not an exception. AA-1026 (S267): ``count_outcome``
+    False (the availability sweep of a disabled candidate) keeps the outcome off the circuit breaker
+    (``LLMClient.probe(count=False)``)."""
     from shared.llm_client.call_log import billed_fields, record_call_with_pool
     from shared.llm_client.client import LLMClient, UnusableReply, unusable_reply_cost
     from shared.llm_client.models import LLMRequest
@@ -465,7 +484,10 @@ async def test_connection(pool, connection_key: str, *, model_key: Optional[str]
     result = {"connection_key": connection_key, "kind": conn.kind, "model_key": model.model_key,
               "wire_id": dep.wire_id, "deployment_enabled": dep.enabled, "connection_enabled": conn.enabled}
     try:
-        resp = await asyncio.to_thread(client.probe, request, model, target)
+        if count_outcome:
+            resp = await asyncio.to_thread(client.probe, request, model, target)
+        else:
+            resp = await asyncio.to_thread(functools.partial(client.probe, count=False), request, model, target)
     except UnusableReply as e:      # the provider answered and billed; the gateway logged the billed row
         result.update(ok=True, reply_usable=False, error_class=None, error=str(e)[:300],
                       cost_usd=round(unusable_reply_cost(e), 6))

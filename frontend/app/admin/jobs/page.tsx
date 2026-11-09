@@ -41,6 +41,7 @@ import {
   apiGet,
   apiSend,
   useToast, PageFrame, useT,
+  ChipButton,
 } from "../../_kit";
 import { JOBS } from "./messages";
 import JobDrawer from "./JobDrawer";
@@ -306,18 +307,18 @@ function JobsPageInner() {
         actions={
           <>
             {tourId && (
-              <button onClick={() => update({ tourId: "" })} title={t("clearTour")}
-                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${K.accent}`, borderRadius: 6, background: K.card, color: K.ink3, cursor: "pointer", fontFamily: mono }}>
+              <ChipButton size="sm" selected onClick={() => update({ tourId: "" })} title={t("clearTour")}
+                style={{ fontFamily: mono }}>
                 {t("tourChip", tourId.slice(0, 8))}
-              </button>
+              </ChipButton>
             )}
             <Button size="sm" onClick={() => refetch()}>
-              <RefreshCw size={12} className={isFetching ? "spin" : undefined} style={{ marginRight: 4 }} />{t("refresh")}
+              <RefreshCw size={12} style={{ marginRight: 4, animation: isFetching ? "spin .8s linear infinite" : undefined }} />{t("refresh")}
             </Button>
           </>
         }
       />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {isError && (
         <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: K.dangerSoft, color: K.danger, border: `1px solid ${K.dangerBorder}`, fontSize: 12.5 }}>
@@ -345,11 +346,12 @@ function JobsPageInner() {
           {/* Status filter chips — clicking sets the status filter, clicking the active one clears it. */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
             {byStatus.map(s => (
-              <button key={s.status} onClick={() => update({ status: status === s.status ? "" : s.status })}
-                      style={{ cursor: "pointer", border: `1px solid ${status === s.status ? K.accent : K.line}`, background: K.card, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}>
+              <ChipButton key={s.status} selected={status === s.status}
+                onClick={() => update({ status: status === s.status ? "" : s.status })}
+                style={{ borderRadius: 8, padding: "8px 12px", gap: 8 }}>
                 <StatusBadge status={s.status} />
                 <span style={{ fontFamily: mono, fontSize: 13, color: K.ink }}>{s.n}</span>
-              </button>
+              </ChipButton>
             ))}
           </div>
 

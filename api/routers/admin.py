@@ -1,21 +1,32 @@
 # api/routers/admin.py
 # P2-S5 — Multi-tenant onboarding + billing metrics
-import hashlib
 import json
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from api.core.staff_authz import MASTER_ADMIN, OPS_READ, TENANT_READ, has_perm, staff_policy
+from api.core.staff_authz import (
+    BILLING_READ, BILLING_WRITE, CONTENT_READ, MASTER_ADMIN, OPS_READ, TENANT_BOOK_READ, TENANT_BOOK_WRITE, TENANT_READ,
+    ROLE_PERMS, TENANT_WRITE, has_any_perm, has_perm, sees_tenant_money, staff_policy,
+)
+from api.core.tenant_scope import (
+    TENANT_SCOPED,
+    scope_for_role,
+    staff_id_of,
+    tenant_scope_filter,
+    tenant_scope_sql,
+)
 from pydantic import BaseModel, Field
+from api.core import view_as
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
-from services.acp_shared.e2e_tenant_key_sync import sync_note, sync_test_tenant_key
+from services.tenant_account import dev_guard
+from services.tenant_account import plans as tenant_plans
+from shared.ops_checks import EVENT_TYPE_PREFIX as OPS_CHECK_EVENT_PREFIX
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -77,17 +88,12 @@ async def _require_master_admin_if_published(request: Request, tour_id: str, x_a
                             headers={"X-Error-Code": "master_admin_required"})
 
 
-PLAN_LIMITS = {
-    # AA-640: tours per month now live ONLY in shared.membership_plans (what tenants see and are
-    # billed on). This table keeps the per-plan rate limit.
-    "starter":  {"rpm": 60},
-    "growth":   {"rpm": 300},
-    "business": {"rpm": 1000},
-    "internal": {"rpm": 60},
-}
+# AA-1028 R1 slice 3 (root ADR 0019 d2): the hard-coded PLAN_LIMITS (per-tier RPM) is gone. A tier's starting RPM is
+# its live content plan's content.rate_limit_rpm (shared.plan_feature, edited on Tenants › Plans & add-ons; seeded by
+# CIS 355 with the same 60 / 300 / 1,000 / internal 60), read by services/tenant_account/plans.tier_rate_limit_rpm.
 # AA-766: upper bound for an admin RPM override — a technical guard against typos (10x the largest
 # plan default), not a commercial limit.
-RATE_LIMIT_RPM_MAX = 10000
+RATE_LIMIT_RPM_MAX = tenant_plans.RATE_LIMIT_RPM_MAX   # 10000; the plan editor shares the bound (S266)
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -115,6 +121,38 @@ def _require_tenant_admin(x_admin_role: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
 
 
+# AA-1035 R2 (root ADR 0019 d3, clarifications.md section 3: "PATCH /admin/tenants/{tenant_id} checks per field:
+# finance only changes billing fields"). The plan and suspend / resume are billing; RPM and the publish limit are not.
+BILLING_PATCH_FIELDS = frozenset({"plan_tier", "is_active"})
+
+
+def _require_tenant_patch(x_admin_role: Optional[str], fields: set[str]) -> None:
+    """PATCH /admin/tenants/{id}: tenant.write (admin) may send every field; billing.write (finance) only the billing
+    fields; tenant.book.write (customer_success, its book: require_tenant_scope) only the other ones (RPM, publish
+    limit). Defense in depth behind POLICY (any of the three), like _require_tenant_admin."""
+    if has_perm(x_admin_role, TENANT_WRITE):
+        return
+    if has_perm(x_admin_role, BILLING_WRITE) and fields <= BILLING_PATCH_FIELDS:
+        return
+    if has_perm(x_admin_role, TENANT_BOOK_WRITE) and not fields & BILLING_PATCH_FIELDS:
+        return
+    if has_perm(x_admin_role, BILLING_WRITE):
+        raise HTTPException(status_code=403, detail=(
+            "Your role may change only the plan and suspend / resume of a tenant (plan_tier, is_active)"))
+    if has_perm(x_admin_role, TENANT_BOOK_WRITE):
+        raise HTTPException(status_code=403, detail=(
+            "Your role may not change the plan or suspend / resume a tenant (plan_tier, is_active)"))
+    raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
+
+
+def _require_tenant_book_write(x_admin_role: Optional[str]) -> None:
+    """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity; AA-1036 R3: the decision on
+    an add-on request): tenant.write (admin) or tenant.book.write (customer_success; require_tenant_scope has already
+    kept it to its book). Defense in depth behind POLICY, like _require_tenant_admin."""
+    if not has_any_perm(x_admin_role, TENANT_WRITE, TENANT_BOOK_WRITE):
+        raise HTTPException(status_code=403, detail="Only an admin or the tenant's account manager can change this")
+
+
 def _admin_actor(x_admin_user_id: Optional[str]) -> str:
     """audit_log.actor is varchar(64); the BFF sends the admin's UUID. A direct (non-FastAPI)
     call leaves the parameter as its Header() default, which is not a str."""
@@ -123,12 +161,21 @@ def _admin_actor(x_admin_user_id: Optional[str]) -> str:
 
 
 def tenant_status(is_active: bool, cancelled_at) -> str:
-    """The three tenant states (AA-797): offboarded (cancelled_at set, key revoked; reversible only
+    """The three tenant states (AA-797): offboarded (cancelled_at set, account_status offboarding; reversible only
     through POST /tenants/{id}/restore), suspended is a reversible is_active=false, everything
     else is active."""
     if cancelled_at is not None:
         return "offboarded"
     return "active" if is_active else "suspended"
+
+
+async def _tier_rpm(conn, plan_tier: str) -> int:
+    """The RPM a tenant of ``plan_tier`` starts with (its live content plan); 400 for a tier no live plan serves."""
+    rpm = await tenant_plans.tier_rate_limit_rpm(conn, plan_tier)
+    if rpm is None:
+        raise HTTPException(status_code=400,
+                            detail=f"Invalid plan_tier. Choose: {await tenant_plans.assignable_tiers(conn)}")
+    return rpm
 
 
 async def _resolve_plan_id(conn, plan_tier: str):
@@ -161,6 +208,9 @@ class CreateTenantRequest(BaseModel):
     name: str
     slug: str
     plan_tier: str = "starter"
+    # AA-1028 R1 slice 3 (root ADR 0019 d16): agency or demo; left out = demo on Dev (synthetic), agency elsewhere.
+    # On Dev a real agency is only the one pilot, made through the saga (POST /admin/tenants/provision, pilot_weeks).
+    kind: Optional[Literal["agency", "demo"]] = None
     # AA-384: caller-chosen posting cadence, no longer implied by plan_tier (was
     # POSTS_PER_WEEK_BY_PLAN_TIER, removed). Required, no default -- every tenant states its own
     # cadence at creation. 1-14 is the validation range confirmed in the AA-384 build task (a
@@ -174,20 +224,9 @@ class CreateTenantResponse(BaseModel):
     slug: str
     plan_tier: str
     posts_per_week: int
-    api_key: str
     rate_limit_rpm: int
     is_active: bool
     message: str
-
-
-class GenerateKeyResponse(BaseModel):
-    tenant_id: str
-    tenant_name: str
-    api_key: str
-    message: str
-    # S237: "synced" when the E2E test copy aa-cis/dev/e2e-tenant/<slug> was updated, "not_test_tenant",
-    # "skipped" (not on ECS) or "failed" (services/acp_shared/e2e_tenant_key_sync.py).
-    test_secret_sync: Optional[str] = None
 
 # ── POST /admin/tenants — Create tenant ───────────────────────────────────────
 
@@ -210,13 +249,11 @@ async def create_tenant(
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
 
-    if body.plan_tier not in PLAN_LIMITS:
-        raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Choose: {list(PLAN_LIMITS.keys())}")
-
-    rpm = PLAN_LIMITS[body.plan_tier]["rpm"]
-    plaintext = f"cis_{secrets.token_urlsafe(32)}"
-    key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-
+    kind = body.kind or dev_guard.default_kind()
+    refused = dev_guard.refusal(kind, None)
+    if refused is not None:
+        raise HTTPException(status_code=422, detail={"detail": refused[0], "message": refused[1]},
+                            headers={"X-Error-Code": refused[0]})
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         existing = await conn.fetchval(
@@ -224,25 +261,21 @@ async def create_tenant(
         )
         if existing:
             raise HTTPException(status_code=409, detail=f"Slug '{body.slug}' already exists")
+        rpm = await _tier_rpm(conn, body.plan_tier)
         # AA-797: plan_id was never set here, so every new tenant showed quota/price 0/inf.
         plan_id = await _resolve_plan_id(conn, body.plan_tier)
 
         async with conn.transaction():
+            # AA-1036 R3 slice 3 (root ADR 0019 d6): no tenant API key; people join through a studio invitation.
             tenant_id = await conn.fetchval("""
                 INSERT INTO shared.tenants
-                    (name, slug, plan_tier, plan_id, posts_per_week, api_key_hash, rate_limit_rpm, is_active)
-                VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, $7, true)
+                    (name, slug, plan_tier, plan_id, posts_per_week, rate_limit_rpm, is_active, kind, is_canary)
+                VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, true, $7, $8)
                 RETURNING tenant_id
-            """, body.name, body.slug, body.plan_tier, plan_id, body.posts_per_week, key_hash, rpm)
-
-            # Quota ledger — default limits per plan
-            plan_limits = PLAN_LIMITS.get(body.plan_tier, PLAN_LIMITS["starter"])
-            await conn.execute("""
-                INSERT INTO acp_shared.acp_quota_ledger
-                    (tenant_id, s2_runs_limit, s3_runs_limit, s4_blogs_limit)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (tenant_id) DO NOTHING
-            """, tenant_id, 10, 10, 50)
+            """, body.name, body.slug, body.plan_tier, plan_id, body.posts_per_week, rpm,
+                kind, kind == "demo")
+            # AA-1028 R1 slice 3: no acp_quota_ledger row (the ACPv1 S2/S3/S4 10/10/50 ledger has no reader since
+            # 13/07/2026; a tenant's limits are its entitlements).
 
             # Empty brand rules row — populated later via brand-brief upload
             # ON CONFLICT omitted: no unique constraint on (tenant_id, is_active);
@@ -281,7 +314,7 @@ async def create_tenant(
                 conn, tenant_id=str(tenant_id), actor=_admin_actor(x_admin_user_id),
                 action=AdminTenantAuditAction.ONBOARD, resource_type="tenant", resource_id=str(tenant_id),
                 details={"name": body.name, "plan_tier": body.plan_tier, "plan_id": str(plan_id),
-                         "posts_per_week": body.posts_per_week},
+                         "posts_per_week": body.posts_per_week, "kind": kind},
             )
 
     return CreateTenantResponse(
@@ -290,10 +323,9 @@ async def create_tenant(
         slug=body.slug,
         plan_tier=body.plan_tier,
         posts_per_week=body.posts_per_week,
-        api_key=plaintext,
         rate_limit_rpm=rpm,
         is_active=True,
-        message="Store this API key securely — it will not be shown again. Tenant is active.",
+        message="Tenant is active. Invite its people to the Content studio from the tenant's Members tab.",
     )
 
 async def _publish_limit_overrides(conn) -> dict:
@@ -374,7 +406,18 @@ async def list_tenants(
             WHERE t.is_active = true OR $1::boolean
             ORDER BY t.created_at
         """, include_inactive)
+        # AA-1035 R2 (root ADR 0019 d4): a customer_success / support caller sees its book (and support the pool) only.
+        scope = await tenant_scope_filter(request, conn)
+        if scope is not None:
+            rows = [r for r in rows if str(r["tenant_id"]) in scope]
         publish_limits = await _publish_limit_overrides(conn)
+    # AA-1035 (S267 review): support reaches its book and the pool, but never the money columns (null for it). Only a
+    # scoped staff call (scope is not None) can lose them; the machine and the "all" roles keep them.
+    money = scope is None or sees_tenant_money(request.headers.get("x-admin-role"))
+
+    def _usd(value):
+        return float(value) if money and value is not None else None
+
     return {
         "tenants": [
             {
@@ -397,9 +440,7 @@ async def list_tenants(
                 "plan": {
                     "tours_quota_monthly":     r["tours_quota_monthly"],
                     "api_calls_quota_monthly": r["api_calls_quota_monthly"],
-                    "price_usd_monthly": (
-                        float(r["price_usd_monthly"]) if r["price_usd_monthly"] is not None else None
-                    ),
+                    "price_usd_monthly": _usd(r["price_usd_monthly"]),
                 },
                 "this_month": {
                     "tours_rewritten":  r["source_active"],
@@ -407,9 +448,9 @@ async def list_tenants(
                     "quota_tours_pct":  float(r["quota_tours_pct"]),
                     "quota_calls_pct":  float(r["quota_calls_pct"]),
                     "tours_overage":    r["tours_overage"],
-                    "overage_usd":      float(r["overage_usd"]),
+                    "overage_usd":      _usd(r["overage_usd"]),
                     # AA-798: the view's real llm_call_log month-to-date spend (migration 223)
-                    "llm_cost_usd":     float(r["llm_cost_usd"]),
+                    "llm_cost_usd":     _usd(r["llm_cost_usd"]),
                 },
                 "lifecycle": {
                     "source_active":     r["source_active"],
@@ -424,6 +465,43 @@ async def list_tenants(
         ],
         "total": len(rows),
     }
+
+# ── GET /admin/tenant-names — the tenant picker (AA-1035) ────────────────────
+
+TENANT_NAMES_SQL = """
+    SELECT tenant_id, name, slug, is_active, cancelled_at
+      FROM shared.tenants
+     ORDER BY lower(name), tenant_id
+"""
+
+
+@router.get("/tenant-names", summary="Tenant ids, names, slugs and status for the admin tenant picker")
+async def list_tenant_names(request: Request, x_admin_secret: str = Header(None)):
+    """AA-1035 (S267 fix pass): the shared admin tenant picker (frontend/lib/tenants.ts TENANTS_API) for every role
+    whose pages pick or name a tenant, including the ones the Tenants directory refuses (content_lead, tenant_qa on
+    Tenant QA, ai_ops on the Writing Lab and AI & spend). Names only: no plan, usage, money or counts. Active,
+    suspended and offboarded tenants (the derived ``status``), filtered to the caller's scope like the directory
+    (api/core/tenant_scope.py tenant_scope_filter: customer_success its book, support its book and the pool)."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(TENANT_NAMES_SQL)
+        scope = await tenant_scope_filter(request, conn)
+    if scope is not None:
+        rows = [r for r in rows if str(r["tenant_id"]) in scope]
+    return {
+        "tenants": [
+            {
+                "tenant_id": str(r["tenant_id"]),
+                "name": r["name"],
+                "slug": r["slug"],
+                "status": tenant_status(r["is_active"], r["cancelled_at"]),
+                "cancelled_at": r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
+            }
+            for r in rows
+        ],
+    }
+
 
 # ── GET /admin/tenants/{id}/usage — Billing metrics ──────────────────────────
 
@@ -462,7 +540,7 @@ TENANT_USAGE_MONTHLY_SQL = """
 
 
 
-@router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics")
+@router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics", dependencies=TENANT_SCOPED)
 async def get_tenant_usage(
     tenant_id: UUID,
     request: Request,
@@ -539,7 +617,7 @@ class UpdateTenantRequest(BaseModel):
     body, so the Active toggle returned 200 and changed nothing."""
     plan_tier: Optional[str] = None
     is_active: Optional[bool] = None
-    # AA-766: an explicit per-tenant override of the plan's default RPM (PLAN_LIMITS). Sent alone
+    # AA-766: an explicit per-tenant override of the plan's default RPM (content.rate_limit_rpm). Sent alone
     # it changes only the limit; sent with plan_tier it wins over that plan's default.
     rate_limit_rpm: Optional[int] = Field(None, ge=1, le=RATE_LIMIT_RPM_MAX)
     # AA-819 (AUP 2026-11): per-tenant override of the daily publish limit (code default 20 per UTC
@@ -547,7 +625,8 @@ class UpdateTenantRequest(BaseModel):
     daily_publish_limit: Optional[int] = Field(None, ge=1, le=daily_limit.DAILY_PUBLISH_LIMIT_MAX)
 
 
-@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status")
+@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status",
+              dependencies=TENANT_SCOPED)
 async def update_tenant(
     tenant_id: UUID,
     body: UpdateTenantRequest,
@@ -563,13 +642,11 @@ async def update_tenant(
     Each change writes one audit row with before/after, in the same transaction. Before migration 230
     the publish limit override is refused with 409 (the code default applies to every tenant)."""
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_patch(x_admin_role, set(body.model_fields_set))
     set_publish_limit = "daily_publish_limit" in body.model_fields_set
     if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None and not set_publish_limit:
         raise HTTPException(status_code=422, detail="Nothing to update: send plan_tier, rate_limit_rpm, "
                                                     "daily_publish_limit and/or is_active")
-    if body.plan_tier is not None and body.plan_tier not in PLAN_LIMITS:
-        raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Choose: {list(PLAN_LIMITS.keys())}")
 
     actor = _admin_actor(x_admin_user_id)
     changed: list[str] = []
@@ -597,8 +674,9 @@ async def update_tenant(
 
         rpm_now = before["rate_limit_rpm"]
         if body.plan_tier is not None and body.plan_tier != before["plan_tier"]:
+            tier_rpm = await _tier_rpm(conn, body.plan_tier)
             plan_id = await _resolve_plan_id(conn, body.plan_tier)
-            rpm = body.rate_limit_rpm if body.rate_limit_rpm is not None else PLAN_LIMITS[body.plan_tier]["rpm"]
+            rpm = body.rate_limit_rpm if body.rate_limit_rpm is not None else tier_rpm
             rpm_now = rpm
             await conn.execute("""
                 UPDATE shared.tenants
@@ -744,7 +822,7 @@ def _derive_run_display_status(
 # ── GET /admin/tenants/{id}/audit — AA-666 Tenant 360 Audit tab ─────────────
 
 
-@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline")
+@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline", dependencies=TENANT_SCOPED)
 async def get_tenant_audit(
     tenant_id: str,
     request: Request,
@@ -775,7 +853,7 @@ async def get_tenant_audit(
 # ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
 
 
-@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view")
+@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view", dependencies=TENANT_SCOPED)
 async def get_tenant_details(
     tenant_id: UUID,
     request: Request,
@@ -798,11 +876,17 @@ async def get_tenant_details(
     # AA-882 (GĐ3 review) — this route has no POLICY entry because Master Content (every staff role)
     # reads the aa_internal catalog through it. Any other tenant's account, usage and LLM spend is
     # tenant.read, like the sibling /usage, /audit and /config routes.
-    if str(tenant_id) != AA_INTERNAL_TENANT and not has_perm(x_admin_role, TENANT_READ):
+    # AA-1035: tenant.book.read (customer_success / support) reads the tenants of its book; require_tenant_scope has
+    # already refused a tenant outside it.
+    # AA-1035 (S267 fix pass): finance (billing.read) opens Tenant 360 for its Billing / Subscription tabs on this read;
+    # it gets the header (plan, usage, cost) and no tenant text or catalog: no tours, pipeline runs or brand rules.
+    if str(tenant_id) != AA_INTERNAL_TENANT and not has_any_perm(x_admin_role, TENANT_READ, TENANT_BOOK_READ,
+                                                                 BILLING_READ):
         raise HTTPException(
             status_code=403,
             detail=f"Role '{x_admin_role or 'machine'}' lacks the '{TENANT_READ}' permission",
         )
+    header_only = not has_any_perm(x_admin_role, TENANT_READ, TENANT_BOOK_READ, CONTENT_READ)
     pool = request.app.state.pool
 
     # AA-718 — windowed LLM cost (reconcile with External Spend: rolling 30 days, UTC).
@@ -877,7 +961,9 @@ async def get_tenant_details(
         catalog_total = 0           # AA-718: true filtered COUNT (not len of a capped list)
         facet_countries: list = []  # AA-739
         catalog_avg_quality = None  # AA-718: avg over the SAME filter set as the table
-        if is_internal:
+        if header_only:
+            tours: list = []
+        elif is_internal:
             # AA-718 — server-side filter/sort/paginate the internal catalog (was ORDER BY
             # published_at DESC LIMIT 200, which silently dropped the newest rows past 200 and made
             # Total Tours / Avg Quality cap at 200). Filters are applied in SQL so the summary
@@ -958,7 +1044,7 @@ async def get_tenant_details(
 
         # UNION: direct tenant runs + runs containing this tenant's tours (covers B2B tenants
         # whose tours were processed under aa_internal pipeline)
-        runs = await conn.fetch("""
+        runs = [] if header_only else await conn.fetch("""
             SELECT * FROM (
                 SELECT pr.batch_id, pr.started_at, pr.tours_total, pr.tours_passed,
                        pr.llm_model, pr.cost_usd, pr.status
@@ -976,7 +1062,7 @@ async def get_tenant_details(
             ORDER BY started_at DESC LIMIT 20
         """, tenant_id)
 
-        brand_rows = await conn.fetch("""
+        brand_rows = [] if header_only else await conn.fetch("""
             SELECT
                 system_prompt, style_guide, forbidden_words, version, updated_at,
                 COALESCE(brand_name, '')         AS brand_name,
@@ -1022,12 +1108,15 @@ async def get_tenant_details(
                 return []
         return []
 
+    # AA-1035 (S267 review): support reads the Tenant 360 header of its book, without the LLM cost (null for it).
+    money = sees_tenant_money(x_admin_role)
+
     return {
         "summary": {
             "total_rewrites":       int(total_rewrites or 0),
-            "total_llm_cost_usd":   float(total_cost or 0),
+            "total_llm_cost_usd":   float(total_cost or 0) if money else None,
             # AA-718 bug 2: windowed cost + label, reconciled with External Spend's 30d window.
-            "llm_cost_window_usd":  float(cost_window or 0) if is_internal else None,
+            "llm_cost_window_usd":  float(cost_window or 0) if is_internal and money else None,
             "llm_cost_window_label": "last 30 days",
             # AA-718 bug 1 + 5: true filtered catalog count + filter-aware avg quality (internal).
             "catalog_total":        catalog_total if is_internal else int(total_rewrites or 0),
@@ -1074,7 +1163,7 @@ async def get_tenant_details(
                 "tours_processed": int(r["tours_total"] or 0),
                 "tours_passed":    int(r["tours_passed"] or 0),
                 "llm_model":       r["llm_model"],
-                "llm_cost_usd":    float(r["cost_usd"] or 0),
+                "llm_cost_usd":    float(r["cost_usd"] or 0) if money else None,
                 "status":          r["status"],
                 # AA-718 bug 3: an honest DISPLAY status derived read-only (never written back).
                 # A run stored 'ingesting' can be: actually finished (all tours passed → show
@@ -1136,7 +1225,7 @@ class TenantBrandIdentityUpdate(BaseModel):
     default_cta:        Optional[str] = None  # AA-771 (S233, migration 220)
 
 
-@router.put("/tenants/{tenant_id}/brand-identity")
+@router.put("/tenants/{tenant_id}/brand-identity", dependencies=TENANT_SCOPED)
 async def update_tenant_brand_identity(
     tenant_id: UUID,
     body: TenantBrandIdentityUpdate,
@@ -1153,7 +1242,7 @@ async def update_tenant_brand_identity(
     prompt_sanitize`) since these free-text fields feed straight into every future rewrite for
     this tenant, same as the tenant's own self-service path."""
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_book_write(x_admin_role)
     tenant_id_s = str(tenant_id)
 
     # AA-741 (S229): same rules as the tenant's own path — reject over-long, never cut silently.
@@ -1216,6 +1305,9 @@ async def update_tenant_brand_identity(
             details={"version": current + 1, "brand_name": brand_name,
                      "fields_set": sorted(k for k, v in body.model_dump().items() if v)},
         )
+    # AA-900 W0: a tenant's house style is part of its writing-memory tenant releases' config_fp (brand_config)
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(pool, actor=f"brand_save:{_admin_actor(x_admin_user_id)}"[:128])
     return {"status": "updated", "version": current + 1,
             "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
 
@@ -1223,7 +1315,7 @@ async def update_tenant_brand_identity(
 # ── GET /admin/tenants/{id}/rewrite-activity ─────────────────────────────────
 
 
-@router.get("/tenants/{tenant_id}/rewrite-activity")
+@router.get("/tenants/{tenant_id}/rewrite-activity", dependencies=TENANT_SCOPED)
 async def get_rewrite_activity(
     tenant_id: UUID,
     request: Request,
@@ -1267,56 +1359,7 @@ async def get_rewrite_activity(
     }
 
 
-# ── POST /admin/tenants/{id}/generate-key ────────────────────────────────────
-
-
-@router.post("/tenants/{tenant_id}/generate-key", response_model=GenerateKeyResponse)
-async def generate_api_key(
-    tenant_id: UUID,
-    request: Request,
-    x_admin_secret: str = Header(None),
-    x_admin_user_id: Optional[str] = Header(None),
-    x_admin_role: Optional[str] = Header(None),
-):
-    verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn, conn.transaction():
-        row = await conn.fetchrow(
-            "SELECT tenant_id, name, slug, cancelled_at FROM shared.tenants WHERE tenant_id = $1 FOR UPDATE",
-            tenant_id,
-        )
-        if not row:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        # AA-797: an offboarded tenant's key stays revoked; restore issues the new key.
-        if row["cancelled_at"] is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=(f"Tenant was offboarded at {row['cancelled_at'].isoformat()}; restore it to issue a "
-                        "new API key (POST /admin/tenants/{id}/restore)"),
-            )
-        plaintext = f"cis_{secrets.token_urlsafe(32)}"
-        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-        await conn.execute("""
-            UPDATE shared.tenants
-            SET api_key_hash = $1, updated_at = NOW()
-            WHERE tenant_id = $2
-        """, key_hash, tenant_id)
-        await write_audit_log(
-            conn, tenant_id=str(tenant_id), actor=_admin_actor(x_admin_user_id),
-            action=AdminTenantAuditAction.KEY_ROTATED, resource_type="tenant", resource_id=str(tenant_id),
-            details={"name": row["name"]},
-        )
-
-    # S237: after the commit, so a rolled-back rotation never overwrites the test copy.
-    sync = await sync_test_tenant_key(row.get("slug"), plaintext)
-    return GenerateKeyResponse(
-        tenant_id=str(row["tenant_id"]),
-        tenant_name=row["name"],
-        api_key=plaintext,
-        message="Store this key securely — it will not be shown again." + sync_note(sync, row.get("slug")),
-        test_secret_sync=sync,
-    )
+# AA-1036 R3 slice 3 (root ADR 0019 d6): POST /admin/tenants/{id}/generate-key was removed with the tenant API keys.
 
 
 # AA-750: POST /admin/tenants/{id}/brand-brief (DOCX upload → Lambda acp-brand-brief-parser on the old
@@ -1330,7 +1373,8 @@ class OffboardRequest(BaseModel):
     reason: str
 
 
-@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)")
+@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant (soft)",
+             dependencies=TENANT_SCOPED)
 async def offboard_tenant(
     tenant_id: str,
     body: OffboardRequest,
@@ -1340,11 +1384,13 @@ async def offboard_tenant(
     x_admin_role: Optional[str] = Header(None),
 ):
     """
-    Tenant offboarding: cancel tenant, revoke API key, write the audit row. PRD v1.0 §3.2.
+    Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.
     Soft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or
     overwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so
-    POST /tenants/{id}/restore brings the tenant back whole. PATCH / generate-key on an
-    offboarded tenant return 409. The tenant's QUEUED jobs are cancelled (running ones finish).
+    POST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.
+    AA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354
+    trigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant).
+    The tenant's QUEUED jobs are cancelled (running ones finish).
     The Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can
     put it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention
     window, with explicit approval, per the data-erasure runbook), not automated here.
@@ -1384,10 +1430,10 @@ async def offboard_tenant(
             await conn.execute(
                 """
                 UPDATE shared.tenants
-                SET cancelled_at        = NOW(),
+                SET account_status      = 'offboarding',
+                    cancelled_at        = NOW(),
                     cancellation_reason = $2,
                     is_active           = FALSE,
-                    api_key_hash        = 'REVOKED_' || tenant_id::text,
                     updated_at          = NOW()
                 WHERE tenant_id = $1::uuid
                 """,
@@ -1407,6 +1453,10 @@ async def offboard_tenant(
                 """,
                 tenant_id,
             )
+            # AA-1035 follow-up (S268): every open view-as session on this tenant ends now ('revoked', one
+            # tenant.view_as_ended row each, cause tenant_offboarded), not at its next request or its expiry.
+            closed_views = await view_as.close_open_sessions(
+                conn, actor=_admin_actor(x_admin_user_id), cause="tenant_offboarded", tenant_id=tenant_id)
             await write_audit_log(
                 conn, tenant_id=tenant_id, actor=_admin_actor(x_admin_user_id),
                 action=AdminTenantAuditAction.OFFBOARD, resource_type="tenant", resource_id=tenant_id,
@@ -1414,6 +1464,7 @@ async def offboard_tenant(
                     "reason": body.reason,
                     "name": tenant["name"],
                     "cancelled_jobs": [{"id": r["id"], "kind": r["kind"]} for r in cancelled],
+                    "ended_view_as_sessions": [r["session_id"] for r in closed_views],
                     "jev_allowlist": ({"reason": allow["reason"], "added_at": allow["added_at"].isoformat(),
                                        "added_by": allow["added_by"]} if allow else None),
                     "note": "Nothing is deleted; POST /admin/tenants/{id}/restore brings the tenant back",
@@ -1433,8 +1484,8 @@ async def offboard_tenant(
     return {
         "tenant_id": tenant_id,
         "status": "offboarded",
-        "api_key": "REVOKED",
         "cancelled_jobs": len(cancelled),
+        "ended_view_as_sessions": len(closed_views),
         "note": "Tenant data and settings are kept; POST /admin/tenants/{id}/restore brings the tenant back.",
     }
 
@@ -1445,17 +1496,16 @@ class RestoreTenantResponse(BaseModel):
     tenant_id: str
     tenant_name: str
     status: str
-    api_key: str
     previous_offboarded_at: str
     previous_reason: Optional[str]
     jev_allowlist_restored: bool
     cancelled_jobs: list[dict]
     message: str
-    test_secret_sync: Optional[str] = None  # S237, see GenerateKeyResponse
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
-             summary="Restore an offboarded tenant with its data and settings")
+             summary="Restore an offboarded tenant with its data and settings",
+             dependencies=TENANT_SCOPED)
 async def restore_tenant(
     tenant_id: UUID,
     request: Request,
@@ -1465,8 +1515,9 @@ async def restore_tenant(
 ):
     """Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.
     Offboard deletes nothing, so restore only clears the offboard markers (cancelled_at,
-    cancellation_reason), sets is_active, re-adds the Jev allow-list row offboard snapshotted, and
-    issues a NEW API key (the old one stays revoked). plan_tier / plan_id / rate limit and every
+    cancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted
+    (AA-1036: no API key is issued; members sign in with the partner pool as before).
+    plan_tier / plan_id / rate limit and every
     setting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are
     listed so the admin can re-run them. 409 unless the tenant is offboarded."""
     verify_admin_secret(x_admin_secret)
@@ -1513,14 +1564,12 @@ async def restore_tenant(
             """, tenant_id, allow["reason"], datetime.fromisoformat(allow["added_at"]), allow["added_by"])
             allow_restored = inserted.endswith(" 1")
 
-        plaintext = f"cis_{secrets.token_urlsafe(32)}"
-        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
         await conn.execute("""
             UPDATE shared.tenants
-            SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE,
-                api_key_hash = $2, updated_at = NOW()
+            SET account_status = 'active', cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE,
+                updated_at = NOW()
             WHERE tenant_id = $1
-        """, tenant_id, key_hash)
+        """, tenant_id)
         await write_audit_log(
             conn, tenant_id=tid, actor=_admin_actor(x_admin_user_id),
             action=AdminTenantAuditAction.RESTORED, resource_type="tenant", resource_id=tid,
@@ -1528,27 +1577,22 @@ async def restore_tenant(
                 "name": row["name"],
                 "previous_offboarded_at": offboarded_at.isoformat(),
                 "previous_reason": row["cancellation_reason"],
-                "restored": ["status:active", "api_key:new"] + (["jev_allowlist"] if allow_restored else []),
+                "restored": ["status:active"] + (["jev_allowlist"] if allow_restored else []),
                 "unchanged": "plan_tier, plan_id, rate limit, brand rules, planning config, content, users",
                 "cancelled_jobs_not_rerun": cancelled_jobs,
             },
         )
 
     await _forget_tenant_meta(request, tenant_id)
-    sync = await sync_test_tenant_key(row.get("slug"), plaintext)  # S237, after the commit
     return RestoreTenantResponse(
         tenant_id=tid,
         tenant_name=row["name"],
         status="active",
-        api_key=plaintext,
         previous_offboarded_at=offboarded_at.isoformat(),
         previous_reason=row["cancellation_reason"],
         jev_allowlist_restored=allow_restored,
         cancelled_jobs=cancelled_jobs,
-        message=("Store this key securely — it will not be shown again. "
-                 f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run."
-                 + sync_note(sync, row.get("slug"))),
-        test_secret_sync=sync,
+        message=f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run.",
     )
 
 
@@ -1572,7 +1616,8 @@ _VALID_CHANNELS = {
 }
 
 
-@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant")
+@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_config(
     tenant_id: UUID,
     request: Request,
@@ -1592,7 +1637,8 @@ async def get_tenant_config(
     }
 
 
-@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant")
+@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant",
+            dependencies=TENANT_SCOPED)
 async def update_tenant_config(
     tenant_id: UUID,
     body: TenantConfigRequest,
@@ -1602,7 +1648,7 @@ async def update_tenant_config(
     x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_book_write(x_admin_role)
     invalid = [c for c in body.channels if c not in _VALID_CHANNELS]
     if invalid:
         raise HTTPException(
@@ -1869,11 +1915,12 @@ async def deactivate_master_tour(
 # AA-882 (GĐ3 review). shared.notifications is one global list with one is_read flag (no per-user read
 # state yet), and it carries admin-only alerts: platform.* events (DFS balance, Jev credit, rerun
 # waves, retention), spend budget alerts, tenant CTA review claims, master lifecycle. A role without
-# ops.read (reviewer, content) sees, counts and clears only the rows targeted at a content role and
+# ops.read (content) sees, counts and clears only the rows targeted at a content role and
 # never a platform.* / spend alert, so one click on "Mark all read" can not hide an admin's alert.
 # Admin (and a machine caller, which holds the secret) sees every row. Longer term: per-user read
 # state (a notification_reads table), so one user's click never clears another user's bell.
 
+# 'reviewer' stays in the array for rows written before CIS 363 merged that role into content (no writer targets it).
 _NOTIF_CONTENT_SCOPE = (
     "(target_roles && ARRAY['content','reviewer']::text[]"
     " AND event_type NOT LIKE 'platform.%'"
@@ -1888,11 +1935,39 @@ _NOTIF_CONTENT_SCOPE = (
 _NOTIF_STAFF_ROWS = "NOT (target_roles <@ ARRAY['tenant']::text[])"
 
 
-def notification_scope(x_admin_role: Optional[str]) -> str:
-    """SQL predicate on shared.notifications for the caller's role (a constant, never user input)."""
+# AA-1035 R2 slice 2: the bell of a role that reads neither ops nor content (customer_success, support, finance): only
+# the rows targeted at that role by name, never a platform.* or spend alert. No writer targets them yet, so their bell
+# is empty until one does; it no longer answers 403.
+# S268 fix round 2: and only the tenants the member's scope reaches (api/core/tenant_scope.py, the rule of
+# require_tenant_scope: customer_success its book, support its book and the pool, finance every tenant). A row of the
+# AA internal tenant (the platform rows: shared.notifications.tenant_id is NOT NULL) stays role-targeted only.
+_NOTIF_ROLE_SCOPE = (
+    "(target_roles && ARRAY['{role}']::text[]"
+    " AND event_type NOT LIKE 'platform.%'"
+    " AND event_type <> 'spend_budget_alert'"
+    " AND (notifications.tenant_id IS NULL OR notifications.tenant_id = '{internal}'::uuid OR {tenants}))"
+)
+
+
+def notification_scope(x_admin_role: Optional[str], staff_id: Optional[str] = None) -> str:
+    """SQL predicate on shared.notifications for the caller's role (a constant, never user input: a role is put into
+    the SQL only when it is one of the ROLE_PERMS keys, which are fixed lower-case identifiers; ``staff_id``, the
+    caller's admin_users.id for the desk roles' tenant scope, only re-validated as a UUID by tenant_scope_sql)."""
     if x_admin_role is None or has_perm(x_admin_role, OPS_READ):
         return _NOTIF_STAFF_ROWS
-    return _NOTIF_CONTENT_SCOPE
+    if has_perm(x_admin_role, CONTENT_READ):
+        return _NOTIF_CONTENT_SCOPE
+    if x_admin_role in ROLE_PERMS and x_admin_role.replace("_", "").isalpha() and x_admin_role.islower():
+        tenants = tenant_scope_sql(scope_for_role(x_admin_role), staff_id, "notifications.tenant_id")
+        return _NOTIF_ROLE_SCOPE.format(role=x_admin_role, internal=AA_INTERNAL_TENANT, tenants=tenants)
+    return "FALSE"
+
+
+def _bell_scope(request: Request, x_admin_role: Optional[str]) -> str:
+    """notification_scope for this request: the staff id is read only for a desk role (the only scope that needs it)."""
+    desk = (isinstance(x_admin_role, str) and x_admin_role in ROLE_PERMS
+            and not has_perm(x_admin_role, OPS_READ) and not has_perm(x_admin_role, CONTENT_READ))
+    return notification_scope(x_admin_role, staff_id_of(request) if desk else None)
 
 
 # ── GET /admin/notifications/count ────────────────────────────────────────────
@@ -1909,7 +1984,7 @@ async def notification_count(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT COUNT(*) AS unread FROM shared.notifications "
-            f"WHERE is_read = FALSE AND {notification_scope(x_admin_role)}"
+            f"WHERE is_read = FALSE AND {_bell_scope(request, x_admin_role)}"
         )
     return {"unread": int(row["unread"])}
 
@@ -1928,7 +2003,7 @@ async def mark_all_read(
     async with pool.acquire() as conn:
         result = await conn.execute(
             "UPDATE shared.notifications SET is_read = TRUE "
-            f"WHERE is_read = FALSE AND {notification_scope(x_admin_role)}"
+            f"WHERE is_read = FALSE AND {_bell_scope(request, x_admin_role)}"
         )
     cleared = int(result.split()[-1])
     return {"cleared": cleared}
@@ -1947,7 +2022,7 @@ async def list_notifications(
     x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    scope = notification_scope(x_admin_role)
+    scope = _bell_scope(request, x_admin_role)
     where = f"WHERE is_read = FALSE AND {scope}" if unread_only else f"WHERE {scope}"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -1975,7 +2050,11 @@ async def list_notifications(
         "tour.master.trashed":      "Master tour trashed",
         "tour.master.restored":     "Master tour restored",
         "tenant.cta.review_claim":  "Tenant CTA mentions reviews or ratings",  # AA-819 follow-up
+        "tenant.addon.requested":   "Add-on requested",  # AA-1036 R3 (Tenant 360 › Subscription decides)
         "llm_circuit_open":         "LLM connection paused",  # AA-1018 (connection-level circuit)
+        "provider_circuit_open":    "Provider paused",        # AA-1025 B3 (Jev / DataForSEO / Geoapify circuit)
+        "platform.provider_credit.low": "Provider credit low",  # AA-1025 B5 (vendor API credit ledger)
+        "llm_model_lifecycle":      "LLM model end of life",  # AA-1024 D2 (routed model EOL within 90 days)
     }
 
     items = []
@@ -1991,6 +2070,8 @@ async def list_notifications(
         item["dispatched_at"] = item["dispatched_at"].isoformat()
         item["created_at"] = item["created_at"].isoformat()
         item["title"] = _event_labels.get(item["event_type"], item["event_type"])
+        if item["event_type"].startswith(OPS_CHECK_EVENT_PREFIX):   # S263 in-app ops checks (shared/ops_checks.py)
+            item["title"] = payload.get("title") or "Ops check"
         item["message"] = payload.get("tour_name") or payload.get("message") or ""
         items.append(item)
     return {"items": items, "total": len(items)}
@@ -2011,7 +2092,7 @@ async def mark_read(
     async with pool.acquire() as conn:
         result = await conn.execute(
             "UPDATE shared.notifications SET is_read = TRUE "
-            f"WHERE id = $1 AND {notification_scope(x_admin_role)}",
+            f"WHERE id = $1 AND {_bell_scope(request, x_admin_role)}",
             notif_id,
         )
     if result.split()[-1] == "0":

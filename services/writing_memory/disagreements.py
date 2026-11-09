@@ -7,6 +7,10 @@ Each weekly KPI run (kpi.run_weekly, apply) adds up to QUEUE_MAX new items of it
   piece_label  a T9 piece labelled in the week (content_piece_label) that the gates passed (approved, no failed
                blocking gate) but a human labelled heavy / reject, or that the gates held but a human labelled as_is /
                light: the gates disagree with the human.
+  golden_claim AA-1048 (CIS 388): a disputed or audit-drawn claim label of shared.eval_claim_label, added by
+               `scripts/aa1048/cli.py enqueue` (never by the weekly job, no weekly cap); machine_verdict = the panel's
+               common label, human_label = disputed | audit; `cli pull-resolutions` turns a resolution into a
+               tech-lead label (services/ground_truth/store.py).
 An item is never added twice (unique source + ref). The reviewer resolves it in one click: judge_right, human_right
 or unclear (+ an optional note). Ids and verdicts only; the texts stay in their own tables. Resolutions are the
 labelled evidence the judge calibration and the gate thresholds are tuned on later; this queue changes no rule,

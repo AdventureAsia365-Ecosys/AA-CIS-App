@@ -8,9 +8,10 @@ DATA-02 weekly cross-app reconciliation, DATA-03 schema change report, DATA-04 l
           statements per role (query text only for the report's own role: cis_app has no pg_read_all_stats), slow
           statements, connection saturation (CloudWatch DatabaseConnections, one GetMetricData call, already granted
           for OPS-08; pg_stat_activity per role now), two-week misses against the previous OPS-13 run, OPS-14 summary.
-  DATA-02 weekly: inquiry handoff roll-up (TP-03's contract views), Booking inbox age (booking.v_ops_inquiry_inbox,
-          bk-035), TripPlanner keys without an inbox row after 24 h (tripplanner.v_ops_inquiry_keys, tp-022), the LLM
-          ledger vs the stored Cost Explorer bill of the LLM account; the CRM feed and Vercel parts are not wired.
+  DATA-02 weekly: the LLM ledger vs the stored Cost Explorer bill of the LLM account; the CRM feed and Vercel parts
+          are not wired. The inquiry hand-off parts (TP-03 roll-up, Booking inbox age, TripPlanner keys with no inbox
+          row) are historical since the R0 hotfix (root ADR 0019, B2B-only model, services/reports/b2b_only.py): the
+          inquiry views are no longer read, K-REC-INBOX and K-REC-UNMATCHED show status historical, never red.
   DATA-03 event (default the last 7 closed days): migrations registered in shared.schema_versions per owner (CIS,
           tp-, bk-, crm-) and the newest version of each owner; GitHub-side checks (bot PRs, contract checks, ERD
           drift) are not wired.
@@ -28,7 +29,7 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import quantiles
 from typing import Any, Iterable, Optional
 
-from services.reports import handoff, periods, store
+from services.reports import b2b_only, periods, store
 from services.reports import money_sources as src
 from services.reports.generate import GENERATED_BY, Rendered, fmt
 from services.reports.money import (KPI_HEADERS, NOT_WIRED, _d, _kpi_line, _kpi_rows, _output, failed, pct,
@@ -48,8 +49,6 @@ SLOW_LOG_MS = 500.0              # OPS-13 "slow > 500 ms" (mean, from pg_stat_st
 CONN_OBJECTIVE = 0.60            # C1.2: DatabaseConnections p95 < 60 % of max_connections
 ROLE_OBJECTIVE = 0.80            # C1.2: each role < 80 % of its CONNECTION LIMIT
 CLAIM_MEAN_MS = 20.0             # C1.2: job claim mean < 20 ms
-INBOX_OBJECTIVE_S = 300.0        # K-REC-INBOX: < 5 min
-UNMATCHED_AFTER = timedelta(hours=24)
 RECON_FLAG = 0.10                # K-LLM-RECON: <= 10 %
 TOP_N = 20
 
@@ -210,6 +209,8 @@ def job_health(facts: dict, expected: dict[str, int], now: datetime) -> dict:
         seen = {r["kind"] for r in last}
         for r in last:
             ls = _ts(r.get("last_scheduled"))
+            if r["kind"] in b2b_only.RETIRED_JOB_KINDS:      # stopped on purpose (R0 hotfix): not a dead scheduler
+                continue
             if r.get("scheduled") and ls is not None and ls < cutoff:
                 dead.append({"kind": r["kind"], "last_scheduled": r["last_scheduled"]})
         never = sorted(k for k in expected if k not in seen)
@@ -495,69 +496,9 @@ def render_ops13(reg, report, first, last, facts, generated_at, expected: Option
 
 # ═══ DATA-02 weekly cross-app reconciliation ════════════════════════════════════════════════════════════════════
 
-INBOX_SQL = """
-    SELECT status, count(*)::int AS n,
-           count(*) FILTER (WHERE processed_at IS NULL)::int AS unprocessed,
-           count(*) FILTER (WHERE processed_at IS NOT NULL AND NOT has_trip_case
-                              AND received_at < now() - interval '24 hours')::int AS no_case_after_24h
-      FROM booking.v_ops_inquiry_inbox
-     WHERE received_at >= $1 AND received_at < $2
-     GROUP BY status ORDER BY status
-"""
-INBOX_AGE_SQL = """
-    SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM now() - received_at))
-               FILTER (WHERE processed_at IS NULL) AS unprocessed_age_p95_s,
-           percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM processed_at - received_at))
-               FILTER (WHERE processed_at IS NOT NULL AND received_at >= $1 AND received_at < $2) AS lag_p95_s
-      FROM booking.v_ops_inquiry_inbox
-"""
-# TripPlanner inquiries of the window older than 24 h with no Booking inbox row of the same key (both views keep 30
-# days; keys only, no payload).
-UNMATCHED_SQL = """
-    SELECT count(*)::int AS unmatched, min(k.created_at) AS oldest
-      FROM tripplanner.v_ops_inquiry_keys k
-     WHERE k.created_at >= $1 AND k.created_at < $2 AND k.created_at < now() - interval '24 hours'
-       AND NOT EXISTS (SELECT 1 FROM booking.v_ops_inquiry_inbox b WHERE b.idempotency_key = k.idempotency_key)
-"""
-KEYS_SQL = """
-    SELECT count(*)::int AS n FROM tripplanner.v_ops_inquiry_keys WHERE created_at >= $1 AND created_at < $2
-"""
-
-
-async def inbox(conn, first: date, last: date) -> dict:
-    start, end = periods.range_bounds(first, last)
-    try:
-        status = [dict(r) for r in await conn.fetch(INBOX_SQL, start, end)]
-        age = dict(await conn.fetchrow(INBOX_AGE_SQL, start, end) or {})
-    except handoff.CONTRACT_ERRORS as e:
-        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-    return {"status": status, **{k: _f(v) for k, v in age.items()}}
-
-
-async def unmatched(conn, first: date, last: date) -> dict:
-    start, end = periods.range_bounds(first, last)
-    try:
-        row = dict(await conn.fetchrow(UNMATCHED_SQL, start, end) or {})
-        keys = await conn.fetchval(KEYS_SQL, start, end)
-    except handoff.CONTRACT_ERRORS as e:
-        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-    return {"unmatched": int(row.get("unmatched") or 0), "keys": int(keys or 0), "oldest": _iso(row.get("oldest"))}
-
-
-async def handoff_week(conn, first: date, last: date) -> dict:
-    try:
-        days = await handoff.read_days(conn, first, last)
-    except handoff.CONTRACT_ERRORS as e:
-        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-    return {"totals": handoff.totals(days), "days": [d.as_dict() for d in days]}
-
-
 async def collect_data02(conn, first: date, last: date) -> dict:
     end = last + timedelta(days=1)
     facts = await src.run_parts({
-        "handoff": lambda: handoff_week(conn, first, last),
-        "inbox": lambda: inbox(conn, first, last),
-        "unmatched": lambda: unmatched(conn, first, last),
         "aws": lambda: src.ce_daily(conn, first, end),
         "llm": lambda: src.llm_ledger(conn, first, end),
     })
@@ -582,60 +523,32 @@ def llm_recon(facts: dict, first: date, last: date) -> dict:
             "ratio": None if not ce else round(abs(ce - est) / ce, 4)}
 
 
-def data02_kpis(ho: dict, ib: Any, um: Any, rc: dict) -> list[dict]:
-    out = []
-    if ib is None or failed(ib):
-        out.append(_kpi_line("K-REC-INBOX", None, "no_data", f"not readable: {failed(ib) or 'not read'}"))
-    else:
-        worst = max((v for v in (ib.get("unprocessed_age_p95_s"), ib.get("lag_p95_s")) if v is not None),
-                    default=None)
-        out.append(_kpi_line("K-REC-INBOX", None if worst is None else round(worst, 1),
-                             "no_data" if worst is None else "amber" if worst >= INBOX_OBJECTIVE_S else "ok",
-                             f"unprocessed age p95 {fmt(ib.get('unprocessed_age_p95_s'), 'seconds')}, processing lag "
-                             f"p95 {fmt(ib.get('lag_p95_s'), 'seconds')} (booking.v_ops_inquiry_inbox)"))
-    if um is None or failed(um):
-        out.append(_kpi_line("K-REC-UNMATCHED", None, "no_data", f"not readable: {failed(um) or 'not read'}"))
-    else:
-        out.append(_kpi_line("K-REC-UNMATCHED", float(um["unmatched"]), "red" if um["unmatched"] else "ok",
-                             f"of {um['keys']} TripPlanner inquiries this week, older than 24 h with no Booking inbox "
-                             "row"))
-    out.append(_kpi_line("K-REC-FEEDLAG", None, NOT_WIRED,
-                         "booking.outbox / crm.booking_feed_state are not granted to the CIS role"))
-    out.append(_kpi_line("K-LLM-RECON", rc.get("ratio"), "no_data" if rc.get("ratio") is None else
-                         "amber" if rc["ratio"] > RECON_FLAG else "ok",
-                         f"not readable: {rc['error']}" if "error" in rc else
-                         f"Cost Explorer {usd(rc['ce_usd'])} vs gateway {usd(rc['ledger_usd'])} over {rc['days']} "
-                         "day(s) with a stored bill"))
-    return out
+def data02_kpis(rc: dict) -> list[dict]:
+    hist = b2b_only.NOTE
+    return [
+        _kpi_line("K-REC-INBOX", None, b2b_only.HISTORICAL, f"{hist} (booking.v_ops_inquiry_inbox not read)"),
+        _kpi_line("K-REC-UNMATCHED", None, b2b_only.HISTORICAL, f"{hist} (tripplanner.v_ops_inquiry_keys not read)"),
+        _kpi_line("K-REC-FEEDLAG", None, NOT_WIRED,
+                  "booking.outbox / crm.booking_feed_state are not granted to the CIS role"),
+        _kpi_line("K-LLM-RECON", rc.get("ratio"), "no_data" if rc.get("ratio") is None else
+                  "amber" if rc["ratio"] > RECON_FLAG else "ok",
+                  f"not readable: {rc['error']}" if "error" in rc else
+                  f"Cost Explorer {usd(rc['ce_usd'])} vs gateway {usd(rc['ledger_usd'])} over {rc['days']} "
+                  "day(s) with a stored bill"),
+    ]
 
 
 def render_data02(reg, report, first, last, facts, generated_at) -> Rendered:
-    ho = facts.get("handoff") or {"error": "not read"}
-    ib, um = facts.get("inbox"), facts.get("unmatched")
     rc = llm_recon(facts, first, last)
-    kpis = data02_kpis(ho, ib, um, rc)
+    kpis = data02_kpis(rc)
     flagged = [k["id"] for k in kpis if k["status"] in ("red", "amber")]
     headline = (f"Reconciliation {first.isoformat()} to {last.isoformat()}: "
                 + (f"flagged {', '.join(flagged)}" if flagged else "nothing flagged"))
-    body = ["## Inquiry handoff, TripPlanner to Booking (weekly roll-up of TP-03)", ""]
-    if failed(ho):
-        body += [f"- Contract views not readable: {failed(ho)}"]
-    else:
-        t = ho["totals"]
-        body += [f"- Sent {t['sent']}, received {t['received']}, gap {t['gap']}, parked {t['parked']}, failed "
-                 f"{t['failed']}, trip cases {t['cases']} (UTC days)."]
-    body += ["", "## Booking inbox backlog and age", ""]
-    if ib is None or failed(ib):
-        body += [f"- Not readable: {failed(ib) or 'not read'}"]
-    else:
-        body += table(["Status", "Received this week", "Unprocessed", "Processed, no trip case after 24 h"],
-                      [[r["status"], r["n"], r["unprocessed"], r["no_case_after_24h"]] for r in ib["status"]]) \
-            if ib["status"] else ["- No inbox row received this week."]
-    body += ["", "## Unmatched inquiries", ""]
-    body += [f"- Not readable: {failed(um) or 'not read'}"] if um is None or failed(um) else [
-        f"- {um['unmatched']} of {um['keys']} TripPlanner inquiries older than 24 h have no Booking inbox row"
-        + (f" (oldest {str(um['oldest'])[:16]})." if um["unmatched"] else ".")]
-    body += ["", "## LLM ledger vs the bill", ""]
+    body = ["## Inquiry handoff, TripPlanner to Booking (historical)", "",
+            f"- Retired with TP-03 on {b2b_only.B2C_OFF_DAY.isoformat()}: the B2C inquiry hand-off is off (B2B-only "
+            "model), so the Booking inbox and the TripPlanner inquiry keys are no longer reconciled. Past DATA-02 runs "
+            "keep the old numbers.", ""]
+    body += ["## LLM ledger vs the bill", ""]
     body += [f"- Not readable: {rc['error']}"] if "error" in rc else [
         f"- LLM account: Cost Explorer {usd(rc['ce_usd'])}, gateway ledger {usd(rc['ledger_usd'])}, gap "
         f"{pct(rc['ratio'])} over {rc['days']} UTC day(s) with a stored bill (target <= 10 %)."]
@@ -645,8 +558,8 @@ def render_data02(reg, report, first, last, facts, generated_at) -> Rendered:
              "- crm.ops.v1 feed freshness: the feed is read per admin request with the staff token, not by the worker.",
              "- Vercel production commit vs main: no Vercel read in the worker.", ""]
     return _render(reg, report, first, last, generated_at, f"Cross-app reconciliation {first.isoformat()} to "
-                   f"{last.isoformat()}", headline, kpis, body, ICT_NOTE + " Handoff and money are per UTC day.",
-                   handoff=ho, inbox=ib, unmatched=um, llm_recon=rc, sources_unreadable=_unreadable(facts))
+                   f"{last.isoformat()}", headline, kpis, body, ICT_NOTE + " Money is per UTC day.",
+                   llm_recon=rc, sources_unreadable=_unreadable(facts))
 
 
 # ═══ DATA-03 schema and contract change report ══════════════════════════════════════════════════════════════════

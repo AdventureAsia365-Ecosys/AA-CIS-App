@@ -68,6 +68,9 @@ export interface AgencyEntitlements {
   seats_allowed: number;
   features_allowed: string[];
   insights_opt_out: boolean;
+  /** crm.ops.v1 1.11: "cis" once the CRM's crm_entitlement_pull projected the tenant's CIS account (the allowed
+   *  features are then read-only here); "ops" while not projected yet. Absent from a 1.10 server. */
+  managed_by?: "cis" | "ops";
 }
 
 export type DataRequestKind = "agency_export" | "agency_deletion";
@@ -136,6 +139,25 @@ export interface OwnerInviteAccepted {
   invitation_id: string;
   status: "pending";
   expires_at: string;
+}
+
+/** POST …/owner-invite/withdraw (crm.ops.v1 1.8): the newest withdrawn first-owner invitation. */
+export interface OwnerInviteWithdrawn {
+  tenant_id: string;
+  invitation_id: string;
+  status: "revoked";
+}
+
+/** POST …/delete (crm.ops.v1 1.8): a synthetic agency moved to the trash, its keys destroyed. */
+export interface AgencyDeleted {
+  tenant_id: string;
+  status: "deleted";
+}
+
+/** The body of POST …/delete: the agency name typed exactly, and the ticket. */
+export interface DeleteTestAgencyBody {
+  agency_name: string;
+  ticket_ref: string;
 }
 
 export interface InsightsOptOut {
@@ -218,7 +240,7 @@ export const RETRYABLE_KINDS = ["crm_intake_process", "crm_dispatch", "crm_offbo
 // ── words ──────────────────────────────────────────────────────────────────────────────────────
 
 /** AA-994: the phrases the helpers below build (English). The page passes the UI language's words
- * (lib/crmConsole.messages.ts CRM_WORDS_MESSAGES) through app/admin/platform/agencies/useCrmText.ts; a call without
+ * (lib/crmConsole.messages.ts CRM_WORDS_MESSAGES) through app/admin/tenants/agencies/useCrmText.ts; a call without
  * them stays English, so node --test loads this module as it is. */
 export const CRM_WORDS = {
   lagNone: "no successful pull yet",
@@ -386,6 +408,8 @@ export const CRM_ERROR_TEXT: Record<string, string> = {
   has_travellers: "The agency already holds travellers or inquiries, so AA cannot invite a first owner.",
   owner_exists: "The agency already has an owner.",
   tenant_exists: "An agency with this id already exists in the CRM. Nothing was changed.",
+  // AA-1031 (S264, crm.ops.v1 1.9): the CIS tenant's (test) agency was deleted; a trashed id is never reused.
+  tenant_deleted: "This tenant's test agency was deleted; its id cannot be reused. Create a new CIS tenant.",
   owner_invite_pending: "An owner invitation is already pending.",
   member_limit_reached: "The agency has no free seat.",
   invalid_feature: "One of the features is not a known code.",
@@ -406,6 +430,10 @@ export const CRM_ERROR_TEXT: Record<string, string> = {
   invalid_display_name: "The agency name is not valid.",
   invalid_locale: "The locale must be en-AU, en-GB, en-US or vi-VN.",
   invalid_ticket_ref: "The ticket reference must look like SUP-1024.",
+  owner_invite_not_found: "There is no first-owner invitation to withdraw (none pending, or it was accepted).",
+  not_synthetic: "Only a test (synthetic) agency can be deleted here. A real agency is deleted by its owner.",
+  agency_name_mismatch: "The typed name is not the agency's name. Type it exactly as shown.",
+  has_members: "The agency still has active or invited members.",
 };
 
 /** One readable line for a failed call: plain words + the code. `detail` may be a code string or FastAPI's 422
@@ -469,6 +497,27 @@ export async function crmWrite<T = Record<string, unknown>>(
   };
 }
 
+// ── delete a test agency (crm.ops.v1 1.8) ───────────────────────────────────────────────────────
+
+/** Why "Delete test agency" is not possible right now, as the CRM's own refusal code (the CRM checks again):
+ * null when it is. `members` undefined = not loaded yet ("members_unknown"). Only synthetic agencies get the action. */
+export type DeleteBlock = "not_synthetic" | "tenant_status" | "has_travellers" | "has_members" | "members_unknown";
+
+export function testAgencyDeleteBlock(
+  agency: Pick<TenantSummary, "is_synthetic" | "state" | "holds_travellers">,
+  members: ReadonlyArray<Pick<AgencyMember, "status">> | undefined,
+): DeleteBlock | null {
+  if (!agency.is_synthetic) return "not_synthetic";
+  if (agency.state === "offboarding") return "tenant_status";
+  if (agency.holds_travellers) return "has_travellers";
+  if (members === undefined) return "members_unknown";
+  if (members.some((m) => m.status === "active" || m.status === "invited")) return "has_members";
+  return null;
+}
+
+/** The typed confirmation must be the agency's name exactly (the CRM compares it as it is). */
+export const agencyNameMatches = (typed: string, name: string) => typed === name && name.length > 0;
+
 // ── formatters ─────────────────────────────────────────────────────────────────────────────────
 
 export function formatBytes(n: number | null | undefined): string {
@@ -511,9 +560,53 @@ export function usdPct(cost: string | number | null | undefined, budget: string 
 
 export const shortId = (id: string | null | undefined) => (id ? id.slice(0, 8) : "—");
 
+/** AA-1031 (S264): may "Create agency" offer this CIS tenant? Not when the loaded agency list already has an agency
+ * with its id (the CRM would answer 409 tenant_exists). Build once per list: `const offer = offerForNewAgency(rows)`. */
+export function offerForNewAgency(
+  agencies: ReadonlyArray<Pick<TenantSummary, "tenant_id">>,
+): (tenant: { tenant_id: string }) => boolean {
+  const taken = new Set(agencies.map((a) => a.tenant_id));
+  return (tenant) => !taken.has(tenant.tenant_id);
+}
+
 /** May the owner recovery be completed now? (eligible_at has passed; the CRM re-checks it). */
 export function recoveryDue(eligibleAt: string | null | undefined, now: number = Date.now()): boolean {
   if (!eligibleAt) return false;
   const t = Date.parse(eligibleAt);
   return Number.isFinite(t) && t <= now;
+}
+
+// ── first owner: also invite to the Content studio (AA-1031, S264) ────────────────────────────────────────────────
+// When the agency id is a CIS tenant, "Invite first owner" can also create the CIS Content studio invitation (owner)
+// for the same address: POST /api/admin/tenants/{id}/members/invitations (the existing Tenant 360 route, tenant.write).
+// It stays a staff action, so root ADR 0010a holds ("Staff invite from Tenant 360"; no CRM event grants a CIS role).
+
+export const studioInvitationsPath = (tenantId: string) =>
+  `/api/admin/tenants/${encodeURIComponent(tenantId)}/members/invitations`;
+
+/** Offer the "also invite to the Content studio" box? Only for an ACTIVE CIS tenant (the API refuses a suspended or
+ * offboarded one) on which this session may invite an owner (`canInviteOwner`: the members access read, AA-1031 F3,
+ * lib/tenantMembers mayInviteAs(…, "owner"); the CRM write right alone is not enough). */
+export function studioInviteOffered(
+  cisTenant: { status?: string | null } | undefined, canInviteOwner: boolean,
+): boolean {
+  return !!cisTenant && canInviteOwner && (!cisTenant.status || cisTenant.status === "active");
+}
+
+/** The studio half of the outcome: sent, created but the mail not delivered, or refused / failed. */
+export type StudioInviteOutcome =
+  | { kind: "sent"; expiresAt: string | null }
+  | { kind: "not_delivered"; why: string }
+  | { kind: "failed"; why: string };
+
+/** The answer of POST .../members/invitations (201 even when the CRM relay failed: delivery.status = "failed"). */
+export function studioInviteOutcome(body: {
+  delivery?: { status?: string; crm_status?: number; expires_at?: string | null; detail?: string | null; message?: string | null };
+} | null | undefined): StudioInviteOutcome {
+  const d = body?.delivery;
+  if (d?.status === "sent") return { kind: "sent", expiresAt: d.expires_at ?? null };
+  const code = d?.detail ? String(d.detail) : "";
+  const msg = d?.message ? String(d.message) : "";
+  const why = msg && code ? `${msg} (${code})` : msg || code || (d?.crm_status ? `HTTP ${d.crm_status}` : "no answer");
+  return { kind: "not_delivered", why };
 }

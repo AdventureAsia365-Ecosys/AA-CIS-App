@@ -150,7 +150,10 @@ def test_billed_fields_reads_the_response_and_ignores_test_doubles():
                        pricing_mode="catalog", connection_key="openai-direct")
     assert call_log.billed_fields(resp) == {"cache_read_tokens": 3, "cache_write_tokens": 4,
                                             "pricing_mode": "catalog", "connection_key": "openai-direct",
-                                            **dict.fromkeys(call_log.V2_BILLED_KEYS)}     # AA-804: not set here
+                                            **dict.fromkeys(call_log.V2_BILLED_KEYS),     # AA-804: not set here
+                                            **dict.fromkeys(call_log.ROUTE_KEYS),         # AA-1042: not set here
+                                            **dict.fromkeys(call_log.RETRY_KEYS),         # S271: not set here
+                                            **dict.fromkeys(call_log.DEGRADED_KEYS)}      # S271 W0: not set here
     assert call_log.billed_fields(MagicMock()) == dict.fromkeys(call_log.billed_fields(resp))
     assert call_log.billed_fields(object()) == dict.fromkeys(call_log.billed_fields(resp))
 

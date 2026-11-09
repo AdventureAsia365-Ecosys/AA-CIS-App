@@ -30,8 +30,10 @@ from services.acp_content_writing.hygiene import (
 )
 from services.acp_content_writing.quality_gates import (F9_STYLE_PROBLEM, OWNED_BY_FIX_STEP, brand_style_sentences,
                                                          expand_ledger)
+from services.acp_content_writing.f9_policy import F9_CLAIM_RE
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
+from services.acp_content_writing import route_table as rt
 from services.quality import repair_contract
 from services.quality import registry as qr
 
@@ -39,19 +41,15 @@ from services.quality import registry as qr
 # '[R:id' opener is dropped like a whole tag
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
-_F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
+_F9_CLAIM_RE = F9_CLAIM_RE  # AA-900 W0 — one pattern, owned by f9_policy
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
-_ELIGIBLE_GATES = {qr.F1_GROUNDING, qr.F9_CTA_FACT, qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME,
-                   qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F15_VOICE,
-                   qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY,  # S234 round 3
-                   qr.F19_AUTHENTICITY,  # AA-819 (AUP 2026-11)
-                   qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES,  # AA-800
-                   qr.F9_BRAND_STYLE}  # AA-788 — only blocks in its `repair` mode, attempt 1
-# Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
-_QUOTED_GATES = {qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME, qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F15_VOICE,
-                 qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
-                 qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES}  # AA-800
+# AA-1049 — every routing set below is a view of the one route table (route_table.py, compiled from the writing
+# policy's route_rows): the gates a sentence repair fixes (action repair_sentence: S234 r3 F13_repeat / F17 / F18,
+# AA-819 F19, AA-800 F2 word layers, AA-788 F9_brand_style in its `repair` mode) …
+_ELIGIBLE_GATES = rt.SENTENCE_REPAIR_GATES
+# … and the ones whose violations read "<problem>: '<sentence>'" (parse quoted, read with _BRAND_QUOTE_RE).
+_QUOTED_GATES = rt.QUOTED_GATES
 # S234 round 2 — contract gates a dedicated step in service.py fixes (FAQ regeneration, first-line
 # rewrite); like F4_seo_surface they never send a piece to the full rewrite.
 OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
@@ -246,11 +244,11 @@ def _fuzzy_locate(text: str, quote: str) -> Optional[tuple[int, int]]:
 def _seo_fields_only(g: dict) -> bool:
     """A failed gate the SEO title/meta fit owns: F4_seo_surface, or a quoted gate (F12_scope)
     whose every violation is in the title or meta."""
-    if g["gate"] == qr.F4_SEO_SURFACE or g["gate"] in OWNED_ELSEWHERE:
+    if g["gate"] in rt.SECTION_GATES:  # AA-1049: a regenerate_section row (F4_seo_surface, F16_faq, F14_first_line)
         return True
     vs = g.get("violations") or []
     # AA-786 — an F9 unsupported claim in the title / meta is SEO-owned the same way.
-    return (g["gate"] in _QUOTED_GATES or g["gate"] == qr.F9_CTA_FACT) and bool(vs) \
+    return rt.parse_of(g["gate"]) in rt.SEO_FIELD_PARSES and bool(vs) \
         and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
 
 
@@ -310,7 +308,7 @@ def _slug_violation(g: dict) -> bool:
     """An F4 violation about the slug ('no slug' / "slug '…' is not lowercase-kebab" / 'slug is N
     characters'): the SEO fit only folds the slug to ASCII and never writes a new one, so only a
     rewrite (a new writer envelope) can fix it."""
-    return g["gate"] == qr.F4_SEO_SURFACE and any(v.startswith(_SLUG_PREFIXES) for v in g.get("violations") or [])
+    return g["gate"] in rt.SLUG_REWRITE_GATES and any(v.startswith(_SLUG_PREFIXES) for v in g.get("violations") or [])
 
 
 def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
@@ -336,19 +334,20 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
         return None
     items: list[tuple[str, str, str]] = []
     for g in failed:
+        parse = rt.parse_of(g["gate"])  # AA-1049: the row's violation format
         for v in g["violations"]:
-            if g["gate"] in _QUOTED_GATES:
+            if parse == rt.PARSE_QUOTED:
                 if v.startswith(_SEO_FIELD_PREFIXES):
                     continue
                 m = _BRAND_QUOTE_RE.search(v)
                 if not m:
                     return None
                 items.append((m.group(2), m.group(1), g["gate"]))
-            elif g["gate"] == qr.F9_BRAND_STYLE:
+            elif parse == rt.PARSE_BRAND_STYLE:
                 # AA-788 — each flagged phrase's body sentence (the gate blocked only when one locates)
                 items += [(sentence, F9_STYLE_PROBLEM.format(phrase=phrase), g["gate"])
                           for sentence, phrase in brand_style_sentences(content_text, v)]
-            elif g["gate"] == qr.F1_GROUNDING:
+            elif parse == rt.PARSE_F1:
                 m = _F1_QUOTE_RE.search(v)
                 if not m:
                     return None
@@ -370,12 +369,12 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
             on_heading = heading_text_at(content_text, span)
             if on_heading is not None:
                 span, heading = on_heading, True
-        elif gate == qr.F9_CTA_FACT:
+        elif rt.parse_of(gate) == rt.PARSE_F9:
             # AA-984 — an F9 claim on a section heading becomes a heading repair item
             span = locate_heading(content_text, quote)
             heading = span is not None
         if span is None:
-            if gate in (qr.F9_CTA_FACT, qr.F9_BRAND_STYLE):
+            if rt.parse_of(gate) in (rt.PARSE_F9, rt.PARSE_BRAND_STYLE):  # a judge's quote (AA-1049: by its parse)
                 continue  # S234 round 3 — a judge quote that matches no sentence; the others are still fixed
             return None
         hit = next((o for o in out if not (span[1] <= o["start"] or span[0] >= o["end"])), None)
@@ -396,7 +395,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
 
 # AA-777 (r6 fix 2) — the gate a merged item reports as its `gate`: a product-truth gate first, so the blog's
 # attempt-3 truth cut sees an F9 claim that shares its sentence with an F17 finding.
-TRUTH_GATES = (qr.F1_GROUNDING, qr.F9_CTA_FACT)
+TRUTH_GATES = rt.TRUTH_GATES  # AA-1049: the route table's `cut: truth` rows, in policy row order
 
 
 def _span_text(content_text: str, span: tuple[int, int]) -> str:
@@ -870,7 +869,7 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         # AA-924 — banned patterns + the brand's forbidden words, one F2_lexicon result (no stock list: a
         # sentence the admin wrote is not held to the writer's style list)
         qg.gate_lexicon(sentence, grounding, pack, include_stock=False),
-        qg.gate_platform_truth(sentence, grounding, pack.get("forbidden_words")),  # AA-800
+        qg.gate_platform_truth(sentence, grounding, qg.gating_forbidden(pack)),  # AA-800; AA-900 W0
         qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
         # AA-819 — an admin suggestion (t9_repair) or edit never puts a review / customer voice in
         qg.gate_authenticity(sentence, (writer_input or {}).get("cta")),

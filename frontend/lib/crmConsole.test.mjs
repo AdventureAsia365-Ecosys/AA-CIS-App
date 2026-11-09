@@ -8,7 +8,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import {
+  agencyNameMatches,
+  CRM_ERROR_TEXT,
   crmErrorText,
   dataRequestStatus,
   formatLag,
@@ -16,9 +21,11 @@ import {
   isTicket,
   lockSourceText,
   membershipFeed,
+  offerForNewAgency,
   parseUsd,
   platformMembershipFeed,
   pct,
+  testAgencyDeleteBlock,
   usdPct,
 } from "./crmConsole.ts";
 
@@ -173,4 +180,97 @@ test("platformMembershipFeed: the first agency's platform-wide value; null with 
   assert.deepEqual([f.state, f.label, f.tone, f.lastPull], ["stale", "Stale", "warning", "15 min ago"]);
   // A 1.1 producer (no field) reads unknown.
   assert.equal(platformMembershipFeed([{}]).state, "unknown");
+});
+
+// ── S263 (crm.ops.v1 1.8): withdraw the first-owner invitation, delete a test agency ─────────────────────────────────
+
+const testAgency = { is_synthetic: true, state: "active", holds_travellers: false };
+
+test("testAgencyDeleteBlock: a synthetic agency without members or travellers can be deleted", () => {
+  assert.equal(testAgencyDeleteBlock(testAgency, []), null);
+  assert.equal(testAgencyDeleteBlock({ ...testAgency, state: "locked" }, []), null);
+  assert.equal(testAgencyDeleteBlock({ ...testAgency, state: "offboarded" }, []), null);
+  // A disabled member does not keep it: only active or invited members do.
+  assert.equal(testAgencyDeleteBlock(testAgency, [{ status: "disabled" }]), null);
+});
+
+test("testAgencyDeleteBlock: the reason it cannot, as the CRM's own refusal code", () => {
+  assert.equal(testAgencyDeleteBlock({ ...testAgency, is_synthetic: false }, []), "not_synthetic");
+  assert.equal(testAgencyDeleteBlock({ ...testAgency, state: "offboarding" }, []), "tenant_status");
+  assert.equal(testAgencyDeleteBlock({ ...testAgency, holds_travellers: true }, []), "has_travellers");
+  assert.equal(testAgencyDeleteBlock(testAgency, [{ status: "active" }]), "has_members");
+  assert.equal(testAgencyDeleteBlock(testAgency, [{ status: "invited" }]), "has_members");
+  assert.equal(testAgencyDeleteBlock(testAgency, undefined), "members_unknown");
+});
+
+test("agencyNameMatches: the typed name must be the agency's name exactly", () => {
+  assert.equal(agencyNameMatches("Lotus Test Tours", "Lotus Test Tours"), true);
+  assert.equal(agencyNameMatches("lotus test tours", "Lotus Test Tours"), false);
+  assert.equal(agencyNameMatches("Lotus Test Tours ", "Lotus Test Tours"), false);
+  assert.equal(agencyNameMatches("", ""), false);
+});
+
+test("the new refusal codes read in plain words with their code", () => {
+  for (const code of ["owner_invite_not_found", "not_synthetic", "agency_name_mismatch", "has_members"]) {
+    assert.ok(CRM_ERROR_TEXT[code], code);
+    assert.ok(crmErrorText(409, code).endsWith(`(${code})`), code);
+  }
+});
+
+test("AA-1031: a deleted test agency's id reads as tenant_deleted in plain words", () => {
+  assert.match(CRM_ERROR_TEXT.tenant_deleted, /cannot be reused/);
+  assert.match(CRM_ERROR_TEXT.tenant_deleted, /new CIS tenant/);
+  assert.equal(crmErrorText(409, "tenant_deleted", "server words"), `${CRM_ERROR_TEXT.tenant_deleted} (tenant_deleted)`);
+});
+
+test("AA-1031: Create agency offers only CIS tenants without an agency in the loaded list", () => {
+  const offer = offerForNewAgency([{ tenant_id: "t-1" }, { tenant_id: "t-3" }]);
+  assert.equal(offer({ tenant_id: "t-1" }), false);
+  assert.equal(offer({ tenant_id: "t-2" }), true);
+  assert.equal(offerForNewAgency([])({ tenant_id: "t-1" }), true);
+});
+
+const DRAWER_SRC = readFileSync(fileURLToPath(new URL("../app/admin/tenants/agencies/AgencyDrawer.tsx", import.meta.url)), "utf8");
+const MESSAGES_SRC = readFileSync(fileURLToPath(new URL("../app/admin/tenants/agencies/messages.ts", import.meta.url)), "utf8");
+
+test("the drawer offers Delete test agency for synthetic agencies only, behind the typed name", () => {
+  assert.match(DRAWER_SRC, /\{a\.is_synthetic && \(\s*<DeleteTestAgencySection/);
+  assert.match(DRAWER_SRC, /crm\.write<AgencyDeleted>\("POST", `\$\{path\}\/delete`, \{ agency_name: typed, ticket_ref: ticket \}\)/);
+  assert.match(DRAWER_SRC, /canSubmit=\{nameOk\}/);
+  assert.match(DRAWER_SRC, /disabled=\{!!block\}/);
+});
+
+test("the drawer offers Withdraw owner invitation while the agency has no owner", () => {
+  assert.match(DRAWER_SRC, /`\$\{path\}\/owner-invite\/withdraw`, \{ ticket_ref: ticket \}/);
+  assert.match(DRAWER_SRC, /const canWithdraw = !agency\.has_owner/);
+});
+
+test("every delete-block reason has words in English and Vietnamese", () => {
+  for (const code of ["not_synthetic", "tenant_status", "has_travellers", "has_members", "members_unknown"]) {
+    const n = MESSAGES_SRC.split(`deleteBlocked_${code}:`).length - 1;
+    assert.equal(n, 2, `deleteBlocked_${code}`);
+  }
+});
+
+// AA-1031 (S264): "Invite first owner" can also invite the same address to the Content studio as owner.
+test("studio invite is offered only for an active CIS tenant on which the session may invite an owner", async () => {
+  const { studioInviteOffered, studioInvitationsPath } = await import("./crmConsole.ts");
+  assert.equal(studioInviteOffered(undefined, true), false);
+  assert.equal(studioInviteOffered({ status: "active" }, false), false);
+  assert.equal(studioInviteOffered({ status: "suspended" }, true), false);
+  assert.equal(studioInviteOffered({ status: "offboarded" }, true), false);
+  assert.ok(studioInviteOffered({ status: "active" }, true));
+  assert.ok(studioInviteOffered({}, true));
+  assert.equal(studioInvitationsPath("t-1"), "/api/admin/tenants/t-1/members/invitations");
+});
+
+test("studio invite outcome: sent, or created but not delivered with the CRM reason", async () => {
+  const { studioInviteOutcome } = await import("./crmConsole.ts");
+  assert.deepEqual(studioInviteOutcome({ delivery: { status: "sent", crm_status: 202, expires_at: "2026-11-09T00:00:00Z" } }),
+    { kind: "sent", expiresAt: "2026-11-09T00:00:00Z" });
+  assert.deepEqual(studioInviteOutcome({ delivery: { status: "failed", crm_status: 409, detail: "x_code", message: "Nope" } }),
+    { kind: "not_delivered", why: "Nope (x_code)" });
+  assert.deepEqual(studioInviteOutcome({ delivery: { status: "failed", crm_status: 503 } }),
+    { kind: "not_delivered", why: "HTTP 503" });
+  assert.deepEqual(studioInviteOutcome(null), { kind: "not_delivered", why: "no answer" });
 });

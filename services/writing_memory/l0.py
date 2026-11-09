@@ -18,6 +18,13 @@ so a rule is skipped when its phrase is a signature word the tenant declared, or
 or the trip name (text the writer must keep verbatim: a ban there could never be repaired). A tenant rule wins over a
 platform rule with the same phrase.
 
+AA-900 W0 (root ADR 0020: "a gate may hold content only with a passing measurement record; until then it warns"):
+the learned phrases are WARN-ONLY until W2 measures the L0 lexicon (`l0_blocking()`, default off). The prompt is
+unchanged (the brand block still names them), but the gates read the tenant's own forbidden words only
+(`gating_forbidden`): a learned phrase the writer still writes is an F2_style_warn finding (`learned_hits` in
+quality_gates.gate_signature_words), never a blocking F2_lexicon one, so it no longer drives a repair or a hold.
+WRITING_MEMORY_L0_ENFORCE=on (api and worker) restores the blocking F2_lexicon finding (after a W2 measurement).
+
 Activation is one admin click after a passing R0 replay (`replay.py`; no R2, no shadow: D11), rollback one click
 (`rules.activate_l0` / `rules.rollback`). With no active rule the pack is returned unchanged, so the prompt is byte for
 byte the pre-918 one (decision 12: release 0 is a no-op). A failure to read the rules writes no rule, never fails the
@@ -25,8 +32,11 @@ write.
 """
 from __future__ import annotations
 
+import contextvars
+import os
 import re
-from typing import Iterable, Optional
+from contextlib import contextmanager
+from typing import Iterable, Iterator, Optional
 
 import structlog
 
@@ -35,6 +45,7 @@ from services.writing_memory.signals import writer_for_channel
 logger = structlog.get_logger()
 
 L0_WRITERS = ("t9_blog", "t9_social")      # the writers with an L0 reader (first target: T9 social, WM-16 scope 4)
+L0_ENFORCE_ENV = "WRITING_MEMORY_L0_ENFORCE"   # AA-900 W0: unset / off = learned phrases warn only
 PHRASE_MAX_WORDS = 6
 _MASK_TOKEN_RE = re.compile(r"\[(?:N|PRICE|TIME|URL|NAME)\]")
 _QUOTES = "\"'“”‘’`"
@@ -229,6 +240,51 @@ def apply_to_pack(pack: Optional[dict], applied: list[dict]) -> Optional[dict]:
     return base
 
 
+_FORCE_BLOCKING: contextvars.ContextVar[bool] = contextvars.ContextVar("wm_l0_force_blocking", default=False)
+
+
+def l0_blocking() -> bool:
+    """AA-900 W0: True only when WRITING_MEMORY_L0_ENFORCE is on (1 / true / yes / on), or inside
+    `measuring_as_blocking()`. Default off: the learned phrases warn, the tenant's own forbidden words still block."""
+    if _FORCE_BLOCKING.get():
+        return True
+    return (os.environ.get(L0_ENFORCE_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+@contextmanager
+def measuring_as_blocking() -> Iterator[None]:
+    """The R0 replay measures a lexicon rule as the gate it would be once measured (a blocking F2_brand_forbidden
+    finding), whatever the live warn-only mode: its counts must not depend on the switch."""
+    token = _FORCE_BLOCKING.set(True)
+    try:
+        yield
+    finally:
+        _FORCE_BLOCKING.reset(token)
+
+
+def learned_added(pack: Optional[dict]) -> list[str]:
+    """The phrases `apply_to_pack` put on the pack's forbidden list (not the ones the tenant listed itself)."""
+    if not isinstance(pack, dict):
+        return []
+    return [str(e.get("phrase") or "").strip() for e in pack.get("learned_lexicon") or []
+            if isinstance(e, dict) and e.get("added", True) and str(e.get("phrase") or "").strip()]
+
+
+def gating_forbidden(pack: Optional[dict]) -> list[str]:
+    """The forbidden words the GATES block on: the pack's list, minus the learned phrases while L0 is warn-only
+    (`l0_blocking()` off). The tenant's own words always block; a pack with no learned phrase is unchanged."""
+    words = [str(w) for w in (pack or {}).get("forbidden_words") or []]
+    added = {p.lower() for p in learned_added(pack)}
+    if not added or l0_blocking():
+        return words
+    return [w for w in words if w.strip().lower() not in added]
+
+
+def warn_only_phrases(pack: Optional[dict]) -> list[str]:
+    """The learned phrases the gates report as a warning instead of blocking ([] while L0 blocks)."""
+    return [] if l0_blocking() else learned_added(pack)
+
+
 def without_learned(pack: Optional[dict]) -> Optional[dict]:
     """The pack as the tenant wrote it: `apply_to_pack` undone (the phrases it added to forbidden_words removed,
     `learned_lexicon` dropped). R0's rule-off base reads it, so a piece written while an L0 rule was active does not
@@ -308,6 +364,8 @@ async def l0_for_write(pool, *, tenant_id, channel: Optional[str], pack: Optiona
     return apply_to_pack(pack, applied), {"writer": writer, "applied": applied, "skipped": skipped}
 
 
-__all__ = ["L0_WRITERS", "PHRASE_MAX_WORDS", "activation_problem", "apply_to_pack", "l0_for_write", "load_active",
-           "phrase_of", "phrase_problem", "replacement_check", "replacement_forbidden", "select_rules",
+__all__ = ["L0_ENFORCE_ENV", "L0_WRITERS", "PHRASE_MAX_WORDS", "activation_problem", "apply_to_pack",
+           "gating_forbidden", "l0_blocking", "l0_for_write", "learned_added", "load_active", "measuring_as_blocking",
+           "phrase_of",
+           "phrase_problem", "replacement_check", "replacement_forbidden", "select_rules", "warn_only_phrases",
            "without_learned"]

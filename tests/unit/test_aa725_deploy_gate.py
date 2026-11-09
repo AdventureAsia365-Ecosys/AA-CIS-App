@@ -166,9 +166,12 @@ async def test_deploy_gate_safe_when_idle():
     # AA-832: exempt kinds (deploy_gate_exempt) are listed, not counted; AA-751: none left (noop_sleep is test-only)
     # until AA-1018's daily LLM probe (it may sit queued across a deploy, a re-run is harmless)
     assert result == {"active": 0, "by_status": {}, "scheduled_later": 0, "safe_to_deploy": True,
-                      "exempt_kinds": ["llm_connection_probe"],
+                      # + AA-1024 D2, + AA-1042 (the route watch), + AA-1045 (the usage rollup), + AA-900 W0
+                      "exempt_kinds": ["ai_usage_rollup", "llm_connection_probe", "llm_model_lifecycle_sync",
+                                       "llm_route_watch", "quality_funnel_watch"],
                       "open_waves": 0, "blocking_kinds": result["blocking_kinds"], "blocking_running": {},
-                      "blocking_due": {}, "blocked_by": []}
+                      # + AA-1024 G3 (c): ECS exec scripts running (heartbeat list off in the unit conftest)
+                      "blocking_due": {}, "exec_scripts": [], "exec_scripts_error": None, "blocked_by": []}
 
 
 def test_the_deploy_blocking_kinds_are_the_ones_not_safe_to_rerun():

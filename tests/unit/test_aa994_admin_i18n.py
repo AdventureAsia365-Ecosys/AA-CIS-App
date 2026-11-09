@@ -107,7 +107,7 @@ def test_dictionary_files_are_dictionaries():
 
 def test_the_scan_sees_the_code():
     files = {p.relative_to(REPO).as_posix() for p in frontend_files()}
-    assert "frontend/app/admin/cost-ops/page.tsx" in files and "frontend/app/_kit/Topbar.tsx" in files
+    assert "frontend/app/admin/spend/page.tsx" in files and "frontend/app/_kit/Topbar.tsx" in files
     assert "frontend/app/_kit/shell.messages.ts" not in files      # a dictionary
     assert not any(".test." in f for f in files)
     assert (REPO / "frontend/app/_kit/shell.messages.ts").is_file()

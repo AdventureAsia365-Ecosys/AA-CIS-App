@@ -24,8 +24,10 @@ from shared.tour_liveness import (
 )
 from services.content_generation.graph import build_graph
 from shared.llm_client.errors import is_llm_access_denied
-from shared.llm_client.tenant_budget import approval_stop_in
-from pydantic import BaseModel
+from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
+from pydantic import BaseModel, model_validator
+
+from api.core.model_tier import refuse_model_tier
 import asyncpg
 import boto3 as _boto3
 from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredentials as _Creds
@@ -75,57 +77,11 @@ router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"],
                    dependencies=[Depends(_require_admin), Depends(staff_policy_if_staff)])
 
 
-def _normalize_generated(generated: dict, tour: dict) -> dict:
-    """Post-process LLM output: title-case name, strip forbidden words from name."""
-    if not generated:
-        return generated
-    # Title-case name if ALL-CAPS (preserve if already mixed case)
-    name = generated.get("name", "")
-    if name and name == name.upper():
-        generated["name"] = name.title()
-    # Strip markdown bold from itineraries — ensure string type (GPT-4.1 may return dict)
-    itin = generated.get("itineraries")
-    if itin:
-        if isinstance(itin, dict):
-            parts = []
-            for k, v in itin.items():
-                parts.append(f"{k} -- {v}" if isinstance(v, str) else str(v))
-            itin = "\n\n".join(parts)
-        elif isinstance(itin, list):
-            parts = []
-            for item in itin:
-                if isinstance(item, dict):
-                    day   = item.get("day", "")
-                    title = item.get("title", "")
-                    desc  = item.get("description", "")
-                    acts  = item.get("activities", [])
-                    day_str = f"Day {day}"
-                    if title:
-                        day_str += f" — {title}"
-                    if desc:
-                        day_str += f"\n{desc}"
-                    if acts:
-                        act_list = ", ".join(str(a) for a in acts) if isinstance(acts, list) else str(acts)
-                        day_str += f"\n*Activities: {act_list}*"
-                    parts.append(day_str)
-                else:
-                    parts.append(str(item))
-            itin = "\n\n---\n\n".join(parts)
-        generated["itineraries"] = clean_itinerary(str(itin))
-    # Same for highlights — ensure list of strings
-    highlights = generated.get("highlights")
-    if highlights and isinstance(highlights, list):
-        generated["highlights"] = [str(h) if not isinstance(h, str) else h for h in highlights]
-    return generated
-
-
-def clean_itinerary(text: str) -> str:
-    """Strip markdown bold markers (**) from itinerary — LLM sometimes adds them."""
-    if not text:
-        return text
-    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
-    text = text.replace("**", "")
-    return text.strip()
+# AA-1047 W1: the S1 text normalizer moved into the graph (services/content_generation/normalize.py, run by
+# graph.final_contract_node before the final contract); these names stay for T2 and existing callers.
+from services.content_generation.normalize import (  # noqa: E402
+    clean_itinerary, normalize_generated as _normalize_generated,
+)
 
 
 def initial_state_for(
@@ -310,16 +266,22 @@ async def _rewrite_tour(
         # the manual run_in_executor(None, run_graph) wrapping the old sync invoke() is no longer
         # needed.
         result = dict(initial_state)
-        async for event in graph.astream(initial_state, stream_mode="updates"):
-            for node_name, node_output in event.items():
-                result = node_output
-                if report_writer and node_name == "generate":
-                    from services.content_generation.s1_checkpoint import writer_state_delta
-                    delta = writer_state_delta(writer_baseline, node_output)
-                    if delta is not None:
-                        await on_writer_state(delta)
-                if on_stage is not None:
-                    await on_stage(node_name)
+        # S271 W0 (AA-900 l13): an A1 tour is one output: its collector of instrument marks and its model trace (the
+        # same-family judge mark), read by the graph's final node (route_guard.with_a1_entries). A T2 version binds
+        # its own around every round (t2_rewrite_job), so a tenant rewrite binds nothing here.
+        from contextlib import nullcontext
+        from services.quality import route_guard
+        with (nullcontext() if is_tenant_rewrite else route_guard.collect_output()):
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    result = node_output
+                    if report_writer and node_name == "generate":
+                        from services.content_generation.s1_checkpoint import writer_state_delta
+                        delta = writer_state_delta(writer_baseline, node_output)
+                        if delta is not None:
+                            await on_writer_state(delta)
+                    if on_stage is not None:
+                        await on_stage(node_name)
 
         return {
             "idx": idx,
@@ -386,6 +348,8 @@ async def _rewrite_tour(
             # AA-793: per-attempt judged scores + whether the hitl exit restored an earlier draft (T2).
             "draft_scores":        result.get("draft_scores", []),
             "best_draft_restored": result.get("best_draft_restored", False),
+            # S271 W0: "hitl" when the draft left through the hitl exit (now through the checks; metadata.exit_path)
+            "exit_path":           result.get("exit_path"),
             # AA-925: same strip class — validate's shadow findings and the fail-open paths that ran.
             "quality_shadow":      result.get("quality_shadow", []),
             "degraded":            result.get("degraded", []),
@@ -393,6 +357,8 @@ async def _rewrite_tour(
             "writer_version":      result.get("writer_version"),
             # AA-919: same strip class — the writing-memory release the kept draft was written with (A1 v2 stamp).
             "writing_release":     result.get("writing_release"),
+            # AA-1047 W1: same strip class — the REPORT-mode final contract of the run's exit (A1; None on T2).
+            "final_contract":      result.get("final_contract"),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 
@@ -412,6 +378,11 @@ async def _rewrite_tour(
             # a "failed" dict would end the job failed (retried into the same stop) instead of stopped_budget.
             logger.warning("rewrite_tenant_budget_approval", idx=idx, error=str(stop)[:300])
             raise stop  # the typed stop itself: the worker ends the job stopped_budget
+        unavailable = counter_unavailable_in(e)
+        if unavailable is not None:
+            # AA-642 A8 (review S263): the tenant's AI budget counter could not be read (fail closed): the job retries.
+            logger.warning("rewrite_tenant_budget_unreadable", idx=idx, error=str(unavailable)[:300])
+            raise unavailable
         logger.error("rewrite_failed", idx=idx, error=str(e))
         return {
             "idx": idx,
@@ -433,8 +404,13 @@ class TourRunRequest(BaseModel):
     validation_feedback: list = []
     seo_mode: str = "dataforseo"
     rewrite_language: str = "en-US"
-    model_tier: Optional[str] = None  # AA-518 — dead-stub class (see comment above), kept consistent
     subtitle_focus: str = "standard"
+
+    # AA-1024 A2: no model_tier, kept consistent with admin_pipeline.TourRunRequest (dead-stub class, see above)
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):
+        return refuse_model_tier(data)
 
 
 # ── Step Functions Execution Status ──────────────────────────────────────────
@@ -518,13 +494,54 @@ async def get_review_queue(
     }
 
 
+class ReviewApproveBody(BaseModel):
+    """S271 W0 (AA-900 l16): optional body of an approve. ``override_reason`` approves an unedited version the
+    publish checks refuse (approve_gate.blockers); at least 10 characters, recorded on the review row."""
+    override_reason: Optional[str] = None
+
+
+# S271 W0: the stored version an approve checks (approve_gate.blockers) — the review's version, its latest score row,
+# only while the review is pending on a live source (otherwise the claim below answers, as before). The page text and
+# the raw source are read for the elephant-riding policy only (approve_gate.is_policy_keep runs the detector on them).
+_APPROVE_GATE_SQL = """
+    SELECT gc.id::text AS generated_content_id, COALESCE(gc.human_edited, false) AS human_edited,
+           gc.fix_pass_applied, gc.metadata,
+           qs.score_overall::float AS score_overall, qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes,
+           gc.aa_name, gc.aa_subtitle, gc.aa_summary, gc.aa_description, gc.aa_highlights::text AS aa_highlights,
+           gc.aa_itineraries, gc.seo_title, gc.seo_meta,
+           rt.country, rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
+           rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
+           rt.activities::text AS activities, rt.price_raw
+    FROM silver_aa_internal.review_queue rq
+    JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
+    LEFT JOIN LATERAL (
+        SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes
+        FROM silver_aa_internal.quality_scores q
+        WHERE q.generated_content_id = gc.id
+        ORDER BY q.evaluated_at DESC
+        LIMIT 1
+    ) qs ON true
+    WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid AND rq.review_status = 'pending'
+      AND {live}
+"""
+
+
 @router.post("/review-queue/{review_id}/approve")
 async def approve_review(
     review_id: str,
     request: Request,
     tenant=Depends(_require_admin),
+    body: Optional[ReviewApproveBody] = None,
 ):
     """Approve a tour in review queue.
+
+    S271 W0 (root ADR 0020, AA-900 l16): an UNEDITED version must pass the auto-publish checks
+    (services/quality/approve_gate.py: score floor, hard codes, grounding ran and left no unsupported sentence,
+    brand audit not flagged-unfixed / manual_check). Otherwise 409 ``approve_blocked`` with the reasons, unless the
+    body carries an ``override_reason`` (recorded on the review row). A tour held only by the elephant-riding policy
+    (its code is the only brand code AND the detector hits the version text or the raw source) is approved as
+    ``policy_keep``. A human-edited version keeps the AA-234 re-validation gate below.
 
     AA-212: atomic-claim the pending row so a double-click cannot double-export. The claim
     only succeeds while review_status='pending'; a second call claims nothing → 409, and
@@ -538,7 +555,21 @@ async def approve_review(
     # review fetch is deferred to ACP.
     tenant_id = "00000000-0000-0000-0000-000000000001"
 
+    from services.quality import approve_gate
+    override = approve_gate.valid_override(body.override_reason if body else None)
+    blockers: list = []
+    policy_keep = False
     async with pool.acquire() as conn:
+        gate_row = await conn.fetchrow(_APPROVE_GATE_SQL.format(live=live_source_exists_sql("rq.tour_id")),
+                                       review_id, tenant_id)
+        if gate_row is not None and not gate_row["human_edited"]:
+            blockers = approve_gate.blockers(gate_row)
+            policy_keep = approve_gate.is_policy_keep(approve_gate.stored_result(gate_row))
+            if blockers and override is None:
+                logger.info("approve_blocked", review_id=review_id, blockers=[b["code"] for b in blockers])
+                raise HTTPException(status_code=409, detail=approve_gate.message(blockers),
+                                    headers={"X-Error-Code": approve_gate.ERROR_CODE})
+
         # Atomic claim: flip pending→approved in one statement. Only the first caller wins.
         # AA-234: the claim ALSO gates on the linked version — a human-edited version may be
         # claimed ONLY after a passing re-validation. The gate lives in the UPDATE WHERE (one
@@ -593,13 +624,28 @@ async def approve_review(
             SET status = 'approved'
             WHERE id = $1::uuid
         """, generated_content_id)
+        if blockers:   # S271 W0: approved over the publish checks with an explicit reason — keep it on the row
+            note = (f"Approved unedited with override: {override} "
+                    f"(blocked by: {', '.join(b['code'] for b in blockers)})")
+            await conn.execute("""
+                UPDATE silver_aa_internal.review_queue
+                SET reviewer_notes = CASE WHEN COALESCE(reviewer_notes, '') = '' THEN $2
+                                          ELSE reviewer_notes || E'\n' || $2 END
+                WHERE id = $1::uuid
+            """, review_id, note)
+            logger.warning("approve_override", review_id=review_id, version_id=generated_content_id,
+                           blockers=[b["code"] for b in blockers])
 
     # Side effects outside the DB transaction. Branch on the claimed token.
     # NULL token (admin/direct enqueue path) → forward export. Use `is not None`, not a falsy
     # check: an empty-string token is a real SF token and must NOT fall into the export branch.
     exported = False
     if task_token is not None:
-        # Legacy Step Functions path — unchanged.
+        # Legacy Step Functions path — unchanged, apart from the AA-1047 W1 REPORT-mode final contract of this approve
+        # (the export branch records it in process_export). Best-effort, never fails the approve.
+        from services.quality.final_contract_store import record_s1_exit
+        async with pool.acquire() as conn:
+            await record_s1_exit(conn, generated_content_id, "approve", actual="approved")
         try:
             sfn = _boto3.client(
                 "stepfunctions",
@@ -620,7 +666,7 @@ async def approve_review(
         # Admin-path forward export (no SF token). Runs once per claim.
         from services.export.handler import process_export
         try:
-            await process_export(str(generated_content_id))
+            await process_export(str(generated_content_id), contract_exit="approve")
             exported = True
         except SourceNotLiveError as e:
             # The source was trashed between the claim and the export (race). Nothing is published and
@@ -655,6 +701,9 @@ async def approve_review(
         "review_id": review_id,
         "exported": exported,
         "sf_notified": task_token is not None,
+        # S271 W0: approved as the human review of the elephant-riding policy; or over the checks with a reason
+        "policy_keep": policy_keep,
+        "override_blockers": [b["code"] for b in blockers],
     }
 
 

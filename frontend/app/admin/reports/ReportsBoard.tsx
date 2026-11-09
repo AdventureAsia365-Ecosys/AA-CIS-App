@@ -301,7 +301,9 @@ function ReportDrawer({ report, onClose, onQueued }: { report: ReportRow; onClos
             <Play size={13} /> {busy ? t("generating") : t("generateNow")}
           </Button>
         ) : <span style={{ fontSize: 12.5, color: K.muted }}>{t("adminOnly")}</span>
-      ) : <span style={{ fontSize: 12.5, color: K.muted }}>{t("notGeneratedHere")}</span>}>
+      ) : <span style={{ fontSize: 12.5, color: K.muted }}>
+        {report.due.state === "retired" ? t("retiredNote", report.retired_on ?? "—") : t("notGeneratedHere")}
+      </span>}>
       <div data-testid="admin-report-drawer">
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <Badge tone={PRIORITY_TONE[report.priority] ?? "neutral"}>{report.priority}</Badge>

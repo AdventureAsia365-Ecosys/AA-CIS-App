@@ -17,7 +17,7 @@ on:
       # reads api/migrations/; the schema is applied by AA-CIS-Infra). Code that needs it waits at `schema-gate`.
       - '!api/migrations/**'
       # AA-879: no 'frontend/**' — the image holds no frontend file (see the Dockerfile COPY lines), so a
-      # frontend-only merge must not restart api/worker. The admin app deploys from vercel-deploy.yml.
+      # frontend-only merge must not restart api/worker. The admin app deploys from deploy-admin-dev.yml.
   workflow_dispatch:
     inputs:
       override_running_jobs:
@@ -58,7 +58,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: |
             .github/scripts
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Fails closed (AA-868): a missing secret or an unreachable gate blocks the roll; an
       # override reason lets it through (also the way out when the API itself is down).
       - name: Check for an open wave or a running deploy-blocking job
@@ -109,15 +109,21 @@ jobs:
       # rebuilds the full image from its own ECR_REGISTRY/ECR_REPOSITORY env.
       tag: ${{ steps.build.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
           mask-aws-account-id: true
       - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      # S273: the verified spaCy model wheel into the build context's .url-wheels/ seed (no github.com download in the
+      # image build). Runs on main, so its cache entry is readable by every PR and merge-queue run.
+      - name: URL-pinned wheels (cached, hash-checked)
+        uses: ./.github/actions/url-wheels
+        with:
+          copy-to: .url-wheels
       - name: Build, tag, push image
         id: build
         run: |
@@ -146,9 +152,9 @@ jobs:
     environment: dev
     needs: [build-and-push, preflight, schema-gate]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
@@ -201,6 +207,15 @@ jobs:
             --task-definition "$NEW_ARN" --region "$AWS_REGION" >/dev/null
           SH
           chmod +x /tmp/deploy_family.sh
+      # AA-1024 G3 (c), S272 review: the preflight ran in parallel with the image build, minutes before this roll.
+      # Ask the gate again right before update-service: an ECS exec script (ecsx heartbeat) or a deploy-blocking job
+      # started during the build would be killed by the roll (lesson S234). Same script, same override.
+      - name: Re-check the deploy gate just before the roll
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          OVERRIDE: ${{ inputs.override_running_jobs }}
+          GATE_URL: https://api-cis.lumiguides.it.com/admin/job-runner/deploy-gate
+        run: bash .github/scripts/deploy_job_guard.sh
       - name: Deploy api
         run: /tmp/deploy_family.sh "${{ env.ECS_SERVICE }}" "${{ env.ECS_SERVICE }}"
       # AA-651 — the worker family/service is created by AA-CIS-Infra. Until that applies, skip
@@ -267,5 +282,5 @@ jobs:
 
   # S240: the "Deploy Frontend to Vercel" job (deploy hook on every Deploy Dev run) was removed — it added a
   # second production deployment per merge and used up the Hobby cap (~100 deployments / 24 h, team-wide;
-  # canceled deployments count too). S241: frontend deploys (preview + production) now come only from
-  # .github/workflows/vercel-deploy.yml; the Vercel Git integration is off (frontend/vercel.json).
+  # canceled deployments count too). S241: frontend deploys came only from vercel-deploy.yml. AA-911 (S272): Vercel
+  # is retired; the admin app deploys to ECS from .github/workflows/deploy-admin-dev.yml.

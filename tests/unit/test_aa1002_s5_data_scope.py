@@ -300,7 +300,9 @@ async def _patch_route(body, scopes):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scopes", [list(BOTH), None], ids=["vendor_direct_stage", "no_stage_policy"])
 async def test_admin_accepts_the_openai_api_last_resort_where_the_stage_allows_it(scopes):
-    out = await _patch_route({"fallback_model_ids": ["gpt-6-luna", "gpt-6-luna-openai"]}, scopes)
+    # AA-1026 D7: a judge fallback-chain change carries its evidence (a break-glass reason here)
+    out = await _patch_route({"fallback_model_ids": ["gpt-6-luna", "gpt-6-luna-openai"],
+                              "break_glass_reason": "acc3 refuses every model since the outage"}, scopes)
     assert out["fallback_model_ids"] == ["gpt-6-luna", "gpt-6-luna-openai"]
 
 

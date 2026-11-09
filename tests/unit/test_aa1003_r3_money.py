@@ -252,6 +252,27 @@ def test_ex01_is_a_draft_with_generated_numbers_and_narrative_slots():
     md = out.markdown
     assert md.count("NARRATIVE") >= 5 and "booking contract view not readable" in md
     assert "## 3. Scorecard" in md and "## 7. Incidents and risks" in md
+    # R0 hotfix (root ADR 0019 B2B-only model): the B2C inquiry funnel is historical, never red or amber
+    assert kp["K-DEM-INQ"]["status"] == "historical" and "hand-off is off" in kp["K-DEM-INQ"]["note"]
+    assert "historical = the B2C inquiry path" in md
+
+
+def test_ex01_demand_section_splits_current_and_historical_rows():
+    reg = _reg()
+    facts = _week_facts()
+    facts["demand"] = {"tripplanner": {"trip_started": 12, "inquiry_sent": 0},
+                       "booking": {"inquiry_received": 0, "confirmed": 2}}
+    facts["demand_prev"] = {"tripplanner": {"trip_started": 10, "inquiry_sent": 3},
+                            "booking": {"inquiry_received": 3, "confirmed": 1}}
+    out = money.render_ex01(reg, reg.report("EX-01"), MON, SUN, facts, NOW)
+    md = out.markdown
+    assert "| Trips started (TripPlanner) | 12 | 10 |" in md
+    assert "| Trip cases confirmed (Booking, every source) | 2 | 1 |" in md
+    assert "B2C inquiry funnel (historical" in md
+    assert "| Inquiries sent (TripPlanner, historical) | 0 | 3 |" in md
+    assert "| Inquiries received (Booking, historical) | 0 | 3 |" in md
+    kp = {k["id"]: k for k in out.output["kpis"]}
+    assert kp["K-DEM-INQ"]["status"] not in ("red", "amber")
 
 
 # ── monthly math ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -573,7 +594,7 @@ def test_fi01_names_a_provisional_month_and_how_to_refresh(monkeypatch):
     facts["cost_by_app:2026-10"]["aws"]["fetched_at"] = "2026-11-01T02:00:00+00:00"
     out = money.render_fi01(reg, reg.report("FI-01"), date(2026, 10, 1), date(2026, 10, 31), facts, NOW)
     assert out.output["aws_status"] == "provisional"
-    assert "/admin/platform/cost?month=2026-10" in out.markdown
+    assert "/admin/spend?tab=apps&month=2026-10" in out.markdown
 
 
 @pytest.mark.parametrize("rid,fn,heading", [("FI-03", money.render_fi03, "## By app and stage"),

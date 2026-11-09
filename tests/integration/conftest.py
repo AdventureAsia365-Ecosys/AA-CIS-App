@@ -8,8 +8,9 @@ Setup (one-time):
     su -c "psql -c \"CREATE DATABASE cis_integration_test OWNER cistest;\"" postgres
 
 cistest must be SUPERUSER, as in CI (.github/workflows: postgres:15 service). Without it the role
-creation below and every migration that grants to / asserts on other roles (203, 225 ...) fail;
-_apply_schema swallows migration errors, so the symptom is failing tests, not a setup error.
+creation below and every migration that grants to / asserts on other roles (203, 225 ...) fail.
+The session now stops at once on a non-superuser (and on any migration that fails outside the expected set,
+tests/integration/_replay_guard.py; AA-1024 l22 G16).
 """
 
 import sys, os
@@ -24,6 +25,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from _constants import (  # noqa: F401 — re-exported for test imports
     SAMPLE_TOUR, SAMPLE_SEO, SAMPLE_GENERATED, TENANT_ID, BATCH_ID
 )
+from _replay_guard import SUPERUSER_HINT, exit_message, first_line, replay_problems
 
 # ── Connection params ─────────────────────────────────────────────
 DB_HOST = os.environ.get("CIS_TEST_DB_HOST", "127.0.0.1")
@@ -36,8 +38,27 @@ DB_PASS = os.environ.get("CIS_TEST_DB_PASS", "cistest")
 # test name keeps S3Archiver & co. from asking STS for the account.
 os.environ.setdefault("BRONZE_BUCKET", "aa-cis-bronze-test")
 os.environ.setdefault("BEDROCK_ACCT_PRIMARY", "acc3-test-account")
+# AA-900 W0: the R1 freeze (services/writing_memory/r1_gate.py) is off for the release / mining / L0 mechanics these
+# modules test; tests/integration/test_aa900_w0_config_fp_db.py turns it on (monkeypatch.delenv) and tests it.
+os.environ.setdefault("WRITING_MEMORY_R1_GATE", "off")
+# AA-900: the gateway's cassette recorder is off for integration tests (they script replies and count ledger rows);
+# tests/integration/test_aa900_cassette_db.py turns it on around its own calls.
+os.environ.setdefault("LLM_CASSETTE", "off")
+# AA-1024 G3 (c): the deploy gate's ECS exec heartbeat list reads S3 (no AWS here); unit-tested with a fake client.
+os.environ.setdefault("DEPLOY_GATE_ECSX", "off")
 
 _SCHEMA_APPLIED = False
+
+# AA-1028 R1 slice 2 (CIS 356): the grants CI's legacy app_user (a writer of shared.tenants here only) needs for 356's
+# per-privilege writer guard; prepended to 356 in the replay and by every test that re-applies 356 after 353.
+APP_USER_356_GRANTS = (
+    "DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
+    "GRANT SELECT ON shared.plan, shared.plan_feature, shared.v_tenant_entitlement_resolved TO app_user; "
+    "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_subscription, shared.tenant_entitlement TO app_user; "
+    "GRANT INSERT ON shared.tenant_account_event TO app_user; "
+    "GRANT EXECUTE ON FUNCTION shared.tenant_entitlement_sync(uuid), shared.tenant_account_closed(uuid), "
+    "shared.tenant_account_emit(text, uuid, jsonb) TO app_user; END IF; END $$;\n"
+)
 
 # AA-817: stand-in for gold_aa_internal.tenant_tour_versions (live table created by migration 001, which
 # this DB skips). Columns used by the RLS tests, with defaults; no version_number, so test_aa766's
@@ -99,7 +120,13 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "shared.writing_memory_release_exemplar",   # 313 (AA-921), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.writing_memory_keep",               # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.writing_memory_disagreement",       # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
-                   "acp_shared.content_label")                 # 315 (AA-923 WM-32), FORCE: also X1_POST_245_FORCE_RLS
+                   "acp_shared.content_label",                 # 315 (AA-923 WM-32), FORCE: also X1_POST_245_FORCE_RLS
+                   # 360 (AA-1039 R6), FORCE: also X1_POST_245_FORCE_RLS
+                   "acp_shared.content_compliance_flag", "acp_shared.tenant_tour_notice",
+                   "acp_shared.tour_retirement_policy",
+                   "acp_shared.fact_sheet",   # 386 (AA-1047), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.eval_claim_label",  # 388 (AA-1048), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.claim_shadow_verdict")  # 391 (AA-1050), FORCE: also X1_POST_245_FORCE_RLS
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
 # own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
 # FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
@@ -108,7 +135,9 @@ X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared
                          "shared.eval_item_result", "shared.writing_memory_release", "shared.writing_memory_shadow",
                          "shared.writing_exemplar", "shared.writing_memory_release_exemplar",
                          "shared.writing_memory_keep", "shared.writing_memory_disagreement",
-                         "acp_shared.content_label")
+                         "acp_shared.content_label", "acp_shared.content_compliance_flag",
+                         "acp_shared.tenant_tour_notice", "acp_shared.tour_retirement_policy",
+                         "acp_shared.fact_sheet", "shared.eval_claim_label", "shared.claim_shadow_verdict")
 
 # AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
 # missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
@@ -235,6 +264,14 @@ def _apply_schema(conn):
         return
     conn.autocommit = True
     cur = conn.cursor()
+    # AA-1024 l22 (G16): a non-superuser replays with dozens of silent GRANT / role failures; stop before that.
+    cur.execute("SELECT rolsuper AS ok FROM pg_roles WHERE rolname = current_user")
+    row = cur.fetchone()
+    if not (row and row[0]):
+        pytest.exit(f"integration conftest: {SUPERUSER_HINT}", returncode=3)
+    cur.execute("SELECT count(*) AS n FROM pg_available_extensions WHERE name = 'vector'")
+    vector_available = bool(cur.fetchone()[0])
+    replay_failed: dict[str, str] = {}
 
     # Drop all schemas and recreate fresh
     cur.execute("""
@@ -411,6 +448,49 @@ def _apply_schema(conn):
         # catalog.v_llm_app_spend_today_v1) through the catalog recipe (needs 245's owners).
         # test_aa642_migration_323 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
         and not f.startswith('323')
+        # AA-1026 (S263): 329 creates catalog.v_embedding_space_v1 through the catalog recipe (needs 245's owners).
+        # test_aa1026_migration_329 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
+        and not f.startswith('329')
+        # AA-1027 E3 (S264): 341 replaces 323's catalog.v_llm_gateway_config_v1 (two appended columns) through the
+        # catalog recipe and needs 323 (skipped above). test_aa1027_migration_341 applies 323 + 341 the DB Migrate
+        # way on the RDS-like state and undoes both at teardown.
+        and not f.startswith('341')
+        # AA-1025 H1b (S265): 347 creates catalog.v_llm_app_profile_v1 (TripPlanner's app profile row) through the
+        # catalog recipe (needs 245's owners). test_aa1025_migration_347 applies it the DB Migrate way on the RDS-like
+        # state and undoes it at teardown.
+        and not f.startswith('347')
+        # AA-1027 E4 (S265): 350 replaces 341's catalog.v_llm_gateway_config_v1 (two more appended columns) through the
+        # catalog recipe and needs 323 + 341 (skipped above). test_aa1027_migration_350 applies 323 + 341 + 350 the DB
+        # Migrate way on the RDS-like state and undoes all three at teardown. (351, the tripplanner REVOKE, is
+        # replayed like every file; test_aa1027_migration_351 re-seeds the grants and re-applies it.)
+        and not f.startswith('350')
+        # AA-1028 R1 slice 2 (S266): 357 creates catalog.v_tenant_account_v1 (the Booking projection's read) through
+        # the catalog recipe (needs 245's owners). test_aa1028_migration_357 applies it the DB Migrate way on the
+        # RDS-like state and undoes it at teardown.
+        and not f.startswith('357')
+        # AA-1040 (S266): 358 replaces 278's catalog.v_supply_content (three appended AI-mark columns) through the
+        # catalog recipe and needs 278's part B (skipped above). test_aa1040_migration_358 applies 278 + 358 the DB
+        # Migrate way on the RDS-like state and rolls both back.
+        and not f.startswith('358')
+        # AA-1040 (S266): 359 replaces 289's catalog.v_tour (text_updated_at appended) through the catalog recipe and
+        # needs 253 / 273 / 289's catalog part (skipped above). test_aa1040_migration_359 applies 253 ... 289 + 359
+        # the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('359')
+        # AA-1029 R4 (S267): 365 creates catalog.v_tour_price_reference_v1 (Booking's reviewed reference price) through
+        # the catalog recipe over 253's _live_tour (skipped above). test_aa1029_migration_365 applies 253 ... 289 + 365
+        # the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('365')
+        # AA-1037 R4 (S269): 377 creates catalog.v_tenant_billing_v1 (Booking's agency invoice read) through the
+        # catalog recipe (needs 245's owners and 357's column grants). test_aa1037_migration_377 applies 357 + 377 the
+        # DB Migrate way on the RDS-like state and undoes both at teardown.
+        and not f.startswith('377')
+        # AA-1038 R5 slice 2 (S271): 379 creates shared.tenant_tripplanner_site, catalog.v_tenant_tripplanner_v1
+        # (TripPlanner's tenant read) through the catalog recipe (needs 245's owners) and seeds the demo tenant.
+        # test_aa1038_migration_379 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
+        and not f.startswith('379')
+        # AA-1038 R5 slice 3 (S272): 390 alters 379's site table and replaces / adds catalog views (catalog recipe,
+        # needs 379). test_aa1038_migration_390 applies 379 + 390 the DB Migrate way and undoes both at teardown.
+        and not f.startswith('390')
     ])
 
     for mf in migration_files:
@@ -475,6 +555,11 @@ def _apply_schema(conn):
             sql = ("DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
                    "REVOKE ALL ON shared.tenant_brand_rules, shared.tenant_seo_config FROM app_user; "
                    "END IF; END $$;\n") + sql
+        if mf.startswith("356_"):
+            # AA-1028 R1 slice 2: CI's legacy app_user writes shared.tenants here (early grants; Dev has no such role),
+            # and 356's guard checks, one privilege at a time, that every writer can run the 355 bridge and the RPM
+            # re-sync. Give it what cis_app holds (353) before the file, as the post-replay block does after it.
+            sql = APP_USER_356_GRANTS + sql
         if mf.startswith("229_"):
             # AA-817: 229 sets RLS + grants on gold_aa_internal.tenant_tour_versions, which only
             # migration 001 creates (skipped here), and its guard refuses a missing table. Apply it
@@ -564,6 +649,7 @@ def _apply_schema(conn):
             print(f"Applied: {mf}")
         except Exception as e:
             print(f"Warning {mf}: {e}")
+            replay_failed[mf] = first_line(e)
             try: mconn.close()
             except: pass
         if mf.startswith("229_"):
@@ -572,6 +658,11 @@ def _apply_schema(conn):
             cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X284_STANDIN_MARK,))
         if mf.startswith("287_"):
             cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X287_STANDIN_MARK,))
+    # AA-1024 l22 (G16): a migration that fails outside the expected set (or an expected one that now applies) is an
+    # error, not a warning in the captured output.
+    problems = replay_problems(replay_failed, vector_available=vector_available)
+    if problems:
+        pytest.exit(exit_message(problems), returncode=3)
 
     # Drop FK constraints in test env — cross-table seeding is fragile
     cur.execute("""
@@ -650,6 +741,18 @@ def _apply_schema(conn):
     # (MIG-6, no SECURITY DEFINER) and calls shared.country_iso2(): a new writer gets the resolver with the table grant
     # (279 grants it to the writers it sees; the replay ran before this block). test_aa851's standing check holds it.
     cur.execute("GRANT EXECUTE ON FUNCTION shared.country_iso2(text) TO app_user")
+    # AA-1028 R1 (354): the shared.tenants account-event trigger runs as the writer and calls
+    # shared.tenant_account_emit() (MIG-6); app_user writes shared.tenants in some tests, so it gets the emitter with its
+    # table grant (354's guard 2 refuses a writer of shared.tenants that could not emit).
+    cur.execute("DO $$ BEGIN IF to_regprocedure('shared.tenant_account_emit(text,uuid,jsonb)') IS NOT NULL THEN "
+                "GRANT EXECUTE ON FUNCTION shared.tenant_account_emit(text, uuid, jsonb) TO app_user; END IF; END $$")
+    # AA-1028 R1 (355): a tenant INSERT also creates its content subscription (the 355 bridge trigger), which
+    # materialises the entitlements, all as the writer: app_user gets what cis_app holds on those (353 grants).
+    cur.execute("DO $$ BEGIN IF to_regprocedure('shared.tenants_content_subscription_sync()') IS NOT NULL THEN "
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_subscription, shared.tenant_entitlement "
+                "TO app_user; "
+                "GRANT EXECUTE ON FUNCTION shared.tenant_entitlement_sync(uuid), shared.tenant_account_closed(uuid) "
+                "TO app_user; END IF; END $$")
     # AA-817 (237): on Dev only the owner and aa_app_user hold privileges on shared.tenant_integrations,
     # and 237's guard 1 refuses any other grantee (with RLS on and a policy TO aa_app_user only, it would
     # read 0 rows). Keep the CI-only app_user off it so test_aa817_* can re-apply 237 per test.
@@ -686,12 +789,12 @@ def _apply_schema(conn):
     # Seed test tenant
     cur.execute("""
         INSERT INTO shared.tenants
-            (tenant_id, name, slug, plan_tier, posts_per_week, api_key_hash, rate_limit_rpm, is_active)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, is_active)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT DO NOTHING;
     """, (
         TENANT_ID, 'Test Tenant', 'test-tenant',
-        'internal', 7, None, 60, True
+        'internal', 7, 60, True
     ))
 
     cur.close()
@@ -704,12 +807,113 @@ def _no_sts_caller_identity(monkeypatch):
     monkeypatch.setattr("shared.aws_client.bronze.caller_account_id", lambda: "111122223333")
 
 
+@pytest.fixture(autouse=True)
+def _provider_circuit_off(request, monkeypatch):
+    """AA-1025 B3: the provider circuit keeps state in process across tests; off and empty unless a test opts in with
+    the marker `real_provider_circuit` (then the test sets its own DB runner and alert hook)."""
+    from shared import provider_circuit
+    provider_circuit.reset()
+    if "real_provider_circuit" not in request.keywords:
+        monkeypatch.setenv(provider_circuit.SWITCH_ENV, "off")
+    yield
+    provider_circuit.reset()
+
+
+# ── One replayed database per test module (AA-1024 l22 follow-up, S273) ──────────────────────────────────────────
+# Every module used to share the one replayed database, so whatever a module left behind reached every later module:
+# test_aa712_migration_226 drops the catalog and geo schemas (the catalog views of 225 / 228 / 241 ... and geo's later
+# tables never come back), x1_244_undo revokes every cis_app grant in the CIS schemas (also the grants later migrations
+# gave, 309 / 322 / 347 ...), a migration replay rewrites seed rows. The 4-shard CI passed only because of its file
+# order; the nightly random order (seed 92395) ended 55 failed / 224 errors. Now the session replays once into
+# DB_NAME, freezes that state as the template REPLAY_TEMPLATE_DB, and every module starts on a fresh copy of it
+# (CREATE DATABASE ... TEMPLATE: about 0.1 s for this size of database on postgres 15+, WAL_LOG strategy).
+# What a copy does NOT reset: cluster-wide objects (roles, role attributes and memberships, passwords) and the
+# database ACL, which the copy re-applies from the replay state. A module that changes a role must still undo it.
+# CIS_TEST_DB_RESET=off keeps the old shared database (for debugging one module's leftovers).
+REPLAY_TEMPLATE_DB = os.environ.get("CIS_TEST_DB_TEMPLATE", f"{DB_NAME}_replay_tpl")
+ADMIN_DB = os.environ.get("CIS_TEST_ADMIN_DB", "postgres")
+_DB_RESET = os.environ.get("CIS_TEST_DB_RESET", "on").strip().lower() not in ("off", "0", "false", "no")
+_TEMPLATE_ACL: dict = {}
+
+
+def _admin_conn():
+    conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=ADMIN_DB, user=DB_USER, password=DB_PASS)
+    conn.autocommit = True
+    return conn
+
+
+def _qi(name):
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _terminate_others(cur, dbname):
+    cur.execute("SELECT count(pg_terminate_backend(pid)) AS n FROM pg_stat_activity "
+                "WHERE datname = %s AND pid <> pg_backend_pid()", (dbname,))
+
+
+def _database_acl(cur, dbname):
+    """The database's owner and ACL (pg_database is cluster-wide: CREATE DATABASE ... TEMPLATE does not copy it)."""
+    cur.execute("SELECT pg_get_userbyid(datdba) AS owner, datacl IS NULL AS default_acl FROM pg_database "
+                "WHERE datname = %s", (dbname,))
+    owner, default_acl = cur.fetchone()
+    cur.execute("SELECT a.privilege_type AS privilege, "
+                "CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END AS grantee "
+                "FROM pg_database d, aclexplode(d.datacl) a WHERE d.datname = %s AND a.grantee <> d.datdba "
+                "ORDER BY a.grantee, a.privilege_type", (dbname,))
+    grants = [f"GRANT {privilege} ON DATABASE {{db}} TO {grantee}" for privilege, grantee in cur.fetchall()]
+    return {"owner": owner, "default_acl": default_acl, "grants": grants}
+
+
+def freeze_replay_template():
+    """Copy the replayed DB_NAME to REPLAY_TEMPLATE_DB (no connection may be open on DB_NAME meanwhile)."""
+    conn = _admin_conn()
+    try:
+        cur = conn.cursor()
+        _TEMPLATE_ACL.clear()
+        _TEMPLATE_ACL.update(_database_acl(cur, DB_NAME))
+        cur.execute(f"DROP DATABASE IF EXISTS {_qi(REPLAY_TEMPLATE_DB)}")
+        _terminate_others(cur, DB_NAME)
+        cur.execute(f"CREATE DATABASE {_qi(REPLAY_TEMPLATE_DB)} TEMPLATE {_qi(DB_NAME)}")
+        # nobody reads or writes the frozen state by mistake (a superuser can still copy it)
+        cur.execute(f"ALTER DATABASE {_qi(REPLAY_TEMPLATE_DB)} ALLOW_CONNECTIONS false")
+    finally:
+        conn.close()
+
+
+def reset_db_from_template():
+    """Replace DB_NAME with a fresh copy of the replay template: every open connection to it is closed."""
+    conn = _admin_conn()
+    try:
+        cur = conn.cursor()
+        _terminate_others(cur, DB_NAME)
+        cur.execute(f"DROP DATABASE IF EXISTS {_qi(DB_NAME)}")
+        cur.execute(f"CREATE DATABASE {_qi(DB_NAME)} TEMPLATE {_qi(REPLAY_TEMPLATE_DB)} "
+                    f"OWNER {_qi(_TEMPLATE_ACL['owner'])}")
+        if not _TEMPLATE_ACL["default_acl"]:
+            cur.execute(f"REVOKE ALL ON DATABASE {_qi(DB_NAME)} FROM PUBLIC")
+            for grant in _TEMPLATE_ACL["grants"]:
+                cur.execute(grant.format(db=_qi(DB_NAME)))
+    finally:
+        conn.close()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _setup_schema():
-    """Apply schema once per session."""
+    """Apply schema once per session, then freeze it as the template every module starts from."""
     conn = _get_conn()
     _apply_schema(conn)
     conn.close()
+    if _DB_RESET:
+        freeze_replay_template()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _fresh_db_per_module(_setup_schema):
+    """Each test module starts on a fresh copy of the replayed database (see REPLAY_TEMPLATE_DB). Runs before the
+    module's own module-scoped fixtures (autouse fixtures of a conftest come first within their scope)."""
+    if _DB_RESET:
+        reset_db_from_template()
+    yield
 
 
 @pytest.fixture

@@ -583,6 +583,7 @@ def _outcome(ledger):
     return {"passed": first is None, "gate_ledger": ledger, "first_failure": first, "flags": []}
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_attempt_three_cuts_the_flagged_sentence_when_the_repair_call_fails():
     """r2 #13 was held at attempt 2 on one F1 sentence. Attempt 2 repairs it; when the attempt-3 repair

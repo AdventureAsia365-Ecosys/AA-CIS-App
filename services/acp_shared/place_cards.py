@@ -53,9 +53,11 @@ import structlog
 from json_repair import repair_json
 
 from services.acp_contract.ranking_reference import PLACE_KINDS, names_somewhere
+from services.quality import writing_policy as _wp  # AA-1047: the place-card facts scope (D1)
 from shared import countries as _countries
 from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -118,10 +120,8 @@ the country the tour is sold as).
 - naming_note: one sentence on how to name the location for an international travel audience \
 (e.g. a widely used region name), and any spelling variants. Empty string if nothing to say.
 - aliases: up to 4 other names or spellings people use for this same place (may be empty).
-- facts: 4-6 short, standalone, well-established facts about the PLACE ITSELF (what it is, its \
-history and era, its setting and what is physically there). Never write how visitors reach it, what \
-visitors do or see, permits or access, or safety advice: those are trip facts and come only from the \
-itinerary. kind is one of: what_it_is, history, setting, naming.
+- facts: 4-6 short, standalone, well-established facts about the PLACE ITSELF """ + _wp.fragment(
+    "a3_place_card.facts_scope") + """ kind is one of: what_it_is, history, setting, naming.
 - Each fact describes the place only. Never end a background fact with a clause about travellers: \
 how people reach it (roads, drives, distances by road, gateways, staging or stopping points), the \
 views visitors get, what visitors do there, which other sites it is combined with, or "making it a \
@@ -378,9 +378,9 @@ def _parse_json(raw: str) -> dict:
     if text.startswith("```"):
         text = text.strip("`")
         text = text.split("\n", 1)[1] if "\n" in text else text
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+    try:   # the first complete object; a note after it is ignored (AA-1026: json_repair made it a list -> {})
+        data = first_json_value(text, scan=False)
+    except JsonReplyError:
         data = repair_json(text, return_objects=True)
     return data if isinstance(data, dict) else {}
 
@@ -850,15 +850,16 @@ def drop_unverifiable(facts: list[dict], country: Optional[str] = None, card_nam
     return out
 
 
-def draft_card(atom: dict) -> tuple[dict, float, object]:
-    """One `a3_place_card` call. Returns (card dict, cost, response)."""
+def draft_card(atom: dict, client=None) -> tuple[dict, float, object]:
+    """One `a3_place_card` call. Returns (card dict, cost, response). `client`: an LLMClient-like object (AA-1026 I6:
+    the contract smoke passes one that forces the acc2 fallback model); None = a new LLMClient."""
     user = (f"PLACE AS THE ITINERARY NAMES IT: {atom['place']}\n"
             f"COUNTRY THE TOUR IS SOLD AS: {atom.get('country') or 'unknown'} "
             f"(the route may cross into a neighbouring country)\n"
             f"TOUR: {atom.get('tour_name') or 'unknown'}\n"
             f"ITINERARY SENTENCE: {_trim(atom.get('evidence'))}")
-    resp = LLMClient().generate(LLMRequest(system_prompt=_CARD_SYSTEM, user_prompt=user,
-                                           stage="a3_place_card", max_tokens=DRAFT_MAX_TOKENS))
+    resp = (client or LLMClient()).generate(LLMRequest(system_prompt=_CARD_SYSTEM, user_prompt=user,
+                                                       stage="a3_place_card", max_tokens=DRAFT_MAX_TOKENS))
     return _parse_json(resp.content), resp.cost_usd, resp
 
 
@@ -867,7 +868,7 @@ def _flag_false(value) -> bool:
     return value is False or (isinstance(value, str) and value.strip().lower() == "false")
 
 
-def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object, dict]:
+def check_card(card: dict, atom: dict, client=None) -> tuple[bool, list[str], float, object, dict]:
     """One `a3_place_card_check` call. Returns (identity_ok, verdict per fact, cost, response, placement) where
     placement = {"locality_ok", "region_ok"} (AA-784: a wrong locality / region is cleared, not a rejected card)."""
     facts = card.get("facts") or []
@@ -878,8 +879,8 @@ def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object, 
             f"CARD IDENTITY: {card.get('display_name')} — locality: {card.get('locality') or '-'}, "
             f"region: {card.get('region') or '-'}, country: {card.get('country')}\n"
             f"FACTS:\n{numbered}")
-    resp = LLMClient().generate(LLMRequest(system_prompt=_CHECK_SYSTEM, user_prompt=user,
-                                           stage="a3_place_card_check", max_tokens=CHECK_MAX_TOKENS))
+    resp = (client or LLMClient()).generate(LLMRequest(system_prompt=_CHECK_SYSTEM, user_prompt=user,
+                                                       stage="a3_place_card_check", max_tokens=CHECK_MAX_TOKENS))
     data = _parse_json(resp.content)
     verdicts = data.get("verdicts") if isinstance(data.get("verdicts"), list) else []
     verdicts = [str(v).strip().lower() for v in verdicts]

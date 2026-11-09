@@ -344,6 +344,13 @@ def test_t9_judge_prompt_keeps_the_brief_when_the_facts_are_long():
            "brand_audience": {"brand_name": "Zz Invented Brand"}}
     src = ew.source_text("t9_blog", {"context": ctx})
     assert len(src) > SOURCE_CHARS
+    # AA-1047 (W1): an over-cap source is no longer cut (the brief could be lost); the item is excluded
+    import pytest
+    from services.writing_memory.eval_judge import InputOverCap
+    with pytest.raises(InputOverCap):
+        build_user_prompt(writer="t9_blog", source_text=src, output_text="x")
+    ctx["facts_text"] = "Zz invented fact. " * 300
+    src = ew.source_text("t9_blog", {"context": ctx})
     prompt = build_user_prompt(writer="t9_blog", source_text=src, output_text="x")
     assert "day 4 only." in prompt and "Zz invented angle" in prompt and "Zz Invented Brand" in prompt
 

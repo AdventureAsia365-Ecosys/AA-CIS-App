@@ -375,15 +375,29 @@ def stamp(view: Optional[dict], **extra) -> Optional[dict]:
     return out
 
 
-def generation_meta(view: Optional[dict], *, prompt_version: Optional[str] = None) -> Optional[dict]:
+def writer_answer(result: Optional[dict]) -> Optional[dict]:
+    """AA-900 W0 (root ADR 0020): how the kept draft's writer call answered, from a writer graph result: the answered
+    model and whether a fallback rung answered (None when the result names no model)."""
+    model = (result or {}).get("model_used")
+    if not model:
+        return None
+    return {"answered_model": str(model)[:100], "fallback_used": bool((result or {}).get("fallback_used"))}
+
+
+def generation_meta(view: Optional[dict], *, prompt_version: Optional[str] = None,
+                    answer: Optional[dict] = None) -> Optional[dict]:
     """AA-920 WM-25: what a T2 version records in `tenant_tour_versions.generation_meta` (CIS 297).
 
     `writing_release` + `rule_ids` (only with a view): the stamp plus the rule ids the view carried (platform part
     first, then the tenant's; no duplicate). `writer_prompt_version` (when known): sha256[:8] of the exact system prompt
     of the kept draft (`batch_prompt.prompt_version_of`, as generated_content.metadata.prompt_version; WM-08 left T2
     out for want of this column). None when neither is there: the column stays NULL. Ids, numbers and hashes only,
-    never rule text; the column is hidden from every tenant read (`_tenant_projection.TENANT_HIDDEN_VERSION_FIELDS`)."""
+    never rule text; the column is hidden from every tenant read (`_tenant_projection.TENANT_HIDDEN_VERSION_FIELDS`).
+    AA-900 W0: `writer_answer` (`answer`, from `writer_answer(result)`): the kept draft's answered model and
+    fallback_used, for the release KPIs (the degraded marks stay in judge_breakdown.route_degraded, not repeated)."""
     out: dict = {}
+    if answer:
+        out["writer_answer"] = answer
     if prompt_version:
         out["writer_prompt_version"] = str(prompt_version)
     if view:
@@ -400,4 +414,5 @@ __all__ = ["EXAMPLES_HEADING", "PLATFORM_HEADING", "REPAIR_HEADING", "SLOTS", "T
            "WRITING_KINDS", "a1_house_rules", "attach_items", "example_lines", "exemplar_texts", "generation_meta",
            "has_content", "ignored", "load_items", "part_of", "voice_examples",
            "render_rules", "repair_hint_block", "repair_hints", "resolve", "rule_line", "rule_texts", "stamp",
-           "t2_block", "t9_platform_block", "t9_tenant_lines", "with_repair_hints", "writer_for_channel"]
+           "t2_block", "t9_platform_block", "t9_tenant_lines", "with_repair_hints", "writer_answer",
+           "writer_for_channel"]

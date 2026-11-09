@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend]
-last_reviewed: 2026-10-25
+last_reviewed: 2026-11-01
 review_every_days: 90
 related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
 ---
@@ -51,40 +51,55 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
-- **Frontend**: one Next.js app here, `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
-  `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy"; CI, not one of the required
-  checks — see Deploy & CI).
+- **Frontend**: one Next.js app here, `frontend/` = the **Admin** console (`app/admin/*`),
+  `https://aa-cis.lumiguides.it.com`. AA-911 (root ADR 0019 d23 + S271 amendment): it runs on ECS as its own service
+  `aa-cis-dev-admin` (container `cis-admin`) behind the shared ALB, workflow `Deploy Admin Dev` (see Deploy & CI).
+  The Vercel project `aa-cis-frontend`, its Preview host and `vercel-deploy.yml` were retired in S272 (root runbook
+  `docs/ops/runbooks/staff-web-ecs-cutover.md` section 4).
   - The **Tenant portal** (Content studio, `https://portal.lumiguides.it.com`) is NOT in this repo: it split off the
     admin as its own app in AA-885 (S243), moved to `AdventureAsia365-Ecosys/AA-Partner/portal` with its history
     in AA-979 (CRM-P2a), runs on Fargate behind CloudFront since the P2b cutover (27/10/2026), and the frozen copy
     left here was deleted at the P2b clean-up (runbook §4.5; `tests/unit/test_aa885_portal_split.py` keeps it
     gone). Read AA-Partner `CONTEXT.md` ("Portal") for its pages, shell, gate and sign-in. The Content studio API
-    (`/v1/*`, `/auth/tenant-session`, `/auth/tenant-memberships`, `/auth/tenant-login` for machines) stays here
-    (root ADR 0010 §7, ADR 0010a).
+    (`/v1/*`, `/auth/tenant-session`, `/auth/tenant-memberships`) stays here (root ADR 0010 §7, ADR 0010a).
+    `/auth/tenant-login` answers **410 Gone** for any body: tenant API keys were removed (AA-1036 R3 slice 3, root
+    ADR 0019 d6); there is no agency machine path to `/v1/*` until R8.
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
     server-side filter/sort/paginate + filter-aware stat cards + windowed cost + derived pipeline
-    status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
-    01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
-    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665; the old `/admin/llm-usage` redirects to its LLM tab),
-    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit), Routing, Models & trials,
-    Budgets, Guide, and the job Trace drawer; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
+    status, via react-query — see A3 note below), `atom-curation` (**Atoms & routes**, sections
+    01 Atomize · 02 Segment · 03 Score · 04 Route/Hub; was "Social Content"), `tenant-qa/*` (AA-1039: `quality` =
+    Content quality, `trace` = Content Trace, `review-log` = review log with gate telemetry per tenant and channel,
+    AA-615, `slate` = the per-tenant Slate that was atom-curation section 05), `spend` (the **Spend** page, AA-622/623/665, was Cost Operations at `cost-ops`: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger), AWS bill and By app (AA-1039 R6 slice 3, was `platform/cost`); the old `/admin/llm-usage` and `/admin/cost-ops` redirect to it), `lab/[stage]` (**Writing Lab**, AA-1039 R6 slice 3; tabs Eval gate, Samples, Labels, Experiments, Prompt versions, Releases and Metrics) and `lab/writing-memory` (opens a tab from `?tab=`),
+    `ai-gateway` (**AI gateway**, was "AI providers", AA-804: tabs Providers (+ views Connections, Jev credit, Credit (AA-1025 B5); warm-path labels, the
+    "Re-queue refused jobs" card; AA-1025 C1: errors and p50 / p95 latency per row over 24 h / 7 d from the ledgers,
+    the Jev / DataForSEO / Geoapify switch (PATCH /admin/llm-connections/{key}), the partner CRM AI and Bedrock
+    Guardrails rows from the CRM's daily totals (crm.ops.v1 GET /llm/usage only, with the staff member's own
+    token; never the row ledger /llm/calls, which audits every agency), a static Mapbox row), Routing (with the LLM availability card), Models & trials (families, shadow report,
+    the read-only Experiments section: prompt versions and eval runs), Budgets (every cap layer and the tenant AI
+    budgets of AA-1016, also shown as a tile on Tenant 360), Calls (ledger v2 search), Guide (AA-1042 S270: the root page
+    `docs/architecture/ai-gateway.md` / `.vi.md` (catalog id ARCH-01-ai-gateway, staff tier only) from the Docs sync bundle
+    through `docs_reader.load_staff_page_by_id`, plus live tables from `GET /admin/ai-gateway/guide` (spend.read,
+    `api/services/ai_gateway_guide.py`: routes with the serving deployment of `llm_route_control.serving`, model x
+    connection matrix, connection register with secret NAMES only, connection caps, stage coverage); finance and
+    ai_ops read that one docs page here although they cannot open /admin/docs), and the Trace drawer
+    opened from a Calls row, the job drawer, tour detail and decisions; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
     there in UI part 2 and their old `?tab=` links are sent on in the browser), `tenants`,
-    `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
+    `jobs`, `decisions` (**Jev Decisions**, AA-660), `facts` (**Facts**, AA-814: platform Facts Entries the T9 writer cites; every staff role reads, `quality.write` edits), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
     admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
-    AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
-    Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
-  - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
-    Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
-    **Operations** (Cost Operations, Jobs, Jev Decisions, API Docs) · **Settings**. Admin-only items are hidden for other
-    roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
+    AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (**Catalogue settings** since AA-1039 R6 rest:
+    pipeline gates, the **AA house style** (Brand Identity editor of aa_internal), SEO config; the tenant row moved to
+    its Tenant 360, the UI kit to `/admin/platform/ui-kit`). `run-health` was removed with N7/N8 (AA-603).
+  - Admin navigation: see **Admin console layout** below (AA-1039, seven groups; AA-1037 adds Trade). Admin-only items are hidden for
+    other roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
-    redirect in `next.config.ts`.
+    redirect in `next.config.ts` (AA-663).
   - **The admin host and the portal (AA-885, AA-979)**: the admin answers `/portal`, `/portal/*` and `/tenant-login`
     with **308** to the same path on `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL`
     in `frontend/lib/apps.ts`) and serves no portal page or tenant BFF. Staff have **no** access to the tenant portal
-    (no staff session there; a support view is future work); the staff login does not link to it.
+    (no staff session there; AA-1035 slice 2 gives staff a read-only "view as partner" inside the admin instead,
+    `/admin/tenants/view-as`); the staff login does not link to it.
     - No CORS is needed for the portal: its BFF calls the API server to server. The API sends no CORS grant on a
       deployed task (AA-876, `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only
       `localhost:3000/3001` off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
@@ -93,9 +108,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
       form-action 'self'; object-src 'none'`, `Permissions-Policy`), plus `poweredByHeader: false` (AA-876).
     - **Cross-site writes (AA-911):** every admin BFF write route (any method but GET/HEAD/OPTIONS)
       first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
-      `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host,
-      including the fixed Preview hosts that serve unmerged PR code, is the same site and its requests carry the
-      Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
+      `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host (the
+      other staff and partner apps) is the same site and its requests carry the Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
     - AA-979: the public white-label page `/trip/[tourId]` lives on the AA-Partner CRM web on the client host (Dev
       `go-dev.`). The admin host answers `/trip/:path*` with a **permanent 308** there (`next.config.ts`,
       `lib/apps.ts` `TRIP_PAGE_BASE_URL`; a 307 during the P2b rollback window, made permanent and the CIS page
@@ -107,7 +121,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     login pages (AA-605; the AA-Partner portal and CRM web vendor them through the kit core). New pages should reuse them.
   - **UI kit core (AA-994 S1a, root ADR 0016)**: the portable part of the kit lives in `frontend/app/_kit/core/`,
     the **canonical copy** for all five frontends (AA-Partner portal and CRM web, AA-Booking admin vendor it byte for
-    byte; AA-TripPlanner-Web takes the `tokens` profile). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
+    byte; AA-TripPlanner-Web takes the `tokens` profile, which since AA-1033 also carries `i18n.ts` and
+    `aiNotice.messages.ts`). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
     `DataTable.tsx`, `csv.ts`, `savedViews.ts`, `Drawer.tsx`, `Modal.tsx`, `Toast.tsx`, `Providers.tsx`,
     `PageFrame.tsx` (the S252 `AdminMain`, which stays an alias, as do `AdminPaneHeader` / `AdminPaneBody`, for
     consumers that have not migrated; CIS admin code uses the `PageFrame*` names since AA-994 S6b, guarded by
@@ -120,7 +135,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `formatMoney`, `formatDay`, `parseDayInput`, `relativeParts`), the one confirm dialog `ConfirmModal` (absorbed
     Booking's `ConfirmDialog`: Figma layout, optional reason, `message` / `danger` aliases), `PageFrame` `width`
     ("full" default, "wide" 1440, "narrow" 880) + header props, and `KitGallery.tsx` (every S4a component in its states,
-    admin Settings → UI kit → Gallery; the gated gallery route of the visual job, S1d, will render it too),
+    admin Platform → UI kit → Gallery; the gated gallery route of the visual job, S1d, will render it too),
     **AA-994 S6a:** `FormControls.tsx` — the form controls every form uses: `Field` (label above, required mark, hint
     or error below, lock icon; a `<label>` that gives its control `aria-describedby` / `aria-invalid` /
     `aria-required`; `as="div"` = a labelled group) around native `Input`, `Select` (`options` / `placeholder` or
@@ -140,6 +155,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     focus-visible / disabled states from one hoisted stylesheet. `Tabs` gains `variant="underline"` (role tablist /
     tab, aria-selected, counts, disabled tabs with a reason, arrow keys); the default track variant's markup is
     unchanged. Render-tested in `lib/kitButtons.test.mjs` (transpiles the core, react-dom/server).
+    **AA-1033:** `AiNotice.tsx` — the one notice under AI-written text in every app (`<p role="note">`, muted 12px
+    line with an info icon), variants `staff` (default: CIS reviewer screens — Review Queue editor, S1 rewrite tab,
+    the content-quality sentence rewrite panel when a model suggestion is loaded — and CRM AI drafts), `publisher` (Content studio review / publish / export) and `traveller` (TripPlanner). Its
+    wording lives in `aiNotice.messages.ts` (`defineMessages`, EN + VI; says AI can make mistakes and that the
+    confirmed quote and booking terms bind, never claims to exclude liability), which with `i18n.ts` is in the
+    `tokens` profile so TripPlanner's own B2C notice renders the same sentence. Language: the I18nProvider's, or
+    the `lang` prop (CRM web). Tested in `lib/kitAiNotice.test.mjs`; shown in the kit gallery.
+    **AA-1040:** variant `narration` (a traveller reading what the AI wrote when they asked for it: TripPlanner trip
+    narration, EU AI Act Art. 50(1)) and `form="badge"`: the short "AI-assisted" pill (`aiBadgeText`) for cards and
+    rows, a `<span role="note">` whose accessible name and tooltip are the variant's sentence (Content studio).
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;
@@ -163,14 +188,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (no-op when no copied file but `MANIFEST.json` changes; the agent merges it through the merge queue); the same
     workflow writes a nightly freshness table (report only). A PR touching `core/**` runs **Kit Consumers**
     (`kit-consumers.yml`, non-required): core overlaid on each consumer's `main`, then integrity, `tsc --noEmit` and
-    the app's lint. CIS-local, outside `core/`: `api.ts`,
-    `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
-    `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useNavSections.ts`, `useAdminIdentity.ts`,
+    the app's lint. **Shell frame (AA-1008 S6e):** `core/ShellFrame.tsx` is the one app shell frame of every kit
+    consumer (CIS admin, Booking admin, the AA-Partner agency app): layout [sidebar | topbar over the page], the phone
+    drawer below 768 or 900 px (off-canvas, backdrop, Esc, out of the tab order while closed: its own hoisted style
+    element keyed on `data-kit-shell`), the ⌘K palette state, bottom bar and footer slots, scroll "main" or
+    "document", and `main="shell"` (it renders the `<main>`) or `"page"` (the page's PageFrame is the `<main>`); the
+    nav, identity, sign-out and brand are the apps' own slot components. CIS-local, outside `core/`: `api.ts`,
+    `guideContent.ts` (the guide checks, re-exporting the core shape), the shell configuration (`AdminShell`, a
+    ShellFrame with `main="page"`; `Sidebar`, `Topbar`, `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useAdminIdentity.ts`,
     `useReviewPendingCount.ts`, `chart.ts` (`CHART_TOOLTIP`, the recharts tooltip style, moved out of `adminUi.tsx`
     in AA-994 S6b), and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
-    core), never `core/` directly; only the root layout, the login form and the legacy `adminUi.tsx` import core
-    files directly (server layout, light login bundle, and no import cycle through the barrel's `Sidebar`).
+    core), never `core/` directly; only the root layout and the login form import core files directly (server
+    layout, light login bundle); a `messages.ts` may import `defineMessages` from `core/i18n`. `KX`
+    (`app/_kit/adminTokens.ts`, AA-1006) names the few `--aa-*` colours the admin draws that core `K` does not
+    (on-solid / on-dark text, the dark side surface, toast, scrim, shadows); it moves into core `K` when a second app
+    needs one.
   - **UI language (AA-994, S255 decision)**: one language at a time — English by default, Vietnamese only when the
     user picks it in the one switch (`core/LangSwitch.tsx`, EN | VI, in the admin `Topbar`). Kit core
     `i18n.ts` (no React: `defineMessages(en, vi)` typed catalogues where a message is a string or a function of typed
@@ -233,27 +266,52 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `app/admin/**/page.tsx` renders it once together with the kit `PageHeader`, and no admin file hand-writes a
     `<main>` or the frame classes — guarded by `frontend/lib/adminFrame.test.mjs`), and `apiGet`/`apiSend` fetch
     helpers. New pages import
-    from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
-    `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,
-    `Skeleton.tsx`) still stand — pages are migrated to the kit one at a time (Review Queue and My
-    Content first). Living reference: the **UI Kit tab in admin Settings** (`/admin/settings?tab=ui-kit`,
-    `app/admin/_components/SettingsKitTab.tsx`) — renders every primitive with static data.
+    from `app/_kit`. Every CIS admin page is on the kit (AA-1006, S263): the legacy `admin/_components/adminUi.tsx`
+    is deleted and `frontend/eslint-suppressions.json` is empty, so any new kit-rule violation fails CI. The admin
+    `_components` that remain (`auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, …) are page parts built from
+    kit components, not a second primitive layer. Living reference: the **UI kit page of Platform** (`/admin/platform/ui-kit`,
+    admin only, was the UI Kit tab of Settings until AA-1039 R6 rest; `app/admin/_components/SettingsKitTab.tsx`) —
+    renders every primitive with static data.
   - **Data fetching (AA-662)**: `@tanstack/react-query` is the standard for UI v2, wired app-wide
     via a single `QueryClientProvider` in `app/_kit/core/Providers.tsx`, mounted from the server root
     layout (`app/layout.tsx`) around all routes. Defaults: no refetch-on-focus, one retry, 30s
     stale. Pages that poll opt in per-query with `refetchInterval` (replaces the old hand-rolled
     `useState`/`useEffect`/`setInterval` fetch). Older pages keep their hand-rolled fetch until
     migrated.
-- **AI/Bedrock**: LLM calls (rewrite, research, gates) route through the ecosystem Bedrock path
-  on the acc3 satellite only (AA-998, S255: acc1, the former cross-account fallback, left the ecosystem;
-  an acc3 failure falls to a same-account model or the job retry); the cross-account trust is provisioned in
-  AA-CIS-Infra.
+- **AI/Bedrock** (root ADR 0009, as built: root `docs/architecture/ai-gateway.md`): every paid AI and data call goes
+  through the gateway in `shared/llm_client/`, whose control plane (registry v2, routes, scopes, budgets, circuit
+  state, ledger v2) this repo owns. Chat models run on Bedrock in **acc3**, the main chat account (refusing every model
+  since 2026-10-29, Error 002); acc2 serves embeddings and five candidate chat models (324, ADR 0009 decision 14: eval,
+  judge and validate only), two of which are the LAST fallback of the platform judge / validate routes that reached
+  acc3 only (migration 331: Nova Lite, Llama 4 Scout for the place card check). Outside AWS: the OpenAI API
+  (`openai-direct`, last resort of the judge routes) and the Anthropic API (`anthropic-direct`, deployments seeded
+  behind acc3 by 306, no key yet), plus Jev, DataForSEO and Geoapify as registry rows (322). acc1 left the ecosystem
+  (AA-998). The cross-account trust is provisioned in AA-CIS-Infra.
   Embeddings (Cohere Embed v4) run natively on acc2, through the GLOBAL cross-region profile
   `global.cohere.embed-v4:0` since migration 238 (AA-856: the `us.` quota is fixed at 20 rpm, the global
   one is adjustable; one quota shared by f10_embed, a3_place_embed and TripPlanner search). Claude cannot be invoked from a local shell — the satellite roles only trust the
   ECS task role, so real LLM measurements run inside the `api` container via ECS exec.
+- **Embedding spaces** (AA-1026 D5, migrations 328 / 329, `shared/llm_client/embedding_space.py`): a space is one
+  model at one dimension (`cohere-embed-v4/1536/v1`, served by `cohere-embed-v4` on acc2 and `cohere-embed-v4-acc3`).
+  `shared.embedding_space` lists the spaces, `shared.embedding_column` gives every vector column its space and swap
+  group (`f10_embed` = atom + question + content piece vectors; `tour_place`; `published_tours`). Writers
+  (`content_embedding.compute_embeddings`, `places.llm.embed_texts`) pass the column's space to `embed(..., space=)`:
+  only that space's models are tried (the route filtered to them, else the space's own), at its dimension, and the
+  ledger row carries `quality_signal.embedding_space`. TripPlanner reads its column's space through
+  `catalog.v_embedding_space_v1` and searches in it only. The ready fallback of another vendor is Amazon Titan Text
+  Embeddings V2 (`titan-embed-text-v2`, space `titan-embed-text-v2/1024/v1`, standby) on connection `acc2-usw2`
+  (acc2, us-west-2, the model is not offered in us-west-1), connection off (its deployment is enabled: switching
+  is one audited `PATCH /admin/llm-connections/acc2-usw2`). Moving a column: the owner steps are DDL in the
+  AA-CIS-Infra run-script `db/scripts/aa1026_embedding_shadow.py` (DB Migrate mode=run-script, as `cis_owner`, DRY RUN
+  by default), not SQL functions (a migration may not switch roles in dynamic SQL; 329 only adds the trigger function
+  `shared._embedding_shadow_reset()`): `prepare` (shadow column + trigger `<column>__shadow_reset`, which empties the
+  shadow of a row whose serving vector a writer rewrites) → job `embedding_reembed` (dry_run / fill / probe, POST
+  /admin/job-runner/embedding-reembed/run, resumable, cost cap per job across retries) → `swap` (the whole group in one
+  transaction: renames, rebuilds the dependent views, registry updated) → `rollback` while `__prev` is kept. A group
+  read by `catalog_owner`'s views (`tour_place`) swaps with a contract cis/ migration under the catalog recipe; the old
+  vectors are dropped by a destructive cis/ migration. Runbook: root `docs/ops/runbooks/embedding-re-embed.md`.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
-  `shared/llm_client/role_config.py` are only a fallback), editable in admin Settings.
+  `shared/llm_client/role_config.py` are only a fallback), editable in admin AI providers › Routing.
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
   LLM prices come from it (`pricing.py` is the fallback). Non-legacy Model Keys (e.g. `sonnet-5`)
   are called with the Bedrock Converse API on the acc3 satellite.
@@ -298,7 +356,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   also holds the paid providers that are not LLMs (`typesafe` = Jev, role decide; `dataforseo` and `geoapify`, role
   data; `bedrock_guardrails`, role guard, seeded off), with a secret guard per kind (LLM kinds `aa-llm/<env>/<name>`,
   each provider kind only `aa-cis/<env>/<kind>`) and a host per kind, both in code (`connections.check_secret_name`,
-  `BASE_URL_ALLOWLIST`) and as CHECKs; plus `failure_domain`, `served_roles` (not read for routing yet), `access_state`,
+  `BASE_URL_ALLOWLIST`) and as CHECKs; plus `failure_domain`, `served_roles` (routing reads it since AA-1024 A5: a
+  connection that does not serve the stage's role is not in the plan; NULL = every role; a model left with no
+  deployment only for that reason is refused with ledger class `role_not_served`, migration 338), `access_state`,
   `last_probe_at`, `balance_source`, `daily_credit_limit`, `low_balance_usd`. The LLM dispatch never sees a provider
   kind (`connections.fetch_connections` / `registry_rows_sync` return `LLM_KINDS` only; `resolve_api_key` refuses
   them). Jev's base URL / timeout / retries (`decide.jev_endpoint`), the Jev and DataForSEO low-balance thresholds and
@@ -310,7 +370,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `effort_default`), each falling back to the old code rules when unset (every row today). `shared.stage_model_params`
   (stage x model: max_tokens, min_output_tokens, temperature, effort, reasoning_mode; `shared/llm_client/stage_params.py`)
   applies with the precedence call site -> row -> protocol default on every catalog path; empty = the same request
-  object (effort reaches the Anthropic Messages API only). A deployment may state its own `api_style` (NULL = the
+  object. **Thinking budget per stage (AA-741 S271):** effort + reasoning_mode are the bound, because the Claude 5.x
+  models take no `budget_tokens` (a 400) and bill adaptive thinking as output inside max_tokens. On the Anthropic
+  Messages API effort is `output_config.effort` and reasoning_mode the one `thinking` form the family takes
+  (`adapters/anthropic_messages.resolve_thinking`: 'off' = `between_tools` on Sonnet 5.5, `disabled` on Haiku 5.5 /
+  Opus 5 / Sonnet 5, never at xhigh / max, nothing on Opus 5.5 / Fable; 'adaptive' explicit; nothing on 4.5); on
+  OpenAI / Azure effort is `reasoning_effort` on a reasoning model only (low / medium / high as is, xhigh / max as
+  high); on Converse effort goes in `additionalModelRequestFields` only in the form the catalog row states
+  (`capabilities.converse_effort`: `output_config` for Claude, `reasoning_effort` for GPT; no row states one, AA-803:
+  set it after a probe; a ValidationException on it drops the field once), and reasoning_mode is never sent there.
+  **One effort rule (AA-1053):** the stage x model row is the only source of a stage's effort and
+  `shared/llm_client/effort_rule.py` the only module that maps it to a provider field (guard
+  `tests/unit/test_aa1053_effort_rule.py`); `LLMResponse.effort` (ledger `effort`) is the value sent, NULL = none
+  (the model's default). A field a path does not send is logged once (`stage_params_not_applied`). CIS 381 seeds effort medium for t9_write on sonnet-5-5 and low for the Claude
+  5.5 validate stages; t2_generate and t8_angle_gen keep their default (high) until a paid quality read backs a
+  change (since AA-900 W0 the writer release fingerprint `config_fp` covers these rows: a change flags reverify). A
+  deployment may state its own `api_style` (NULL = the
   catalog's). `errors.TRUNCATED` is the recorded, non-failure class of a reply cut at its token limit (ledger status
   `truncated`; `llm_provider_health` accepts it). `shared.tenant_ai_budget` (AA-1016, no rows = no budget) and
   `shared.prompt_version` (AA-900, sha256 + path, never prompt text) exist for the enforcement / prompt-gate slices.
@@ -335,6 +410,65 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the
   circuit of each deployment). UI: AI providers › Providers › Connections (`frontend/app/admin/ai-gateway/ConnectionsPanel.tsx`; secret name
   and base URL read-only there since AA-1017, changed by migration).
+- **Cassette recorder** (AA-900, S271 lane l17, migration 385; root ADR 0020 d8), record-only:
+  `shared/llm_client/cassette.py`. `LLMClient._attempt` hands every provider attempt that returned a reply (every role,
+  shadows, the probe, the truncation retry) to `cassette.record_attempt`, which writes one `shared.llm_cassette` row
+  on a background write (best-effort: never raises, `cassette.stats()` counts failures; UndefinedTable before 385 =
+  a 5-minute skip). A row holds the raw reply (256 KiB cap, `reply_truncated`; a `pii` stage keeps the sha only),
+  `request_sha256` (canonical JSON of messages + params as SENT, `cassette.request_sha`), the system prompt's sha and
+  version (never prompt text), model key, provider-reported model, wire id, connection, provider request id, rung,
+  attempt number, effort, max_tokens, stop reason, and the links: bound job / tenant / eval run and
+  `cassette.bind_owner(content_piece_id, tour_id, eval_item)`. Its ledger row is found through `route_trace` +
+  `attempt_no` (`get_by_call_log_id`; no FK, the ledger insert is unchanged); `get_by_request_sha` is the replay
+  read. Switch `LLM_CASSETTE=record|off` (default record; unit and integration tests default off). Retention 30 days
+  proposed (root data standards DM-7.1), no TTL job yet; the tenant erasure deletes a tenant's rows.
+  S272 (no migration): an attempt that ends **billed but unusable** gets its row too (`cassette.record_unusable_attempt`
+  from `_attempt`'s except path): the reply the `BilledUnusableReply` carries (`reply_facts`, set by the Converse,
+  Anthropic API and OpenAI-format adapters; empty when none), marked `stop_reason = 'billed_unusable[:<provider stop
+  reason>]'` (`cassette.is_unusable`); replay by request sha never serves it. Billed records carry `route_trace` +
+  `route_position`, so every `billed_unusable` ledger row (the probe's too) joins its cassette row. Link rule: one
+  cassette row per attempt that got a reply, joined on (`route_trace`, `attempt_no`), never on the model name (the
+  ledger names the answering label: acc3's legacy `haiku` and catalog `haiku-4-5` both log `haiku-4-5`). Embeddings
+  and Jev write no cassette row, by design (a vector is not text; replay re-embeds).
+- **Refusal noise: known no-access models** (AA-900, S271 lane l11, no migration). The ledger rule stays: every real
+  provider call has one `shared.llm_call_log` row, refused included. What changes is how often a model with no grant
+  is called and how its refusals are counted:
+  - **Open period.** The access_denied period of a **known refusal** (another model of the connection answered after
+    this model's streak began) doubles from 5 min up to **6 h** (`breaker.RULES`, `ACCESS_DENIED_MAX_OPEN_S`, was
+    30 min): a fresh refusal still costs minutes (5, 10, 20, 40 min, ...), a model refused for ~10 h is re-probed by
+    real traffic at most every 6 h. Any other access_denied (nothing on the connection answered since the streak
+    began: the account itself may be refusing) keeps the 30 min cap (`breaker.ACCOUNT_DENIED_RULES`); the choice is
+    made per failure on the locked row (`breaker.failure_rules`). quota_exhausted / credential / throttled / other are unchanged, and the non-LLM
+    provider circuits (`shared/provider_circuit.py`) keep a 30 min access_denied cap (`breaker.PROVIDER_RULES`).
+  - **How long until traffic returns to acc3 after AWS grants a model**: at the latest the next of (a) the daily
+    `llm_connection_probe` (05:00 UTC, `LLM_DAILY_PROBE=on`), (b) an admin Test connection of that model, (c) the end
+    of its open period (at most 6 h for a known refusal), then one real call probes it. (a) and (b) go through `LLMClient.probe` =
+    `breaker.guarded(admit_call=False)`: an open circuit is not in their way and their success closes it (the
+    10 s health snapshot of the other tasks then picks it up). **To force it**: AI gateway › Providers › Connections ›
+    the connection › Test connection with that model (`POST /admin/llm-connections/{key}/test`
+    `{"model_key": ...}`), or a live run of `POST /admin/job-runner/llm-probe/run` (every enabled deployment).
+  - **Account recovery.** While a whole account refuses (Error 002, an IAM block: every model access_denied and
+    nothing answering), no row is a known refusal, so every reopening is capped at 30 min and the connection circuit
+    (OPEN until the newest open period of its member rows ends; `admit` turns every real call away meanwhile)
+    half-opens within 30 min of its last failed probe: after AWS fixes the account, real traffic finds it within
+    30 min by itself, sooner through the daily probe or a Test connection. When any model of a connection answers,
+    the OPEN circuits of an account-wide class whose refusal began after the connection's previous answer (refusals
+    the account itself may have caused: Error 002, a lapsed credit) turn half-open at once
+    (`breaker._reprobe_after_account_recovery`, streak kept). A model refused since before another one answered (a
+    **known refusal**, `breaker.known_refusal`) keeps its period (up to 6 h).
+  - **Logs.** A known refusal's reopening (`llm_circuit_opened`), its failed deployment attempt
+    (`llm_deployment_attempt_failed`) and a route rung refused only for that reason (`llm_route_attempt_failed`) log
+    at info with `known_refusal=true`, not as warnings. `llm_deployment_skip` is logged once per (model, connection,
+    reason) per 10 min and process (`vendor_route.SKIP_LOG_INTERVAL_S`); the next line carries `suppressed=<n>`.
+  - **Expected refusal (display)**, one rule in `shared/llm_client/expected_refusal.py` (`EXPECTED_SQL` /
+    `is_expected`): a row `status = 'refused'`, `error_class = 'access_denied'`, whose deployment's `access_state` is
+    `access_denied` (its last probe found no access) on a connection whose `access_state` is `ok` (the account answers).
+    Counted apart from errors in the Providers stats (`expected_refused`, left out of `refused`), the Calls tab
+    (`expected_refusal` per row, own KPI), Route trace (`expected_refusals`, left out of `failed_attempts`), the route
+    digest (`shared/llm_client/route_watch.py`) and `GET /admin/llm-availability` (a known model is
+    `expected_refusal: true` and in `known_refused_models`; it does not make the connection `open` / `degraded`).
+    An account-wide refusal is never expected (the connection's access_state is not `ok`), and a model whose last
+    probe answered still counts as an error when it starts refusing, until the next probe records the refusal.
 - **Data scopes per stage** (AA-1002 slice S5, migration 311 contract, app ADR 0012): `shared.llm_role_config.
   allowed_scopes` (`{aws_only}` or `{aws_only, vendor_direct}`, default `{aws_only}`, migration-only: `cis_app` has no
   INSERT / UPDATE on the column) says which connections (`data_scope`) a stage's content may use. Backfilled from the
@@ -347,6 +481,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   unavailable with a reason, and the PATCHes refuse such a model (422) and keep the S235 position rule in scope terms
   (a model reached only outside AWS: last fallback only). A new stage seeded with an OpenAI-API last resort must set
   both scopes in its seed migration.
+- **Data class per stage** (AA-1039 R6, CIS 373 contract, root ADR 0019 d12): `shared.llm_role_config.pii_class`
+  (`content` | `pii`, NOT NULL default `content`, migration-only). A `pii` stage must have `allowed_scopes = {aws_only}`
+  (CHECK `llm_role_config_pii_scope_check`), and the gateway calls it only on a US deployment on our AWS accounts
+  (`data_scope.pii_allows`: a `us.` profile or an in-region `<provider>.<model>` id on a `us-*` connection, never
+  `global.`, a full ARN, an unknown prefix or a vendor API) in `vendor_route.deployment_plan`, a pinned
+  `model@connection`, `embed`, the route invariant and the route preview; a path the registry does not describe
+  (legacy chain, catalog fallback, the OpenAI adapter and the GPT-4.1 last resort check the class themselves) is
+  refused for it, and so is Bedrock Batch (`s1_batch`: on demand instead). `pii_allows` also needs an AWS connection
+  kind (`bedrock`, `bedrock_guardrails`, `mock`), not only the `aws_only` scope. A failed stage read with no cached row
+  keeps the class of the stage's last successful read in the process (`role_config._pii_known`, never cleared by
+  `invalidate()`: a class changes only by migration); a stage never read reads as `data_scope.PII_UNREAD` (`pii`, with
+  `allowed_scopes = {aws_only}`; logs and errors say "stage class unknown (role_config read failed): US AWS
+  deployments only"). The decision path never sends a `pii` stage's state to TypeSafe (a vendor outside our accounts):
+  `decide()` reads the pii stages with its questions and answers every question `skipped` ("pii stage: no vendor
+  decision"; a class read that fails before any good read skips every stage the same way, a later failed refresh keeps
+  the last set), so the stage keeps its own rule. The route preview plans a legacy key of a pii stage through its alias
+  targets, as `_legacy_call` does. Every stage is `content` today (no CIS stage takes
+  personal data; the CRM's PII stages run in the CRM gateway). Admin: `GET /admin/llm-config` returns `pii_class`
+  (null before 373) for AI gateway › Routing › "Routing by data class"; the route PATCHes and Route control refuse a
+  model with no US deployment for a pii stage.
 - **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
   billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
   Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt
@@ -378,10 +532,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   allowlisted credential env (openai-direct's `OPENAI_API_KEY`, a fallback until `secret_name` is set on the
   Connections tab); endpoint from `base_url` on the kind's host allowlist (openai default `https://api.openai.com/v1`;
   Azure `https://<resource>.openai.azure.com` + `api_version` from `request_defaults.api_version`, default
-  `AZURE_API_VERSION`; wire id = the Azure deployment name); per-connection timeout / retries (NULL = 300 s / 1, never
-  the SDK's 600 s / 2); a 401 drops the cached key and client. An `azure_openai` connection serves `openai_chat` rows of
-  an OpenAI model (S235 gate keyed on the catalog row; the stage scope reads the called connection's data scope); its
-  reply is labelled `azure-openai-<key>` (llm_call_log provider `azure_openai`, account = the connection). A client set
+  `AZURE_API_VERSION`; wire id = the Azure deployment name); per-connection timeout (NULL = 300 s, never the SDK's
+  600 s; SDK retries off since AA-1024 A3); a 401 drops the cached key and client. An `azure_openai` connection
+  serves `openai_chat` rows of an OpenAI model (S235 gate keyed on the catalog row; the stage scope reads the called
+  connection's data scope); its reply is labelled `azure-openai-<key>` (llm_call_log provider `azure_openai`, account = the connection). A client set
   on `LLMClient._openai` (tests, scripts) is used for every OpenAI-format call.
 - **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
@@ -428,14 +582,31 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   migration 321), in `GET /admin/llm-availability` (`invariant`, and per connection `circuit` + `failure_domain`) and
   the OPS-12 digest provider section. Job kind `llm_connection_probe` (`services/jobs/llm_probe_job.py`: one Test
   connection per enabled text deployment of every enabled, configured connection, at most 30; max_attempts 1,
-  background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off);
+  background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off; **on** on Dev
+  since AA-CIS-Infra #574, set on the api and worker task definitions);
   `POST /admin/job-runner/llm-probe/run` (ai.admin) queues a DRY RUN by default (deployments + estimated cost, no
-  call). Bedrock runtime clients take the connection's `timeout_s` / `max_retries` only when set (NULL = unchanged).
+  call). Bedrock runtime clients take the connection's `timeout_s` when set; since AA-1024 A3 every runtime client makes
+  one attempt per request (botocore `total_max_attempts` 1, SDK `max_retries` 0: the gateway owns retries, at most
+  `errors.MAX_CHAIN_ATTEMPTS` = 6 provider attempts per request, the 7th refused as a 0 USD `deadline` row).
+- **Model lifecycle as data** (AA-1024 D2, OPS-04; migration 352): `shared.llm_model_catalog` carries
+  `lifecycle_status` (active | legacy | unlisted | unknown | untracked), `eol_date`, `legacy_date`,
+  `lifecycle_checked_at`, `lifecycle_detail` (per Bedrock connection: access, error class, wire id, matched model).
+  Job kind `llm_model_lifecycle_sync` (`services/jobs/llm_model_lifecycle_job.py`, core in
+  `shared/llm_client/model_lifecycle.py`): one free Bedrock `ListFoundationModels` per enabled Bedrock connection (acc2
+  on the task role, acc3 through the satellite session; IAM in AA-CIS-Infra), then every catalog row; a model with no
+  Bedrock deployment is `untracked`, a refusing account keeps the earlier answered status (else `unknown`), so no routed
+  model stays NULL. Nightly from 04:00 UTC (`LLM_MODEL_LIFECYCLE_SYNC`, default on), background, deploy-gate exempt;
+  `POST /admin/job-runner/llm-model-lifecycle/run` (ai.admin, `dry_run` optional). A routed model (active routes,
+  fallbacks, shadows, aliases expanded) whose end of life is within 90 days, or that is LEGACY or unlisted, gets an
+  admin bell `llm_model_lifecycle` (once per 7 days) and an OPS-12 digest attention line (section "Model lifecycle").
 - **Reliability part 2** (AA-1018 / AA-1016 / AA-900, no migration; reads 320 / 321 / 322): **route deadline**
-  `llm_role_config.route_deadline_s` (NULL on every row = nothing bound, requests byte-identical): checked before every
+  `llm_role_config.route_deadline_s` (set on every row by migration 334: writer 1200, judge 900, validate 600, embed
+  120 s; NULL = nothing bound): checked before every
   attempt after the first (route position, plan deployment, alias step, legacy tier), `RouteDeadlineExceeded` (ledger
   `error` / `deadline`, 0 USD); the OpenAI and Anthropic API adapters get the remaining time as their per-request
-  timeout (Bedrock keeps its client read timeout). The paths that bypass the plan (`_legacy_chain` tiers on the catalog
+  timeout, never more than the connection's own (Bedrock keeps its client read timeout). Structured output on Converse
+  follows the catalog capability `structured_output` (tool / any / auto / prompt, AA-1024 I6; unstated = tool, or auto
+  for a model that refuses a forced tool choice). The paths that bypass the plan (`_legacy_chain` tiers on the catalog
   key they call, the S2 `vendor_deployment_for` path, the catalog-fallback Converse / OpenAI calls) run inside
   `breaker.guarded` and log `llm_deprecated_path_used` once per path and stage (`client.DEPRECATED_PATHS`: since
   2026-10-31, proposed removal 2026-12-31 after S11). **Tenant AI budget** (`shared/llm_client/tenant_budget.py`,
@@ -448,11 +619,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   stop (`tenant_budget.approval_stop_in`; the worker reads the explicit cause chain too), and the `t2_rewrite` /
   `t9_write` on_terminal hooks leave the version `pending` / piece `processing` for such a job (the tenant's live view
   says "on hold"), so the re-queue writes it; an admin Cancel of the `stopped_budget` job is the decline (the hook then
-  marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Prompt register**:
+  marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Central LLM budgets** (AA-1025 A7, migration 340;
+  `shared/llm_client/central_budget.py`): `shared.spend_budget` rows of provider `llm` cap every LLM provider together
+  per scope: `app:<app>` (`llm_call_log.app`, NULL = cis), `stage:<stage>`, `job:<kind>` (that kind's jobs; its
+  `per_run_usd` = the running job's spend), `eval` (an eval label bound, or `writing_memory_eval`; spend = the eval log
+  stages) and `adhoc` (`adhoc_*` stages); `per_day_usd` (UTC day), `per_month_usd` (UTC month, llm rows only). Checked
+  in `_generate_with` after the stage switch and the tenant budget: no `llm` row = nothing more read; a row with
+  `hard_stop` whose cap spent + the call's worst case (`client.estimate_call_usd`: the route's first model, the prompt
+  at ~4 chars per token, the whole `max_tokens`) would pass refuses the call with `CentralBudgetExceeded` (a
+  BudgetExceeded: job `stopped_budget`, ledger `refused` / `budget`, 0 USD, nothing sent); an alert-only row never
+  refuses (tech lead T-8: Dev caps alert-only). Bell + ops e-mail at `alert_pct` or on a refusal
+  (`cost_guard.maybe_alert_central`, entity `llm:<scope>`). Rows 60 s, spend 30 s cached per process; unreadable =
+  not enforced; `LLM_CENTRAL_BUDGETS=off` switches it off. 340 seeds one alert-only `app:cis` daily cap = p95 of the
+  last 30 days x 1.5 (T-8). Edited on AI providers › Budgets (`PUT /admin/budgets/llm/{scope}`, `DELETE
+  /admin/budgets/llm/{scope}`); the tab shows the central tier and the coverage per call site (which cap covers each
+  CIS stage). **Prompt register**:
   `prompt_hash` = sha256 of the system prompt; `prompt_version` = `prompt_registry.version_for(stage)` (the manifest
   `shared/llm_client/prompt_versions.json` hashes the prompt symbols' source with `ast`; the version counts only when
-  `shared.prompt_version` holds the same hash; no rows today = NULL), on every reply and attempt row; CI gate
-  `tests/unit/test_aa900_prompt_registry_gate.py` / `scripts/prompt_registry_check.py` (`--bump`, `--sql`). The
+  `shared.prompt_version` holds the same hash; migration 325 registered the 32 v1 rows), on every reply and attempt
+  row; CI gate `tests/unit/test_aa900_prompt_registry_gate.py` / `scripts/prompt_registry_check.py` (`--bump`,
+  `--sql --unregistered`; it also fails when no file in `api/migrations/` inserts a manifest entry). The
   breaker writes `llm_provider_connection.access_state` (open connection circuit → `access_denied` /
   `quota_exhausted` / `unconfigured`; any answer → `ok`; once per change and process, one write per connection at a
   time, none during the breaker's DB back-off, `DB_RETRY_S` back-off after a failed write); the probe stamps
@@ -460,6 +646,171 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
   (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
+- **App profile** (AA-1025 H1a, migration 345, root ADR 0009 decision 4; `shared/llm_client/app_profile.py`):
+  `shared.llm_app_profile` holds one row per app (`cis`, `tripplanner`, `crm`, `booking`, fixed by migration;
+  `cis_app` has SELECT and column UPDATE only, 345 revokes `cis_owner`'s default privileges):
+  `ai_enabled`, `bulk_paused`, `default_daily_budget_usd`, `degrade_mode` (tech lead T-21: CIS `queue_retry`,
+  TripPlanner `basic_narration`, CRM `manual_reply_needed`, Booking `none`) and `disabled_reason`. The CIS gateway reads
+  its own app's row (20 s cache per process; no table, no row or unreadable = AI on) before anything else: AI off
+  refuses `generate` (before the stage switch), the connection test (`probe`), `embed()`, the daily embedding probe
+  (`embed.probe`) and Jev `decide()` / the Jev canary with one 0 USD ledger row each (status refused, error_class `disabled`). The refusal is `LLMAppDisabled`, an
+  `LLMStageDisabled` whose message names the stage, so jobs fail without a retry, T2 / T9 keep their version / piece to
+  do, and the bulk re-queue holds every stage while the app's AI is off (`shared/jobs/queue.disabled_stages` returns
+  `EveryStage`); Jev fails open as on its own switch. `bulk_paused` holds the bulk job kinds and pauses the open waves
+  (H2, below); the default budget is stored and shown only (CIS enforces its central cap `llm/app:cis`; TripPlanner
+  and the CRM read their row in H1b / H1c). `LLM_APP_PROFILE=off` skips the check. Admin: AI providers › Providers › App profiles
+  (`AppProfilesCard.tsx`; `GET /admin/ai-gateway/app-profiles` spend.read, `PATCH /admin/ai-gateway/app-profiles/{app}`
+  ai.admin, a reason to switch off, audited `llm_app_ai_switched_off` / `_on` / `llm_app_profile_updated`).
+  **The other apps (AA-1025 H1b / H1c):** TripPlanner reads its row through `catalog.v_llm_app_profile_v1` (migration
+  347, `tripplanner` only, six columns: no reason, no `updated_by`) and acts on it within its own 20 s cache (AI off =
+  a 0 USD refused row and the basic narration / keyword search; `default_daily_budget_usd` = its daily cap over every
+  `tp_*` stage). The CRM reads no `shared.llm_*` table (root ADR 0008a §6): `PATCH .../app-profiles/crm` first relays
+  the whole profile to the CRM (`crm.ops.v1` 1.10 `PUT /llm/app-profile`, the staff member's own token, so it needs
+  `crm-platform-admin`; `api/services/crm_console.ALLOWED`) and changes the CIS row only after a 200 (a refusal answers
+  its status and changes nothing). The card's "Takes effect" (`enforced_here`) is true for cis, tripplanner and crm.
+  The ops check `llm_spend_alert.tripplanner.near|cap` (`shared/ops_checks.app_spend_findings`, sampler tick): when
+  TripPlanner's row has a budget, today's (UTC) `shared.llm_call_log` spend of app `tripplanner` against it at 80 % and
+  100 %, admin bell + one ops e-mail a UTC day per threshold; the CRM's spend has no such check (its ledger is
+  `crm.llm_call`, readable only with a staff token).
+- **Capacity: lines, TPM limiter, backpressure, wave pause** (AA-1025 H2 = capacity S12, migrations 348 expand /
+  349 contract; `shared/llm_client/capacity.py`). Every LLM call has a line: `bulk` (rerun waves and catalogue
+  backfills), `prod` (tenant work, admin actions, anything outside a job) or `dev` (stage `adhoc_*`, eval runs, the
+  probes); a job's line is its kind's (`capacity.KIND_LINES`, every registered kind listed, guarded by a unit test;
+  the worker binds the kind, `LLMClient` binds the request's line and token estimate = prompt chars / 4 + max_tokens).
+  `shared.llm_capacity_limit` (PK connection_key + model_key, `*` = the whole connection) holds `tpm_limit`,
+  `bulk_pct` (default 50), `dev_pct` and `prod_guard`. `breaker.limit` reserves the estimate on every covering limit
+  before the concurrency / rpm slot; a call that does not fit WAITS (prod / dev 65 s, bulk 180 s; bulk and dev also
+  wait while a prod call waits = bulk yields to prod), then `LimiterSaturated` (throttled). Per process like
+  `rpm_limit` (set a task's share). No estimate (embeddings, the connection test) = no reservation. Backpressure: the
+  worker's claim leaves out held kinds (`capacity.claim_hold`, 10 s cache): a `prod_guard` circuit OPEN (connection
+  circuit for `*`, else the deployment's) holds prod + bulk kinds; still refusing (half-open, nothing answered),
+  `bulk_paused`, or a staff-paused wave hold bulk kinds; this process's TPM waits hold that line's kinds for 30 s;
+  dev kinds (probes) are never held. Wave pause: while a guard refuses or the bulk pause is on the worker sets
+  `shared.rerun_wave.paused_at` / `paused_by 'capacity'` / `pause_reason` on every open wave (status stays `open`, so
+  the deploy gate, retention and the miner still see an open wave; the wave check does not end a paused wave), one
+  bell `platform.rerun_wave.paused` per wave, and resumes them when it clears; `POST /admin/waves/{id}/pause|resume`
+  (ops.write) for a staff pause, which the worker never resumes. The backlog sampler does not count held kinds as
+  starved (`held_kinds` in its output). Admin: `GET /admin/ai-gateway/capacity` (spend.read: rows, hold, held kinds,
+  kind lines, this api task's windows), `PUT` / `DELETE /admin/ai-gateway/capacity/{connection_key}/{model_key}`
+  (ai.admin, audited `llm_capacity_limit_set` / `_cleared`; the model must be deployed on the connection). No row =
+  no limit and no hold; tables missing or unreadable = fail open. `LLM_CAPACITY=off` (ECS env) turns it off. Live
+  drill at $0: `scripts/aa1025_h2_tpm_drill.py` (ECS exec; a drill model key no route uses). No UI card yet.
+- **Wave stop flags** (AA-1024 G17): the quality read of an S1 rerun wave and its six stop flags live in
+  `services/waves/quality.py` (gate codes `services/quality/s1_gates.py`, figure coverage
+  `services/quality/s1_coverage.py`); `scripts/aa645/wave_report.py` is its CLI (exit 3 a flag true, 5 pending while
+  any queued / running `shared.job` row names a wave tour: `tour_id`, a `tour_ids` list, or a t2_rewrite
+  `published_tour_id` through `published_tours.id`). Code-only, $0, no write. Never run inside an API request: the
+  code checks take 16-75 s per wave (S272), past the API Gateway's 29 s; `POST /admin/waves` does not read them.
+- **Non-LLM provider circuit and the vendor API credit ledger** (AA-1025 B3 / B5, migrations 342 / 343):
+  `shared/provider_circuit.py` keeps ONE circuit per decide / data provider connection (`typesafe`, `dataforseo`,
+  `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s
+  snapshot, row-locked writes, per-process fallback when the table cannot be read), so both ECS tasks see the same
+  state. Each client asks `admit` before a call (open = nothing sent, its own 0 USD refused ledger row: Jev
+  `llm_call_log`, DataForSEO `dfs_call_log` meta `circuit_open`, Geoapify `GeocoderUnavailable`) and records one outcome
+  per call after its own retries: HTTP 401 / 403 `access_denied`, 402 `quota_exhausted`, 429 `throttled`, 404 / 405 /
+  408 / 410 / 5xx / timeout `other`, any other 4xx not counted. On opening: one admin bell `provider_circuit_open` (one unread per
+  connection per 24 h) and one `ops_alert_email` job (template `provider_circuit_open`, once per connection, class and
+  UTC day); a Jev 402 keeps only its own exhausted alert. `PROVIDER_CIRCUIT_BREAKER=off` turns it off. Decide's
+  per-process credit breaker stays as the fast local stop. **Credit ledger**: `shared.provider_credit_topup` holds the
+  top-ups and balance reads of every connection whose `balance_source` is `topups_minus_spend` (343: the anthropic /
+  openai kinds; Jev keeps `shared.jev_credit_topup`); `shared/provider_credit.py` estimates newest balance read (or
+  first top-up) + later top-ups − `llm_call_log` spend since (connection_key, else account) and, below the
+  connection's `low_balance_usd`, raises `platform.provider_credit.low` (one bell per connection per 24 h) + the
+  `provider_credit_low` e-mail (the api sampler every 30 min, after each entry, `POST /admin/ai-gateway/credit/check`).
+  Admin: AI providers › Providers › Credit (`ProviderCreditPanel.tsx`, `GET/POST/DELETE /admin/ai-gateway/credit…`,
+  spend.read / spend.write, audited); the Providers rows carry `circuit` and the vendor API `balance`.
+- **Route governance** (AA-1024 A2 / A4 / A6, AA-1026 D7; root ADR 0009 decisions 5 and 12, no migration):
+  **family rule** (`shared/llm_client/family_rule.py`): a judge never scores text of its own model family
+  (`CatalogModel.family_key`, migration 320); writers stay on `WRITER_FAMILY` (`anthropic`). The admin options and both
+  PATCH routes read the family, not the vendor, with English reasons. The eval runners check it twice: before the run
+  (`stage_pair_conflicts`: the writer stage's primary against every model of the judge route; R2
+  `check_judge_family` refuses, its DRY RUN reports `judge_family_check`; the S1-old regression raises
+  `SameFamilyJudge`) and at call time (`trace_models`: `LLMClient.generate` records `(role, model label)` of each
+  reply while a trace is bound; an R2 item judged by the writer's family is an `error` row with `same_family`, a
+  regression tour makes the run INVALID with `same_family_tours`). **Evidence** (`shared/llm_client/route_evidence.py`):
+  a change of a writer / judge stage's primary model or fallback chain needs `eval_run_id` (a finished
+  `shared.prompt_eval_runs` row that measured the change: not INVALID (`details.invalid`), a writing-memory run with
+  verdict `pass` and stop reason `completed`, a legacy regression row with no regression) or `break_glass_reason` (≥ 20 characters):
+  422 otherwise, 503 when the run cannot be read; the evidence goes into the `acp_shared.audit_log` row
+  (`details.evidence`) and a break glass writes an admin bell (`platform.llm_route.break_glass`) in the same
+  transaction. A shadow-only, an account-only change and validate / embed stages need none. **Warnings**: both PATCH
+  routes answer `warnings[]` from the failure-domain rule on the saved route (`invariant.read` with the refusing
+  circuits, as the digest runs it; report only, never blocks). **No per-request model**: the rewrite / ingest / batch
+  request bodies have no `model_tier` (a value = 422, `api/core/model_tier.py`; an explicit null is ignored); the
+  `s1_rewrite` idempotency key is tour + batch, the batch ingest runs on the route; eval and probe callers still pass
+  a model to `_rewrite_tour` / `LLMRequest`.
+- **Shared core `aa_llm`** (AA-642 S8, root ADR 0009 decision 13): `shared/aa_llm/` is the pure, standard-library
+  core of the gateway (error classes, `quote` with the catalog passed in, the ledger v2 row and INSERT, the budget
+  decision, the 323 contract SELECTs) that TripPlanner (`backend/aa_llm/`) and AA-Partner (`app/aa_llm/`) vendor byte
+  for byte; `check_copy.py` + `MANIFEST.json` pin each copy. Never edit a copy: change it here, run
+  `python3 shared/aa_llm/check_copy.py --write`, merge, and the **Llm Core Sync** workflow (`llm-core-sync.yml`, bot
+  branch `bot/llm-core-sync`, never merges) opens the consumer PRs; `llm-core-consumers.yml` runs each consumer's tests
+  on a CIS PR that touches the core. **CIS runs on the core** (AA-1024 A10): `shared/llm_client/errors.py`,
+  `pricing.py` and the ledger v2 values of `call_log.py` import it (`attempt_outcome` asks the core's
+  `ledger.failed_outcome` / `outcome_of` first and adds only the CIS-typed refusals: breaker, limiter, budget
+  exceptions, OpenAI platform block); `tests/unit/test_aa1024_a10_core_identity.py` checks the names are the core's
+  own objects and compares a CIS ledger row with the core's row column by column. The core (1.1.0) also owns the
+  outcome classes `truncated` (from the provider's text too), `disabled`, `role_not_served`, `deadline`, `budget`.
+- **Contract views for TripPlanner** (migration 323, contract class): `catalog.v_llm_gateway_config_v1` (routes,
+  models, prices and deployments of the `tp_*` stages only) and `catalog.v_llm_app_spend_today_v1` (today's ledger
+  spend of `app = 'tripplanner'` per stage), owned by `catalog_owner` with column-level SELECT on the four gateway
+  tables they read, SELECT to `tripplanner` only. 341 (AA-1027 E3) appends the route deadline and the deployment
+  routing facts and circuits; 350 (E4) appends the model's `supports_temperature` and `stage_params` (the
+  `shared.stage_model_params` row of the stage and model, NULL = none), which TripPlanner applies with this gateway's
+  precedence. 351 (E5) revokes the grandfathered SELECT of CIS 173 on `llm_role_config` / `llm_model_catalog`:
+  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`.
+- **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
+  Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
+  deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer
+  the probe and `POST /admin/llm-connections/acc2/test` (body `max_tokens` up to 512 for the reasoning model). "Add a
+  model" = one migration PR like this one.
+- **acc2 fallback of judge / validate stages** (AA-1026 I6, migration 331 contract): the eight platform judge / validate
+  stages whose route reached acc3 only (`s1_brand_audit`, `s1_source_facts`, `a3_atomize`, `a3_place_card`,
+  `a3_place_card_check`, `a3_place_days`, `a3_place_locate`, `a3_place_dedupe_check`) end their route on an acc2 model:
+  `nova-lite` (the cheapest acc2 model that meets every one of their output contracts), `llama4-scout` for
+  `a3_place_card_check` (draft and check stay on two makers). The primary, earlier fallbacks, shadow and scopes are
+  unchanged; writers never name an acc2 model. The tenant judge / validate stages (`t2_brand_audit`, `t10_claims`,
+  `t9_faq_answer_fit`, `t9_faq_filter`) wait for migration 332 and the tech lead's yes: ADR 0009 decision 14 keeps acc2
+  off tenant stages until decision 10 and AA-820 are done. **Migration 333** ("AWS first, outside last", tech lead
+  S263): every judge / validate route that ends on the OpenAI API hop (`gpt-6-luna-openai`) gets an acc2 pick right
+  BEFORE it, so the OpenAI API stays the last rung: `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`,
+  `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine` on `nova-lite`. `a3_place_dedupe` was left out of
+  333: it forces a tool choice, its check stage falls back to Nova Lite (Amazon), and Llama 4 Scout refused Converse
+  `toolChoice.tool` in the live smoke (333 records `forced_tool_choice: false` on `llama4-scout`). **Migration 339**
+  (S264) closes it: `llama4-maverick` (Meta) right before its OpenAI API hop, asked for the verdict in the prompt
+  (`structured_output: prompt`, 337); the place pair keeps two makers (dedupe OpenAI + Meta, check Anthropic +
+  Amazon), and its live smoke passed on 02/11. These
+  judges' acc2 verdicts are not held by code (only the brand audits' `pass` is); the revert is the admin route PATCH. **Contract smoke** (job kind `llm_contract_smoke`,
+  `services/jobs/llm_contract_smoke_job.py`; `POST /admin/job-runner/llm-contract-smoke/run`, ai.admin, DRY RUN by
+  default, optional `stages` and `models` = stage -> model key override): per stage one invented fixture through the
+  stage's own prompt pieces and parser, with the stage's acc2 model forced through `LLMClient.probe` on its acc2
+  deployment (the override, else the route's acc2 model, else the planned one), ledger stage `adhoc_aa1026` with the
+  stage's role, `quality_signal.contract_smoke` / `parser_ok`; refused over 0.10 USD estimated, about 0.01 USD for the
+  twelve stages of 331 / 332 (estimate 0.02 USD for all twenty cases: the eight judge / validate stages whose route
+  ends on the OpenAI API have cases too, seven of them planned for migration 333, which puts an acc2 pick before that
+  hop; since 339 `a3_place_dedupe` is planned on `llama4-maverick`). It proves format only (ladder rung 3).
+  A stage that got no usable reply (a refused or failed provider call, a billed unusable reply) is FAILED in the
+  summary, never absent, and writes a 0 USD smoke row with `parser_ok` false and the error (the order gate reads the
+  latest row). A structured stage (its request carries a JSON schema, so Converse forces the tool choice) is not run on
+  a model whose catalog row states `forced_tool_choice: false` (`requires` / `why_not` in the plan), unless that row
+  also states a non-forced `structured_output` mode (any / auto / prompt). **Order gate:** 331 / 332 / 333 refuse to give a stage its acc2
+  fallback unless the LATEST smoke row of that stage on that model (connection acc2) passed, so the smoke runs before
+  the apply; a stage that fails is re-picked (smoke the next model with `models`, change the migration's pick) or
+  dropped before the apply, and after the apply re-pointed with the admin route PATCH. (A database that never logged
+  an LLM call, a CI or local replay, skips the gate with a NOTICE.) The validate stages go live on the format smoke
+  alone (the tech lead's S263 yes skips calibration, A/B and shadow for them); the brand audit is the one judge, and
+  **an acc2 brand-audit `pass` is held**: `brand_audit_node.hold_uncalibrated_pass` turns it into `manual_check` +
+  `BRAND_AUDIT_UNCALIBRATED_JUDGE` (connections in `UNCALIBRATED_JUDGE_CONNECTIONS`), so an uncalibrated judge can flag
+  or hold a tour but never publish one. `draft_card` / `check_card` (place cards) take an optional `client` for the
+  smoke. **Reply parsing:** the stage parsers without a forced schema read the reply's FIRST complete JSON value
+  through `shared/llm_client/json_reply.first_json_value` (prose or a fence before it, any text after it ignored, a
+  cut-off reply never yields a nested value; the item / shape checks stay in each parser): `t9_faq_filter` and
+  `t9_faq_answer_fit` and `t10_adjudicate` (which also take the bare items list: both acc2 models answered the S263 smoke that way),
+  `a3_place_days`, `a3_place_locate`, `a3_atomize` (`atom_extraction.atoms_from_reply`), the brand fit judges
+  (`brand_fit._judge`: still no json_repair), and before their json_repair salvage `s1_source_facts`, the place card
+  draft / check and the T10 F9 judge (`judge.parse_judge_json_checked`: a first value read as is is not "repaired").
+  The schema-forced judges / validators (brand audit, `t10_claims`, `a3_place_dedupe(_check)`, the writing memory
+  judges) keep `json.loads`.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object
@@ -483,8 +834,60 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`brand_fit._judge`), the T10 F9 judge (`quality_gates` via `invoke_judge`) — is built and sent by
     `shared/llm_client/judge.py` (`call_judge`; it also holds the judge JSON parsers). It writes no
     `llm_call_log` row: the callers (judge_node, debate, quality_gates) do, once they have the verdict.
-  - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
-  - acc3 is the only satellite account (AA-998). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
+  - `s1_brand_audit`, `t2_brand_audit` (and every judge since migration 366): GPT-5.6 Luna → GPT-6 Luna (acc3) → GPT-6
+    Luna on the OpenAI API (its vendor twin, model first, S267) → Nova Lite (acc2).
+  - **A-series writers** (AA-1026, migration 327, tech lead T-3 in S263): `s1_generate`, `s1_flag_fix`,
+    `s1_itinerary_nudge`, `a0_column_map`, `supply_content_writer` have `allowed_scopes = {aws_only, vendor_direct}`
+    and end on GPT-6 Luna (OpenAI API) as the LAST fallback. Route order is MODEL FIRST (tech lead S267, root ADR 0009
+    decision 5 amendment, AA-1026; it replaced S263's "every AWS path before any vendor API"): the gateway tries every
+    deployment of a model (acc3 by priority, then the same model on the Anthropic API once its key exists) before the
+    route's next model, so the family chains of migration 366 run e.g. Sonnet 5.5 on acc3, Sonnet 5.5 on the
+    Anthropic API, Sonnet 4.6 on acc3, Haiku 4.5 on acc3, then GPT-6 Luna on the OpenAI API (5 attempts, within the
+    6 per request). The order mode `aws_first` (`client.route_attempts`) runs every AWS deployment of the route first
+    instead. AA-1042 (S268, CIS 370): the order mode is a DB setting (`shared.llm_route_settings`, read by
+    `shared/llm_client/route_settings.py`, 20 s cache; `LLM_ROUTE_AWS_FIRST` is only the bootstrap default while the
+    row cannot be read), and the admin's **Route control** tab (`/admin/ai-gateway?tab=controls`, router
+    `admin_llm_route_control.py`, service `api/services/llm_route_control.py`) edits the order mode, every stage's
+    chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with two presets
+    ("Prefer Anthropic API for Claude", "Prefer AWS"), a $0 server preview (`llm_route_chains.resolve_stage` under
+    context-variable overrides; "serves first" is the deployment that would SERVE: one the account refuses on record,
+    by the Stage coverage card's own rule `stage_coverage.refusal`, is skipped and listed with its reason) and the
+    rules on every save (the PATCH rules, judge family, check pairs, attempt cap,
+    a live model per stage; a rule the live config already breaks is only a warning). Every route change, the Routing
+    tab's PATCHes included, is a version in `shared.llm_route_config_version` (who, when, snapshot, diff;
+    `shared/llm_client/route_versions.py`), revertible in one click; a change made outside the admin is recorded as
+    an `external` version; each CIS ledger row carries `route_config_version` (a BEFORE INSERT trigger). A model reached ONLY outside AWS stays the end of the route: both admin PATCH endpoints refuse
+    an AWS model behind it (`_check_aws_before_vendor`, relaxed S267), except its VENDOR TWIN right behind the same
+    model on AWS (`data_scope.vendor_twins`: same family and base model, today `gpt-6-luna-openai` behind `gpt-6-luna`,
+    the "openai-direct for a GPT twin if one exists" of S267 Q2: every GPT route of migration 366 runs GPT-6 Luna on
+    acc3, then on the OpenAI API, then its next model); the route PATCH accepts the one other-maker
+    last fallback on a vendor_direct writer (`_writer_last_resort`); the writer / judge family rule holds for the
+    primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge (same
+    maker): its ledger row says `provider = 'openai'`, `fallback_used = true`; an eval run refuses that verdict
+    ("Route governance" above).
+  - **No uncalibrated rung (S271 W0, tech lead D7, CIS 383, break-glass):** since 383 no writer route names a model of
+    another family than its primary (the OpenAI API rung `gpt-6-luna-openai` left all 13 writer routes: a writer
+    whose Claude rungs all fail stops and re-queues, `degrade_mode` queue_retry), and no judge route nor the
+    `t10_claims` instrument names Nova Lite (`nova-lite`, kappa 0.137 against the human labels): a judge whose GPT
+    rungs all fail returns no verdict instead of an uncalibrated one. The FAQ checks and the A3 / S1 evidence producers
+    keep Nova Lite (decided per row, migration 383 header). CI lint `tests/unit/test_aa900_w0_route_lint.py` checks
+    both rules on the latest route snapshot and `SAFE_DEFAULTS`. The text above on the writers' OpenAI API last
+    resort describes the 327-376 routes; the admin route PATCH still accepts that last resort
+    (`_writer_last_resort`) until a code change refuses it.
+  - **AWS preferred, not AWS only** (tech lead S267, root ADR 0009 decision 5 amendment; it replaced T-3, which kept
+    tenant content, TripPlanner, the CRM and the validate stages inside AWS): migration 366 gives EVERY active text
+    stage (writer, judge, validate) `allowed_scopes = {aws_only, vendor_direct}`, so each one reaches the Anthropic API
+    (one key, connection `anthropic-direct`, 150 USD a month, alert 80 %, hard stop) for its Claude 5.x primary and,
+    the OpenAI API (GPT-6 Luna's twin on the GPT routes, the last rung on the writers). Only the embedding stages stay `aws_only`
+    (no vendor embedding deployment). The data protections stay as they are: the tenant AI budget (fail closed,
+    `tenant_budget`), the per-connection monthly caps, the tenant `data_region` (ADR 0019; the per-stage `pii_class`
+    routing it plans is not in this gateway yet) and the CRM's PII scrubbing in its own gateway. `llm_route_chains.violations` reports a text
+    stage left on `aws_only` (`aws_only_text_stage`). TripPlanner's own gateway still calls Bedrock only, so it skips
+    a vendor deployment on `tp_compose` until it gains the vendor adapters; the CRM routes in its own gateway
+    (AA-Partner), outside `shared.llm_role_config`. Per-product spend stays in the ledger:
+    `llm_route_chains.product_of` / `ledger_app` map every stage to catalogue, tenant content, TripPlanner, Booking or
+    shared, and to the `app` the admin Spend > By app page groups by.
+  - acc3 is the only chat account a route uses today (AA-998; the acc2 candidates of 324 have no route). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
     (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
     other value. `CatalogModel.account_for` only picks acc3 or acc2. They no longer try acc2-native Bedrock first (AA-843:
     acc2 is a channel-program account and always refuses Anthropic models); the env var
@@ -492,7 +895,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - A call served by the OpenAI API logs `llm_openai_fallback_used` and is recorded in `llm_call_log`
     with `provider = 'openai'`, `fallback_used = true`.
   - **Brand audit fails closed** (AA-714): a model/schema error gives `manual_check` +
-    `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`.
+    `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`. A `pass` answered on an uncalibrated judge connection
+    (acc2, AA-1026 I6) gives `manual_check` + `BRAND_AUDIT_UNCALIBRATED_JUDGE`.
   - **Where a GPT model runs**: on Bedrock only on acc3 (acc2 has no OpenAI models), or on the
     OpenAI platform API (`gpt-6-luna-openai`, last resort only). `gpt-4.1` is disabled (migration 224)
     and admin cannot re-enable it; `LLMClient._call_openai` refuses any model whose catalog row is not
@@ -518,7 +922,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
   (catalog `api_style='embed'`, stage role `embed`). `tests/unit/test_aa685_no_raw_model_calls.py` fails
-  on any raw Bedrock/OpenAI call outside `shared/llm_client/` (no exceptions since AA-757).
+  on any raw model call outside `shared/llm_client/` in `api/`, `services/`, `shared/`, `worker/` and `scripts/`
+  (AA-642 L6): Bedrock `invoke_model*` / `converse*` / `apply_guardrail` / `create_model_invocation_job` (called
+  or passed uncalled), vendor SDK `.completions|.messages|.responses|.embeddings .create|.stream|.parse`,
+  importing `openai` / `anthropic` or a gateway internal, and a vendor endpoint string (`api.anthropic.com`, `api.openai.com`, `bedrock-runtime`). Its
+  `ALLOWED` list (path + hit, with a reason, ratcheted) holds only the cost reconcile's billing API URLs.
   **One `llm_call_log` row per billed call** (AA-927):
   - one row per `generate()` / `embed()` response returned to a caller, written by the caller, also when
     the reply then turns out unusable. Canonical pattern: write the row right after `generate()` returns
@@ -529,6 +937,35 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`quality_signal.gateway_attempt = true`), fire-and-forget, before the route moves on or raises;
   - a gateway-internal retry that succeeds (the AA-714 Converse schema retry) is ONE response whose cost
     and tokens cover both requests (`LLMResponse.provider_requests = 2`);
+  - the **truncation retry is the gateway's only** (S271; since S271 W0 / AA-900 also for T8 angles, T9 write /
+    repair / FAQ filter, whose `services/acp_shared/token_budget.py` is now a ceiling calculator: no own retry, no
+    `budget_retry=False`, because it never saw an EMPTY reply cut at max_tokens and the route swapped the model
+    silently). It is TWO responses and two rows: the reply cut at its token ceiling (the gateway's row) and the retry
+    with double the ceiling (the caller's row, `truncation_retry: true`, `retry_reason` = `cut_reply` |
+    `billed_unusable_cut` | `truncated_refusal`); never a third call. No production request says
+    `budget_retry=False` (**gateway's own truncation retry**, S271,
+    `shared/llm_client/token_floor.py`, rules in the core `shared/aa_llm/tokens.py`): per route model in
+    `LLMClient._call_key_logged`, a cut reply / a refused cut reply (OpenAI 400) / a billed cut reply is asked once
+    more on the same model with double the ceiling (cap 24000 and the model's `max_output_tokens`) before the route
+    moves on; the cut reply that came back gets the gateway's row (`call_log.cut_reply_row`: status truncated,
+    `budget_cut`, `gateway_attempt`), the retry's reply carries `LLMResponse.truncation_retry_max_tokens` and the
+    caller's row gets `truncation_retry: true` + `max_tokens` through `billed_fields` (`call_log.RETRY_KEYS`); same
+    route_trace, the retry reports the cut attempt's `attempt_no` (never read as a fallback rung). Not retried:
+    `token_floor.NO_RETRY_STAGES` (`adhoc_conn_test` only; AA-1053: a3_atomize's own re-ask is gone, it stops on a read
+    still cut and stays out of the floor, `NO_FLOOR_STAGES`; guard `tests/unit/test_aa1053_one_retry_owner.py` fails on
+    any re-ask after a cut outside the gateway), shadow calls, a request at the model's cap,
+    past the route deadline, `LLM_BUDGET_RETRY=off`. And the **floor**: a reasoning-capable catalog model (Claude 5.x,
+    GPT-5.x / 6.x, or `capabilities.reasoning`) is sent at least 4096 output tokens (or `capabilities.
+    min_output_tokens`), over a call site's explicit value, after the stage x model row (`_call_catalog_model`;
+    `LLM_TOKEN_FLOOR=off`). Guard: `tests/unit/test_s271_gateway_token_budget.py` (literal sub-floor ceilings are a
+    shrinking allowlist, no production `budget_retry=False`, every migration model key classified) and
+    `tests/unit/test_aa900_s271_w0_gateway.py` (every budgeted call-site ceiling >= `token_floor.effort_floor(model,
+    effort)` of every model of the stage's route, read from the migrations). Alert:
+    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
+    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
+    1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
+    adaptive thinking of the 5.x writers is billed as output inside the same ceiling (bounded by the stage x model
+    effort since CIS 381: medium for t9_write on Sonnet 5.5);
   - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per
     call in one transaction (`record_calls_sync`): the verdict row (run 1's cost, `judge_calls: n`) plus
     `{judge_run, of, verdict_row: false}` rows;
@@ -546,7 +983,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     key. So a success is one row (the caller's) and each failed attempt before it one more at 0 USD. Jev failed /
     refused asks (breaker open, daily cap, 402, outage) and DataForSEO failed calls and budget refusals
     (`shared.dfs_call_log.status / latency_ms / error`) get rows too; Geoapify counts `geo.geocode_call
-    .failed_requests` and the job's `tenant_id`. Readers take `coalesce(app, quality_signal->>'app', 'cis')` and
+    .failed_requests` and the job's `tenant_id`, and since AA-1025 D3 (migration 346) each batch also carries `status`
+    (ok | refused | error; NULL before 346 = derived: every request failed = error), `latency_ms` (the sum over its
+    requests), `app` and `stage` (place_geocode / place_relocate / place_shape / adhoc_conn_test). The contract is
+    read federated (root ADR 0009 decision 8 as amended in S264, DM-10.4): `llm_call_log` for LLM and Jev calls (a Jev
+    row has role `decide` since D3, `validate` before), the domain ledgers for DataForSEO and Geoapify, read together
+    by the Calls tab, the trace and Providers (the geocoder answers the stage / app / status filters; a Jev ask refused
+    before an answer is `refused` there, `api/services/ai_gateway.JEV_STATUS_SQL`). Readers take `coalesce(app, quality_signal->>'app', 'cis')` and
     `coalesce(is_shadow, quality_signal @> '{"shadow": true}')` (no backfill); `llm_call_daily` adds
     `refused_calls`, `error_calls`, `latency_ms_sum` / `latency_ms_count` (`calls` = every row of the group).
   Exclusions: a Jev verdict-cache hit (no provider call; counted in `decision_cache_hits_daily`), a
@@ -557,6 +1000,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   new LLM call site that is not registered with the function writing its row. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
   `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:
+  - AA-1026 (migration 327, tech lead T-4 in S263): no route names the legacy `haiku` / `sonnet` keys any more; each
+    moved to the Converse key of the same tier (`haiku-5-5`, `sonnet-5-5`; a CIS `sonnet` became `sonnet-5-5` →
+    `haiku-5-5`, the legacy chain's degrade, except for an A-series writer, see above; `tp_*` one to one). The model names below are the history of each choice.
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
   - `t2_generate` (T2 tenant rewrite, AA-620) = Sonnet — follows a tenant's brand style guide
     noticeably better, at ~11-13x Haiku's cost per call.
@@ -581,7 +1027,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - Tenant content goes to TypeSafe only for tenants in `shared.jev_tenant_allowlist` (the AA test
     tenants) until the DPA/ZDR is confirmed.
   - Every verdict is logged in `shared.decision_log`, and each call in `llm_call_log` (provider
-    `typesafe`, role `validate`), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
+    `typesafe`, role `decide` since AA-1025 D3, `validate` before), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
     Key: secret `aa-cis/dev/typesafe`. Migration 181.
 - **Cost observability (epic AA-616)**:
   - `shared.llm_call_log` records account (acc3 / acc2; rows before AA-998 may hold acc1), provider and
@@ -601,8 +1047,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     through `frontend/lib/awsAccounts.ts` (`accountName` / `accountLabel`, hook `useAwsAccounts`); a guard test
     fails on a key spelled anywhere else in the frontend. Labels built by the API (Settings › Models "via",
     the account-route option, the forecast and Cost per app lines) use the same module.
-  - The admin **Cost Operations** page (`/admin/cost-ops`, AA-665; was External Spend at `/admin/llm-usage`, which
-    redirects to its LLM tab) has the tabs Overview, LLM, DataForSEO, AWS bill and Jev (Budgets moved to AI providers ›
+  - The admin **Spend** page (`/admin/spend`; AA-665 Cost Operations at `/admin/cost-ops` until AA-1039 R6 slice 3,
+    External Spend at `/admin/llm-usage` before that, both redirect) has the tabs Overview, AI & data spend (views LLM,
+    DataForSEO, Jev), AWS bill and By app (the former Cost per app page) (Budgets moved to AI providers ›
     Budgets in AA-804 UI part 2: `GET /admin/ai-gateway/budgets` lists every cap by tier, edits still go through
     `PUT /admin/budgets/{provider}/{scope}`). It compares estimated spend (token
     logs) with the real AWS bill (AWS bill tab), splitting Bedrock from infrastructure per account, over any date range.
@@ -680,7 +1127,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
     `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `writing_memory_kpi_weekly` — AA-922, `kpi_snapshot_daily`, `report_generate`,
-    `inquiry_handoff_check`, `report_email` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003, `quality_funnel_watch` — AA-900 W0). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -692,7 +1139,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared.llm_call_daily`), `retention_tenant_api_usage` (90 d, monthly rollup
     `shared.tenant_api_usage_monthly`), `retention_job` (succeeded 30 d; failed/cancelled/stopped_budget
     90 d), `retention_decision_log` (180 d = Jev `CACHE_MAX_AGE_DAYS`; rows with a human `outcome`
-    kept), `retention_cost_explorer_snapshot` (rows superseded by a newer fetch of the same day).
+    kept), `retention_cost_explorer_snapshot` (rows superseded by a newer fetch of the same day). The two
+    tenant-row kinds skip the pilot tenant (`NOT_PILOT`, AA-969 d16).
     Policies in `services/retention/policy.py`. Rollups are written before raw rows are deleted;
     batches of <= 5,000 rows by (ts, id) keyset, archived first to
     `s3://<bronze bucket>/archive/<table>/yyyy/mm/` (`shared/aws_client/bronze.py`) as gzipped JSONL (pyarrow is not a
@@ -763,8 +1211,23 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     days are ICT, UTC+7). Manual runs and the register: `/admin/reports` (Platform › Overview › Reports, admin;
     `GET /admin/reports`, `GET /admin/reports/{id}/runs`, `GET /admin/reports/runs/{run_id}`,
     `POST /admin/reports/{id}/run`, 409 for a report not generated here; `POST /admin/reports/snapshots` {day?}
-    re-computes one day's snapshot, the back-fill path, 90 days max). $0: DB reads only.
-  - **Daily safety net (AA-1003 R2)**: `report_generate` also renders **OPS-12** (daily platform health digest,
+    re-computes one day's snapshot, the back-fill path, 90 days max). $0: DB reads only. A report with registry status
+    `retired` (field `retired_on`, no generator) has due state `retired`: never due or overdue, its old failures are
+    not flagged (EX-06, OPS-12), the register lists it under "Retired", the page shows "Retired".
+  - **B2B-only model (AA-1003 R0 hotfix, root ADR 0019 d8 / d11; `services/reports/b2b_only.py`)**: since 2026-11-03
+    the TripPlanner to Booking inquiry hand-off is off (send-to-advisor 410 `b2b_only`, `bk_inquiry_pull` off). **TP-03
+    is retired**: no renderer, the ops sampler no longer queues the hourly check, no KPI snapshot of K-TP-HANDOFFGAP /
+    K-BK-PARKED / K-BK-INQ2CASE (old `shared.kpi_daily` rows stay), no bell `platform.inquiry_handoff.gap`, no e-mail
+    template `inquiry_handoff_gap`, no OPS-12 handoff section, no `INQUIRY_HANDOFF_ALERTS` variable; the kind
+    `inquiry_handoff_check` stays registered as a no-op for a row queued before the release, and OPS-14 does not count
+    it as a dead scheduler. The inquiry metrics other reports still show carry status `historical` (never red or
+    amber): TP-01 inquiries sent and K-TP-T2I, the EX-01 B2C inquiry funnel and K-DEM-INQ, DATA-02 K-REC-INBOX and
+    K-REC-UNMATCHED (DATA-02 no longer reads `booking.v_ops_inquiry_inbox` / `tripplanner.v_ops_inquiry_keys`; the
+    owners' views and grants stay until the B2C drop). Tenant leads (`lead.submitted.v1`) get their own report once the
+    contract has a producer.
+  - **Daily safety net (AA-1003 R2; TP-03 retired by the R0 hotfix, see "B2B-only model" above, so the TP-03, hourly
+    check, bell, e-mail and `inquiry_handoff` KPI parts below are history)**: `report_generate` also renders **OPS-12**
+    (daily platform health digest,
     `services/reports/digest.py`: live /health + /health/ready of CIS (public origin `PUBLIC_API_BASE`, Dev default),
     Booking and the CRM (`platform_apps.http_health_card`), CIS workers' commits vs the API's (not compared when the
     API's commit is unknown), alarms in ALARM (DescribeAlarms), failed / overdue / lease-expired `shared.job` rows, LLM
@@ -809,8 +1272,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     live rule and `shared.v_tour_photos`, DATA-01 snapshots, action list), **OPS-13** (C1.2 objectives CIS can measure,
     `pg_stat_statements` per role, CloudWatch DatabaseConnections, two-week misses vs the previous run; draft),
     **OPS-14** (`shared.job` per kind vs the registry's `expected_seconds`, overdue, dead scheduled kinds, cost per run)
-    and **DATA-02** (handoff roll-up, `booking.v_ops_inquiry_inbox` age, `tripplanner.v_ops_inquiry_keys` unmatched
-    after 24 h, LLM ledger vs the stored acc3 bill), the monthly **DATA-04** (rows past each retention window counted
+    and **DATA-02** (LLM ledger vs the stored acc3 bill; the handoff roll-up, inbox age and unmatched keys are
+    historical since the R0 hotfix), the monthly **DATA-04** (rows past each retention window counted
     like the retention job, retention runs, growth, largest relations vs the previous run) and the event reports
     **CIS-06** (eval runs, writing-memory releases, worst items), **CIS-07** (rerun waves through
     `services/waves/report.py`, cost per stage, retry waste, projection) and **DATA-03** (`shared.schema_versions`
@@ -818,6 +1281,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `services/reports/quality.py`, `services/reports/reliability.py`. Booking / TripPlanner / CRM job tables, the
     CRM feed, GitHub checks and Vercel are named "not wired" / "not readable from CIS". No migration.
   - **R4 part 2 reports (AA-1003)**: the weekly **TP-01** (TripPlanner funnel from `tripplanner.v_ops_traffic_daily`,
+    inquiries sent and K-TP-T2I historical since the R0 hotfix,
     AI searches and the TripPlanner online-stage LLM spend vs the mirrored default cap from `shared.llm_call_log`;
     `services/reports/planner.py`) and **DEV-03** (CIS deploys = worker starts on a new commit in `shared.job_worker`,
     rollbacks, migrations per owner; kept in the output so the monthly **DEV-01** can count a month after the worker
@@ -828,6 +1292,36 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     health, worker parity, newest migration per owner, active CIS jobs, open waves; the output is the session-close
     state-snapshot.json) (`services/reports/delivery.py`). Linear, GitHub (Dependabot, secret scanning, PRs, CI runs,
     releases), Vercel, Lambda and other owners' job and audit tables are listed as "Source not available". No migration.
+  - **Quality funnel and nightly watchdog (AA-900 W0, root ADR 0020 "Measurement")**: `report_generate` also renders
+    the daily **CIS-08** (`services/reports/funnel_report.py`, chained by `kpi_snapshot_daily` like EX-04): the funnel
+    of `services/quality/funnel.py` per workflow and ISO week (ICT) over 8 weeks — T9 per channel
+    (`acp_shared.content_piece`), S1 (`silver_aa_internal.generated_content` + `quality_scores` + `published_tours`),
+    T2 (`gold_aa_internal.tenant_tour_versions`, AI edits only): created, delivered (T9/T2: approved + held, the
+    agency receives both; S1: ever published — approved / published, or a `published_tours` row points at it, so a
+    draft a later rewrite superseded stays delivered in its week), held, failed, first-pass yield (S1: no retry, no
+    fix pass, no human edit / reviewer / `review_queue` row), attempts (S1: + 1 for the fix pass) and LLM USD per
+    delivered object (the whole stage cost of the workflow; T9 per channel is the attributed part, the totals add
+    `unattributed_cost_usd`); every failing T9 gate of every attempt (final ledger + `discarded_attempts`), with
+    `F9_cta_fact` split into `.judge_unavailable` / `.text_integrity` / claims; S1 failure and brand codes per
+    evaluation; per stage of `shared.llm_call_log`: rung share, fallback share, cut rate (`route_watch.CUT_ROW`),
+    refused / error rows, cost. The stage numbers count **production rows only** (`route_watch.LEDGER_FILTER`: no
+    shadow, eval or Jev row; no AI gateway route-test row, `quality_signal.route_test`) under their raw `stage`, so
+    the funnel's cut rate is NOT `route_cut`'s (that one keeps eval rows under their real stage); `refused` leaves
+    out the expected refusals (`shared/llm_client/expected_refusal.py`, counted apart as `expected_refusals`, as in
+    `route_digest`). The run's `output` IS the snapshot; `GET /admin/quality/funnel` (ops.read or lab.read) serves
+    the newest **scheduled** one (the run the watchdog read) plus 14 days of scheduled headline totals, never
+    recomputed; the newest manual run is listed apart (`manual_run`, never alerted on). A succeeded scheduled
+    CIS-08 run queues **`quality_funnel_watch`** (`services/jobs/quality_funnel_watch_job.py`, idempotent per run,
+    deploy-gate exempt). Findings over the trailing 7 days: `qf_cut.<stage>` (cut > 5 % of the billed replies),
+    `qf_fb.<stage>` (fallback ≥ the stage's `shared.llm_route_policy` `fallback_alert_pct`, route_watch's own row →
+    `*` row → default 20 rule), `qf_drift.<stage>` (≥ 10 % of answers from a model under 1 % of the stage's answers
+    the 7 days before, the minimum in both windows); minimum rows = max(20, the policy's `min_requests`). Alerts on
+    the **transition** only: a finding the previous scheduled run (≤ 7 days back) already had is stored with
+    `repeat: true` and not raised again (drift: unless a new model drifts), and the night's new findings go out as
+    ONE `qf_digest` alert through `shared/ops_checks.alert_all` (bell at most every 20 h, as `route_digest`; one
+    e-mail per UTC day). A failed e-mail or bell makes the job raise a retryable error (the bell is deduplicated, so
+    the retry is safe). T2 per-attempt gate codes are not stored on the version (in `shared.job.result.t3` only). No
+    migration (store: `shared.report_run`, report CIS-08 in the registry copy). $0.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after
@@ -841,21 +1335,30 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     queued/running rows of `shared.jobs.registry.RETIRED_KINDS` (kinds whose handler was removed;
     `ops_rds_role_connections` today, error `kind removed (AA-751)`, `retired_cancelled` in the line),
     so a rolling-deploy leftover neither pages as starved nor blocks the deploy gate:
-    - `AA/RDS`, dimension `Role`: `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) for
+    - `roles` (was the `AA/RDS` custom metrics until S263): sessions and % of the limit for
       every LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered
       each tick; the main pool logs in as `cis_app` since X1 S18, and `pg_stat_activity` still lists every
-      role's sessions to it, only their query/state columns are hidden);
-    - `AA/Jobs/CIS`, no dimensions (`shared/jobs/backlog.py`): `OverdueRunningJobs` = running rows
+      role's sessions to it, only their query/state columns are hidden); `xid_age` = `max(age(datfrozenxid))`;
+    - the backlog (was `AA/Jobs/CIS` until S263; `shared/jobs/backlog.py`): `overdue_running_jobs` = running rows
       whose current attempt (`progress.attempt_started_at`, else `started_at`) is older than 2 x the
-      kind's `expected_seconds` (600 if unknown); `OldestQueuedAgeSeconds` = capacity-aware age of the
+      kind's `expected_seconds` (600 if unknown); `oldest_queued_age_seconds` = capacity-aware age of the
       longest-**starved** due queued row, 0 if none. A row is starved when no worker is live
       (`shared.job_worker`, `WORKER_ALIVE_SECONDS` rule), when no live worker has its kind in `caps`
       (unregistered), or when a live, non-yielding worker has a free slot, `claim_caps_for` keeps the
       kind and the kind is under its global cap. The age runs from the latest of `run_after` and the
       moment capacity last freed (latest finish / re-queue, the worker's start; for no live worker,
       the last time one was seen), so a full wave or the few seconds before the next poll read 0.
-    AA-CIS-Infra alarms on both (`observability_ecosys.tf`, emails on ALARM only; `*-sampling-stopped`
-    fires when no sample arrives). This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
+    **S263 alert diet (AA-1025): no CloudWatch metric or alarm any more.** The tick evaluates the values itself
+    (`shared/ops_checks.py` state checks `jobs_starved` > 900 s, `jobs_overdue` > 0, `rds_role_connections` > 80 %,
+    `rds_xid_age` > 1e9) and flushes the log events the process counted (structlog processor `ops_checks.capture`
+    on the JSON handler: the `*_write_failed` cost-log events, the `aa817_tenant_*` fail-closed events, a tenant route
+    on the admin pool, `too many connections for role "cis_app"`; the worker flushes its own every 5 minutes). A
+    finding writes the admin bell (`shared.notifications`, `platform.ops_check.<check>`, roles admin, at most one per
+    check per 6 h) and publishes one e-mail per check per UTC day on the alerts SNS topic (`ALERTS_TOPIC_ARN`, task
+    role `sns:Publish`), the topic the removed alarms used. The api being down is the Infra alarm
+    `aa-cis-dev-api-no-healthy-task`. Decision table: root `docs/audits/2026-11-01-S263-alerting-cost/diet.md`.
+    The dead AA-362 `services/acp_produce/metrics.py` emitter (namespace `acp`, never called) is deleted.
+    This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
     `POST /admin/job-runner/rds-role-connections/schedule` -> job `ops_rds_role_connections` -> worker),
     both now removed. `@job_kind(..., deploy_gate_exempt=True)` stays as a mechanism (the pre-deploy
     guard `GET /admin/job-runner/deploy-gate` leaves such kinds out of its info counts and lists them in
@@ -944,6 +1447,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     support, deterministic and report-only, `services/content_generation/t2_brand_claims.py`); the admin reads it in
     Content Quality → Tour versions. **T9 write is a job** too (`t9_write`, `content_piece.job_id`; a job that
     ends without success marks the piece `failed`, which the portal already shows with Retry).
+    **Machine-readable AI mark (AA-1040, EU AI Act Art. 50(2)):** every T9 piece is AI output;
+    `content_piece.writer_input -> 'ai_provenance'` holds `ai_generated`, `generator`, the writer `model` of the final
+    attempt (from the `t9_write` ledger row) and `generated_at`, stamped at finalize, plus `human_edited_at` on a
+    tenant edit (no migration). `services/acp_content_writing/ai_marking.py` builds the mark: `piece["ai"]` in the
+    tenant JSON, `data-ai-*` on the `<article>` and `<meta name="ai-*">` tags in exports and the WordPress post, the
+    `X-AI-*` headers of a download. Facebook Page text posts have no API label (the mark stays in the piece).
+    T2 versions: `project_version()` adds `ai` from `edit_source` (`tenant_edit` = human-edited) and the DOCX download
+    carries it in its core properties (keywords `ai-generated`, comments).
+    Master catalog text (A-series `published_tours.aa_*`, S1 writer): `project_tour()` adds `ai` (`generator`
+    "Adventure Asia catalog writer", `generated_at` = `updated_at` else `published_at`; `model` and `human_edited`
+    null, both recorded admin-side on `generated_content`) to `/v1/tours/pool`, `/v1/tours/{id}` and `/{id}/full`.
     **A3 atomize is a job** (`a3_atomize`, one tour at a time), enqueued by publish
     (`process_export`) and by `POST /admin/atoms/atomize` (one job per tour).
   - **Recompute stage registry (AA-735 nac 3, ADR 0003 layer B + C)**: the platform-wide
@@ -980,11 +1494,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet
   enabled Batch Inference on acc3 (support case 178979743800653, blocker AA-624). Batch atomize
   (AA-621) waits on the same blocker.
-- **Plans and quota (AA-640)**: the tour-rewrite quota comes only from `shared.membership_plans`
-  (starter 50 / growth 200 / business 500). Over-quota rewrites are allowed, logged as
-  `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds the plan's
-  default RPM; an admin can override one tenant's RPM (`PATCH /admin/tenants/{id}
-  {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
+- **Plans and quota (AA-640, AA-1028 R1 slice 3)**: the tour-rewrite quota is the tenant's resolved entitlement
+  `content.rewrite` (starter 50 / growth 200 / business 500, edited on Tenants › Plans & add-ons), with the old
+  `shared.membership_plans` read only as the fallback for a tenant with no numeric key. Over-quota rewrites are
+  allowed, logged as `rewrite_over_quota` and billed as overage. There is no `PLAN_LIMITS` any more: a tier's
+  default RPM is its live content plan's `content.rate_limit_rpm`; an admin can override one tenant's RPM
+  (`PATCH /admin/tenants/{id} {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
   `SUM(shared.llm_call_log.cost_usd)` for the tenant (shadow and NULL-tenant rows excluded). Admin
   billing and the admin tenant list read that column as-is (one definition, `api/routers/_billing.py`).
@@ -996,9 +1511,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
 - **Tenant Account pages (AA-761)**: `GET /v1/account/activity` (the tenant's own `acp_shared.audit_log` rows,
   newest first, `category` / `action` / `since` / `until` filters, offset paging with a total, `page_size` ≤ 100),
-  `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so) and
-  `GET /v1/account/api-key` (masked `cis_…` key, issue date from the onboard / rotate / restore audit rows, last
-  sign-in with it and last metered API call). Tenant JWT only; the id comes from the token. `audit_log` has no RLS
+  and `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so).
+  `GET /v1/account/api-key` was removed with the tenant API keys (AA-1036). Tenant JWT only; the id comes from the token. `audit_log` has no RLS
   and no tenant-role grant, so these read on the main pool with the id bound (the `/v1/billing` pattern), and only
   an **allowlist of actions** is visible (`api/services/tenant_account.py` `TENANT_VISIBLE_ACTIONS`): admin silent
   corrections, the staff request trail, brand / config / membership edits and the erasure record never are. A new
@@ -1205,6 +1719,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **Migrations in the app PR (root ADR 0017, AA-993):** CI job **Migration preflight** (`ci.yml`,
+  `.github/scripts/migration_preflight.py`, pull_request and merge_group) says whether a new migration is **expand**
+  (header `-- migrate: expand`, auto-applied on Dev) or **contract** (manual DB Migrate apply, MIG-4), and refuses a
+  number other than `main` max + 1, an edit of a file already copied to AA-CIS-Infra, or a readiness raise to a
+  non-expand file. After a push to `main` that touches `api/migrations/`, `migration-sync-wake.yml` rings the
+  AA-CIS-Infra **Migration Sync** doorbell (one ci-bot comment on its wake-up issue), so the byte copy opens at once.
+  Deploy Dev's **Schema gate** job (`.github/scripts/schema_gate.py`) then waits, before the roll, until `/health/ready`
+  `registered_keys` holds every key the commit needs and the last Infra Migration Apply run is green
+  (`SCHEMA_GATE_TIMEOUT_S`, default 2400 s).
 - **Post-deploy verify (AA-993 V1, ADR 0016 D3)**: `deploy-dev.yml` calls `post-deploy-verify.yml` after `deploy`
   (also dispatchable with `expected_sha`; its own concurrency group, never `deploy-dev-cis`). Script
   `.github/scripts/post_deploy_verify.sh`, HTTP rows in `.github/verify/cis.rows` (a PR that adds an endpoint worth
@@ -1232,7 +1755,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
   (`.github/coverage-ratchet.json`, `.github/scripts/coverage_ratchet.py`): below `floor` fails, lowering
   `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. `deploy-dev.yml` does
-  not trigger on `frontend/**` (the image has no frontend file). Security headers on previews are checked
+  not trigger on `frontend/**` (the image has no frontend file). The URL-pinned wheel of `requirements.txt` (the
+  spaCy model) is never downloaded per job: `.github/actions/url-wheels` restores it from the actions cache (key = the
+  URL + sha256 pins, warmed on main by Deploy Dev and the nightly run), downloads it with retries only on a miss, checks
+  the pinned sha256 every time and hands the job a rewritten requirements file pointing at the local wheel; Docker
+  builds read the verified copy from the `.url-wheels/` seed (bind mount) or download it the same way
+  (`.github/scripts/url_wheels.py`, S273). Security headers on the deployed host are checked
   by the UI smoke specs (`aa876-security-headers.spec.ts`, `aa885-portal-host.spec.ts`).
 - **Public repo, no resource IDs (AA-902)**: the required **Lint** job runs
   `.github/scripts/check_resource_ids.py` over every tracked file and fails on an AWS account ID, an ARN
@@ -1242,9 +1770,39 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   bucket from `shared/aws_client/bronze.py` (`BRONZE_BUCKET`, else `aa-cis-bronze-<caller account>`) and
   acc2's own ID from STS; the acc3 satellite ID comes from the task env (`BEDROCK_ACCT_PRIMARY`), read once in
   `shared/llm_client/bedrock_satellite.py`.
+- **Test and CI guards from repeated lessons (AA-1024 l22, S271)**: the pre-push hook (`scripts/install-hooks.sh`
+  once per clone) refuses a push mid-rebase, and a push whose changed integration tests have no local pass on that
+  code (`scripts/pre-push.sh --integration` runs them on a throwaway Postgres and writes the stamp;
+  `AA_PREPUSH_SKIP_INTEGRATION=1` skips once); a change to `tests/integration/conftest.py` or a helper it imports
+  needs the stamp of the smoke file `tests/integration/test_aa1024_replay_smoke.py`. The integration conftest stops
+  the session on a migration that fails outside `tests/integration/_replay_guard.py` `EXPECTED_REPLAY_FAILURES`, on an
+  expected file failing with another error than its entry, on an entry that now applies, and on a non-superuser test
+  user. Unit lints: no `ORDER BY` a uuid `id` / `created_at` alone in `tests/integration`
+  (`test_aa1024_sql_order_stability.py`, frozen allowlist), every migration after 304 naming a table the 304 replay
+  drops is in its `LATER` or `NOT_LATER` (`test_aa1024_replay_later_list.py`). Migration preflight also refuses an
+  added line naming a migration by an old number after a renumber (`.github/scripts/migration_refs.py`, identical in
+  Booking, Partner, TripPlanner), on every PR including one that touches no migration. `nightly-integration.yml` runs
+  the integration suite nightly in one job with the modules in a seeded random order (not a PR check); a red night
+  opens (or comments on) one GitHub issue labelled `nightly-red`, the next green night closes it.
 - **No acc1 in runtime code (AA-998)**: `tests/unit/test_aa998_no_acc1_runtime.py` fails when `acc1`, its account
   ID, its IAM roles, its account env var or its CLI profile appears in api/ (not migrations), services/,
   shared/, worker/, scripts/ or frontend/ — comments included.
+- **Writing-path change control (AA-1052, root ADR 0020 W6 and amendment d12)**: the required **Unit Tests** job runs
+  `tests/unit/test_aa1052_change_control.py` (also `python -m services.quality.change_control`). (1) The lock
+  `services/quality/change_control.lock.json` holds the sha of each writing-path component (`writing_policy` source,
+  `gates` = taxonomy + thresholds, `prompt_registry` = every stage's registered version, `route_table`,
+  `final_contract` version + mode, `route_defaults` = `SAFE_DEFAULTS` of the gated stages) with the evidence that let
+  it change: `eval:<prompt_eval_runs id>`, `parity:<tests/...py>` (a replay / parity test: output unchanged) or
+  `break-glass:<reason>`. A PR that moves a component fails until `--accept <component> --evidence ...` records it;
+  the lock's git history is the writing path's change log. (2) A CIS migration above 390 that writes the route config
+  of a gated stage (`llm_role_config` / `stage_model_params` rows of an `s1_ t2_ t3_ t8_ t9_ t10_` or
+  `writing_memory_eval` stage; any `llm_model_deployment`, `llm_model_catalog`, `llm_route_settings`,
+  `llm_route_policy` or `writing_memory_release` write) needs `-- eval: <run uuid>` or `-- break-glass: <reason>` in
+  its leading comment block. The lint fails closed: a stage-scoped write is exempt only when every stage it selects
+  is a literal outside the gated prefixes (`stage = '<lit>'`, `stage IN (...)`, INSERT ... VALUES, a LIKE pattern
+  that cannot match a gated prefix); a write by role (as CIS 331-333 did), by subquery, regex, `<>` / `NOT`, `OR` or
+  with no stage selector counts as gated. Prompt registrations need none (they are the bump). Runtime admin edits of a gated route
+  are not gated yet (follow-up of AA-1052).
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
@@ -1255,37 +1813,50 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   non-required job
   **Quality Paths (report)** prints the quality tiers a change touches and a hash of its diff on
   `services/quality/paths.yaml` paths (AA-919 will enforce `quality/q2` with it).
-- **Frontend (Vercel)**: deploys are created by CI, not the Vercel Git integration (S241 — Hobby
-  cap ~100 deployments / 24 h for the whole team, canceled ones included).
-  `frontend/vercel.json` sets `git.deploymentEnabled: false`; `.github/workflows/vercel-deploy.yml`
-  runs `vercel deploy` (CLI pinned) from the repo root only when a PR or a push to `main` touches
-  `frontend/**`: PR → preview of the head commit + one PR comment with the URL, then the UI smoke;
-  `main` → production (+ a 200 check with the bypass header); `workflow_dispatch` → preview or
-  production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
-  without it the job fails red on every target (nothing else deploys the frontend). A PR
-  that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
+- **Frontend (Vercel) — retired (AA-911, S272).** `vercel-deploy.yml`, `frontend/vercel.json`, the per-PR previews,
+  the fixed Preview host and its `preview-signin` label are gone. Per-PR UI evidence is the required check
+  `Visual (next start, public pages + kit gallery)` (root ADR 0019 d23 R7); the deployed host is checked after each
+  deploy (below).
+- **Frontend (ECS, AA-911, root ADR 0019 d23)**: `.github/workflows/deploy-admin-dev.yml` builds
+  `frontend/Dockerfile` (Next standalone, `NEXT_OUTPUT=standalone`) on an arm64 runner,
+  pushes `aa-cis-dev-admin:dev-<sha>` (IMMUTABLE), copies the latest revision of family `aa-cis-dev-admin` with only the
+  image swapped (env and secrets from that revision), rolls service `aa-cis-dev-admin` and checks
+  `https://aa-cis.lumiguides.it.com/api/healthz` answers this commit from ECS (resolved to the ALB on the runner
+  through `vars.STAFF_WEB_ALB_DNS`), then runs the UI smoke on that host (job `smoke-production`, public + signed in)
+  and the report-only visual run (job `visual-production`). The Booking admin is a separate service (AA-Booking). A PR touching the Dockerfile runs the image
+  build only ("Admin Docker Build Check"). Behind the ALB the standalone server's `request.url` / `nextUrl` name its
+  bind address (`https://0.0.0.0:3000`), so redirects use a relative Location (`lib/redirect.ts`) and the same-origin
+  check takes the public origin from `Host` when `X-Forwarded-Proto` is https (`lib/sameOrigin.ts requestOrigin`).
 - **Portal**: no workflow here deploys, builds or tests the portal. It deploys from AA-Partner (`deploy-portal-dev.yml`,
   ECS `aa-crm-dev-portal` behind CloudFront since the P2b cutover); its Vercel project was deleted at the P2b
   clean-up (AA-979, runbook §4.5).
-- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
-  successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
-  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
+- **Visual run (AA-1008 S1d/S2c, root ADR 0016 decision 9, `.github/workflows/visual.yml`, report-only)**: the
+  pages a change touches (`tests/e2e/visual/changed-pages.mjs`; a kit, shell, `lib/` or layout change = every page)
+  at 1440 x 900 and 390 x 844, light and dark (Playwright projects `visual-1440` / `visual-390`, `visual-staff-*`),
+  asserting no horizontal overflow of the document AND of the kit frame (PageFrame / ShellFrame main scroll on their
+  own), 0 console errors, no failed same-origin request, `[data-kit-frame]`, the theme applied; PNGs + `report.json`
+  as an artifact, one PR comment. Per PR (job `pr`): `next build` with `KIT_GALLERY=1` + `next start` in the runner,
+  the changed public pages and the gated `/kit-gallery` route (404 in every build without the flag), after a
+  self-test that must fail on a planted overflow (`/kit-gallery?plant=overflow|frame`). After the production deploy
+  (job `deployed`, called by `deploy-admin-dev.yml` job `visual-production`; or a dispatch from `main` with `base_url`):
+  the changed pages on the host, staff pages signed in through the smoke setup (Cognito E2E user, environment `e2e`).
+  `tests/e2e/visual/pages.ts` lists every route or excludes it with a reason (guard `frontend/lib/visualPages.test.mjs`).
+- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `deploy-admin-dev.yml` after a
+  verified deploy from `main` (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
+  (`workflow_dispatch`). A Playwright suite (`tests/e2e/smoke/`)
   opens the key admin pages and fails the check on any HTTP/console error, failing same-origin `/api/` call, or a
   blank page (no table rows and no kit empty state). **Split (AA-816 S2 path):** specs that need a session carry
   the tag `@staff` (project `smoke`, after `smoke-setup`); every other spec is project `smoke-public` (no session).
-  A per-PR preview (`*.vercel.app`, not a Cognito callback) runs only `smoke-public` (job `smoke`). The signed-in
+  Job `smoke` runs only `smoke-public`. The signed-in
   run (job `smoke-staff`, `staff_session=true`, from `main` only: GitHub environment `e2e`, the read-only mailbox
   role, concurrency group `e2e-cognito` shared with the Cognito E2E) signs in as the Cognito E2E user with an email
-  code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the two callback hosts only:
-  Production after every production deploy (job `smoke-production`; the user is a reviewer, so reviewer mode:
-  pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes) and the fixed Preview host after an alias-only
-  dispatch (job `smoke-preview-host`; viewer mode, and the setup fails unless the session's role is `viewer`, the
-  live evidence of the Preview client cap). For a PR labelled `preview-signin`, dispatch `ui-smoke.yml` from `main`
-  with `base_url=https://aa-cis-preview.lumiguides.it.com` and `staff_session=true`. Screenshots (desktop 1440 +
+  code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the callback host only:
+  Production after every deploy (`deploy-admin-dev.yml` job `smoke-production`; the user is `content` (reviewer until
+  CIS 375), so content mode: pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes). Screenshots (desktop 1440 +
   mobile 390, light + dark) upload as an artifact (the public run also uploads the HTML report; the signed-in run
-  never does: a `fill` step would name the code) and link from one PR comment each. Secret:
-  `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass), sent only to the BASE_URL origin (origin-scoped route),
-  never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed, and since S2 the smoke setup
+  never does: a `fill` step would name the code) and link from one PR comment each. The specs still read an optional
+  `VERCEL_AUTOMATION_BYPASS_SECRET` (`installBypassRoute`), which no workflow passes since the Vercel retirement (a
+  no-op). The `E2E_ADMIN_*` password secrets are no longer passed, and since S2 the smoke setup
   has no password mode (locally, run `--project=smoke-public`; agents have no mailbox access). The admin suite also checks that the old portal URLs answer 308
   to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
 - **Portal UI smoke**: moved to AA-Partner with the portal (AA-979: `e2e/smoke-portal/`, `ui-smoke-portal.yml`).
@@ -1296,13 +1867,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
-  project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback; the fixed
-  Preview host belongs to the separate preview client and is covered by the signed-in UI smoke): staff
-  user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
+  project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback): staff
+  user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, content, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
-  then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
-  `https://booking.lumiguides.it.com` by default, or the fixed Preview host `https://booking-preview.lumiguides.it.com`,
-  AA-911; optional `e2e` secret `BOOKING_PREVIEW_BYPASS` sent as headers to that host only) and signs in
+  then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
   with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
   no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
   no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
@@ -1421,7 +1989,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   goes into `OUT_OF_ORDER_CIS`: while it is not registered the reported version is capped just below it. Since AA-993
   M4a it also requires every key of `REQUIRED_CIS_KEYS` (each number from `LEGACY_CIS_BASELINE` + 1 = 264 up to
   `REQUIRED_CIS_SCHEMA`; a gap is `schema_behind` with `missing_schema_versions`) and lists `registered_keys` (every
-  numeric key above the baseline, for the coming Deploy Dev `schema-gate`; omitted if that read fails). Deploy Dev's
+  numeric key above the baseline, read by the Deploy Dev `schema-gate` job; omitted if that read fails). Deploy Dev's
   smoke asserts both, and that a live worker reports the same SHA (`shared.job_worker.git_sha`, written at worker
   start).
 - **Release version (AA-891)**: release-please (manifest mode, `release-please-config.json`,
@@ -1464,8 +2032,10 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 | AA-TripPlanner-Web | the Model Gateway config `shared.llm_role_config` / `shared.llm_model_catalog`; all content through the `catalog.*` views (row below) | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migration 173 (gateway tables + log) to role `tripplanner`. The pilot's direct reads are revoked: 254 (AA-847) `raw_tours` (179) and `tour_atoms` (180); 270 (AA-712 X4) `gold_aa_internal.published_tours`, `shared.destinations` (201), the photo views `shared.v_destination_photos` / `v_tour_photos` (201), `acp_contract.v_active_tour_atoms` (216) and USAGE on `gold_aa_internal` / `acp_contract` |
 | AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
 | AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`; `catalog.tour.v1.3` (CIS 274, AA-986 L4) adds `v_tour_retired` (tombstone: retired / paused / restored per key, derived from the served state) and `v_tour_lifecycle_outbox` (served-state events, cursor `event_id`); CIS 298 (AA-996 follow-up) adds `v_tour_place_name` (security_barrier, SELECT to `booking` only): the `source_system`, `source_id`, `tour_id`, `day_number`, `position`, `place_name` of `v_tour_place` row for row, without its per-place card / destination / segment lookups, for the Booking trip-plans list; read keyed by `tour_id` only. New consumers read only `catalog.*`; since CIS 270 TripPlanner does too (plus the Model Gateway). Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
-| AA-Partner (partner CRM) | **`catalog.http.v1` over HTTP** (AA-976, CRM-B4; root ADR 0010 decision 4: the CRM holds no grant on any CIS schema): `GET /catalog/v1/tours` (keyset cursor by `source_id`, `updated_since`, `country_code`, `limit` ≤ 50), `GET /catalog/v1/tours/cis/{source_id}` (days with per-day and per-place IANA `time_zone`, inclusions, exclusions classified for pay-on-arrival R25, facets for system tags R29, photos), `GET /catalog/v1/destinations/{id}`. Served from the `catalog` views read as `aa_app_user` on the tenant pool (one connection per api task at most, READ ONLY, `app.tenant_id` = ''), so it shows exactly what Booking / TripPlanner see. Liveness per root ADR 0015 decision 5: `retired` → 410 `gone` + `reason` (the CRM marks lines "no longer offered"), `paused` → 404 + `reason`, never served → 404. Strong `ETag` (a tour's `content_hash` = sha256 over the served body), `Cache-Control: private, max-age=60`, 304 on `If-None-Match`. Code: `api/routers/catalog_http.py`, `services/catalog_http/`; contract copy `docs/contracts/catalog.http.v1.openapi.yaml` (byte-identical to the root file, conformance test `tests/unit/test_aa976_catalog_http_contract.py`). **AA-authored content** (AA-977, contract 1.2): `GET /catalog/v1/aa-content` (latest published version of each item that is not retired; `kind`, `locale`, keyset cursor by `content_id`, `limit` ≤ 50; ETag / 304) and `GET /catalog/v1/aa-content/{content_id}/versions/{version}` (any published version, also after a newer publish or retire; a draft / unknown version → 404), read from `gold_aa_internal.v_aa_content_published` on the main pool (cis_app); see "AA-authored content" below | — | M2M client-credentials token of the `aa-m2m-<env>` pool, CRM client + scope `cis.catalog/read` (root ADR 0006b decision 7, `api/core/m2m_auth.py`, same shared verifier as staff tokens); API Gateway route `/catalog/{proxy+}` (AA-CIS-Infra) |
+| AA-Partner (partner CRM) | **`catalog.http.v1` over HTTP** (AA-976, CRM-B4; root ADR 0010 decision 4: the CRM holds no grant on any CIS schema): `GET /catalog/v1/tours` (keyset cursor by `source_id`, `updated_since`, `country_code`, `limit` ≤ 50), `GET /catalog/v1/tours/cis/{source_id}` (days with per-day and per-place IANA `time_zone`, inclusions, exclusions classified for pay-on-arrival R25, facets for system tags R29, photos), `GET /catalog/v1/destinations/{id}`. Served from the `catalog` views read as `aa_app_user` on the tenant pool (one connection per api task at most, READ ONLY, `app.tenant_id` = ''), so it shows exactly what Booking / TripPlanner see. Liveness per root ADR 0015 decision 5: `retired` → 410 `gone` + `reason` (the CRM marks lines "no longer offered"), `paused` → 404 + `reason`, never served → 404. Strong `ETag` (a tour's `content_hash` = sha256 over the served body), `Cache-Control: private, max-age=60`, 304 on `If-None-Match`. Code: `api/routers/catalog_http.py`, `services/catalog_http/`; contract copy `docs/contracts/catalog.http.v1.openapi.yaml` (byte-identical to the root file, conformance test `tests/unit/test_aa976_catalog_http_contract.py`). **AI mark** (contract 1.3, AA-1040, EU AI Act Art. 50(2)): every served `Tour` carries `ai` = `ai_marking.tour_mark(v_tour.text_updated_at, published_at)` (`ai_generated`, `generator` "Adventure Asia catalog writer", `model` null, `generated_at` = the last Master publish of the text, `human_edited` null), inside the hashed body (the ETag moves with a Master publish). `text_updated_at` (CIS 359) is the Master row's `updated_at`, the value the tenant reads use; `v_tour.updated_at` also moves with a photo change, so it is used only while 359 is not applied (the reader probes `pg_attribute` once per process until the column is there and selects NULL in its place before). **AA-authored content** (AA-977, contract 1.2): `GET /catalog/v1/aa-content` (latest published version of each item that is not retired; `kind`, `locale`, keyset cursor by `content_id`, `limit` ≤ 50; ETag / 304) and `GET /catalog/v1/aa-content/{content_id}/versions/{version}` (any published version, also after a newer publish or retire; a draft / unknown version → 404), read from `gold_aa_internal.v_aa_content_published` on the main pool (cis_app); see "AA-authored content" below | — | M2M client-credentials token of the `aa-m2m-<env>` pool, CRM client + scope `cis.catalog/read` (root ADR 0006b decision 7, `api/core/m2m_auth.py`, same shared verifier as staff tokens); API Gateway route `/catalog/{proxy+}` (AA-CIS-Infra) |
 | AA-Partner (partner CRM) | **`tenant.membership.v1` over HTTP** (AA-978, CRM-P1; root ADR 0006b decision 4, ADR 0010 decision 5): `GET /tenant/membership/v1/tenants/{id}/members` (invited + active members and `tenant_state` active / locked / deleted; ETag over the body without `as_of`, 304), `GET /tenant/membership/v1/memberships?iss=&sub=` (keyed by iss AND sub), `GET /tenant/membership/v1/events?after=&limit=` (cursor feed, `limit` ≤ 500, ordered by `(txid, seq)` below the snapshot horizon so a late commit is never skipped). Ids, identity and the Content studio role only: no e-mail, name or CRM role. Read from `shared.tenant_members` / `shared.tenant_membership_event` (CIS 276) on the main pool (cis_app); see "Tenant membership directory" below. Code: `api/routers/tenant_membership.py`, `services/tenant_membership/`; contract copy `docs/contracts/tenant.membership.v1.openapi.yaml` (test `tests/unit/test_aa978_tenant_membership_contract.py`) | — | M2M token of the `aa-m2m-<env>` pool, CRM client + scope `cis.tenant/read` (`api/core/m2m_auth.require_m2m`, the same dependency factory as `/catalog/v1`); API Gateway route `/tenant/membership/{membership_proxy+}` (AA-CIS-Infra, AA-978 S1) |
+| AA-Partner (partner CRM), later AA-Booking and TripPlanner | **`tenant.entitlements.v1` over HTTP** (AA-1028 R1, root ADR 0019 d1 / d2): `GET /tenant/v1/tenants/{id}/account` (account status, `in_service`, kind, pilot marker, data region, time zone, every subscription, the resolved entitlements; ETag over the body without `as_of`, 304) and `GET /tenant/v1/account-events?after=&limit=` (cursor feed of `account.status_changed`, `subscription.changed`, `entitlement.changed`, the membership feed's horizon and cursor). Apps check feature keys, never plan names; no bill-to field, price, billing reference, reason or actor. Read from `shared.tenants`, `shared.tenant_subscription`, `shared.v_tenant_entitlement_v1` and `shared.tenant_account_event` (CIS 353-355) on the main pool (cis_app); see "Tenant control plane" below. Code: `api/routers/tenant_account.py`, `services/tenant_account/`; contract copy `docs/contracts/tenant.entitlements.v1.openapi.yaml` (test `tests/unit/test_aa1028_tenant_account_contract.py`) | — | M2M token, CRM client + scope `cis.tenant/read` (same dependency as `/tenant/membership/v1`; the Booking client joins with `bk_tenant_pull`); API Gateway route `/tenant/v1/{tenant_v1_proxy+}` (AA-CIS-Infra) |
+| AA-Partner (partner CRM) | **`tenant.addons.v1` over HTTP** (AA-1036 R3, root ADR 0019 d7): `GET /tenant/v1/tenants/{id}/add-ons` (the same list as the studio's `/v1/account/add-ons`: each add-on active / requested / available, the pending request, the last decision) and `POST /tenant/v1/tenants/{id}/add-on-requests` (`{product, note?, crm_member_id}`: 201 a new request, 200 the open one with `created` false). The CRM relays its **CRM owner's** request for an agency with no Content studio membership; the CRM checks the owner role, CIS records `requested_by` = `crm-member:<id>` (never a name or e-mail) and applies the studio's rules (`services/tenant_account/addon_requests.py`: 409 `already_subscribed` / `tenant_not_in_service`, one pending request per add-on, 10 a day, 500-character note). One store (`shared.tenant_addon_request`, CIS 374) and one staff decision path (Tenant 360 › Subscription). Code: `api/routers/tenant_addons.py`; contract copy `docs/contracts/tenant.addons.v1.openapi.yaml` (test `tests/unit/test_aa1036_tenant_addons_contract.py`) | — | M2M token, CRM client + scope `cis.tenant/addons` (`api/core/m2m_auth.require_m2m`; AA-CIS-Infra `identity_m2m.tf`); the same API Gateway route `/tenant/v1/{tenant_v1_proxy+}` |
 | AA-Booking | **Supply content read-back** (AA-835, root ADR 0004a): `catalog.v_supply_content` (CIS 278), one row per Booking hotel / service CIS knows, key `(source_system 'booking', source_id = the Booking id)`: `content_status`, `content_version`, and `description`, `highlights`, `good_to_know`, `photo_urls` **only while published** (an approved version of an active entity; draft, in_review, stale and unpublished rows carry NULL text), `edit_url` = `/admin/supply-content/<id>` (Booking prefixes the CIS admin origin). Booking's hotel / service pages show it read-only and proposals carry only published text (AA-Booking `app/supply/content.py`, feature-detected) | — | CIS 278 to role `booking` only, under the `catalog.*:booking` contract grant (catalog_owner view, security_barrier) |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
@@ -1477,6 +2047,12 @@ views the producers own and grant to `cis_app` in their own migrations (contract
 `tripplanner.v_ops_data_totals`, `v_ops_pin_components`, `v_ops_component_id_map` (tp-020) and
 `booking.v_ops_data_totals`, `v_ops_trip_plan_keys` (bk-025), plus the CRM's counts over HTTP (`crm.ops.v1` 1.4
 `GET /crm/ops/v1/data-coverage`, staff token relayed; no AA role reads schema `crm`).
+
+CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`, AA-Ecosys
+`docs/contracts/price.from.v1.md`; Booking bk-040 grants `booking.v_from_prices` to `cis_app`): `GET /v1/tours/pool`
+(the Content studio Marketplace) reads the suggested retail price per person of the page's tours by catalog key, on MAIN
+after the tenant block, and returns it as `from_price` (null when Booking has none or the view cannot be read: fail
+soft). CIS never computes a price and never shows `raw_tours.price_raw` as one (ADR 0005 d7).
 
 CIS as a consumer of Booking supply facts (AA-835, root ADR 0004a; contracts `supply.hotel.v1` / `supply.service.v1`,
 Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `services/supply_content/`:
@@ -1509,8 +2085,9 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
   history; Publish / Reject / Unpublish for review.act, Edit / Regenerate for content.write). Every staff role reads.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
-and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
-enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
+and `llm_call_log` (TripPlanner, through the shared core and the 323 views; the CRM vendors the core with its own
+ledger), the job table template of `shared.job` (each app has its own table from it: `booking.job`, `crm.job`,
+`tripplanner.job`; ADR 0003a), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
 waves (`/admin/waves`, AA-727).
 
 LLM operations (AA-900): `docs/llm/prompt-register.md` maps every gateway prompt to its stage, file and symbol, version
@@ -1550,11 +2127,21 @@ change. Deletes only 90 days after removal / occurrence or for an offboarded ten
 a new writer of `shared.tenants` needs INSERT on the event table (migration guard + standing test). Staff routes
 (Tenant 360 Members, `api/routers/admin_tenant360.py`, `services/tenant_membership/writer.py`): `GET
 /admin/tenants/{id}/members` (identity shown as a 12-hex fingerprint only), `PATCH .../members/{membership_id}`
-(Content studio role) and `POST .../members/{membership_id}/remove`, both `tenant.write`, audited
+(Content studio role) and `POST .../members/{membership_id}/remove`, both `tenant.write` (AA-1035: or
+`tenant.member.write` of the caller's book, never for the owner seat), audited
 (`tenant.member_role_changed` / `tenant.member_removed`). The partner CRM applies a removal (member disabled and
 signed out; last owner -> agency locked until owner recovery) and agency lifecycle within a minute; it never takes a
-CRM role from CIS. Invitation and activation of identities come with AA-979 (partner-pool re-enrolment); until then
-rows are created only by staff tooling / the Dev seed.
+CRM role from CIS. Invitation and activation of identities came with AA-979 (partner-pool re-enrolment, below).
+**Admin UI (AA-1031, S264):** Tenants › Tenant 360 › Members (`frontend/app/admin/tenants/_components/Tenant360Members.tsx`,
+helpers `frontend/lib/tenantMembers.ts`) lists the memberships (fingerprint, role, status, invited / last change) and,
+with `tenant.write`, invites (e-mail + role + mail language), sends an invitation again (the address is typed again:
+CIS keeps none), changes the role and removes (warning when it is the last active owner), all over the routes above;
+the mail result of an invitation stays on the page (sent / created but not delivered). Which write controls show is
+the API's own answer for the session, `GET /admin/tenants/{id}/members/access` (`tenant.read`; `{read_only, actions:
+{invite, send_again, change_role, remove}, invite_roles}` from `staff_authz.denial_reason` on each write route plus the
+E2E invitation rule; hook `frontend/app/admin/_components/useMembersAccess.ts`, also used by the agency drawer's
+"also invite to the Content studio" box): a read-only session (the Dev E2E admin) sees no write control, nothing shows
+while the read loads, and only a failed read falls back to the role's `tenant.write` (AA-1031 S264 F3).
 Tenant read (AA-978 follow-up): `GET /v1/account/members` (`api/routers/v1_account_members.py`,
 `services/tenant_membership/portal.py`), the portal's Account › Members page: the agency's invited + active rows
 (fingerprint, role, status, dates; no staff actor, no invitation id), tenant id from the tenant JWT only, main pool.
@@ -1564,34 +2151,126 @@ person's partner-pool access token (partner-web client) for a short tenant JWT a
 (`api/routers/tenant_session.py`; verifier `api/core/partner_identity.py`, its own `MultiIssuerVerifier`, never a staff
 issuer; WORKFORCE / EXTERNAL / M2M tokens 403). It answers from the active `shared.tenant_members` rows of `(iss, sub)`
 on active agencies (`services/tenant_membership/session.py`): none 403 `no_membership`, several 409 `choose_tenant`
-(chooser `GET /auth/tenant-memberships`). The token is the API-key token's shape plus `client=portal`, `amr=partner`,
+(chooser `GET /auth/tenant-memberships`). The token is the legacy tenant token's shape (`_create_jwt`) plus `client=portal`, `amr=partner`,
 `mid`, `csr`; at most 15 min and never past the access token. Throttled per identity in Redis, not per IP. The Content
 studio role is enforced by `api/middleware/tenant_role.py` on every tenant-JWT path (`/v1/*`, `/admin/brand-identity`):
-viewer read only, editor no writes under `/v1/integrations`, `/v1/account`, `/v1/webhooks`; owner and API-key tokens
-unchanged. Invitations: `POST /admin/tenants/{id}/members/invitations` (`tenant.write`) creates the `invited` row and
+viewer read only, editor no writes under `/v1/integrations`, `/v1/account`, `/v1/webhooks`; owner and tokens without
+`csr` unchanged. Invitations: `POST /admin/tenants/{id}/members/invitations` (`tenant.write`) creates the `invited` row and
 relays the e-mail once to the CRM (`crm.ops.v1` `POST /tenants/{id}/studio-invitations`, staff token, through
 `api/services/crm_console.py`); CIS stores no e-mail; `.../members/{membership_id}/invitation/send` sends again. The
 CRM binds the accepted identity with `POST /tenant/membership/v1/invitations/{invitation_id}/activate` (M2M scope
-`cis.tenant/activate`, contract 1.1; idempotent for the same identity, 409 otherwise). API-key sign-in
-(`/auth/tenant-login`) is unchanged for machines; the portal stopped offering it at the P2b clean-up
-(`PORTAL_API_KEY_SIGNIN=false`: its `/tenant-login` answers 308 to the partner sign-in).
+`cis.tenant/activate`, contract 1.1; idempotent for the same identity, 409 otherwise). **No tenant API keys
+(AA-1036 R3 slice 3, root ADR 0019 d6):** `POST /auth/tenant-login` (both handlers, `api/main.py` and the unmounted
+`api/routers/auth.py` router) answers 410 Gone with `{"detail": "tenant_api_key_removed", "message": …,
+"sign_in": "partner"}` for any body, reads no table and writes no audit row; `verify_tenant_api_key`, the Lambda
+authorizer code, `POST /admin/tenants/{id}/generate-key`, `GET /v1/account/api-key`, the key in the create / restore
+answers and the E2E key copy sync (`aa-cis/dev/e2e-tenant/*`) are gone. `tests/unit/test_aa1036_no_tenant_api_keys.py`
+keeps it so (410 for any body, no key route, a source guard over `api/`, `services/`, `shared/`, `worker/`). CIS 368
+sets `shared.tenants.api_key_hash` NULL; the column DROP is a separate destructive migration (DRY RUN, tech lead).
+The 30-day `audit_log` check before the removal found only synthetic E2E tenants signing in with a key.
 
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
-`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218 — and the read-only `viewer` — migration
+`shared.admin_role`: `admin`, `content` — migration 218; its `reviewer` value is unused and forbidden since CIS 375 — and the read-only `viewer` — migration
 249, AA-878; identity columns from migration 247:
 `email` lower-case `@adventure.asia` only — one TEMPORARY exception until the Cognito E2E work is done (AA-816,
-S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as a reviewer, not an owner,
+S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as `content` (reviewer until CIS 375), not an owner,
 no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_STAFF_EMAIL` /
 `require_e2e_test_scope` + the WORKFORCE triggers); and, **Dev only** (A10b, AA-816 S252, root ADR 0006a A10b),
 `e2e-cis-admin@e2e-mail.lumiguides.it.com` as an admin, not an owner, no password, no Booking grant (migration 283
 CHECK + `api/core/e2e_staff.py` / `staff_directory.require_e2e_test_scope` / `require_dev_only_e2e_environment` +
-the WORKFORCE triggers' dev-only map) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+the WORKFORCE triggers' dev-only map); and, **Dev only** (A10d, AA-1035 S270), `e2e-cis-cs@e2e-mail.lumiguides.it.com`
+as `customer_success`, same scope rules (migration 378 CHECK) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
-`contracting` / `content_creator`). Root ADR 0006 + amendment 0006a are the design; tenants are separate
-(`cis_tenant_token`, role `tenant`).
+`contracting` / `content_creator` / `finance` (CIS 363, group `booking-finance`)). AA-Partner (CRM) staff roles are a set per person in
+`shared.staff_crm_grant (admin_user_id, role)` (AA-1031, migration 330: `platform_admin` / `ops` / `support` =
+WORKFORCE groups `crm-platform-admin` / `crm-ops` / `crm-support`, root ADR 0006b decision 6), written by the same
+directory writer with its own audit field and synced (added and removed) like the CIS / Booking groups; the E2E
+directory addresses hold none, and the A10c CRM staff E2E user stays outside the directory. The Staff page's "Platform
+owner" preset sets CIS admin + Booking admin + CRM `platform_admin` in one change (never the owner flag). Root ADR 0006 +
+amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
+
+**R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
+`content_lead`, `tenant_qa`, `customer_success`, `support`, `finance` and `ai_ops` (WORKFORCE groups `cis-<role>`,
+ranked 10-39; `api/core/staff_identity.py GROUP_ROLES`). `reviewer` merged into `content` (CIS 363) and the alias is
+gone (CIS 375, S269: the A10 E2E row is `content`, `admin_users_role_not_alias_chk` forbids `reviewer`, the group
+`cis-reviewer` holds no role and the Staff page "Sync" removes a leftover membership). Each role is one explicit capability set in `api/core/staff_authz.py ROLE_PERMS` (the matrix of
+root `docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md` section 3), deny by default: a POLICY entry
+is one capability or `any_of(...)`; a GET with no entry needs `content.read` (so `customer_success`, `support` and
+`finance` reach only their listed routes). `tenant.read` still means "every tenant" (admin); the split adds
+`tenant_content.read` (tenant text: Tenant QA, Content Trace, A4 logs, Writing Lab text), `catalog.read` (the atom
+store), `tenant.book.read` / `tenant.member.write` (the tenant desk: directory and the non-money Tenant 360 tabs;
+member actions customer_success only), `tenant.member.resend` (support: send an editor / viewer invitation again,
+nothing else), `tenant.book.write` (customer_success: config, brand identity, RPM and publish limit of its book; plan,
+suspend, key, offboard / restore and overrides stay `tenant.write` / `billing.write`), the owner seat (invite as owner,
+change to / from owner, remove an owner, send an owner invitation again) only with `tenant.write`
+(`admin_tenant360._require_owner_tier`: a send-again re-seals to the typed address),
+`tenant.book.account.read` (customer_success only: plans and add-ons, subscription, usage, cost, Tenant QA verdicts,
+the AI budget tile of the own book; support never, and its directory rows and Tenant 360 header carry the price,
+overage and LLM cost as null, `staff_authz.sees_tenant_money`), `tenant.assign`, `billing.read` / `billing.write`
+(PATCH `/admin/tenants/{id}` is field-level: finance only `plan_tier` / `is_active`, customer_success every other
+field; finance opens Tenant 360 on `/details`, which answers it the header only), `wave.run` and `lab.read`. The
+shared tenant picker reads `GET /admin/tenant-names` (id, name, slug, status; scoped like the directory) so the
+Tenant QA, Writing Lab and AI & spend roles can pick a tenant without the directory. The
+content-quality writes check `quality.write` (admin, content_lead, tenant_qa) instead of the literal admin role.
+**Tenant scope:** `api/core/tenant_scope.py require_tenant_scope` runs on every staff route with `{tenant_id}`
+(`dependencies=TENANT_SCOPED`; `tests/unit/test_aa1035_tenant_scope_routes.py` fails CI on a route without it):
+admin, finance, ai_ops, content_lead and tenant_qa reach every tenant (their capabilities still decide the routes);
+`customer_success` only tenants in `shared.staff_tenant_assignment` for them (kind owner / backup / support, one owner
+per tenant), `support` those plus the pool (agency / demo tenants without an owner or in the `tech_touch` segment);
+content and viewer only the aa_internal tenant (Master Content). The staff member is the verified Cognito
+identity, or with the main admin secret the `x-admin-user-id` header; a book role without one gets 403. Refusals are
+403 `Tenant outside your scope` whether the tenant exists or not. `GET /admin/tenants` lists only the caller's scope.
+Assignments: `GET|PUT|DELETE /admin/tenants/{tenant_id}/assignments[/{admin_user_id}]` (writes `tenant.assign`,
+audited `tenant.assignment_set` / `_removed`; since slice 2 the PUT takes only admin / customer_success / support
+staff). The frontend matrix (`frontend/lib/rbac.ts`) mirrors the roles and capabilities; the role x route decisions
+are pinned in `tests/unit/snapshots/aa1035_role_route_matrix.json`.
+
+**R2 slice 2 (AA-1035, S268; no migration).** *Assignments page* `/admin/tenants/assignments` (admin, customer_success,
+support): `GET /admin/tenant-assignments` (every partner tenant of the caller's scope with owner / backup / support and
+the pool flag) and `GET /admin/tenant-assignments/staff` (the assignable staff, `tenant.assign`); writes stay the
+per-tenant routes (admin only). *View as tenant* (root ADR 0019 d5, capability `tenant.view_as`: admin,
+customer_success own book, support own book + pool): `POST /admin/tenants/{tenant_id}/view-as` (scoped; reason 3-500,
+optional ticket, 5-60 minutes; one open session per staff member; refused 409 for the AA internal tenant, an
+offboarded one or one that is not live, `view_as.tenant_refusal`; refused 409 when the caller's `shared.admin_users`
+row differs from its sign-in role) writes `shared.staff_view_as_session` + audit
+`tenant.view_as_started` and returns a short-lived tenant JWT (`api/core/view_as.py`: `csr` viewer, `client` portal,
+`vas` session, `stf` staff, `srl` the start role = the verified group role the start was authorised with); `GET /admin/view-as/sessions[/{id}]` and `POST .../{id}/end` (own; admin every one, an
+admin end of another's is `revoked`). Every path that ends a session (the end route, a new start closing the caller's
+other sessions, the gate) writes one `tenant.view_as_ended` row under that session's id with its end reason and cause.
+`api/middleware/view_as.py ViewAsGateMiddleware` (around the tenant role middleware and the rate limiter; its own
+per-session limit, 120 requests a minute, answers 429 before any check or audit row) lets such a token make only GET /
+HEAD on `view_as.READ_ROUTES` (12 side-effect-free tenant reads; never `/v1/slate`, `/v1/billing`, exports,
+integrations or the brand branch), re-checks the open session, that the staff row's current role (and the verified
+group role the BFF forwards in `x-view-as-staff-role`, which can only end a session) is still the start role `srl`
+(else cause `role_changed`), the tenant (the start's rule: offboarded / suspended / internal ends the view) and the
+start role's tenant scope on every request (a lost right ends the session for good: `revoked`, or `expired` past its
+expiry), and refuses (403 `view_as_not_for_role`) a read the start role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` and `/v1/account/add-ons` need `tenant.read` or `tenant.book.account.read`, so
+support never sees the plan, usage or add-on subscriptions and decisions; view-as never widens a role's own reads), and writes one `acp_shared.audit_log` row per request
+(`tenant.view_as_request`, BEFORE a served read: no unlogged read, 503 when the row cannot be written); everything
+else is 403 `view_as_read_only` (logged), an ended session 401 `view_as_ended`. `tenant_role.enforce` repeats the
+read-only check on the dependency side. The token never reaches the browser: the start answers it only with the
+request header `x-view-as-client: bff` (403 `view_as_bff_only` before any row otherwise), which only the view-as BFF
+sets, and the generic `/api/admin/[...path]` proxy refuses the start path (`lib/viewAs.ts isViewAsStartPath`). The
+admin BFF (`frontend/app/api/view-as/*`) keeps the token in the httpOnly cookie `aa_view_as` (path `/api/view-as`) and
+forwards only the allowed reads of the signed-in member's role (`VIEW_AS_ROUTE_ROLES`, the mirror of `ROUTE_CAPS`); Tenant 360 › "View as partner" opens
+`/admin/tenants/view-as` (banner: tenant, time left, reason, End view; tabs over the partner's reads).
+*Logged Lab read*: ai_ops holds `lab.tenant_text.read` (never `tenant_content.read`), which opens only the tenant-text
+GETs of `/admin/writing-memory/*` (not the Tenant 360 voice route); `api/core/lab_read_log.py LAB_TEXT_LOGGED` writes
+an audit row `lab.tenant_text_read` before each such read (503 when it cannot). *Bell*: `notifications.read` (every
+role) on the four `/admin/notifications` routes; customer_success / support / finance see only rows targeted at their
+role, and of a tenant row only those of a tenant their scope reaches (`tenant_scope.tenant_scope_sql`: book; support
+also the pool; finance every tenant; the platform rows of the AA internal tenant stay role-targeted). **R2 close-out (AA-1035, S269; CIS 375).** *CRM L1 console for the desk roles*: `/admin/platform/crm/*` GETs take
+`tenant.book.read` (usage / entitlements `tenant.book.account.read`, customer_success only), `{tenant_id}` reads pass
+`require_tenant_scope`, the agency list is filtered to the scope; the CRM itself serves a desk caller only the tenants
+CIS reports through `tenant.membership.v1` 1.3 `GET /tenant/membership/v1/staff-scope?iss=&sub=&desk_role=`
+(`tenant_scope.desk_scope_of_identity`, M2M `cis.tenant/read`), never a scope the caller sent. *Tenant QA own book*:
+customer_success holds `tenant_content.book.read`: the Content quality lists, details and stats of its book (a piece or
+version of another tenant is a 404), no labels, place cards, compliance or writes. *Send again to the kept address*:
+`POST .../invitation/send` without `email` relays `keep_address: true` (crm.ops.v1 1.12); support may only do that
+(403 with an address), customer_success and admin may also name a new one (`members/access` `send_again_to`).
 
 **Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence
 screenshots of the admin-only pages and the AA-916 WM-07 sentence-action sample. `api/core/e2e_staff.py` holds the
@@ -1606,10 +2285,22 @@ S252), POST `/admin/tenants/{id}/members/invitations` and `/admin/tenants/{id}/m
 (the phase 2 re-enrolment E2E); those two routes then refuse it (403 `e2e_read_only`, before any row, audit or relay)
 unless the tenant is synthetic (`shared.tenants.is_canary IS TRUE`), the address is on the E2E mailbox domain
 (`e2e-mail.lumiguides.it.com`) and the invited role is `viewer` / `editor`; `staff_authz.denial_reason` refuses the same
-writes again by route template. `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
+writes again by route template. AA-1035 slice 2 (proposed A10b-2) adds POST `/admin/tenants/{id}/view-as` and
+`/admin/view-as/sessions/{id}/end`, synthetic tenants only (the routes refuse any other with 403 `e2e_read_only`), so
+the evidence run can show the view-as banner; the session it opens is read-only like every view-as session.
+`/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
 of project code.
+
+**Dev-only E2E customer_success (A10d, AA-1035 S270, root ADR 0006a A10d).** The agent's own customer_success identity,
+to prove the tenant-book scoping with a real Cognito session (Playwright `admin-evidence/cs-scope.spec.ts`, `E2ECS=1`,
+never CI). Same directory, environment and read-only rules as A10b, but **no write allow-list**: the identity carries
+`e2e_read_only` and not `e2e_allowlisted_writes`, the flag every A10b exception keys on (bearer middleware,
+`staff_authz.denial_reason`, `docs_owner_read_via`, the view-as / studio-invitation / sentence-apply route checks), so
+every write is 403 `e2e_read_only`. Its book holds synthetic tenants only: `PUT /admin/tenants/{id}/assignments/{staff}`
+answers 409 for any Dev-only E2E row (A10b, A10d) on a tenant that is not synthetic. `/auth/verify-admin` returns
+`customer_success`. Codes in `inbound-admin/` (MFA admin reads only). Removed with A10 / A10a / A10b / A10c.
 
 **Sign-in (ADR 0006 Phase 1, live on Dev).** Staff sign in with an email one-time code on Cognito WORKFORCE
 (pool `us-west-1_bCcFvbSOS`) through managed login on our own domain `https://staff-auth.lumiguides.it.com`
@@ -1618,10 +2309,9 @@ of project code.
 - The BFF (`frontend/lib/cognito.ts`, `lib/cognitoRoutes.ts`, routes `app/api/auth/{signin,callback}/{cognito,
   cognito-breakglass}`, `app/api/auth/refresh`) runs authorization code + PKCE (state + nonce in the 5-minute
   `cis_oauth_tx` cookie) with a confidential client. Redirect URIs come from a fixed allow-list
-  (`aa-cis.lumiguides.it.com`, localhost in development; a Vercel preview build only the fixed Preview host,
-  below); any other host (a per-deployment `*.vercel.app` preview URL) gets `cognito_host` and no sign-in at all (the
+  (`aa-cis.lumiguides.it.com`, localhost in development); any other host gets `cognito_host` and no sign-in at all (the
   password form is off since AA-816 S2). Domain, issuer and client ids are code constants with `COGNITO_*` env overrides; the two production client
-  secrets are set in Vercel (Production only), the Preview-only client secret on the Preview target only.
+  secrets come from the task's secret `aa-cis/dev/admin-web` (AA-CIS-Infra `tools/identity/staff_web_secret.py`).
 - Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
@@ -1638,14 +2328,15 @@ of project code.
 AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_identity.py` (resolver):
 - issuer chosen by the **unverified `iss`**; only the WORKFORCE issuer is accepted for staff (any other `iss` →
   401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`,
-  `cis-admin-preview` (AA-911 D-1, always capped at viewer, below)},
+  `cis-admin-preview` only when set through the env (empty by default since the Vercel retirement; capped at viewer,
+  below)},
   `token_use=access`, no `aud`, leeway ≤ 60 s; one JWKS cache per issuer, prefetched at start-up
   (`identity_jwks_prefetched`), unknown `kid` refetched at most once a minute, last good keys kept;
 - the row is found by `(iss, sub)`; on the first sign-in it is linked **once** by `lower(email)` to an active
   row with no Cognito identity (`email_verified` is trusted from the pre token trigger, which refuses
   unverified or off-domain addresses; WORKFORCE access tokens do not carry the claim, ADR 0006a A7). A row
   already bound to another `sub` is never rebound (401; rebinding is an owner action);
-- role = the highest `cis-*` group (`admin > reviewer > content`); no `cis-*` group → 403 even with `booking-*`
+- role = the highest `cis-*` group (`GROUP_ROLES` order; `admin` first, `content` last); no `cis-*` group → 403 even with `booking-*`
   groups; a different DB role is logged as `staff_role_drift`, not denied; inactive or unknown row → 401;
   verifier/JWKS/directory outage → 503. Lookups are cached 60 s per `(iss, sub)`.
 - `api/middleware/staff_bearer.py` (registered right after the rate limiter) handles every staff path: a
@@ -1666,7 +2357,7 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   missing, unreadable or equal to the main secret = feature off, never an error). Sent as `X-Admin-Secret` on a
   staff path, it makes the middleware replace `x-admin-role` with `viewer` (no role header → viewer, never the
   machine), so it reads content and is refused on every write and admin-only read; audited as
-  `details.auth = preview`. The Vercel Preview BFF holds this value; the main `ADMIN_SECRET` stays with the
+  `details.auth = preview`. The Vercel Preview BFF held this value until the Vercel retirement (S272; no holder now); the main `ADMIN_SECRET` stays with the
   Production BFF (legacy sessions), the CI deploy gate/smoke and the ops-probe Lambda.
 
 **Legacy password login (off since AA-816 S2, kept as the rollback).** `/auth/admin-login` (HS256 JWT signed with
@@ -1677,39 +2368,26 @@ off; sign in again" when off). **Since S2 it is off by default in both the API a
 `frontend/lib/staffSession.ts`, a test keeps the two lists equal) turns it back on; unset, empty or a typo keeps it
 off. The deployed API task definition does not set it, so every HS256 staff session is refused on every host,
 Preview included; staff sign in with Cognito only. Rollback: revert the S2 commit, or set the flag on the api task
-definition (AA-CIS-Infra, hand edit) and on the Vercel target. `/auth/admin-login` and `/auth/booking-token` are not
-gated and never call `/auth/verify-admin`: AA-Booking's legacy staff path (admin-login → booking-token) keeps working
-until the bridge is retired (AA-911 P6b). The fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never
-offers the password form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
+definition (AA-CIS-Infra, hand edit) and on the admin task definition. `/auth/admin-login` is not gated and never calls
+`/auth/verify-admin`; the AA-Booking bridge that used it (`/auth/booking-token`) is retired (AA-911, S271).
 
-**Preview staff sign-in (AA-911 D-1, AA-816 P6a, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a
-Vercel domain of `aa-cis-frontend` and the only callback / sign-out URL of the Preview-only WORKFORCE client
-`cis-admin-preview` (AA-CIS-Infra; the production `cis-admin` client does not list it; break-glass stays
-production-only). A Vercel production build signs in with `cis-admin` on the production host only, a preview build
-with `cis-admin-preview` on this host only (`VERCEL_ENV`, `frontend/lib/cognito.ts`; its own secret env var
-`COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET`, Preview target only; client id a code constant), so the redirect URI is
-still never built from the Host header and a preview build never reads the production client secret. The Vercel
-Deploy workflow points the host at a preview only on opt-in: the PR label `preview-signin`, or a dispatch from
-`main` with `alias_only_url` (checked over the Vercel API: this project, not production, READY). A Cognito session
-on that host is always the **viewer**: `api/core/staff_identity.resolve_staff` maps every `cis-admin-preview` token
-to role `viewer` with `is_owner` false whatever its `cis-*` groups (`api/core/identity_config.is_preview_client`,
-env override `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`; a preview id equal to a production id fails the verifier build,
-so every staff token answers 503), the bearer middleware forwards `viewer`, `staff_authz` refuses every write
-("Role 'viewer' is read-only") and `/auth/verify-admin` returns `viewer` (log `staff_identity_preview_capped`). The CIS
-to Booking bridge (`/auth/booking-token`, below) stays and mints only from an HS256 password session, so a Cognito
-session (this one included) never gets a Booking token; the bridge retirement is AA-911 P6b. The
-cap holds only while the Vercel Preview `ADMIN_SECRET` is the C9 Preview credential (check V2, root ship plan):
-the main secret with a forged `x-admin-role` would pass on a path without a Bearer. Preview builds send
-`X-Robots-Tag: noindex, nofollow`. Every BFF route that attaches `X-Admin-Secret` calls `requireAdmin()` first
-(audited 21/10/2026). UI smoke keeps the per-deployment URL. Runbook: root
-`docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session (rollback only, since S2)
+**Preview staff sign-in — retired (AA-911, S272; root ADR 0006a A11 superseded by A13).** The fixed Preview host
+`aa-cis-preview.lumiguides.it.com`, its Vercel project `aa-cis-frontend` and the Preview-only WORKFORCE client
+`cis-admin-preview` are gone; `frontend/lib/cognito.ts` has one client (`cis-admin`, plus break-glass) on the production
+host. The API keeps the viewer cap for a preview client set through `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`
+(`api/core/identity_config.is_preview_client`, `api/core/staff_identity.resolve_staff`: role `viewer`, `is_owner`
+false, log `staff_identity_preview_capped`), but the default is empty, so a token of the deleted client is 401. The C9
+Preview credential (`aa-cis/dev/admin-secret-preview`, `api/core/staff_credential.py`) has no holder since the
+Vercel Preview `ADMIN_SECRET` went with the project; its code and secret are a follow-up removal. Every BFF route that
+attaches `X-Admin-Secret` calls `requireAdmin()` first (audited 21/10/2026). For an HS256 session (rollback only, since S2)
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
 ~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
 principal-aware since C9 (above); then `ADMIN_SECRET` is rotated (I6) and the flag goes off. New staff are created on
 the Staff page only (the legacy password-row script is retired, AA-816 D1).
 
-**Login throttle (AA-876).** `/auth/admin-login` and `/auth/tenant-login` call `api/core/login_throttle.py` before the
+**Login throttle (AA-876).** `/auth/admin-login` calls `api/core/login_throttle.py` (so did `/auth/tenant-login` until
+AA-1036 made it 410) before the
 DB read and bcrypt (bcrypt runs in the threadpool). One pipelined Redis call checks, per source IP and scope: at most
 20 **failed** logins per 15 min (`loginfail_ip:*`, successes do not count) and a high ceiling of 100 attempts per 5 min
 (`loginrl:*`, protects bcrypt CPU). Admin only, per username (stored as a hash, never in clear): 5 failures from one
@@ -1761,10 +2439,48 @@ The matrix lives in `frontend/lib/rbac.ts` and is read by `frontend/proxy.ts` (p
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
 
-**Admin console layout (AA-883, S241 design option A).** One console (`aa-cis-frontend`), nav model
-`frontend/app/_kit/adminNav.tsx` in two sections named after who a page serves: **Platform** (Overview,
-People & access › Staff, Tenants, Jobs, AI & spend, Developer) and **CIS Content** (Pipeline, Assets,
-Intelligence, Tenant output). Section headers fold and show only when the role sees both sections.
+**Admin console layout (AA-883, S241 design option A; regrouped by AA-1039 R6 slice 1, S266, root ADR 0019 d13).**
+One console (`aa-cis-frontend`). The nav model is plain data in `frontend/lib/adminIa.ts` (`ADMIN_IA`; icons added
+in `frontend/app/_kit/adminNav.tsx`), seven groups (d13) plus Trade (d9, AA-1037), each folding on its own (kit
+NavGroup, S264; no sections, no footer Settings entry):
+- **Home** — Overview, App health (`/admin/platform/apps`), Reports, Data coverage;
+- **Tenants** — Directory (`/admin/tenants`, a row opens **Tenant 360**, a route since AA-1039 R6 rest:
+  `/admin/tenants/<id>[?tab=cost]`, panel in `tenants/_components/TenantDetail.tsx`; an old `?tenant=<id>` link is
+  replaced in the browser by the route), CRM agencies
+  (`/admin/tenants/agencies`), Data erasure (`/admin/tenants/data-erasure`), Plans & add-ons
+  (`/admin/tenants/plans`, AA-1028 R1 slice 3: the plan catalogue, see "Tenant control plane");
+- **AA Catalogue** — Upload (S0), Rewrite (S1), Review Queue, Master Content, Atoms & routes (`/admin/atom-curation`),
+  Places, Place cards (`/admin/places/cards`, R6 rest option A: was Content quality's Cards tab; its own page rule =
+  admin, content_lead, tenant_qa, before the admin-only `/admin/places` rule; API `/admin/content-quality/place-cards*`
+  unchanged), Photos, Facts, Supply copy, AA content, SEO Intelligence (no Spend tab since R6 rest: DataForSEO spend is
+  Spend › DataForSEO; `GET /admin/seo-intelligence` no longer sends `spend`), Catalogue settings (`/admin/settings`);
+- **Tenant content QA** — Content quality, Content Trace, Review log, Slate (`/admin/tenant-qa/*`, admin only);
+- **AI & spend** — AI gateway (`/admin/ai-gateway`, was "AI providers": tabs Providers, Routing incl. "Routing by data
+  class", Models & trials, Budgets, Calls, Guide), Spend (`/admin/spend`, R6 slice 3: was Cost Operations at
+  `/admin/cost-ops` and Cost per app at `/admin/platform/cost`, now its By app tab `?tab=apps`);
+- **Writing Lab** — Stages (`/admin/lab` opens `/admin/lab/a1-s1`; one page per writing-memory writer `a1-s1`,
+  `t2-rewrite`, `t9-blog`, `t9-social` with the tabs Eval gate, Samples, Labels, Experiments, Prompt versions, one read
+  `GET /admin/writing-memory/lab/{writer}` over the existing learning tables, ids / labels / counts / hashes only, no
+  new learning logic: S262 TL-11 freeze unchanged), Writing memory (`/admin/lab/writing-memory`, was
+  `/admin/writing-memory`), Jev Decisions;
+- **Trade** (AA-1037, root ADR 0019 d9 "Screens now") — Booking admin, Agency billing, Agency tiers, B2B desk: pages of
+  AA-Booking's admin (`external` items; the URL comes from `lib/apps.ts appPageUrl`; same tab, never the active item),
+  shown to `billing.read` or `tenant.book.account.read` (`lib/rbac.ts canSeeNavItem`); Booking checks its own grant;
+- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs, UI kit.
+
+Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
+`next.config.ts` before `proxy.ts`): `/admin/content-quality` → `/admin/tenant-qa/quality`, `/admin/tenant-activity`
+→ `/admin/tenant-qa/trace`, `/admin/platform-stats` → `/admin/tenant-qa/review-log`,
+`/admin/atom-curation?section=slate` → `/admin/tenant-qa/slate`, `/admin/platform/agencies` →
+`/admin/tenants/agencies`, `/admin/data-erasure` → `/admin/tenants/data-erasure`; R6 slice 3: `/admin/writing-memory`
+→ `/admin/lab/writing-memory`, `/admin/cost-ops` → `/admin/spend`, `/admin/platform/cost` → `/admin/spend?tab=apps`; R6 rest:
+`/admin/seo-intelligence?tab=spend` → `/admin/spend?tab=spend&view=dfs`, `/admin/settings?tab=tenant` → the aa_internal
+Tenant 360 `?tab=settings`, `/admin/settings?tab=ui-kit` → `/admin/platform/ui-kit`,
+`/admin/tenant-qa/quality?tab=cards` (and `/admin/content-quality?tab=cards`, one hop) → `/admin/places/cards`
+(a query of the target wins over the request's, as Next.js merges them). BFF and backend paths keep their
+names (`/api/admin/content-quality/*`, `/admin/platform/crm/*`). `frontend/lib/adminIa.test.mjs` checks that every
+page URL of the S265 nav still opens a page, nav items never point at an old URL and every admin page has a nav
+entry; `tests/e2e/smoke/aa1039-admin-ia-redirects.spec.ts` checks the 307s on the deployed host.
 The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking admin, TripPlanner
 public site; no tenant-portal link until there is a real support view, since the portal needs a tenant
 session); deep links are built only there, never from a return URL, never with a
@@ -1801,10 +2517,17 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
 - `/admin/platform/crm/*` (AA-941, CRM-13a S-01; GET `tenant.read`, writes `tenant.write`) —
   `api/routers/admin_crm_console.py` + `api/services/crm_console.py`: the partner CRM's AA L1 console (agency list and
   meters, create agency, lock / unlock, first-owner invite, allowed features, insights opt-out, AA-raised data
-  requests, owner recovery, member disable, failed-job retry). A relay only: each route mirrors one `crm.ops.v1` route
+  requests, owner recovery, member disable, failed-job retry; S263 crm.ops.v1 1.8: withdraw the first-owner invitation,
+  delete a synthetic test agency with no member or traveller, typed name + ticket). A relay only: each route mirrors one `crm.ops.v1` route
   with the staff member's own Cognito token, inside a path allow-list (`ALLOWED`); the CRM's status and body pass
   through (it decides crm-platform-admin writes and filters L1 keys); bodies are never logged (the owner invite
-  carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)).
+  carries an e-mail). Page `/admin/tenants/agencies` (nav Tenants › CRM agencies; was `/admin/platform/agencies`, AA-1039). AA-1031 (S264): the Create
+  agency picker leaves out CIS tenants that already have an agency in the loaded list, and the CRM's 409
+  `tenant_deleted` (crm.ops.v1 1.9: the id of a deleted test agency, never reused) reads "create a new CIS tenant".
+  When the agency id is an active CIS tenant and the staff member has `tenant.write`, the drawer's "Invite first owner"
+  offers "Also invite to the Content studio as owner" (ticked by default): after the CRM invitation is sent, the page
+  calls the Tenant 360 route `POST /admin/tenants/{id}/members/invitations` (role owner) with the same address — a
+  staff action, so no CRM event grants a CIS role (root ADR 0010a) — and keeps both results in the section.
   **One health definition (S243):** a card's `status` is `overall.status` from `api/services/app_health.py`
   `overall_status(probe, traffic)` — the worst known signal of the app's own check (`probe`; none for TripPlanner) and
   its CloudWatch traffic of the last 24 h (`traffic_section`, the AA-858 health section and its Redis key, shared by
@@ -1873,8 +2596,8 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
 - **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
   `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
   `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain
-  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and `/admin/platform/cost`
-  (AI & spend › **Cost per app**; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
+  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and Cost per app (since AA-1039
+  R6 slice 3 the By app tab of AI & spend › **Spend**, `/admin/spend?tab=apps`, `?month=YYYY-MM` opens a month; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
   ~$0.04). Notes: `docs/implementation-notes/AA-884-ui.md`.
 
 **Ops overview (AA-858).** `GET /admin/overview/ops` (`ops.read`, not a machine route; the CI smoke keeps
@@ -1920,13 +2643,12 @@ fetched about once a day.
 |---|---|---|---|---|---|
 | Content work pages: Upload, Rewrite (S1) | ✓ | ✓ | ✓ | — | — |
 | Content pages: Review Queue, Master Content, Settings (viewer: read only, write controls hidden by `can()`) | ✓ | ✓ | ✓ | read | — |
-| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, Cost Operations, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
+| Overview, Photos, Atoms & routes (atom curation), Tenant content QA (`/admin/tenant-qa/*`: Content quality, Content Trace, Review log, Slate), SEO Intelligence, Tenants (`/admin/tenants/*`), Cost Operations, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
 | Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only; AA-913 Alert recipients, changes need `alerts.write` + Cognito) | ✓ | — | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
 | Tenant portal `/portal/*` — **portal app** (AA-Partner `portal/`, `portal.lumiguides.it.com`, AA-885 / AA-979; no staff access) | — | — | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | GET only | — |
-| AA-Booking token `POST /auth/booking-token` | ✓ | ✓ | ✓ | 403 | — |
 | `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |
 
 **Read-only `viewer` (AA-878).** The role of every Preview-host Cognito session (AA-911 D-1) and, until AA-816 S2,
@@ -1938,7 +2660,7 @@ row script, retired at AA-816 D1 — a password change for a legacy test row is 
 `READ_ONLY_ROLES`), and the backend `denial_reason` refuses `READ_ONLY_ROLES` on any method but GET/HEAD/OPTIONS
 whatever the route's capability (the notification bell's PUTs need `content.read`, the viewer still cannot clear
 it). Admin-only reads stay refused by POLICY; the role-filtered open reads (search, bell, tenant details) treat
-it like reviewer/content. No Booking access (`/auth/booking-token` → 403, `staff_authz.NO_BOOKING_ROLES`). Not
+it like reviewer/content. No Booking access (Booking reads only `booking-*` groups; the CIS bridge is retired, AA-911). Not
 assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
 Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
 readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the smoke session is
@@ -1992,45 +2714,173 @@ of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kep
 legacy password login (`/auth/admin-login`, kept for Booking until ADR 0006 Phase 2); Booking keeps a thin
 profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 
-### Booking staff token (AA-680)
+### Booking staff token (AA-680) — retired (AA-911, S271)
 
-CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
-`api/main.py`, key handling in `api/core/booking_jwt.py`:
+CIS no longer mints AA-Booking tokens. `POST /auth/booking-token` and `GET /auth/.well-known/jwks.json` are gone (404)
+and `api/core/booking_jwt.py` is deleted: since the staff frontends run on ECS on their own hosts (root ADR 0019 d23),
+Booking staff sign in with the Cognito WORKFORCE `booking-staff` client only, and Booking accepts only the WORKFORCE
+issuer, its roles (finance included) from the `booking-*` groups. The signing-key secret
+`aa-cis/dev/booking-jwt-signing-key` has no reader and is scheduled for deletion (root secrets register).
 
-Status (S245, owner decision): the bridge is **kept on purpose**. Booking production signs staff in through
-Cognito WORKFORCE (Booking roles from `booking-*` groups), but Vercel previews of the Booking admin have no
-registered Cognito callback, so the legacy CIS password → `/auth/booking-token` path is still their only staff
-sign-in. Removing these endpoints, the Booking bridge issuer and the signing key moves to a follow-up that first
-designs a preview sign-in. Do not delete them as dead code.
+### Tenant control plane (AA-1028 R1, root ADR 0019 d1 / d2)
 
-- `POST /auth/booking-token` — needs a CIS **HS256** staff session (a Cognito session cannot mint one until
-  Booking Phase 2): the `cis_admin_token` JWT as an `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
-  (must be `is_active`; the role comes from the row, not the session). Returns
-  `{access_token, token_type: "Bearer", expires_in: 900}`. 401 for no/invalid/tenant session or an
-  inactive user; 503 when the signing key is not configured.
-- `GET /auth/.well-known/jwks.json` — the public keys (`kty=RSA`, `use=sig`, `alg=RS256`, `kid`),
-  current key first, then `previous` keys, then pre-published `next` keys.
-  `Cache-Control: public, max-age=600`.
+CIS `shared` is the master of the tenant account, lifecycle, plans, subscriptions and entitlements; `crm.tenant` and
+`booking.b2b_partners` become read-only projections (their pull jobs, R1 slices 2-3). Storage (CIS 353-355):
 
-Token: RS256, header `kid`. Claims `iss=https://api-cis.lumiguides.it.com`, `aud=booking`,
-`sub=<admin_users.id>`, `name` and `preferred_username` (= username; the token carries no email),
-`cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
-Booking must verify signature via the JWKS (select by `kid`), pin `alg=RS256`, and require `iss`,
-`aud=booking` and `exp`. Booking MUST re-fetch the JWKS once when a token's `kid` is not in its
-cached copy (rate-limited, e.g. at most once per 60 s), then reject if the `kid` is still unknown.
-Booking maps `cis_role` to its own roles (see the mapping above).
+- `shared.tenants.account_status` (lead, applied, trial, active, past_due, suspended, offboarding, closed) leads the
+  lifecycle; the trigger `tenants_account_status_sync` keeps the legacy `is_active` / `cancelled_at` in step both ways,
+  so the AA-797 routes below keep working (PATCH is_active false -> suspended, offboard -> offboarding, restore ->
+  active). In service = trial, active, past_due. Also `suspend_reason`, `data_region` (us), `kind` (agency, demo,
+  internal; `is_canary` stays the CRM's `is_synthetic`), `time_zone`, the bill-to fields (DM-6.1 tagged, never served
+  to other apps), `segment`, and the one Dev pilot marker `is_pilot` + `pilot_ends_at` (ADR 0019 d16).
+- `shared.entitlement_feature` (the feature keys, a value kind, unit and product), `shared.plan` (content, crm per
+  seat, tripplanner per site; starting prices are policy data, NULL = not priced), `shared.plan_feature`,
+  `shared.tenant_subscription` (one per tenant and product, Stripe status vocabulary; an add-on needs a live content
+  row), `shared.tenant_entitlement_override` (per-tenant exceptions with a reason, optional expiry, `enabled = false`
+  takes a feature away).
+- Until the slice-2 saga writes subscriptions, the bridge trigger `tenants_content_subscription_ins` / `_upd` (CIS 355)
+  keeps the content subscription in step with `shared.tenants`: created at tenant create on the live plan of
+  `plan_tier` (`shared.plan.tier`), moved on a tier change, canceled with the add-ons on offboarding / closed, active
+  again on restore. The admin routes write no subscription themselves.
+- The resolver `shared.v_tenant_entitlement_resolved` (live): override > `shared.tenant_ai_budget` (as the
+  `ai.budget_usd_monthly` override; the table is not retired yet) > the plan of a live subscription.
+  `shared.tenant_entitlement` is its materialisation, written only by `shared.tenant_entitlement_sync(tenant)`, which
+  triggers on every input call; `shared.tenant_entitlement_sync_due()` re-syncs expired overrides (called by the hourly
+  `tenant_account_tick`, slice 3). `shared.v_tenant_entitlement_v1` is the contract view.
+- `shared.tenant_account_event`: the append-only feed, written only through `shared.tenant_account_emit()` (the
+  writer's label from the transaction setting `aa.actor`, never served). A new writer of `shared.tenants`,
+  `tenant_subscription`, `tenant_entitlement_override`, `plan_feature` or `tenant_ai_budget` needs the CIS 353 grants
+  (the triggers run as the writer, MIG-6).
+- `shared.tenant_addon_request` (CIS 374, AA-1036 R3, ADR 0019 d7): the add-on requests an agency sends from the agency
+  app ("Request add-on": `POST /v1/account/add-on-requests`, Content studio owner only; `GET /v1/account/add-ons` is the
+  app's active / requested / available list) and the staff decision in Tenant 360 › Subscription
+  (`api/routers/admin_tenant_addon_requests.py`; admin, or the tenant's account manager for its own book:
+  `tenant.book.write` + `require_tenant_scope`, clarifications TL-7 step 4): an approval (refused 409
+  `tenant_not_in_service` unless the account is in service: status, `is_active`, `cancelled_at`; 409
+  `already_subscribed` when the add-on is live by now) attaches the plan through the `tenant_provision` saga (attach
+  mode with `only_new`: a live add-on is never changed, its plan and seats stay `tenant.write` / `billing.write`;
+  request key `addon-request:<id>`, enqueued in the same transaction) and then shows its `setup` from the job
+  (in_progress / done / failed), a decline carries a reason the agency sees. Every attach saga closes the pending
+  requests of the products it made live (approved by the saga actor). "View as tenant" reads
+  `GET /v1/account/add-ons` (admin and customer_success only, `ROUTE_CAPS`; never the POST). At most one pending request per tenant and product; audited
+  (`tenant.addon_requested`, `tenant.addon_request_approved` / `_declined`); a new request rings the staff bell
+  (`tenant.addon.requested`, admin + customer_success). Rules: `services/tenant_account/addon_requests.py`.
 
-Key material: Secrets Manager `BOOKING_JWT_SECRET_NAME` (default
-`aa-cis/dev/booking-jwt-signing-key`), JSON `{"kid", "private_key_pem", "previous": [{"kid",
-"public_key_pem"}], "next": [{"kid", "public_key_pem"}]}`, cached 10 min in-process and read off
-the event loop (bounded 2 s connect / 3 s read timeouts). A missing or malformed secret gives 503 on
-both endpoints and never blocks startup; a blank or repeated `kid` in `previous`/`next` counts as
-malformed (the last good keys keep serving and an error is logged). Rotation, three steps so no
-verifier ever sees an unknown `kid`: (1) add the new public key under `next`, wait ≥ 20 min (CIS key
-cache 10 + Booking JWKS cache 10); (2) put the new private key and kid in place, move the old public
-key to `previous`, empty `next`; (3) after ≥ 25 min (key cache 10 + token 15) drop the `previous`
-entry.
-This is separate from the HS256 `JWT_SECRET` used for CIS sessions — Booking never receives that.
+- CIS 356 (slice 2, review fixes): a non-plan candidate of a platform key (an override, the legacy AI budget) needs a
+  live **content** subscription (an offboarded tenant keeps no `ai.budget_usd_monthly`); `shared.tenants.rate_limit_rpm`
+  is mirrored as `content.rate_limit_rpm` (source override, rank above an explicit override) when it differs from the
+  live content plan's value, and the trigger `tenants_rate_limit_resync` re-syncs on an RPM change. The column stays
+  the limiter's source (`api/middleware/rate_limit.py`) until slice 3 moves the limiter onto the entitlement.
+- CIS 357 (slice 2): `catalog.v_tenant_account_v1` (catalog recipe, SELECT to `booking` only; contract
+  tenant.entitlements.v1 1.1): one row per tenant (id, name, account_status, suspend_reason, in_service, kind,
+  is_pilot, trade_book) for Booking's `bk_tenant_pull`, which projects every tenant into `booking.b2b_partners`.
+- **One-action provisioning (slice 2):** the `tenant_provision` saga on `shared.job`
+  (`services/tenant_account/provision.py`, `services/jobs/tenant_provision_job.py`, routes in
+  `api/routers/admin_tenant_provision.py`, admin role, `tenant.write`): `POST /admin/tenants/provision` creates a tenant
+  (the same rows as `POST /admin/tenants`; no tenant API key, AA-1036) with its content subscription
+  (the 355 bridge, active, or trialing with `trial_days` since slice 3) and optional crm / tripplanner add-ons;
+  `POST /admin/tenants/{id}/provision` adds or changes add-ons of an existing tenant; `GET
+  /admin/tenants/provision/{job_id}` reads the job. Idempotent per `request_key` (job key `tenant_provision:<key>`; the
+  database steps are one transaction that writes the audit row naming the key, so a retry after a commit returns the
+  stored outcome). The feed events carry `aa.actor` = `job:tenant_provision:<job id>`. The CRM (`crm_entitlement_pull`,
+  plan / seats / allowed features / CIS lock) and Booking (`bk_tenant_pull`) projections follow by themselves; creating
+  the CRM agency itself and inviting its owner stay on Platform › Agencies (the relay uses the staff's own WORKFORCE
+  token, which a job does not have). Platform › Agencies shows the CRM allowed features read-only once the CRM
+  projected the agency from CIS (crm.ops.v1 1.11 `managed_by` cis) and still edits them while it is `managed_by` ops. The bridge triggers of 355 stay: `POST /admin/tenants`, PATCH, offboard and
+  restore still write only `shared.tenants`.
+- Platform › Agencies shows the CRM's allowed features read-only (crm.ops.v1 1.11: the CRM refuses the L1 write with
+  409 `entitlements_managed_by_cis`; they follow the tenant's CRM subscription and overrides here).
+
+**Slice 3** (`docs/implementation-notes/AA-1028-l9-r1-slice3.md`):
+- **Plans & add-ons** (`/admin/tenants/plans`; API `api/routers/admin_plans.py`, rules
+  `services/tenant_account/plans.py`): list / create / edit / retire plans and their feature rows, admin only,
+  versioned (`shared.plan.version`, a stale write is 409 `version_conflict`), audited (`plan.created` / `.updated` /
+  `.retired`, before / after). An edit re-syncs every subscriber at once; a retired plan takes no new subscription,
+  current subscribers keep it. Product, key and tier never change; a tier plan must give `content.rate_limit_rpm`
+  (a whole number) and list `ai.budget_usd_monthly` (a number, 0 = none included; NULL only on `internal`) and
+  `content.rewrite`. A limit the plan has is never dropped by an edit (`limit_removal_refused`: "no row" = no limit),
+  platform keys (`ai.*`, `policy.*`) go on content plans only, counts / seats / days / RPM are whole numbers within
+  int4 and the RPM at most 10,000. An RPM edit also moves `shared.tenants.rate_limit_rpm` (what the limiter enforces) of every
+  tenant on the plan whose column still equals the old value; a tenant with its own RPM (PATCH) keeps it.
+- **Tenant 360 › Subscription** (`frontend/app/admin/tenants/_components/Tenant360Subscription.tsx`; API
+  `api/routers/admin_tenant_subscription.py`, `services/tenant_account/subscription.py`): subscriptions, the resolved
+  entitlements with their source, overrides (PUT / DELETE `…/entitlement-overrides/{key}`, reason required, optional
+  end, audited `tenant.entitlement_override_set` / `_removed`; `enabled = false` is how staff take a flag away; a
+  limit is stopped with 0, never "off", which would remove it; `content.rate_limit_rpm` is not overridable (PATCH the
+  tenant) and `content.rewrite` needs a number),
+  add-ons through the saga (attach / change, and `POST /admin/tenants/{id}/provision/cancel`, saga mode `detach`).
+- **Trials**: the saga's `trial_days` (1-60) starts the account in `trial` and the subscriptions `trialing`; the hourly
+  job `tenant_account_tick` (`services/tenant_account/lifecycle.py`, queued by the api's ops sampler, key per UTC hour,
+  `TENANT_ACCOUNT_TICK=off` stops it) moves an ended trial to `active` (finance recorded `paid_through` covering
+  today) or `past_due` (grace, service goes on) and the account out of `trial`, calls
+  `tenant_entitlement_sync_due()`, and reports a pilot past its end (no change). Until the tick moves it, an ended
+  trial stays live in the resolver (CIS 361: source `trial`, `expires_at` in the past), so nothing (the AI budget
+  included) drops at `trial_ends_at`; CIS 361 also takes a platform key from the content plan only (tie-break on
+  `plan_key`).
+- **Billing from Booking** (AA-1037 R4, root ADR 0019 d9): every agency invoice is issued in AA-Booking. Booking reads
+  `catalog.v_tenant_billing_v1` (CIS 377: subscriptions with plan prices and the bill-to fields, SELECT to `booking`
+  only) and publishes `booking.v_tenant_billing_status` (bk-042, SELECT to `cis_app`). The hourly job
+  `tenant_billing_tick` (`services/tenant_account/billing.py`, queued by the api's ops sampler, key per UTC hour,
+  `TENANT_BILLING_TICK=off` stops it) writes a newer `paid_through` to the live subscriptions, moves `warn` -> account
+  `past_due` + the bell `tenant.billing.overdue` (once a day; tenant, admin, finance), `past_due` -> `suspended` with
+  `suspend_reason` `billing` (`tenant.billing.suspended`), and `ok` again -> back in service (only a billing suspension
+  is lifted). On Dev only `demo` tenants move. Fail-soft without the Booking view (`skipped`). Tenant 360 › Billing
+  shows the same view row for one tenant above the usage meters (`GET /admin/tenants/{id}/booking-billing`,
+  `billing.tenant_snapshot`: status, overdue amount per currency, paid through, warn / suspend days, next to the
+  account and live subscriptions; read only, `available: false` without the view; the Billing tab's rule:
+  billing.read, or tenant.book.account.read on the own book) with "Open in Booking" (`lib/apps.ts
+  bookingAgencyInvoicesUrl`).
+- **TripPlanner tenants** (AA-1038 R5 slice 2, root ADR 0019 d10; `docs/implementation-notes/AA-1038.md`): CIS 379
+  adds `shared.tenant_tripplanner_site` (per tenant: `theme` = kit token name -> `#rrggbb`, CHECKed, at most 4 kB;
+  `locale` en | vi; no RLS, cis_app DML, rule a allowlist) and `catalog.v_tenant_tripplanner_v1` (catalog recipe,
+  SELECT to `tripplanner` only; contract tenant.entitlements.v1 1.4): one row per tenant with a TripPlanner subscription
+  (kind internal excluded) with slug, trading name, kind, account status, `in_service`, `served` (in service and
+  `tp.hosted` live), `tp_launcher`, `tp_branding` (BO-8 badge), theme and locale. TripPlanner answers `/{slug}` only for
+  a served row. It also seeds the demo tenant `aa-tripplanner` (`00000000-0000-0000-0000-000000000002`, kind demo,
+  plan_tier internal, a `tripplanner.hosted` subscription), the soft key of every TripPlanner row since tp-025. A bound
+  tenant reads AA master catalogue rows only (`catalog._live_tour` keeps the master tenant). No admin editor for the
+  site row yet (kit brand token slice).
+  **Slice 3 (CIS 390, contract tenant.entitlements.v1 1.5; `docs/implementation-notes/AA-1038-r5-slice3.md`):** the site
+  row gains the lead route of a tenant without the CRM (`lead_channel` none | webhook | email, `lead_webhook_url` https,
+  `lead_email`; CHECKed, no secret); the view appends `crm_core`, the resolved `lead_channel` (crm when `crm.core` is live)
+  and the target of that channel only; the new view `catalog.v_tenant_ai_budget_v1` (SELECT to `tripplanner` only) serves
+  the tenant's resolved `ai.budget_usd_monthly` (`budget_source` entitlement / disabled / none) and its ledger spend this
+  UTC month on every app, so TripPlanner caps its AI stages per tenant (failing closed) and its ledger rows (now carrying
+  the tenant) count in the same pot as the T-stages. The **runtime brand-token layer** is kit core
+  `frontend/app/_kit/core/brandTheme.ts` (tokens profile, import-free; root ADR 0016 amendment): a tenant theme becomes
+  one CSS block over the accent family of `--aa-*` (light: every accent token that passes the WCAG pairs, the label
+  colour picked for contrast; dark: the accent only when it keeps 3:1 on the dark card), checked by
+  `lib/kitBrandTheme.test.mjs`. The lead route has a Tenant 360 editor (S272 follow-up): Subscription tab › TripPlanner
+  lead route, `GET` / `PUT /admin/tenants/{id}/tripplanner-site/lead-route` (read: the Subscription tab's rule; write:
+  tenant.write, admin; audited `tenant.tripplanner_lead_route_changed`; `services/tenant_account/tripplanner_site.py`).
+  The PUT refuses (422 with the field) a webhook URL that is not https, not the 390 CHECK's shape, or names a host that
+  cannot be public: an IP literal outside global unicast (IPv4 / IPv6, mapped / NAT64 / 6to4 unwrapped, legacy IPv4
+  spellings) or an internal name (one label, `localhost`, `*.local`, `*.internal` ...). No DNS lookup in CIS:
+  TripPlanner checks the resolved addresses again before storing a lead and before each POST. Still no editor for the
+  theme (set by a reviewed `run-script` on Dev until it ships).
+- **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
+  `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
+  entitlements (`useContentTiers`: the live public content plans).
+- **AI budget = the entitlement** (`shared/cost_guard.py`): the gateway's tenant budget is `ai.budget_usd_monthly`
+  (thresholds from the AA-1016 row if any, else alert 80 % / approval 100 % / hard stop), and `adhoc_*` stages count as
+  tenant spend like T-stages (`shared/llm_client/tenant_budget.is_tenant_spend_stage`). It fails closed: a 0 USD
+  budget stops the first call whatever the AA-1016 row's `hard_stop` says, a disabled override of the key reads as 0,
+  and a tenant with no resolved key and no AA-1016 row falls back to its (not canceled) content subscription plan's
+  value, never "no budget". Tenant 360 › Cost shows this effective
+  budget and its source (`tenant_ai_budget.read_one` → `effective`).
+- **Dev guard** (root ADR 0019 d16, `services/tenant_account/dev_guard.py`): on Dev (`ENVIRONMENT` exactly `dev`) a new
+  tenant defaults to `demo` (synthetic) in `POST /admin/tenants` and the saga; an `agency` is refused unless the saga
+  creates it as the one pilot (`pilot_weeks` 1-8). Existing rows keep their kind.
+- **Pilot protections** (AA-969 part 2, root ADR 0019 d16): clean-up never touches the pilot tenant. The retention
+  kinds of tenant rows (`retention_llm_call_log`, `retention_tenant_api_usage`) leave its rows out
+  (`services/retention/policy.py` `NOT_PILOT`; the rollups still count them), and the E2E identity's "synthetic
+  tenant" check (`api/core/e2e_staff.py`) is false for it whatever its canary flag. Not changed, with reasons in
+  `docs/implementation-notes/AA-969-l1-aa969-d16.md`: the A1-A3 waves (AA's own catalogue, not tenant data), the
+  tenant's own T2 / T7-T9 jobs, the ADR 0015 retirement propagation, `data_erasure` (approved DRY RUN process),
+  the platform retention kinds (`retention_job`, `retention_decision_log`, `retention_cost_explorer_snapshot`).
+
+Not yet: retiring `shared.tenant_ai_budget` into overrides, the billing tick (`past_due` -> `suspended` after the
+grace), moving the limiter onto the entitlement (it still reads `shared.tenants.rate_limit_rpm`, mirrored by CIS 356).
 
 ### Tenant lifecycle (AA-797)
 
@@ -2043,14 +2893,14 @@ A tenant (`shared.tenants`) is in one of three states, derived from two columns
   deactivated" to the tenant's JWT. The PATCH clears the 30 s Redis `tenant_meta:{id}` cache, so
   this applies at once.
 - **offboarded**: `cancelled_at` set. Reached only through `POST /admin/tenants/{id}/offboard`,
-  which needs a reason. That call revokes the key (`api_key_hash = 'REVOKED_' || id`), sets
-  `is_active = false`, removes the tenant from the Jev allow-list (snapshotted in the audit row) and
+  which needs a reason. That call sets `account_status = 'offboarding'` (the CIS 354 trigger keeps
+  `is_active = false` and `cancelled_at` in step; AA-1036 dropped the old `REVOKED_` key marker), removes the
+  tenant from the Jev allow-list (snapshotted in the audit row) and
   cancels its QUEUED `shared.job` rows (running jobs finish). It deletes no data or setting.
 
-PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/{id}/restore`
-(Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
-re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
-revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
+PATCH on an offboarded tenant returns 409. `POST /admin/tenants/{id}/restore`
+(Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `account_status = 'active'`,
+re-adds the snapshotted Jev allow-list row (no key is issued, AA-1036); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
 data erasure is a separate step after offboarding plus a retention window, with explicit approval: the
 `data_erasure` job (AA-839, see the job runner section) — DRY RUN by default, apply OFF behind
 `ERASURE_APPLY_ENABLED`; after an apply the tenant cannot be restored.
@@ -2209,8 +3059,8 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   >= 50 ms logs `aa859_main_pool_wait` (capped per interval), and an acquire with no timeout of its own gives
   up after 5 s (C2.3g) with ERROR `aa859_main_pool_acquire_timeout` (a 500, instead of hanging to the API Gateway
   30 s limit). Main pool size: the literal in `api/main.py` (source of truth, read by the Infra connection
-  budget check). Per-role connections are alarmed
-  (`AA/RDS RoleConnectionLimitPct`, AA-832, published by the api's ops metrics sampler, AA-751).
+  budget check). Per-role connections are checked by the api's ops sampler (`rds_role_connections`, > 80 % of the
+  limit -> admin bell + alert e-mail; S263, was the AA-832 `AA/RDS RoleConnectionLimitPct` alarms).
 
 ## Boundaries — what this repo does NOT do
 
@@ -2274,6 +3124,52 @@ Distinct from Facts Entry (tenant scope) below — same table (`acp_shared.facts
 tells them apart, never merged.
 _Avoid_: Fact (bare), reference data.
 
+**FactSheet (AA-1047, root ADR 0020)**:
+The facts one write rests on, built by code (`services/quality/factsheet.py`): typed, numbered lines, each with
+its provenance (`source_raw`, `human_verified`, `tenant_asserted`, `llm_derived`, `external`) and, for a tour,
+a pointer into the supplier source; plus what the builder left out and why. Two builders: the **tour builder**
+(S1 / T2: the raw source tour, rendered as the S1 writer v2 FACT SHEET) and the **route builder** (T9: seed +
+Facts Entries + brand / audience / trip / destination lines, rendered as the gates' SOURCE). `render()` is
+byte-equal to what each workflow read before W1. Stored once per distinct input in `acp_shared.fact_sheet`
+(CIS 386, `services/quality/factsheet_store.py`, best-effort) and named by `generated_content.fs_id`,
+`tenant_tour_versions.fs_id` and `content_piece.writer_input.fs_id`. The brief is never a FactSheet line.
+_Avoid_: fact pack, source bundle, grounding text (the old names of its parts).
+
+**Lineage (AA-1052, root ADR 0020 layer 3)**:
+The versions one writer output was made with, from stored fields only (`services/quality/lineage.py`): `policy_sha`,
+`fs_id` (the FactSheet), `prompt_version` (the writer's own system-prompt sha, plus the registered version of every
+stage in the object's ledger rows) and `route_config_version` (stamped at the exit, plus the versions the ledger
+trigger stamped on its calls). The writer's store step writes `lineage: {v, policy_sha, route_config_version}` ONCE,
+next to the contract record (`generated_content.metadata.lineage`, `tenant_tour_versions.judge_breakdown.lineage`,
+`content_piece.writer_input.lineage`; no I/O: the route version is the one the process's gateway last read, just
+refreshed by the writer's own calls); a later exit (approve, publish, human edit, re-validation, admin sentence apply)
+replaces only `final_contract`, so the object's lineage stays the writer's. Each exit record also carries its own
+`final_contract.lineage` (kept in the S1 `final_contract_log` entries): the policy in force at that exit, with a route
+version only at a writer exit. An eval result reads its run's fingerprint (`config_fp.parts.policy`,
+`route_config_version`) and its `judge_version`; it has no FactSheet. `GET /admin/quality/lineage/coverage?days=`
+(the share of recent objects carrying each field) and `GET /admin/quality/lineage/{s1|t2|t9|eval}/{id}` (one object,
+with `missing` / `complete`); ops.read or lab.read; ids and shas, never text.
+_Avoid_: provenance (that is a FactSheet line's source class), audit trail.
+
+**Claim shadow (AA-1050, root ADR 0020 W4, D6 / D7)**:
+The pinned claim instrument calibrated in W2 (`services/ground_truth/r1.py`, extraction mode, R1 prompts byte for byte,
+3 votes, 2 agreeing to decide) run beside a live decision without acting on it (`services/quality/claim_shadow.py`):
+after a T9 piece is finalized (baseline: its final `F9_cta_fact` entry) and after a T2 version is saved (baseline: the
+brand-claim check in `judge_breakdown.brand_claims`), and on the replay corpus (`python -m
+services.quality.claim_shadow_replay`, DRY RUN default). One row per object in `shared.claim_shadow_verdict` (CIS 391,
+no text: spans, claim hashes, classes, votes) with a typed reason, the agreement with the baseline and what the
+per-(writer, class) enforce map would do (`shadow_action`; every class warns until a class is in both
+`ENFORCE_OVERRIDES` and the instrument's passing record `CALIBRATED`, both empty). A miss, refusal, unusable reply,
+split vote, answer from another model / connection, caller error or the spend guard is `unverified`, never a pass;
+the tenant's CTA / brand name spans never count. Cache first (key = instrument + votes + prompt sha + each field's
+prompt), then a hard spend guard over the `claim_shadow` stage's ledger window (`CLAIM_SHADOW_CAP_USD`, default 0.30,
+max 0.50; `CLAIM_SHADOW_WINDOW_DAYS`, default 30; an unreadable ledger closes it). Switch `CLAIM_SHADOW=on` (default
+off: no read, no call). Calls go through the gateway on stage `claim_shadow` (platform stage, role judge,
+`{"shadow": true}`), never change a status and never raise into the job. Read side: `GET
+/admin/writing-memory/claim-shadow/summary` (Writing Lab read: counts, cells, reasons, spend vs cap, a seeded sample of
+disagreement ids). The enforce flip (holds for measured classes, truth-cut clause first) is a later, measured change.
+_Avoid_: shadow judge (the gateway's model shadow, `llm_shadow_log`, is a different thing).
+
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):
 `served` (live source version + live Master), `paused` (Master inactive, or a supersede waiting for the new
@@ -2296,9 +3192,41 @@ TripPlanner purge (AA-987): every lifecycle event gets one `tripplanner_purge` j
 `tripplanner_purge:<event idempotency_key>`, enqueued after commit by `run_after_commit` and by the publish of
 `process_export`, plus a sweep in the api ops sampler for any event without a job, last 2 h). The job re-reads the
 event from `gold_aa_internal.tour_lifecycle_event` and POSTs it, HMAC-signed (`X-AA-Signature: t=..,v1=..`, secret
-`aa-cis/<env>/tripplanner-revalidate-hmac`, same value as TripPlanner's Vercel env `CATALOG_REVALIDATE_SECRET`), to
-`TRIPPLANNER_REVALIDATE_URL` (default `https://aa-tripplanner.vercel.app/api/revalidate/catalog`), which purges the
-TripPlanner CDN / ISR caches. 4 attempts with backoff; not configured = succeeded `skipped: not_configured`.
+`aa-cis/<env>/tripplanner-revalidate-hmac`, same value as TripPlanner's env `CATALOG_REVALIDATE_SECRET`), to
+`TRIPPLANNER_REVALIDATE_URL` (default `https://tripplanner.lumiguides.it.com/api/revalidate/catalog`, the public host
+served by the TripPlanner web ECS service behind CloudFront since AA-1038 retired its Vercel project; Infra sets the
+same value), which purges the TripPlanner ISR / CDN caches. 4 attempts with backoff; not configured = succeeded `skipped: not_configured`.
+Tenant fan-out (AA-1039 R6, root ADR 0019 d20; CIS 360): every `retired` / `restored` event also gets one
+`tour_retirement_fanout` job (`services/tour_lifecycle/fanout.py`, `services/jobs/tour_retirement_jobs.py`; same
+after-commit enqueue + 2 h sweep). `retired`: each live post of the key's tours gets a `tour_retired` row in
+`acp_shared.content_compliance_flag` (WordPress: `draft_after_notice`, the page goes to draft at `draft_due_at` =
+event + `acp_shared.tour_retirement_policy` days, default 7, through a `retired_page_draft` job the sampler enqueues
+due-now; Facebook: `notice_only`, nothing deleted); stale `requested` publish claims are closed; every derivative
+tenant gets an `acp_shared.tenant_tour_notice` row, mailed at once (`tour_notice_email`, SES) when it still has live
+posts, else in the daily digest (08:00 UTC). A fan-out replay re-enqueues every unmailed `immediate` notice of the
+event (mail job key `tour_notice_email:<notice_id>`), and the digest also takes an `immediate` notice left unmailed
+for an hour (a dead mail job); a mail job claims its notices before sending, so the two never both send one. A second
+`retired` event of a retired key (a reason change) adds no flag, notice or mail. `restored` resolves the open flags
+and writes the "back on sale" notice only for tenants whose latest notice is `retired` (never after a pause). Before
+CIS 360 is applied the fan-out fails retryable and the sampler re-queues those jobs once the tables exist.
+Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
+verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
+**AA-subject gate** (AA-1039 R6, d21; `services/acp_shared/subject_gate.py`, no LLM): when T9 finishes a piece
+(`_finalize_piece`) and again right before `POST /v1/publish-log/{id}/publish`, a piece must be about a served AA
+tour, a live AA atom or a Slate Segment with a live member (brand content with no sales link and a non-sales goal is
+exempt), and every sales link (the CTA, a link whose text / path has a booking word, or a product word with a
+commercial tour host or a `/tours/<page>` path) must go to an AA host, a trip
+page of a served tour, the tenant's own page of a served AA tour (`acp_deliver.tenant_tour_pages`) or the TripPlanner
+site. A failing piece has one open `subject_gate` flag; the publish answers 409 `content_needs_change` with the flag's
+content-style `tenant_message`, and `/pending` items carry it as `needs_change`; when the gate cannot answer the
+publish fails closed (503 `content_check_unavailable`, "try again"); a repeat publish of a revision already live or
+in flight is not checked again. Links are read from the HTML the publisher sends (the same markdown render, every
+`<a href>` through an HTML parser, entities decoded, `//host` and scheme-less hrefs resolved) plus bare and
+scheme-less URLs of the text and the raw piece; a trip page link counts only with a real uuid; the TripPlanner hosts
+include the Dev domain `tripplanner.lumiguides.it.com`. Admin Tenant content QA › Compliance
+(`/admin/tenant-qa/compliance`, API `GET /admin/tenant-qa/compliance`, `POST …/{flag_id}/release`) lists both kinds;
+a release sends the `content_sha256` the gate read and is refused (409) when the text changed since; it lets exactly
+that text through. Flags are admin data; tenants never see them.
 _Avoid_: "delete" for a published tour (it is retired and can be restored); `raw_tours.lifecycle_stage` as a
 deletion signal (it is the sales phase).
 
@@ -2350,7 +3278,8 @@ _Avoid_: rank, weight, priority.
 
 **Route**:
 A consecutive-day span (2-5 days) of one tour's ranked, non-excluded Segments — a Blog-only
-concept (the only channel scored at Route grain instead of Segment grain). Rebuilt whole on
+concept: since AA-741 S271 the walk a Blog Segment Subject carries (the origin's `walk`); from AA-511 to S271
+Blog was proposed at Route grain, which left each agency one or two Blog Subjects ever. Rebuilt whole on
 every re-run (old rows are superseded, never deleted). Platform-wide since AA-545: identity is
 `(tour_id, first_day, last_day)`, no `tenant_id`.
 A blog request keeps a frozen copy of the Route's Segment ids (`angle_gate_request.route_segment_ids`).
@@ -2372,7 +3301,8 @@ _Avoid_: journey, family, group (Route Family, a distinct upstream concept, has 
 ### Tenant content (per tenant, from the Slate onward)
 
 **Subject**:
-One proposable (Segment or Route) × Channel pair, with a `state` (proposed/picked/used/cut), a
+One proposable (Segment or Route) × Channel pair (every Channel proposes Segments since AA-741 S271; Route
+Subjects are the Blog ones picked before then and stay valid), with a `state` (proposed/picked/used/cut), a
 `score` (copied from Atom Ranking or Route.score, never recomputed), and `cleared_bar_reason`
 (why it passed/failed that Channel's numeric Bar). One row = one thing a tenant can pick.
 _Avoid_: proposal, candidate, slot (Slot is the older, deprecated N7 term — do not reuse).
@@ -2399,6 +3329,17 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    first; a place appears at most once per Channel and on at most `MAX_CHANNELS_PER_PLACE` (3)
    Channels of one Slate. A Channel the tenant switches off loses its `proposed` rows on the next
    proposal and they are hidden from `GET /v1/slate` at once (picked/used rows stay).
+   **Blog** (AA-741 S271): Segment grain with the Bar demand >= 1,000 and questions >= 3, read from the Segment's
+   best market (lowest total_rank, its numbers together); a place the tenant already picked / used / cut on Blog
+   is never proposed there again (`one_piece_per_place`). The Blog pick fills `angle_gate_request.route_segment_ids`
+   with the walk: the current Route on the seed atom's tour that holds the Segment (merged ids followed, read through
+   `route_guard`, at least two Segments; when the seed's tour has none, a member of the same match grade on a tour
+   that has one). No Route = a single-place blog. A Blog piece is about its Subject's own moment (the **walk focus**,
+   `services/acp_shared/walk_focus.py`, S271 review): T8's Route digest names it FOCUS and the other moments CONTEXT
+   (an angle leading with another moment is re-ranked, three of them retried), T9 marks it FOCUS in the seed with the
+   WALK FOCUS rule (t9_write v3), so sibling Subjects of one Route get different articles. When that moment is off
+   the walk or thin, T8 and T9 both write a single-place piece; the Slate does not propose a Blog Subject whose own
+   seed is thin. A Route-grain Subject (picked before S271) keeps the whole-walk digest with no focus.
 
 A Segment Subject is offered and written only from its **seed atom** (AA-857,
 `services/acp_shared/subject_seed.py`): a live member on the tenant's own tours whose place IS the
@@ -2611,6 +3552,21 @@ the blog attempt-3 cut also takes F17 'cut it' items once F17 was repaired befor
 says to keep it (played-down hazard 'keep the hazard', family caveat 'add ONE') is never cut, merged or not,
 and an empty repair of a hazard sentence is not spliced; a multi-sentence cut checks every sentence in it
 (hook, CTA, FAQ question) and the sentence after it (orphaned pronoun).
+S271 W0 (AA-900, root ADR 0020 D6) — **stop and label**: attempt 3 no longer pays. A piece still failing after
+attempt 2 keeps the better of attempts 1 and 2 (the AA-528 guard) and is labelled at $0: no second repair, no third
+F9 judge call and no code truth cut (the blog cut, the LinkedIn F9 cut and the attempt-3 fallback cut above run only
+with `T9_LAST_ATTEMPT_MODE=legacy`, the rollback switch; a cut needs a passing measurement record for its class).
+A held piece always ends its `repair_log` with a label entry (`gate_targeted`/`repair_mode` `stop_and_label`, or
+`repair_mode` `label` when no paid attempt was skipped): `reason_codes` (one typed code per hold-capable failing
+gate, `gate_eval.HOLD_REASON_CODES`, plus `detector_degraded`), `kept_attempt`, `cost_usd` 0 and `failing`.
+Every attempt's `repair_log` entry lists **every failing gate** (`failing`, `gate_eval.failing_gates`: gate,
+source, blocking, may_hold, n, F9 `classes`), not only the first one `held_reason` names. **Interim F9 policy**
+(`services/acp_content_writing/f9_policy.py`, declared diff, `T10_F9_POLICY_MODE=legacy` rolls back):
+F9_cta_fact holds only on a quoted body claim with a why_not_in_source that names a concrete trip activity,
+service, time or view (`trip_promise_kinds`, D1/D4/D15); its violations keep those claims only. Every other F9 class
+warns (`blocking: false`, in the flags): place background and other unsupported claims, CTA_NOT_REFLECTED,
+TEXT_INTEGRITY, title / meta claims, a fact flag with no named claim. The F9 classes (`f9_policy.entry_classes`)
+keep `judge_unavailable` and `text_integrity` apart from the fidelity classes in every count.
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
@@ -2629,7 +3585,8 @@ _Avoid_: check, validator, rule (Gate is the specific automated-check object; "r
 
 **Piece**:
 One row of generated content for one (Subject, Goal, Angle) — carries `attempt_number` (max 3;
-attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone),
+attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone; since S271 W0
+attempt 3 is the $0 stop-and-label, so a stored piece has at most 2 unless the legacy mode is on),
 `gate_ledger` (every Gate's result on the persisted attempt), `status`
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
 Each failed attempt's `repair_log` entry also keeps that attempt's own trimmed ledger
@@ -2654,8 +3611,8 @@ data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_
 `gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
 `not_ready` means there is no content yet). The same rule covers T2 tour versions (see **Tenant
 projection** below). `writer_input` (migration 220) stores what the writer was given. Admins
-see everything on **Content Quality** (`/admin/content-quality`, AA-769), plus Content Trace and
-Platform Stats. An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
+see everything on **Content quality** (`/admin/tenant-qa/quality`, AA-769; was `/admin/content-quality`), plus
+Content Trace and the review log (Tenant content QA). An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
 an approved/held Piece from that drawer (S234): *suggest* is one cheap LLM call (stage
 `t9_repair`, logged with `content_piece_id`, nothing saved); *apply* is deterministic (span-text
 match under `FOR UPDATE`, the replacement re-checked by F1/F2/brand-forbidden/F11 and — with the
@@ -2734,6 +3691,20 @@ _Avoid_: model list, pricing table.
 The ordered list of Model Keys a Stage tries (primary first, then fallbacks), plus an optional
 shadow model that runs alongside for comparison and never changes the result. See ADR 0006.
 _Avoid_: fallback chain (the old hardcoded Haiku/Sonnet chain), routing.
+
+**Usage rollup** (AA-1045, CIS 372):
+`shared.ai_usage_hourly`, one row per UTC hour and dimension set (source llm / jev / dfs / geocoder, app, provider,
+account, model, stage, role, tenant, status, error class, traffic) with the summed requests, tokens, cost, latency sum
+and a latency histogram, built from the paid-call ledgers by job kind `ai_usage_rollup` (`api/services/usage_rollup.py`,
+`services/jobs/ai_usage_rollup_job.py`: queued by the api's ops sampler every quarter hour, re-rolling the last 6 hours
+for late rows, DELETE + INSERT per hour range, idempotent; a one-time backfill of the raw window; never an hour older
+than 175 days). Its totals equal the ledgers' for the same hours (`GET /admin/usage-explorer/rollup/check`,
+`scripts/aa1045/rollup_live_check.py`). One definition of each dimension per ledger, shared with the Calls tab's
+filters: `api/services/usage_dims.py`. The **Usage explorer** page (`/admin/usage`, AI & spend; spend.read: admin,
+finance, ai_ops) reads it (`api/services/usage_explorer.py`) plus the CRM's daily totals through crm.ops.v1 GET
+/llm/usage; its saved views are `shared.ai_usage_saved_view` (per staff member); a cell opens the Calls tab with the
+same range and dimensions (`since` / `until`, `tenant`, `model`, `account`, `role`, `error_class`, `product`).
+_Avoid_: usage report, analytics table.
 
 ### Jev decisions (platform)
 
@@ -2832,12 +3803,20 @@ to the 280 limits, stored redacted when it held tenant text, and not redrafted u
 Automatic runs are off unless the worker sets `WRITING_MEMORY_AUTO_MINE`; when on: ≥ 10 new pass signals since the
 last run, ≤ 2 a month, never during an open rerun wave. A manual run (admin, after a confirm step) is the 3rd. A
 failed run that spent money counts as a run.
+**R1 freeze** (AA-900 W0, root ADR 0020, `services/writing_memory/r1_gate.py`): until a writer has an R1 record (a
+finished `prompt_eval_runs` row, pipeline `writing_memory`, run_kind `r1`, verdict `pass`), mining and the
+preference-summary drafter refuse at $0 (`mining.decide_run` first check; a run drafts only for writers with a
+record), and a first activation of a release with content or of an L0 lexicon rule is refused with code `r1_missing`
+(the Releases drawer and the candidate drawer show why). Rollback, retire, the memory switch, empty releases (release
+0, the rollback drill), R0 and R2 / shadow runs are not frozen. Break-glass: `WRITING_MEMORY_R1_GATE=off` (api and
+worker); the summary's `mine_trigger.r1` shows the switch and the frozen writers.
 Signals reach `pass` through the fact filter (`writing_signal_fact_filter`, `fact_filter.py`, $0, daily from the
 api ops sampler while signals are pending): an edit that adds a number, time, price or promise word the text and
 the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill
 (`writing_signal_backfill`, `backfill.py`) copies the pre-AA-916 admin sentence audit rows, T2 tenant-edit versions,
 T9 failed attempts (system signals, evidence for R0) and A1 brand-audit lessons, idempotently. Admin page
-`/admin/writing-memory` (Signals and Candidates tabs, plus a Guide tab: `frontend/app/admin/writing-memory/guide.ts`
+`/admin/lab/writing-memory` (was `/admin/writing-memory`; Signals and Candidates tabs, plus a Guide tab:
+`frontend/app/admin/lab/writing-memory/guide.ts`
 on the kit GuidePanel; `api/routers/admin_writing_memory.py`, admin only). A rule
 reaches a writer through a release (AA-919), except an L0 lexicon rule (below).
 **R0** (AA-918, `services/writing_memory/replay.py`, job `writing_memory_r0`, $0, no model call): the replay of one
@@ -2854,6 +3833,12 @@ a post-gate substitution; skipped when it is a declared signature word, or in th
 piece's `writer_input.writing_rules` lists what it got. Activation = an R0 on the current text with `l0_ok` (phrase
 drops to 0, no new hard stop, a replacement adds no number / place / time / price / service) + one admin click;
 rollback = one click (`active` → `rejected`, `rollback: …`). No active rule: the pack and prompt are unchanged.
+AA-900 W0 (ADR 0020: a gate holds only with a passing measurement record): the learned phrases are **warn-only** by
+default; the prompt still names them, but the gates block on the tenant's own words only (`l0.gating_forbidden`,
+`quality_gates.gating_forbidden`) and report a learned phrase as an `F2_style_warn` finding (`learned_hits`; a
+platform-truth or stock-superlative word stays on its own layer). `WRITING_MEMORY_L0_ENFORCE=on` restores the blocking
+F2_lexicon finding once W2 has measured it. R0 replays measure a rule as blocking whatever the switch
+(`l0.measuring_as_blocking`).
 _Avoid_: lesson (the frozen AA-132 rows), output rule (the retired N8 table), guideline.
 
 **Pinned Exemplar**:
@@ -2880,7 +3865,23 @@ CIS 287, AA-919 WM-18; ids only, the rule text stays in `writing_rule`). It pass
 text), R1 (re-score old outputs), R2 (golden-set run) and shadow, then becomes `active` only by one human click,
 never automatically. Statuses `draft` → `evaluated` → `approved` → `active` → `retired` (+ `rejected`); a `reverify`
 flag when the golden set, a model route or the gate taxonomy changed since its evidence (it keeps serving; a re-run
-needs approval). Activation needs its evidence twice: the API (`services/writing_memory/releases.py`
+needs approval). Since AA-900 W0 the fingerprint also holds `config_fp` (`services/writing_memory/config_fp.py`): one
+sha per component over every route row, `stage_model_params` row, catalog / deployment row and route order mode of the
+writer's path (stage prefixes s1_ / t2_ t3_ / t8_ t9_ t10_ plus the eval judge), the output-changing env switches
+(names stored, values hashed), the deployed prompt source of each registered path stage, the other active release a
+tenant release renders after, the active L0 lexicon rules and the owner's house style (`tenant_brand_rules` +
+`tenant_seo_config`: the AA master for A1, the tenant for a tenant release). A changed component maps to
+`model_route` or `prompt_version_mismatch` (the CIS 287 vocabulary); the scan's audit row and `GET
+/releases/{id}.config_drift` name the components and path stages. The env switches are the worker's (the writers run
+there; the api task carries other env): each record names its service, and only a worker scan compares them, against
+the release's own fingerprint when the worker drafted it, else against its worker-run R2 / shadow / R0 evidence. A
+component a read could not get ("unavailable") on either side is never a change. The scan runs after every llm-config
+route, switch, catalog, connection and route-control save of a path stage, after a release activation, rollback or
+retirement (same transaction), after an L0 rule activation or rollback and a staff house-style / SEO save, at worker
+start, hourly in the worker (a DB Migrate change without a deploy, a tenant's own brand save) and on demand. Each content write the
+KPIs read records how its writer answered: T9 `writer_input.writer_answer` (answered model, fallback_used, route
+position, connection, effort; admin-only), T2 `generation_meta.writer_answer`, A1 the existing
+`generated_content.model_editorial` / `fallback_used` columns. Activation needs its evidence twice: the API (`services/writing_memory/releases.py`
 `evidence_problem`, 409 with a code) and the DB (CHECK `writing_memory_release_evidence_check` + trigger
 `writing_memory_release_guard`): an `empty` release needs R0 (0 byte diffs over ≥ 20 inputs) + the AA-729 baseline
 eval; `lexicon_only` R0 only; `repair_hint_only` / `rules` an R2 pass + a shadow pass. One active release per writer
@@ -2920,8 +3921,16 @@ candidate release (or today's writers) against the golden set: the judge calibra
 (every run) and the stored controls re-judged by the current judge (stage `writing_memory_eval`, CIS 291; regenerated
 only in a `reverify` run), then probe (<= 3, traps first) -> tune ->
 holdout of the affected tiers, each candidate written through the real writer path (`eval_writers.py`; T9 = the first
-write only) and checked for a new hard fact class (counts only when the judge's kappa vs the labels >= 0.6), a QA
+write only) and checked for a new hard fact class (counts only when the judge's kappa vs the labels >= 0.6, and since
+S271 W0 only on a candidate verdict fail against a control verdict pass), a QA
 trace and another tenant's text (`eval_checks.py`); fail-only early stop; hard cap <= $10 a run from llm_call_log.
+S271 W0 (AA-900): controls are paired on (`sample_id`, `input_sha256`), and release 0 / an empty release whose eval run
+is the baseline of an older golden version uses this version's baseline (`details.control_run_stale`); the run is
+refused at $0 when a planned control is missing or calibration cannot be measured, and by default
+(`require_calibrated`) stops after calibration, before any writer call, when the judge does not count
+(`--calibrate-only` always stops there); `--judge-model` / `--judge-connection` pin the judge (identity in
+`judge_version` and details; a run with two judge identities is invalid, `details.error = judge_model_mixed`); the
+per-item reservation comes from the ledger (median logged candidate cost x 1.3).
 **Shadow** (WM-21, `services/writing_memory/shadow.py`, job `writing_memory_shadow`): the candidate on recent real
 inputs (20; T2 / Facebook 50; a social release for every channel 50 Facebook + 20 others; repair-hint-only <= 10; a
 tenant release + 2 inputs of another tenant; golden tours excluded), QA-trace and
@@ -3007,6 +4016,14 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   (`itinerary_utils`, `output_days`), validate's dash normaliser, the day gap check / `final_day_guard`,
   `places/validity`, `places/days`, the T2 day markers and the SQL twin `catalog._tour_day_text` /
   `v_tour.duration_days` (CIS 289) all apply it, so a ranged day is never folded into the day before.
+  Two written-day readers, on purpose (AA-1049 S273): `output_days` / `canonical_blocks` read only the canonical
+  "Day N — Title" heading (S1's storage contract and its SQL twin); `written_day_numbers` reads any written form (the
+  dash-fixed T2 "Day N: Title" / "Day N · Title", markdown or bold headings, a writer-JSON day list) and is the ONE
+  reader of the T2 final contract, the T2 orchestrator's Master slot check and the repair contract's days_kept, so
+  those day-count checks can never disagree. Its per-day twin `written_day_word_counts` (same day set) is the written
+  side of `graph.itinerary_day_gap` when validate_node checks a T2 tenant rewrite (T3 and the linear orchestrator
+  validate the dash-fixed text); S1 / A1 and `final_day_guard` keep the canonical reader. The day oracle
+  (`day_oracle.check`, shadow-only on a tenant rewrite) still reads `output_days`.
   `validate_node` runs the deterministic day oracle
   (`services/quality/day_oracle.py`: sub-day split, duplicate / out-of-order / skipped / extra day, departure
   mid-trip, count vs duration, `SOURCE_DAY_CONTRADICTION` — a source fault, never charged to the writer —
@@ -3106,6 +4123,14 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     already fail-closed on numbers and the hold adds review load, not safety, until AA-845 sets a ceiling.
   - Per job: `decide()` notes every zone=error verdict into a contextvar collector bound by the job worker
     (`shared.job.result.degraded`), so A3 / ingestion / S1 prefetch outages are counted without their code.
+  - **Instrument marks** (S271 W0, AA-900; `services/quality/route_guard.answer_marks`, set by the gateway on every
+    reply): `fallback_instrument` (a judge / validate / decide answer from route position > 0, or from nova-lite)
+    and `same_family_pair` (a judge of the same model family as a writer of the same output; the family trace is
+    bound per output by `route_guard.collect_output`: T9 piece, T2 version, S1 tour). On the reply
+    (`LLMResponse.route_degraded`), in the ledger (`quality_signal.degraded`) and in the collectors, severity
+    `count`: T9 flags the piece (non-blocking), S1 stores it in `metadata.degraded`, T2 in
+    `judge_breakdown.route_degraded`; no hold reads them yet. A writer at position > 0 carries `fallback_writer` on
+    its reply too (the AA-1042 note is unchanged).
   - **Repair contract** (`services/quality/repair_contract.py`): a repair may not fail a gate that passed,
     add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
     short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left
@@ -3144,6 +4169,22 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value
   `dismissed`).
+  - **S271 W0 safety interim** (root ADR 0020, AA-900; notes `docs/implementation-notes/AA-900-l16-w0-t2s1.md`):
+    the **hitl exit** (retries used up below the line) no longer ends the graph: `hitl_exit` → brand_audit →
+    grounding → revalidate (flag_fix skipped), so the day guard, route guard and degraded hold run on it too
+    (`metadata.exit_path = "hitl"`). The **approve** of an unedited version (`v1_pipeline.approve_review`, both the
+    admin alias and `/v1/pipeline`) must pass the auto-publish checks (`services/quality/approve_gate.py`: score
+    floor, hard codes, grounding ran with no unsupported sentence, brand audit not flagged-unfixed / manual_check):
+    else **409 `approve_blocked`** with the reasons, unless the body carries `override_reason` (recorded on
+    `review_queue.reviewer_notes`). A tour held only by the **elephant-riding policy** (D8; detector
+    `services/quality/elephant_policy.py` over every page field and the source, fail-safe negation, a bare
+    "elephant safari" in Sri Lanka is a jeep safari) is approved as `policy_keep`, and a human edit of one passes the
+    re-validation gate (`human_edit_gate_node`); flag_fix never edits such a tour. "Held only by the policy" is
+    `elephant_policy.is_policy_only_hold`: `FACT_CHECK_MANUAL_CHECK` as the only brand code AND a detector hit on
+    the version or its source; the code alone is not enough (the LLM audit also emits it for other fact checks,
+    and those stay blocked). The **S1 judge is off the live path** for a writer-v2 draft
+    (D9, `S1_JUDGE_LIVE` off by default; the brand audit then uses its deterministic pre-audit codes), and
+    `POST /admin/s1-batch/submit` answers 409 while writer v2 is on (the batch seeds a v1 draft).
 - **A3 — Master Content Pool**: `gold_aa_internal.published_tours` — a tour is "in Master
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
@@ -3279,6 +4320,27 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     admin signal only; tenants see it through the tenant projection (see **Tenant projection**).
   - **Live view and billing.** The tenant watches the rewrite live (streamed text, AA-637). Each
     rewrite counts against the plan quota; over-quota rewrites are billed (AA-640).
+  - **S271 W0 interim profile** (`services/content_generation/t2_interim.py`, switch `T2_INTERIM`, default on): the
+    t2_judge is report-only (score = validate's), no Jev tie-break, no median-of-3, no revalidate judge, no T3
+    full-graph rewrite round, status `ai_generated` only with validate's score over the line and no T3 hard code,
+    no copy of the Master's `quality_score` (NULL), em-dash fix inside T3 before every check. An **elephant-riding**
+    tour (Master text or raw source) is `policy_hold` v0 (D8): Master text verbatim + code-fitted SEO title / meta,
+    0 LLM calls, `needs_review` (the agency still receives it), `judge_breakdown.policy_hold`, a review row.
+  - **AA-1049 W3 linear orchestrator (opt-in, default off)** (`services/content_generation/t2_orchestrator.py`,
+    switch `T2_ORCHESTRATOR=linear`; unset / any other value = the graph + T3 path above, byte-equal to it): one
+    plain sequence (write -> code fixes -> verify -> route by the `t2` rows of
+    `services/acp_content_writing/route_table.yaml` -> sentence repair / meta regenerate / one field regen ->
+    select best -> one report-only judge call -> final contract -> save) reusing the graph's and T3's own steps (no
+    prompt change), a per-version budget (writer <= 2; every billed call counted on the pending version's
+    `generation_meta` before it is sent, its cost right after, with the best candidate) so a job retry never pays a
+    call twice and resumes without a new write, and a stricter status (any enforce finding left = `needs_review`). Dry
+    store seam `t2_store.py` (store, review row and checkpoints; no DB write); free replay
+    `scripts/quality/replay_aa1049_t2.py` (declared / undeclared / MISS buckets against a replay recorded on main).
+  - **Per-job trial of the W3 switches** (`services/quality/trial_flags.py`): a `t2_rewrite` / `t9_write` job
+    payload may carry `trial_flags` (`T2_ORCHESTRATOR`; `T9_SEO_BUILDER`, `T9_REGRESSION_GUARD_MODE`, only the
+    values the switch knows). Honoured for an audit tenant only (`shared.tenants.kind = 'demo'`, not the pilot);
+    anything else runs main's path. Scoped to the job's task (a ContextVar), never the worker env; the job result
+    records `trial_flags` (requested / applied / refused). No router sets it: paid trials enqueue it by script.
 - **T3 — QA Gate**: an automatic validate→repair loop (max 2 repairs) on T2's output. There is no
   manual tenant approval step: `status='approved'` is T3's own automatic result, not a button.
   - **Blocking and repair (AA-639).** T3 blocks only on `_HARD_BLOCK_CODES` and passes the specific

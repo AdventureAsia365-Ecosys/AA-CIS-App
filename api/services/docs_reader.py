@@ -33,6 +33,11 @@ asset (503) instead of serving it. Assets are staff tier: an asset whose access 
 readers only. The route sends it as image/svg+xml with a sandbox CSP, and the page shows it through <img>, where an SVG
 can neither run script nor fetch anything.
 
+AA-1042 (S270) — ``load_staff_page_by_id(page_id)``: one STAFF-tier catalog page by its catalog id (the English entry
+and its published translations), for a page that shows one fixed document outside /admin/docs (the AI gateway Guide
+tab, ARCH-01-ai-gateway). The entry is found in the manifest by id and read by the key the manifest names, never by a
+caller path; an entry the manifest marks owner (or anything but staff) raises ``DocsRestricted`` and is not read.
+
 This repo is public: it ships the reader only, no page content.
 
 load_manifest() is cached in process for CACHE_TTL_S; load_page() caches each body for CACHE_TTL_S too (bounded).
@@ -129,6 +134,10 @@ class DocsMissing(Exception):
 
 class DocsUnavailable(Exception):
     """Storage failed or an object is not in the expected shape."""
+
+
+class DocsRestricted(Exception):
+    """AA-1042: the page exists but is not staff tier (owner only): a by-id read never serves it."""
 
 
 def s3_prefix() -> str:
@@ -556,3 +565,35 @@ async def load_asset(repo: str, path: str, owner_read: bool,
     while len(_assets) > ASSET_CACHE_MAX:
         _assets.popitem(last=False)
     return data
+
+
+# ── one staff page by catalog id (AA-1042) ──────────────────────────────────────────────────────────
+
+async def load_staff_page_by_id(page_id: str, repo: str = "AA-Ecosys",
+                                client_factory: Optional[Callable[[], Any]] = None) -> dict:
+    """The English entry with catalog id ``page_id`` in ``repo`` and its published translations, staff tier only.
+
+    Returns {"page", "markdown", "translations": [{"lang", "page", "markdown"}], "source", "generated_at"}. Raises
+    DocsMissing (no manifest, no such id, or a body not stored yet), DocsRestricted (the entry, or the only entry with
+    that id, is not staff tier: never read) or DocsUnavailable (storage or format). A translation that is not staff tier
+    or not stored is left out (the English page still serves)."""
+    m = await _manifest(False, client_factory)
+    matches = [e for e in m["entries"] if e["repo"] == repo and e["id"] == page_id and e["lang"] == DEFAULT_LANG]
+    if not matches:
+        raise DocsMissing(f"No page {page_id} in the published docs yet")
+    entry = matches[0]
+    if len(matches) > 1 or entry["access"] != ACCESS_STAFF:
+        # Two English entries with one id is a builder bug: refuse rather than guess which one is meant.
+        raise DocsRestricted(f"Page {page_id} is not a staff page")
+    english = await load_page(repo, entry["path"], False, client_factory)
+    translations = []
+    for t in entry["translations"]:
+        try:
+            view = await load_page(repo, t["path"], False, client_factory)
+        except (DocsMissing, DocsUnavailable) as err:
+            # an owner-tier copy (not visible to staff), a body not stored yet or unreadable: English still serves
+            logger.info("docs_reader_translation_skipped", page_id=page_id, lang=t["lang"], error=type(err).__name__)
+            continue
+        translations.append({"lang": t["lang"], "page": view["page"], "markdown": view["markdown"]})
+    return {"page": english["page"], "markdown": english["markdown"], "translations": translations,
+            "source": english["source"], "generated_at": english["generated_at"]}

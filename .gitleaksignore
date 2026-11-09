@@ -103,3 +103,7 @@ ffa78aefa4e88ec83def8938768c1f3b47bba6dc:tests/integration/test_007_rls_isolatio
 # hash; the key name "tokens" trips generic-api-key. Not a secret (the hash of a committed source file). The current
 # format nests the hash under "sha256", which does not match.
 93dacc48d69ef8e1e847889a1dec7b80e5cd8109:frontend/app/_kit/core/MANIFEST.json:generic-api-key:34
+
+# Closed PR #1228 (S263, AA-1026): its head commit quoted a test assertion in a comment of this file; the quote trips
+# generic-api-key. Not a secret (a test comparing an embedding space key constant). The full-history scan reads PR heads.
+2edac5f8d44d0a0c408b144c1b676e6d3d3abf91:.gitleaksignore:generic-api-key:106

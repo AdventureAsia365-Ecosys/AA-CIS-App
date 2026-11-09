@@ -14,6 +14,7 @@ import pytest
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import GOALS
 from services.acp_content_writing import ai_tells, hygiene, prompts, quality_gates, service
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 from services.acp_content_writing.ai_tells import (FAMILY_RULE, FAMILY_SHORT_POST_CHANNELS, FAMILY_SHORT_POST_RULE,
                                                    PROMPT_RULES, SELF_CHECK_RULE, VISIT_DETAIL_RULE, brand_voice_rule,
                                                    family_presence_rule)
@@ -59,7 +60,7 @@ def test_writer_prompt_version_is_round_five():
 
 def test_round_four_ai_tell_rules_are_unchanged():
     """Round 5 keeps every round-4 AI-tell change: PROMPT_RULES (ten pairs) + SELF_CHECK_RULE, byte for byte."""
-    assert _sha16(PROMPT_RULES + SELF_CHECK_RULE) == "9ea12897753804d2"
+    assert _sha16(pre_aa1047(PROMPT_RULES + SELF_CHECK_RULE)) == "9ea12897753804d2"
     assert SELF_CHECK_RULE in prompts.SYSTEM_PROMPT and PROMPT_RULES in prompts.SYSTEM_PROMPT
 
 
@@ -258,6 +259,8 @@ def test_non_family_user_prompts_are_byte_identical_to_round_four(name, channel)
     texture = ai_tells.brand_texture_rule(_PACKS[name], channel)
     assert bool(texture) == (name != "FAMRUN")
     assert p.count(texture) == 1 if texture else "BRAND TEXTURE" not in p
+    # AA-741 (S271): the blog's LENGTH AND EFFORT block (t9_write v2) is a later, separate change: compare without it.
+    p = p.replace(prompts._BLOG_LENGTH_INSTRUCTIONS, "")
     assert _sha16(p.replace(texture, "") if texture else p) == _ROUND4_USER_PROMPTS[(name, channel)]
 
 

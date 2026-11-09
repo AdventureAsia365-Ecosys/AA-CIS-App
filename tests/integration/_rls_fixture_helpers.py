@@ -33,9 +33,12 @@
 * `restore_266_catalog_owner_read(cur)`: the catalog tests drop and re-create catalog_owner (DROP OWNED also drops
   a policy whose only role it is); this puts 266's keep-alive policy on tour_atoms back, and 272's SELECT grants of
   catalog_owner on gold_aa_internal.v_tour_liveness / tour_lifecycle_event (the 274 catalog views read them).
+* `KEY_HASH_STANDIN_SQL` / `key_hash_standin(cur)` (AA-1036, CIS 369): a stand-in shared.tenants.api_key_hash for a
+  test that re-runs 354, 355 or 368 (their bodies name the column 369 dropped).
 """
 import glob
 import os
+from contextlib import contextmanager
 
 MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 
@@ -193,6 +196,34 @@ def migration_body(n) -> str:
         return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
 
 
+# AA-1036 (CIS 369): 369 dropped shared.tenants.api_key_hash, but the guard 3 probe INSERTs of 354 / 355 and the whole
+# of 368 still name it, and a file applied on Dev is never edited. A test that re-runs one of them on the fully migrated
+# DB puts a stand-in column back first: inside its own rolled-back transaction (KEY_HASH_STANDIN_SQL), or around a run
+# of the file with its own BEGIN / COMMIT (key_hash_standin). Same type as the dropped column (003: VARCHAR(255)).
+KEY_HASH_STANDIN_SQL = "ALTER TABLE shared.tenants ADD COLUMN IF NOT EXISTS api_key_hash VARCHAR(255)"
+KEY_HASH_PRESENT_SQL = ("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'shared.tenants'::regclass "
+                        "AND attname = 'api_key_hash' AND NOT attisdropped) AS present")
+
+
+@contextmanager
+def key_hash_standin(cur):
+    """A psycopg2 cursor in autocommit: the stand-in column while the block runs, dropped after if this added it
+    (a DB that still has the real column, before 369, is left alone)."""
+    cur.execute(KEY_HASH_PRESENT_SQL)
+    row = cur.fetchone()
+    present = row["present"] if isinstance(row, dict) else row[0]
+    if not present:
+        cur.execute(KEY_HASH_STANDIN_SQL)
+    try:
+        yield
+    except BaseException:
+        cur.execute("ROLLBACK")        # a failed file leaves its own BEGIN open and aborted
+        raise
+    finally:
+        if not present:
+            cur.execute("ALTER TABLE shared.tenants DROP COLUMN IF EXISTS api_key_hash")
+
+
 # AA-850: the wave-1 objects CIS 294 quarantined in `retired` and CIS 296 dropped -> (pre-294 schema, kind). Tests that
 # re-apply 294 itself, or an old migration that names one of them (239: acp_shared.tenant_atom_state), rebuild them as
 # minimal stand-ins: the replay has run 296, so none of the ten exists any more.
@@ -294,3 +325,17 @@ def restore_272_catalog_owner_reads(cur):
         cur.execute("SELECT to_regclass(%s)", (rel,))
         if cur.fetchone()[0] is not None:
             cur.execute(f"GRANT SELECT ON {rel} TO catalog_owner")
+
+
+def catalog_owner_grantable_by(cur, runner):
+    """AA-1024 (S273): the catalog tests (225 / 228 the RDS way) drop catalog_owner so their runner creates it again, as
+    aa_cis_admin did on Dev. Since conftest freezes the replay as a template database, the template still depends on
+    the role and DROP ROLE fails (the tests catch that), so 225 meets the role it did not create. On postgres 15 (CI and
+    RDS) CREATEROLE may grant and comment on any non-superuser role, so nothing changes. On postgres 16+ only a role
+    with ADMIN on it may: give the runner what PG16 gives a role's creator (ADMIN, no INHERIT, no SET). A no-op when the
+    runner created the role itself or the server is older than 16. DROP ROLE of the runner removes the grant."""
+    cur.execute("SELECT current_setting('server_version_num')::int >= 160000 AS pg16, "
+                "EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'catalog_owner') AS present")
+    pg16, present = cur.fetchone()
+    if pg16 and present:
+        cur.execute(f"GRANT catalog_owner TO {runner} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE")

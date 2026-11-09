@@ -5,10 +5,15 @@
 //   Providers        one row per paid source (ProvidersTab.tsx): health, spend today / this month, budget, balance;
 //                    its views Connections (connection settings and test call) and Jev credit (the top-up ledger).
 //   Routing          the model route of every stage (RoutingTab.tsx): primary, fallbacks, shadow, LLM availability.
+//   Route control    AA-1042: order mode, presets, chain editor, provider order, preview, versions (RouteControlTab.tsx).
 //   Models & trials  the model catalog (on / off; prices view-only) and the shadow comparisons (ModelsTab.tsx).
 //   Budgets          every spending cap by tier (BudgetsTab.tsx).
 //   Calls            every logged paid call, newest first, across the CIS ledgers and the CRM's (CallsTab.tsx).
-//   Guide            how to read the page (guide.ts / guide.vi.ts), the kit GuidePanel like every admin guide.
+//   Trace            AA-1042: how each stage's route behaved, every attempt of a request, the route alerts and the
+//                    content a fallback model wrote (TraceTab.tsx); `?rt=<trace id>&rt_at=<time>` opens one request.
+//   Guide            AA-1042: the gateway's reference page from the docs catalog (root docs/architecture/ai-gateway.md
+//                    and its .vi.md) plus the live routes, matrix, connections, caps and coverage (GuideTab.tsx); the
+//                    short page guide (guide.ts / guide.vi.ts) stays on top as "How to read this page".
 // UI part 2 moved Routing, Models & trials, the connection settings and the Jev credit ledger here from Settings
 // (LLM Models, Jev Credit) and Budgets from Cost Operations; the old links are sent on here by those pages
 // (lib/aiGateway RETIRED_SETTINGS_TABS / RETIRED_COST_OPS_TABS).
@@ -33,9 +38,13 @@ import BudgetsTab from "./BudgetsTab";
 import CallsTab from "./CallsTab";
 import { AI_GATEWAY_GUIDE } from "./guide";
 import { AI_GATEWAY_GUIDE_VI } from "./guide.vi";
+import GuideTab from "./GuideTab";
 import { M } from "./messages";
+import TraceTab from "./TraceTab";
+import { parseRouteTarget, type RouteTarget } from "@/lib/routeTrace";
 import ModelsTab from "./ModelsTab";
 import ProvidersTab from "./ProvidersTab";
+import RouteControlTab from "./RouteControlTab";
 import RoutingTab from "./RoutingTab";
 import TraceDrawer from "./TraceDrawer";
 
@@ -54,7 +63,7 @@ function setParam(name: string, value: string | null): void {
 /** Every query key the page's tabs read, refreshed together by the header button. */
 const PAGE_QUERIES = [
   ["ai-gateway"], ["llm-config"], ["llm-catalog"], ["llm-shadow-report"], ["llm-availability"], ["llm-connections"],
-  ["llm-connection-costs"], ["jev-credit"], ["decisions-summary"],
+  ["llm-connection-costs"], ["jev-credit"], ["decisions-summary"], ["ai-gateway", "guide"],
 ] as const;
 
 export default function AiGateway() {
@@ -65,12 +74,16 @@ export default function AiGateway() {
   const [tab, setTabState] = useState<TabKey>(() => parseTab(params.get("tab")));
   const [view, setViewState] = useState<ProviderView>(() => parseView(params.get("view")));
   const [trace, setTraceState] = useState<TraceTarget | null>(() => parseTraceTarget(params.get("trace")));
+  const [route, setRouteState] = useState<RouteTarget | null>(
+    () => parseRouteTarget(params.get("rt"), params.get("rt_at")));
   const tabs = [
     { key: "providers", label: t("tabProviders") },
     { key: "routing", label: t("tabRouting") },
+    { key: "controls", label: t("tabRouteControl") },
     { key: "models", label: t("tabModels") },
     { key: "budgets", label: t("tabBudgets") },
     { key: "calls", label: t("tabCalls") },
+    { key: "trace", label: t("tabTrace") },
     { key: "guide", label: t("tabGuide") },
   ];
 
@@ -89,6 +102,15 @@ export default function AiGateway() {
     setTraceState(target);
     setParam("trace", traceParam(target));
   };
+  const openRoute = (target: RouteTarget | null) => {
+    setRouteState(target);
+    setParam("rt", target?.id ?? null);
+    setParam("rt_at", target?.at ?? null);
+  };
+  const openRouteTab = (target: RouteTarget) => {
+    setTab("trace");
+    openRoute(target);
+  };
   const closeTrace = () => {
     setTraceState(null);
     setParam("trace", null);
@@ -98,7 +120,7 @@ export default function AiGateway() {
     <ToastProvider>
       <PageFrame>
         <PageHeader title={t("title")}
-          breadcrumbs={[{ label: t("crumbPlatform") }, { label: t("crumbGroup") }, { label: t("title") }]}
+          breadcrumbs={[{ label: t("crumbGroup") }, { label: t("title") }]}
           description={<>{t("description")}{" "}
             <span data-testid="ai-gateway-guide-link" style={{ display: "inline-flex" }}>
               <LinkButton onClick={() => setTab("guide")}>{t("readGuide")}</LinkButton></span></>}
@@ -112,10 +134,14 @@ export default function AiGateway() {
         </div>
         {tab === "providers" && <ProvidersTab view={view} onView={setView} />}
         {tab === "routing" && <RoutingTab />}
+        {tab === "controls" && <RouteControlTab />}
         {tab === "models" && <ModelsTab />}
         {tab === "budgets" && <BudgetsTab onOpenConnections={() => { setTab("providers"); setView("connections"); }} />}
-        {tab === "calls" && <CallsTab onTrace={openTrace} />}
-        {tab === "guide" && <GuidePanel content={guide} testId="ai-gateway-guide" />}
+        {tab === "calls" && <CallsTab onTrace={openTrace} onRoute={openRouteTab} />}
+        {tab === "trace" && <TraceTab target={route} onOpen={openRoute} />}
+        {tab === "guide" && (
+          <GuideTab howToRead={<GuidePanel content={guide} testId="ai-gateway-guide-panel" />} />
+        )}
         {trace && <TraceDrawer key={traceParam(trace)} target={trace} onClose={closeTrace} />}
       </PageFrame>
     </ToastProvider>

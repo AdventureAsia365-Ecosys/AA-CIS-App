@@ -39,6 +39,8 @@ import {
   useT,
   type ColumnDef,
   type Tone, PageFrame,
+  Input, Select,
+  LinkButton,
 } from "../../../_kit";
 import { BOOKING_AUDIT_LOG_URL } from "@/lib/apps";
 import { TenantName } from "../../_components/TenantSelect";
@@ -280,7 +282,7 @@ function ChainStatus({ verify, loading, error, onRetry, filtered }: {
     detail = (
       <>
         {error.message}{" "}
-        <button type="button" onClick={onRetry} style={inlineBtn}>{t("retry")}</button>
+        <LinkButton onClick={onRetry} style={{ fontSize: 12.5 }}>{t("retry")}</LinkButton>
       </>
     );
   } else if (verify) {
@@ -329,11 +331,6 @@ function ChainStatus({ verify, loading, error, onRetry, filtered }: {
   );
 }
 
-const inlineBtn: React.CSSProperties = {
-  background: "none", border: "none", padding: 0, color: K.accentDeep, fontWeight: 600, cursor: "pointer",
-  fontFamily: sans, fontSize: 12.5,
-};
-
 // ── filters ─────────────────────────────────────────────────────────────────────────────────
 
 const inputStyle: React.CSSProperties = {
@@ -360,33 +357,33 @@ function FilterForm({ draft, setDraft, onSubmit, onReset }: {
     }}>
       <label style={labelStyle}>
         {t("scope")}
-        <select value={draft.scope} onChange={(e) => set("scope", e.target.value === "all" ? "all" : "staff")} style={inputStyle}>
+        <Select value={draft.scope} onChange={(e) => set("scope", e.target.value === "all" ? "all" : "staff")} style={inputStyle}>
           <option value="staff">{t("scopeStaff")}</option>
           <option value="all">{t("scopeAll")}</option>
-        </select>
+        </Select>
       </label>
       <label style={labelStyle}>
         {t("actor")}
-        <input value={draft.actor} onChange={(e) => set("actor", e.target.value)} placeholder="admin:<id>"
+        <Input value={draft.actor} onChange={(e) => set("actor", e.target.value)} placeholder="admin:<id>"
           maxLength={64} style={inputStyle} />
       </label>
       <label style={labelStyle}>
         {t("actionStarts")}
-        <input value={draft.action} onChange={(e) => set("action", e.target.value)} placeholder="staff."
+        <Input value={draft.action} onChange={(e) => set("action", e.target.value)} placeholder="staff."
           maxLength={64} style={inputStyle} />
       </label>
       <label style={labelStyle}>
         {t("route")}
-        <input value={draft.route} onChange={(e) => set("route", e.target.value)} placeholder="/admin/…"
+        <Input value={draft.route} onChange={(e) => set("route", e.target.value)} placeholder="/admin/…"
           maxLength={512} style={inputStyle} />
       </label>
       <label style={labelStyle}>
         {t("from")}
-        <input type="date" value={draft.since} onChange={(e) => set("since", e.target.value)} style={inputStyle} />
+        <Input type="date" value={draft.since} onChange={(e) => set("since", e.target.value)} style={inputStyle} />
       </label>
       <label style={labelStyle}>
         {t("to")}
-        <input type="date" value={draft.until} onChange={(e) => set("until", e.target.value)} style={inputStyle} />
+        <Input type="date" value={draft.until} onChange={(e) => set("until", e.target.value)} style={inputStyle} />
       </label>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Button type="submit" variant="primary" size="sm">{t("apply")}</Button>

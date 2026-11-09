@@ -1,5 +1,5 @@
 {
-  "_about": "AA-900 prompt register manifest. One entry per (stage, version), newest last. prompt_sha256 = sha256 of the source text of the symbols (shared/llm_client/prompt_registry.prompt_hash_of). Changing a prompt: run python3 scripts/prompt_registry_check.py --bump, then register the new rows with a migration (scripts/prompt_registry_check.py --sql). Never edit an existing entry.",
+  "_about": "AA-900 prompt register manifest. One entry per (stage, version), newest last. prompt_sha256 = sha256 of the source text of the symbols (shared/llm_client/prompt_registry.prompt_hash_of). Changing a prompt: run python3 scripts/prompt_registry_check.py --bump, then register the new rows with a migration (scripts/prompt_registry_check.py --sql --unregistered --created-by migration-NNN; the gate fails until a file in api/migrations/ inserts them). Never edit an existing entry.",
   "prompts": [
     {
       "stage": "s1_generate",
@@ -221,6 +221,18 @@
       "prompt_sha256": "ac67e8d2e32fae9f16f090efd605a23d2bcf79fc2879c38d369a3f55f4f4fb72"
     },
     {
+      "stage": "t8_angle_gen",
+      "version": "v2",
+      "source_path": "services/acp_angle_gate/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "SYSTEM_PROMPT_R8",
+        "system_prompt",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "4972f4467440c80fb06efefa7982f2ce4bc6493e9634b20f78effa5dea3c1240"
+    },
+    {
       "stage": "t9_write",
       "version": "v1",
       "source_path": "services/acp_content_writing/prompts.py",
@@ -322,6 +334,383 @@
         "judge_version"
       ],
       "prompt_sha256": "c8ddffc252af1784b0ced1bdddc470f1254635fde62ea34e4ce7952aec93ce9f"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS"
+      ],
+      "prompt_sha256": "0a1d1f804988534d78bc9e15513251a8e98a5c6a4442ffdf467c9d94f861c277"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v3",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE"
+      ],
+      "prompt_sha256": "2fc26ac2cf17abd0bee803f330c9bab7b8500fcbc1c8d8fb156450891d067d0b"
+    },
+    {
+      "stage": "writing_memory_eval",
+      "version": "v2",
+      "source_path": "services/writing_memory/eval_judge.py",
+      "symbols": [
+        "system_prompt",
+        "build_user_prompt",
+        "judge_version"
+      ],
+      "prompt_sha256": "1bb1732339d7785be23edb2f1024e2900860a15b289ead0eacb7205ac502eb99"
+    },
+    {
+      "stage": "s1_brand_audit",
+      "version": "v2",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "756b8331cb281278b007d75b70caf92640d8ce7e4f44b1ac7ab66dca2f92b9c4"
+    },
+    {
+      "stage": "t2_brand_audit",
+      "version": "v2",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "756b8331cb281278b007d75b70caf92640d8ce7e4f44b1ac7ab66dca2f92b9c4"
+    },
+    {
+      "stage": "a3_place_card",
+      "version": "v2",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CARD_SYSTEM"
+      ],
+      "prompt_sha256": "0299d2a5e5741f2a1179bca86a7f15747eb321342f2c9aff1399ddf41e5ea269"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v4",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE"
+      ],
+      "prompt_sha256": "a238ab7d6e1bd8c3b65df30c899f2ff2cd5a155623ed18d45603d5910d8c611e"
+    },
+    {
+      "stage": "t9_repair",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/generate.py",
+      "symbols": [
+        "_REPAIR_SYSTEM",
+        "_SEO_FIT_SYSTEM",
+        "_FAQ_SYSTEM"
+      ],
+      "prompt_sha256": "ed8061ddd087731b3c74c0113a39a8f30907e0b6141449ac32e1079eeb4c9766"
+    },
+    {
+      "stage": "writing_memory_eval",
+      "version": "v3",
+      "source_path": "services/writing_memory/eval_judge.py",
+      "symbols": [
+        "system_prompt",
+        "build_user_prompt",
+        "judge_version"
+      ],
+      "prompt_sha256": "bbbf4e778dee02722854e488c185e60e5f1d5b49396cf865fe732a544129b8c6"
+    },
+    {
+      "stage": "s1_generate",
+      "version": "v2",
+      "source_path": "services/content_generation/s1_writer_v2.py",
+      "symbols": [
+        "w_system_prompt",
+        "w_user_prompt",
+        "VERSION"
+      ],
+      "prompt_sha256": "e2b47a076a9138843335079f12155a03a5ed05b62f7f0cdeecc752694f5f7d65"
+    },
+    {
+      "stage": "t2_generate",
+      "version": "v2",
+      "source_path": "services/content_generation/prompts.py",
+      "symbols": [
+        "T2_SYSTEM_PROMPT",
+        "build_t2_base_prompt"
+      ],
+      "prompt_sha256": "0ecd2e82ed994e0ba2b760d22d3c4afcf1ba68ee3b6ffea44630c0a2797e763c"
+    },
+    {
+      "stage": "s1_judge",
+      "version": "v2",
+      "source_path": "services/content_generation/brand_fit_v2.py",
+      "symbols": [
+        "SYSTEM_V2",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "ecfa10c33f36e42c6c039f0db45b21b6ff1541ce53ae711a572a0a8d6d1d7aec"
+    },
+    {
+      "stage": "t2_judge",
+      "version": "v2",
+      "source_path": "services/content_generation/brand_fit_v2.py",
+      "symbols": [
+        "SYSTEM_V2",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "ecfa10c33f36e42c6c039f0db45b21b6ff1541ce53ae711a572a0a8d6d1d7aec"
+    },
+    {
+      "stage": "s1_flag_fix",
+      "version": "v2",
+      "source_path": "services/content_generation/flag_fix_node.py",
+      "symbols": [
+        "FIX_SYSTEM",
+        "fix_system_prompt"
+      ],
+      "prompt_sha256": "ac3acbf26e69fa34d3801a26b47973e45bd44f976084e346372a7caf0cfdb426"
+    },
+    {
+      "stage": "t2_flag_fix",
+      "version": "v2",
+      "source_path": "services/content_generation/flag_fix_node.py",
+      "symbols": [
+        "FIX_SYSTEM",
+        "fix_system_prompt"
+      ],
+      "prompt_sha256": "ac3acbf26e69fa34d3801a26b47973e45bd44f976084e346372a7caf0cfdb426"
+    },
+    {
+      "stage": "a3_place_card_check",
+      "version": "v2",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CHECK_SYSTEM"
+      ],
+      "prompt_sha256": "36f53b73c7323070d266463342b91b38eb49a66ac6b0a18f0d14cb09ccc6b014"
+    },
+    {
+      "stage": "t9_faq_answer_fit",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/faq_answer_fit.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "ISOLATED_SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "42cad51b3e177b2be57c59a3537d30a972c73f60f5a4414ff9dc19b31c542f2b"
+    },
+    {
+      "stage": "t10_judge",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/quality_gates.py",
+      "symbols": [
+        "_JUDGE_SYSTEM_PROMPT",
+        "F9_PROMPT_VERSION",
+        "f9_user_prompt"
+      ],
+      "prompt_sha256": "39e6ba9591049ee2a708708331ff5de1fd83e9e0af5d1f6ea2fb9a807932e7ad"
+    },
+    {
+      "stage": "t10_claims",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/claim_rules.py",
+      "symbols": [
+        "EXTRACTION_SYSTEM"
+      ],
+      "prompt_sha256": "ed3de5c319505803998caab7d17abdaf7ffc5a61f53ed33682c2fb7d3722268f"
+    },
+    {
+      "stage": "s1_generate",
+      "version": "v3",
+      "source_path": "services/content_generation/s1_writer_v2.py",
+      "symbols": [
+        "w_system_prompt",
+        "w_user_prompt",
+        "VERSION"
+      ],
+      "prompt_sha256": "b42594d5827f9d3f60f1dcaf43d8a4e2bb19693df90a0c3a5caa96dfb26a60d3"
+    },
+    {
+      "stage": "t2_generate",
+      "version": "v3",
+      "source_path": "services/content_generation/prompts.py",
+      "symbols": [
+        "T2_SYSTEM_PROMPT",
+        "build_t2_base_prompt"
+      ],
+      "prompt_sha256": "d02d0405b0ceb579516a1440e5c934fe55ff6bc7f6b97c51470cb42fa8d6acba"
+    },
+    {
+      "stage": "s1_judge",
+      "version": "v3",
+      "source_path": "services/content_generation/brand_fit_v2.py",
+      "symbols": [
+        "SYSTEM_V2",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "dbd95e1ffa6ae47051c655a083ef2270b42f3b6201cf46490bac2bc765c0de28"
+    },
+    {
+      "stage": "t2_judge",
+      "version": "v3",
+      "source_path": "services/content_generation/brand_fit_v2.py",
+      "symbols": [
+        "SYSTEM_V2",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "dbd95e1ffa6ae47051c655a083ef2270b42f3b6201cf46490bac2bc765c0de28"
+    },
+    {
+      "stage": "s1_brand_audit",
+      "version": "v3",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "a7799f358e4631bbe89eaeb03a9812ce436edda8c993f9629336bdc0400d7263"
+    },
+    {
+      "stage": "t2_brand_audit",
+      "version": "v3",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "a7799f358e4631bbe89eaeb03a9812ce436edda8c993f9629336bdc0400d7263"
+    },
+    {
+      "stage": "s1_flag_fix",
+      "version": "v3",
+      "source_path": "services/content_generation/flag_fix_node.py",
+      "symbols": [
+        "FIX_SYSTEM",
+        "fix_system_prompt"
+      ],
+      "prompt_sha256": "5b757b82efb6b0916861aa3793385d40d2cbfdddaa5313df1498250ef858f488"
+    },
+    {
+      "stage": "t2_flag_fix",
+      "version": "v3",
+      "source_path": "services/content_generation/flag_fix_node.py",
+      "symbols": [
+        "FIX_SYSTEM",
+        "fix_system_prompt"
+      ],
+      "prompt_sha256": "5b757b82efb6b0916861aa3793385d40d2cbfdddaa5313df1498250ef858f488"
+    },
+    {
+      "stage": "a3_place_card",
+      "version": "v3",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CARD_SYSTEM"
+      ],
+      "prompt_sha256": "1fd224bb585f38a290f530892fde49be12b7417addef9d84d78b41110dd0d475"
+    },
+    {
+      "stage": "a3_place_card_check",
+      "version": "v3",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CHECK_SYSTEM"
+      ],
+      "prompt_sha256": "6d0fe409c8e691897920664fe4b4dbb2eba3e36f26eb2f0d875cbb300bd8ffcd"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v5",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE"
+      ],
+      "prompt_sha256": "6c967aab65584abe3191a3a6c9422fb91e1faf5be6d4b548a1e8cfa4ca81763f"
+    },
+    {
+      "stage": "t9_repair",
+      "version": "v3",
+      "source_path": "services/acp_content_writing/generate.py",
+      "symbols": [
+        "_REPAIR_SYSTEM",
+        "_SEO_FIT_SYSTEM",
+        "_FAQ_SYSTEM"
+      ],
+      "prompt_sha256": "040e34bd28224c78bf17f80fcfe6abc425580fe76c4770e4ddb828bf42128cf8"
+    },
+    {
+      "stage": "t9_faq_answer_fit",
+      "version": "v3",
+      "source_path": "services/acp_content_writing/faq_answer_fit.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "ISOLATED_SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "9919c69e5c1f1c28e816287ddeae400188c122c1a7826a0c2c738facd3a7f4e1"
+    },
+    {
+      "stage": "t10_judge",
+      "version": "v3",
+      "source_path": "services/acp_content_writing/quality_gates.py",
+      "symbols": [
+        "_JUDGE_SYSTEM_PROMPT",
+        "F9_PROMPT_VERSION",
+        "f9_user_prompt"
+      ],
+      "prompt_sha256": "59525f9613545f010408838a516f5c5db9e232939588c5084cbaf12dbe645fb0"
+    },
+    {
+      "stage": "t10_claims",
+      "version": "v3",
+      "source_path": "services/acp_content_writing/claim_rules.py",
+      "symbols": [
+        "EXTRACTION_SYSTEM"
+      ],
+      "prompt_sha256": "9e14d1d7b050378b1e5652ba39c8627c6bab035a48a04fed1d7231de92ee72b8"
+    },
+    {
+      "stage": "writing_memory_eval",
+      "version": "v4",
+      "source_path": "services/writing_memory/eval_judge.py",
+      "symbols": [
+        "system_prompt",
+        "build_user_prompt",
+        "judge_version"
+      ],
+      "prompt_sha256": "7f92769d2b7812f7cd737351e70e635e6285abeb7c6a336a856504c9a3d408b1"
     }
   ]
 }

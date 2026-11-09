@@ -3,8 +3,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { scoreColor } from "./TourDetailPanelV2";
-import { SCORE_BANDS } from "@/lib/quality-registry.generated";
-import { K, Badge, mono, sans, serif, useT } from "../../_kit";
+import { SCORE_BANDS, SEO_BANDS } from "@/lib/quality-registry.generated";
+import { K, Badge, IconButton, Tabs, mono, serif, useT } from "../../_kit";
 import { M } from "./tour.messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -94,25 +94,29 @@ export function CompareModal({ tourIds, onClose }: {
   onClose: () => void;
 }) {
   const t = useT(M);
-  const [details, setDetails] = useState<(TourDetailCompare | null)[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The details of the ids they were loaded for: a new id list shows the loader until its own answer arrives.
+  const [loaded, setLoaded] = useState<{ key: string; details: (TourDetailCompare | null)[] } | null>(null);
   const [activeTab, setActiveTab] = useState<ContentTab>("summary");
   const scrollRefs = useRef<(HTMLDivElement | null)[]>([]);
   const isSyncing = useRef(false);
 
   const n = Math.min(tourIds.length, 4);
   const ids = tourIds.slice(0, 4);
+  const idsKey = ids.join(",");
+  const loading = loaded?.key !== idsKey;
+  const details = loaded && loaded.key === idsKey ? loaded.details : [];
 
   useEffect(() => {
-    setLoading(true);
+    let alive = true;
     Promise.all(
-      ids.map(id =>
+      idsKey.split(",").filter(Boolean).map(id =>
         fetch(`/api/admin/tours/${id}/detail`)
           .then(r => r.ok ? r.json() : null)
           .catch(() => null)
       )
-    ).then(setDetails).finally(() => setLoading(false));
-  }, [ids.join(",")]);  // eslint-disable-line react-hooks/exhaustive-deps
+    ).then(d => { if (alive) setLoaded({ key: idsKey, details: d }); });
+    return () => { alive = false; };
+  }, [idsKey]);
 
   function handleScroll(idx: number, e: React.UIEvent<HTMLDivElement>) {
     if (isSyncing.current) return;
@@ -145,33 +149,18 @@ export function CompareModal({ tourIds, onClose }: {
           <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: K.ink }}>
             {t("comparing", n)}
           </div>
-          <button
-            onClick={onClose}
-            aria-label={t("close")}
-            style={{ background: "none", border: "none", cursor: "pointer", color: K.muted, padding: 6 }}
-          >
+          <IconButton variant="plain" size="lg" onClick={onClose} label={t("close")}>
             <X size={20} />
-          </button>
+          </IconButton>
         </div>
         {/* Content tabs */}
-        <div style={{ display: "flex", gap: 0 }}>
-          {TAB_LABELS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key)}
-              style={{
-                padding: "7px 14px", fontSize: 13,
-                fontWeight: activeTab === key ? 600 : 400,
-                color: activeTab === key ? K.ink : K.muted,
-                cursor: "pointer", background: "none", border: "none",
-                borderBottom: activeTab === key ? `2px solid ${K.accent}` : "2px solid transparent",
-                fontFamily: sans,
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          variant="underline"
+          ariaLabel={t("comparing", n)}
+          tabs={TAB_LABELS}
+          active={activeTab}
+          onChange={(k) => setActiveTab(k as ContentTab)}
+        />
       </div>
 
       {loading ? (
@@ -297,7 +286,7 @@ export function CompareModal({ tourIds, onClose }: {
                       {gen?.seo_title && (
                         <div>
                           <div style={{ fontSize: 11, color: K.muted, marginBottom: 3 }}>
-                            {t("title")} <span style={{ color: (gen.seo_title.length > 60 ? K.amber : K.muted2) }}>({gen.seo_title.length}/70)</span>
+                            {t("title")} <span style={{ color: (gen.seo_title.length > SEO_BANDS.title.max ? K.amber : K.muted2) }}>({gen.seo_title.length}/{SEO_BANDS.title.max})</span>
                           </div>
                           <div style={{ fontSize: 13, color: K.ink }}>{gen.seo_title}</div>
                         </div>
@@ -305,7 +294,7 @@ export function CompareModal({ tourIds, onClose }: {
                       {gen?.seo_meta && (
                         <div>
                           <div style={{ fontSize: 11, color: K.muted, marginBottom: 3 }}>
-                            {t("meta")} <span style={{ color: (gen.seo_meta.length > 155 ? K.amber : K.muted2) }}>({gen.seo_meta.length}/170)</span>
+                            {t("meta")} <span style={{ color: (gen.seo_meta.length > SEO_BANDS.meta.max ? K.amber : K.muted2) }}>({gen.seo_meta.length}/{SEO_BANDS.meta.max})</span>
                           </div>
                           <div style={{ fontSize: 13, color: K.body }}>{gen.seo_meta}</div>
                         </div>

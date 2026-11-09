@@ -30,8 +30,8 @@ import sentry_sdk
 import structlog
 
 from shared.cost_guard import BudgetExceeded
-from shared.llm_client import call_log
-from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied
+from shared.llm_client import call_log, capacity
+from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied, stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
@@ -116,13 +116,27 @@ def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
     anywhere in the cause chain: Bedrock "Error 002", AccessDenied, no OpenAI credit), a retry minutes later is
     refused the same way, so the job fails at once and its error starts with ``llm_access_denied`` (the admin LLM
     availability card and the Jobs page read that prefix). Any other exception keeps the old rule: retry unless
-    NonRetryable."""
+    NonRetryable. AA-642 A1 (review S263): a stage kill switch refusal wrapped by a pipeline is written as the refusal
+    itself, so the error names the stage (the T2 / T9 on_terminal hooks and the bulk re-queue hold read it)."""
     if is_llm_access_denied(exc):
+        switched_off = stage_disabled_in(exc)
+        if switched_off is not None:
+            exc = switched_off
         body = str(exc) if isinstance(exc, LLMAccessDenied) else f"{type(exc).__name__}: {exc}"
         if not body.startswith(LLM_ACCESS_DENIED_REASON):
             body = f"{LLM_ACCESS_DENIED_REASON}: {body}"
         return body[:900 + len(LLM_ACCESS_DENIED_REASON) + 2], False, LLM_ACCESS_DENIED_REASON
     return f"{type(exc).__name__}: {str(exc)[:900]}", not isinstance(exc, NonRetryable), None
+
+
+OPS_FLUSH_EVERY_S = 300.0     # S263: same cadence as the api ops sampler
+OPS_FLUSH_TIMEOUT_S = 20.0
+# AA-900 W0: the hourly writing-memory reverify scan (a handful of active releases, ~12 reads each, $0).
+REVERIFY_EVERY_S = 3600.0
+REVERIFY_TIMEOUT_S = 60.0
+# S263 review: the last flush on shutdown. The events of the last minutes (a lost cost-log write, a cis_app refused
+# connection) would otherwise die with the task. Short: it runs inside RELEASE_MARGIN_SECONDS, after the release.
+OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0
 
 
 class Worker:
@@ -144,9 +158,18 @@ class Worker:
         self._running_kinds: dict[str, str] = {}   # job id -> kind (background group cap, AA-712)
         # AA-687: how often this worker writes its shared.job_worker row (liveness for the Jobs page).
         self.beat_every_seconds = 15.0
+        # S263 (AA-1025): how often this worker turns the ops log events it counted (lost cost-log writes, cis_app
+        # refused connections; shared/ops_checks.py) into the admin bell + alert e-mail. The api does it on its tick.
+        self.ops_flush_every_seconds = OPS_FLUSH_EVERY_S
+        # AA-900 W0: how often this worker re-runs the writing-memory reverify scan (the start scan covers a deploy;
+        # this one catches a DB Migrate change of a route, params, prompt or house-style row without a deploy).
+        self.reverify_every_seconds = REVERIFY_EVERY_S
         # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
         self.task_revision = ecs_task_revision()
         self.yielding = False
+        # AA-1025 H2: the lines held at the last claim (logged on change) and the DB hold the waves were synced to.
+        self._held_lines: frozenset = frozenset()
+        self._last_hold_seen_db = None
 
     def caps(self) -> dict[str, int]:
         return {name: k.concurrency for name, k in kinds().items()}
@@ -171,6 +194,8 @@ class Worker:
                              self.max_parallel, self.caps(), self.task_revision, release())
         last_reap = last_beat = 0.0
         loop = asyncio.get_running_loop()
+        last_ops_flush = loop.time()
+        last_reverify = loop.time()      # _main scanned at start
         while not self._stopping.is_set():
             reaped = None
             try:
@@ -190,12 +215,39 @@ class Worker:
                 await self._liveness(queue.worker_beat, self.pool, self.worker_id,
                                      len(self._running), reaped)
                 last_beat = loop.time()
+            if loop.time() - last_ops_flush >= self.ops_flush_every_seconds:
+                await self._flush_ops_events()
+                last_ops_flush = loop.time()
+            if not self.yielding and loop.time() - last_reverify >= self.reverify_every_seconds:
+                await self._reverify_scan()
+                last_reverify = loop.time()
             if not claimed:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_seconds)
                 except asyncio.TimeoutError:
                     pass
         logger.info("job_worker_loop_stopped", worker_id=self.worker_id)
+
+    async def _flush_ops_events(self, timeout_s: float = OPS_FLUSH_TIMEOUT_S) -> None:
+        """S263: alert on the ops log events this process counted. Bounded and never fails the loop."""
+        from shared import ops_checks
+
+        try:
+            results = await asyncio.wait_for(ops_checks.flush_events(self.pool), timeout=timeout_s)
+            if results:
+                logger.warning("job_worker_ops_checks", worker_id=self.worker_id, ops_checks=results)
+        except Exception as e:  # noqa: BLE001 — the events stay counted until a flush succeeds
+            logger.warning("job_worker_ops_checks_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
+
+    async def _reverify_scan(self, timeout_s: Optional[float] = None) -> None:
+        """AA-900 W0: the periodic writing-memory reverify scan. Bounded and never fails the loop."""
+        from services.writing_memory.releases import reverify_scan_safe
+
+        try:
+            await asyncio.wait_for(reverify_scan_safe(self.pool, actor="system:worker_tick"),
+                                   timeout=REVERIFY_TIMEOUT_S if timeout_s is None else timeout_s)
+        except Exception as e:  # noqa: BLE001 — the next tick scans again
+            logger.warning("job_worker_reverify_scan_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
     async def _liveness(self, fn, *args) -> None:
         """AA-687: shared.job_worker writes are for the Jobs page only — never fail the loop."""
@@ -212,8 +264,11 @@ class Worker:
                 self.yielding = True
             return 0
         self.yielding = False
+        held = await self._capacity_hold()
         while len(self._running) < self.max_parallel and not self._stopping.is_set():
             caps = self.claim_caps(self.max_parallel - len(self._running), self.running_background())
+            if held:
+                caps = capacity.without_held(caps, held)
             job = await queue.claim(self.pool, self.worker_id, caps, self.lease_seconds)
             if job is None:
                 break
@@ -223,6 +278,31 @@ class Worker:
             task.add_done_callback(lambda _t, jid=job.id: self._forget(jid))
             claimed += 1
         return claimed
+
+    async def _capacity_hold(self) -> frozenset:
+        """AA-1025 H2 (backpressure): the lines whose LLM job kinds wait in the queue now (capacity.claim_hold: a prod
+        guard circuit open or refusing, the bulk pause, a wave a person paused, this process's TPM pressure), and the
+        wave pause that goes with it (capacity.sync_waves, once per hold refresh). Logs each change of the held set.
+        Never raises (nothing held)."""
+        hold = capacity.Hold()
+        try:
+            db_hold = await capacity.claim_hold(self.pool, with_pressure=False)   # the same object until it refreshes
+            if db_hold is not self._last_hold_seen_db:
+                self._last_hold_seen_db = db_hold
+                await capacity.sync_waves(self.pool, db_hold)
+            hold = capacity.with_pressure_of(db_hold)
+            lines = hold.lines()
+        except Exception as e:  # noqa: BLE001 — a capacity problem never stops the queue
+            logger.warning("job_capacity_hold_failed", error=str(e)[:200])
+            lines = frozenset()
+        if lines != self._held_lines:
+            if lines:
+                logger.warning("job_claims_held", worker_id=self.worker_id, lines=sorted(lines),
+                               kinds=sorted(capacity.held_kinds(lines, self.caps())), **hold.as_dict())
+            else:
+                logger.info("job_claims_released", worker_id=self.worker_id, was=sorted(self._held_lines))
+            self._held_lines = lines
+        return lines
 
     def _forget(self, job_id: str) -> None:
         self._running.pop(job_id, None)
@@ -256,8 +336,9 @@ class Worker:
         # and, for a tenant job, the tenant (AA-741 G1, call_log.bind_tenant).
         # AA-925 — and every Jev outage (zone=error) the handler meets is counted into this job's collector
         # (services/quality/degraded.py), written to shared.job.result.degraded below.
+        # AA-1025 H2: and the job's kind, so each LLM call reserves its tokens on its line (capacity.KIND_LINES).
         with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)), \
-                _degraded_collect() as degraded_box:
+                capacity.bind_kind(job.kind), _degraded_collect() as degraded_box:
             handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False
         try:
@@ -347,11 +428,13 @@ class Worker:
 
     # ── shutdown ──────────────────────────────────────────────────────────────────────────────
     async def shutdown(self) -> None:
-        """Stop claiming, give running jobs `grace_seconds` to finish, release the rest."""
+        """Stop claiming, give running jobs `grace_seconds` to finish, release the rest, then flush the ops events
+        counted since the last flush (S263; bounded by OPS_FLUSH_ON_STOP_TIMEOUT_S, inside the release margin)."""
         self._stopping.set()
         tasks = list(self._running.values())
         if not tasks:
             await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
+            await self._flush_ops_events(OPS_FLUSH_ON_STOP_TIMEOUT_S)
             return
         logger.info("job_worker_draining", worker_id=self.worker_id, running=len(tasks),
                     kinds=sorted(set(self._running_kinds.values())), grace_seconds=self.grace_seconds,
@@ -364,6 +447,7 @@ class Worker:
         logger.info("job_worker_drained", worker_id=self.worker_id, finished=len(tasks) - len(pending),
                     released=len(pending))
         await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
+        await self._flush_ops_events(OPS_FLUSH_ON_STOP_TIMEOUT_S)
 
 
 # AA-737: slot budget of the standalone worker service. S217 Nepal wave: with 4 slots, s1_rewrite
@@ -468,6 +552,8 @@ async def deploy_gate_status(pool) -> dict:
       - a job of a `deploy_blocking` kind is RUNNING (`blocking_running`, per kind): such a job is not safe to re-run
         after a release, or QUEUED and due within `queue.DEPLOY_BLOCKING_HORIZON_S` (`blocking_due`): the guard runs
         before the image build and the old task would claim it before its SIGTERM.
+      - an ECS exec script is running in the api or worker container (AA-1024 G3 c: a fresh ecsx heartbeat on the
+        bronze bucket, `exec_scripts`; shared/jobs/exec_heartbeat.py): the roll would kill it (lesson S234).
     Queued and running rows of every other kind no longer block: the worker drains on SIGTERM and releases a job still
     running after its grace window (G1-G4), and a queued row is claimed by whichever image is live. They stay in the
     answer as information (`active`, `by_status`, `scheduled_later`; `deploy_gate_exempt` kinds not counted there).
@@ -478,6 +564,15 @@ async def deploy_gate_status(pool) -> dict:
     blocking = sorted(k.name for k in kinds().values() if k.deploy_blocking)
     counts = await queue.active_count(pool, exempt_kinds=exempt)
     blockers = await queue.deploy_blockers(pool, blocking_kinds=blocking)
+    from shared.jobs.exec_heartbeat import running_exec_scripts
+    # S272 review: a failed S3 list blocks (fail closed: an unread heartbeat may be a running script) but no longer
+    # raises, so the platform card keeps the wave and job counts and says what it could not read.
+    exec_error = None
+    try:
+        exec_scripts = await asyncio.to_thread(running_exec_scripts)
+    except Exception as e:  # noqa: BLE001 - any S3 / credential error is "unreadable"
+        logger.warning("deploy_gate_exec_heartbeat_unreadable", error=repr(e)[:200])
+        exec_scripts, exec_error = None, "ECS exec heartbeat unreadable (scripts/out/ list failed)"
     open_waves, running, due = blockers["open_waves"], blockers["blocking_running"], blockers["blocking_due"]
     blocked_by = []
     if open_waves:
@@ -486,9 +581,13 @@ async def deploy_gate_status(pool) -> dict:
         blocked_by.append(f"{n} {kind} job(s) running (deploy-blocking kind)")
     for kind, n in due.items():
         blocked_by.append(f"{n} {kind} job(s) due (deploy-blocking kind, queued to start within 15 min)")
+    for script in exec_scripts or []:
+        blocked_by.append(f"ECS exec script {script['run_id']} running (heartbeat {script['age_s']} s ago)")
+    if exec_error:
+        blocked_by.append(exec_error)
     return {**counts, "exempt_kinds": exempt, "open_waves": open_waves, "blocking_kinds": blocking,
-            "blocking_running": running, "blocking_due": due, "blocked_by": blocked_by,
-            "safe_to_deploy": not blocked_by}
+            "blocking_running": running, "blocking_due": due, "exec_scripts": exec_scripts,
+            "exec_scripts_error": exec_error, "blocked_by": blocked_by, "safe_to_deploy": not blocked_by}
 
 
 async def _main() -> None:
@@ -518,6 +617,10 @@ async def _main() -> None:
                 grace_seconds=grace_seconds)
     # AA-919 (WM-18 scope 5): a deploy can change the gate taxonomy (services/quality/registry.TAXONOMY_VERSION): flag
     # the active writing-memory releases whose fingerprint no longer matches (they keep serving). Never fails the start.
+    # AA-900 W0: the writers run here, so this process's env is the writers' (config_fp mode_flags is compared only
+    # between records of this service: the api task carries other switches).
+    from services.writing_memory import config_fp
+    config_fp.set_service(config_fp.WRITER_SERVICE)
     from services.writing_memory.releases import reverify_scan_safe
     await reverify_scan_safe(pool, actor="system:worker_start")
     await serve(worker)

@@ -1,9 +1,10 @@
-"""AA-761 — the tenant portal's Account pages: the read side of a tenant's own activity trail and API key facts.
+"""AA-761 — the tenant portal's Account pages: the read side of a tenant's own activity trail.
 
 - ``list_activity(pool, tenant_id, filters, page, page_size)``: the tenant's rows of ``acp_shared.audit_log``,
   newest first, offset-paged with a total (the portal's kit DataTable ``serverPagination``).
 - ``export_activity_csv(pool, tenant_id, filters)``: the same filtered set as CSV (every page, not just one).
-- ``api_key_facts(pool, tenant_id)``: masked key, when it was issued, and when it was last used.
+
+AA-1036 R3 slice 3 (root ADR 0019 d6): the API key facts (``GET /v1/account/api-key``) went with the tenant API keys.
 
 Tenant scoping. ``acp_shared.audit_log`` has no RLS and no grant to the tenant role ``aa_app_user`` (schema
 reference), and this lane adds no migration, so these reads run on the main pool (``cis_app``) with the tenant
@@ -38,7 +39,8 @@ CATEGORIES: dict[str, str] = {
 # action -> (category, label). The ONLY rows a tenant can read (module docstring). English: product UI.
 TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     # the tenant's own actions (services.acp_shared.audit_log.TenantAuditAction)
-    "tenant.login": ("account", "Signed in with your API key"),
+    # a partner sign-in (login_method partner); older rows are API-key sign-ins (AA-1036 removed them)
+    "tenant.login": ("account", "Signed in"),
     "slate.subject_picked": ("content", "Picked a topic"),
     "write.started": ("content", "Started writing"),
     "content_piece.created": ("content", "Draft created"),
@@ -53,6 +55,8 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "fact.created": ("content", "Added a fact"),  # AA-814 — Content studio › Facts (the tenant's own facts)
     "fact.updated": ("content", "Edited a fact"),
     "fact.deleted": ("content", "Deleted a fact"),
+    # AA-1036 R3 (root ADR 0019 d7): the owner asked for an add-on (Account › Add-ons)
+    "tenant.addon_requested": ("account", "Requested an add-on"),
     # what Adventure Asia changed on the account (AdminTenantAuditAction), facts the tenant is told anyway
     "agency.onboard": ("account", "Account opened"),
     "tenant.restored": ("account", "Account restored"),
@@ -60,11 +64,11 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "tenant.rate_limit_changed": ("account", "Rate limit changed"),
     "tenant.daily_publish_limit_changed": ("account", "Daily publish limit changed"),
     "tenant.status_changed": ("account", "Account status changed"),
-    "tenant.key_rotated": ("account", "API key replaced"),
+    "tenant.key_rotated": ("account", "API key replaced"),  # history only: no key is issued since AA-1036
+    # AA-1036 R3: Adventure Asia's decision on the request (the plan change itself is tenant.subscription_changed)
+    "tenant.addon_request_approved": ("account", "Add-on request approved"),
+    "tenant.addon_request_declined": ("account", "Add-on request declined"),
 }
-
-# The rows that (re)issue the key: its issue date is the newest of them.
-KEY_ISSUE_ACTIONS = ("agency.onboard", "tenant.key_rotated", "tenant.restored")
 
 MAX_PAGE_SIZE = 100
 # One CSV holds at most this many rows (the newest). A tenant's whole trail is far below it on Dev (the table
@@ -72,10 +76,9 @@ MAX_PAGE_SIZE = 100
 # loading an unbounded result into the api task's memory. A cut file says so in its last line.
 EXPORT_MAX_ROWS = 50_000
 
+_ADDON_LABELS = {"crm": "CRM", "tripplanner": "Trip planner"}
 _CHANNEL_LABELS = {"blog": "WordPress", "wordpress": "WordPress", "facebook": "Facebook", "instagram": "Instagram",
                    "tiktok": "TikTok", "email": "Email", "landing_page": "Landing page", "ads": "Ads"}
-_MASK = "•" * 16
-KEY_PREFIX = "cis_"
 
 
 @dataclass(frozen=True)
@@ -193,6 +196,8 @@ def detail_text(action: str, raw_details: Any) -> str:
         return " · ".join(p for p in parts if p)
     if action == "tour.rewrite_triggered":
         return "Retry" if d.get("retry") is True else ""
+    if action in ("tenant.addon_requested", "tenant.addon_request_approved", "tenant.addon_request_declined"):
+        return _ADDON_LABELS.get(str(d.get("product") or ""), "")
     if action == "tenant.login":
         return "Content studio" if d.get("client") == "portal" else "API"
     if action == "tenant.plan_changed":
@@ -295,66 +300,3 @@ async def export_activity_csv(pool, tenant_id: str, f: ActivityFilters) -> str:
         rows = await conn.fetch(sql, *args, EXPORT_MAX_ROWS + 1)
     truncated = len(rows) > EXPORT_MAX_ROWS
     return items_to_csv([row_to_item(r) for r in rows[:EXPORT_MAX_ROWS]], truncated=truncated)
-
-
-# ── API key facts ───────────────────────────────────────────────────────────────────────────────
-
-API_KEY_FACTS_SQL = """
-    SELECT
-        t.api_key_hash IS NOT NULL AND t.api_key_hash NOT LIKE 'REVOKED\\_%' AS has_key,
-        (SELECT max(a.created_at) FROM acp_shared.audit_log a
-          WHERE a.tenant_id = $2 AND a.action = ANY($3::text[])) AS issued_at,
-        (SELECT max(a.created_at) FROM acp_shared.audit_log a
-          WHERE a.tenant_id = $2 AND a.action = 'tenant.login') AS last_sign_in_at,
-        (SELECT max(u.called_at) FROM shared.tenant_api_usage u
-          WHERE u.tenant_id = $1 AND u.actor_type = 'tenant') AS last_api_call_at,
-        (SELECT max(m.month) FROM shared.tenant_api_usage_monthly m
-          WHERE m.tenant_id = $1 AND m.actor_type = 'tenant' AND m.calls > 0) AS last_api_call_month
-    FROM shared.tenants t
-    WHERE t.tenant_id = $1
-"""
-
-
-def _iso(v: Optional[datetime]) -> Optional[str]:
-    return v.astimezone(timezone.utc).isoformat() if v else None
-
-
-def _month_start(m: date) -> datetime:
-    return datetime(m.year, m.month, 1, tzinfo=timezone.utc)
-
-
-async def api_key_facts(pool, tenant_id: str) -> dict:
-    """The key itself is never readable (only its sha256 is stored, ``shared.tenants.api_key_hash``), so the
-    masked view is the fixed prefix and a mask. ``last_used_at`` = the newer of a sign-in with the key (portal or
-    ``/auth/tenant-login``) and a metered API call made with a token from it.
-
-    Raw ``shared.tenant_api_usage`` is kept 90 days, then rolled up per month into
-    ``shared.tenant_api_usage_monthly`` (AA-825). When no raw call is left, the newest rolled-up month with calls
-    is returned at month precision (``last_api_call_month``, ``YYYY-MM``) instead of claiming no call was ever made.
-    ``last_used_month`` carries that month when it is newer than every exact use; then ``last_used_at`` is null, so
-    at most one of the two is set and neither states an older use as the latest."""
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(API_KEY_FACTS_SQL, uuid.UUID(tenant_id), tenant_id, list(KEY_ISSUE_ACTIONS))
-    if row is None:
-        return {"has_key": False, "masked": None, "issued_at": None, "last_sign_in_at": None,
-                "last_api_call_at": None, "last_api_call_month": None, "last_used_at": None,
-                "last_used_month": None}
-    used = [v for v in (row["last_sign_in_at"], row["last_api_call_at"]) if v]
-    last_used = max(used) if used else None
-    # the rollup only matters when the raw window holds no call (fallback, not a merge of the two sources)
-    month = row.get("last_api_call_month") if row["last_api_call_at"] is None else None
-    month_text = month.strftime("%Y-%m") if month else None
-    used_month = None
-    if month and (last_used is None or last_used < _month_start(month)):
-        used_month, last_used = month_text, None
-    has_key = bool(row["has_key"])
-    return {
-        "has_key": has_key,
-        "masked": f"{KEY_PREFIX}{_MASK}" if has_key else None,
-        "issued_at": _iso(row["issued_at"]),
-        "last_sign_in_at": _iso(row["last_sign_in_at"]),
-        "last_api_call_at": _iso(row["last_api_call_at"]),
-        "last_api_call_month": month_text,
-        "last_used_at": _iso(last_used),
-        "last_used_month": used_month,
-    }

@@ -3,8 +3,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system deps: C/C++ toolchain for packages that build from source, and git for pip VCS deps
-RUN apt-get update && apt-get install -y \
+# Install system deps: C/C++ toolchain for packages that build from source, and git for pip VCS deps.
+# Also upgrade the Debian packages the base image already has, so a security fix Debian ships before the next base
+# image tag reaches this image too (Trivy fails the build on a fixable HIGH/CRITICAL finding; same as Booking and CRM).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y \
     curl \
     gcc \
     g++ \
@@ -14,7 +16,16 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# S273: the URL-pinned wheel of requirements.txt (the spaCy model) comes from a local, sha256-checked copy: the verified
+# seed in .url-wheels/ (CI and Deploy Dev put it there from the actions cache) or, when the seed is empty, a download
+# with retries and backoff (.github/scripts/url_wheels.py). Same wheel, same pinned hash; pip installs from the rewritten
+# file. Both are bind mounts, so neither the script nor the seed lands in a layer.
+RUN --mount=type=bind,source=.github/scripts/url_wheels.py,target=/tmp/url_wheels.py \
+    --mount=type=bind,source=.url-wheels,target=/tmp/url-wheels-seed \
+    python /tmp/url_wheels.py fetch --req requirements.txt --dest /tmp/url-wheels --seed /tmp/url-wheels-seed \
+        --out /tmp/requirements-local.txt \
+    && pip install --no-cache-dir -r /tmp/requirements-local.txt \
+    && rm -rf /tmp/url-wheels /tmp/requirements-local.txt
 
 # Copy source
 COPY api/ ./api/

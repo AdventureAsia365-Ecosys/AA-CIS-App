@@ -175,6 +175,7 @@ def test_family_caveat_in_source_words_is_not_reverted():
 
 # ---------------------------------------------------------------- test gap: the attempt-3 F17 cut in the job
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_job_attempt_three_cuts_an_f17_cut_it_item_once_f17_was_repaired():
     """F17 'cut it' on one sentence at attempts 1 and 2 (the repair keeps it); attempt 3 cuts it in code."""

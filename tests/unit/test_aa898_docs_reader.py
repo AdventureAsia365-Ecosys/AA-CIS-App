@@ -111,7 +111,7 @@ def _as_owner(owner: bool = True):
 def test_policy_is_admin_only():
     for path in (MANIFEST, PAGE):
         assert staff_authz.POLICY[("GET", path)] == staff_authz.OPS_READ
-    for role in ("viewer", "reviewer", "content"):
+    for role in ("viewer", "content", "content"):
         assert not staff_authz.has_perm(role, staff_authz.OPS_READ), role
 
 
@@ -120,7 +120,7 @@ def test_missing_secret_and_non_admin_roles_403_without_storage_reads(client, pa
     fake = FakeS3(_objects())
     with _use(fake):
         assert client.get(path, headers={"x-admin-role": "admin"}).status_code == 403
-        for role in ("viewer", "reviewer", "content", "tenant"):
+        for role in ("viewer", "content", "tenant"):
             assert client.get(path, headers={"X-Admin-Secret": SECRET, "x-admin-role": role}).status_code == 403
         assert client.get(path, headers={"X-Admin-Secret": SECRET}).status_code == 403   # machine
     assert fake.calls == []
@@ -320,18 +320,27 @@ def test_docs_owner_read_is_not_a_role_or_route_capability():
     assert staff_authz.DOCS_OWNER_READ not in staff_authz.POLICY.values()
 
 
+# The A10b identity: the Dev-only E2E CIS admin carries both flags (AA-1035 A10d).
+_A10B = {"e2e_read_only": True, "e2e_allowlisted_writes": True}
+
+
 @pytest.mark.parametrize("env,kw,expected", [
     ("dev", {"is_owner": True}, "owner"),
     ("prod", {"is_owner": True}, "owner"),                                  # a real owner is not env-gated
-    ("dev", {"e2e_read_only": True}, "e2e_dev"),
-    ("prod", {"e2e_read_only": True}, None),
-    ("staging", {"e2e_read_only": True}, None),
-    ("Dev", {"e2e_read_only": True}, None),                                  # exact match only
-    (None, {"e2e_read_only": True}, None),                                   # unset refuses
-    ("dev", {"e2e_read_only": True, "auth": None}, None),                    # no verified Cognito session
-    ("dev", {"e2e_read_only": True, "role": "viewer",
+    ("dev", _A10B, "e2e_dev"),
+    ("prod", _A10B, None),
+    ("staging", _A10B, None),
+    ("Dev", _A10B, None),                                                    # exact match only
+    (None, _A10B, None),                                                     # unset refuses
+    ("dev", {**_A10B, "auth": None}, None),                                  # no verified Cognito session
+    ("dev", {**_A10B, "role": "viewer",
              "perms": staff_authz.ROLE_PERMS["viewer"]}, None),               # not the admin scope
     ("dev", {}, None),                                                       # an ordinary admin
+    # AA-1035 A10d: a Dev-only E2E identity without the A10b flag (the customer_success account) never gets it,
+    # even with the admin scope.
+    ("dev", {"e2e_read_only": True}, None),
+    ("dev", {"e2e_read_only": True, "role": "customer_success",
+             "perms": staff_authz.ROLE_PERMS["customer_success"]}, None),
     ("dev", {"is_owner": True, "auth": None}, None),                         # owner flag without Cognito
 ])
 def test_docs_owner_read_via(monkeypatch, env, kw, expected):
@@ -347,7 +356,7 @@ def test_docs_owner_read_via(monkeypatch, env, kw, expected):
 
 def test_e2e_admin_reads_owner_pages_on_dev_but_stays_not_owner(client, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "dev")
-    with _use(FakeS3(_objects())), _as_identity(e2e_read_only=True):
+    with _use(FakeS3(_objects())), _as_identity(e2e_read_only=True, e2e_allowlisted_writes=True):
         body = client.get(MANIFEST, headers=ADMIN).json()
         page = client.get(PAGE, params={"path": "docs/legal/register.md"}, headers=ADMIN)
     assert {p["path"] for p in body["pages"]} == {"docs/ops/runbook.md", "docs/legal/register.md"}
@@ -359,7 +368,7 @@ def test_e2e_admin_reads_owner_pages_on_dev_but_stays_not_owner(client, monkeypa
 def test_e2e_admin_gets_no_owner_pages_outside_dev(client, monkeypatch, env):
     monkeypatch.setenv("ENVIRONMENT", env)
     fake = FakeS3(_objects())
-    with _use(fake), _as_identity(e2e_read_only=True):
+    with _use(fake), _as_identity(e2e_read_only=True, e2e_allowlisted_writes=True):
         body = client.get(MANIFEST, headers=ADMIN).json()
         page = client.get(PAGE, params={"path": "docs/legal/register.md"}, headers=ADMIN)
     assert [p["path"] for p in body["pages"]] == ["docs/ops/runbook.md"]
@@ -370,7 +379,7 @@ def test_e2e_admin_gets_no_owner_pages_outside_dev(client, monkeypatch, env):
 
 def test_e2e_admin_owner_read_grants_no_staff_write(client, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "dev")
-    p = _principal(e2e_read_only=True)
+    p = _principal(e2e_read_only=True, e2e_allowlisted_writes=True)
     assert staff_authz.can_read_owner_docs(p)
     for (method, route), cap in staff_authz.POLICY.items():
         if cap == staff_authz.STAFF_WRITE:

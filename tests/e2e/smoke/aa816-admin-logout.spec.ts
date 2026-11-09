@@ -1,12 +1,12 @@
 // tests/e2e/smoke/aa816-admin-logout.spec.ts
 // AA-816 (cutover prep, S244) — staff sign-out, with hand-made cookies only (no admin storage state, no real
-// credential). Safe on a Vercel preview and on the production host.
+// credential). Safe on the production host and on a local `next start`.
 //   • unit: logoutNavigationTarget follows only "/login" or an https Cognito /logout URL (client_id + logout_uri);
 //   • unit: isSameOrigin (same rule as AA-Booking lib/sameOrigin.ts);
 //   • POST /api/auth/admin-logout from another origin → 403, nothing cleared;
 //   • same-origin POST without a session → 200 { redirect: "/login" }, every session cookie cleared;
 //   • same-origin POST with a Cognito-shaped refresh cookie → on the production host the answer is the managed-login
-//     /logout URL for the cis-admin client returning to <prod>/login (a registered logout URL); on a preview host
+//     /logout URL for the cis-admin client returning to <prod>/login (a registered logout URL); on any other host
 //     (no registered logout URL) it is "/login". The forged refresh token is only sent to Cognito's revoke
 //     endpoint, which refuses it.
 // The real browser round trip (sign-in → sign-out → the next sign-in asks for a new email code) is
@@ -17,8 +17,6 @@ import { LOGIN_PATH, logoutNavigationTarget } from '../../../frontend/lib/staffL
 import { isSameOrigin } from '../../../frontend/lib/sameOrigin';
 
 const PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
-// AA-816 P6a: the fixed Preview host is the sign-out URL of the cis-admin-preview client.
-const PREVIEW_SIGNIN_ORIGIN = 'https://aa-cis-preview.lumiguides.it.com';
 const STAFF_AUTH_ORIGIN = 'https://staff-auth.lumiguides.it.com';
 const SESSION_COOKIES = ['cis_admin_token', 'cis_staff_rt', 'cis_role', 'cis_user'];
 
@@ -114,8 +112,8 @@ test.describe('AA-816 — staff sign-out', () => {
       const res = await ctx.post('/api/auth/admin-logout', { maxRedirects: 0 });
       expect(res.status()).toBe(200);
       const body = (await res.json()) as { redirect?: unknown };
-      if (origin !== PROD_ORIGIN && origin !== PREVIEW_SIGNIN_ORIGIN) {
-        // A per-deployment preview URL (or localhost in production mode) has no registered logout URL.
+      if (origin !== PROD_ORIGIN) {
+        // Any other host (localhost in production mode) has no registered logout URL.
         expect(body.redirect).toBe(LOGIN_PATH);
       } else {
         const url = new URL(String(body.redirect));

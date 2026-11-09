@@ -22,7 +22,6 @@ atom would fill — measured and reported, not used to skip the model yet).
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
@@ -30,6 +29,7 @@ from typing import Awaitable, Callable, Optional
 import structlog
 
 from services.content_generation.day_parse import day_range
+from shared.llm_client.json_reply import first_json_value
 
 logger = structlog.get_logger()
 
@@ -164,11 +164,9 @@ Rules:
 
 
 def parse_llm_days(raw: str) -> dict[int, dict]:
-    """{day_from: {...}} from the model's JSON (code fences tolerated). Raises ValueError."""
-    s = raw.strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.S)
-    data = json.loads(s)
+    """{day_from: {...}} from the model's JSON: its first complete JSON object or list (code fences, prose before it
+    and text after it tolerated, AA-1026). Raises ValueError."""
+    data = first_json_value(raw, kinds=(dict, list))
     days = data.get("days") if isinstance(data, dict) else data
     if not isinstance(days, list):
         raise ValueError("model output has no 'days' list")

@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
+from _acc2_routes import candidates_off_routes  # noqa: E402
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from shared.llm_client import bedrock_satellite  # noqa: E402
@@ -51,14 +52,67 @@ def _run(c):
 LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
          ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql",
           "317_llm_connection_cost_policy_reconcile.sql", "320_llm_registry_v2_families_params.sql",
-          "322_provider_connection_v2.sql", "324_llm_acc2_candidate_models.sql")]
+          "322_provider_connection_v2.sql", "324_llm_acc2_candidate_models.sql",
+          # AA-1024: 337 records the Llama 4 capabilities on the rows 324 re-creates
+          "337_llm_llama4_structured_prompt_mode.sql",
+          # AA-1025 A7: 304 re-adds spend_budget_provider_check without 'llm'; 340 widens it again, so every module
+          # that runs after this one sees the live CHECK (S264: two CI rounds failed on the stale one)
+          "340_spend_budget_central_llm_scopes.sql",
+          # AA-1025 B3 / B5: 342's tables reference the connection table (dropped by _undo); 343 re-sets the vendor
+          # API balance source on the rows 322 re-creates
+          "342_provider_health_and_credit_ledger.sql", "343_vendor_api_balance_from_ledger.sql",
+          # AA-1025 H2: 348's capacity table references the connection table (dropped by _undo)
+          "348_llm_capacity_limit.sql",
+          # AA-1026 (S267): 367's probe-state columns and acc3 candidate rows live on the deployment table _undo drops
+          "367_llm_candidate_models_probe_state.sql",
+          # AA-1042 (S268): 370 grants cis_app UPDATE on the deployment priority and switches the gpt-4.1 row off
+          "370_llm_route_control_versions.sql",
+          # AA-1042 (S269): 376's Anthropic API rows live on the deployment table _undo drops; its catalog rows
+          # (provider anthropic) leave with _undo, as the pre-304 provider CHECK refuses them
+          "376_llm_anthropic_api_catalog_fallbacks.sql")]
+# AA-1024 l22 (G8): every migration after 304 that names a table _undo drops (or 304's catalog capabilities column)
+# is in LATER above or here, with the reason it need not be re-run; tests/unit/test_aa1024_replay_later_list.py fails
+# on a new one in neither list (lessons S259..S270: a new FK / CHECK / grant / row on these tables broke this module
+# in CI six times). These were on main when the guard came in (S271) and this module passed without re-running them.
+NOT_LATER = {
+    "306_llm_anthropic_deployments.sql": "on main before the G8 guard (S271); this module passes without it",
+    "307_llm_model_alias.sql": "on main before the G8 guard (S271); this module passes without it",
+    "311_llm_stage_allowed_scopes.sql": "on main before the G8 guard (S271); this module passes without it",
+    "319_llm_ledger_v2.sql": "on main before the G8 guard (S271); this module passes without it",
+    "323_llm_contract_views.sql": "on main before the G8 guard (S271); this module passes without it",
+    "327_llm_routes_converse_keys_writer_scopes.sql": "on main before the G8 guard (S271); this module passes without it",
+    "329_embedding_reembed_tools_titan_fallback.sql": "on main before the G8 guard (S271); this module passes without it",
+    "331_llm_judge_validate_acc2_fallback.sql": "on main before the G8 guard (S271); this module passes without it",
+    "332_llm_tenant_judge_validate_acc2_fallback.sql": "on main before the G8 guard (S271); this module passes without it",
+    "333_llm_judge_validate_acc2_before_openai.sql": "on main before the G8 guard (S271); this module passes without it",
+    "335_llm_segment_research_stages.sql": "on main before the G8 guard (S271); this module passes without it",
+    "339_llm_place_dedupe_acc2_maverick.sql": "on main before the G8 guard (S271); this module passes without it",
+    "341_llm_gateway_view_routing_health.sql": "on main before the G8 guard (S271); this module passes without it",
+    "344_llm_tenant_writers_openai_last.sql": "on main before the G8 guard (S271); this module passes without it",
+    "350_llm_gateway_view_stage_params.sql": "on main before the G8 guard (S271); this module passes without it",
+    "366_llm_family_fallback_chains.sql": "on main before the G8 guard (S271); this module passes without it",
+    "382_llm_gpt6_luna_min_output_tokens.sql": "on main before the G8 guard (S271); this module passes without it",
+    "383_llm_w0_remove_uncalibrated_rungs.sql": "on main before the G8 guard (S271); this module passes without it",
+}
+# AA-1042 (S269): the Opus 4.6 / 4.5 candidates CIS 376 switches on for their Anthropic API row (acc3 rows stay off).
+API_ONLY_376 = {"opus-4-6": "claude-opus-4-6", "opus-4-5": "claude-opus-4-5-20251101"}
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
 
 def _run_later(c):
     for path in LATER:
-        c.execute(open(path, encoding="utf-8").read())
+        if path.endswith("324_llm_acc2_candidate_models.sql"):
+            with candidates_off_routes(c):      # AA-1026 I6: 331 / 332 routes name 324's models; 324's guard refuses
+                c.execute(open(path, encoding="utf-8").read())
+        elif path.endswith("367_llm_candidate_models_probe_state.sql"):
+            # AA-1042 (S269): 376 switched the Opus 4.6 / 4.5 candidates on; 367's guard counts them disabled, and the
+            # 376 re-run below switches them on again
+            c.execute("UPDATE shared.llm_model_catalog SET enabled = false, updated_by = 'migration-367-aa1026' "
+                      "WHERE model_key IN ('opus-4-6', 'opus-4-5') AND updated_by = 'migration-376-aa1042'")
+            c.execute(open(path, encoding="utf-8").read())
+        else:
+            c.execute(open(path, encoding="utf-8").read())
 
 
 @pytest.fixture
@@ -82,13 +136,22 @@ def cur():
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
+    c.execute("DROP TABLE IF EXISTS shared.llm_capacity_limit")           # 348: references the connection table
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '348'")
+    c.execute("DROP TABLE IF EXISTS shared.provider_credit_topup")        # 342: references the connection table
+    c.execute("DROP TABLE IF EXISTS shared.provider_health")              # 342: references the connection table
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('342', '343')")
     c.execute("DROP TABLE IF EXISTS shared.llm_cost_reconcile")           # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_connection_cost_policy")   # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
     c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310', '317', '322')")
     c.execute("DROP TABLE IF EXISTS shared.llm_model_deployment")
-    c.execute("DELETE FROM shared.llm_model_catalog WHERE updated_by = 'migration-324-aa1017'")
-    c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
+    # 324's rows (333 / AA-1026 re-signs the llama4-scout row when it records the model's forced tool choice, 337 /
+    # AA-1024 both Llama 4 rows when it records their structured output mode)
+    c.execute("DELETE FROM shared.llm_model_catalog "
+              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024', "
+              "'migration-367-aa1026', 'migration-376-aa1042')")
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('324', '367', '376')")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
     for (table, name), check in OLD_CHECKS.items():
@@ -100,16 +163,21 @@ def _undo(c):
 def _profiles(c):
     # 324's catalog rows leave with _undo (they come back with LATER), so they are not part of 304's profiles
     c.execute("SELECT model_key, bedrock_profile_ids FROM shared.llm_model_catalog "
-              "WHERE updated_by <> 'migration-324-aa1017' ORDER BY model_key")
+              "WHERE updated_by NOT IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024', "
+              "'migration-367-aa1026', 'migration-376-aa1042') "
+              "ORDER BY model_key")
     return [(r["model_key"], r["bedrock_profile_ids"]) for r in c.fetchall()]
 
 
 def _deployments(c):
     # the rows 304 writes: 306 (AA-1002 S2) adds anthropic-direct seeds and 324 (AA-1017) the acc2 candidate models,
-    # rows a 304 re-run does not recreate
+    # rows a 304 re-run does not recreate; 370 (AA-1042) switches the retired gpt-4.1 row off, which a 304 re-run from
+    # the pre-304 state seeds on again (LATER puts 370 back)
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
               "FROM shared.llm_model_deployment "
-              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017') "
+              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017', 'migration-367-aa1026', "
+              "'migration-376-aa1042') "
+              "AND model_key <> 'gpt-4.1' "
               "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]
 
@@ -182,6 +250,8 @@ def test_first_enabled_deployment_is_the_path_the_gateway_takes_today(cur):
         first.setdefault(r["model_key"], (r["connection_key"], r["wire_id"]))
     checked = 0
     for m in models:
+        if not m.enabled and m.model_key not in first:
+            continue                                         # AA-1026: a disabled candidate (CIS 367), no path
         if m.provider == "typesafe":
             assert m.model_key not in first                  # Jev stays outside the registry in S1
             continue
@@ -189,6 +259,10 @@ def test_first_enabled_deployment_is_the_path_the_gateway_takes_today(cur):
             expected = ("acc3", LEGACY_ACC3[m.model_key])    # _legacy_chain -> invoke_claude constants
         elif m.provider == "openai":
             expected = ("openai-direct", m.wire_model or m.model_key)   # _call_openai
+        elif m.api_style == "anthropic_messages":
+            expected = ("anthropic-direct", m.wire_model)           # AA-1042 (CIS 376): reached only by the API
+        elif m.model_key in API_ONLY_376:
+            expected = ("anthropic-direct", API_ONLY_376[m.model_key])   # CIS 376: the acc3 candidate rows stay off
         else:
             account = m.account_for(None)                     # _call_catalog_model / embed
             expected = (account, m.bedrock_profile_ids[account]) if account else None

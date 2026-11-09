@@ -22,9 +22,9 @@ No network and no `gh`: --dry-run never calls it, --offline skips the PR step bu
   with Contents + Pull requests only; the PR check reads no secret and has a stable "Kit consumers" result job that is
   green when the plan says unchanged.
 - The consumer legs install the app's dependencies before any check and run tsc / lint / tests only when that install
-  succeeded (run 40815951299: `eslint: not found`); the plan matrix carries `migrated` per consumer (portal, crm-web
-  true; booking true since AA-994 S4b; tripplanner false until S5a) and the `--css` check is report-only (warning + summary
-  count, exit 0) for a pre-migration consumer, strict for a migrated one, and fails on a usage error either way.
+  succeeded (run 40815951299: `eslint: not found`); the plan matrix carries `migrated` per consumer (crm-web
+  true; booking true since AA-994 S4b; tripplanner false until S5a) and the `--css` check is report-only (warning +
+  summary count, exit 0) for a pre-migration consumer, strict for a migrated one, and fails on a usage error either way.
 """
 from __future__ import annotations
 
@@ -125,10 +125,10 @@ def remote_branch(consumer: Path) -> str:
 # --- kit-sync.sh --------------------------------------------------------------------------------------------------
 
 def test_consumer_table_matches_adr_0016():
+    # AA-1008: AA-Partner portal/ was merged into web/ (AA-1036); a portal row would re-create the deleted folder.
     out = subprocess.run(["bash", str(KIT_SYNC), "--list"], capture_output=True, text=True, check=True).stdout
     rows = [line.split("\t") for line in out.splitlines()]
     assert rows == [
-        ["portal", "AA-Partner", "portal/app/_kit/core", "portal/kit.lock.json", "full"],
         ["crm-web", "AA-Partner", "web/app/_kit/core", "web/kit.lock.json", "full"],
         ["booking", "AA-Booking", "frontend/ui/core", "frontend/kit.lock.json", "full"],
         ["tripplanner", "AA-TripPlanner-Web", "frontend/ui/core", "frontend/kit.lock.json", "tokens"],
@@ -173,10 +173,10 @@ def test_plan_unchanged_when_no_core_file_changed(tmp_path, cis):
     assert json.loads(outputs["repos"]) == ["AA-Booking", "AA-Partner", "AA-TripPlanner-Web"]
     matrix = json.loads(outputs["consumers"])
     assert {c["name"]: c["app_dir"] for c in matrix} == {
-        "portal": "portal", "crm-web": "web", "booking": "frontend", "tripplanner": "frontend"}
+        "crm-web": "web", "booking": "frontend", "tripplanner": "frontend"}
     # Pre-migration consumers (their own CSS still defines --aa-*): Booking migrated in S4b, S5a flips TripPlanner.
     assert {c["name"]: (c["migrated"], c["migrates_in"]) for c in matrix} == {
-        "portal": (True, ""), "crm-web": (True, ""), "booking": (True, ""), "tripplanner": (False, "S5a")}
+        "crm-web": (True, ""), "booking": (True, ""), "tripplanner": (False, "S5a")}
 
 
 def test_plan_changed_on_core_change_or_without_base(cis):
@@ -200,7 +200,7 @@ def test_plan_also_paths_count_as_a_change(cis):
 
 @pytest.mark.parametrize("dry", [True, False])
 def test_sync_is_a_green_noop_when_the_consumer_has_the_core(tmp_path, cis, dry):
-    work = make_consumer(tmp_path, cis, "AA-Partner", ["portal", "crm-web"])
+    work = make_consumer(tmp_path, cis, "AA-Partner", ["crm-web"])
     main_before = g(work, "rev-parse", "origin/main")
     args = ["--cis", str(cis), "sync", "--repo", "AA-Partner", "--dest", str(work), "--ref", "HEAD", "--offline"]
     res = bot(*args, *(["--dry-run"] if dry else []))
@@ -212,7 +212,7 @@ def test_sync_is_a_green_noop_when_the_consumer_has_the_core(tmp_path, cis, dry)
 
 
 def test_sync_dry_run_commits_locally_and_pushes_nothing(tmp_path, cis):
-    work = make_consumer(tmp_path, cis, "AA-Partner", ["portal", "crm-web"])
+    work = make_consumer(tmp_path, cis, "AA-Partner", ["crm-web"])
     write_core(cis, {**BASE_FILES, "DataTable.tsx": "export const DataTable = 2;\n"})
     new = commit_all(cis, "feat: compact DataTable")
     res = bot("--cis", str(cis), "sync", "--repo", "AA-Partner", "--dest", str(work), "--ref", new, "--dry-run")
@@ -223,8 +223,8 @@ def test_sync_dry_run_commits_locally_and_pushes_nothing(tmp_path, cis):
     assert "feat: compact DataTable" in res.stdout  # the core log since the previous lock ref
     assert remote_branch(work) == ""
     assert g(work, "rev-parse", "--abbrev-ref", "HEAD") == "bot/kit-sync"
-    for lock in ("portal/kit.lock.json", "web/kit.lock.json"):
-        assert json.loads(g(work, "show", f"HEAD:{lock}"))["ref"] == new
+    assert json.loads(g(work, "show", "HEAD:web/kit.lock.json"))["ref"] == new
+    assert not (work / "portal").exists(), "the retired portal/ app must not come back with a sync"
     assert g(work, "log", "-1", "--format=%an|%B", "HEAD").startswith("aa-ecosys-ci-bot[bot]|chore: sync UI kit core")
 
 
@@ -407,7 +407,7 @@ def test_sync_unknown_repo_fails_cleanly(tmp_path, cis):
 # --- report -------------------------------------------------------------------------------------------------------
 
 def test_report_counts_core_commits_behind(tmp_path, cis):
-    partner = make_consumer(tmp_path, cis, "AA-Partner", ["portal", "crm-web"])
+    partner = make_consumer(tmp_path, cis, "AA-Partner", ["crm-web"])
     booking = make_consumer(tmp_path, cis, "AA-Booking", ["booking"])
     tp = make_consumer(tmp_path, cis, "AA-TripPlanner-Web", ["tripplanner"])
     write_core(cis, {**BASE_FILES, "DataTable.tsx": "export const DataTable = 2;\n"})
@@ -419,7 +419,7 @@ def test_report_counts_core_commits_behind(tmp_path, cis):
     assert res.returncode == 0, res.stderr
     rows = {line.split("|")[1].strip(): [c.strip() for c in line.split("|")[2:-1]]
             for line in res.stdout.splitlines()[2:]}
-    assert rows["portal"][2] == "1" and rows["crm-web"][2] == "1" and rows["booking"][2] == "1"
+    assert "portal" not in rows and rows["crm-web"][2] == "1" and rows["booking"][2] == "1"
     assert rows["tripplanner"][2] == "0"  # DataTable is not in the tokens profile
 
 
@@ -456,7 +456,7 @@ def test_sync_workflow_token_is_main_only_and_narrowed_to_one_consumer():
 
 def test_consumers_workflow_reads_no_secret_and_has_a_stable_result_job():
     wf = _wf(CONSUMERS_WF)
-    assert set(wf["on"]) == {"pull_request"}
+    assert set(wf["on"]) == {"pull_request", "merge_group"}  # AA-1008 H3: a required check
     assert wf["permissions"] == {"contents": "read"}
     text = CONSUMERS_WF.read_text()
     assert "secrets." not in text and "create-github-app-token" not in text
@@ -485,7 +485,13 @@ def test_consumers_workflow_installs_before_checks_and_gates_on_the_install():
         assert next(s for s in steps if s["name"].startswith(prefix))["if"] == INSTALLED, prefix
     node = next(s for s in steps if "setup-node" in s.get("uses", ""))
     assert node["with"]["node-version"] == "22"
-    assert node["with"]["cache-dependency-path"] == "consumer/${{ matrix.consumer.app_dir }}/package-lock.json"
+    # S273 (AA-1024, workflow_lint WL4): no setup-node cache (it saved on every ref); the npm cache is restored only,
+    # keyed on the consumer's lock file (format(), never a nested expression), falling back to main's shared entry.
+    assert "cache" not in node["with"]
+    restore = next(s for s in steps if s.get("id") == "npm-cache")
+    assert restore["uses"].startswith("actions/cache/restore@")
+    assert "format('consumer/{0}/package-lock.json', matrix.consumer.app_dir)" in restore["with"]["key"]
+    assert names.index(restore["name"]) < install
     env = _wf(CONSUMERS_WF)["jobs"]["consumer"]["env"]
     assert env["MIGRATED"] == "${{ matrix.consumer.migrated }}"
     assert env["MIGRATES_IN"] == "${{ matrix.consumer.migrates_in }}"
@@ -550,7 +556,7 @@ def test_consumers_workflow_runs_each_consumer_unit_tests(tmp_path):
     if not shutil.which("node"):
         pytest.skip("needs node")
     assert pick({"test:unit": "node --test", "test:layout": "playwright test"}) == "test:unit"  # Booking
-    assert pick({"test": "node --test lib/*.test.ts"}) == "test"  # TripPlanner, portal
+    assert pick({"test": "node --test lib/*.test.ts"}) == "test"  # TripPlanner
     assert pick({"lint": "eslint"}) == ""
 
 

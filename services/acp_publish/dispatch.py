@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlparse
 
+from services.acp_content_writing import ai_marking
 from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_publish.base import SocialPost
 from services.acp_publish.facebook import FacebookAdapter
@@ -46,6 +47,12 @@ def _facebook(creds: dict) -> FacebookAdapter:
     return FacebookAdapter(page_id=creds["page_id"], page_access_token=creds["page_access_token"])
 
 
+def piece_ai_mark(piece) -> dict:
+    """AA-1040 — the AI mark of a piece row read by the publish route (`created_at`, `ai_provenance`); a row
+    without them (an older caller) still gets `ai_generated`."""
+    return ai_marking.piece_mark(piece.get("created_at"), piece.get("ai_provenance"))
+
+
 def _slug(piece, key: str) -> str:
     return blog_slug(piece.get("slug") or piece.get("angle_name") or "", key)
 
@@ -71,13 +78,17 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str) -> tupl
         # pairs). Publishing it raw into content_html made WordPress show literal `##`/`**`.
         # Render the markdown to a bare <article> fragment first (the CMS supplies the page
         # chrome; the standalone-document mode is for tenant download, not publish).
+        # AA-1040 — the fragment carries the machine-readable AI mark (data-ai-* on the <article>, then the
+        # <meta name="ai-*"> tags), so the published page says the text is AI-generated.
         content = BlogContent(
-            title=title, content_html=render_content_text_to_fragment(piece["content_text"]),
+            title=title, content_html=render_content_text_to_fragment(piece["content_text"], ai=piece_ai_mark(piece)),
             slug=_slug(piece, key), seo_title=title, seo_meta=piece.get("meta_description") or "",
             status="publish",
         )
         result = await _wordpress(creds).create_post(content)
     else:  # channel == "facebook" — the only other channel SUPPORTED_CHANNELS lets through
+        # AA-1040 — the Graph API Page feed has no AI label for a text post; the mark stays in the piece
+        # (writer_input.ai_provenance) and its publish_log row (root AI Use Register, "Machine-readable marking").
         result = await _facebook(creds).create_post(SocialPost(message=piece["content_text"]))
     return str(result.post_id), result.post_url
 
@@ -109,4 +120,4 @@ async def delete_remote(channel: str, creds: dict, external_id: str) -> str:
 
 
 __all__ = ["INTEGRATION_TYPE", "SUPPORTED_CHANNELS", "channel_display_name", "delete_remote", "find_remote",
-           "other_account", "publish_to_channel"]
+           "other_account", "piece_ai_mark", "publish_to_channel"]

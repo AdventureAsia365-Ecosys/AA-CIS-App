@@ -123,7 +123,7 @@ def conn():
 
 
 def _add_staff(cur, **cols):
-    cols = {"id": str(uuid.uuid4()), "username": f"aa854-{uuid.uuid4().hex[:8]}", "role": "reviewer", **cols}
+    cols = {"id": str(uuid.uuid4()), "username": f"aa854-{uuid.uuid4().hex[:8]}", "role": "content", **cols}
     names = ", ".join(cols)
     marks = ", ".join(["%s"] * len(cols))
     cur.execute(f"INSERT INTO shared.admin_users ({names}) VALUES ({marks})", list(cols.values()))
@@ -382,7 +382,7 @@ async def test_legacy_login_on_a_cognito_only_row_is_401(app_on_db):
 
 @pytest.mark.asyncio
 async def test_staff_lookup_returns_a_cognito_only_row(app_on_db):
-    """The verify-admin / booking-token lookup reads id, username, role only: a NULL hash does not matter."""
+    """The verify-admin lookup reads id, username, role only: a NULL hash does not matter."""
     from api.main import _load_active_staff
     _client, pool, ids = app_on_db
     uid = uuid.uuid4()

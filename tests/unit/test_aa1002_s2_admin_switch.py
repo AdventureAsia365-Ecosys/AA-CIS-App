@@ -83,7 +83,7 @@ def _run(db, enabled=True, key="anthropic-direct"):
 
 def test_switch_is_admin_only():
     assert staff_authz.POLICY[("PATCH", "/admin/llm-connections/{connection_key}")] == staff_authz.AI_ADMIN
-    for role in ("reviewer", "content", "viewer"):
+    for role in ("content", "viewer"):
         assert staff_authz.AI_ADMIN not in staff_authz.ROLE_PERMS[role]
 
 

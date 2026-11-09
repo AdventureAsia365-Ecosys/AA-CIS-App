@@ -1,8 +1,8 @@
 """AA-761 against real Postgres (every migration replayed by conftest): the SQL behind /v1/account.
 
-Cross-tenant refusal on actual rows: tenant A's activity, CSV and API key facts never include tenant B's rows, and
-A's own staff-only rows (admin silent corrections, the staff request trail, brand edits) stay hidden. Date filters,
-paging totals and the key's issue / last-use times are read from rows this test writes.
+Cross-tenant refusal on actual rows: tenant A's activity and CSV never include tenant B's rows, and A's own
+staff-only rows (admin silent corrections, the staff request trail, brand edits) stay hidden. Date filters and
+paging totals are read from rows this test writes. (AA-1036: the API key facts went with the tenant API keys.)
 """
 import json
 import os
@@ -28,9 +28,9 @@ T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 async def _tenant(pool, tag: str, suffix: str) -> uuid.UUID:
     tid = uuid.uuid4()
     await pool.execute(
-        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, api_key_hash, rate_limit_rpm, is_active, "
-        "posts_per_week) VALUES ($1, $2, $3, 'starter', $4, 60, true, 3)",
-        tid, f"AA-761 {suffix} {tag}", f"aa761-{suffix}-{tag}", f"hash-{suffix}-{tag}")
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active, "
+        "posts_per_week) VALUES ($1, $2, $3, 'starter', 60, true, 3)",
+        tid, f"AA-761 {suffix} {tag}", f"aa761-{suffix}-{tag}")
     return tid
 
 
@@ -114,55 +114,3 @@ async def test_export_is_the_whole_filtered_set_of_the_tenant(env):
     assert len(lines) == 1 + 3
     assert env.b not in csv_text and "staff-only text" not in csv_text and "Brand" not in csv_text
 
-
-@pytest.mark.asyncio
-async def test_api_key_facts_are_per_tenant(env):
-    a = await ta.api_key_facts(env.pool, env.a)
-    assert a["has_key"] is True and a["masked"].startswith("cis_")
-    assert a["issued_at"] == T0.isoformat()  # agency.onboard; B's key rotation is not A's
-    assert a["last_sign_in_at"] == (T0 + timedelta(days=1)).isoformat()
-    assert a["last_api_call_at"] == (T0 + timedelta(days=3)).isoformat()
-    assert a["last_used_at"] == a["last_api_call_at"]
-    assert "hash-a" not in json.dumps(a)
-    b = await ta.api_key_facts(env.pool, env.b)
-    assert b["issued_at"] == (T0 + timedelta(days=5)).isoformat()
-    assert b["last_used_at"] == (T0 + timedelta(days=9)).isoformat()
-    await env.pool.execute("UPDATE shared.tenants SET api_key_hash = 'REVOKED_' || tenant_id::text "
-                           "WHERE tenant_id = $1", uuid.UUID(env.b))
-    assert (await ta.api_key_facts(env.pool, env.b))["has_key"] is False
-    assert (await ta.api_key_facts(env.pool, str(uuid.uuid4())))["has_key"] is False
-
-
-async def _monthly(pool, tenant_id, month: date, calls: int, actor_type: str = "tenant"):
-    await pool.execute(
-        "INSERT INTO shared.tenant_api_usage_monthly (month, tenant_id, actor_type, calls, ok_calls, "
-        "rate_limited_calls, server_error_calls) VALUES ($1, $2, $3, $4, $4, 0, 0)",
-        month, tenant_id, actor_type, calls)
-
-
-@pytest.mark.asyncio
-async def test_api_key_facts_fall_back_to_the_monthly_rollup(env):
-    """AA-825 keeps raw usage 90 days, then only the monthly rollup: a tenant whose calls all aged out still
-    gets the newest month with calls (month precision), not "no API call yet"."""
-    c = await _tenant(env.pool, uuid.uuid4().hex[:8], "c")
-    try:
-        await _audit(env.pool, c, "tenant.login", datetime(2026, 3, 2, 8, 0, tzinfo=timezone.utc))
-        await _monthly(env.pool, c, date(2026, 4, 1), 12)
-        await _monthly(env.pool, c, date(2026, 5, 1), 7)
-        await _monthly(env.pool, c, date(2026, 6, 1), 0)                        # no calls: not "used"
-        await _monthly(env.pool, c, date(2026, 7, 1), 40, actor_type="staff")   # staff calls: not the key
-        a_month = date(2026, 8, 1)
-        await _monthly(env.pool, uuid.UUID(env.a), a_month, 99)                 # another tenant's month
-        out = await ta.api_key_facts(env.pool, str(c))
-        assert out["last_api_call_at"] is None and out["last_api_call_month"] == "2026-05"
-        assert out["last_used_at"] is None and out["last_used_month"] == "2026-05"  # newer than the March sign-in
-        assert out["last_sign_in_at"] == "2026-03-02T08:00:00+00:00"
-        # A still has a raw call: the rollup is a fallback only, never merged over a raw timestamp
-        a = await ta.api_key_facts(env.pool, env.a)
-        assert a["last_api_call_at"] == (T0 + timedelta(days=3)).isoformat()
-        assert a["last_api_call_month"] is None and a["last_used_month"] is None
-    finally:
-        await env.pool.execute("DELETE FROM shared.tenant_api_usage_monthly WHERE tenant_id = ANY($1::uuid[])",
-                               [c, uuid.UUID(env.a)])
-        await delete_audit_rows(env.pool, "tenant_id = $1", str(c))
-        await env.pool.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", c)

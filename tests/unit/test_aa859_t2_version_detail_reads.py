@@ -354,8 +354,10 @@ _OLD_SEO = """
     WHERE tour_id = $1::uuid
     ORDER BY fetched_at DESC LIMIT 1
 """
+# AA-1040 adds ttv.edit_source and ttv.created_at (the AI mark of the DOCX properties); the rest is the pre-D5b SQL.
 _OLD_EXPORT = """
     SELECT ttv.version_number, ttv.rewritten_content, ttv.rewrite_language,
+           ttv.edit_source, ttv.created_at,
            pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_highlights,
            pt.aa_itineraries,
            rt.country, rt.duration, rt.inclusions, rt.exclusions

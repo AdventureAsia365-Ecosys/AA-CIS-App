@@ -25,12 +25,18 @@
 // AA-769 (S234): non-GET requests on lib/rbac.ts API_WRITE_RULES paths (Content
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
+//
+// AA-1035 R2 slice 2 (S268 fix pass): the view-as start (backend POST /admin/tenants/{id}/view-as) answers a
+// read-only tenant bearer token; this proxy streams bodies back to the page, so it refuses that path for every
+// method and role (lib/viewAs.ts isViewAsStartPath). Only app/api/view-as/route.ts starts a session, and it keeps
+// the token in an httpOnly cookie.
 import { NextRequest, NextResponse } from "next/server";
 import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
+import { isViewAsStartPath } from "@/lib/viewAs";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -54,6 +60,11 @@ async function handler(
   const upstreamPath = proxyPath(path);
   if (upstreamPath === null) {
     return NextResponse.json({ detail: "Invalid path" }, { status: 400 });
+  }
+  // AA-1035 (S268) — the view-as token must never reach the page: start a view through /api/view-as only.
+  if (isViewAsStartPath(pathStr)) {
+    return NextResponse.json({ detail: "view_as_bff_only", message: "Start a view-as session from Tenant 360." },
+      { status: 403 });
   }
   // AA-577 follow-up — a few paths (the OpenAPI schema) are admin-only even for reads.
   if (!canReadAdminPath(auth.role, pathStr)) {

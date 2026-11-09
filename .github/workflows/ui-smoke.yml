@@ -1,24 +1,17 @@
 name: UI Smoke
 
-# AA-732 — run the Playwright UI smoke suite against a PR's Vercel preview.
-# S241: the Vercel Git integration is off (frontend/vercel.json), so Vercel no longer sends
-# `deployment_status`. `vercel-deploy.yml` now calls this workflow after a successful PREVIEW deploy
-# (workflow_call). Inside a called workflow `github.event_name` / `github.event` belong to the
-# CALLER (pull_request, …), so everything here reads `inputs.*`, never the event payload.
+# AA-732 — the Playwright UI smoke suite against a deployed CIS admin host.
+# Called by deploy-admin-dev.yml after a verified ECS deploy from main (AA-911: the Vercel previews and the
+# vercel-deploy.yml caller were retired in S272), or dispatched. Inside a called workflow `github.event_name` /
+# `github.event` belong to the CALLER, so everything here reads `inputs.*`, never the event payload.
 #
 # AA-816 S2 path — two jobs:
 #   • `smoke` (always): Playwright project `smoke-public`, every smoke spec without the @staff tag, NO session.
-#     This is all a per-PR *.vercel.app preview can run: those hosts are not Cognito callbacks (no wildcard
-#     callbacks) and the legacy password login is going away (S2).
 #   • `smoke-staff` (only with staff_session=true, from main): project `smoke` (+ its setup) signed in as the
 #     Cognito E2E user "E2E Cognito" with an email code read from the SES mailbox (same OIDC role, environment `e2e`
-#     and concurrency group as e2e-cognito.yml). Only on the two callback hosts: the fixed Preview host
-#     https://aa-cis-preview.lumiguides.it.com (the cis-admin-preview client: the API caps the session at viewer
-#     and the setup fails unless the role is viewer) and Production https://aa-cis.lumiguides.it.com (the E2E user
-#     is a reviewer: read-only checks only). vercel-deploy.yml calls it after a production deploy and after an
-#     alias-only dispatch of the Preview host; for a PR labelled preview-signin, dispatch this workflow from main
-#     with base_url=https://aa-cis-preview.lumiguides.it.com and staff_session=true (the mailbox role trusts main
-#     only). Uploads screenshots only: the HTML report would name the typed code in a `fill` step.
+#     and concurrency group as e2e-cognito.yml). Only on the Cognito callback host https://aa-cis.lumiguides.it.com
+#     (the E2E user is a reviewer: read-only checks only). Uploads screenshots only: the HTML report would name the
+#     typed code in a `fill` step.
 on:
   workflow_call:
     inputs:
@@ -37,12 +30,14 @@ on:
         type: boolean
         default: false
     secrets:
-      VERCEL_AUTOMATION_BYPASS_SECRET:
+      # the read-only mailbox role of the E2E sign-in (the caller passes `secrets: inherit`; declared so the called
+      # workflow names every secret it reads, actionlint G15)
+      E2E_MAIL_ROLE_ARN:
         required: false
   workflow_dispatch:
     inputs:
       base_url:
-        description: "Base URL to run the smoke against (e.g. a preview or production URL)"
+        description: "Base URL to run the smoke against (e.g. https://aa-cis.lumiguides.it.com)"
         required: true
         type: string
       sha:
@@ -51,7 +46,7 @@ on:
         type: string
         default: ""
       staff_session:
-        description: "AA-816: also run the authenticated smoke as the Cognito E2E user (dispatch from main; base_url must be https://aa-cis-preview.lumiguides.it.com or https://aa-cis.lumiguides.it.com)"
+        description: "AA-816: also run the authenticated smoke as the Cognito E2E user (dispatch from main; base_url must be https://aa-cis.lumiguides.it.com)"
         required: false
         type: boolean
         default: false
@@ -70,24 +65,22 @@ jobs:
     name: UI smoke (Playwright)
     # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
     runs-on: ubuntu-24.04
-    # Both triggers carry inputs.base_url (the caller only calls after a successful preview deploy).
+    # Both triggers carry inputs.base_url (the caller only calls after a verified deploy).
     if: inputs.base_url != ''
     env:
-      # Preview is behind Vercel SSO — the bypass secret lets Playwright reach it; the spec only
-      # sends the header to the BASE_URL origin, and only when the secret is present.
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The deployed commit (PR head sha from vercel-deploy.yml); the dispatched ref otherwise.
+          # The deployed commit (from deploy-admin-dev.yml); the dispatched ref otherwise.
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored, so `npm ci` fails
       # (first live dispatch, S220). The only root dependency is @playwright/test.
@@ -97,13 +90,13 @@ jobs:
       - name: Install Playwright browser (chromium)
         run: npx playwright install --with-deps chromium
 
-      # AA-816 S2 path: no session on a per-PR preview (the @staff specs run in job smoke-staff).
+      # AA-816 S2 path: no session here (the @staff specs run in job smoke-staff).
       - name: Run the public UI smoke project (no session)
         run: npx playwright test --project=smoke-public -c playwright.config.ts
 
       - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-smoke-${{ github.run_id }}
           # Only screenshots and the HTML report. Never upload tests/e2e/.auth (session cookies).
@@ -141,7 +134,7 @@ jobs:
           MARKER="<!-- ui-smoke-report -->"
           RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
           if [ "$OUTCOME" = "success" ]; then STATUS="✅ passed"; else STATUS="❌ failed"; fi
-          BODY=$(printf '%s\n### UI smoke — %s\n\nPreview: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
+          BODY=$(printf '%s\n### UI smoke — %s\n\nHost: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
                    "$MARKER" "$STATUS" "${BASE_URL:-n/a}" "$RUN_URL")
           # Find an existing marker comment and edit it in place; otherwise create one.
           EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
@@ -160,7 +153,7 @@ jobs:
         if: always()
         run: rm -rf tests/e2e/.auth
 
-  # ── AA-816 S2 path: authenticated smoke as the Cognito E2E user (callback hosts only, main only) ──
+  # ── AA-816 S2 path: authenticated smoke as the Cognito E2E user (callback host only, main only) ──
   smoke-staff:
     name: UI smoke, signed in (Cognito E2E user)
     # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
@@ -179,36 +172,36 @@ jobs:
       group: e2e-cognito
       cancel-in-progress: false
     env:
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       BASE_URL: ${{ inputs.base_url }}
       # Opt-in switch the smoke setup checks (no underscore by design, like e2e-cognito.yml).
       E2ECOGNITO: "1"
     steps:
-      - name: Only the two Cognito callback hosts
+      - name: Only the Cognito callback host
         env:
           URL: ${{ inputs.base_url }}
         run: |
           case "${URL%/}" in
-            https://aa-cis.lumiguides.it.com|https://aa-cis-preview.lumiguides.it.com) echo "Staff smoke on $URL" ;;
-            *) echo "::error::staff_session needs base_url https://aa-cis.lumiguides.it.com or https://aa-cis-preview.lumiguides.it.com (got $URL)"; exit 1 ;;
+            https://aa-cis.lumiguides.it.com) echo "Staff smoke on $URL" ;;
+            *) echo "::error::staff_session needs base_url https://aa-cis.lumiguides.it.com (got $URL)"; exit 1 ;;
           esac
 
       - name: Checkout the deployed commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Configure AWS credentials (OIDC, read-only mailbox role)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
           aws-region: us-west-1
           role-session-name: cis-ui-smoke-staff-${{ github.run_id }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (S220 lesson).
       - name: Install dependencies (repo root — Playwright lives here)
@@ -224,7 +217,7 @@ jobs:
       # Screenshots only. NOT the HTML/JSON reports: a `fill` step title would carry the typed sign-in code.
       - name: Upload smoke screenshots (NO report, NO auth state)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-smoke-staff-${{ github.run_id }}
           path: tests/e2e/results/smoke/**/*.png

@@ -75,7 +75,7 @@ def test_backend_text_shown_in_the_admin_has_no_issue_id():
 def test_the_scans_see_the_code():
     # A path refactor must not turn the guard into a no-op.
     fe = {p.relative_to(REPO).as_posix() for p in _frontend_files()}
-    assert "frontend/app/admin/cost-ops/page.tsx" in fe and "frontend/lib/crmConsole.ts" in fe
+    assert "frontend/app/admin/spend/page.tsx" in fe and "frontend/lib/crmConsole.ts" in fe
     assert not any(".test." in p for p in fe)
     be = {p.relative_to(REPO).as_posix() for p in _backend_files()}
     assert "api/routers/admin_llm_ops.py" in be and not any("/migrations/" in p for p in be)

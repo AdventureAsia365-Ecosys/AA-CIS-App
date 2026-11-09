@@ -97,7 +97,7 @@ async def test_promote_publishes_the_whole_version_and_forces_a_reatomize():
     ex.assert_awaited_once()
     assert ex.await_args.args == (VERSION_ID,)
     assert ex.await_args.kwargs == {"atomize_dedupe": False, "atomize_force": True,
-                                    "atomize_created_by": "admin:promote_version"}
+                                    "atomize_created_by": "admin:promote_version", "contract_exit": "promote"}
     assert out == {"promoted": True, "published_tour_id": "pt-1", "version_num": 2, "version_id": VERSION_ID,
                    "atomize_job_id": "job-1"}
     # no partial copy onto published_tours any more (the old UPDATE … SET aa_name, published_at = NOW())

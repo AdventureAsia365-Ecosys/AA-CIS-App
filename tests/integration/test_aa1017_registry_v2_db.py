@@ -78,11 +78,17 @@ def test_the_jev_provider_query_runs():
     from shared.llm_client import decide
 
     row = _adb(lambda c: c.fetchrow(decide._PROVIDER_SQL, decide.JEV_CONNECTION_KEY))
-    assert dict(row) == {"base_url": "https://api.typesafe.ai", "timeout_s": 3, "max_retries": 2}
+    assert dict(row) == {"base_url": "https://api.typesafe.ai", "timeout_s": 3, "max_retries": 2, "enabled": True}
 
 
-def test_the_stage_params_read_runs_on_the_empty_table():
-    assert _adb(stage_params.fetch_params) == {}
+def test_the_stage_params_read_runs_on_the_replayed_table():
+    # Empty at 320; CIS 381 (AA-741 S271) seeds effort-only rows (updated_by migration-381-aa741). Every row the read
+    # returns is one of those: effort set, every other parameter NULL.
+    # (Another module may have re-created the catalog rows, whose FK cascade drops the params: no presence check.)
+    rows = _adb(stage_params.fetch_params)
+    for p in rows.values():
+        assert p.effort in ("low", "medium")
+        assert (p.max_tokens, p.min_output_tokens, p.temperature, p.reasoning_mode) == (None, None, None, None)
 
 
 def test_the_geoapify_limit_comes_from_its_row(monkeypatch):

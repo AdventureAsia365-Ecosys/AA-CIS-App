@@ -111,6 +111,8 @@ def _conn(allowlist):
                      "threshold_version": 1, "question_hash": "h"}]
         if "FROM shared.decision_log" in sql:
             return []
+        if "FROM shared.llm_role_config" in sql:      # AA-1039: the pii stages (none)
+            return []
         return [{"t": t} for t in allowlist]
 
     conn.fetch = AsyncMock(side_effect=fetch)

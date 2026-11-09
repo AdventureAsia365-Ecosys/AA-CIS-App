@@ -23,6 +23,11 @@ AA-978 adds the Members routes over the CIS membership directory (``shared.tenan
   out within a minute, and locks the agency when that was its last owner.
 
 Both writes need tenant.write (staff_authz POLICY) and write an acp_shared.audit_log row with the change.
+AA-1035 R2: tenant.member.write (customer_success, scoped to its book) also passes POLICY; the owner role is not part of
+it. A change to or from ``owner``, the removal of an owner, an owner invitation and the send-again of an owner
+invitation need tenant.write (:func:`_require_owner_tier`): a send-again re-seals the invitation to the address in the
+body (neither CIS nor the CRM can read back the first address), so it could otherwise hand an owner seat to anyone.
+support holds only tenant.member.resend: the send-again of a non-owner invitation.
 
 AA-979 P2b adds the Content studio invitation (re-enrolment in the partner pool, root ADR 0010a):
 
@@ -33,11 +38,27 @@ AA-979 P2b adds the Content studio invitation (re-enrolment in the partner pool,
   failed: the row stays ``invited`` and the answer says ``delivery.status = failed`` (send again).
 * ``POST /admin/tenants/{id}/members/{membership_id}/invitation/send`` — send the invitation of an ``invited`` row
   again (the CRM is idempotent on ``cis_invitation_id``: it re-issues the same invitation with a new link).
+  AA-1035 R2 close-out (crm.ops.v1 1.12): without ``email`` the CRM sends it again to the address it kept sealed
+  under its own data key (``keep_address``), so nobody types it again and nobody can redirect it; support
+  (tenant.member.resend) may only do that. With ``email`` it goes to the new address (tenant.member.write or
+  tenant.write: customer_success, admin). An invitation the CRM issued before 1.12 kept no address: 409
+  ``address_not_kept`` from the CRM, shown in the delivery answer; then a new address is the only way.
 
 Both invitation routes are on the write allow-list of the Dev-only E2E CIS admin (root ADR 0006a A10b-1, AA-979 phase
 2 automation): :func:`_refuse_e2e_invitation` answers that session 403 ``e2e_read_only`` before any write or relay
 unless the tenant is synthetic (``is_canary``), the address is an E2E mailbox address and the role is viewer / editor
 (the body's role on a new invitation, the stored role on a send-again: :func:`_refuse_e2e_resend_role`).
+
+AA-1031 (S264 live check F3) adds the read the page uses to show only the writes the API would accept:
+
+* ``GET /admin/tenants/{id}/members/access`` — ``{read_only, actions: {invite, send_again, change_role, remove},
+  invite_roles}``. Each action is ``staff_authz.denial_reason`` on that write's own route, plus the invitation routes'
+  own refusal of the Dev-only E2E CIS admin (synthetic tenant only, viewer / editor only), so a read-only session sees
+  no Invite button and no row menu. UI hint only: every write keeps its own checks.
+
+AA-1037 (root ADR 0019 d9) adds ``GET /admin/tenants/{id}/booking-billing``: the agency billing status AA-Booking
+publishes in ``booking.v_tenant_billing_status`` next to the CIS account and live subscriptions it drives (read only,
+fail soft; ``services/tenant_account/billing.tenant_snapshot``).
 
 Cost definition is the AA-798 one (migration 223): ``shared.llm_call_log.cost_usd`` for the
 tenant, current calendar month (``date_trunc('month', now())``), Jev included, shadow rows
@@ -56,10 +77,16 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.core import e2e_staff
-from api.core.staff_authz import request_staff_identity, staff_policy
+from api.core.staff_authz import (
+    TENANT_MEMBER_WRITE, TENANT_WRITE, StaffPrincipal, denial_reason, principal_from_role, request_staff_identity,
+    staff_policy,
+)
+from api.core.tenant_scope import TENANT_SCOPED
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import _admin_actor, verify_admin_secret
+from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
+from services.tenant_account import billing as tenant_billing
 from services.tenant_membership import session as members_session
 from services.tenant_membership import writer as members_writer
 from api.services import crm_console
@@ -333,7 +360,8 @@ async def _require_tenant(conn, tenant_id: UUID) -> dict:
 
 # ── routes ────────────────────────────────────────────────────────────────────────────────────
 
-@router.get("/{tenant_id}/cost", summary="Tenant month-to-date LLM cost, $/piece, $/tour, margin")
+@router.get("/{tenant_id}/cost", summary="Tenant month-to-date LLM cost, $/piece, $/tour, margin",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_cost(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -370,7 +398,8 @@ async def get_tenant_cost(tenant_id: UUID, request: Request, x_admin_secret: str
     }
 
 
-@router.get("/{tenant_id}/quality", summary="Tenant T10 gate verdicts, held reasons, edit rate")
+@router.get("/{tenant_id}/quality", summary="Tenant T10 gate verdicts, held reasons, edit rate",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_quality(
     tenant_id: UUID, request: Request,
     days: int = Query(30, ge=1, le=365),
@@ -407,7 +436,8 @@ async def get_tenant_quality(
     }
 
 
-@router.get("/{tenant_id}/markets", summary="Tenant markets, research coverage, unmapped requests")
+@router.get("/{tenant_id}/markets", summary="Tenant markets, research coverage, unmapped requests",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -448,6 +478,28 @@ async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: 
     }
 
 
+# ── Booking invoices (AA-1037) ────────────────────────────────────────────────────────────────
+
+@router.get("/{tenant_id}/booking-billing", summary="Tenant's agency billing status from AA-Booking (read only)",
+            dependencies=TENANT_SCOPED)
+async def get_tenant_booking_billing(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
+    """Tenant 360 › Billing › Booking invoices (root ADR 0019 d9 "Screens now"). Booking issues every agency invoice and
+    publishes the agency's billing status in its contract view ``booking.v_tenant_billing_status`` (bk-042, SELECT
+    to ``cis_app``); the hourly ``tenant_billing_tick`` moves the account from it. This read shows both sides: the
+    view row (status, overdue invoices and amount per currency, paid through, the warn / suspend days; ``booking``
+    null when Booking has no row for the tenant) and the CIS account and live subscriptions. No invoice line, bill-to
+    or person. ``available`` false when the view cannot be read (fail soft, like the tick).
+
+    Who: the existing Billing tab's rule (POLICY ``_TENANT_BILLING_READ``): billing.read on every tenant (admin,
+    finance), tenant.book.account.read on the caller's book only (customer_success; require_tenant_scope)."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        snap = await tenant_billing.tenant_snapshot(conn, str(tenant_id))
+    return {"tenant_id": str(tenant_id), **snap}
+
+
 # ── members (AA-978) ──────────────────────────────────────────────────────────────────────────
 
 class MemberRoleChange(BaseModel):
@@ -461,7 +513,8 @@ def _members_unavailable(exc: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail="Memberships need migration 276 (shared.tenant_members).")
 
 
-@router.get("/{tenant_id}/members", summary="The tenant's CIS memberships (Content studio roles)")
+@router.get("/{tenant_id}/members", summary="The tenant's CIS memberships (Content studio roles)",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_members(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -479,7 +532,38 @@ async def get_tenant_members(tenant_id: UUID, request: Request, x_admin_secret: 
     }
 
 
-async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
+OWNER_ROLE = "owner"
+
+
+def may_write_owner(principal: StaffPrincipal) -> bool:
+    """AA-1035: may this caller grant, change, remove or (re)send the ``owner`` Content studio role? tenant.write only
+    (admin); tenant.member.write / tenant.member.resend never reach the owner seat. The machine (main secret, no role)
+    never reaches the member routes (POLICY: not MACHINE_ROUTES); it would be the secret holder, who may claim admin."""
+    return principal.is_machine or TENANT_WRITE in principal.perms
+
+
+def _caller(principal: Any, request: Request) -> StaffPrincipal:
+    """The staff_policy principal, or (a direct call in a test, where the Depends default is not resolved) the one
+    the request headers and the verified identity give."""
+    if isinstance(principal, StaffPrincipal):
+        return principal
+    return principal_from_role(request.headers.get("x-admin-role"), request_staff_identity(request))
+
+
+def owner_tier_refusal(principal: StaffPrincipal) -> HTTPException:
+    # Starts with "Role '" like the policy refusals, so the page's staffErrorMessage() reads it the same way.
+    return HTTPException(status_code=403, detail=(
+        f"Role '{principal.role}' lacks the '{TENANT_WRITE}' permission the owner role needs"))
+
+
+def _require_owner_tier(principal: StaffPrincipal, *roles: Optional[str]) -> None:
+    """403 when one of ``roles`` (the role asked for, the stored role) is owner and the caller lacks tenant.write."""
+    if OWNER_ROLE in roles and not may_write_owner(principal):
+        logger.warning("tenant_member_owner_refused", role=principal.role)
+        raise owner_tier_refusal(principal)
+
+
+async def _member_write(request: Request, tenant_id: UUID, op, principal: Optional[StaffPrincipal] = None) -> dict:
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
@@ -487,6 +571,9 @@ async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
             row, changed = await op(conn)
         except members_writer.MemberNotFound as exc:
             raise HTTPException(status_code=404, detail="Membership not found") from exc
+        except members_writer.OwnerNeedsTenantWrite as exc:
+            logger.warning("tenant_member_owner_refused", role=getattr(principal, "role", None))
+            raise owner_tier_refusal(principal or StaffPrincipal(kind="staff")) from exc
         except members_writer.MemberRemoved as exc:
             raise HTTPException(status_code=409, detail="This membership is removed; removal is final.") from exc
         except asyncpg.UndefinedTableError as exc:
@@ -495,30 +582,40 @@ async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
 
 
 @router.patch("/{tenant_id}/members/{membership_id}",
-              summary="Change a member's Content studio role (owner / editor / viewer)")
+              summary="Change a member's Content studio role (owner / editor / viewer)",
+              dependencies=TENANT_SCOPED)
 async def patch_tenant_member(
     tenant_id: UUID, membership_id: UUID, body: MemberRoleChange, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
     actor = _admin_actor(x_admin_user_id)
+    principal = _caller(principal, request)
+    _require_owner_tier(principal, body.content_studio_role)
+    allow_owner = may_write_owner(principal)
     result = await _member_write(request, tenant_id, lambda conn: members_writer.change_role(
-        conn, str(tenant_id), str(membership_id), body.content_studio_role, actor))
+        conn, str(tenant_id), str(membership_id), body.content_studio_role, actor, allow_owner=allow_owner),
+        principal)
     logger.info("tenant_member_role_changed", tenant_id=str(tenant_id), membership_id=str(membership_id),
                 role=body.content_studio_role, changed=result["changed"])
     return result
 
 
 @router.post("/{tenant_id}/members/{membership_id}/remove",
-             summary="Remove a member (final; the partner CRM signs them out within a minute)")
+             summary="Remove a member (final; the partner CRM signs them out within a minute)",
+             dependencies=TENANT_SCOPED)
 async def remove_tenant_member(
     tenant_id: UUID, membership_id: UUID, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
     actor = _admin_actor(x_admin_user_id)
+    principal = _caller(principal, request)
+    allow_owner = may_write_owner(principal)
     result = await _member_write(request, tenant_id, lambda conn: members_writer.remove(
-        conn, str(tenant_id), str(membership_id), actor))
+        conn, str(tenant_id), str(membership_id), actor, allow_owner=allow_owner), principal)
     logger.info("tenant_member_removed", tenant_id=str(tenant_id), membership_id=str(membership_id),
                 changed=result["changed"])
     return result
@@ -541,8 +638,19 @@ class MemberInvite(BaseModel):
 
 class MemberInviteResend(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    email: str = Field(min_length=6, max_length=254, pattern=_EMAIL)
+    # AA-1035 close-out: None = send again to the address the CRM kept (crm.ops.v1 1.12 keep_address).
+    email: Optional[str] = Field(None, min_length=6, max_length=254, pattern=_EMAIL)
     locale: Literal["en", "vi"] = "en"
+
+
+def may_readdress(principal: StaffPrincipal) -> bool:
+    """AA-1035 close-out: may this caller send an invitation again to a NEW address? tenant.write or
+    tenant.member.write (admin, customer_success). support (tenant.member.resend only) sends again to the kept address
+    only, so it can never hand an invitation to an address of its choosing."""
+    return principal.is_machine or bool({TENANT_WRITE, TENANT_MEMBER_WRITE} & principal.perms)
+
+
+READDRESS_REFUSED = "Your role sends an invitation again to the same address only (leave the address empty)."
 
 
 async def _refuse_e2e_invitation(request: Request, conn, tenant_id: UUID, email: str,
@@ -552,11 +660,15 @@ async def _refuse_e2e_invitation(request: Request, conn, tenant_id: UUID, email:
     or ``editor`` (a new invitation: the body's role, checked here; a send-again: the stored role of the membership,
     checked by :func:`_refuse_e2e_resend_role` once the row is read). 403 ``e2e_read_only`` otherwise, before any row,
     audit or relay.
-    Every other staff member is unaffected."""
-    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+    Every other staff member is unaffected. AA-1035 A10d: any other Dev-only E2E identity (``e2e_read_only`` without
+    ``e2e_allowlisted_writes``) is refused outright, whatever the tenant, address or role."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
         return
     reason = None
-    if role is not None and role not in e2e_staff.E2E_INVITE_ROLES:
+    if not e2e_staff.has_allowlisted_writes(identity):
+        reason = "not_allowlisted"
+    elif role is not None and role not in e2e_staff.E2E_INVITE_ROLES:
         reason = "role"
     elif not e2e_staff.is_e2e_mailbox_address(email):
         reason = "address"
@@ -572,19 +684,26 @@ def _refuse_e2e_resend_role(request: Request, tenant_id: UUID, member: dict) -> 
     the Dev-only E2E CIS admin may send again only an invitation whose role is ``viewer`` or ``editor``. Without this
     check an A10b session could redirect an ``owner`` invitation a real admin created on a synthetic tenant to an
     E2E mailbox and claim it as owner. 403 ``e2e_read_only`` before any relay. Every other staff member is
-    unaffected."""
-    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+    unaffected. AA-1035 A10d: a Dev-only E2E identity without ``e2e_allowlisted_writes`` is refused outright."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
         return
-    if member.get("content_studio_role") not in e2e_staff.E2E_INVITE_ROLES:
+    if (not e2e_staff.has_allowlisted_writes(identity)
+            or member.get("content_studio_role") not in e2e_staff.E2E_INVITE_ROLES):
         logger.warning("tenant_member_invitation_e2e_refused", tenant_id=str(tenant_id), reason="role")
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
 
-async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email: str, locale: str) -> dict:
-    """Relay the invitation to the CRM (crm.ops.v1). Never raises: the outcome goes into the answer."""
+async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email: Optional[str], locale: str) -> dict:
+    """Relay the invitation to the CRM (crm.ops.v1). Never raises: the outcome goes into the answer. ``email`` None:
+    send again to the address the CRM kept (1.12 ``keep_address``)."""
+    payload: dict[str, Any] = {"cis_invitation_id": invitation_id, "locale": locale}
+    if email is None:
+        payload["keep_address"] = True
+    else:
+        payload["email"] = email
     status, body = await crm_console.crm_ops_call(
-        "POST", f"/tenants/{tenant_id}/studio-invitations", relay_authorization(request),
-        json={"email": email, "cis_invitation_id": invitation_id, "locale": locale})
+        "POST", f"/tenants/{tenant_id}/studio-invitations", relay_authorization(request), json=payload)
     ok = 200 <= status < 300
     logger.info("tenant_member_invitation_relayed", tenant_id=str(tenant_id), invitation_id=invitation_id,
                 crm_status=status, delivered=ok)
@@ -598,13 +717,17 @@ async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email:
 
 
 @router.post("/{tenant_id}/members/invitations", status_code=201,
-             summary="Invite a Content studio member (CIS row + CRM-delivered AA system mail)")
+             summary="Invite a Content studio member (CIS row + CRM-delivered AA system mail)",
+             dependencies=TENANT_SCOPED)
 async def invite_tenant_member(
     tenant_id: UUID, body: MemberInvite, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
     actor = _admin_actor(x_admin_user_id)
+    principal = _caller(principal, request)
+    _require_owner_tier(principal, body.content_studio_role)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
@@ -623,16 +746,27 @@ async def invite_tenant_member(
 
 
 @router.post("/{tenant_id}/members/{membership_id}/invitation/send",
-             summary="Send a Content studio invitation again (invited members only)")
+             summary="Send a Content studio invitation again (invited members only)",
+             dependencies=TENANT_SCOPED)
 async def resend_tenant_member_invitation(
     tenant_id: UUID, membership_id: UUID, body: MemberInviteResend, request: Request,
     x_admin_secret: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
+    principal = _caller(principal, request)
+    if body.email is None and principal.e2e_read_only:
+        # A10b-1: the Dev E2E admin sends only to an E2E mailbox address it names (checked below), never to a kept one.
+        logger.warning("tenant_member_invitation_e2e_refused", tenant_id=str(tenant_id), reason="address_required")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+    if body.email is not None and not may_readdress(principal):
+        logger.warning("tenant_member_readdress_refused", tenant_id=str(tenant_id), role=principal.role)
+        raise HTTPException(status_code=403, detail=READDRESS_REFUSED)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
-        await _refuse_e2e_invitation(request, conn, tenant_id, body.email)
+        if body.email is not None:
+            await _refuse_e2e_invitation(request, conn, tenant_id, body.email)
         try:
             members = await members_writer.list_members(conn, str(tenant_id))
         except asyncpg.UndefinedTableError as exc:
@@ -643,5 +777,205 @@ async def resend_tenant_member_invitation(
     if member["status"] != "invited" or not member["invitation_id"]:
         raise HTTPException(status_code=409, detail="Only an invited membership has an invitation to send.")
     _refuse_e2e_resend_role(request, tenant_id, member)
+    # AA-1035: an owner invitation is sent again only by tenant.write (a new address would hand the owner seat to it;
+    # kept unchanged for the kept address too, the conservative S267 rule); support / customer_success send again
+    # editor and viewer invitations.
+    _require_owner_tier(principal, member.get("content_studio_role"))
     delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
     return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}
+
+
+# ── AA-1031 (S264 F3): which member write controls the caller may use ──────────────────────────────────────────────
+
+# Each write control of the Members tab (and of the agency drawer's "also invite to the Content studio" box) and the
+# route it calls (method, POLICY template). The answer for a control is denial_reason on that route, so it follows the
+# API exactly: a role without tenant.write and a read-only session both get False.
+MEMBER_WRITES: dict[str, tuple[str, str]] = {
+    "invite": ("POST", "/admin/tenants/{tenant_id}/members/invitations"),
+    "send_again": ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"),
+    "change_role": ("PATCH", "/admin/tenants/{tenant_id}/members/{membership_id}"),
+    "remove": ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"),
+}
+STUDIO_ROLES: tuple[str, ...] = ("owner", "editor", "viewer")
+
+
+def members_access(principal: StaffPrincipal, *, synthetic_tenant: bool) -> dict:
+    """{read_only, actions, invite_roles} for one caller on one tenant (pure; tests/unit/test_aa1031_members_access.py).
+
+    The two invitation routes are on the Dev-only E2E CIS admin's write allow-list (root ADR 0006a A10b-1), so
+    denial_reason lets them through; the routes then refuse that session unless the tenant is synthetic and the role
+    is viewer / editor (_refuse_e2e_invitation, _refuse_e2e_resend_role). The same rule applies here, so the page
+    offers exactly what the route accepts. ``invite_roles`` is empty when neither invitation control is allowed.
+    AA-1035: ``invite_roles`` leaves out ``owner`` and ``owner_writes`` (change role / remove on an owner row) is False
+    for a caller without tenant.write (_require_owner_tier)."""
+    actions = {key: denial_reason(principal, method, route) is None for key, (method, route) in MEMBER_WRITES.items()}
+    # AA-1035: without tenant.write the owner role is never offered (invite, send again of an owner invitation, change
+    # to / from owner, removal of an owner: _require_owner_tier).
+    owner_writes = may_write_owner(principal)
+    roles = [r for r in STUDIO_ROLES if owner_writes or r != OWNER_ROLE]
+    if principal.e2e_read_only:
+        if not synthetic_tenant:
+            actions["invite"] = actions["send_again"] = False
+        roles = [r for r in roles if r in e2e_staff.E2E_INVITE_ROLES]
+    if not (actions["invite"] or actions["send_again"]):
+        roles = []
+    # AA-1035 close-out: how a send again may address the mail. same_address: the CRM's kept address (never the Dev
+    # E2E admin, which must name an E2E mailbox address); new_address: a typed one (not support).
+    send_again_to = {"same_address": actions["send_again"] and not principal.e2e_read_only,
+                     "new_address": actions["send_again"] and may_readdress(principal)}
+    return {"read_only": not any(actions.values()), "actions": actions, "invite_roles": roles,
+            "owner_writes": owner_writes and (actions["change_role"] or actions["remove"]),
+            "send_again_to": send_again_to}
+
+
+@router.get("/{tenant_id}/members/access",
+            summary="Which member write controls of this tenant the caller may use (UI hint, $0)",
+            dependencies=TENANT_SCOPED)
+async def get_tenant_members_access(
+    tenant_id: UUID, request: Request, principal: StaffPrincipal = Depends(staff_policy),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        # Only the E2E session's answer depends on the tenant (its invitations are for synthetic tenants only).
+        synthetic = principal.e2e_read_only and await e2e_staff.is_synthetic_tenant(conn, tenant_id)
+    return {"tenant_id": str(tenant_id), **members_access(principal, synthetic_tenant=bool(synthetic))}
+
+
+# ── AA-1035 R2 (CIS 364, root ADR 0019 d4): who looks after the tenant ─────────────────────────────────────────────
+# shared.staff_tenant_assignment rows (owner / backup / support; one owner per tenant) feed api/core/tenant_scope.py:
+# a customer_success member reaches exactly its assigned tenants, support also the pool. Reads: tenant.read or the
+# caller's own book (tenant.book.read, scoped). Writes: tenant.assign (admin), audited in acp_shared.audit_log. The
+# Assignments page is R2 slice 2; these routes are what it (and the live isolation check) calls.
+
+AssignmentKind = Literal["owner", "backup", "support"]
+
+_ASSIGNMENTS_SQL = """
+SELECT a.admin_user_id::text AS admin_user_id, a.kind, a.created_at, a.created_by,
+       u.display_name, u.role::text AS staff_role, u.is_active
+FROM shared.staff_tenant_assignment a
+JOIN shared.admin_users u ON u.id = a.admin_user_id
+WHERE a.tenant_id = $1
+ORDER BY CASE a.kind WHEN 'owner' THEN 0 WHEN 'backup' THEN 1 ELSE 2 END, u.display_name NULLS LAST
+"""
+
+
+# AA-1035 slice 2: the roles an assignment means something for (tenant_scope.py book / book_pool; admin may be the named
+# owner of an account). The Assignments page picker reads the same tuple (admin_tenant_assignments.ASSIGNABLE_ROLES).
+ASSIGNABLE_ROLES: tuple[str, ...] = ("admin", "customer_success", "support")
+ASSIGN_STAFF_SQL = "SELECT id, is_active, role::text AS role, email FROM shared.admin_users WHERE id = $1"
+# AA-1035 A10d (root ADR 0006a A10d): a Dev-only E2E staff row (A10b, A10d) joins synthetic tenants only, so the E2E
+# identity's book (and so its reads) never holds a real tenant or the pilot.
+E2E_REAL_TENANT_REFUSED = "A Dev-only E2E staff account can be assigned to synthetic tenants only."
+
+
+class AssignmentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: AssignmentKind
+
+
+def _assignments_unavailable(exc: Exception) -> HTTPException:
+    logger.error("tenant_assignments_unavailable", reason=type(exc).__name__)
+    return HTTPException(status_code=503, detail="Assignments need migration 364 (shared.staff_tenant_assignment).")
+
+
+def _assignment_row(r: Any) -> dict:
+    return {"admin_user_id": r["admin_user_id"], "kind": r["kind"], "display_name": r["display_name"],
+            "staff_role": r["staff_role"], "is_active": r["is_active"], "created_at": _iso(r["created_at"]),
+            "created_by": r["created_by"]}
+
+
+@router.get("/{tenant_id}/assignments", summary="Who looks after this tenant (owner, backup, support)",
+            dependencies=TENANT_SCOPED)
+async def get_tenant_assignments(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        try:
+            rows = await conn.fetch(_ASSIGNMENTS_SQL, tenant_id)
+        except asyncpg.UndefinedTableError as exc:
+            raise _assignments_unavailable(exc) from exc
+    return {"tenant_id": str(tenant_id), "assignments": [_assignment_row(r) for r in rows]}
+
+
+@router.put("/{tenant_id}/assignments/{admin_user_id}",
+            summary="Assign a staff member to this tenant, or change the kind (audited)", dependencies=TENANT_SCOPED)
+async def put_tenant_assignment(
+    tenant_id: UUID, admin_user_id: UUID, body: AssignmentBody, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        await _require_tenant(conn, tenant_id)
+        staff = await conn.fetchrow(ASSIGN_STAFF_SQL, admin_user_id)
+        if staff is None:
+            raise HTTPException(status_code=404, detail="Staff member not found")
+        if not staff["is_active"]:
+            raise HTTPException(status_code=409, detail="This staff account is disabled; enable it first.")
+        if staff["role"] not in ASSIGNABLE_ROLES:   # AA-1035 slice 2: an assignment would give this role nothing
+            raise HTTPException(status_code=409, detail=(
+                "Only Administrator, Customer Success or Support staff can be assigned to a tenant."))
+        if (e2e_staff.is_dev_only_e2e_staff(staff.get("email"))
+                and not await e2e_staff.is_synthetic_tenant(conn, tenant_id)):
+            logger.warning("tenant_assignment_e2e_refused", tenant_id=str(tenant_id),
+                           admin_user_id=str(admin_user_id), reason="tenant_not_synthetic")
+            raise HTTPException(status_code=409, detail=E2E_REAL_TENANT_REFUSED)
+        try:
+            before = await conn.fetchval(
+                "SELECT kind FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2",
+                admin_user_id, tenant_id)
+            changed = before != body.kind
+            if changed:   # a new assignment, or another kind: delete + insert (cis_app has no UPDATE on the table)
+                await conn.execute(
+                    "DELETE FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2",
+                    admin_user_id, tenant_id)
+                await conn.execute(
+                    "INSERT INTO shared.staff_tenant_assignment (admin_user_id, tenant_id, kind, created_by) "
+                    "VALUES ($1, $2, $3, $4)", admin_user_id, tenant_id, body.kind, actor)
+        except asyncpg.UndefinedTableError as exc:
+            raise _assignments_unavailable(exc) from exc
+        except asyncpg.UniqueViolationError as exc:
+            if getattr(exc, "constraint_name", None) == "staff_tenant_assignment_one_owner_key":
+                raise HTTPException(status_code=409, detail=(
+                    "This tenant already has an owner; make the current owner a backup or remove them first.")) from exc
+            raise HTTPException(status_code=409, detail="The assignment changed at the same time; try again.") from exc
+        if changed:
+            await write_audit_log(
+                conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.ASSIGNMENT_SET,
+                resource_type="staff_tenant_assignment", resource_id=str(admin_user_id),
+                details={"admin_user_id": str(admin_user_id), "before": before, "after": body.kind})
+    logger.info("tenant_assignment_set", tenant_id=str(tenant_id), admin_user_id=str(admin_user_id),
+                kind=body.kind, changed=changed)
+    return {"tenant_id": str(tenant_id), "admin_user_id": str(admin_user_id), "kind": body.kind, "changed": changed}
+
+
+@router.delete("/{tenant_id}/assignments/{admin_user_id}",
+               summary="Remove a staff member from this tenant (audited)", dependencies=TENANT_SCOPED)
+async def delete_tenant_assignment(
+    tenant_id: UUID, admin_user_id: UUID, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        await _require_tenant(conn, tenant_id)
+        try:
+            before = await conn.fetchval(
+                "DELETE FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2 RETURNING kind",
+                admin_user_id, tenant_id)
+        except asyncpg.UndefinedTableError as exc:
+            raise _assignments_unavailable(exc) from exc
+        if before is None:
+            raise HTTPException(status_code=404, detail="This staff member is not assigned to the tenant")
+        await write_audit_log(
+            conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.ASSIGNMENT_REMOVED,
+            resource_type="staff_tenant_assignment", resource_id=str(admin_user_id),
+            details={"admin_user_id": str(admin_user_id), "before": before, "after": None})
+    logger.info("tenant_assignment_removed", tenant_id=str(tenant_id), admin_user_id=str(admin_user_id))
+    return {"tenant_id": str(tenant_id), "admin_user_id": str(admin_user_id), "removed": before}

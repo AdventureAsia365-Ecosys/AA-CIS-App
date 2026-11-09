@@ -8,21 +8,23 @@
 // FilterBar, RowMenu, ConfirmModal, Money, DateText); S6a adds the form controls (Field, Input, Select, Textarea,
 // Checkbox, Radio, DateField in a Field); the button variants (core Buttons.tsx: Button incl. dashed, LinkButton,
 // IconButton, ButtonGroup, SegmentedControl, ChipButton, Switch, underline Tabs, ListButton, Pressable) have their
-// own entry; S6b adds the Eyebrow (the section entry); the older
-// core components join it with S1d.
+// own entry; S6b adds the Eyebrow (the section entry); AA-1033 the AI notice (its three variants); AA-1008 the
+// ShellFrame (embedded in a box: a sidebar and topbar slot, the drawer below 768px); the older core components join it
+// with S1d.
 //
 // Demo dates are fixed values and the relative examples use a fixed "now" (no clock read during render), so the
 // gallery renders the same text on the server and the client and in every screenshot.
 
 import { Suspense, useState, type ReactNode } from "react";
 import {
-  Archive, CalendarCheck, ChevronRight, Copy, Download, Eye, Lock, Pencil, Pin, Plus, Send, Trash2, X, XCircle,
+  Archive, CalendarCheck, ChevronRight, Copy, Download, Eye, Lock, Menu, Pencil, Pin, Plus, Send, Trash2, X, XCircle,
 } from "lucide-react";
 import { Eyebrow, Tabs } from "./primitives";
 import {
   Button, ButtonGroup, ChipButton, IconButton, LinkButton, ListButton, Pressable, SegmentedControl, Switch,
 } from "./Buttons";
 import { ConfirmModal } from "./Modal";
+import { AiNotice } from "./AiNotice";
 import { Section } from "./Section";
 import { KpiTile } from "./KpiTile";
 import { FilterBar } from "./FilterBar";
@@ -30,6 +32,7 @@ import { RowMenu } from "./RowMenu";
 import { Money } from "./Money";
 import { DateText, relativeTime } from "./DateText";
 import { DateField } from "./DateField";
+import { ShellFrame } from "./ShellFrame";
 import { Checkbox, Field, Input, Radio, Select, Textarea } from "./FormControls";
 import { K, sans } from "./tokens";
 import { GALLERY_MESSAGES } from "./kitGallery.messages";
@@ -55,6 +58,46 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap", fontSize: 13, color: K.body }}>
       <span style={{ width: 120, flexShrink: 0, color: K.muted }}>{label}</span>
       <span style={{ display: "inline-flex", gap: 16, flexWrap: "wrap", minWidth: 0 }}>{children}</span>
+    </div>
+  );
+}
+
+/** The ShellFrame with demo slots, in a box (embedded): a sidebar, a topbar with the phone menu button, a page. */
+function ShellDemo() {
+  const t = useT(GALLERY_MESSAGES);
+  const item: React.CSSProperties = { display: "block", padding: "7px 12px", borderRadius: 6, fontSize: 13, color: "inherit" };
+  return (
+    <div style={{ height: 240, border: `1px solid ${K.line}`, borderRadius: 10, overflow: "hidden" }}>
+      <ShellFrame
+        embedded
+        sidebarId="kit-gallery-shell-sidebar"
+        sidebar={(c) => (
+          <nav aria-label={t("shellBrand")} style={{ width: 180, height: "100%", background: "var(--aa-side-bg)", color: "var(--aa-side-text)", padding: 12, boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontWeight: 600, color: K.accent }}>{t("shellBrand")}</span>
+              {c.drawerOpen && (
+                <IconButton label={t("shellCloseMenu")} variant="plain" onClick={c.closeDrawer}>
+                  <X size={16} />
+                </IconButton>
+              )}
+            </div>
+            <span style={{ ...item, background: "var(--aa-side-panel)" }}>{t("shellNavHome")}</span>
+            <span style={item}>{t("shellNavTrips")}</span>
+          </nav>
+        )}
+        topbar={(c) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: `1px solid ${K.line}`, background: K.card, fontSize: 12, color: K.muted }}>
+            <IconButton label={t("shellMenu")} onClick={c.openDrawer} aria-controls={c.sidebarId} aria-expanded={c.drawerOpen}>
+              <Menu size={16} />
+            </IconButton>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("shellTopbar")}</span>
+          </div>
+        )}
+        mainStyle={{ padding: 16, fontSize: 13, color: K.body }}
+        mainId="kit-gallery-shell-main"
+      >
+        {t("shellBody")}
+      </ShellFrame>
     </div>
   );
 }
@@ -339,6 +382,23 @@ export function KitGallery() {
         <ConfirmModal open={confirm === "busy"} onClose={close} onConfirm={close} destructive busy
           title={t("confirmDangerTitle")} body={t("confirmDangerBody")} confirmLabel={t("confirmDangerAction")}
           error={t("confirmError")} />
+      </Entry>
+
+      <Entry id="ai-notice" title={t("aiNoticeTitle")}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 640 }}>
+          <AiNotice testId="kit-gallery-ai-staff" />
+          <AiNotice variant="publisher" testId="kit-gallery-ai-publisher" />
+          <AiNotice variant="traveller" testId="kit-gallery-ai-traveller" />
+          <AiNotice variant="narration" testId="kit-gallery-ai-narration" />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <AiNotice variant="publisher" form="badge" testId="kit-gallery-ai-badge" />
+            <AiNotice variant="staff" form="badge" testId="kit-gallery-ai-badge-staff" />
+          </div>
+        </div>
+      </Entry>
+
+      <Entry id="shell" title={t("shellTitle")}>
+        <ShellDemo />
       </Entry>
 
       <Entry id="formats" title={t("formatTitle")}>

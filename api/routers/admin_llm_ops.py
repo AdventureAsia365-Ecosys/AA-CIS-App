@@ -51,10 +51,12 @@ from shared.llm_client.catalog import (
 from shared.llm_client import connections as llm_connections
 from shared.llm_client import data_scope
 from shared.llm_client import deployments as llm_deployments
+from shared.llm_client import family_rule, invariant, route_evidence
 from shared.llm_client.client import legacy_acc2_native_enabled
 from shared.llm_client.role_config import (
     list_stage_configs,
     set_stage_config,
+    set_stage_enabled,
     set_stage_route,
 )
 
@@ -168,12 +170,22 @@ def _route_view(row: dict, models: Optional[list]) -> dict:
     }
 
 
+# AA-1024 A4: the refusal reasons the admin shows next to an unavailable model (English UI copy).
+_REASON_NOT_ENABLED = "Not enabled in the model catalog"
+_REASON_NOT_CALLABLE = "This model cannot be called through the gateway"
+_REASON_JUDGE_FAMILY = ("A judge must be of another model family than the writers it scores "
+                        f"(writers are {family_rule.WRITER_FAMILY} models, ADR 0009 decision 12)")
+_REASON_WRITER_FAMILY = (f"Writer stages stay on {family_rule.WRITER_FAMILY} models until the qualification ladder "
+                         "passes (ADR 0009 decision 12); the judge that scores them is of another family")
+
+
 def _catalog_options(role: str, stage: str, models: list, scopes: Optional[tuple] = None,
                      reach: Optional[dict] = None) -> list[dict]:
     """AA-659: every stage now runs through the gateway route, so availability depends only on
-    the catalog row and the writer/judge vendor rule (ADR-2026-014/027): writers are Anthropic,
-    judges are never Anthropic. ADR 0008: `validate` stages (extraction/checks the judge never
-    scores, e.g. s1_source_facts) may use any vendor. AA-1002 (S5): and on the stage's data scopes
+    the catalog row and the writer/judge rule. AA-1024 A4 (ADR 0009 decision 12): the rule reads the model FAMILY
+    (``CatalogModel.family_key``, migration 320), not the vendor: writers are of ``family_rule.WRITER_FAMILY``
+    (Anthropic), judges never are. ADR 0008: `validate` stages (extraction/checks the judge never
+    scores, e.g. s1_source_facts) may use any family. AA-1002 (S5): and on the stage's data scopes
     (`scopes`, None = no stage policy): a model none of whose connections (`reach`, `_reach_scopes`)
     the stage allows cannot be selected."""
     options = []
@@ -183,15 +195,15 @@ def _catalog_options(role: str, stage: str, models: list, scopes: Optional[tuple
             continue
         reason = None
         if not m.enabled:
-            reason = m.blocked_reason or "Chưa bật trong model catalog"
+            reason = m.blocked_reason or _REASON_NOT_ENABLED
         elif role == "embed":
             pass
         elif "llm_client" not in m.callable_via:
-            reason = "Model này không gọi được qua gateway"
-        elif role == "judge" and m.vendor == "anthropic":
-            reason = "Judge phải khác vendor với writer (writer là Anthropic)"
-        elif role == "writer" and m.vendor != "anthropic":
-            reason = "Writer và judge phải khác vendor (judge là OpenAI)"
+            reason = _REASON_NOT_CALLABLE
+        elif role == "judge" and m.family_key == family_rule.WRITER_FAMILY:
+            reason = _REASON_JUDGE_FAMILY
+        elif role == "writer" and m.family_key != family_rule.WRITER_FAMILY:
+            reason = _REASON_WRITER_FAMILY
         elif not _scope_reaches(scopes, reach, m.model_key):
             reason = _SCOPE_REASON.format(scopes=", ".join(scopes or ()))
         opt = {"model_id": m.model_key, "label": m.label, "via": model_via(m),
@@ -219,7 +231,8 @@ _SCOPE_REASON = "This stage may not send content outside AWS (data scopes: {scop
 
 _VENDOR_DIRECT_LAST_RESORT_ONLY = (
     "S235: a model reached only outside AWS (data scope vendor_direct, e.g. the OpenAI platform API) may only be the "
-    "last fallback of a route (Bedrock outage), never the primary or the shadow")
+    "last fallback of a route (Bedrock outage), or sit right behind the same model served inside AWS (its twin, "
+    "e.g. gpt-6-luna-openai right after gpt-6-luna), never the primary or the shadow")
 
 
 def _reach_scopes(models: Optional[list]) -> dict[str, frozenset]:
@@ -271,6 +284,90 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
             "migration (shared.llm_role_config.allowed_scopes), not an admin setting"))
 
 
+def _pii_usable_models(models: Optional[list]) -> frozenset:
+    """AA-1039 (CIS 373): the model keys with at least one deployment a personal-data stage may use (an aws_only
+    connection of an AWS kind, a US deployment: ``data_scope.pii_allows``), every row enabled or not (the switch is an
+    operation, the class a policy). A model the registry does not describe is not usable (the gateway refuses that
+    path for a pii stage). Sync (registry caches): run in a thread. Never raises."""
+    try:
+        rows = llm_connections.registry_rows_sync()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_admin_pii_registry_failed", error=str(e)[:200])
+        return frozenset()
+    out: set[str] = set()
+    for m in models or []:
+        try:
+            for d in llm_deployments.deployments_for_sync(m.model_key, enabled_only=False):
+                c = rows.get(d.connection_key)
+                if c is not None and data_scope.pii_allows(data_scope.PII_PERSONAL, c.data_scope, d.wire_id, c.region,
+                                                           c.kind):
+                    out.add(m.model_key)
+                    break
+        except Exception as e:  # noqa: BLE001
+            logger.warning("llm_admin_pii_deployments_failed", model=m.model_key, error=str(e)[:200])
+    return frozenset(out)
+
+
+async def _check_pii(stage: str, current: dict, models: Optional[list], keys: list) -> None:
+    """AA-1039 (root ADR 0019 d12): 422 when a personal-data stage (pii_class 'pii') names a model with no deployment
+    on our AWS accounts in the US: the gateway would never call it for that stage. A content stage is not checked."""
+    if data_scope.normalize_pii_class(current.get("pii_class")) != data_scope.PII_PERSONAL:
+        return
+    usable = await asyncio.to_thread(_pii_usable_models, models)
+    blocked = [k for k in keys if k and k not in usable]
+    if blocked:
+        raise HTTPException(status_code=422, detail=(
+            f"stage {stage!r} handles personal data (pii_class pii): {', '.join(blocked)} has no deployment on our "
+            "AWS accounts in the US (a us. profile or an in-region model), so the gateway would never call it. "
+            "A stage's data class is a migration (shared.llm_role_config.pii_class), not an admin setting"))
+
+
+def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, chain: list,
+                             twins: Optional[dict] = None) -> None:
+    """AA-1026 (S263, tech lead T-3: go outside AWS only as the last resort; relaxed S267). 422 when a stage open to
+    vendor_direct names a model reachable inside AWS AFTER a model reached ONLY outside AWS (every deployment on a
+    vendor API, e.g. gpt-6-luna-openai): the vendor-only rungs are the end of the route (the ``vendor_not_last`` rule
+    of ``api/services/llm_route_chains.py``). ``reach`` counts every deployment, enabled or not (the switch is an
+    operation, the scope a policy); a model the registry does not describe counts as inside AWS (the gateway calls it
+    on acc3). An aws_only stage (or no stage policy) never reaches a vendor API, so it is not checked.
+
+    S267 (tech lead, root ADR 0009 decision 5 amendment: "prefer the same model first, then go outside"): a model
+    with BOTH an AWS and a vendor API deployment may now sit before an AWS model. The gateway's default model-first
+    order calls that model on acc3, then on its vendor API, then the next model on acc3 (e.g. [sonnet-5-5, sonnet-4-6,
+    haiku-4-5, gpt-6-luna-openai]); S263 refused exactly that interleaving. And a model reached only outside AWS that
+    is the VENDOR TWIN of the rung right before it (``twins`` = ``data_scope.vendor_twins``: the same model on its
+    vendor API as a separate catalog row, gpt-6-luna-openai behind gpt-6-luna) is part of that model's slot, so it
+    may sit before the next AWS model ("openai-direct for a GPT twin if one exists", S267 Q2)."""
+    if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
+        return
+    keys = [k for k in chain if k]
+    for i, first in enumerate(keys):
+        first_reach = reach.get(first, frozenset({data_scope.AWS_ONLY}))
+        if not first_reach or data_scope.AWS_ONLY in first_reach or data_scope.in_twin_slot(keys, i, twins or {}):
+            continue
+        later = [k for k in dict.fromkeys(keys[i + 1:])
+                 if k != first and data_scope.AWS_ONLY in reach.get(k, frozenset({data_scope.AWS_ONLY}))]
+        if later:
+            raise HTTPException(status_code=422, detail=(
+                f"stage {stage!r} may leave AWS only as the last resort of its route: {first} is reached only through "
+                f"a vendor API, so it must come after every model served inside AWS ({', '.join(later)}). Put "
+                f"{', '.join(later)} ahead of {first}, or leave it out"))
+
+
+def _writer_last_resort(role: str, scopes: Optional[tuple], models: Optional[list], outside: frozenset,
+                        model_key: str) -> bool:
+    """AA-1026 (S263, tech lead T-3): a writer stage a migration opened to vendor_direct may END its route on a model
+    of another maker that is reached only outside AWS (today GPT-6 Luna on the OpenAI API, migration 327): the last
+    resort when every AWS path is blocked. The writer / judge family rule still decides the primary, every other
+    fallback and the shadow. The caller checks the position (the last fallback only)."""
+    if role != "writer" or model_key not in outside:
+        return False
+    if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
+        return False
+    m = next((m for m in models or [] if m.model_key == model_key), None)
+    return m is not None and m.enabled and "llm_client" in m.callable_via and m.api_style != "embed"
+
+
 def _options_for(role: str, stage: str, models: Optional[list], scopes: Optional[tuple] = None,
                  reach: Optional[dict] = None) -> list[dict]:
     if models is None:
@@ -280,9 +377,64 @@ def _options_for(role: str, stage: str, models: Optional[list], scopes: Optional
     return _catalog_options(role, stage, models, scopes, reach)
 
 
-class LlmConfigPatch(BaseModel):
+class _ChangeEvidence(BaseModel):
+    """AA-1026 D7 (ADR 0009 decision 12, T-19): what backs a change of a writer / judge stage's models: the eval run
+    (shared.prompt_eval_runs.id) or, when no eval can run, a break-glass reason (audited, raises an admin bell)."""
+    eval_run_id: Optional[str] = Field(None, max_length=64)
+    break_glass_reason: Optional[str] = Field(None, max_length=route_evidence.BREAK_GLASS_MAX_CHARS)
+
+
+class LlmConfigPatch(_ChangeEvidence):
     model_id: str
     account_route: Optional[str] = None
+
+
+async def _change_evidence(role: str, body: _ChangeEvidence) -> Optional[dict]:
+    """422 when a writer / judge model change carries no usable evidence; the evidence for the audit row otherwise
+    (None for a stage that needs none)."""
+    try:
+        return await route_evidence.require(role, eval_run_id=body.eval_run_id,
+                                            break_glass_reason=body.break_glass_reason)
+    except route_evidence.EvidenceRefused as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — the eval run table could not be read: refuse, never wave through
+        logger.warning("llm_route_evidence_unreadable", error=str(e)[:200])
+        raise HTTPException(status_code=503, detail="the eval run could not be checked; try again")
+
+
+# ── AA-1024 A6 — the failure-domain rule on a saved route (report only) ─────────────────────────────────────────────
+
+def route_warnings(report: dict, stage: str) -> list[str]:
+    """The warnings of one stage from the failure-domain report (invariant.read; pure): a breach only (a stage with a
+    second domain or a declared degrade mode passes). Report only: the change is saved either way (blocking waits for
+    prod go-live, ADR 0009 decision 5)."""
+    if not report or not report.get("ready"):
+        return []
+    result = next((s for s in report.get("stages") or [] if s.get("stage") == stage), None)
+    if result is None or result.get("status") != "breach":
+        return []
+    why = result.get("reason") or "no enabled, funded deployment on the route"
+    return [f"Failure-domain rule (report only): stage {stage!r} has no enabled, funded fallback in another failure "
+            f"domain and no declared degrade mode ({why}). The change is saved; add a fallback on another connection "
+            "or declare a degrade mode."]
+
+
+async def _route_warnings(request: Optional[Request], stage: str) -> list[str]:
+    """The rule the nightly digest and /admin/llm-availability run (invariant.read with the connections whose circuit
+    refuses now), on the route just saved. Never fails the change: an unreadable registry gives no warning."""
+    from api.services import llm_availability
+    pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
+    if pool is None:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            now = datetime.now(timezone.utc)
+            _ready, conns = await llm_availability.read_connections(conn, now=now)
+            report = await invariant.read(conn, blocked=llm_availability.blocked_from(conns), now=now)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_route_invariant_check_failed", stage=stage, error=str(e)[:200])
+        return []
+    return route_warnings(report, stage)
 
 
 @router.get("/llm-config", summary="Việc C — list all 16 per-stage LLM configs + option metadata")
@@ -294,6 +446,8 @@ async def get_llm_config():
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
         # AA-1002 (S5): read-only here (a migration sets it); None until migration 311 is applied
         r["allowed_scopes"] = r.get("allowed_scopes")
+        # AA-1039 (CIS 373): the stage's data class, read-only (None before 373); AI gateway > Routing by data class
+        r["pii_class"] = r.get("pii_class")
         r["options"] = _options_for(r["role"], r["stage"], models,
                                     data_scope.normalize(r["allowed_scopes"]), reach)
         r["account_route_options"] = _account_route_options() if r["provider"] == "claude" else []
@@ -321,39 +475,46 @@ async def patch_llm_config(
     scopes = data_scope.normalize(current.get("allowed_scopes"))
     # AA-1002 (S5): the stage's data scopes first (the clearer refusal), then the S235 last-resort rule.
     _check_scopes(stage, scopes, reach, [body.model_id])
+    await _check_pii(stage, current, models, [body.model_id])        # AA-1039: personal data stays US / our accounts
     if body.model_id in data_scope.outside_aws_only(reach):
         raise HTTPException(status_code=422, detail=_VENDOR_DIRECT_LAST_RESORT_ONLY)
     allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
     if body.model_id not in allowed:
         raise HTTPException(status_code=422,
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
+    _check_aws_before_vendor(stage, scopes, reach, [body.model_id, *(current.get("fallback_model_ids") or [])],
+                             data_scope.vendor_twins(models or [], reach))
     # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
     if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
         raise HTTPException(status_code=422,
                             detail="This account route is not allowed: models run on the LLM account only")
+    # AA-1026 D7: a new primary model of a writer / judge stage needs its eval run or a break-glass reason.
+    evidence = (await _change_evidence(current["role"], body)) if body.model_id != current["model_id"] else None
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
-            audit_actor=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}", evidence=evidence,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     updated["updated_at"] = updated["updated_at"].isoformat() if updated["updated_at"] else None
     updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_config_changed", stage=stage, model_id=body.model_id,
-                account_route=body.account_route, admin_actor=admin_actor)
+                account_route=body.account_route, admin_actor=admin_actor,
+                evidence=sorted(evidence) if evidence else None)
     await _wm_reverify(request, stage, admin_actor)
+    updated["warnings"] = await _route_warnings(request, stage)   # AA-1024 A6 (report only)
     return updated
 
 
 # ── AA-686 — PATCH a stage route (fallback chain + shadow) ─────────────────────────────────────
 # Separate from PATCH /llm-config/{stage} (which sets the primary model): the route is the ordered
 # fallbacks + optional shadow (ADR 0006). Every model named must be a catalog model that
-# _options_for() marks `available` for the stage — the same vendor + enabled rule as the model
+# _options_for() marks `available` for the stage — the same family + enabled rule as the model
 # PATCH — so the UI can never save a route the gateway would refuse to run.
 
 
-class LlmRoutePatch(BaseModel):
+class LlmRoutePatch(_ChangeEvidence):
     fallback_model_ids: Optional[list[str]] = None
     shadow_model_id: Optional[str] = None
     shadow_sample_pct: Optional[int] = None
@@ -395,9 +556,15 @@ async def patch_llm_route(
     # AA-1002 (S5): every model the route names must be callable within the stage's data scopes; a model reached only
     # outside AWS stays the S235 last resort (never a non-last fallback, never the shadow).
     _check_scopes(stage, scopes, reach, [*fallbacks, shadow])
+    await _check_pii(stage, current, models, [*fallbacks, shadow])  # AA-1039: personal data stays US / our accounts
     allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
     outside = data_scope.outside_aws_only(reach)
-    if any(m in outside for m in fallbacks[:-1]) or (shadow is not None and shadow in outside):
+    # S267 (model first): a vendor-only model right behind its AWS twin is part of that model's slot, not a mid-chain
+    # exit (gpt-6-luna -> gpt-6-luna-openai -> gpt-5.6-luna); any other vendor-only model is still the last fallback.
+    twins = data_scope.vendor_twins(models or [], reach)
+    chain = [primary, *fallbacks]
+    if any(m in outside and not data_scope.in_twin_slot(chain, i + 1, twins) for i, m in enumerate(fallbacks[:-1])) \
+            or (shadow is not None and shadow in outside):
         raise HTTPException(status_code=422, detail=_VENDOR_DIRECT_LAST_RESORT_ONLY)
 
     # Fallback list: no duplicates, must not contain the primary, every entry available.
@@ -406,8 +573,9 @@ async def patch_llm_route(
     if primary in fallbacks:
         raise HTTPException(status_code=422,
                             detail=f"fallback_model_ids must not contain the primary model {primary!r}")
-    for m in fallbacks:
-        if m not in allowed:
+    for i, m in enumerate(fallbacks):
+        if m not in allowed and not (i == len(fallbacks) - 1
+                                     and _writer_last_resort(current["role"], scopes, models, outside, m)):
             raise HTTPException(status_code=422,
                                 detail=f"fallback model {m!r} is not selectable for stage {stage!r}")
 
@@ -419,30 +587,83 @@ async def patch_llm_route(
         if shadow not in allowed:
             raise HTTPException(status_code=422,
                                 detail=f"shadow model {shadow!r} is not selectable for stage {stage!r}")
+    # AA-1026 review: T-3 (outside AWS only when the AWS paths are blocked) holds for the whole route.
+    _check_aws_before_vendor(stage, scopes, reach, chain, twins)
+    # AA-1026 D7: a new fallback chain of a writer / judge stage needs its eval run or a break-glass reason. A
+    # shadow-only change does not (the shadow never serves a reply; it is how the evidence is gathered).
+    chain_changed = list(fallbacks) != list(current.get("fallback_model_ids") or [])
+    evidence = (await _change_evidence(current["role"], body)) if chain_changed else None
 
     try:
         updated = await set_stage_route(
             stage, fallback_model_ids=fallbacks, shadow_model_id=shadow,
             shadow_sample_pct=sample_pct, updated_by=f"admin:{admin_actor}",
-            audit_actor=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}", evidence=evidence,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     updated["updated_at"] = updated["updated_at"].isoformat() if updated["updated_at"] else None
     updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_route_changed", stage=stage, fallback_model_ids=fallbacks,
-                shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor)
+                shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor,
+                evidence=sorted(evidence) if evidence else None)
     await _wm_reverify(request, stage, admin_actor)
+    # AA-1024 A6: the failure-domain rule on the saved route, as the nightly digest reports it (200 + warnings[]).
+    updated["warnings"] = await _route_warnings(request, stage)
     return updated
 
 
-async def _wm_reverify(request: Request, stage: str, admin_actor: str) -> None:
+# ── AA-642 A1 — the stage kill switch ───────────────────────────────────────────────────────────────────────────
+# llm_role_config.is_active (migration 326 gives it this meaning): off = every call of the stage is refused before any
+# provider attempt (a 0 USD ledger row, status refused, error_class disabled); jobs fail without a retry and are
+# re-queued with "Re-queue refused jobs" once the stage is on again (the bulk re-queue holds them while it is off).
+
+
+class LlmStageSwitch(BaseModel):
+    model_config = {"extra": "forbid"}
+    enabled: bool
+    reason: Optional[str] = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def _reason_when_off(self):
+        self.reason = (self.reason or "").strip() or None
+        if not self.enabled and (self.reason is None or len(self.reason) < 3):
+            raise ValueError("say why the stage is switched off (reason, at least 3 characters)")
+        return self
+
+
+@router.patch("/llm-config/{stage}/switch",
+              summary="Switch one stage on or off (the kill switch; admin-only, audited)")
+async def patch_llm_stage_switch(
+    stage: str,
+    body: LlmStageSwitch,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+    request: Request = None,  # AA-900 W0: the reverify scan's pool; None in direct calls
+):
+    verify_admin_secret(x_admin_secret)
+    admin_actor = x_admin_user_id or "unknown"
+    try:
+        updated = await set_stage_enabled(stage, enabled=body.enabled, reason=body.reason,
+                                          updated_by=f"admin:{admin_actor}", audit_actor=f"admin:{admin_actor}")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    updated["updated_at"] = updated["updated_at"].isoformat() if updated.get("updated_at") else None
+    logger.info("admin_llm_stage_switched", stage=stage, enabled=body.enabled, admin_actor=admin_actor)
+    await _wm_reverify(request, stage, admin_actor)     # AA-900 W0: on/off is part of the route row
+    return updated
+
+
+async def _wm_reverify(request: Request, stage: Optional[str], admin_actor: str) -> None:
     """AA-919 (WM-18 scope 5): a route change of a writer stage or of the writing-memory judge flags the active
     releases whose fingerprint names the old route (`reverify`; they keep serving). Its own transaction, after the
-    route change committed; never fails the route change."""
-    from services.writing_memory.releases import JUDGE_STAGE, WRITER_STAGES, reverify_scan_safe
+    route change committed; never fails the route change. AA-900 W0: any stage on a writer's path
+    (writing_memory.config_fp.on_any_path: the repair, FAQ-check, T10 and eval stages too), and `stage=None` (a
+    catalog row or a connection: no single stage) always scans."""
+    from services.writing_memory.config_fp import on_any_path
+    from services.writing_memory.releases import reverify_scan_safe
     pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
-    if pool is None or stage not in set(WRITER_STAGES.values()) | {JUDGE_STAGE}:
+    if pool is None or (stage is not None and not on_any_path(stage)):
         return
     await reverify_scan_safe(pool, actor=f"admin:{admin_actor}")
 
@@ -469,6 +690,7 @@ async def patch_llm_catalog(
     body: LlmCatalogPatch,
     x_admin_secret: str = Header(None),
     x_admin_user_id: Optional[str] = Header(None),
+    request: Request = None,  # AA-900 W0: the reverify scan's pool; None in direct calls
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"
@@ -486,6 +708,7 @@ async def patch_llm_catalog(
         raise HTTPException(status_code=404, detail=str(e))
     logger.info("admin_llm_catalog_changed", model_key=model_key, fields=list(fields),
                 admin_actor=admin_actor)
+    await _wm_reverify(request, None, admin_actor)      # AA-900 W0: a catalog row is part of config_fp
     return updated
 
 
@@ -1042,10 +1265,12 @@ _INSERT_LOW_ALERT_SQL = """
 """
 
 
-async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -> bool:
+async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float, *, currency: Optional[str] = None,
+                                   fetched_at: Optional[str] = None) -> bool:
     """Insert a low-balance notification unless one is already unread within 24h. Returns True
     if a new alert was inserted. Best-effort: a notification failure must not fail the check
-    (the snapshot + returned low flag are the source of truth; the bell is a bonus channel)."""
+    (the snapshot + returned low flag are the source of truth; the bell is a bonus channel).
+    AA-642 (S263 L2, B4): a new bell also queues the operator e-mail (at most one per UTC day)."""
     try:
         existing = await conn.fetchval(_RECENT_LOW_ALERT_SQL, _DFS_BALANCE_LOW_EVENT)
         if existing:
@@ -1057,23 +1282,44 @@ async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -
             "threshold_usd": threshold,
         })
         await conn.execute(_INSERT_LOW_ALERT_SQL, _PLATFORM_TENANT_ID, _DFS_BALANCE_LOW_EVENT, payload)
-        return True
     except Exception as e:
         logger.warning("dfs_balance_alert_insert_failed", error=str(e))
         return False
+    try:
+        from shared import ops_alerts
+        await ops_alerts.enqueue_dfs_balance_low_email(conn, details={
+            "balance_usd": balance_usd, "threshold_usd": threshold, "currency": currency, "fetched_at": fetched_at})
+    except Exception as e:  # noqa: BLE001 — the bell is written; a failed e-mail enqueue is logged only
+        logger.warning("dfs_balance_alert_email_failed", error=str(e)[:200])
+    return True
+
+
+def _iso_or_none(value) -> Optional[str]:
+    return value.isoformat() if hasattr(value, "isoformat") else (str(value) if value is not None else None)
 
 
 @router.post("/dfs-balance/check", summary="Daily DataForSEO balance read + low-balance alert")
 async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
-    from services.seo_intelligence.dataforseo_client import DataForSEOClient
+    from services.seo_intelligence.dataforseo_client import (
+        DFS_CONNECTION_KEY, DataForSEOClient, access_state_of, as_dfs_error)
+    from shared.llm_client import connections as conn_registry
 
     threshold = await dfs_balance_threshold(request.app.state.pool)
+    # AA-642 (S263 L2, B1): DataForSEO switched off in the admin = no call, not even the free balance read.
+    if not await conn_registry.provider_enabled(DFS_CONNECTION_KEY, db=request.app.state.pool):
+        logger.info("admin_dfs_balance_check_skipped", reason="switched_off")
+        return {"balance_usd": None, "currency": None, "threshold_usd": threshold, "below_threshold": False,
+                "alerted": False, "fetched_at": None,
+                "skipped": conn_registry.switched_off_reason(DFS_CONNECTION_KEY)}
     try:
         money = await DataForSEOClient().fetch_balance()
     except Exception as e:
         logger.error("dfs_balance_check_fetch_failed", error=str(e))
+        # the daily check is DataForSEO's probe: last_probe_at, and the state a 401 / 402 / 403 proves
+        await conn_registry.note_provider_access(DFS_CONNECTION_KEY, access_state_of(as_dfs_error(e)), probed=True)
         raise HTTPException(status_code=502, detail=f"DataForSEO balance read failed: {e}")
+    await conn_registry.note_provider_access(DFS_CONNECTION_KEY, "ok", probed=True)
 
     balance = money.get("balance")
     if balance is None:
@@ -1090,7 +1336,8 @@ async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)
     alerted = False
     if below:
         async with pool.acquire() as conn:
-            alerted = await _maybe_alert_low_balance(conn, balance, threshold)
+            alerted = await _maybe_alert_low_balance(conn, balance, threshold, currency=currency,
+                                                     fetched_at=_iso_or_none(snapshot.get("fetched_at")))
 
     logger.info("admin_dfs_balance_checked", balance=balance, threshold=threshold,
                 below=below, alerted=alerted)
@@ -1292,6 +1539,8 @@ async def patch_llm_connection(
         raise HTTPException(status_code=503, detail=str(e))
     logger.info("admin_llm_connection_changed", connection_key=connection_key, fields=sorted(changes),
                 changed=result["changed_fields"], admin_actor=admin_actor)
+    if result.get("changed_fields"):
+        await _wm_reverify(request, None, admin_actor)  # AA-900 W0: deployment rows are part of config_fp
     return result
 
 
@@ -1468,24 +1717,42 @@ JEV_CANARY_STAGE = "adhoc_jev_canary"
 
 async def _log_jev_canary_call(pool, data: dict) -> None:
     """AA-642 (S0): the canary is a billed TypeSafe call, so it writes its llm_call_log row like decide() does
-    (provider typesafe, role validate, input tokens only) — before, it was spend no ledger or Jev cap saw.
+    (provider typesafe, role decide since AA-1025 D3, input tokens only) — before, it was spend no ledger or Jev cap
+    saw.
     record_call_with_pool never raises (a failed write is a warning)."""
     from shared.llm_client import decide as decide_mod
     from shared.llm_client.call_log import record_call_with_pool
 
     model, tokens, cost = decide_mod.jev_usage(data)
-    await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role="validate", model=model, tokens_in=tokens,
+    await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role=decide_mod.JEV_ROLE, model=model,
+                                tokens_in=tokens,
                                 tokens_out=0, cost_usd=cost, provider="typesafe",
-                                quality_signal={"source": "jev_canary"})
+                                quality_signal={"source": "jev_canary"},
+                                connection_key=decide_mod.JEV_CONNECTION_KEY)   # AA-642 (S263 L2): account set
 
 
 @router.post("/jev-canary/check", summary="Daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
     global _last_canary_ok_at
     verify_admin_secret(x_admin_secret)
+    from shared.llm_client import connections as conn_registry
     from shared.llm_client import decide as decide_mod
 
     pool = request.app.state.pool
+    # AA-642 (S263 L2, B1): Jev switched off in the admin = no canary call either (the switch means nothing is sent).
+    if not await decide_mod.jev_connection_enabled(pool):
+        logger.info("admin_jev_canary_skipped", reason="switched_off")
+        return {"credit_ok": None, "billing_error": False, "alerted": False, "skipped": decide_mod.JEV_SWITCHED_OFF,
+                "breaker_open": decide_mod.jev_breaker_open(), "detail": None,
+                "checked_at": datetime.now(timezone.utc).isoformat()}
+    # AA-1025 H1a: the app's AI switched off in its app profile = no canary call either (nothing is sent).
+    from shared.llm_client import app_profile
+    off = await app_profile.ai_off_async(pool)
+    if off is not None:
+        logger.info("admin_jev_canary_skipped", reason="app_ai_off", app=off.app)
+        return {"credit_ok": None, "billing_error": False, "alerted": False,
+                "skipped": app_profile.refusal_text(off.app), "breaker_open": decide_mod.jev_breaker_open(),
+                "detail": None, "checked_at": datetime.now(timezone.utc).isoformat()}
     # A minimal, cheap probe. We do not care about the verdict content — only whether the call is
     # billable (credit present) or raises JevBillingError (402).
     probe_questions = {"canary": {"type": "noul", "instructions": "Reply true.",
@@ -1510,6 +1777,11 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
             alerted = await decide_mod.maybe_alert_jev_credit(conn, source="canary")
     else:
         _last_canary_ok_at = started          # AA-845: the sweep's cut (see _JEV_402_SWEEP_SQL)
+    # AA-642 (S263 L2, B1): the canary is Jev's probe: last_probe_at, and the access state its answer proves
+    # (credit present = ok, 402 = quota_exhausted; another failure proves nothing lasting: the time only).
+    await conn_registry.note_provider_access(
+        decide_mod.JEV_CONNECTION_KEY, "quota_exhausted" if billing_error else ("ok" if detail is None else None),
+        probed=True)
     logger.info("admin_jev_canary_checked", credit_ok=not billing_error, alerted=alerted,
                 breaker_open=decide_mod.jev_breaker_open())
     return {

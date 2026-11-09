@@ -255,6 +255,13 @@ def _request(conn):
     return req
 
 
+# S271 W0: the approve gate reads the stored version first (v1_pipeline._APPROVE_GATE_SQL). None = the review is not
+# pending on a live source (the claim then answers as before); _GATE_CLEAN = a version that passes the publish checks.
+_GATE_CLEAN = {"generated_content_id": GCID, "human_edited": False, "fix_pass_applied": False,
+               "metadata": '{"grounding": {"found": 0, "violations": []}}', "score_overall": 9.5,
+               "failure_codes": "[]", "brand_audit_status": "pass", "brand_audit_codes": "[]"}
+
+
 def _approve(conn):
     from api.routers import v1_pipeline
     with patch("services.export.handler.process_export", new=AsyncMock()) as export:
@@ -268,6 +275,7 @@ def _approve(conn):
 def test_approve_on_a_dead_source_is_409_source_not_live(status):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(side_effect=[
+        None,                                            # S271 W0 gate: not pending on a live source
         None,                                            # claim: the live-source condition fails
         {"tour_id": TOUR, "blocked": False},             # still pending
         {"source_status": status, "deleted_at": None},   # source_state
@@ -278,38 +286,38 @@ def test_approve_on_a_dead_source_is_409_source_not_live(status):
     assert out.headers == {"X-Error-Code": "source_not_live"}
     export.assert_not_called()
     conn.execute.assert_not_called()                     # generated_content not flipped to approved
-    claim = conn.fetchrow.await_args_list[0].args[0]
+    claim = conn.fetchrow.await_args_list[1].args[0]
     assert tl.live_source_exists_sql("rq.tour_id") in claim
 
 
 def test_approve_keeps_the_revalidation_answer_on_a_live_source():
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(side_effect=[
-        None, {"tour_id": TOUR, "blocked": True}, {"source_status": "active", "deleted_at": None}])
+        None, None, {"tour_id": TOUR, "blocked": True}, {"source_status": "active", "deleted_at": None}])
     out, _ = _approve(conn)
     assert out.status_code == 409 and "re-validation" in out.detail
 
 
 def test_approve_already_processed_is_unchanged():
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(side_effect=[None, None])
+    conn.fetchrow = AsyncMock(side_effect=[None, None, None])
     out, _ = _approve(conn)
     assert out.status_code == 409 and out.detail == "Review already processed or not found"
 
 
 def test_approve_on_a_live_source_exports():
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(side_effect=[{"generated_content_id": GCID, "step_fn_task_token": None}])
+    conn.fetchrow = AsyncMock(side_effect=[_GATE_CLEAN, {"generated_content_id": GCID, "step_fn_task_token": None}])
     conn.execute = AsyncMock(return_value="UPDATE 1")
     out, export = _approve(conn)
     assert out["status"] == "approved" and out["exported"] is True
-    export.assert_awaited_once_with(GCID)
+    export.assert_awaited_once_with(GCID, contract_exit="approve")
 
 
 def test_approve_trash_between_claim_and_export_dismisses_and_409s():
     from api.routers import v1_pipeline
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(side_effect=[{"generated_content_id": GCID, "step_fn_task_token": None}])
+    conn.fetchrow = AsyncMock(side_effect=[_GATE_CLEAN, {"generated_content_id": GCID, "step_fn_task_token": None}])
     conn.execute = AsyncMock(return_value="UPDATE 1")
     err = tl.SourceNotLiveError(tl.SourceState(TOUR, True, "trashed", None))
     with patch("services.export.handler.process_export", new=AsyncMock(side_effect=err)):

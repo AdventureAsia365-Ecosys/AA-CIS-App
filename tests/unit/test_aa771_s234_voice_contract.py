@@ -19,6 +19,7 @@ from services.acp_angle_gate.route_digest import angle_anchor, render_digest, ro
 from services.acp_content_writing import hygiene, quality_gates as qg, sentence_repair
 from services.acp_content_writing import service as writing_service
 from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
+from tests.unit.aa1047_prompt_lines import pre_aa1047  # AA-1047: the policy's writer lines, put back
 from services.acp_shared.channel_spec import (CONSUMER_SOCIAL, EDITORIAL, OBSERVATIONAL, WARM_PRACTICAL,
                                               brand_register, channel_spec, linkedin_spec, post_words,
                                               sanitize_best_final_style)
@@ -358,7 +359,7 @@ class TestT8Service:
              patch.object(angle_service, "fetch_piece_history", new=AsyncMock(return_value=[])), \
              patch.object(angle_service, "verify_answers",
                           new=AsyncMock(side_effect=lambda a, ev, t: (ev, 0, 0))), \
-             patch.object(angle_service, "_route_moments", new=AsyncMock(return_value=route)), \
+             patch.object(angle_service, "_route_moments", new=AsyncMock(return_value=(route, False))), \
              patch.object(angle_service, "request_route_segment_ids",  # AA-914 guard: keeps every id here
                           new=AsyncMock(side_effect=lambda p, r, **k: list(r["route_segment_ids"]))), \
              patch.object(angle_service, "generate_angles", new=gen), \
@@ -480,7 +481,11 @@ class TestT9Prompt:
         round-5 bytes (30305b79… / c212a3a2…).
         Updated AA-789 tier 0 (S258, 29/10/2026): the route blog's "Thin moment" line no longer says "ONE plain
         sentence" (the writer copied the shape: '## A Single Sentence on …'); a thin moment is named in passing,
-        with only what its source line states. Only `route` changes; SYSTEM_PROMPT and `single` do not."""
+        with only what its source line states. Only `route` changes; SYSTEM_PROMPT and `single` do not.
+        Updated AA-741 (S271 phase-1 audit, t9_write v2): both blog variants end with the LENGTH AND EFFORT block
+        (prompts._BLOG_LENGTH_INSTRUCTIONS: a word band, a section cap, one plan-then-write pass) before the JSON
+        envelope, so `single` and `route` change; SYSTEM_PROMPT does not (other channels never see the block). Its
+        floor is stated as a hard minimum (S271 review: F4 holds a body under 4,700 characters)."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -501,9 +506,10 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
-        assert sha(single) == "58f9c85f586ebec43d0b77c853a38163dd852b0d29384652e681d507a8a13e76"
-        assert sha(route) == "2fb376a81acb40f4f99137a74cbb67238bce144b774216a93fd34cceb2ca26ad"
+        # AA-1047: byte-identical apart from the writing policy lines (tests/unit/aa1047_prompt_lines.py)
+        assert sha(pre_aa1047(SYSTEM_PROMPT)) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
+        assert sha(single) == "d6be250786c6f276036fe183be959b8f75fb64b54801b0bbcd2dd80d4c1c5636"
+        assert sha(route) == "7b62bcc7b7dab960089ebeb3642dbdd827f35cc063797c1131a714a6be273bb9"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash

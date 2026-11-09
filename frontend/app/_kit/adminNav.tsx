@@ -4,22 +4,29 @@
 // CommandPalette (Pages group) and BottomNav. Visibility follows lib/rbac.ts PAGE_RULES (AA-656): an
 // item renders only when the role may open its page.
 //
-// AA-883 (S241 admin console, design §4) — groups belong to one of two sections, named after who the
-// page serves (not how it runs):
-//   - Platform: people, tenants (accounts), machines and money — Overview · People & access ·
-//     Apps · Tenants · Jobs · AI & spend · Developer (AA-884 added Audit log, Apps, Cost per app);
-//   - CIS Content: what CIS produces, including the QA of tenant output — Pipeline · Assets ·
-//     Intelligence · Tenant output.
-// No URL changed. Settings stays the standalone footer entry until it is split (design GĐ6). The
-// other apps (Booking admin, TripPlanner, tenant portal) are links from lib/apps.ts, not nav entries.
+// AA-1039 R6 slice 1 (S266, root ADR 0019 d13) — the groups, their order and every href come from lib/adminIa.ts
+// (plain data, also read by next.config.ts for the redirects of the pages that moved and by lib/adminIa.test.mjs).
+// This file only adds the icons. Seven groups: Home · Tenants · AA Catalogue · Tenant content QA · AI & spend ·
+// Writing Lab · Platform. The S241 split into two foldable sections (Platform / CIS Content) and the standalone
+// Settings footer entry are gone: Settings sits in AA Catalogue, and every group folds on its own (kit NavGroup, S264).
+// A `hidden` slot of the model (Tenants › Plans & add-ons) is left out everywhere until its page ships.
+//
+// AA-1037 (root ADR 0019 d9 "Screens now"): an eighth group, Trade, whose items are `external` pages of Booking admin.
+// Their href is the full URL from the app registry (lib/apps.ts appPageUrl, nothing else builds it); the sidebar and
+// the ⌘K palette open them in the same tab (followExternal: a full page load, not the Next router); they never match
+// the current route (no active state, no breadcrumb); a role sees them through lib/rbac.ts canSeeNavItem.
 
 import {
   Cpu, Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
-  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
-  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote, Newspaper,
+  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
+  Boxes, ScrollText, FlaskConical, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
+  Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn, Palette, MapPinned,
+  CalendarCheck, Receipt, Layers, Briefcase,
 } from "lucide-react";
 import { useCallback } from "react";
-import { canSeePage } from "@/lib/rbac";
+import { canSeeNavItem, type Capability } from "@/lib/rbac";
+import { ADMIN_IA, type NavIcon } from "@/lib/adminIa";
+import { appPageUrl } from "@/lib/apps";
 import { useLang } from "./core/useI18n";
 import { NAV_MESSAGES } from "./nav.messages";
 
@@ -29,148 +36,145 @@ export interface NavEntry {
   label: string;
   /** Other routes that belong to this entry (its sub-nav pages) — used for active-state matching. */
   also?: string[];
+  /** AA-1037: a page of another app (href is its full URL): same-tab full load, never the active entry. */
+  external?: boolean;
+  /** AA-1037: for an external entry, the capabilities that show it (lib/rbac.ts canSeeNavItem). */
+  capabilities?: readonly Capability[];
 }
-
-export type NavSectionId = "platform" | "cis";
-
-export interface NavSection {
-  id: NavSectionId;
-  label: string;
-}
-
-export const NAV_SECTIONS: NavSection[] = [
-  { id: "platform", label: "Platform" },
-  { id: "cis", label: "CIS Content" },
-];
 
 export interface NavGroup {
   label: string;
-  section: NavSectionId;
   items: NavEntry[];
 }
 
-export const NAV_GROUPS: NavGroup[] = [
-  // ── Platform ──
-  { label: "Overview", section: "platform", items: [
-    { href: "/admin/overview", icon: <Gauge size={16} />, label: "Overview" },
-    { href: "/admin/data-coverage", icon: <Table2 size={16} />, label: "Data coverage" },  // AA-992
-    { href: "/admin/reports", icon: <Newspaper size={16} />, label: "Reports" },  // AA-1003 — report register
-  ] },
-  { label: "People & access", section: "platform", items: [
-    { href: "/admin/platform/staff", icon: <UserCog size={16} />, label: "Staff" },  // AA-883
-    { href: "/admin/platform/audit", icon: <ScrollText size={16} />, label: "Audit log" },  // AA-884
-    { href: "/admin/platform/alerts", icon: <BellRing size={16} />, label: "Alert recipients" },  // AA-913
-  ] },
-  // AA-884 — health and running commit of each ecosystem app (CIS api/worker, Booking, TripPlanner).
-  { label: "Apps", section: "platform", items: [
-    { href: "/admin/platform/apps", icon: <Boxes size={16} />, label: "Apps" },
-  ] },
-  { label: "Tenants", section: "platform", items: [
-    { href: "/admin/tenants", icon: <Users size={16} />, label: "Tenants" },
-    { href: "/admin/platform/agencies", icon: <Building2 size={16} />, label: "Agencies (CRM)" },  // AA-941
-  ] },
-  { label: "Jobs", section: "platform", items: [
-    { href: "/admin/jobs", icon: <ListChecks size={16} />, label: "Jobs" },
-    { href: "/admin/data-erasure", icon: <Eraser size={16} />, label: "Data erasure" },  // AA-839
-  ] },
-  { label: "AI & spend", section: "platform", items: [
-    // AA-804 — every paid AI and data provider (health, spend, budget, balance) and the job trace (root ADR 0009)
-    { href: "/admin/ai-gateway", icon: <Cpu size={16} />, label: "AI providers" },
-    { href: "/admin/cost-ops", icon: <Wallet size={16} />, label: "Cost Operations" },
-    { href: "/admin/platform/cost", icon: <ChartPie size={16} />, label: "Cost per app" },  // AA-884
-    { href: "/admin/decisions", icon: <Scale size={16} />,  label: "Jev Decisions" },
-  ] },
-  { label: "Developer", section: "platform", items: [
-    { href: "/admin/api-docs", icon: <BookOpen size={16} />, label: "API Docs" },  // AA-577 follow-up
-    { href: "/admin/data-model", icon: <Network size={16} />, label: "Data model" },  // AA-894 — live ERD
-    { href: "/admin/docs", icon: <BookMarked size={16} />, label: "Docs" },  // AA-898 — docs catalog reader
-  ] },
-  // ── CIS Content ──
-  { label: "Pipeline", section: "cis", items: [
-    { href: "/admin/upload",         icon: <Upload size={16} />,        label: "Upload (S0)" },
-    { href: "/admin/s1-rewrite",     icon: <Wand2 size={16} />,         label: "Rewrite (S1)" },
-    { href: "/admin/review",         icon: <ClipboardList size={16} />, label: "Review Queue" },
-    { href: "/admin/master-content", icon: <Library size={16} />,       label: "Master Content" },
-  ] },
-  { label: "Assets", section: "cis", items: [
-    { href: "/admin/photos", icon: <ImageIcon size={16} />, label: "Photos" },
-    { href: "/admin/places", icon: <MapPin size={16} />, label: "Places" },  // AA-847
-    { href: "/admin/aa-content", icon: <FileText size={16} />, label: "AA content (CRM)" },  // AA-977
-    { href: "/admin/facts", icon: <Quote size={16} />, label: "Facts" },  // AA-814 — sourced facts the writer cites
-    { href: "/admin/supply-content", icon: <Hotel size={16} />, label: "Supply (Booking)" },  // AA-835 (S251: shorter, "Supply content (Booking)" was cut at 1440)
-  ] },
-  { label: "Intelligence", section: "cis", items: [
-    { href: "/admin/atom-curation",    icon: <Puzzle size={16} />, label: "Social Content" },
-    { href: "/admin/seo-intelligence", icon: <Search size={16} />, label: "SEO Intelligence" },
-  ] },
-  { label: "Tenant output", section: "cis", items: [
-    { href: "/admin/tenant-activity", icon: <Radio size={16} />,       label: "Content Trace" },
-    { href: "/admin/platform-stats",  icon: <BarChart3 size={16} />,   label: "A4 Quality" },
-    { href: "/admin/content-quality", icon: <ShieldCheck size={16} />, label: "Content Quality" },
-    { href: "/admin/writing-memory", icon: <BookOpen size={16} />, label: "Writing memory" },  // AA-917
-  ] },
-];
-
-/** The groups of one section. */
-export function sectionGroups(section: NavSectionId): NavGroup[] {
-  return NAV_GROUPS.filter((g) => g.section === section);
-}
-
-/** The sections `role` sees at least one page of, in display order. */
-export function visibleSections(role: string): NavSection[] {
-  return NAV_SECTIONS.filter((s) =>
-    sectionGroups(s.id).some((g) => g.items.some((it) => canSeePage(role, it.href))),
-  );
-}
-
-/** The standalone Settings entry (all staff roles, same as proxy.ts). */
-export const SETTINGS_ENTRY: NavEntry = {
-  href: "/admin/settings", icon: <Settings size={16} />, label: "Settings",
+const ICONS: Record<NavIcon, React.ReactNode> = {
+  overview: <Gauge size={16} />,
+  appHealth: <Boxes size={16} />,
+  reports: <Newspaper size={16} />,
+  dataCoverage: <Table2 size={16} />,
+  tenants: <Users size={16} />,
+  agencies: <Building2 size={16} />,
+  erasure: <Eraser size={16} />,
+  plans: <CreditCard size={16} />,
+  assignments: <UserCheck size={16} />,
+  upload: <Upload size={16} />,
+  rewrite: <Wand2 size={16} />,
+  review: <ClipboardList size={16} />,
+  master: <Library size={16} />,
+  atoms: <Puzzle size={16} />,
+  places: <MapPin size={16} />,
+  placeCards: <MapPinned size={16} />,
+  photos: <ImageIcon size={16} />,
+  facts: <Quote size={16} />,
+  supply: <Hotel size={16} />,
+  aaContent: <FileText size={16} />,
+  seo: <Search size={16} />,
+  settings: <Settings size={16} />,
+  quality: <ShieldCheck size={16} />,
+  trace: <Radio size={16} />,
+  reviewLog: <BarChart3 size={16} />,
+  slate: <FileStack size={16} />,
+  compliance: <ShieldAlert size={16} />,
+  aiGateway: <Cpu size={16} />,
+  spend: <Wallet size={16} />,
+  usage: <ChartColumn size={16} />,
+  lab: <FlaskConical size={16} />,
+  writingMemory: <PenLine size={16} />,
+  decisions: <Scale size={16} />,
+  staff: <UserCog size={16} />,
+  audit: <ScrollText size={16} />,
+  jobs: <ListChecks size={16} />,
+  alerts: <BellRing size={16} />,
+  apiDocs: <BookOpen size={16} />,
+  dataModel: <Network size={16} />,
+  docs: <BookMarked size={16} />,
+  uiKit: <Palette size={16} />,
+  bookingAdmin: <CalendarCheck size={16} />,
+  agencyBilling: <Receipt size={16} />,
+  agencyTiers: <Layers size={16} />,
+  b2bDesk: <Briefcase size={16} />,
 };
 
-/** Does `href` (or any of its `also` routes) match the current pathname? */
-export function navActive(entry: Pick<NavEntry, "href" | "also">, pathname: string): boolean {
+/** The navigation groups in display order, reserved (`hidden`) slots left out. */
+export const NAV_GROUPS: NavGroup[] = ADMIN_IA.map((g) => ({
+  label: g.label,
+  items: g.items.filter((it) => !it.hidden).map((it) => ({
+    href: it.external ? appPageUrl(it.external, it.href) : it.href, label: it.label, icon: ICONS[it.icon],
+    ...(it.also ? { also: it.also } : {}),
+    ...(it.external ? { external: true, capabilities: it.capabilities ?? [] } : {}),
+  })),
+}));
+
+/** The groups `role` sees, each with only the items the role may open; empty groups left out. */
+export function visibleGroups(role: string): NavGroup[] {
+  return NAV_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((n) => canSeeNavItem(role, n)) }))
+    .filter((g) => g.items.length > 0);
+}
+
+/** AA-1037: go to an external entry (another app) in the same tab, a full page load; false for a CIS route. */
+export function followExternal(entry: Pick<NavEntry, "href" | "external">): boolean {
+  if (!entry.external) return false;
+  window.location.assign(entry.href);
+  return true;
+}
+
+/** Does `href` (or any of its `also` routes) match the current pathname? An external entry never does. */
+export function navActive(entry: Pick<NavEntry, "href" | "also" | "external">, pathname: string): boolean {
+  if (entry.external) return false;
   const all = [entry.href, ...(entry.also ?? [])];
   return all.some((h) => pathname === h || pathname.startsWith(h + "/"));
 }
 
-/** Flat list of every entry (incl. Settings), filtered by role. */
+/** The entry of the page at `pathname`: the longest matching href wins (/admin/tenants/agencies is CRM agencies,
+ *  not the Directory at /admin/tenants). */
+function activeEntry(pathname: string): { group: NavGroup; entry: NavEntry } | null {
+  let best: { group: NavGroup; entry: NavEntry; len: number } | null = null;
+  for (const group of NAV_GROUPS) {
+    for (const entry of group.items) {
+      if (entry.external) continue;   // AA-1037: another app's page is never the current one
+      for (const h of [entry.href, ...(entry.also ?? [])]) {
+        if ((pathname === h || pathname.startsWith(h + "/")) && (!best || h.length > best.len)) {
+          best = { group, entry, len: h.length };
+        }
+      }
+    }
+  }
+  return best ? { group: best.group, entry: best.entry } : null;
+}
+
+/** Is `entry` the nav entry of the page at `pathname`? (one entry at a time, even when hrefs nest) */
+export function isActiveEntry(entry: Pick<NavEntry, "href" | "external">, pathname: string): boolean {
+  if (entry.external) return false;
+  return activeEntry(pathname)?.entry.href === entry.href;
+}
+
+/** The group of the page at `pathname`, or null outside the nav. */
+export function activeGroup(pathname: string): NavGroup | null {
+  return activeEntry(pathname)?.group ?? null;
+}
+
+/** Flat list of every entry, filtered by role. */
 export function allEntries(role: string): NavEntry[] {
-  const out: NavEntry[] = [];
-  for (const g of NAV_GROUPS) {
-    for (const it of g.items) {
-      if (canSeePage(role, it.href)) out.push(it);
-    }
-  }
-  if (canSeePage(role, SETTINGS_ENTRY.href)) out.push(SETTINGS_ENTRY);
-  return out;
+  return visibleGroups(role).flatMap((g) => g.items);
 }
 
-/** The section label of the page at `pathname` (breadcrumb root), or null outside the nav. */
+/** The group label of the page at `pathname` (breadcrumb root), or null outside the nav. */
 export function pageSection(pathname: string): string | null {
-  for (const g of NAV_GROUPS) {
-    if (g.items.some((it) => navActive(it, pathname))) {
-      return NAV_SECTIONS.find((s) => s.id === g.section)?.label ?? null;
-    }
-  }
-  return null;
+  return activeGroup(pathname)?.label ?? null;
 }
 
-/** The human page title for the breadcrumb (<Section> / <title>). Falls back to a prettified slug. */
+/** The human page title for the breadcrumb (<Group> / <title>). Falls back to a prettified slug. */
 export function pageTitle(pathname: string): string {
-  for (const g of NAV_GROUPS) {
-    for (const it of g.items) {
-      if (navActive(it, pathname)) return it.label;
-    }
-  }
-  if (navActive(SETTINGS_ENTRY, pathname)) return SETTINGS_ENTRY.label;
+  const hit = activeEntry(pathname);
+  if (hit) return hit.entry.label;
   const slug = pathname.replace(/^\/admin\/?/, "").split("/")[0] || "";
   if (!slug) return "Admin";
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**
- * AA-994 — a nav label (section, group, entry, as this module carries them in English) in the UI language
+ * AA-994 — a nav label (group, entry, as this module carries them in English) in the UI language
  * (nav.messages.ts). A label without a translation is returned as is.
  */
 export function useNavLabel(): (label: string) => string {

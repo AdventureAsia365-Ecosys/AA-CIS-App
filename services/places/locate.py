@@ -44,8 +44,6 @@ defer the rest of the run: no try consumed, no further paid model call.
 """
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable, Optional
 
@@ -53,6 +51,7 @@ import structlog
 
 from services.places import geomatch, guards
 from shared.cost_guard import BudgetExceeded
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from services.places.names import name_norm
 from services.places.geocoder import (CONFIRMED_BY, STRATEGY_V1, Confirmed, CreditLimitReached,
                                       GeocoderUnavailable, Unconfirmed, default_accept_rule, default_strategy)
@@ -183,28 +182,15 @@ class AnswerUnreadable(ValueError):
     """The model's answer holds no JSON object (empty, a refusal, or cut at max_tokens)."""
 
 
-_FENCE = re.compile(r"```[a-zA-Z]*")
-_MAX_OBJECT_STARTS = 50
-
-
 def json_object(raw: Optional[str]) -> dict:
     """The first JSON object in a model answer: code fences and prose before / after it are ignored (AA-990: the old
-    first-"{"-to-last-"}" slice failed a whole batch on trailing prose holding a brace). Raises AnswerUnreadable."""
-    s = _FENCE.sub("", raw or "")
-    decoder = json.JSONDecoder()
-    pos, err = s.find("{"), "no '{'"
-    for _ in range(_MAX_OBJECT_STARTS):
-        if pos < 0:
-            break
-        try:
-            obj, _end = decoder.raw_decode(s, pos)
-        except json.JSONDecodeError as e:
-            err = str(e)
-        else:
-            if isinstance(obj, dict):
-                return obj
-        pos = s.find("{", pos + 1)
-    raise AnswerUnreadable(f"no JSON object in the locate answer: {err[:80]}")
+    first-"{"-to-last-"}" slice failed a whole batch on trailing prose holding a brace). The shared reader since
+    AA-1026 (shared/llm_client/json_reply.py): a brace in leading prose is skipped, a cut-off answer is unreadable.
+    Raises AnswerUnreadable."""
+    try:
+        return first_json_value(raw)
+    except JsonReplyError as e:
+        raise AnswerUnreadable(f"no JSON object in the locate answer: {str(e)[:80]}") from e
 
 
 def _proposal(v) -> "Proposal | str":

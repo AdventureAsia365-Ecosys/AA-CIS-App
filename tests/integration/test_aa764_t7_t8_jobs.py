@@ -26,8 +26,8 @@ async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=3)
     await p.execute("""
         INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active,
-                                    posts_per_week, api_key_hash)
-        VALUES ($1, 'AA-764 Test', $2, 'starter', 60, true, 3, 'h') ON CONFLICT DO NOTHING""",
+                                    posts_per_week)
+        VALUES ($1, 'AA-764 Test', $2, 'starter', 60, true, 3) ON CONFLICT DO NOTHING""",
                     TENANT, f"t-{str(TENANT)[:8]}")
     yield p
     await p.execute("DELETE FROM shared.job WHERE payload->>'tenant_id' = $1", str(TENANT))

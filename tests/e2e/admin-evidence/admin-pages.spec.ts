@@ -7,8 +7,8 @@
 //   cd apps/AA-CIS-App && AWS_PROFILE=aa365-admin E2EADMIN=1 npx playwright test --project admin-evidence
 //
 // Steps: /login → "Sign in with company email" → managed login → the admin address → code from inbound-admin/ →
-// back under /admin (cis_admin_token cookie, Account menu) → /admin/content-quality and /admin/writing-memory at
-// 1440x900 (grown to the inner scroll region) and 390x844, light and dark → AA-898: the docs manifest says owner_read
+// back under /admin (cis_admin_token cookie, Account menu) → the PAGES below (Tenant QA quality and compliance,
+// Writing Lab, AI & spend, the IA moves) at 1440x900 (grown to the inner scroll region) and 390x844, light and dark → AA-898: the docs manifest says owner_read
 // true / is_owner false, then docs/glossary.md in EN and VI (the switch), the owner-only docs/legal/register.md, and a
 // Mermaid page + a callout page when published, at the same sizes and themes → API checks through the BFF that write
 // nothing: a refused write (403 e2e_read_only), the allow-listed sentence apply on a missing piece (404, so it passed
@@ -29,7 +29,45 @@ import { growViewportToContent } from '../smoke/smoke-helpers';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
 const SHOTS_DIR = 'tests/e2e/results/admin-evidence';
-const PAGES = ['/admin/content-quality', '/admin/writing-memory', '/admin/docs'] as const;  // AA-898: + docs reader
+// AA-898: + docs reader. AA-1039 R6 slice 3: Writing memory moved to /admin/lab/writing-memory; + one Writing Lab stage
+// (T9 social, the first writer of the learning loop) and the AI & spend group (AI gateway, Spend, Spend › By app).
+const PAGES = [
+  '/admin/tenant-qa/quality', '/admin/lab/writing-memory', '/admin/docs',
+  '/admin/lab/t9-social', '/admin/ai-gateway', '/admin/spend', '/admin/spend?tab=apps',
+  // AA-1039 R6 rest (S268): the Lab's Releases and Metrics tabs, and the Routing tab (Routing by data class).
+  '/admin/lab/t9-social?tab=releases', '/admin/lab/t9-social?tab=metrics', '/admin/ai-gateway?tab=routing',
+  // + the IA moves of the fix pass: Tenant 360 route, Catalogue settings, the UI kit page, SEO without Spend, and
+  // Spend › DataForSEO (where SEO's Spend tab went).
+  '/admin/tenants/00000000-0000-0000-0000-000000000001', '/admin/settings', '/admin/platform/ui-kit',
+  '/admin/seo-intelligence', '/admin/spend?tab=spend&view=dfs',
+  // AA-1039 R6 rest (option A): AA Catalogue › Place cards (was Content quality's Cards tab).
+  '/admin/places/cards',
+  // AA-1039 R6 slice 2: Tenant QA › Compliance (lib/rbac.ts prefix /admin/tenant-qa = TENANT_QA, which includes admin;
+  // the visual job's E2E reviewer is not in TENANT_QA, so only this run shoots it).
+  '/admin/tenant-qa/compliance',
+  // AA-1042 (S270): AI gateway › Guide (the gateway page from the docs catalog plus the live tables).
+  '/admin/ai-gateway?tab=guide',
+] as const;
+// A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
+const READY: Partial<Record<(typeof PAGES)[number], string>> = {
+  '/admin/lab/t9-social': '[data-testid="writing-lab-ready"]',
+  '/admin/lab/t9-social?tab=releases': '[data-testid="lab-releases-ready"]',
+  '/admin/lab/t9-social?tab=metrics': '[data-testid="lab-metrics-ready"]',
+  '/admin/ai-gateway?tab=routing': '[data-testid="ai-gateway-data-class"]',
+  '/admin/ai-gateway?tab=guide': '[data-testid="ai-gateway-guide-live-ready"]',
+  '/admin/spend?tab=apps': '[data-testid="platform-cost-ready"]',
+  '/admin/tenants/00000000-0000-0000-0000-000000000001': '[data-testid="tenant360-ready"]',
+  '/admin/settings': '[data-testid="admin-content-ready"]',
+  '/admin/platform/ui-kit': '[data-testid="admin-content-ready"]',
+  '/admin/tenant-qa/compliance': '[data-testid="admin-content-ready"]',
+};
+// A ready marker the page also renders in its error state (Compliance: the API error string or "not available yet" in
+// the same element): the marker must also hold the loaded table or the empty text, so an error page fails the run
+// instead of being shot as evidence.
+const LOADED: Partial<Record<(typeof PAGES)[number], string>> = {
+  '/admin/tenant-qa/compliance':
+    '[data-testid="admin-content-ready"]:has(table tbody tr), [data-testid="admin-content-ready"]:has-text("Nothing here.")',
+};
 // Ids that do not exist: nothing is ever written by this spec.
 const MISSING_CARD = '00000000-0000-4000-8000-00000000a10b';
 const MISSING_PIECE = '00000000-0000-4000-8000-00000000a10c';
@@ -117,11 +155,15 @@ test.describe('AA-816 A10b — admin evidence as the Dev-only E2E CIS admin', ()
 
     // ── 7. Admin-only pages: 1440 (grown to the inner scroll region) + 390, light + dark ──
     for (const pagePath of PAGES) {
-      const slug = pagePath.replace(/^\/admin\//, '').replace(/\//g, '-');
+      const slug = pagePath.replace(/^\/admin\//, '').replace(/[/?=&]/g, '-');
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.goto(pagePath, { waitUntil: 'domcontentloaded' });
-      expect(new URL(page.url()).pathname).toBe(pagePath);   // not bounced: the session is an admin
-      await waitForPageData(page);
+      expect(new URL(page.url()).pathname).toBe(pagePath.split('?')[0]);   // not bounced: the session is an admin
+      const ready = READY[pagePath];
+      if (ready) await expect(page.locator(ready).first()).toBeVisible({ timeout: 30000 });
+      else await waitForPageData(page);
+      const loaded = LOADED[pagePath];
+      if (loaded) await expect(page.locator(loaded).first(), `${pagePath} loaded, not its error state`).toBeVisible();
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme });
         await page.setViewportSize({ width: 1440, height: 900 });
@@ -134,6 +176,18 @@ test.describe('AA-816 A10b — admin evidence as the Dev-only E2E CIS admin', ()
       }
       await page.emulateMedia({ colorScheme: 'light' });
     }
+
+    // ── 7a. AA-1035 (directory capability UI): the admin keeps every Directory write control (the desk roles get
+    //        none, cs-scope.spec.ts). Nothing is clicked. ──
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/admin/tenants', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('table tbody tr').first()).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('button', { name: /new tenant/i }), 'admin still creates tenants').toBeVisible();
+    await expect(page.getByRole('button', { name: /^(offboard|restore)$/i }).first(), 'admin still offboards')
+      .toBeVisible();
+    await expect(page.locator('table tbody').getByRole('button', { name: /^(active|suspended)$/i }).first(),
+      'a clickable status pill').toBeVisible();
+    await shot(page, 'tenants-directory-admin-desktop-light', true);
 
     // ── 7b. AA-898 docs reader: the EN / VI switch on a translated page, an owner-only page (docs.owner_read: Dev
     //        only, is_owner stays false), and a Mermaid diagram + callouts when such pages are published ──

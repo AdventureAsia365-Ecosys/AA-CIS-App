@@ -16,7 +16,7 @@ class TestGateSeoSurface:
     def test_valid_fields_pass(self):
         result = qg.gate_seo_surface(
             seo_title="Wat Sisaket Travel Guide: Vientiane's Oldest Temple",
-            meta_description="x" * 130 + " for your Laos trip today.",
+            meta_description="x" * 120 + " for your Laos trip today.",   # AA-1047: 146 chars, inside 140-155
             slug="wat-sisaket-guide",
             keyword=None,
         )
@@ -40,7 +40,7 @@ class TestGateSeoSurface:
         result = qg.gate_seo_surface(
             seo_title="A Title", meta_description="Too short.", slug="a-slug", keyword=None,
         )
-        assert any("120-158" in v for v in result["violations"])
+        assert any("140-155" in v for v in result["violations"])      # AA-1047: the policy band
 
     def test_meta_description_missing_terminal_punctuation_fails(self):
         result = qg.gate_seo_surface(

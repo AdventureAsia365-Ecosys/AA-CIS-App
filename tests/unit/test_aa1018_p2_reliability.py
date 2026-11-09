@@ -12,6 +12,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from shared.llm_client import breaker, call_log, invariant, prompt_registry
+from shared.llm_client import role_config
 from shared.llm_client import client as client_mod
 from shared.llm_client.client import LLMClient, attempt_outcome
 from shared.llm_client.errors import TRUNCATED, LLMAccessDenied, RouteDeadlineExceeded, classify
@@ -202,6 +203,10 @@ def test_breaker_off_keeps_the_legacy_chain_calls(world, monkeypatch):
 def test_the_legacy_chain_is_logged_as_deprecated_once_per_stage(world, monkeypatch):
     monkeypatch.setenv("LLM_LEGACY_ALIASES", "off")
     monkeypatch.setattr(client_mod, "_DEPRECATED_LOGGED", set())
+    # AA-1039 (review S268): the stage read succeeds with no row (an adhoc_* stage): content. Left to the DB, a
+    # unit run (no DB) fails the read, which now fails closed as pii (no legacy chain, no vendor pin).
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync",
+                        lambda s: role_config.SAFE_DEFAULTS.get(s, role_config._GENERIC_FALLBACK))
     with capture_logs() as logs:
         world.generate(model_tier="haiku", stage="adhoc_dep")
         world.generate(model_tier="haiku", stage="adhoc_dep")
@@ -280,6 +285,10 @@ def test_a_stage_row_role_wins_over_the_request():
 
 def test_a_registered_prompt_version_rides_on_the_reply(world, monkeypatch):
     monkeypatch.setattr(prompt_registry, "version_for", lambda stage: "v7" if stage == "adhoc_pv" else None)
+    # AA-1039 (review S268): the stage read succeeds with no row (an adhoc_* stage): content. Left to the DB, a
+    # unit run (no DB) fails the read, which now fails closed as pii (no legacy chain, no vendor pin).
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync",
+                        lambda s: role_config.SAFE_DEFAULTS.get(s, role_config._GENERIC_FALLBACK))
     resp = world.generate(model_tier="gpt-6-luna", stage="adhoc_pv")
     assert resp.prompt_version == "v7" and call_log.billed_fields(resp)["prompt_version"] == "v7"
     assert resp.prompt_hash == client_mod.prompt_hash(LLMRequest(system_prompt="s", user_prompt="other tour"))

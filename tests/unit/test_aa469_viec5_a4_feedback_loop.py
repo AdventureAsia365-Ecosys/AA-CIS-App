@@ -468,3 +468,98 @@ class TestGetContentLogAA568:
         item = result["data"][0]
         assert item["publish_external_url"] is None
         assert item["publish_published_at"] is None
+
+
+# ── AA-1006 follow-up (S263 F3) — paging: offset, the real total and the per-channel counts ─────────────────────
+
+@pytest.mark.asyncio
+class TestGetContentLogPagingAA1006:
+    """`total` used to be `len(data)`, so the Content Trace header said "Total pieces 200" for the first 200 rows of
+    a larger set. Now `offset` pages the rows and `total` / `by_channel` count every match (one grouped query, run
+    only when the page does not already hold every match)."""
+
+    @staticmethod
+    def _row(channel: str, **over):
+        return TestGetContentLog._full_row(
+            channel=channel, tour_name="Lantern Ridge Walk", tour_destination="Testland",
+            atom_text="Cross the rope bridge at dawn", segment_place="Mistvale Terraces", **over,
+        )
+
+    @staticmethod
+    def _pool_with(rows, counts):
+        """fetch #1 answers the page; fetch #2 (the grouped count) answers `counts`."""
+        pool, conn = _make_pool()
+        conn.fetch = AsyncMock(side_effect=[rows, counts])
+        return pool, conn
+
+    async def test_offset_is_bound_after_limit(self):
+        from api.routers.admin_a4 import get_content_log
+
+        pool, conn = self._pool_with([], [{"channel": "blog", "n": 230}])
+        req = _make_request(pool)
+        await get_content_log(req, tenant_id=None, limit=100, offset=200, x_admin_secret=_TEST_SECRET)
+
+        sql, *params = conn.fetch.call_args_list[0][0]
+        assert "OFFSET $" in sql
+        assert params[-2:] == [100, 200]
+
+    async def test_first_page_holding_every_match_needs_no_count_query(self):
+        from api.routers.admin_a4 import get_content_log
+
+        rows = [self._row("blog"), self._row("blog"), self._row("linkedin")]
+        pool, conn = _make_pool(fetch=rows)
+        req = _make_request(pool)
+        result = await get_content_log(req, tenant_id=None, limit=50, x_admin_secret=_TEST_SECRET)
+
+        assert conn.fetch.await_count == 1
+        assert result["total"] == 3
+        assert result["by_channel"] == {"blog": 2, "linkedin": 1}
+        assert result["offset"] == 0
+        assert result["limit"] == 50
+
+    async def test_full_page_reads_the_real_total_and_channel_counts(self):
+        from api.routers.admin_a4 import get_content_log
+
+        rows = [self._row("blog"), self._row("linkedin")]
+        counts = [{"channel": "blog", "n": 118}, {"channel": "linkedin", "n": 89}, {"channel": None, "n": 1}]
+        pool, conn = self._pool_with(rows, counts)
+        req = _make_request(pool)
+        result = await get_content_log(req, tenant_id=None, limit=2, x_admin_secret=_TEST_SECRET)
+
+        assert conn.fetch.await_count == 2
+        assert len(result["data"]) == 2
+        assert result["total"] == 208
+        assert result["by_channel"] == {"blog": 118, "linkedin": 89, "": 1}
+
+    async def test_count_query_uses_the_same_filters_without_paging(self):
+        from api.routers.admin_a4 import get_content_log
+
+        pool, conn = self._pool_with([self._row("blog")], [{"channel": "blog", "n": 7}])
+        req = _make_request(pool)
+        result = await get_content_log(
+            req, tenant_id=TENANT_ID, tour_id=None, status="held", channel="blog", published="no",
+            date_from=None, date_to=None, limit=1, offset=0, x_admin_secret=_TEST_SECRET,
+        )
+
+        page_sql, *page_params = conn.fetch.call_args_list[0][0]
+        count_sql, *count_params = conn.fetch.call_args_list[1][0]
+        assert "GROUP BY 1" in count_sql
+        assert "LIMIT" not in count_sql and "OFFSET" not in count_sql
+        for clause in ("cp.tenant_id = $1::uuid", "cp.status = $2", "COALESCE(cp.channel, agr.channel) = $3",
+                       "pl.publish_id IS NULL"):
+            assert clause in page_sql and clause in count_sql
+        assert "pl.status = 'published'" in count_sql
+        assert count_params == [TENANT_ID, "held", "blog"]
+        assert page_params == [TENANT_ID, "held", "blog", 1, 0]
+        assert result["total"] == 7
+
+    async def test_a_page_past_the_end_still_reports_the_total(self):
+        from api.routers.admin_a4 import get_content_log
+
+        pool, conn = self._pool_with([], [{"channel": "facebook", "n": 4}])
+        req = _make_request(pool)
+        result = await get_content_log(req, tenant_id=None, limit=50, offset=50, x_admin_secret=_TEST_SECRET)
+
+        assert result["data"] == []
+        assert result["total"] == 4
+        assert result["offset"] == 50

@@ -42,6 +42,7 @@ import {
   useLang,
   useT,
   type Tone,
+  IconButton, Input, Select,
 } from "../../_kit";
 import { M } from "./messages";
 import { DOC_AUDIENCE_MESSAGES, DOC_LANG_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
@@ -94,7 +95,7 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
   );
 }
 
-function Select({
+function FilterSelect({
   value,
   onChange,
   label,
@@ -106,29 +107,13 @@ function Select({
   options: { value: string; label: string }[];
 }) {
   return (
-    <select
+    <Select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={label}
-      style={{
-        flex: "1 1 120px",
-        padding: "8px 10px",
-        background: K.card,
-        color: K.ink,
-        border: `1px solid ${K.line}`,
-        borderRadius: RADIUS.md,
-        fontSize: 13,
-        fontFamily: sans,
-        maxWidth: "100%",
-        minWidth: 0,
-      }}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+      options={options}
+      style={{ flex: "1 1 120px" }}
+    />
   );
 }
 
@@ -505,21 +490,12 @@ function DocsReaderPage() {
 
   const filters = (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: 12, borderBottom: `1px solid ${K.line}` }}>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          flex: "1 1 100%",
-          minWidth: 0,
-          padding: "8px 12px",
-          background: K.card,
-          border: `1px solid ${K.line}`,
-          borderRadius: RADIUS.md,
-        }}
-      >
-        <Search size={14} style={{ color: K.muted2, flexShrink: 0 }} />
-        <input
+      <div style={{ position: "relative", flex: "1 1 100%", minWidth: 0 }}>
+        <Search
+          size={14}
+          style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: K.muted2, pointerEvents: "none" }}
+        />
+        <Input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -528,30 +504,27 @@ function DocsReaderPage() {
           }}
           placeholder={t("searchPlaceholder")}
           aria-label={t("searchAria")}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            border: "none",
-            outline: "none",
-            background: "transparent",
-            color: K.ink,
-            fontSize: 13,
-            fontFamily: sans,
-          }}
+          style={{ width: "100%", padding: "0 36px 0 34px" }}
         />
         {query && (
-          <Button variant="ghost" size="sm" onClick={() => setQuery("")} ariaLabel={t("clearSearch")} style={{ padding: "2px 6px" }}>
+          <IconButton
+            variant="plain"
+            size="sm"
+            onClick={() => setQuery("")}
+            label={t("clearSearch")}
+            style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)" }}
+          >
             <X size={12} />
-          </Button>
+          </IconButton>
         )}
-      </label>
-      <Select
+      </div>
+      <FilterSelect
         value={type}
         onChange={setType}
         label={t("type")}
         options={[{ value: ALL, label: t("allTypes") }, ...typeOptions(pages).map((ty) => ({ value: ty, label: typeLabel(ty) }))]}
       />
-      <Select
+      <FilterSelect
         value={audience}
         onChange={setAudience}
         label={t("audience")}

@@ -116,7 +116,10 @@ async def test_regressed_attempt_ledger_survives_the_revert(_loop_isolation):
         await service.run_write_background(uuid.uuid4(), uuid.uuid4(), _context(), pool=MagicMock())
 
     log = fin.call_args.kwargs["repair_log"]
-    assert [e["gate_targeted"] for e in log] == ["F4_extreme_length", "F4_extreme_length", "gate_regression_guard"]
+    # AA-900 W0 — the held piece's typed label comes last (no gate_ledger: it is not an attempt)
+    assert [e["gate_targeted"] for e in log] == ["F4_extreme_length", "F4_extreme_length", "gate_regression_guard",
+                                                 "stop_and_label"]
+    assert "gate_ledger" not in log[3]
     assert {g["gate"]: g["passed"] for g in log[1]["gate_ledger"]} == {"F4_extreme_length": False,
                                                                        "F1_grounding": False}
     assert "gate_ledger" not in log[2]  # the revert note is not an attempt
@@ -161,7 +164,7 @@ async def test_label_routes_503_before_migration_231(call):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", [None, "reviewer", "content"])
+@pytest.mark.parametrize("role", [None, "content", "content"])
 async def test_label_routes_are_admin_only(role):
     for call in (cq.get_piece_label(PIECE, _request(AsyncMock()), **_hdr(x_admin_role=role)),
                  cq.set_piece_label(PIECE, cq.PieceLabelBody(label="light"), _request(AsyncMock()),
