@@ -52,7 +52,7 @@ async def tx():
     await c.close()
 
 
-async def _tour(conn, country: str = "Velmora", *, active: bool = True) -> uuid.UUID:
+async def _tour(conn, country: str = "Mongolia", *, active: bool = True) -> uuid.UUID:
     tour_id = uuid.uuid4()
     await conn.execute("""INSERT INTO silver_aa_internal.raw_tours
                           (tour_id, tenant_id, batch_id, src_name, country, source_group_id, source_status)
@@ -83,7 +83,7 @@ async def test_scope_reads_only_active_masters(tx):
     await _segment(tx, gone, "zz1055_gone", "Quellan Gorge")
     by_place = await sr._places_in_scope(_Pool(tx), None, [str(live), str(gone)], None, cached_only=True)
     assert by_place == {"Zarvok Lake": ["visit"]}
-    by_country = await sr._places_in_scope(_Pool(tx), None, None, "velmora", cached_only=True)
+    by_country = await sr._places_in_scope(_Pool(tx), None, None, "mongolia", cached_only=True)
     assert "Zarvok Lake" in by_country and "Quellan Gorge" not in by_country
 
 
