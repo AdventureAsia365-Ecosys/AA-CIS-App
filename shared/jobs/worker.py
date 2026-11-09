@@ -134,6 +134,9 @@ OPS_FLUSH_TIMEOUT_S = 20.0
 # AA-900 W0: the hourly writing-memory reverify scan (a handful of active releases, ~12 reads each, $0).
 REVERIFY_EVERY_S = 3600.0
 REVERIFY_TIMEOUT_S = 60.0
+# AA-1055: the landing sweep tick (services/acp_contract/landing_sweep.SWEEP_TICK_S, repeated here so the worker does
+# not import the A3 modules at start).
+LANDING_SWEEP_EVERY_S = 3600.0
 # S263 review: the last flush on shutdown. The events of the last minutes (a lost cost-log write, a cis_app refused
 # connection) would otherwise die with the task. Short: it runs inside RELEASE_MARGIN_SECONDS, after the release.
 OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0
@@ -164,6 +167,9 @@ class Worker:
         # AA-900 W0: how often this worker re-runs the writing-memory reverify scan (the start scan covers a deploy;
         # this one catches a DB Migrate change of a route, params, prompt or house-style row without a deploy).
         self.reverify_every_seconds = REVERIFY_EVERY_S
+        # AA-1055: how often this worker runs the landing sweep (services/acp_contract/landing_sweep.py: it acts only in
+        # its night window, once per day, and enqueues one debounced platform recompute for unlanded Segments).
+        self.landing_sweep_every_seconds = LANDING_SWEEP_EVERY_S
         # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
         self.task_revision = ecs_task_revision()
         self.yielding = False
@@ -196,6 +202,7 @@ class Worker:
         loop = asyncio.get_running_loop()
         last_ops_flush = loop.time()
         last_reverify = loop.time()      # _main scanned at start
+        last_landing_sweep = loop.time()
         while not self._stopping.is_set():
             reaped = None
             try:
@@ -221,6 +228,9 @@ class Worker:
             if not self.yielding and loop.time() - last_reverify >= self.reverify_every_seconds:
                 await self._reverify_scan()
                 last_reverify = loop.time()
+            if not self.yielding and loop.time() - last_landing_sweep >= self.landing_sweep_every_seconds:
+                await self._landing_sweep()
+                last_landing_sweep = loop.time()
             if not claimed:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_seconds)
@@ -248,6 +258,19 @@ class Worker:
                                    timeout=REVERIFY_TIMEOUT_S if timeout_s is None else timeout_s)
         except Exception as e:  # noqa: BLE001 — the next tick scans again
             logger.warning("job_worker_reverify_scan_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
+
+    async def _landing_sweep(self, timeout_s: Optional[float] = None) -> None:
+        """AA-1055: the landing sweep (enqueue a recompute for Segments whose newest demand never landed). Bounded and
+        never fails the loop."""
+        from services.acp_contract.landing_sweep import SWEEP_TIMEOUT_S, sweep_safe
+
+        try:
+            result = await asyncio.wait_for(sweep_safe(self.pool),
+                                            timeout=SWEEP_TIMEOUT_S if timeout_s is None else timeout_s)
+            if result.get("action") == "enqueued":
+                logger.info("job_worker_landing_sweep", worker_id=self.worker_id, **result)
+        except Exception as e:  # noqa: BLE001 — the next tick sweeps again
+            logger.warning("job_worker_landing_sweep_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
     async def _liveness(self, fn, *args) -> None:
         """AA-687: shared.job_worker writes are for the Jobs page only — never fail the loop."""

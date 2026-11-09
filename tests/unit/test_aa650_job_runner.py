@@ -61,6 +61,8 @@ async def _run(ctx, *, result=None, balance=100.0, budgets=None, spend=(0.3, 0.0
     dfs, llm = budgets or (_budget("dfs"), _budget("bedrock"))
 
     async def fake_research(markets, pool, *, dfs_budget, llm_budget, **kw):
+        if kw.get("before_buy") is not None:          # AA-1055: the balance is checked against the estimate
+            await kw["before_buy"]({"estimate": {"dfs_usd_cap": 4.0}})
         dfs_budget.charge(spend[0])
         llm_budget.charge(spend[1])
         return result or {"places_selected": 5, "aborted": False, "abort_reason": None}
@@ -138,7 +140,7 @@ async def test_run_refuses_while_a_research_job_is_active():
 async def test_run_enqueues_a_job_and_returns_its_id():
     from api.routers import admin_segment_research as r
     scope = r.ResearchScope(markets=["us"], max_places=5)
-    preview = {"places_selected": 3}
+    preview = {"places_selected": 3, "estimate": {"dfs_usd_cap": 1.2}}
     with patch.object(r, "verify_admin_secret"), \
          patch.object(r.job_queue, "latest", AsyncMock(return_value=None)), \
          patch("services.acp_contract.segment_research.run_segment_research", AsyncMock(return_value=preview)), \

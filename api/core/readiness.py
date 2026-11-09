@@ -76,7 +76,9 @@ REQUIRED_CIS_SCHEMA = 322
 # directory now writes for that address, and no row may be 'reviewer', which no role map reads any more).
 # 378 (AA-1035 A10d — the directory accepts the Dev-only E2E customer_success address; without 378 its create fails the
 # admin_users_email_chk CHECK).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378)
+# 393 (AA-1055 PR 2 — segment research writes acp_contract.place_keyword, search_demand.related_searches /
+# paa_retrieved_on / serp_location and segment_research_log.tier with ON CONFLICT (canonical_place, market, tier)).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

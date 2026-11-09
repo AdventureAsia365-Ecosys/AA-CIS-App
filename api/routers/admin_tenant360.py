@@ -101,7 +101,7 @@ AA_INTERNAL_TENANT = "00000000-0000-0000-0000-000000000001"
 
 # The research cache's own freshness horizon (services/acp_contract/segment_research.py FRESH_FOR,
 # same constant admin_seo.py mirrors).
-FRESH_DAYS = 182
+FRESH_DAYS = 365  # AA-1055 (was 182)
 
 # Channel -> piece kind for the "$/piece blog vs social" split. Channels follow
 # services/acp_planning/models.py's Channel literal (admin.py _VALID_CHANNELS).
@@ -234,7 +234,7 @@ SELECT mk.market,
        max(r.researched_at)                                                            AS last_researched
 FROM unnest($3::text[]) AS mk(market)
 LEFT JOIN acp_contract.segment_research_log r
-       ON r.market = mk.market AND r.canonical_place IN (SELECT canonical_place FROM places)
+       ON r.market = mk.market AND r.tier = 'volume' AND r.canonical_place IN (SELECT canonical_place FROM places)
 GROUP BY mk.market
 """
 

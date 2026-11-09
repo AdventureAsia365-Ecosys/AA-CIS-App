@@ -133,9 +133,10 @@ SELECT
 # Research coverage: distinct places researched vs how many are stale (>30 days old).
 _RESEARCH_SQL = """
 SELECT
-    (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log)  AS places_researched,
     (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log
-      WHERE researched_at < now() - interval '30 days')                             AS places_stale,
+      WHERE tier = 'volume')                                                         AS places_researched,
+    (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log
+      WHERE tier = 'volume' AND researched_at < now() - interval '30 days')         AS places_stale,
     (SELECT count(*) FROM acp_contract.search_demand)                               AS demand_rows,
     (SELECT max(researched_at) FROM acp_contract.segment_research_log)              AS last_researched
 """
