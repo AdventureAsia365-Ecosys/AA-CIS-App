@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional
 
+from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
+
 Kind = Literal["must", "backlog", "info"]
 Polarity = Literal["coverage", "defect", "threshold", "equal"]
 Tier = Literal["fast", "slow", "crm"]
@@ -50,6 +52,9 @@ class Row:
     issue: Optional[str] = None
     drill: Optional[str] = None
     sources: tuple[str, ...] = field(default=())   # every source the row reads (for the hover text)
+    # AA-1055: a row that applies only in some contexts (a research market no tenant targets). Evaluated like
+    # `value`; a 0 hides the row from the page. A failed source keeps it (na with the reason), so a failure is seen.
+    shown_if: Optional[Num] = None
 
 
 def f(src: str, name: str) -> Num:
@@ -101,6 +106,10 @@ SOURCES: tuple[Source, ...] = (
     Source("gc", "fast", "cis", "shared.job (latest succeeded platform recompute, result.segment_gc)"),
     Source("recompute_lag", "fast", "cis", "gold_aa_internal.tour_lifecycle_event x shared.job (recompute)"),
     Source("rank", "fast", "cis", "acp_contract.atom_ranking, search_demand"),
+    # AA-1055: services/acp_contract/research_coverage.measure (the research run's own scope and freshness rules; the
+    # ops check research_stale_share reads the same function once a day)
+    Source("research", "slow", "cis", "acp_contract.v_active_tour_atoms, atom_segment(_member), segment_research_log, "
+                                      "stored Jev type picks, shared.tenants x tenant_seo_config (markets)"),
     Source("route", "fast", "cis", "acp_contract.route"),
     Source("paa", "fast", "cis", "acp_contract.atom_ranking, atom_segment, search_demand"),
     Source("emb", "fast", "cis", "acp_contract.atom_embedding"),
@@ -133,6 +142,7 @@ SOURCES: tuple[Source, ...] = (
 )
 SOURCE_BY_KEY = {s.key: s for s in SOURCES}
 
+DFS_MARKETS = tuple(DFS_LOCATION_MAP)    # AA-1055: the research markets (one stale-share row each)
 LIVE = f("atoms", "live")          # live tours (the catalog._live_tour rule); one definition, read from one source
 LIVE_LABEL = "live tours"
 DROP_ROWS = (
@@ -308,6 +318,25 @@ ROWS: tuple[Row, ...] = (
         "info", "defect", unit="events", denominator=f("recompute_lag", "followed"),
         denominator_label="events followed by a finished recompute", drill="/admin/jobs",
         sources=("recompute_lag",)),
+    # AA-1055: per targeted market, the share of the research scope with no research or research older than FRESH_FOR
+    # (services/acp_contract/research_coverage; a market no active tenant targets is hidden)
+    *(Row(f"research.stale_share.{mk.lower()}", "aseries",
+          f"Places with no fresh search demand research, {mk} market",
+          f("research", f"stale_{mk}"), "backlog", "defect", unit="places",
+          denominator=f("research", "in_scope"), denominator_label="places in the research scope",
+          expected=f("research", "allowed"),
+          expected_note="up to 20 % of the scope (no research, or older than 365 days; the US also counts the SERP); "
+                        "above it the daily ops check research_stale_share alerts",
+          issue="paid research run (POST /admin/segment-research/preview, then /run)",
+          drill="/admin/seo-intelligence", sources=("research",), shown_if=f("research", f"targeted_{mk}"))
+      for mk in DFS_MARKETS),
+    Row("research.waiting_after_reatomize", "aseries",
+        "Places atomized since their last research and stale in a targeted market",
+        f("research", "waiting_after_reatomize"), "backlog", "defect", unit="places",
+        denominator=f("research", "in_scope"), denominator_label="places in the research scope",
+        expected_note="a new or re-atomized tour's places wait here until an approved research run "
+                      "(scope reatomized)",
+        issue="paid research run, scope reatomized", drill="/admin/seo-intelligence", sources=("research",)),
     Row("rank.tours", "aseries", "Segmented tours with ranking", f("rank", "with_ranking"), "must",
         denominator=f("rank", "with_segment"), denominator_label="live tours with a segment",
         drill="/admin/atom-curation?section=score", sources=("rank",)),

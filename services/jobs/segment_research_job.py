@@ -6,7 +6,7 @@ results are cached for 7 days (AA-625) and places already researched are no long
 
 Payload: {"markets": [...], "max_usd"?: float, "max_places"?: int, "places"?, "tour_ids"?, "country"?,
           "strategy": "batch"|"loop", "use_suggestions": bool, "tiers"?: ["volume", "serp"],
-          "dfs_queue"?: "live"|"standard", "recompute"?: bool}
+          "dfs_queue"?: "live"|"standard", "recompute"?: bool, "reatomized"?: bool}
 
 AA-1055 — the selection is bounded by `max_usd` (default: what the DFS budget still allows this run, and never more
 than MAX_USD_PER_RUN, also when the budget row sets no limit), not by a place count; the DataForSEO balance is checked
@@ -32,7 +32,7 @@ KIND = "segment_research"
 # larger `max_usd`, and a run whose budget row sets no limit is capped here.
 MAX_USD_PER_RUN = 50.0
 _SCOPE_KEYS = ("places", "tour_ids", "country", "max_places", "max_usd", "strategy", "use_suggestions", "tiers",
-               "dfs_queue", "recompute")
+               "dfs_queue", "recompute", "reatomized")
 
 
 async def load_budgets(pool):

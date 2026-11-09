@@ -12,7 +12,9 @@ Both take explicit markets. AA-1055: a run is bounded by `max_usd` (the selectio
 ceiling: what the DFS budget still allows, at most MAX_USD_PER_RUN; the job also makes it the run's hard DFS spend
 limit) instead of the old 200-place cap; `max_places` is an optional extra limit.
 `tiers` picks volume and / or the one SERP per place, `use_suggestions` is off by default, `dfs_queue` picks the live
-endpoint or the Standard queue. Only one run at a time. AA-650: a run is
+endpoint or the Standard queue. `reatomized` (AA-1055 stale guard) limits the scope to the places atomized since their
+last research: a re-atomize "queues" its new places as that batch, bought only when an admin runs it. Only one run at
+a time. AA-650: a run is
 a durable job (shared.job, services/jobs/segment_research_job.py), so a deploy mid-run re-queues it
 instead of losing it; places that fail or are skipped by an abort stay stale and are picked up by the
 next run (AA-647).
@@ -64,6 +66,9 @@ class ResearchScope(BaseModel):
     # None = the env setting DFS_RESEARCH_QUEUE (live by default).
     dfs_queue: Optional[Literal["live", "standard"]] = None
     recompute: bool = True
+    # AA-1055 (stale guard): only the places atomized since their last research (a new or re-atomized tour's places,
+    # segment_research.reatomized_places). The batch a re-atomize queues: preview it (cost shown), then run it.
+    reatomized: bool = Field(False, description="Only places atomized since their last research (re-atomize batch)")
 
     @field_validator("markets")
     @classmethod
@@ -89,6 +94,7 @@ def _kwargs(scope: ResearchScope) -> dict:
         # payload, so the job buys through the endpoint the preview and the balance check were priced at.
         "dfs_queue": research_queue_mode(scope.dfs_queue),
         "recompute": scope.recompute,
+        "reatomized": scope.reatomized,
     }
 
 

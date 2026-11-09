@@ -6489,6 +6489,12 @@
             ],
             "title": "Places"
           },
+          "reatomized": {
+            "default": false,
+            "description": "Only places atomized since their last research (re-atomize batch)",
+            "title": "Reatomized",
+            "type": "boolean"
+          },
           "recompute": {
             "default": true,
             "title": "Recompute",

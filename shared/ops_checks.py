@@ -14,7 +14,9 @@ Two kinds of checks:
   ``-jobs-overdue-running``), ``rds_role_connections`` (a LOGIN role above 80 % of its CONNECTION LIMIT, was the six
   ``-rds-role-connections-*``), ``rds_xid_age`` (``max(age(datfrozenxid))`` above 1,000,000,000, was
   ``-rds-max-used-xid-high``), ``recompute_lifecycle_lag`` (AA-1056: a tour retired / paused / restored more than
-  30 minutes ago with no finished recompute since). See :func:`state_findings`.
+  30 minutes ago with no finished recompute since), ``research_stale_share`` (AA-1055: once a day, more than 20 % of
+  the research scope stale in a market an active tenant targets; ``services/acp_contract/research_coverage``, the
+  number the Data coverage page shows). See :func:`state_findings`.
 - **App spend** (AA-1025 H1b), evaluated on the same tick from the database (:func:`app_spend_findings`): for each app
   in :data:`APP_SPEND_APPS` whose app profile (``shared.llm_app_profile``, CIS 345) sets ``default_daily_budget_usd``,
   today's (UTC) ``shared.llm_call_log`` spend of that app against it. TripPlanner takes its daily cap from the same row
@@ -76,6 +78,7 @@ XID_AGE_LIMIT = 1_000_000_000
 JOB_RUNNER_PAGE = "/admin/job-runner"
 PLATFORM_PAGE = "/admin/platform/apps"
 COST_PAGE = "/admin/ai-gateway"
+DATA_COVERAGE_PAGE = "/admin/data-coverage"
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,14 @@ CHECKS: dict[str, Check] = {
                                      "Slate and tenant Subjects can still show its old state. The 2-hourly sweep "
                                      "queues a recompute; check the recompute rows on the Jobs page.",
                                      JOB_RUNNER_PAGE),
+    # AA-1055: services/acp_contract/research_coverage.measure, read by the api ops sampler once a day.
+    "research_stale_share": Check("Search demand research stale in a market", "More than 20 % of the places research "
+                                  "covers have no search demand research in a market a tenant targets, or research "
+                                  "older than 365 days, so their Score, Questions and Blog bar read no demand. Preview "
+                                  "a research run for that market (POST /admin/segment-research/preview, the cost is "
+                                  "shown before anything is bought) and run it once approved. The Data coverage page "
+                                  "shows the same share per market.", DATA_COVERAGE_PAGE,
+                                  bell_every=timedelta(hours=20)),
     "cis_app_too_many_connections": Check("cis_app connection refused", "The api or worker could not get a database "
                                           "connection (too many connections for role cis_app). Check pool sizes "
                                           "before raising the limit."),
@@ -389,7 +400,25 @@ def state_findings(tick: dict) -> list[Finding]:
                            + (f" (oldest {int(float(oldest))} s)" if oldest is not None else ""),
                            {"waiting_over_limit": waiting, "oldest_waiting_s": oldest,
                             "events": lag.get("events"), "swept": tick.get("recompute_sweep")}))
+    out += research_stale_findings(tick.get("research_stale") or {})
     return out
+
+
+def research_stale_findings(summary: dict) -> list[Finding]:
+    """AA-1055: one ``research_stale_share`` finding when any targeted market's stale share is above the limit
+    (``research_coverage.summarize`` output, measured once a day by the sampler). None below it: the check clears by
+    not firing (the next day's measure). Pure."""
+    by_market = summary.get("by_market") or {}
+    hot = {m: v for m, v in by_market.items() if v.get("above_limit")}
+    if not hot:
+        return []
+    limit = float(summary.get("limit") or 0)
+    parts = [f"{m} {100.0 * float(v['stale_share']):.1f} % ({v['places_stale']} of {v['places_in_scope']} places)"
+             for m, v in hot.items()]
+    return [Finding("research_stale_share",
+                    f"search demand research stale above {100.0 * limit:.0f} % in " + ", ".join(parts),
+                    {"markets": hot, "limit": limit, "waiting_after_reatomize": summary.get("waiting_after_reatomize"),
+                     "places_in_scope": summary.get("places_in_scope")})]
 
 
 # $1 = the evaluation time, $2 = the apps. The ledger v2 app column, or the pre-v2 quality_signal app (as CIS 323).

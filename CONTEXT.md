@@ -1364,7 +1364,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     **S263 alert diet (AA-1025): no CloudWatch metric or alarm any more.** The tick evaluates the values itself
     (`shared/ops_checks.py` state checks `jobs_starved` > 900 s, `jobs_overdue` > 0, `rds_role_connections` > 80 %,
     `rds_xid_age` > 1e9, `recompute_lifecycle_lag`: a tour on/off event waiting over 30 min for a finished
-    recompute, AA-1056) and flushes the log events the process counted (structlog processor `ops_checks.capture`
+    recompute, AA-1056; `research_stale_share`, measured once a day: more than 20 % of the search demand research
+    scope stale in a targeted market, AA-1055) and flushes the log events the process counted (structlog processor `ops_checks.capture`
     on the JSON handler: the `*_write_failed` cost-log events, the `aa817_tenant_*` fail-closed events, a tenant route
     on the admin pool, `too many connections for role "cis_app"`; the worker flushes its own every 5 minutes). A
     finding writes the admin bell (`shared.notifications`, `platform.ops_check.<check>`, roles admin, at most one per
@@ -3355,6 +3356,13 @@ animal / food (head noun of the card's `what_it_is`; a market or food court stay
 phrase is dropped; dropped keywords are stored as `jev_zone 'skipped'`, `jev_mode 'rule:<reason>'`. A fresh place
 whose older map the rules would change is re-proposed on the next run; any other older map is reused. Ranking stops
 claiming a namesake place's bare-name keyword once a locality-qualified keyword of it is stored.
+Stale guard (AA-1055, `research_coverage.py`, $0, read only): per market an active tenant targets (resolved like the
+Slate, never recording an unmapped market), the share of the research scope with no research or research older than
+the freshness window (the run's own `stale_tiers`; the SERP counts against the US only), and the places atomized since
+their last research that are stale ("waiting after an atomize"). The api ops sampler measures it once a day (ops check
+`research_stale_share` above 20 % in any market: bell + one e-mail a day, the issue equivalent) and the data coverage
+page shows the same numbers (`research.stale_share.<mk>`, `research.waiting_after_reatomize`). A re-atomize queues its
+new places as research scope `reatomized` (preview priced, bought only when an admin runs it); there is no queue table.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
 
 **Score** (Atom Ranking):
