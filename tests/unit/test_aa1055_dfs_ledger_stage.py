@@ -87,7 +87,7 @@ async def test_failed_balance_read_is_logged_as_dfs_balance_too(monkeypatch, row
 @pytest.mark.asyncio
 async def test_a_paid_call_keeps_the_client_stage(monkeypatch, rows):
     monkeypatch.setattr(dfs_mod.httpx, "AsyncClient", _Http(status=500, body={}))
-    with pytest.raises(Exception):
+    with pytest.raises(httpx.HTTPStatusError):
         await DataForSEOClient(login="x", password="y", stage="a3_search_demand")._request(
             "task_get", "https://api.dataforseo.com/v3/serp/google/organic/task_get/advanced/t1")
     assert rows.call_args.kwargs["stage"] == "a3_search_demand"
