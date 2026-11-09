@@ -117,6 +117,12 @@ def _metrics(text: str) -> dict:
 @pytest.mark.asyncio
 async def test_report_reads_every_section_as_cis_app(tx, capsys):
     job = await _fixtures(tx)
+    # The replay's cis_app lacks some of the live grants (db-schema-reference: SELECT on each of these for cis_app);
+    # granted inside the rolled-back transaction only.
+    await tx.execute("GRANT USAGE ON SCHEMA shared, acp_contract, silver_aa_internal TO cis_app; "
+                     "GRANT SELECT ON shared.job, shared.dfs_call_log, acp_contract.search_demand, "
+                     "acp_contract.segment_research_log, acp_contract.place_keyword, acp_contract.atom_segment, "
+                     "acp_contract.atom_ranking, silver_aa_internal.seo_context TO cis_app")
     await tx.execute("SET LOCAL ROLE cis_app")
     await rq.report(tx, job, 30)
     text = capsys.readouterr().out
