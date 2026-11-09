@@ -28,7 +28,7 @@ TOUR = "11111111-1111-1111-1111-111111111111"
 
 def test_every_stage_declares_reads_writes_and_a_valid_strategy():
     stages = all_stages()
-    assert set(stages) == {"segment", "landing", "score", "route", "segment_gc"}
+    assert set(stages) == {"segment", "segment_catchup", "landing", "score", "route", "segment_gc"}
     for name, stage in stages.items():
         assert stage.name == name
         assert stage.reads and all(isinstance(t, str) for t in stage.reads), name
@@ -86,12 +86,18 @@ def test_declared_write_strategies_match_the_real_sql():
     # every reference the GC must respect is a declared read
     assert {"acp_contract.atom_segment_alias", "acp_shared.subject", "acp_shared.debate_brand_fit_cache",
             "acp_contract.route", "acp_contract.atom_ranking", "acp_shared.angle_gate_request"} <= set(gc.reads)
+    # AA-1059: segment_catchup calls the segment stage's own function, so it declares the same reads and writes
+    catchup = get_stage("segment_catchup")
+    assert catchup.table_strategies == segment.table_strategies
+    assert catchup.write_strategy == segment.write_strategy
+    assert set(catchup.reads) == set(segment.reads)
 
 
 def test_named_lists_mirror_the_two_old_chains():
     assert TOUR_STAGES == ["segment", "landing", "score", "route"]
     # AA-988: the platform pass ends with the orphan GC, after ranking and routes are current
-    assert PLATFORM_STAGES == ["landing", "score", "route", "segment_gc"]
+    # AA-1059: and starts with the segment stage for the active Masters the per-tour paths missed
+    assert PLATFORM_STAGES == ["segment_catchup", "landing", "score", "route", "segment_gc"]
 
 
 # ── orchestrator ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +248,8 @@ async def test_platform_stages_pass_the_segment_scope_straight_to_landing():
          patch("services.acp_contract.route_detection.run_route_detection",
                AsyncMock(return_value={})), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1}), \
-         patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})):
+         patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})), \
+         patch("services.recompute.segment_catchup.run_segment_catchup", AsyncMock(return_value={"status": "ok"})):
         # scoped Segment set
         await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids={"a", "b"}), pool=object())
         assert landing.await_args.args[1] == {"a", "b"}
@@ -266,6 +273,7 @@ async def test_platform_stages_are_progress_silent_and_emit_no_per_tour_logs():
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP",
                {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}), \
          patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})), \
+         patch("services.recompute.segment_catchup.run_segment_catchup", AsyncMock(return_value={"status": "ok"})), \
          patch("services.recompute.stages.logger") as log:
         # Exactly how recompute_rankings_and_routes calls it: no progress argument.
         await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids={"a"}), pool=object())
@@ -333,10 +341,11 @@ async def test_recompute_segment_score_route_result_keys_unchanged():
 async def test_recompute_rankings_and_routes_result_keys_unchanged():
     from services.export import handler
     with patch("services.recompute.run_stages",
-               AsyncMock(return_value={"landing": {}, "score": {"US": {}}, "route": {"r": 1},
-                                      "segment_gc": {"mode": "report"}})):
+               AsyncMock(return_value={"segment_catchup": {"status": "ok"}, "landing": {}, "score": {"US": {}},
+                                      "route": {"r": 1}, "segment_gc": {"mode": "report"}})):
         out = await handler.recompute_rankings_and_routes(object(), segment_ids=["s1"])
-    assert set(out) == {"ranking", "route", "segment_gc"}
+    assert set(out) == {"ranking", "route", "segment_gc", "segment_catchup"}
+    assert out["segment_catchup"] == {"status": "ok"}
     assert out["segment_gc"] == {"mode": "report"}
     assert out["ranking"] == {"US": {}} and out["route"] == {"r": 1}
 
