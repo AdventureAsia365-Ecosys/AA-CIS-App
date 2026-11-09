@@ -81,10 +81,13 @@ class QueuedTaskFailed(DFSCallError):
     its keywords again would pay twice: the caller marks them failed and leaves them to the next run. ``task_id`` is
     DataForSEO's id of the accepted task (a timed-out task may still finish in the queue)."""
 
-    def __init__(self, message: str, *, task_id: str | None = None, fatal: bool = False,
-                 status_code: int | None = None):
-        super().__init__(message, fatal, status_code)
-        self.task_id = task_id
+    task_id: str | None = None
+
+    @classmethod
+    def of(cls, message: str, task_id: str | None, status_code: int | None = None) -> "QueuedTaskFailed":
+        err = cls(message, False, status_code)
+        err.task_id = task_id
+        return err
 
 
 @dataclass
@@ -207,8 +210,8 @@ class StandardQueue:
             err = _dfs_status_error(data)
             if err is not None and err.fatal:
                 raise err
-            raise QueuedTaskFailed(str(err) if err else f"DataForSEO task {task_id} returned no result",
-                                   task_id=task_id, status_code=err.status_code if err else None)
+            raise QueuedTaskFailed.of(str(err) if err else f"DataForSEO task {task_id} returned no result",
+                                      task_id, err.status_code if err else None)
         return data
 
     async def _ready(self, kind: dict) -> set[str] | None:
@@ -259,8 +262,8 @@ class StandardQueue:
             if self._clock() - started >= self.timeout_s:
                 logger.warning("dfs_queue_timeout", pending=len(pending), task_ids=sorted(pending)[:20])
                 for t in list(pending.values()):
-                    await _collect(t.tag, QueuedTaskFailed(
-                        f"DataForSEO task {t.task_id} not finished after {self.timeout_s:.0f} s", task_id=t.task_id))
+                    await _collect(t.tag, QueuedTaskFailed.of(
+                        f"DataForSEO task {t.task_id} not finished after {self.timeout_s:.0f} s", t.task_id))
                 break
             await self._sleep(self.poll_s)
         return out
@@ -278,7 +281,7 @@ class StandardQueue:
         }], keyword_count=len(chunk), location_code=location_code)
         got = (await self.wait(_VOLUME, posted)).get(tag)
         if got is None:
-            raise QueuedTaskFailed("DataForSEO queue lost the volume task", task_id=posted[0].task_id)
+            raise QueuedTaskFailed.of("DataForSEO queue lost the volume task", posted[0].task_id)
         if isinstance(got, DFSCallError):
             raise got
         return parse_volumes(got, chunk)
@@ -331,7 +334,7 @@ class StandardQueue:
 
         if all_posted:
             await self.wait(_SERP, all_posted, on_result=_collected)
-        for tag, i in all_tags.items():
+        for i in all_tags.values():
             if i not in out:
                 await _settle(i, DFSCallError("DataForSEO queue did not accept the SERP task"))
         return out

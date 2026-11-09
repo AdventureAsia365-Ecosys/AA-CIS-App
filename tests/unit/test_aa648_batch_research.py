@@ -480,8 +480,7 @@ async def test_a_queued_task_that_failed_after_it_was_accepted_is_never_split_no
 
     pool, conn = _pool()
     queue = MagicMock()
-    queue.volumes = AsyncMock(side_effect=QueuedTaskFailed("DataForSEO task t-1 not finished after 3600 s",
-                                                           task_id="t-1"))
+    queue.volumes = AsyncMock(side_effect=QueuedTaskFailed.of("DataForSEO task t-1 not finished after 3600 s", "t-1"))
     places = [rb._Place(f"p{i}", [], ["US"], keywords=[f"kw{i:03d}"]) for i in range(300)]
     guard = sr._RunGuard()
     with patch.object(rb, "SPLIT_MIN", 100), patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
