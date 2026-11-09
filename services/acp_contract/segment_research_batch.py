@@ -514,8 +514,14 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
             await _settle()          # each place is logged as soon as it is complete
 
         await _settle()              # places fully answered by the store
-        for chunk in _chunks([kw for kw in need if kw not in answers], VOLUME_TASK_MAX):
-            await _buy(chunk)
+        chunks = list(_chunks([kw for kw in need if kw not in answers], VOLUME_TASK_MAX))
+        if queue is not None:
+            # Queued tasks are worked on in parallel by DataForSEO: post them all, then wait (free polls). The
+            # live endpoint stays one task at a time, so the budget check before each call stays exact.
+            await asyncio.gather(*[_buy(chunk) for chunk in chunks])
+        else:
+            for chunk in chunks:
+                await _buy(chunk)
         await _settle()
 
     for loc, _name, lang in markets:
@@ -615,6 +621,8 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
         for i, (p, kw) in enumerate(to_buy):
             got = answers.get(i)
             if got is None or isinstance(got, Exception):
+                if isinstance(got, Exception):
+                    guard.record(got)        # a budget stop or a fatal answer aborts the run
                 p.failed = True
                 continue
             await _done(p, kw, got)

@@ -34,6 +34,7 @@ from services.seo_intelligence.dataforseo_client import (
     _dfs_status_error,
     as_dfs_error,
 )
+from shared.cost_guard import BudgetExceeded
 from shared.dfs_client.call_log import extract_cost
 
 logger = structlog.get_logger()
@@ -141,9 +142,18 @@ class StandardQueue:
         self.direct_after_s = direct_after_s
         self._sleep = sleep
         self._clock = clock
+        # Posts are serialised (budget check -> paid post -> charge), so concurrent callers never pass the run
+        # budget's check together; the free waits run in parallel.
+        self._post_lock = asyncio.Lock()
 
     async def _post(self, kind: dict, endpoint: str, payload: list[dict], *, keyword_count: int,
                     location_code: int | None, keyword: str | None = None) -> list[PostedTask]:
+        async with self._post_lock:
+            return await self._post_locked(kind, endpoint, payload, keyword_count=keyword_count,
+                                           location_code=location_code, keyword=keyword)
+
+    async def _post_locked(self, kind: dict, endpoint: str, payload: list[dict], *, keyword_count: int,
+                           location_code: int | None, keyword: str | None = None) -> list[PostedTask]:
         c = self.client
         c._precheck(endpoint, location_code=location_code, keyword_count=keyword_count, keyword=keyword,
                     tasks=len(payload))
@@ -238,10 +248,14 @@ class StandardQueue:
             raise got
         return parse_volumes(got, chunk)
 
-    async def serps(self, asks: list[tuple[str, int, str]]) -> dict[int, dict | DFSCallError]:
+    async def serps(self, asks: list[tuple[str, int, str]]) -> dict[int, dict | Exception]:
         """One SERP (organic, advanced) per (keyword, location_code, language_code), posted 100 per request.
         Returns index of ``asks`` -> the raw answer (same shape as the live advanced SERP) or that task's error."""
         out: dict[int, dict | DFSCallError] = {}
+        all_posted: list[PostedTask] = []
+        all_tags: dict[str, int] = {}
+        # Every request is posted first, then all tasks are waited for together: the queue works on them in
+        # parallel, so a run of thousands of places waits about as long as one request.
         for start in range(0, len(asks), POST_MAX_TASKS):
             part = list(enumerate(asks))[start:start + POST_MAX_TASKS]
             tags = {f"{i}-{uuid.uuid4().hex[:8]}": i for i, _ in part}
@@ -250,15 +264,23 @@ class StandardQueue:
             try:
                 posted = await self._post(_SERP, SERP_ENDPOINT, payload, keyword_count=len(payload),
                                           location_code=payload[0]["location_code"])
-            except DFSCallError as err:
-                if err.fatal:
-                    raise
+            except (DFSCallError, BudgetExceeded) as err:
+                if isinstance(err, BudgetExceeded) or err.fatal:
+                    if not all_posted:
+                        raise
+                    # A budget stop or a fatal answer stops posting; the tasks already paid for are still
+                    # collected below and the rest carry this error (the caller's guard aborts on it).
+                    for rest in range(start, len(asks)):
+                        out[rest] = err
+                    break
                 for i in tags.values():
                     out[i] = err
                 continue
-            answers = await self.wait(_SERP, posted)
-            for tag, i in tags.items():
-                out[i] = answers.get(tag, DFSCallError("DataForSEO queue did not accept the SERP task"))
+            all_posted.extend(posted)
+            all_tags.update(tags)
+        answers = await self.wait(_SERP, all_posted) if all_posted else {}
+        for tag, i in all_tags.items():
+            out[i] = answers.get(tag, DFSCallError("DataForSEO queue did not accept the SERP task"))
         return out
 
 

@@ -98,6 +98,69 @@ async def test_queue_serps_post_100_per_request_and_return_by_index():
     assert [c["meta"]["tasks"] for c in client.logged] == [100, 50]
 
 
+class _OrderedClient(_FakeClient):
+    """Records the order of posts and polls, and that no two posts are in flight together."""
+
+    def __init__(self, budget_left_posts: int | None = None, **kw):
+        super().__init__(**kw)
+        self.events: list[str] = []
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.budget_left_posts = budget_left_posts
+
+    def _precheck(self, endpoint, **kw):
+        from shared.cost_guard import BudgetExceeded
+        if self.budget_left_posts is not None:
+            if self.budget_left_posts <= 0:
+                raise BudgetExceeded("dfs run budget", "dataforseo", "per_run")
+            self.budget_left_posts -= 1
+        super()._precheck(endpoint, **kw)
+
+    async def _request(self, endpoint, url, *, payload=None, **kw):
+        import asyncio
+        if url.endswith("task_post"):
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            await asyncio.sleep(0)
+            self.in_flight -= 1
+            self.events.append("post")
+        elif url.endswith("tasks_ready"):
+            self.events.append("ready")
+        return await super()._request(endpoint, url, payload=payload, **kw)
+
+
+@pytest.mark.asyncio
+async def test_queue_serps_post_every_request_before_the_first_poll():
+    client = _OrderedClient()
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    out = await queue.serps([(f"kw{i}", 2840, "en") for i in range(250)])
+    assert len(out) == 250 and all(isinstance(v, dict) for v in out.values())
+    assert client.events[:3] == ["post", "post", "post"] and client.events[3] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_queue_serps_budget_stop_keeps_the_paid_tasks_and_fails_the_rest():
+    from shared.cost_guard import BudgetExceeded
+    client = _OrderedClient(budget_left_posts=1)
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    out = await queue.serps([(f"kw{i}", 2840, "en") for i in range(150)])
+    assert all(isinstance(out[i], dict) for i in range(100))
+    assert all(isinstance(out[i], BudgetExceeded) for i in range(100, 150))
+    with pytest.raises(BudgetExceeded):                     # nothing paid yet: the stop is raised as before
+        await q.StandardQueue(_OrderedClient(budget_left_posts=0), sleep=AsyncMock()).serps([("kw", 2840, "en")])
+
+
+@pytest.mark.asyncio
+async def test_queue_posts_are_serialised_while_waits_run_together():
+    import asyncio
+    client = _OrderedClient()
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    a, b = await asyncio.gather(queue.volumes(["zarvok lake"], 2840, "en"),
+                                queue.volumes(["melnith gorge"], 2826, "en"))
+    assert a == {"zarvok lake": 10} and b == {"melnith gorge": 10}
+    assert client.max_in_flight == 1 and client.events.count("post") == 2
+
+
 @pytest.mark.asyncio
 async def test_queue_task_that_never_finishes_is_an_error_for_that_task_only():
     client = _FakeClient(ready_after=10**6)

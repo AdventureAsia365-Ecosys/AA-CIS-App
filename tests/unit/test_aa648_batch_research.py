@@ -367,6 +367,22 @@ async def test_queue_task_error_fails_only_that_place():
 
 
 @pytest.mark.asyncio
+async def test_queue_budget_stop_or_fatal_answer_aborts_the_run():
+    from shared.cost_guard import BudgetExceeded
+    pool, conn = _pool()
+    queue = MagicMock()
+    queue.serps = AsyncMock(return_value={0: _serp_body(), 1: BudgetExceeded("run budget", "dataforseo", "per_run")})
+    places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True,
+                        volumes={"zarvok lake": {"US": 9}}),
+              rb._Place("Melnith Gorge", [], [], keywords=["melnith gorge"], has_map=True, serp=True,
+                        volumes={"melnith gorge": {"US": 9}})]
+    guard = sr._RunGuard()
+    await rb._buy_serps(places, _client(), pool, guard, queue)
+    assert guard.aborted and places[1].failed and not places[0].failed
+    assert _logs(conn, "serp") == [("Zarvok Lake", "US", "serp")]     # the paid one is still stored and logged
+
+
+@pytest.mark.asyncio
 async def test_unusable_llm_output_still_researches_the_plain_place_name():
     places = [rb._Place("Zarvok Dzong", ["visit"], ["US"])]
     pool, _ = _pool()
