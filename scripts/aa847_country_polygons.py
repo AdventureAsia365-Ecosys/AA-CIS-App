@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 
 DEFAULT_TOL_DEG = 0.01
-MIN_RING_VERTICES = 4          # a ring simplified below this (a rock) is dropped
+MIN_RING_VERTICES = 4          # a ring simplified below this is kept unsimplified (_keep_small)
 SOURCE = "Natural Earth 1:10m admin-0 countries v5.1.2 (public domain)"
 # Natural Earth features with no ISO code that lie inside ISO countries (ADMIN -> ISO alpha-2 codes, lower case).
 # Siachen Glacier is between Ladakh (India) and Baltistan (Pakistan), both AA trekking areas: it goes to both.
@@ -82,11 +82,19 @@ def _polygons(geometry: dict, tol: float) -> list:
     polys = geometry["coordinates"] if geometry["type"] == "MultiPolygon" else [geometry["coordinates"]]
     out = []
     for poly in polys:
-        rings = [simplify_ring(r, tol) for r in poly]
+        rings = [_keep_small(simplify_ring(r, tol), r) for r in poly]
         if len(rings[0]) < MIN_RING_VERTICES:
             continue
         out.append([r for r in rings if len(r) >= MIN_RING_VERTICES])
     return out
+
+
+def _keep_small(simplified: list, ring: list) -> list:
+    """A ring the tolerance would shrink below MIN_RING_VERTICES is a small island (Lakshadweep's atolls, S274), not
+    noise: keep it unsimplified (4-decimal rounding only) so a point on it is inside its country."""
+    if len(simplified) >= MIN_RING_VERTICES:
+        return simplified
+    return simplify_ring(ring, 0.0)
 
 
 def build(src: dict, codes: set, tol: float = DEFAULT_TOL_DEG) -> dict:

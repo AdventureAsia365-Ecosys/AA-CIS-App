@@ -82,6 +82,26 @@ def test_guard_needs_the_country_polygon_not_only_the_box(lat, lng, country, rea
     assert guards.point_ok(lat, lng, country) == reason
 
 
+@pytest.mark.parametrize("lat, lng, country, reason", [
+    (7.74, 98.77, "Thailand", None),                           # Phi Phi Don: not drawn by Natural Earth 1:10m
+    (10.096, 99.84, "Thailand", None),                         # Koh Tao
+    (8.65, 97.64, "Thailand", None),                           # the Similan Islands, ~60 km offshore
+    (10.57, 72.64, "India", None),                             # Lakshadweep: a small ring the build now keeps
+    (10.096, 99.84, "Cambodia", "outside_country_bbox"),       # Koh Tao as Cambodia
+    (10.0, 95.0, "Thailand", "outside_country_bbox"),          # open sea
+])
+def test_guard_accepts_small_islands_offshore(lat, lng, country, reason):
+    assert guards.point_ok(lat, lng, country) == reason
+
+
+def test_offshore_needs_the_nearest_coast_to_be_the_country():
+    assert shape.offshore_of(10.096, 99.84, "th")
+    assert not shape.offshore_of(10.096, 99.84, "kh")           # Cambodia's coast is farther than Thailand's
+    assert not shape.offshore_of(13.36, 103.86, "th")           # Siem Reap is on land, inside Cambodia
+    assert not shape.offshore_of(-3.07, 37.35, "ke")            # Kilimanjaro is inside Tanzania
+    assert not shape.offshore_of(10.096, 99.84, "zz")
+
+
 def test_model_answer_in_another_country_than_the_tour_is_kept():
     raw = ('{"Mount Kilimanjaro": [-3.07, 37.35, "Tanzania"], "Moshi": [-3.35, 37.34, "United Republic of Tanzania"],'
            ' "Hunza Valley": [36.32, 74.66, "Pakistan"], "Atlantis": [0.1, 0.1, "Atlantis"]}')

@@ -88,6 +88,10 @@ def point_ok(lat: Optional[float], lng: Optional[float], country: Optional[str])
     # shape imports only geomatch, so there is no cycle.
     from services.places import shape
     if not shape.in_country(lat, lng, iso2(country), buffer_km=POLYGON_BUFFER_KM):
+        # Natural Earth 1:10m leaves out small islands (Koh Tao, Phi Phi, the Similans): a point at sea whose nearest
+        # coast is this country's is accepted; a point inside another country's polygon is still refused.
+        if shape.offshore_of(lat, lng, iso2(country)):
+            return None
         return "outside_country_polygon"
     return None
 

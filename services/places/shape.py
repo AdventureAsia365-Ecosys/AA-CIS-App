@@ -55,6 +55,7 @@ STOP_ON_LINE_KM = 15.0           # a stop "is on" the line (stretch cutting)
 MIN_STRETCH_KM = 2.0             # two stops closer than this along the line are an out-and-back
 WINDOW_KM = 15.0                 # ± around one anchor
 BORDER_BUFFER_KM = 3.0           # a river that IS the border (Mekong: Laos / Thailand) belongs to both
+OFFSHORE_KM = 100.0              # an island 1:10m does not draw is at most this far from its country's coast
 OVERLAP_KM = 1.0
 OVERLAP_SHARE = 0.70
 NAME_SIM_MIN = 0.999             # every distinctive token must match ("Nam Ou" ≠ "Nam Khan")
@@ -360,11 +361,13 @@ def _inside_polygon(c: _Country, lat: float, lng: float) -> bool:
     return inside
 
 
-def _near_border(c: _Country, lat: float, lng: float, buffer_km: float) -> bool:
-    dlat = buffer_km / 110.574
+def _border_km(c: _Country, lat: float, lng: float, max_km: float) -> Optional[float]:
+    """Distance (km) from the point to the country's nearest polygon edge when one lies within `max_km`, else None."""
+    dlat = max_km / 110.574
     f = _xy(lat)
     px, py = f((lng, lat))
     seen = set()
+    best = None
     for b in range(math.floor((lat - dlat) / _BAND), math.floor((lat + dlat) / _BAND) + 1):
         for e in c.bands.get(b, ()):
             if e in seen:
@@ -373,9 +376,51 @@ def _near_border(c: _Country, lat: float, lng: float, buffer_km: float) -> bool:
             x1, y1, x2, y2 = e
             ax, ay = f((x1, y1))
             bx, by = f((x2, y2))
-            if _seg_closest(px, py, ax, ay, bx, by)[0] <= buffer_km:
-                return True
-    return False
+            d = _seg_closest(px, py, ax, ay, bx, by)[0]
+            if d <= max_km and (best is None or d < best):
+                best = d
+    return best
+
+
+def _near_border(c: _Country, lat: float, lng: float, buffer_km: float) -> bool:
+    return _border_km(c, lat, lng, buffer_km) is not None
+
+
+@lru_cache(maxsize=1)
+def _bbox_index() -> dict:
+    """{iso2: (min_lat, min_lng, max_lat, max_lng)} of every country polygon; parsed once, rings not kept."""
+    out = {}
+    for iso2, text in _polygon_text().items():
+        polys = json.loads(text) if isinstance(text, str) else text
+        xs = [x for poly in polys for ring in poly for x, _ in ring]
+        ys = [y for poly in polys for ring in poly for _, y in ring]
+        if xs:
+            out[iso2] = (min(ys), min(xs), max(ys), max(xs))
+    return out
+
+
+def offshore_of(lat: float, lng: float, iso2: str, max_km: float = OFFSHORE_KM) -> bool:
+    """True for a point at sea for Natural Earth 1:10m (inside no country's polygon) whose nearest coast within
+    `max_km` is `iso2`'s: a small island the 1:10m layer does not draw (Koh Tao, Phi Phi, the Similans). A point inside
+    another country's polygon is never offshore (Kilimanjaro as Kenya stays refused)."""
+    code = (iso2 or "").lower()
+    if _country(code) is None:
+        return False
+    pad_lat = max_km / 110.574
+    pad_lng = max_km / (111.320 * max(math.cos(math.radians(lat)), 0.1))
+    best_code, best_km = None, None
+    for cc, (a, b, c2, d) in _bbox_index().items():
+        if not (a - pad_lat <= lat <= c2 + pad_lat and b - pad_lng <= lng <= d + pad_lng):
+            continue
+        country = _country(cc)
+        if country is None:
+            continue
+        if _inside_polygon(country, lat, lng):
+            return False
+        dist = _border_km(country, lat, lng, max_km)
+        if dist is not None and (best_km is None or dist < best_km):
+            best_code, best_km = cc, dist
+    return best_code == code
 
 
 def in_country(lat: float, lng: float, iso2: str, buffer_km: float = BORDER_BUFFER_KM) -> bool:
