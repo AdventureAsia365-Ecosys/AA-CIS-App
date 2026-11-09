@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import functools
+import itertools
 import threading
 from pathlib import Path
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -325,11 +328,17 @@ def test_the_dfs_sites_this_issue_touched_name_their_stage():
 
 # ── the guard ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-# The ledger writers of shared/llm_client/call_log.py and decide.py (decide's stage is its first argument).
+# The ledger writers of shared/llm_client/call_log.py and decide.py (decide's stage is its first argument), and the
+# call_log row builders whose rows reach record_calls (their stage is a keyword too).
 LEDGER_WRITERS = {"record_call", "record_call_sync", "record_call_with_pool", "record_unusable",
-                  "record_unusable_sync", "record_billed_failure", "record_billed_failure_sync"}
+                  "record_unusable_sync", "record_billed_failure", "record_billed_failure_sync",
+                  "billed_unusable_rows", "gateway_failure_row", "cut_reply_row"}
 DECIDE_WRITERS = {"decide", "decide_sync"}
+# record_calls takes prebuilt rows: in a module that calls it, every dict(stage=...) / {"stage": ...} is a row.
+ROW_SINKS = {"record_calls", "record_calls_sync"}
 SCANNED = ("api", "services", "shared")
+WRITER_MODULES = ("shared/llm_client/call_log.py", "shared/llm_client/decide.py")
+MAX_DEPTH = 6
 
 
 def _module_constants(tree: ast.Module) -> dict[str, str]:
@@ -342,20 +351,14 @@ def _module_constants(tree: ast.Module) -> dict[str, str]:
     return out
 
 
-def _strings(expr: ast.AST, consts: dict, local: dict, depth: int = 0) -> set[str]:
-    """Every stage name ``expr`` can evaluate to that is spelled in the module: literals, module constants, and (one
-    level) the expressions a local name or a parameter default was set from."""
-    out: set[str] = set()
-    for node in ast.walk(expr):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            out.add(node.value)
-        elif isinstance(node, ast.Name):
-            if node.id in consts:
-                out.add(consts[node.id])
-            elif depth == 0:
-                for src in local.get(node.id, ()):
-                    out |= _strings(src, consts, {}, depth + 1)
-    return out
+def _callee(call: ast.Call):
+    f = call.func
+    return f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+
+
+def _params(func) -> list[str]:
+    a = func.args
+    return [p.arg for p in a.posonlyargs + a.args + a.kwonlyargs]
 
 
 def _local_sources(func: ast.AST) -> dict[str, list[ast.AST]]:
@@ -376,37 +379,278 @@ def _local_sources(func: ast.AST) -> dict[str, list[ast.AST]]:
     return out
 
 
-def _ledger_sites():
-    """(path, line, stage, key, passes_key) for every ledger write of a ruled stage under SCANNED."""
-    sites = []
+@functools.lru_cache(maxsize=None)
+def _constants_of(dotted: str) -> dict[str, str]:
+    """The string constants of repo module ``dotted`` ({} when it is not a repo file)."""
+    base = ROOT / dotted.replace(".", "/")
+    for path in (base.with_suffix(".py"), base / "__init__.py"):
+        if path.is_file():
+            return _module_constants(ast.parse(path.read_text(encoding="utf-8")))
+    return {}
+
+
+def _imports(tree: ast.Module, rel: str) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+    """(name -> (module, attribute) of every ``from m import a as name``, alias -> module of every module bound)."""
+    names: dict[str, tuple[str, str]] = {}
+    mods: dict[str, str] = {}
+    package = rel[:-3].split("/")[:-1]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = package[:len(package) - (node.level - 1)] if node.level > 1 else package
+                mod = ".".join(base + ([node.module] if node.module else []))
+            else:
+                mod = node.module or ""
+            for a in node.names:
+                bound = a.asname or a.name
+                names[bound] = (mod, a.name)
+                mods[bound] = f"{mod}.{a.name}"                # `from pkg import module` binds a module
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    mods[a.asname] = a.name
+    return names, mods
+
+
+class _Module:
+    """One module's resolver: the stage names an expression can evaluate to (literals, module constants, constants
+    imported from a repo module, local assignments, parameter defaults, and a parameter forwarded by its callers in
+    the same module, through ``**dict`` keywords too), and whether a call passes a key (an explicit keyword, or a
+    ``**name`` whose dict names the key)."""
+
+    def __init__(self, src: str, rel: str = "m.py"):
+        tree = ast.parse(src)
+        self.consts = _module_constants(tree)
+        self.imported, self.mod_alias = _imports(tree, rel)
+        self.decide_names = {b for b, (m, a) in self.imported.items()
+                             if m.endswith("llm_client.decide") and a in DECIDE_WRITERS}
+        self.decide_mods = {b for b, m in self.mod_alias.items() if m.endswith("llm_client.decide")}
+        self.funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        self.owner: dict[ast.AST, ast.AST] = {}      # node -> innermost enclosing function (BFS: inner overwrites)
+        for f in self.funcs:
+            for n in ast.walk(f):
+                if n is not f:
+                    self.owner[n] = f
+        self.local = {f: _local_sources(f) for f in self.funcs}
+        self.calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+
+    # -- names and arguments
+    def _imported_const(self, node: ast.AST, func) -> Optional[str]:
+        """The value of an imported repo constant (``NAME`` from ``from m import NAME``, or ``mod.NAME``)."""
+        if isinstance(node, ast.Name) and node.id in self.imported and self._scope_of(node.id, func) is None:
+            mod, attr = self.imported[node.id]
+            return _constants_of(mod).get(attr)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and \
+                node.value.id in self.mod_alias and self._scope_of(node.value.id, func) is None:
+            return _constants_of(self.mod_alias[node.value.id]).get(node.attr)
+        return None
+
+    def _scope_of(self, name: str, func):
+        """The function (``func`` or an enclosing one) that defines ``name``, else None."""
+        while func is not None:
+            if name in self.local[func] or name in _params(func):
+                return func
+            func = self.owner.get(func)
+        return None
+
+    def _arg_sources(self, func, param: str) -> list[tuple[ast.AST, object]]:
+        """(expression, its function) for every same-module call of ``func`` that passes ``param``."""
+        out = []
+        pos = [p.arg for p in func.args.posonlyargs + func.args.args]
+        for call in self.calls:
+            if _callee(call) != func.name:
+                continue
+            caller = self.owner.get(call)
+            kw = next((k.value for k in call.keywords if k.arg == param), None)
+            if kw is not None:
+                out.append((kw, caller))
+                continue
+            if param in pos:
+                i = pos.index(param) - (1 if pos and pos[0] in ("self", "cls")
+                                        and isinstance(call.func, ast.Attribute) else 0)
+                head = list(itertools.takewhile(lambda a: not isinstance(a, ast.Starred), call.args))
+                if 0 <= i < len(head):
+                    out.append((head[i], caller))
+                    continue
+            for k in call.keywords:
+                if k.arg is None:
+                    out += self._dict_entry(k.value, param, caller, set(), 0)
+        return out
+
+    def _sources(self, name: str, func, seen: set, depth: int) -> Optional[list[tuple[ast.AST, object]]]:
+        """(expression, its function) ``name`` can take in ``func``; None when already followed or too deep."""
+        scope = self._scope_of(name, func)
+        if scope is None:
+            return []
+        if (id(scope), name) in seen or depth > MAX_DEPTH:
+            return None
+        seen.add((id(scope), name))
+        out = [(e, scope) for e in self.local[scope].get(name, ())]
+        if name in _params(scope):
+            out += self._arg_sources(scope, name)
+        return out
+
+    def _dict_entry(self, expr: ast.AST, key: str, func, seen: set, depth: int) -> list[tuple[ast.AST, object]]:
+        """(value expression, its function) for every value ``expr`` (a dict) can hold under ``key``."""
+        if depth > MAX_DEPTH:
+            return []
+        if isinstance(expr, ast.Dict):
+            out = [(v, func) for k, v in zip(expr.keys, expr.values) if isinstance(k, ast.Constant) and k.value == key]
+            for k, v in zip(expr.keys, expr.values):
+                if k is None:                                    # {**other}
+                    out += self._dict_entry(v, key, func, seen, depth + 1)
+            return out
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "dict":
+            out = [(k.value, func) for k in expr.keywords if k.arg == key]
+            for k in expr.keywords:
+                if k.arg is None:
+                    out += self._dict_entry(k.value, key, func, seen, depth + 1)
+            return out
+        if isinstance(expr, ast.Name):
+            return [e for src, f in self._sources(expr.id, func, seen, depth + 1) or ()
+                    for e in self._dict_entry(src, key, f, seen, depth + 1)]
+        return []
+
+    # -- the questions the guard asks
+    def resolve(self, expr: ast.AST, func, seen: Optional[set] = None, depth: int = 0) -> tuple[set[str], bool]:
+        """(every stage name ``expr`` can evaluate to that the module spells, open): open when a part of it comes
+        from outside the module's sight (an attribute, a call's result, an import, a parameter no same-module caller
+        sets and no default names)."""
+        seen = set() if seen is None else seen
+        out: set[str] = set()
+        open_ = False
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, ast.Constant):
+                if isinstance(node.value, str):
+                    out.add(node.value)
+            elif isinstance(node, (ast.Name, ast.Attribute)) and self._imported_const(node, func) is not None:
+                out.add(self._imported_const(node, func))
+            elif isinstance(node, ast.Name):
+                if node.id in self.consts and self._scope_of(node.id, func) is None:
+                    out.add(self.consts[node.id])
+                    continue
+                srcs = self._sources(node.id, func, seen, depth + 1)
+                if srcs is None:
+                    continue                                # already followed on this path
+                open_ |= not srcs
+                for src, f in srcs:
+                    names, o = self.resolve(src, f, seen, depth + 1)
+                    out |= names
+                    open_ |= o
+            elif isinstance(node, ast.IfExp):
+                stack += [node.body, node.orelse]
+            elif isinstance(node, (ast.Attribute, ast.Call, ast.Subscript)):
+                open_ = True                                # its literals still count: state.get("k", "s1_judge")
+                out |= {n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+            else:
+                stack.extend(ast.iter_child_nodes(node))
+        return out, open_
+
+    def passes(self, call: ast.Call, key: str) -> bool:
+        if any(k.arg == key for k in call.keywords):
+            return True
+        func = self.owner.get(call)
+        return any(self._dict_entry(k.value, key, func, set(), 0) for k in call.keywords if k.arg is None)
+
+    def sites(self):
+        """(line, stage expression or None, row node, passes_key callable) for every ledger write / row."""
+        sink = any(_callee(c) in ROW_SINKS for c in self.calls)
+        for node in self.calls:
+            name = _callee(node)
+            if name in LEDGER_WRITERS:
+                expr = next((k.value for k in node.keywords if k.arg == "stage"), None)
+                if expr is None and not any(k.arg is None for k in node.keywords):
+                    continue                                # stage passed positionally to a writer: none today
+                yield node.lineno, expr, node, (lambda key, n=node: self.passes(n, key))
+            elif node.args and self._is_decide(node):
+                yield node.lineno, node.args[0], node, (lambda key, n=node: self.passes(n, key))
+            elif sink and name == "dict" and isinstance(node.func, ast.Name) and \
+                    any(k.arg == "stage" for k in node.keywords):
+                expr = next(k.value for k in node.keywords if k.arg == "stage")
+                yield node.lineno, expr, node, (lambda key, n=node: self.passes(n, key))
+        if sink:
+            for node in self.funcs_dicts():
+                expr = next(v for k, v in zip(node.keys, node.values)
+                            if isinstance(k, ast.Constant) and k.value == "stage")
+                yield node.lineno, expr, node, (lambda key, n=node: any(
+                    isinstance(k, ast.Constant) and k.value == key for k in n.keys))
+
+    def _is_decide(self, call: ast.Call) -> bool:
+        """A call of the ledger's decide / decide_sync (other modules have their own ``decide``)."""
+        f = call.func
+        if isinstance(f, ast.Name):
+            return f.id in self.decide_names
+        return isinstance(f, ast.Attribute) and f.attr in DECIDE_WRITERS and isinstance(f.value, ast.Name) and \
+            f.value.id in self.decide_mods
+
+    def funcs_dicts(self):
+        seen = set()
+        for f in self.funcs:
+            for n in ast.walk(f):
+                if isinstance(n, ast.Dict) and id(n) not in seen and \
+                        any(isinstance(k, ast.Constant) and k.value == "stage" for k in n.keys):
+                    seen.add(id(n))
+                    yield n
+
+
+def _forwards_a_request_stage(expr: ast.AST) -> bool:
+    """``request.stage`` / ``self.stage``: the stage of an object built elsewhere (the gateway's own rows)."""
+    return any(isinstance(n, ast.Attribute) and n.attr == "stage" for n in ast.walk(expr))
+
+
+def _scan(rel: str, src: str):
+    """(sites, unresolved) of one module: sites = (rel, line, stage, key, passes_key) for every ruled stage a ledger
+    write can carry; unresolved = (rel, line) of a write whose stage the guard cannot name: it resolves to no string
+    spelled in the module or a repo constant it imports (a helper's ``stage`` parameter that no same-module caller
+    sets), or it forwards an object's ``.stage``."""
+    mod = _Module(src, rel)
+    sites, unresolved = [], []
+    for line, expr, node, passes in mod.sites():
+        func = mod.owner.get(node)
+        if expr is None:                                    # stage only inside a **row: resolve it like a key
+            entries = [e for k in node.keywords if k.arg is None
+                       for e in mod._dict_entry(k.value, "stage", func, set(), 0)]
+            if not entries:
+                continue                                    # a **kwargs pass-through with no stage in sight
+            stages = set().union(*(mod.resolve(e, f)[0] for e, f in entries))
+            forwarded = any(_forwards_a_request_stage(e) for e, _f in entries)
+        else:
+            stages, _open = mod.resolve(expr, func)
+            forwarded = _forwards_a_request_stage(expr)
+        if forwarded or not any(stages):
+            unresolved.append((rel, line))
+        for stage in sorted(s for s in stages if s):
+            key = attribution.required_key(stage)
+            if key is not None:
+                sites.append((rel, line, stage, key, passes(key)))
+    return sites, unresolved
+
+
+@functools.lru_cache(maxsize=1)
+def _scan_tree():
+    sites, unresolved = [], []
     for top in SCANNED:
         for path in sorted((ROOT / top).rglob("*.py")):
             rel = path.relative_to(ROOT).as_posix()
-            if rel in ("shared/llm_client/call_log.py", "shared/llm_client/decide.py"):
+            if rel in WRITER_MODULES:
                 continue                     # the writers themselves (their stage is a parameter)
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            consts = _module_constants(tree)
-            funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-            for func in funcs:
-                local = _local_sources(func)
-                for node in ast.walk(func):
-                    if not isinstance(node, ast.Call):
-                        continue
-                    f = node.func
-                    name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
-                    if name in LEDGER_WRITERS:
-                        expr = next((k.value for k in node.keywords if k.arg == "stage"), None)
-                    elif name in DECIDE_WRITERS and node.args:
-                        expr = node.args[0]
-                    else:
-                        continue
-                    if expr is None:
-                        continue
-                    passed = {k.arg for k in node.keywords if k.arg}
-                    for stage in sorted(_strings(expr, consts, local)):
-                        key = attribution.required_key(stage)
-                        if key is not None:
-                            sites.append((rel, node.lineno, stage, key, key in passed))
+            s, u = _scan(rel, path.read_text(encoding="utf-8"))
+            sites += s
+            unresolved += u
+    return sorted(set(sites)), sorted(set(unresolved))
+
+
+def _ledger_sites():
+    """(path, line, stage, key, passes_key) for every ledger write of a ruled stage under SCANNED, the stages of
+    attribution.STAGE_FORWARDED counted at each write whose stage the module does not spell."""
+    sites, unresolved = _scan_tree()
+    for rel, line in unresolved:
+        for stage in attribution.STAGE_FORWARDED.get(rel, ()):
+            key = attribution.required_key(stage)
+            if key is not None:
+                sites.append((rel, line, stage, key, False))
     return sorted(set(sites))
 
 
@@ -420,12 +664,92 @@ def test_every_ruled_ledger_write_carries_its_key():
         "it at the stage's entry point and list the module in shared/llm_client/attribution.py BOUND_MODULES")
 
 
+def test_every_ledger_write_has_a_known_stage():
+    """A write whose stage the guard cannot name (a helper's ``stage`` parameter no same-module caller sets) is
+    invisible to the rules: its module must name the stages it carries in attribution.STAGE_FORWARDED, or say in
+    attribution.STAGE_PASSTHROUGH why any stage is right (the gateway's own rows)."""
+    _sites, unresolved = _scan_tree()
+    unknown = [(rel, line) for rel, line in unresolved
+               if rel not in attribution.STAGE_FORWARDED and rel not in attribution.STAGE_PASSTHROUGH]
+    assert unknown == [], (
+        "ledger writes whose stage the guard cannot resolve: pass the stage from a same-module caller or constant, "
+        "or list the module and the stages it carries in shared/llm_client/attribution.py STAGE_FORWARDED")
+
+
+def test_the_forwarded_and_passthrough_lists_are_not_stale():
+    _sites, unresolved = _scan_tree()
+    mods = {rel for rel, _l in unresolved}
+    stale = sorted((set(attribution.STAGE_FORWARDED) | set(attribution.STAGE_PASSTHROUGH)) - mods)
+    assert stale == []
+    assert not set(attribution.STAGE_FORWARDED) & set(attribution.STAGE_PASSTHROUGH)
+
+
+def test_a_forwarded_ruled_stage_is_checked_like_any_other(monkeypatch):
+    """A STAGE_FORWARDED module that carries a ruled stage gets sites for it (and fails without its key)."""
+    monkeypatch.setitem(attribution.STAGE_FORWARDED, "services/places/llm.py", ("t9_invented_stage",))
+    sites = [(p, k) for r, _l, s, k, p in _ledger_sites() if (r, s) == ("services/places/llm.py", "t9_invented_stage")]
+    assert sites and all(k == "content_piece_id" and not p for p, k in sites)
+
+
 def test_the_guard_sees_the_call_sites():
     sites = _ledger_sites()
     stages = {s for _r, _l, s, _k, _p in sites}
     assert {"s1_generate", "s1_grounding", "a3_atomize", "t9_write", "t10_judge", "a3_demand",
-            "a3_question_landing"} <= stages, stages
+            "a3_question_landing", "t9_faq_answer_fit", "t10_adjudicate", "s1_judge"} <= stages, stages
+    by_mod = {(r, s) for r, _l, s, _k, _p in sites}
+    # forwarded through a same-module caller's parameter default (adjudicate) and a **dict (faq_answer_fit)
+    assert ("services/acp_content_writing/seed_align/adjudicate.py", "t10_adjudicate") in by_mod
+    assert ("services/acp_content_writing/faq_answer_fit.py", "t9_faq_answer_fit") in by_mod
+    fit = [p for r, _l, s, _k, p in sites if r == "services/acp_content_writing/faq_answer_fit.py"]
+    assert fit and all(fit)                                  # content_piece_id reaches its rows through **ids
     assert len(sites) >= 25
+
+
+# Invented module sources: what the resolver must see.
+_FORWARDED_SRC = '''
+STAGE = "t9_invented_check"
+
+def _call(items, *, stage, ids):
+    record_call_sync(stage=stage, model="m", **ids)
+    record_unusable_sync(None, stage=stage, role="judge", error="x")
+
+def run(items, piece_id=None, *, stage=STAGE):
+    ids = {"content_piece_id": piece_id}
+    call = dict(stage=stage, ids=ids)
+    return _call(items, **call)
+'''
+
+_HIDDEN_SRC = '''
+def _call(stage):
+    record_call_sync(stage=stage, model="m")
+'''
+
+_ROWS_SRC = '''
+def rows_of(stage="s1_invented"):
+    rows = [dict(stage=stage, role="judge"), {"stage": "t10_invented", "content_piece_id": None}]
+    rows += billed_unusable_rows(stage=stage, role="judge", billed=[], error="x")
+    record_calls_sync(rows)
+'''
+
+
+def test_the_resolver_follows_a_forwarded_stage_and_a_dict_of_ids():
+    sites, unresolved = _scan("m.py", _FORWARDED_SRC)
+    assert unresolved == []
+    assert {(s, k, p) for _r, _l, s, k, p in sites} == {
+        ("t9_invented_check", "content_piece_id", True),     # record_call_sync: **ids names the key
+        ("t9_invented_check", "content_piece_id", False),    # record_unusable_sync: no key
+    }
+
+
+def test_the_resolver_reports_a_stage_it_cannot_see():
+    assert _scan("m.py", _HIDDEN_SRC) == ([], [("m.py", 3)])
+
+
+def test_the_resolver_reads_rows_and_row_builders():
+    sites, unresolved = _scan("m.py", _ROWS_SRC)
+    assert unresolved == []
+    assert sorted((s, p) for _r, _l, s, _k, p in sites) == [
+        ("s1_invented", False), ("s1_invented", False), ("t10_invented", True)]
 
 
 def test_every_registered_module_still_writes_a_ruled_stage():

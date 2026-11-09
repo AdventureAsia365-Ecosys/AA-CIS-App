@@ -12,6 +12,10 @@ rows no ``content_piece_id``. A row gets its key from the gateway context (``cal
 - ``BOUND_MODULES``: key -> the modules whose ledger writes for a ruled stage take the key from the context (their
   call sites pass no key): every one of them only runs below a binder. A new module that writes a ruled stage without
   passing the key fails the guard until it is listed here (after checking it runs below a binder) or passes the key.
+- ``STAGE_FORWARDED`` / ``STAGE_PASSTHROUGH``: the guard resolves a write's stage from the module (literals, constants,
+  imported repo constants, a helper's ``stage`` parameter through its same-module callers). A write whose stage it
+  cannot name fails the guard unless its module is listed: ``STAGE_FORWARDED`` names the stages it carries (they are
+  then checked like any other), ``STAGE_PASSTHROUGH`` says why any stage is right (the gateway's own rows).
 
 ``call_log`` also logs ``llm_call_log_attribution_missing`` at run time for a tour / piece row written without its
 key (never refused: the call was billed). ``job_id`` rows are checked by the guard only: the same stages run outside a
@@ -79,11 +83,30 @@ BOUND_MODULES: dict[str, tuple[str, ...]] = {
         "services/acp_content_writing/generate.py",
         "services/acp_content_writing/quality_gates.py",
         "services/acp_content_writing/faq_filter.py",
+        "services/acp_content_writing/seed_align/adjudicate.py",   # t10_adjudicate: run() from quality_gates
     ),
     JOB: (
         "services/acp_contract/atom_ranking.py",
         "services/acp_contract/segment_matching.py",
     ),
+}
+
+
+# Modules whose ledger writes carry a stage set by a caller in another module: the stages they carry.
+STAGE_FORWARDED: dict[str, tuple[str, ...]] = {
+    # make_generate: the place_extract / place_geocode jobs pass DAYS_STAGE / LOCATE_STAGE.
+    "services/places/llm.py": ("a3_place_days", "a3_place_locate"),
+    # fill: the column's writer stage in shared.embedding_space (migration 328).
+    "services/embeddings/reembed.py": ("a3_place_embed", "f10_embed"),
+}
+
+# Modules whose ledger writes carry whatever stage the request names, and why that is right.
+STAGE_PASSTHROUGH: dict[str, str] = {
+    "shared/llm_client/client.py": "the gateway's billed-failure, cut-reply and failed-attempt rows (request.stage): "
+                                   "the key comes from the bound context",
+    "shared/llm_client/embed.py": "the embedding gateway's failure row: the key comes from the bound context",
+    "shared/llm_client/shadow.py": "the shadow row of the caller's stage: the shadow thread carries the binding",
+    "api/services/llm_route_trace.py": "the admin route test of any chat stage: a test names no tour or piece",
 }
 
 
