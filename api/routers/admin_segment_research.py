@@ -9,7 +9,8 @@ places x AU/US/UK, $49). Research is now an explicit admin action:
   - POST /admin/segment-research/run     — enqueues one `segment_research` job (admin secret required).
 
 Both take explicit markets. AA-1055: a run is bounded by `max_usd` (the selection's capped DFS estimate, default and
-ceiling: what the DFS budget still allows) instead of the old 200-place cap; `max_places` is an optional extra limit.
+ceiling: what the DFS budget still allows, at most MAX_USD_PER_RUN; the job also makes it the run's hard DFS spend
+limit) instead of the old 200-place cap; `max_places` is an optional extra limit.
 `tiers` picks volume and / or the one SERP per place, `use_suggestions` is off by default, `dfs_queue` picks the live
 endpoint or the Standard queue. Only one run at a time. AA-650: a run is
 a durable job (shared.job, services/jobs/segment_research_job.py), so a deploy mid-run re-queues it
@@ -32,7 +33,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from api.routers.admin import verify_admin_secret
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
-from services.jobs.segment_research_job import KIND as JOB_KIND, dfs_balance, load_budgets
+from services.jobs.segment_research_job import KIND as JOB_KIND, MAX_USD_PER_RUN, dfs_balance, load_budgets
 from shared.jobs import queue as job_queue
 from shared.jobs.registry import enqueue
 
@@ -45,9 +46,6 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/admin/segment-research", tags=["admin-segment-research"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
 
-# AA-1055 — the USD cap replaced the 200-place cap; this only bounds a typo (one run's capped estimate).
-MAX_USD_PER_RUN = 50.0
-
 class ResearchScope(BaseModel):
     markets: list[str] = Field(..., min_length=1, description="Buyer market codes, e.g. ['US','UK']")
     max_usd: Optional[float] = Field(None, gt=0, le=MAX_USD_PER_RUN,
@@ -56,8 +54,9 @@ class ResearchScope(BaseModel):
     places: Optional[list[str]] = None
     tour_ids: Optional[list[str]] = None
     country: Optional[str] = None
-    # AA-648 — "batch" (default): few large paid tasks. "loop": the original per-place ReAct loop.
-    strategy: Literal["batch", "loop"] = "batch"
+    # AA-648 — "batch": few large paid tasks. AA-1055: the per-place "loop" strategy is retired (its estimate did not
+    # cover the SERPs and suggestions it bought).
+    strategy: Literal["batch"] = "batch"
     # AA-1055 — keyword suggestions (keywords_for_keywords) are off by default.
     use_suggestions: bool = False
     tiers: list[Literal["volume", "serp"]] = Field(default_factory=lambda: ["volume", "serp"], min_length=1)

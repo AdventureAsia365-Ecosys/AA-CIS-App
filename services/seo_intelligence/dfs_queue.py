@@ -13,8 +13,12 @@ overridden per job by the ``dfs_queue`` payload field. ``live`` keeps the code p
 Everything goes through ``DataForSEOClient``: its admin switch, the shared circuit, the run budget (checked per task
 before the post, charged with the post's real cost) and ``shared.dfs_call_log`` (one row per post, endpoint labels
 ``search_volume_bulk_queue`` / ``serp_advanced_queue``, with the cost DataForSEO reports; the free polls write no row).
-A task that does not finish within ``timeout_s`` or answers an error raises ``DFSCallError`` for that task only: the
-caller stores nothing for it (AA-647), exactly as for a failed live call.
+A task that does not finish within ``timeout_s`` or answers an error raises ``QueuedTaskFailed`` (a ``DFSCallError``)
+for that task only: the caller stores nothing for it (AA-647), exactly as for a failed live call, but never posts the
+same keywords again in this run (the accepted task was already charged). A failed free poll (``tasks_ready`` or
+``task_get`` transport error) is retried on the next poll, never counted as the task's failure. ``serps`` reports each
+task through ``on_result`` as soon as it is collected, so the caller stores what was paid for before the whole wait
+ends (a worker restart during a long wait keeps it).
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 
 import structlog
 
@@ -69,6 +74,17 @@ def research_queue_mode(value: str | None = None) -> str:
     if mode not in MODES:
         raise ValueError(f"{QUEUE_ENV} / dfs_queue must be one of {MODES}, got {raw!r}")
     return mode
+
+
+class QueuedTaskFailed(DFSCallError):
+    """A task the queue accepted (and charged at post) that then answered an error or did not finish in time. Posting
+    its keywords again would pay twice: the caller marks them failed and leaves them to the next run. ``task_id`` is
+    DataForSEO's id of the accepted task (a timed-out task may still finish in the queue)."""
+
+    def __init__(self, message: str, *, task_id: str | None = None, fatal: bool = False,
+                 status_code: int | None = None):
+        super().__init__(message, fatal, status_code)
+        self.task_id = task_id
 
 
 @dataclass
@@ -174,16 +190,25 @@ class StandardQueue:
         return posted
 
     async def _get(self, kind: dict, task_id: str) -> dict | None:
-        """The finished answer, None while the task is still queued; DFSCallError on an error answer."""
+        """The finished answer, None while the task is still queued or the free poll itself failed (asked again on
+        the next poll); QueuedTaskFailed on an error answer of the task, a fatal DFSCallError on auth / payment."""
         try:
             data, _ms = await self.client._request("task_get", kind["get"].format(id=task_id))
-        except Exception as e:
-            raise as_dfs_error(e) from e
+        except Exception as e:  # noqa: BLE001 — a failed free poll is not the task's failure
+            err = as_dfs_error(e)
+            if err.fatal:
+                raise err from e
+            logger.warning("dfs_queue_get_failed", task_id=task_id, error=str(err)[:200])
+            return None
         state = task_get_state(data)
         if state == "pending":
             return None
         if state == "error":
-            raise _dfs_status_error(data) or DFSCallError(f"DataForSEO task {task_id} returned no result")
+            err = _dfs_status_error(data)
+            if err is not None and err.fatal:
+                raise err
+            raise QueuedTaskFailed(str(err) if err else f"DataForSEO task {task_id} returned no result",
+                                   task_id=task_id, status_code=err.status_code if err else None)
         return data
 
     async def _ready(self, kind: dict) -> set[str] | None:
@@ -197,11 +222,20 @@ class StandardQueue:
             return None
         return parse_ready(data)
 
-    async def wait(self, kind: dict, posted: list[PostedTask]) -> dict[str, dict | DFSCallError]:
-        """tag -> the finished raw answer, or the DFSCallError of that task (a timeout is one too)."""
+    async def wait(self, kind: dict, posted: list[PostedTask],
+                   on_result: Callable[[str, dict | DFSCallError], Awaitable[None]] | None = None,
+                   ) -> dict[str, dict | DFSCallError]:
+        """tag -> the finished raw answer, or the QueuedTaskFailed of that task (a timeout is one too).
+        ``on_result(tag, answer_or_error)`` is awaited as each task is collected (before the next poll)."""
         pending = {t.task_id: t for t in posted}
         out: dict[str, dict | DFSCallError] = {}
         started = self._clock()
+
+        async def _collect(tag: str, value: dict | DFSCallError) -> None:
+            out[tag] = value
+            if on_result is not None:
+                await on_result(tag, value)
+
         while pending:
             ready = await self._ready(kind)
             now = self._clock()
@@ -214,18 +248,19 @@ class StandardQueue:
                 except DFSCallError as err:
                     if err.fatal:
                         raise
-                    out[t.tag] = err
                     pending.pop(task_id)
+                    await _collect(t.tag, err)
                     continue
                 if data is not None:
-                    out[t.tag] = data
                     pending.pop(task_id)
+                    await _collect(t.tag, data)
             if not pending:
                 break
             if self._clock() - started >= self.timeout_s:
-                for t in pending.values():
-                    out[t.tag] = DFSCallError(f"DataForSEO task {t.task_id} not finished after {self.timeout_s:.0f} s")
-                logger.warning("dfs_queue_timeout", pending=len(pending))
+                logger.warning("dfs_queue_timeout", pending=len(pending), task_ids=sorted(pending)[:20])
+                for t in list(pending.values()):
+                    await _collect(t.tag, QueuedTaskFailed(
+                        f"DataForSEO task {t.task_id} not finished after {self.timeout_s:.0f} s", task_id=t.task_id))
                 break
             await self._sleep(self.poll_s)
         return out
@@ -243,17 +278,28 @@ class StandardQueue:
         }], keyword_count=len(chunk), location_code=location_code)
         got = (await self.wait(_VOLUME, posted)).get(tag)
         if got is None:
-            raise DFSCallError("DataForSEO queue lost the volume task")
+            raise QueuedTaskFailed("DataForSEO queue lost the volume task", task_id=posted[0].task_id)
         if isinstance(got, DFSCallError):
             raise got
         return parse_volumes(got, chunk)
 
-    async def serps(self, asks: list[tuple[str, int, str]]) -> dict[int, dict | Exception]:
+    async def serps(self, asks: list[tuple[str, int, str]],
+                    on_result: Callable[[int, dict | Exception], Awaitable[None]] | None = None,
+                    ) -> dict[int, dict | Exception]:
         """One SERP (organic, advanced) per (keyword, location_code, language_code), posted 100 per request.
-        Returns index of ``asks`` -> the raw answer (same shape as the live advanced SERP) or that task's error."""
-        out: dict[int, dict | DFSCallError] = {}
+        Returns index of ``asks`` -> the raw answer (same shape as the live advanced SERP) or that task's error.
+        ``on_result(index, answer_or_error)`` is awaited once per index as soon as that index is settled (a refused
+        post at once, an accepted task when it is collected), so the caller can store each paid answer right away.
+        A fatal error or budget stop before anything was posted is raised instead (no index is reported)."""
+        out: dict[int, dict | Exception] = {}
         all_posted: list[PostedTask] = []
         all_tags: dict[str, int] = {}
+
+        async def _settle(i: int, value: dict | Exception) -> None:
+            out[i] = value
+            if on_result is not None:
+                await on_result(i, value)
+
         # Every request is posted first, then all tasks are waited for together: the queue works on them in
         # parallel, so a run of thousands of places waits about as long as one request.
         for start in range(0, len(asks), POST_MAX_TASKS):
@@ -271,18 +317,25 @@ class StandardQueue:
                     # A budget stop or a fatal answer stops posting; the tasks already paid for are still
                     # collected below and the rest carry this error (the caller's guard aborts on it).
                     for rest in range(start, len(asks)):
-                        out[rest] = err
+                        await _settle(rest, err)
                     break
                 for i in tags.values():
-                    out[i] = err
+                    await _settle(i, err)
                 continue
             all_posted.extend(posted)
             all_tags.update(tags)
-        answers = await self.wait(_SERP, all_posted) if all_posted else {}
+
+        async def _collected(tag: str, value: dict | DFSCallError) -> None:
+            if tag in all_tags:
+                await _settle(all_tags[tag], value)
+
+        if all_posted:
+            await self.wait(_SERP, all_posted, on_result=_collected)
         for tag, i in all_tags.items():
-            out[i] = answers.get(tag, DFSCallError("DataForSEO queue did not accept the SERP task"))
+            if i not in out:
+                await _settle(i, DFSCallError("DataForSEO queue did not accept the SERP task"))
         return out
 
 
-__all__ = ["StandardQueue", "research_queue_mode", "QUEUE_ENV", "VOLUME_ENDPOINT", "SERP_ENDPOINT",
+__all__ = ["StandardQueue", "QueuedTaskFailed", "research_queue_mode", "QUEUE_ENV", "VOLUME_ENDPOINT", "SERP_ENDPOINT",
            "parse_post", "parse_ready", "parse_volumes", "task_get_state"]

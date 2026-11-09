@@ -118,12 +118,13 @@ async def test_serp_upsert_keeps_earlier_paa_and_reads_fresh_only_with_related(t
     assert rows["zarvok lake"]["serp_location"] == "US" and rows["zarvok lake"]["search_volume"] == 1200
     assert rows["zarvok lake hike"]["search_volume"] is None and rows["zarvok lake hike"]["volume_stale"]
     assert rows["zarvok lake hike"]["has_serp"]
-    state = {(r["keyword"], r["market"]): r["serp_fresh"] for r in await tx.fetch(
-        rb._SERP_STATE_SQL, ["zarvok lake", "zarvok lake hike"], rb.SERP_FRESH_FOR)}
-    assert state == {("zarvok lake", "US"): True, ("zarvok lake hike", "US"): True}
+    state = {(r["keyword"], r["market"]): (r["serp_fresh"], r["volume_fresh"]) for r in await tx.fetch(
+        rb._SERP_STATE_SQL, ["zarvok lake", "zarvok lake hike"], rb.SERP_FRESH_FOR, sr.FRESH_FOR)}
+    # the SERP-only row holds a fresh SERP but no measured volume (epoch date): not a known zero
+    assert state == {("zarvok lake", "US"): (True, True), ("zarvok lake hike", "US"): (True, False)}
     await tx.execute("UPDATE acp_contract.search_demand SET related_searches = NULL WHERE keyword = 'zarvok lake'")
     state = {r["keyword"]: r["serp_fresh"] for r in await tx.fetch(rb._SERP_STATE_SQL, ["zarvok lake"],
-                                                                    rb.SERP_FRESH_FOR)}
+                                                                    rb.SERP_FRESH_FOR, sr.FRESH_FOR)}
     assert state == {"zarvok lake": False}
 
 

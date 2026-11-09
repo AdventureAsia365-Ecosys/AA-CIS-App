@@ -168,7 +168,83 @@ async def test_queue_task_that_never_finishes_is_an_error_for_that_task_only():
     queue = q.StandardQueue(client, poll_s=1, timeout_s=250, direct_after_s=10**9,
                             sleep=AsyncMock(), clock=lambda: next(clock))
     out = await queue.serps([("zarvok lake", 2840, "en")])
-    assert isinstance(out[0], DFSCallError) and "not finished" in str(out[0])
+    assert isinstance(out[0], q.QueuedTaskFailed) and "not finished" in str(out[0])
+    assert out[0].task_id == "id-" + client.posted[0]["tag"] and not out[0].fatal
+
+
+@pytest.mark.asyncio
+async def test_queue_error_answer_after_accept_is_a_queued_task_failure():
+    client = _FakeClient(get_code=50000)
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    with pytest.raises(q.QueuedTaskFailed) as exc:
+        await queue.volumes(["zarvok lake"], 2840, "en")
+    assert exc.value.task_id and not exc.value.fatal
+
+
+class _FlakyGetClient(_FakeClient):
+    """The first task_get fails in transport (a free poll), the next one answers."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.gets = 0
+
+    async def _request(self, endpoint, url, *, payload=None, **kw):
+        if "task_get" in url:
+            self.gets += 1
+            if self.gets == 1:
+                raise ConnectionError("connection reset")
+        return await super()._request(endpoint, url, payload=payload, **kw)
+
+
+@pytest.mark.asyncio
+async def test_queue_failed_free_poll_is_asked_again_not_counted_as_the_task_failing():
+    client = _FlakyGetClient()
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    assert await queue.volumes(["zarvok lake"], 2840, "en") == {"zarvok lake": 10}
+    assert client.gets == 2 and len(client.posted) == 1      # paid once
+
+
+class _StaggeredClient(_FakeClient):
+    """tasks_ready lists one more posted task per poll (in post order)."""
+
+    async def _request(self, endpoint, url, *, payload=None, **kw):
+        if url.endswith("tasks_ready"):
+            self.polls += 1
+            ids = [{"id": f"id-{t['tag']}"} for t in self.posted[:self.polls]]
+            return {"status_code": 20000, "tasks": [{"result": ids}]}, 5
+        return await super()._request(endpoint, url, payload=payload, **kw)
+
+
+@pytest.mark.asyncio
+async def test_queue_serps_report_each_task_as_it_is_collected():
+    client = _StaggeredClient()
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    reported: list[tuple[int, int]] = []          # (index, polls so far)
+
+    async def on_result(i, value):
+        assert isinstance(value, dict)
+        reported.append((i, client.polls))
+
+    out = await queue.serps([("zarvok lake", 2840, "en"), ("melnith gorge", 2840, "en"),
+                             ("quorra valley", 2840, "en")], on_result=on_result)
+    assert reported == [(0, 1), (1, 2), (2, 3)]    # each one before the wait for the next ended
+    assert sorted(out) == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_queue_serps_report_refused_posts_and_budget_stops_too():
+    client = _OrderedClient(budget_left_posts=1)
+    queue = q.StandardQueue(client, sleep=AsyncMock())
+    reported: dict = {}
+
+    async def on_result(i, value):
+        assert i not in reported                   # once per index
+        reported[i] = value
+
+    from shared.cost_guard import BudgetExceeded
+    await queue.serps([(f"kw{i}", 2840, "en") for i in range(150)], on_result=on_result)
+    assert sorted(reported) == list(range(150))
+    assert all(isinstance(reported[i], BudgetExceeded) for i in range(100, 150))
 
 
 @pytest.mark.asyncio
@@ -412,6 +488,67 @@ def test_max_usd_never_exceeds_the_budget():
     assert srj.max_usd_for({"max_usd": 9.0}, budget) == 5.0
     budget.remaining_usd.return_value = None
     assert srj.max_usd_for({"max_usd": 9.0}, budget) == 9.0
+    # a budget row with no limit and no max_usd: capped, never an unbounded selection
+    assert srj.max_usd_for({}, budget) == srj.MAX_USD_PER_RUN
+    assert srj.max_usd_for({"max_usd": 500.0}, budget) == srj.MAX_USD_PER_RUN
+
+
+def _budget(**kw):
+    from shared.cost_guard import RunBudget
+
+    return RunBudget(provider="dataforseo", scope="segment_research", **{
+        "per_run_usd": None, "per_day_usd": None, **kw})
+
+
+def test_narrow_to_makes_max_usd_the_hard_per_run_limit():
+    from services.jobs import segment_research_job as srj
+    from shared.cost_guard import BudgetExceeded
+
+    unlimited = _budget()
+    srj.narrow_to(unlimited, 2.0)
+    assert unlimited.per_run_usd == 2.0 and unlimited.hard_stop
+    unlimited.charge(1.99)
+    with pytest.raises(BudgetExceeded):
+        unlimited.check(0.02)                       # the post that would cross the approved cap is refused
+
+    tighter_row = _budget(per_run_usd=1.0)
+    srj.narrow_to(tighter_row, 2.0)
+    assert tighter_row.per_run_usd == 1.0           # the row's own lower cap still wins
+
+    # an alert-only row: the per-run cap becomes hard at max_usd, its daily cap stays alert-only
+    alert_only = _budget(per_run_usd=0.5, per_day_usd=1.0, hard_stop=False)
+    srj.narrow_to(alert_only, 2.0)
+    assert alert_only.per_run_usd == 2.0 and alert_only.hard_stop and not alert_only.day_is_hard
+    alert_only.check(1.5)                           # over the alert-only daily figure: not a stop
+
+
+@pytest.mark.asyncio
+async def test_job_runs_with_its_budget_narrowed_and_refuses_the_loop_strategy():
+    from services.jobs import segment_research_job as srj
+    from shared.jobs.registry import NonRetryable
+
+    dfs, llm = _budget(), _budget(per_run_usd=1.0)
+    ctx = MagicMock()
+    ctx.pool = MagicMock()
+    ctx.progress = AsyncMock()
+    ctx.payload = {"markets": ["US"], "strategy": "loop"}
+    with pytest.raises(NonRetryable):
+        await srj.run(ctx)
+
+    ctx.payload = {"markets": ["US"], "max_usd": 3.0}
+    seen = {}
+
+    async def fake_run(target, pool, **kw):
+        seen.update(kw)
+        return {"aborted": False}
+
+    with patch.object(srj, "load_budgets", AsyncMock(return_value=(dfs, llm))), \
+         patch.object(srj, "dfs_balance", AsyncMock(return_value=40.0)), \
+         patch.object(srj, "maybe_alert", AsyncMock()), \
+         patch("services.acp_contract.segment_research.run_segment_research", fake_run):
+        await srj.run(ctx)
+    assert seen["max_usd"] == 3.0 and seen["dfs_budget"] is dfs
+    assert dfs.per_run_usd == 3.0 and dfs.hard_stop
 
 
 @pytest.mark.asyncio

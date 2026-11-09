@@ -23,29 +23,41 @@ CIS 393 alone (contract, MIG-4), then this code PR, which raises readiness to 39
   (transit / unnamed place, same rule and Jev pick as the recompute). A dry run reads stored Jev picks only
   (`cached_only=True`), so a preview never pays for a verdict.
 - Phase A (map): a place with a map of the current `PROMPT_VERSION` reuses it (no LLM, no Jev). Otherwise one LLM
-  call per 15 places, Jev per keyword, and the map is stored per chunk right away.
+  call per 15 places, Jev per keyword, and the map is stored per chunk right away. A stale place with no usable map
+  is stale in every requested market (its keywords are new), even where its volume tier is fresh.
 - Phase B (volume): per stale market, read the fresh store, buy the rest in tasks of up to 1,000 cleaned keywords
   (`clean_keyword`: accents folded, <= 10 words, <= 80 chars, not only digits). A failed task is split in two down to
-  125 keywords. Each place's `volume` log row is written as soon as all its keywords are answered in that market.
+  125 keywords, but only when DataForSEO refused the task: a queued task it accepted (and charged) that then failed or
+  timed out (`QueuedTaskFailed`) is never split nor posted again in the run. Each place's `volume` log row is written
+  as soon as all its keywords are answered in that market.
 - Phase C (SERP): one SERP per place, US / English, for its best keyword with volume > 0 in any market. Skipped (and
   logged fresh) when that keyword's US row holds a fresh SERP with both PAA and related searches. A place whose
-  keywords all have volume 0 where the US volume is known is logged fresh (nothing to buy); one whose US volume is not
-  known yet stays stale.
+  keywords all have volume 0 is logged fresh (nothing to buy) only when the US volume of EVERY keyword is known (a
+  fresh US store row, or answered this run); otherwise it waits (`serp_waiting_volume`), stale.
 - Phase D (keyword suggestions): off by default (`use_suggestions=False` in the route, the job and the function).
 - No log row on error, abort or budget stop (AA-647): the next run resumes there.
 - Bounds: `max_usd` (the selection's capped DFS estimate) replaces the 200-place cap; the default and ceiling is what
-  the DFS budget still allows; `max_places` stays as an optional extra limit; the route refuses `max_usd` > 50.
+  the DFS budget still allows, never above `MAX_USD_PER_RUN` (50, also when the budget row sets no limit);
+  `max_places` stays as an optional extra limit; the route refuses `max_usd` > 50. The job narrows the run's DFS budget
+  to `max_usd` (`narrow_to`: hard per-run cap = min(max_usd, row cap)), so the check before every paid post stops the
+  run at the approved, balance-checked figure, whatever the estimate missed.
 - Estimate (`estimate_plan`): `dfs_usd` (real: map size or 2.565 keywords/place, SERP for 77.3 % of places) and
   `dfs_usd_cap` (4 keywords/place, a SERP for every place). The route and the job (`before_buy`) check the DFS
   balance against `dfs_usd_cap`, not against the whole remaining budget.
 - Recompute: a run that stored new demand enqueues ONE debounced platform recompute (`WAVE_DEBOUNCE_S`, folded into a
-  queued one) for the Segments of the places it changed (`enqueue_recompute_for_places`, never raises).
+  queued one) for the Segments of the places it changed (`enqueue_recompute_for_places`, never raises). More than
+  `IMMEDIATE_RECOMPUTE_MAX_SEGMENTS` (300) Segments outside the night window are left to the nightly landing sweep
+  (result `recompute_deferred: "landing_sweep"`), unless `LANDING_SWEEP=off`.
 - DFS ledger rows carry `stage=a3_search_demand` and `meta {"job": "segment_research", "queue": ...}`.
 
 **Standard queue (`services/seo_intelligence/dfs_queue.py`).** `task_post` (up to 100 tasks, paid), `tasks_ready` and
 `task_get` (free) for search volume and organic SERP (advanced). Picked by `DFS_RESEARCH_QUEUE` (env, default `live`)
 or the job payload `dfs_queue`; `live` keeps today's path. Same client checks (admin switch, circuit, budget per task,
-one ledger row per post with DataForSEO's cost). A task that errors or times out fails that task only. Posts are
+one ledger row per post with DataForSEO's cost). A task that errors or times out fails that task only
+(`QueuedTaskFailed`, with its task id); a failed free poll (`tasks_ready` / `task_get` transport error) is asked
+again on the next poll. `serps(..., on_result=)` reports each task as soon as it is collected, and research stores
+the SERP and writes the place's log row from that callback, so a worker restart during the wait keeps every SERP
+already answered. Posts are
 serialised behind a lock (budget check, paid post, charge), waits run in parallel: every SERP request of a run is
 posted before the first poll, and the volume tasks of a market are posted together. A budget stop or a fatal answer
 after some posts stops posting but still collects the tasks already paid for (stored and logged); the rest fail and
@@ -84,9 +96,26 @@ count the `volume` tier only. `precompute_question_landings` also reads rows tha
 
 ## Changed vs the issue
 - `max_places` is optional (no longer mandatory) and has no 200 ceiling; `max_usd` is the bound.
-- The loop strategy (`strategy="loop"`) is kept for comparison and buys the volume tier only.
+- The loop strategy (`strategy="loop"`) is refused (route schema, `run_segment_research`, job): its estimate counted
+  volume tasks only while each place could still buy a SERP per market and a suggestion. `_research_place` and
+  `_VolumeBatcher` stay (unit-tested, cited by the gateway token-budget allow-list) until a follow-up deletes them.
+
+## Fix pass (independent review, S274)
+Six findings, all real, all fixed:
+1. Volume-fresh place without a map logged "serp: nothing to buy" for keywords never bought -> no-map places are
+   stale in every requested market (`_plan`), and "nothing to buy" needs every keyword's US volume known.
+2. Standard-queue SERPs were stored only after the whole wait -> `on_result` callback stores and logs per task.
+3. Research recompute ran in working hours whatever its size -> more than 300 Segments wait for the night sweep.
+4. `max_usd` bounded the selection, not the spend; no limit row = unbounded -> budget narrowed to `max_usd`,
+   fallback `MAX_USD_PER_RUN`.
+5. `strategy="loop"` bypassed the cap and the suggestions default -> refused.
+6. Queue split re-bought accepted (charged) tasks -> `QueuedTaskFailed` is never split.
 
 ## Tradeoffs
+- The 300-Segment threshold for an immediate recompute is a judgement, not a measurement: a scoped recompute of a few
+  hundred Segments lands in minutes (Jev and embeddings mostly cached); a whole-country run waits for the night.
+- A timed-out queued task is not polled again by a later run (its id is only logged): its keywords are bought again
+  next run. Rare (timeout 1 h) and cheaper than keeping a task ledger.
 - The sweep could ask for a nightly recompute for a Segment whose disputed moment has no stored Jev pick (the rule
   says "not excluded", the live decide() would exclude it): bounded to once per 20 h at night, and the recompute
   stores that pick, so it stops the next night.

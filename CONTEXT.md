@@ -3289,9 +3289,10 @@ and kept in `acp_contract.place_keyword` (with Jev's verdict and the prompt vers
 per market and logged per place in `segment_research_log` tier `volume`; each place gets ONE SERP
 (US / English, tier `serp`), whose PAA, related searches and domains sit on the keyword's US row
 (`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days. A run is bounded by a USD
-cap (not a place count), checked against the DFS balance, and enqueues one debounced platform
-recompute for the places it changed; the worker's night landing sweep catches Segments whose newest
-research never landed.
+cap (not a place count, at most 50 USD) that is also its hard DFS spend limit, checked against the
+DFS balance; the per-place ReAct loop strategy is retired. A run enqueues one debounced platform
+recompute for the places it changed (more than 300 Segments outside the night window wait for the
+sweep); the worker's night landing sweep catches Segments whose newest research never landed.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
 
 **Score** (Atom Ranking):

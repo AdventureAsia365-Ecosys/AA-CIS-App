@@ -8,14 +8,18 @@ price). This module runs research as phases over the whole selection, so each pa
                    up to KEYWORDS_PER_PLACE keywords (the plain place name first), Jev judges each (A3-3), and the map
                    is stored right away, the rejected keywords included, so they are never proposed nor bought again.
   B. volumes     — per market the place is stale in: read the fresh store in one query, buy the rest in tasks of up to
-                   VOLUME_TASK_MAX cleaned keywords (live, or the Standard queue). A failed task is split in two
-                   (down to SPLIT_MIN keywords) before its keywords count as failed. Each place's volume log row is
-                   written as soon as every keyword of it is answered in that market.
+                   VOLUME_TASK_MAX cleaned keywords (live, or the Standard queue). A task DataForSEO refused is
+                   split in two (down to SPLIT_MIN keywords) before its keywords count as failed; a queued task it
+                   accepted (and charged) and that then failed or timed out is never split nor bought again in this
+                   run. Each place's volume log row is written as soon as every keyword of it is answered in that
+                   market. A place with no usable map is stale in every requested market (its keywords are new).
   C. serp        — ONE SERP per place, in the SERP market (US / English), for its best keyword with volume > 0 in any
                    market. Skipped (and logged fresh) when that keyword's row already holds a fresh SERP with both
-                   PAA and related searches. PAA, related searches and organic domains of the one answer are stored on
-                   the keyword's SERP-market row with paa_retrieved_on / serp_location; the place's SERP log row is
-                   written right after.
+                   PAA and related searches. A place with no keyword above 0 is logged fresh ("nothing to buy") only
+                   when the SERP-market volume of EVERY keyword is known (fresh in the store or bought this run);
+                   otherwise it waits. PAA, related searches and organic domains of the one answer are stored on the
+                   keyword's SERP-market row with paa_retrieved_on / serp_location; the place's SERP log row is written
+                   as soon as that answer is collected (in Standard-queue mode too, task by task).
   D. suggestions — off by default (AA-1055): places with no volume anywhere get "<place> <country>" seeds,
                    IDEAS_SEEDS_PER_TASK per keywords_for_keywords task (primary market).
 
@@ -42,6 +46,7 @@ from services.acp_contract.segment_research import (
     _RunGuard,
 )
 from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs_error
+from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
 from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded, RunBudget
 from shared.dfs_client.call_log import record_dfs_call_with_pool
@@ -161,10 +166,13 @@ _INSERT_MAP_SQL = """
         jev_zone = excluded.jev_zone, jev_mode = excluded.jev_mode, jev_probability = excluded.jev_probability,
         proposed_at = excluded.proposed_at
 """
+# serp_fresh: the row holds a SERP of the last SERP_FRESH_FOR with related searches; volume_fresh: its volume was
+# measured within FRESH_FOR (a SERP-only row has retrieved_on at the epoch, so it is not).
 _SERP_STATE_SQL = """
     SELECT keyword, market, search_volume,
            (paa_retrieved_on IS NOT NULL AND paa_retrieved_on > now() - $2::interval
-            AND related_searches IS NOT NULL) AS serp_fresh
+            AND related_searches IS NOT NULL) AS serp_fresh,
+           (retrieved_on > now() - $3::interval) AS volume_fresh
     FROM acp_contract.search_demand WHERE keyword = ANY($1::text[])
 """
 
@@ -179,7 +187,6 @@ class _Place:
     failed: bool = False
     serp: bool = False                 # the SERP tier is stale and requested this run
     has_map: bool = False              # keywords came from a stored map of the current prompt version
-    serp_market_volume_fresh: bool = False   # the volume tier of SERP_MARKET is fresh (before or during this run)
     logged: set = field(default_factory=set)  # (market, tier) rows written this run
     changed: bool = False              # this run stored new demand data for the place (volume or SERP)
     verdicts: dict = field(default_factory=dict)  # keyword -> Jev Verdict of this run's proposal (for the map)
@@ -473,8 +480,6 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
                         p.volumes.setdefault(kw, {})[market] = answers.get(kw)
                     p.changed = p.changed or any(kw in bought for kw in p.keywords)
                     p.logged.add((market, "volume"))
-                    if market == SERP_MARKET:
-                        p.serp_market_volume_fresh = True
                     done.append((p.name, market, "volume"))
             await _write_logs(pool, done)
 
@@ -494,10 +499,13 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
             except Exception as exc:
                 guard.record(exc)
                 err = as_dfs_error(exc)
-                if err.fatal or guard.aborted or len(chunk) < 2 * SPLIT_MIN:
+                # A queued task DataForSEO accepted was charged at post: it failed or timed out after that, so
+                # posting its halves would pay for the same keywords again. Its keywords fail (no log row) and the
+                # next run buys them.
+                if err.fatal or guard.aborted or isinstance(err, QueuedTaskFailed) or len(chunk) < 2 * SPLIT_MIN:
                     failed_kw.update(chunk)
                     return
-                # AA-1055 — a failed task is split in two before its keywords count as failed.
+                # AA-1055 — a task DataForSEO refused is split in two before its keywords count as failed.
                 stats["volume_splits"] += 1
                 logger.warning("segment_research_volume_split", market=market, keywords=len(chunk),
                                error=str(err)[:200])
@@ -563,16 +571,22 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
         return stats
     loc = DFS_LOCATION_MAP[SERP_MARKET][0]
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_SERP_STATE_SQL, sorted({kw for p in wanted for kw in p.keywords}), SERP_FRESH_FOR)
+        rows = await conn.fetch(_SERP_STATE_SQL, sorted({kw for p in wanted for kw in p.keywords}), SERP_FRESH_FOR,
+                                FRESH_FOR)
     best_volume: dict[str, int] = {}
     fresh: set[str] = set()
+    known: set[str] = set()     # keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0)
     for r in rows:
         best_volume[r["keyword"]] = max(best_volume.get(r["keyword"], 0), r["search_volume"] or 0)
         if r["market"] == SERP_MARKET and r["serp_fresh"]:
             fresh.add(r["keyword"])
+        if r["market"] == SERP_MARKET and r["volume_fresh"]:
+            known.add(r["keyword"])
     for p in wanted:   # this run's answers too (a mock or a store write that has not landed)
         for kw, per in p.volumes.items():
             best_volume[kw] = max(best_volume.get(kw, 0), *[(v or 0) for v in per.values()], 0)
+            if SERP_MARKET in per:
+                known.add(kw)
 
     to_buy: list[tuple[_Place, str]] = []
     logs: list[tuple[str, str, str]] = []
@@ -580,13 +594,16 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
         ranked = sorted(((best_volume.get(kw, 0), -i, kw) for i, kw in enumerate(p.keywords)), reverse=True)
         top = ranked[0] if ranked else (0, 0, None)
         if top[0] <= 0:
-            if p.serp_market_volume_fresh:
-                # Nobody searches any keyword of the place where we measured it: nothing to buy, fresh for a year.
+            if all(kw in known for kw in p.keywords):
+                # Nobody searches any keyword of the place where we measured each one: nothing to buy, fresh for a
+                # year.
                 stats["serp_no_volume"] += 1
                 logs.append((p.name, SERP_MARKET, "serp"))
                 p.logged.add((SERP_MARKET, "serp"))
             else:
-                stats["serp_waiting_volume"] += 1     # the SERP-market volume is not known yet: stays stale
+                # A keyword's SERP-market volume is not known yet (a new map, a failed or skipped volume task, a
+                # run without the volume tier): the place stays stale and the next run decides.
+                stats["serp_waiting_volume"] += 1
             continue
         if top[2] in fresh:
             stats["serp_fresh_skips"] += 1
@@ -611,21 +628,31 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
             for p, _kw in to_buy:
                 p.failed = True
             return stats
-        try:
-            answers = await queue.serps([(kw, loc, SERP_LANGUAGE) for _p, kw in to_buy])
-        except Exception as exc:
-            guard.record(exc)
-            for p, _kw in to_buy:
-                p.failed = True
-            return stats
-        for i, (p, kw) in enumerate(to_buy):
-            got = answers.get(i)
+        settled: set[int] = set()
+
+        async def _collected(i: int, got) -> None:
+            """Called by the queue as each task is collected: the paid SERP is stored and its place logged right
+            away, so a worker restart during the long wait loses nothing already answered."""
+            settled.add(i)
+            p, kw = to_buy[i]
             if got is None or isinstance(got, Exception):
                 if isinstance(got, Exception):
                     guard.record(got)        # a budget stop or a fatal answer aborts the run
                 p.failed = True
-                continue
-            await _done(p, kw, got)
+                return
+            try:
+                await _done(p, kw, got)
+            except Exception as exc:  # noqa: BLE001 — one failed store must not stop collecting the others
+                p.failed = True
+                logger.warning("segment_research_serp_store_failed", place=p.name, error=str(exc)[:200])
+
+        try:
+            await queue.serps([(kw, loc, SERP_LANGUAGE) for _p, kw in to_buy], on_result=_collected)
+        except Exception as exc:
+            guard.record(exc)
+        for i, (p, _kw) in enumerate(to_buy):
+            if i not in settled:     # never collected (a fatal stop before any post, a lost task)
+                p.failed = True
         return stats
 
     sem = asyncio.Semaphore(SERP_CONCURRENCY)

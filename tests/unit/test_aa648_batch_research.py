@@ -209,7 +209,7 @@ async def test_a_stored_map_is_reused_without_any_llm_call():
 @pytest.mark.asyncio
 async def test_serp_skipped_when_the_row_already_holds_fresh_paa_and_related():
     pool, conn = _pool(serp_rows=[{"keyword": "zarvok lake", "market": "US", "search_volume": 900,
-                                   "serp_fresh": True}])
+                                   "serp_fresh": True, "volume_fresh": True}])
     client = _client()
     places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True)]
     stats = await rb._buy_serps(places, client, pool, sr._RunGuard())
@@ -221,7 +221,7 @@ async def test_serp_skipped_when_the_row_already_holds_fresh_paa_and_related():
 async def test_serp_is_bought_again_when_related_searches_were_never_stored():
     # serp_fresh is False when related_searches IS NULL (the places bought before CIS 393)
     pool, conn = _pool(serp_rows=[{"keyword": "zarvok lake", "market": "US", "search_volume": 900,
-                                   "serp_fresh": False}])
+                                   "serp_fresh": False, "volume_fresh": True}])
     client = _client()
     places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True)]
     stats = await rb._buy_serps(places, client, pool, sr._RunGuard())
@@ -231,10 +231,46 @@ async def test_serp_is_bought_again_when_related_searches_were_never_stored():
 @pytest.mark.asyncio
 async def test_no_volume_place_waits_while_its_serp_market_volume_is_unknown():
     pool, conn = _pool(serp_rows=[{"keyword": "quorra valley", "market": "UK", "search_volume": 0,
-                                   "serp_fresh": False}])
+                                   "serp_fresh": False, "volume_fresh": True}])
     places = [rb._Place("Quorra Valley", [], [], keywords=["quorra valley"], has_map=True, serp=True)]
     stats = await rb._buy_serps(places, _client(), pool, sr._RunGuard())
     assert stats["serp_waiting_volume"] == 1 and _logs(conn) == []
+
+
+@pytest.mark.asyncio
+async def test_volume_fresh_place_with_a_new_keyword_never_logs_its_serp_as_nothing_to_buy():
+    # The place's US volume tier is fresh (researched before CIS 393), but phase A proposed a keyword the store has no
+    # row for ("quorra valley lookout"), and the stored plain-name row is a zero. Until that keyword's US volume is
+    # known, "nobody searches it" is not proven: no SERP log row, the place stays stale.
+    pool, conn = _pool(serp_rows=[{"keyword": "quorra valley", "market": "US", "search_volume": None,
+                                   "serp_fresh": False, "volume_fresh": True}])
+    places = [rb._Place("Quorra Valley", [], [], keywords=["quorra valley", "quorra valley lookout"], serp=True)]
+    stats = await rb._buy_serps(places, _client(), pool, sr._RunGuard())
+    assert stats == {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 1}
+    assert _logs(conn) == [] and (rb.SERP_MARKET, "serp") not in places[0].logged
+
+
+@pytest.mark.asyncio
+async def test_serp_only_row_does_not_count_as_a_known_volume():
+    # A SERP-only row (volume never measured, retrieved_on at the epoch) is not a known zero.
+    pool, conn = _pool(serp_rows=[{"keyword": "quorra valley", "market": "US", "search_volume": None,
+                                   "serp_fresh": True, "volume_fresh": False}])
+    places = [rb._Place("Quorra Valley", [], [], keywords=["quorra valley"], has_map=True, serp=True)]
+    stats = await rb._buy_serps(places, _client(), pool, sr._RunGuard())
+    assert stats["serp_waiting_volume"] == 1 and _logs(conn) == []
+
+
+@pytest.mark.asyncio
+async def test_every_keyword_known_at_zero_logs_nothing_to_buy():
+    # one zero from the fresh store, one answered by this run's US volume task
+    pool, conn = _pool(serp_rows=[{"keyword": "quorra valley", "market": "US", "search_volume": 0,
+                                   "serp_fresh": False, "volume_fresh": True}])
+    places = [rb._Place("Quorra Valley", [], [], keywords=["quorra valley", "quorra valley lookout"], serp=True,
+                        volumes={"quorra valley lookout": {"US": None}})]
+    client = _client()
+    stats = await rb._buy_serps(places, client, pool, sr._RunGuard())
+    client._serp_advanced.assert_not_awaited()
+    assert stats["serp_no_volume"] == 1 and _logs(conn, "serp") == [("Quorra Valley", "US", "serp")]
 
 
 @pytest.mark.asyncio
@@ -332,7 +368,18 @@ async def test_volume_tasks_split_at_task_limit_per_market():
         stats = await rb._buy_volumes(places, US_UK, client, pool, sr._RunGuard())
     assert stats["volume_tasks"] == 6          # ceil(5/2)=3 per market x 2 markets
     assert all(p.volumes[p.keywords[0]] == {"US": 10, "UK": 10} for p in places)
-    assert all(p.serp_market_volume_fresh for p in places)
+
+
+def _queue_serps(answers):
+    """A StandardQueue.serps stand-in: reports each index through on_result (as the real queue does when it collects
+    a task), then returns them all. `answers` is a dict or a function of the asks."""
+    async def serps(asks, on_result=None):
+        got = answers(asks) if callable(answers) else answers
+        for i in sorted(got):
+            if on_result is not None:
+                await on_result(i, got[i])
+        return got
+    return serps
 
 
 @pytest.mark.asyncio
@@ -341,7 +388,7 @@ async def test_queue_mode_buys_through_the_standard_queue():
     client = _client()
     queue = MagicMock()
     queue.volumes = AsyncMock(side_effect=lambda kws, *a: {kw: 30 for kw in kws})
-    queue.serps = AsyncMock(side_effect=lambda asks: {i: _serp_body() for i in range(len(asks))})
+    queue.serps = AsyncMock(side_effect=_queue_serps(lambda asks: {i: _serp_body() for i in range(len(asks))}))
     places = [rb._Place("Zarvok Lake", [], ["US"], keywords=["zarvok lake"], has_map=True, serp=True)]
     with patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
         result = await rb.research_batch(places, US, pool, client, sr._RunGuard(), queue=queue)
@@ -356,7 +403,7 @@ async def test_queue_mode_buys_through_the_standard_queue():
 async def test_queue_task_error_fails_only_that_place():
     pool, conn = _pool()
     queue = MagicMock()
-    queue.serps = AsyncMock(return_value={0: DFSCallError("not finished"), 1: _serp_body()})
+    queue.serps = AsyncMock(side_effect=_queue_serps({0: DFSCallError("not finished"), 1: _serp_body()}))
     places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True,
                         volumes={"zarvok lake": {"US": 9}}),
               rb._Place("Melnith Gorge", [], [], keywords=["melnith gorge"], has_map=True, serp=True,
@@ -371,7 +418,8 @@ async def test_queue_budget_stop_or_fatal_answer_aborts_the_run():
     from shared.cost_guard import BudgetExceeded
     pool, conn = _pool()
     queue = MagicMock()
-    queue.serps = AsyncMock(return_value={0: _serp_body(), 1: BudgetExceeded("run budget", "dataforseo", "per_run")})
+    queue.serps = AsyncMock(side_effect=_queue_serps(
+        {0: _serp_body(), 1: BudgetExceeded("run budget", "dataforseo", "per_run")}))
     places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True,
                         volumes={"zarvok lake": {"US": 9}}),
               rb._Place("Melnith Gorge", [], [], keywords=["melnith gorge"], has_map=True, serp=True,
@@ -380,6 +428,67 @@ async def test_queue_budget_stop_or_fatal_answer_aborts_the_run():
     await rb._buy_serps(places, _client(), pool, guard, queue)
     assert guard.aborted and places[1].failed and not places[0].failed
     assert _logs(conn, "serp") == [("Zarvok Lake", "US", "serp")]     # the paid one is still stored and logged
+
+
+@pytest.mark.asyncio
+async def test_queue_serps_are_stored_and_logged_as_each_task_is_collected():
+    # The queue is still waiting for the second task when the first one is collected: the first SERP must already be
+    # stored and its place logged (a worker restart during the wait keeps it).
+    pool, conn = _pool()
+    seen_at_second: list = []
+
+    async def serps(asks, on_result=None):
+        await on_result(0, _serp_body())
+        seen_at_second.append(list(_logs(conn, "serp")))
+        await on_result(1, _serp_body())
+        return {}
+
+    queue = MagicMock()
+    queue.serps = AsyncMock(side_effect=serps)
+    places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True,
+                        volumes={"zarvok lake": {"US": 9}}),
+              rb._Place("Melnith Gorge", [], [], keywords=["melnith gorge"], has_map=True, serp=True,
+                        volumes={"melnith gorge": {"US": 9}})]
+    stats = await rb._buy_serps(places, _client(), pool, sr._RunGuard(), queue)
+    assert seen_at_second == [[("Zarvok Lake", "US", "serp")]]
+    assert stats["serp_calls"] == 2 and not any(p.failed for p in places)
+
+
+@pytest.mark.asyncio
+async def test_queue_serp_never_reported_fails_its_place_and_a_fatal_wait_keeps_the_collected_ones():
+    pool, conn = _pool()
+
+    async def serps(asks, on_result=None):
+        await on_result(0, _serp_body())
+        raise DFSCallError("Payment Required", True, 40200)      # fatal while waiting for the second task
+
+    queue = MagicMock()
+    queue.serps = AsyncMock(side_effect=serps)
+    places = [rb._Place("Zarvok Lake", [], [], keywords=["zarvok lake"], has_map=True, serp=True,
+                        volumes={"zarvok lake": {"US": 9}}),
+              rb._Place("Melnith Gorge", [], [], keywords=["melnith gorge"], has_map=True, serp=True,
+                        volumes={"melnith gorge": {"US": 9}})]
+    guard = sr._RunGuard()
+    await rb._buy_serps(places, _client(), pool, guard, queue)
+    assert guard.aborted and not places[0].failed and places[1].failed
+    assert _logs(conn, "serp") == [("Zarvok Lake", "US", "serp")]
+
+
+@pytest.mark.asyncio
+async def test_a_queued_task_that_failed_after_it_was_accepted_is_never_split_nor_bought_again():
+    from services.seo_intelligence.dfs_queue import QueuedTaskFailed
+
+    pool, conn = _pool()
+    queue = MagicMock()
+    queue.volumes = AsyncMock(side_effect=QueuedTaskFailed("DataForSEO task t-1 not finished after 3600 s",
+                                                           task_id="t-1"))
+    places = [rb._Place(f"p{i}", [], ["US"], keywords=[f"kw{i:03d}"]) for i in range(300)]
+    guard = sr._RunGuard()
+    with patch.object(rb, "SPLIT_MIN", 100), patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+        stats = await rb._buy_volumes(places, US, _client(), pool, guard, queue)
+    queue.volumes.assert_awaited_once()                       # one paid post, no halves posted again
+    assert stats["volume_splits"] == 0 and stats["volume_tasks"] == 0
+    assert all(p.failed for p in places) and _logs(conn) == [] and not guard.aborted
 
 
 @pytest.mark.asyncio
@@ -491,8 +600,10 @@ def _run_pool(scope, fresh=(), maps=(), segments=()):
 
 @pytest.mark.asyncio
 async def test_dry_run_returns_the_estimate_and_never_pays():
+    zarvok_map = [{"subject": "Zarvok Lake", "keyword": "zarvok lake", "rank": 0, "jev_zone": "not_asked",
+                   "jev_mode": None, "prompt_version": rb.PROMPT_VERSION}]
     pool, conn = _run_pool(_scope_rows("Zarvok Lake", "Melnith Gorge"),
-                           fresh=[("Zarvok Lake", "US", "volume")])
+                           fresh=[("Zarvok Lake", "US", "volume")], maps=zarvok_map)
     with patch.object(sr, "DataForSEOClient") as m_client:
         result = await sr.run_segment_research({"countries": ["US"]}, pool, dry_run=True)
     m_client.assert_not_called()
@@ -557,3 +668,58 @@ def test_unknown_strategy_rejected():
 
     with pytest.raises(ValueError):
         asyncio.run(sr.run_segment_research({"countries": ["US"]}, MagicMock(), strategy="nope"))
+
+
+def test_loop_strategy_is_refused():
+    # Its estimate counted volume tasks only while each place could buy a SERP per market and a suggestion.
+    import asyncio
+
+    with pytest.raises(ValueError, match="retired"):
+        asyncio.run(sr.run_segment_research({"countries": ["US"]}, MagicMock(), strategy="loop", dry_run=True))
+
+
+@pytest.mark.asyncio
+async def test_plan_makes_a_place_without_a_map_stale_in_every_requested_market():
+    current = [{"subject": "Zarvok Lake", "keyword": "zarvok lake", "rank": 0, "jev_zone": "not_asked",
+                "jev_mode": None, "prompt_version": rb.PROMPT_VERSION}]
+    # Both places: volume fresh in US and UK, SERP stale. Zarvok Lake has a map of the current prompt; Melnith
+    # Gorge has none (researched before CIS 393): its new keywords were never bought anywhere.
+    fresh = [(p, m, "volume") for p in ("Zarvok Lake", "Melnith Gorge") for m in ("US", "UK")]
+    pool, _ = _run_pool(_scope_rows("Zarvok Lake", "Melnith Gorge"), fresh=fresh, maps=current)
+    stale = await sr._plan(pool, {"Zarvok Lake": ["explore"], "Melnith Gorge": ["walk"]}, ["US", "UK"],
+                           ("volume", "serp"))
+    by_name = {p.name: p for p in stale}
+    assert by_name["Zarvok Lake"].markets == [] and by_name["Zarvok Lake"].has_map
+    assert by_name["Melnith Gorge"].markets == ["US", "UK"] and not by_name["Melnith Gorge"].has_map
+    assert all(p.serp for p in stale)
+    # a SERP-only run buys no volume, so it adds no market (the SERP pass makes the place wait instead)
+    serp_only = await sr._plan(pool, {"Melnith Gorge": ["walk"]}, ["US", "UK"], ("serp",))
+    assert serp_only[0].markets == []
+
+
+@pytest.mark.asyncio
+async def test_a_large_research_run_leaves_its_recompute_to_the_night_sweep(monkeypatch):
+    from datetime import datetime, timezone
+
+    from services.acp_contract import landing_sweep as ls
+
+    monkeypatch.delenv(ls.SWITCH_ENV, raising=False)
+    many = [f"s-{i:04d}" for i in range(sr.IMMEDIATE_RECOMPUTE_MAX_SEGMENTS + 1)]
+    pool, _ = _run_pool([], segments=many)
+    day = datetime(2026, 11, 9, 4, 0, tzinfo=timezone.utc)
+    night = datetime(2026, 11, 9, 18, 0, tzinfo=timezone.utc)
+    enq = AsyncMock(return_value=("job-r", True))
+    with patch("services.jobs.recompute_job.enqueue_recompute", enq):
+        out = await sr.enqueue_recompute_for_places(pool, ["Zarvok Lake"], now=day)
+        assert out == {"recompute_job_id": None, "recompute_deferred": "landing_sweep",
+                       "recompute_segments": len(many)}
+        enq.assert_not_awaited()
+        out = await sr.enqueue_recompute_for_places(pool, ["Zarvok Lake"], now=night)   # inside the window
+        assert out["recompute_job_id"] == "job-r"
+        monkeypatch.setenv(ls.SWITCH_ENV, "off")                       # no sweep to catch them: enqueue now
+        out = await sr.enqueue_recompute_for_places(pool, ["Zarvok Lake"], now=day)
+        assert out["recompute_job_id"] == "job-r"
+    small, _ = _run_pool([], segments=["s-1"])
+    monkeypatch.delenv(ls.SWITCH_ENV, raising=False)
+    with patch("services.jobs.recompute_job.enqueue_recompute", AsyncMock(return_value=("job-s", True))):
+        assert (await sr.enqueue_recompute_for_places(small, ["Zarvok Lake"], now=day))["recompute_job_id"] == "job-s"

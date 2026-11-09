@@ -6495,11 +6495,8 @@
             "type": "boolean"
           },
           "strategy": {
+            "const": "batch",
             "default": "batch",
-            "enum": [
-              "batch",
-              "loop"
-            ],
             "title": "Strategy",
             "type": "string"
           },

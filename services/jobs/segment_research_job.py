@@ -8,10 +8,13 @@ Payload: {"markets": [...], "max_usd"?: float, "max_places"?: int, "places"?, "t
           "strategy": "batch"|"loop", "use_suggestions": bool, "tiers"?: ["volume", "serp"],
           "dfs_queue"?: "live"|"standard", "recompute"?: bool}
 
-AA-1055 — the selection is bounded by `max_usd` (default: what the DFS budget still allows this run), not by a place
-count; the DataForSEO balance is checked against the selection's capped estimate (it used to be checked against the
-whole remaining budget, which refused small runs whenever the balance was low). A run that stored new demand enqueues
-one debounced platform recompute (segment_research.enqueue_recompute_for_places).
+AA-1055 — the selection is bounded by `max_usd` (default: what the DFS budget still allows this run, and never more
+than MAX_USD_PER_RUN, also when the budget row sets no limit), not by a place count; the DataForSEO balance is checked
+against the selection's capped estimate (it used to be checked against the whole remaining budget, which refused small
+runs whenever the balance was low). `max_usd` is also the run's hard DFS spend limit: the run budget's per-run cap is
+narrowed to it (`narrow_to`), so the check before every paid post stops the run at the figure that was approved and
+balance-checked, whatever the estimate missed. A run that stored new demand enqueues one debounced platform recompute
+(segment_research.enqueue_recompute_for_places). `strategy: "loop"` is refused (retired, AA-1055).
 """
 from __future__ import annotations
 
@@ -25,6 +28,9 @@ from shared.jobs.registry import JobContext, NonRetryable, job_kind
 logger = structlog.get_logger()
 
 KIND = "segment_research"
+# AA-1055 — the USD cap replaced the 200-place cap. The most one run may spend on DataForSEO: the route refuses a
+# larger `max_usd`, and a run whose budget row sets no limit is capped here.
+MAX_USD_PER_RUN = 50.0
 _SCOPE_KEYS = ("places", "tour_ids", "country", "max_places", "max_usd", "strategy", "use_suggestions", "tiers",
                "dfs_queue", "recompute")
 
@@ -48,13 +54,26 @@ def scope_kwargs(payload: dict) -> dict:
     return {k: payload.get(k) for k in _SCOPE_KEYS if k in payload}
 
 
-def max_usd_for(payload: dict, dfs_budget) -> float | None:
-    """The run's USD cap: the payload's, never above what the DFS budget still allows (None = no limit set)."""
+def max_usd_for(payload: dict, dfs_budget) -> float:
+    """The run's USD cap: the payload's (default MAX_USD_PER_RUN), never above what the DFS budget still allows nor
+    above MAX_USD_PER_RUN. Never None: a budget row with no limit does not mean an unbounded selection."""
     remaining = dfs_budget.remaining_usd()
     asked = payload.get("max_usd")
-    if asked is None:
-        return remaining
-    return float(asked) if remaining is None else min(float(asked), remaining)
+    caps = [MAX_USD_PER_RUN, float(asked) if asked is not None else MAX_USD_PER_RUN]
+    if remaining is not None:
+        caps.append(remaining)
+    return min(caps)
+
+
+def narrow_to(dfs_budget, max_usd: float) -> None:
+    """Make `max_usd` the run's hard per-run DFS limit (the same narrowing as the question top-up): the per-run cap
+    becomes min(max_usd, the row's per-run cap) and always stops the run. The daily axes keep the row's own hard /
+    alert-only setting."""
+    if dfs_budget.hard_stop_day is None:
+        dfs_budget.hard_stop_day = dfs_budget.hard_stop     # the day cap keeps what hard_stop meant for it
+    current = dfs_budget.per_run_usd if dfs_budget.hard_stop else None
+    dfs_budget.per_run_usd = max_usd if current is None else min(max_usd, current)
+    dfs_budget.hard_stop = True
 
 
 def balance_gate(balance: Optional[float]):
@@ -74,6 +93,8 @@ async def run(ctx: JobContext) -> dict:
     markets = ctx.payload.get("markets")
     if not markets:
         raise NonRetryable("payload has no markets")
+    if (ctx.payload.get("strategy") or "batch") != "batch":
+        raise NonRetryable(f"strategy {ctx.payload.get('strategy')!r} is not supported (only 'batch', AA-1055)")
 
     # Budgets and balance are re-checked here, not only at enqueue: a retry can start much later.
     dfs_budget, llm_budget = await load_budgets(ctx.pool)
@@ -87,6 +108,7 @@ async def run(ctx: JobContext) -> dict:
         raise NonRetryable("DataForSEO balance could not be read")
     kwargs = scope_kwargs(ctx.payload)
     kwargs["max_usd"] = max_usd_for(ctx.payload, dfs_budget)
+    narrow_to(dfs_budget, kwargs["max_usd"])
 
     await ctx.progress(phase="researching", markets=markets, dfs_balance_usd=balance,
                        max_spend_usd={"dfs": kwargs["max_usd"], "bedrock": llm_budget.remaining_usd()})
