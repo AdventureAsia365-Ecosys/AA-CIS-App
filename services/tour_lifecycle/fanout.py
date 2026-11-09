@@ -22,6 +22,11 @@ TripPlanner purge) runs :func:`fan_out`:
 ``restored``: the open ``tour_retired`` flags of the key's tours are resolved (``restored``); every tenant whose latest
 notice for them is ``retired`` (still told "no longer offered") gets a ``restored`` notice ("back on sale"), at once
 when it had live posts flagged. A restore that follows a pause or a supersede, or a second restore, mails nobody.
+  The WordPress pages the retirement this restore undoes already moved to draft (flags resolved ``drafted`` of a
+  ``retired`` event of the key since its previous ``restored`` event) are marked ``detail.restore_republish`` and get
+  one ``restored_page_republish`` job each, inserted in this transaction (:func:`republish_page`): the page is
+  published again only when the tour, the piece and the remote draft still allow it. The tenant's notice is then
+  ``immediate`` but waits for those jobs (``summary.pages_returning``), so the mail says which pages are back.
 One fan-out of a key runs at a time (a transaction advisory lock on the key).
 ``paused`` and ``superseded`` do nothing here (ADR 0019 d20: a paused tour gets no mail; a supersede is invisible).
 
@@ -57,6 +62,10 @@ DEFAULT_NOTICE_DAYS = 7
 STALE_REQUESTED_SECONDS = 900      # a publish claim this old without an answer is abandoned (idempotency.py: 300 s)
 ACTOR = "system:tour_retirement"
 FLAG_KIND = "tour_retired"
+# A restore puts back the WordPress pages its retirement moved to draft (one job per page, :func:`republish_page`).
+REPUBLISH_KIND = "restored_page_republish"
+REPUBLISH_ATTEMPTS = 4
+REPUBLISH_MARK = "restore_republish"     # the flag's detail key: {event_key, state, queued_at, done_at, reason, ...}
 # publish_log.channel of a WordPress post: 'blog' (the T11 channel); older rows say 'wordpress'.
 WORDPRESS_CHANNELS = ("blog", "wordpress")
 
@@ -156,9 +165,12 @@ INSERT_NOTICE_SQL = """
 
 # The event's notices still to mail at once, whether this run or an earlier one wrote them: the mail jobs are keyed
 # tour_notice_email:<notice_id>, so a replay after a lost enqueue (worker stop, deploy) enqueues them again.
+# A notice that still waits for pages being put back (a restore, `summary.pages_returning`) is mailed by the last
+# republish job instead, so its mail says what happened to each page.
 UNMAILED_IMMEDIATE_SQL = """
     SELECT n.notice_id::text AS notice_id FROM acp_shared.tenant_tour_notice n
      WHERE n.event_key = $1 AND n.delivery = 'immediate' AND n.mailed_at IS NULL
+       AND jsonb_array_length(COALESCE(n.summary -> 'pages_returning', '[]'::jsonb)) = 0
      ORDER BY n.tenant_id
 """
 
@@ -175,6 +187,46 @@ OUTSTANDING_RETIRED_SQL = """
          WHERE n.tour_id = ANY($1::uuid[]) AND n.event_key <> $2
          ORDER BY n.tenant_id, e.id DESC NULLS LAST, n.created_at DESC, n.notice_id DESC) latest
      WHERE latest.event = 'retired'
+"""
+
+# The WordPress pages the retirement this restore ($2) undoes moved to draft: the drafted tour_retired flags of the
+# key's tours ($1) of a retired event of the same key after its previous restored event and before this one (a reason
+# change writes a second retired event in one retirement). A page drafted by an older retire / restore cycle is never
+# touched. Marked once (the mark is the idempotency: a replay marks nothing new).
+MARK_REPUBLISH_SQL = f"""
+    WITH ev AS (SELECT e.id, e.source_id FROM gold_aa_internal.tour_lifecycle_event e WHERE e.idempotency_key = $2),
+    prev AS (SELECT COALESCE(max(p.id), 0) AS id FROM gold_aa_internal.tour_lifecycle_event p, ev
+              WHERE p.source_id = ev.source_id AND p.event = 'restored' AND p.id < ev.id),
+    cycle AS (SELECT r.idempotency_key FROM gold_aa_internal.tour_lifecycle_event r, ev, prev
+               WHERE r.source_id = ev.source_id AND r.event = 'retired' AND r.id > prev.id AND r.id < ev.id)
+    UPDATE acp_shared.content_compliance_flag f
+       SET detail = f.detail || jsonb_build_object('{REPUBLISH_MARK}', jsonb_build_object(
+               'event_key', $2::text, 'state', 'queued', 'queued_at', now())),
+           updated_at = now()
+     WHERE f.kind = '{FLAG_KIND}' AND f.state = 'resolved' AND f.resolution = 'drafted'
+       AND f.action = 'draft_after_notice' AND f.tour_id = ANY($1::uuid[])
+       AND f.event_key IN (SELECT idempotency_key FROM cycle)
+       AND NOT (f.detail ? '{REPUBLISH_MARK}')
+    RETURNING f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, f.external_url
+"""
+
+# One republish job per marked page of this restore ($1), in the fan-out transaction (no enqueue lost after the
+# commit; the job key makes a replay a no-op), due now.
+ENQUEUE_REPUBLISH_SQL = f"""
+    WITH created AS (
+    INSERT INTO shared.job (kind, payload, idempotency_key, max_attempts, created_by)
+    SELECT '{REPUBLISH_KIND}', jsonb_build_object('flag_id', f.flag_id::text, 'event_key', $1::text,
+                                                  'trigger', 'restored'),
+           '{REPUBLISH_KIND}:' || f.flag_id::text, $2, 'system:{REPUBLISH_KIND}'
+      FROM acp_shared.content_compliance_flag f
+     WHERE f.kind = '{FLAG_KIND}' AND f.tour_id = ANY($3::uuid[])
+       AND f.detail -> '{REPUBLISH_MARK}' ->> 'event_key' = $1
+       AND f.detail -> '{REPUBLISH_MARK}' ->> 'state' = 'queued'
+     ORDER BY f.flag_id
+    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+    RETURNING 1
+    )
+    SELECT count(*) FROM created
 """
 
 # One fan-out of a key at a time (two events of one key, or a replay racing the first run): the outstanding checks
@@ -323,20 +375,28 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
 
 async def _restored(conn, event, tour_ids: list[str]) -> dict:
     tour_name = await _tour_name(conn, event["tour_id"])
+    key = event["idempotency_key"]
     resolved = await conn.fetch(RESOLVE_RESTORED_SQL, tour_ids, ACTOR)
     had_live = {r["tenant_id"] for r in resolved}
-    tenants = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids,
-                                                         event["idempotency_key"])} | had_live
+    returning: dict[str, list] = {}
+    for m in await conn.fetch(MARK_REPUBLISH_SQL, tour_ids, key):
+        returning.setdefault(m["tenant_id"], []).append({"url": m["external_url"], "flag_id": m["flag_id"]})
+    tenants = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids, key)} | had_live
+    tenants |= set(returning)
+    tenants.discard(_d.AA_TENANT)
     immediate = []
     for tid in sorted(tenants):
         summary = {"back_on": _fmt_day(event["occurred_at"]), "flags_cleared": sum(
-            1 for r in resolved if r["tenant_id"] == tid)}
+            1 for r in resolved if r["tenant_id"] == tid), "pages_returning": returning.get(tid, [])}
+        at_once = tid in had_live or tid in returning
         notice_id = await conn.fetchval(
-            INSERT_NOTICE_SQL, tid, event["tour_id"], event["source_id"], event["idempotency_key"], "restored",
-            tour_name, "immediate" if tid in had_live else "digest", json.dumps(summary))
-        if notice_id and tid in had_live:
+            INSERT_NOTICE_SQL, tid, event["tour_id"], event["source_id"], key, "restored",
+            tour_name, "immediate" if at_once else "digest", json.dumps(summary))
+        if notice_id and at_once and tid not in returning:      # a waiting notice is mailed by its last page's job
             immediate.append(notice_id)
-    return {"flags_resolved": len(resolved), "tenants_noticed": len(tenants), "immediate_notices": immediate}
+    jobs = await conn.fetchval(ENQUEUE_REPUBLISH_SQL, key, REPUBLISH_ATTEMPTS, tour_ids)
+    return {"flags_resolved": len(resolved), "tenants_noticed": len(tenants), "immediate_notices": immediate,
+            "pages_to_republish": sum(len(v) for v in returning.values()), "republish_jobs": int(jobs or 0)}
 
 
 async def enqueue_due_drafts(pool, max_attempts: int) -> int:
@@ -456,9 +516,218 @@ async def _note(pool, flag_id: str, text: str) -> None:
         await conn.execute(NOTE_SQL, flag_id, json.dumps({"draft_error": text}))
 
 
+# ── the WordPress page put back after a restore (one drafted flag) ─────────────────────────────────────────────────
+
+REPUBLISH_FLAG_SQL = f"""
+    SELECT f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, f.state, f.resolution, f.detail,
+           f.tour_id::text AS tour_id, f.publish_id::text AS publish_id, f.piece_id::text AS piece_id,
+           f.external_url AS flag_url,
+           pl.status AS publish_status, pl.unpublished_by, pl.external_id, pl.external_url, pl.channel,
+           cp.status AS piece_status, cp.angle_gate_request_id::text AS request_id
+      FROM acp_shared.content_compliance_flag f
+      LEFT JOIN acp_shared.publish_log pl ON pl.publish_id = f.publish_id
+      LEFT JOIN acp_shared.content_piece cp ON cp.piece_id = f.piece_id AND cp.tenant_id = f.tenant_id
+     WHERE f.flag_id = $1::uuid AND f.kind = '{FLAG_KIND}'
+"""
+
+# Another live or in-flight WordPress post of the same piece (the tenant published it again from the studio after the
+# restore): putting the old post back would show two copies.
+OTHER_LIVE_POST_SQL = """
+    SELECT EXISTS (SELECT 1 FROM acp_shared.publish_log o
+                    WHERE o.piece_id = $1::uuid AND o.tenant_id = $2::uuid AND o.channel = ANY($3::text[])
+                      AND o.publish_id <> $4::uuid AND o.status IN ('published', 'requested'))
+"""
+
+# The AA-subject gate holds the piece (AA-1039 d21, services/acp_shared/subject_gate.py): it would not publish now.
+OPEN_GATE_SQL = """
+    SELECT EXISTS (SELECT 1 FROM acp_shared.content_compliance_flag g
+                    WHERE g.piece_id = $1::uuid AND g.kind = 'subject_gate' AND g.state = 'open')
+"""
+
+# The reverse of MARK_UNPUBLISHED_SQL, only for the row this system took down (published_at keeps the first date).
+MARK_REPUBLISHED_SQL = """
+    UPDATE acp_shared.publish_log SET status = 'published', unpublished_at = NULL, unpublished_by = NULL
+     WHERE publish_id = $1::uuid AND tenant_id = $2::uuid AND status = 'unpublished' AND unpublished_by = $3
+"""
+
+# The restore mark's outcome ($2 merged into detail.restore_republish), once: only while it is still 'queued'.
+REPUBLISH_DONE_SQL = f"""
+    UPDATE acp_shared.content_compliance_flag
+       SET detail = jsonb_set(detail, '{{{REPUBLISH_MARK}}}', (detail -> '{REPUBLISH_MARK}') || $2::jsonb),
+           updated_at = now()
+     WHERE flag_id = $1::uuid AND detail -> '{REPUBLISH_MARK}' ->> 'state' = 'queued'
+    RETURNING detail -> '{REPUBLISH_MARK}' ->> 'event_key' AS event_key
+"""
+
+REPUBLISH_NOTE_SQL = f"""
+    UPDATE acp_shared.content_compliance_flag
+       SET detail = jsonb_set(detail, '{{{REPUBLISH_MARK}}}', (detail -> '{REPUBLISH_MARK}') || $2::jsonb),
+           updated_at = now()
+     WHERE flag_id = $1::uuid AND detail ? '{REPUBLISH_MARK}'
+"""
+
+# The restored notice of the tenant ($1, event $2): the page ($3 = flag id, $4 = url) leaves `pages_returning` and,
+# when $5 names a list (`pages_back` / `pages_kept`), joins it. Returns whether the notice still waits for pages.
+NOTICE_PAGE_SQL = """
+    UPDATE acp_shared.tenant_tour_notice n
+       SET summary = n.summary
+           || jsonb_build_object('pages_returning', COALESCE((
+                  SELECT jsonb_agg(x) FROM jsonb_array_elements(COALESCE(n.summary -> 'pages_returning', '[]'::jsonb)) x
+                   WHERE x ->> 'flag_id' IS DISTINCT FROM $3::text), '[]'::jsonb))
+           || CASE WHEN $5::text IS NULL THEN '{}'::jsonb
+                   ELSE jsonb_build_object($5::text, COALESCE(n.summary -> $5::text, '[]'::jsonb)
+                                                     || jsonb_build_array(jsonb_build_object('url', $4::text))) END
+     WHERE n.tenant_id = $1::uuid AND n.event_key = $2 AND n.event = 'restored'
+    RETURNING n.notice_id::text AS notice_id, n.delivery, n.mailed_at,
+              jsonb_array_length(COALESCE(n.summary -> 'pages_returning', '[]'::jsonb)) AS waiting
+"""
+
+# What WordPress says the post is now, when it is not a draft any more: nothing is changed.
+REMOTE_SKIP = {"missing": "removed_on_site", "trash": "removed_on_site", "publish": "already_published",
+               "future": "scheduled_on_site"}
+# The reasons the tenant is told about ("still in draft: we could not put it back"); the others (they removed,
+# published or scheduled it themselves, published it again from the studio, the tour is off sale again) say nothing.
+KEPT_REASONS = frozenset({"wordpress_not_connected", "other_site", "content_needs_change", "piece_not_publishable",
+                          "wordpress_error"})
+
+
+class RepublishRefused(DraftRefused):
+    """WordPress could not be asked or refused (`permanent` = a retry cannot help); the job retries the others."""
+
+
+def _detail(raw) -> dict:
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return dict(raw or {})
+
+
+async def _republish_blocker(conn, flag) -> Optional[str]:
+    """Why the page must stay as it is, re-read now; None = it may be published again."""
+    if flag["state"] != "resolved" or flag["resolution"] != "drafted":
+        return "flag_changed"
+    if flag["channel"] not in WORDPRESS_CHANNELS:
+        return "not_wordpress"
+    if flag["publish_status"] != "unpublished" or flag["unpublished_by"] != ACTOR:
+        return "publish_record_changed"
+    # strict: this makes a page public, so a key without a served state is not taken as served
+    if (await conn.fetchval(TOUR_STATE_SQL, flag["tour_id"])) != "served":
+        return "tour_not_served"
+    if flag["piece_status"] not in ("approved", "held"):     # the publish route's rule (AA-770); None = deleted
+        return "piece_not_publishable"
+    if flag["request_id"]:                                    # AA-986 L3: the piece's own tour is served
+        tours = await _tl.request_tours(conn, flag["tenant_id"], [flag["request_id"]])
+        try:
+            await _tl.ensure_served(conn, tours.get(flag["request_id"]), "publish a new post")
+        except _tl.TourNotServedError:
+            return "tour_not_served"
+    if await conn.fetchval(OPEN_GATE_SQL, flag["piece_id"]):
+        return "content_needs_change"
+    if await conn.fetchval(OTHER_LIVE_POST_SQL, flag["piece_id"], flag["tenant_id"], list(WORDPRESS_CHANNELS),
+                           flag["publish_id"]):
+        return "published_again_from_studio"
+    return None
+
+
+async def _finish(conn, flag, state: str, reason: Optional[str], extra: Optional[dict] = None) -> dict:
+    """Record the outcome on the flag (once) and on the tenant's restored notice; returns the job result with the
+    notice to mail now (no page of it is still waiting)."""
+    outcome = {"state": state, "done_at": datetime.now().astimezone().isoformat(), **(extra or {})}
+    if reason:
+        outcome["reason"] = reason
+    out = {"status": state, "flag_id": flag["flag_id"], "tenant_id": flag["tenant_id"], "piece_id": flag["piece_id"],
+           "publish_id": flag["publish_id"], **({"reason": reason} if reason else {})}
+    event_key = await conn.fetchval(REPUBLISH_DONE_SQL, flag["flag_id"], json.dumps(outcome, default=str))
+    if event_key is None:                                    # another run recorded it first
+        return {**out, "status": "skipped", "reason": "already_done"}
+    page_list = {"republished": "pages_back", "kept": "pages_kept"}.get(state)
+    notice = await conn.fetchrow(NOTICE_PAGE_SQL, flag["tenant_id"], event_key, flag["flag_id"],
+                                 flag["external_url"] or flag["flag_url"], page_list)
+    if notice and notice["delivery"] == "immediate" and notice["mailed_at"] is None and not notice["waiting"]:
+        out["mail_notice_id"] = notice["notice_id"]
+    return out
+
+
+async def _finish_pool(pool, flag, state: str, reason: Optional[str], extra: Optional[dict] = None) -> dict:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            return await _finish(conn, flag, state, reason, extra)
+
+
+async def _republish_note(pool, flag_id: str, text: str) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(REPUBLISH_NOTE_SQL, flag_id, json.dumps({"error": text}))
+
+
+async def republish_page(pool, flag_id: str, *, read_secret, adapter_for) -> dict:
+    """Publish again the WordPress page of one ``tour_retired`` flag the retirement moved to draft, after a restore
+    marked it (``detail.restore_republish`` queued). Re-reads everything first (:func:`_republish_blocker`), then asks
+    WordPress: only a post that still exists and is still a draft is published; one the tenant removed, published or
+    scheduled is left alone. Every ending is recorded once on the flag and on the tenant's restored notice
+    (``pages_back`` / ``pages_kept``). Transient WordPress errors raise :class:`RepublishRefused` (retryable)."""
+    from services.acp_publish.dispatch import other_account
+
+    async with pool.acquire() as conn:
+        flag = await conn.fetchrow(REPUBLISH_FLAG_SQL, flag_id)
+        if flag is None:
+            return {"status": "skipped", "reason": "flag_not_found"}
+        mark = _detail(flag["detail"]).get(REPUBLISH_MARK) or {}
+        if not mark:
+            return {"status": "skipped", "reason": "not_marked"}
+        if mark.get("state") != "queued":
+            return {"status": "skipped", "reason": f"already_{mark.get('state')}"}
+        blocker = await _republish_blocker(conn, flag)
+        if blocker:
+            async with conn.transaction():
+                return await _finish(conn, flag, "kept" if blocker in KEPT_REASONS else "skipped", blocker)
+        integ = await conn.fetchrow(INTEGRATION_SQL, flag["tenant_id"])
+    if not integ or not integ["secret_key"]:
+        return await _finish_pool(pool, flag, "kept", "wordpress_not_connected")
+    creds = await read_secret(integ["secret_key"])
+    other = other_account("blog", creds, str(flag["external_id"] or ""), flag["external_url"])
+    if other:
+        return await _finish_pool(pool, flag, "kept", "other_site", {"site": other})
+    adapter = adapter_for(creds)
+    try:
+        remote = await adapter.post_status(flag["external_id"])
+    except Exception as exc:  # noqa: BLE001 — recorded on the flag, the job decides on the retry
+        await _republish_note(pool, flag_id, str(exc)[:300])
+        raise RepublishRefused(str(exc)[:300], permanent=False) from exc
+    if remote != "draft":
+        return await _finish_pool(pool, flag, "skipped", REMOTE_SKIP.get(remote, "changed_on_site"),
+                                  {"wordpress_status": remote})
+    try:
+        outcome = await adapter.set_published(flag["external_id"])
+    except Exception as exc:  # noqa: BLE001 — recorded on the flag, the job decides on the retry
+        await _republish_note(pool, flag_id, str(exc)[:300])
+        raise RepublishRefused(str(exc)[:300], permanent=False) from exc
+    extra = {"wordpress": outcome, "republished_at": datetime.now().astimezone().isoformat()}
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            try:
+                async with conn.transaction():          # a savepoint: a studio publish racing this one keeps its row
+                    await conn.execute(MARK_REPUBLISHED_SQL, flag["publish_id"], flag["tenant_id"], ACTOR)
+            except asyncpg.UniqueViolationError:
+                extra["publish_log_not_updated"] = "another live row of the same revision"
+            return await _finish(conn, flag, "republished", None, extra)
+
+
+async def give_up_republish(pool, flag_id: str, reason: str) -> dict:
+    """The job's last attempt failed (or WordPress refused for good): the page stays in draft and the tenant is told
+    (``pages_kept``)."""
+    async with pool.acquire() as conn:
+        flag = await conn.fetchrow(REPUBLISH_FLAG_SQL, flag_id)
+    if flag is None:
+        return {"status": "skipped", "reason": "flag_not_found"}
+    mark = _detail(flag["detail"]).get(REPUBLISH_MARK) or {}
+    if mark.get("state") != "queued":
+        return {"status": "skipped", "reason": f"already_{mark.get('state')}"}
+    return await _finish_pool(pool, flag, "kept", "wordpress_error", {"error": reason[:300]})
+
+
 def immediate_ids(result: dict[str, Any]) -> list[str]:
     return list(result.get("immediate_notices") or [])
 
 
-__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "SchemaMissing", "enqueue_due_drafts", "fan_out",
-           "immediate_ids", "move_to_draft", "notice_days", "page_message", "post_message"]
+__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "REPUBLISH_ATTEMPTS", "REPUBLISH_KIND",
+           "RepublishRefused", "SchemaMissing", "enqueue_due_drafts", "fan_out", "give_up_republish",
+           "immediate_ids", "move_to_draft", "notice_days", "page_message", "post_message", "republish_page"]

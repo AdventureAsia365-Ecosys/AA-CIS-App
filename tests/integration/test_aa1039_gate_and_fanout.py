@@ -560,6 +560,130 @@ async def test_restore_resolves_the_flags_and_writes_back_on_sale_notices(conn):
     assert deliveries == {w.posting: "immediate", w.quiet: "digest"}
 
 
+# ── a restore puts the drafted page back (S274 rehearsal) ───────────────────────────────────────────────────────
+
+class _WPRemote:
+    """A fake WordPress site: one post status per id."""
+
+    def __init__(self, status="publish"):
+        self.status = status
+        self.calls = []
+
+    async def set_draft(self, post_id):
+        self.calls.append(("draft", post_id))
+        self.status = "draft"
+        return "drafted"
+
+    async def post_status(self, post_id):
+        self.calls.append(("status", post_id))
+        return self.status
+
+    async def set_published(self, post_id):
+        self.calls.append(("publish", post_id))
+        self.status = "publish"
+        return "published"
+
+
+async def _wp_secret(name):
+    return {"wp_url": "https://agency.example", "username": "u", "app_password": "p"}
+
+
+async def _retire_and_draft(conn, w, site):
+    pool = l2._OneConnPool(conn)
+    await conn.execute("INSERT INTO shared.tenant_integrations (tenant_id, integration_type, config, secret_key) "
+                       "VALUES ($1, 'wordpress', '{}'::jsonb, 'tenant/wp-test') ON CONFLICT DO NOTHING", w.posting)
+    await tl.trash_master(conn, w.t.tour)
+    key = await _event_key(conn, w.t, "retired")
+    await fanout.fan_out(pool, key)
+    flag_id = await conn.fetchval("SELECT flag_id::text FROM acp_shared.content_compliance_flag "
+                                  "WHERE event_key = $1 AND channel = 'blog'", key)
+    await conn.execute("UPDATE acp_shared.content_compliance_flag SET draft_due_at = now() - interval '1 minute' "
+                       "WHERE flag_id = $1::uuid", flag_id)
+    out = await fanout.move_to_draft(pool, flag_id, read_secret=_wp_secret, adapter_for=lambda creds: site)
+    assert out["status"] == "drafted"
+    return flag_id
+
+
+async def _restore(conn, w):
+    await tl.restore_master(conn, w.t.tour)
+    await tl.activate_master(conn, w.t.tour)
+    key = await _event_key(conn, w.t, "restored")
+    return key, await fanout.fan_out(l2._OneConnPool(conn), key)
+
+
+@pytest.mark.asyncio
+async def test_restore_republishes_the_page_the_retirement_drafted(conn):
+    w = await _world(conn, "fan-republish")
+    site = _WPRemote()
+    flag_id = await _retire_and_draft(conn, w, site)
+    key, result = await _restore(conn, w)
+    assert result["status"] == "done" and result["pages_to_republish"] == 1 and result["republish_jobs"] == 1
+    job_key = f"{fanout.REPUBLISH_KIND}:{flag_id}"
+    job = await conn.fetchrow("SELECT kind, status, payload FROM shared.job WHERE idempotency_key = $1", job_key)
+    assert job["kind"] == trj.REPUBLISH_KIND and job["status"] == "queued"
+    notice = await conn.fetchrow("SELECT notice_id::text, delivery, summary FROM acp_shared.tenant_tour_notice "
+                                 "WHERE event_key = $1 AND tenant_id = $2::uuid", key, w.posting)
+    assert notice["delivery"] == "immediate"
+    assert [p["flag_id"] for p in json.loads(notice["summary"])["pages_returning"]] == [flag_id]
+    assert notice["notice_id"] not in result["immediate_notices"]          # waits for the page
+
+    again = await fanout.fan_out(l2._OneConnPool(conn), key)                # replay: nothing new, no second job
+    assert again["pages_to_republish"] == 0 and again["republish_jobs"] == 0
+    assert await conn.fetchval("SELECT count(*) FROM shared.job WHERE idempotency_key = $1", job_key) == 1
+
+    out = await fanout.republish_page(l2._OneConnPool(conn), flag_id, read_secret=_wp_secret,
+                                      adapter_for=lambda creds: site)
+    assert out["status"] == "republished" and out["mail_notice_id"] == notice["notice_id"]
+    assert site.calls[-2:] == [("status", "41"), ("publish", "41")]
+    row = await conn.fetchrow("SELECT status, unpublished_at, unpublished_by FROM acp_shared.publish_log "
+                              "WHERE publish_id = $1::uuid", w.wp)
+    assert row["status"] == "published" and row["unpublished_at"] is None and row["unpublished_by"] is None
+    flag = await conn.fetchrow("SELECT state, resolution, detail FROM acp_shared.content_compliance_flag "
+                               "WHERE flag_id = $1::uuid", flag_id)
+    mark = json.loads(flag["detail"])[fanout.REPUBLISH_MARK]
+    assert flag["state"] == "resolved" and flag["resolution"] == "drafted"
+    assert mark["state"] == "republished" and mark["event_key"] == key and mark["republished_at"]
+    summary = json.loads(await conn.fetchval("SELECT summary FROM acp_shared.tenant_tour_notice "
+                                             "WHERE notice_id = $1::uuid", notice["notice_id"]))
+    assert summary["pages_returning"] == [] and summary["pages_back"] == [{"url": "https://agency.example/lake-walk"}]
+
+    second = await fanout.republish_page(l2._OneConnPool(conn), flag_id, read_secret=_wp_secret,
+                                         adapter_for=lambda creds: site)
+    assert second == {"status": "skipped", "reason": "already_republished"}
+
+
+@pytest.mark.asyncio
+async def test_restore_leaves_a_page_the_tenant_published_themselves(conn):
+    w = await _world(conn, "fan-republish-own")
+    site = _WPRemote()
+    flag_id = await _retire_and_draft(conn, w, site)
+    await _restore(conn, w)
+    site.status = "publish"                                                  # the tenant put it back by hand
+    out = await fanout.republish_page(l2._OneConnPool(conn), flag_id, read_secret=_wp_secret,
+                                      adapter_for=lambda creds: site)
+    assert out["status"] == "skipped" and out["reason"] == "already_published"
+    assert ("publish", "41") not in site.calls
+    assert await conn.fetchval("SELECT status FROM acp_shared.publish_log WHERE publish_id = $1::uuid",
+                               w.wp) == "unpublished"
+
+
+@pytest.mark.asyncio
+async def test_a_page_drafted_by_an_older_cycle_is_not_resurrected(conn):
+    """retire -> draft -> restore (handled before this code: no mark) -> retire -> restore: the second restore undoes
+    only the second retirement, which drafted nothing, so the old page stays as it is."""
+    w = await _world(conn, "fan-republish-old")
+    site = _WPRemote()
+    flag_id = await _retire_and_draft(conn, w, site)
+    _, first = await _restore(conn, w)
+    assert first["pages_to_republish"] == 1
+    await conn.execute(f"UPDATE acp_shared.content_compliance_flag SET detail = detail - '{fanout.REPUBLISH_MARK}' "
+                       "WHERE flag_id = $1::uuid", flag_id)                 # as if restored by the code before
+    await tl.trash_master(conn, w.t.tour)
+    await fanout.fan_out(l2._OneConnPool(conn), await _event_key(conn, w.t, "retired"))
+    _, second = await _restore(conn, w)
+    assert second["status"] == "done" and second["pages_to_republish"] == 0 and second["republish_jobs"] == 0
+
+
 class _Ses:
     def __init__(self):
         self.sent = []

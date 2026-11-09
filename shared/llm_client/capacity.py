@@ -108,6 +108,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     "staff_directory_reconcile": None, "staff_invite_email": None, "supply_media_purge": None,
     "tenant_account_tick": None, "tenant_billing_tick": None, "tenant_provision": None,
     "tour_retirement_fanout": None, "retired_page_draft": None,
+    "restored_page_republish": None,   # AA-1039: a restore puts a drafted WordPress page back (WordPress + database)
     "tour_notice_email": None,
     "tour_graph_build": None, "tripplanner_purge": None, "writing_memory_kpi_weekly": None,
     "writing_memory_post_activation": None,

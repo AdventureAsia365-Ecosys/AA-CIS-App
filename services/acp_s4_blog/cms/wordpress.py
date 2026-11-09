@@ -168,6 +168,46 @@ class WordPressAdapter(CMSAdapter):
                                f"(HTTP {status_code}{': ' + message if message else ''})")
         raise RuntimeError(f"WP API update {status_code} returned an unexpected response: {body_text[:300]}")
 
+    async def post_status(self, post_id) -> str:
+        """AA-1039 (restore): the post's WordPress status now (``publish``, ``draft``, ``future``, ``pending``,
+        ``private``, ``trash``), or ``missing`` when WordPress itself says it no longer exists (404
+        rest_post_invalid_id, 410 rest_already_trashed). GET /wp/v2/posts/{id}?context=edit (an edit context, so a
+        draft is visible). Same AA-460 lesson: anything that is not a real post object or WordPress's own error code
+        raises, so the caller never acts on a host error page."""
+        resp = await safe_http.request("GET", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
+                                       params={"context": "edit"}, headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        body_text = resp.text()
+        parsed_body = _json_or_none(resp.headers.get("content-type", ""), body_text)
+        if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body \
+                and isinstance(parsed_body.get("status"), str):
+            return parsed_body["status"]
+        code, message = _wp_error(parsed_body)
+        if (status_code, code) in ((404, "rest_post_invalid_id"), (410, "rest_already_trashed")):
+            return "missing"
+        if status_code == 401 or code in ("rest_cannot_edit", "rest_forbidden", "rest_forbidden_context"):
+            raise RuntimeError("WordPress refused the read — the connected user cannot edit this post "
+                               f"(HTTP {status_code}{': ' + message if message else ''})")
+        raise RuntimeError(f"WP API read {status_code} returned an unexpected response: {body_text[:300]}")
+
+    async def set_published(self, post_id) -> str:
+        """AA-1039 (restore): publish again a page this system moved to draft when AA retired its tour (POST
+        /wp/v2/posts/{id} {"status": "publish"}). Returns "published"; the answer must be a real post object now
+        ``publish`` (AA-460), anything else raises."""
+        resp = await safe_http.request("POST", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
+                                       json={"status": "publish"}, headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        body_text = resp.text()
+        parsed_body = _json_or_none(resp.headers.get("content-type", ""), body_text)
+        if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body \
+                and parsed_body.get("status") == "publish":
+            return "published"
+        code, message = _wp_error(parsed_body)
+        if status_code == 401 or code in ("rest_cannot_edit", "rest_cannot_publish", "rest_forbidden"):
+            raise RuntimeError("WordPress refused the change — the connected user cannot publish this post "
+                               f"(HTTP {status_code}{': ' + message if message else ''})")
+        raise RuntimeError(f"WP API update {status_code} returned an unexpected response: {body_text[:300]}")
+
 
 def _json_or_none(content_type: str, body_text: str):
     if not content_type.startswith("application/json"):

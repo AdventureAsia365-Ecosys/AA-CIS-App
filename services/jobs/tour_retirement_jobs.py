@@ -1,4 +1,4 @@
-"""AA-1039 R6 slice 2 (root ADR 0019 d20) — the three job kinds of the tour retirement fan-out ($0, no LLM):
+"""AA-1039 R6 slice 2 (root ADR 0019 d20) — the four job kinds of the tour retirement fan-out ($0, no LLM):
 
 - ``tour_retirement_fanout``  one per ``retired`` / ``restored`` lifecycle event (idempotency key
   ``tour_retirement_fanout:<event idempotency_key>``): services/tour_lifecycle/fanout.fan_out (flags, cancelled
@@ -10,6 +10,10 @@
 - ``retired_page_draft``  one per open WordPress flag whose notice period ended (key ``retired_page_draft:<flag>``),
   enqueued due now by the sweep (never queued days ahead: the deploy gate and the migration idle check count queued
   rows): fanout.move_to_draft.
+- ``restored_page_republish``  one per WordPress page a ``retired_page_draft`` job moved to draft, when the restore
+  that undoes that retirement runs its fan-out (key ``restored_page_republish:<flag>``, inserted due now in the
+  fan-out transaction): fanout.republish_page puts the page back online when the tour, the piece and the remote draft
+  still allow it, then enqueues the tenant's restored-notice mail once no page of it is still waiting.
 - ``tour_notice_email``  the SES mail (services/tour_lifecycle/notice_mail.py): payload ``{"notice_id"}`` for one
   immediate notice, or ``{"digest_day"}`` for the daily digest (every unmailed notice of the last 14 days, one mail
   per tenant; queued once a UTC day from 08:00 by the sampler; it also takes an ``immediate`` notice left unmailed for
@@ -36,9 +40,11 @@ logger = structlog.get_logger()
 
 FANOUT_KIND = "tour_retirement_fanout"
 DRAFT_KIND = "retired_page_draft"
+REPUBLISH_KIND = fanout.REPUBLISH_KIND        # "restored_page_republish", inserted by the fan-out itself
 MAIL_KIND = "tour_notice_email"
 FANOUT_ATTEMPTS = 5
 DRAFT_ATTEMPTS = 4
+REPUBLISH_ATTEMPTS = fanout.REPUBLISH_ATTEMPTS
 MAIL_ATTEMPTS = 4
 DIGEST_HOUR_UTC = 8
 DIGEST_WINDOW_DAYS = 14
@@ -240,6 +246,52 @@ async def run_draft(ctx: JobContext) -> dict:
     return result
 
 
+async def _enqueue_notice_mail(ctx: JobContext, result: dict) -> Optional[str]:
+    """The tenant's restored notice no longer waits for a page: its mail now (the key makes a second enqueue a
+    no-op, and the digest stays the backstop)."""
+    notice_id = result.get("mail_notice_id")
+    if not notice_id:
+        return None
+    job_id, _ = await enqueue(ctx.pool, MAIL_KIND, {"notice_id": notice_id, "trigger": REPUBLISH_KIND},
+                              idempotency_key=f"{MAIL_KIND}:{notice_id}", parent_job_id=str(ctx.job_id),
+                              created_by=f"job:{REPUBLISH_KIND}")
+    return job_id
+
+
+@job_kind(REPUBLISH_KIND, concurrency=2, max_attempts=REPUBLISH_ATTEMPTS, expected_seconds=120)
+async def run_republish(ctx: JobContext) -> dict:
+    flag_id = (ctx.payload or {}).get("flag_id")
+    if not flag_id:
+        raise NonRetryable("payload.flag_id is required")
+    read_secret = ctx.resources.get("read_secret") or _read_secret
+    adapter_for = ctx.resources.get("wordpress") or _wordpress
+    try:
+        result = await fanout.republish_page(ctx.pool, str(flag_id), read_secret=read_secret,
+                                             adapter_for=adapter_for)
+    except fanout.DraftRefused as exc:
+        if exc.permanent or ctx.job.attempt >= ctx.job.max_attempts:
+            # the last try: the page stays in draft, the tenant's mail says so and goes out
+            given_up = await fanout.give_up_republish(ctx.pool, str(flag_id), exc.reason)
+            await _enqueue_notice_mail(ctx, given_up)
+            raise NonRetryable(f"page not put back: {exc.reason}") from exc
+        raise RuntimeError(f"page not put back yet: {exc.reason}") from exc
+    if result.get("status") == "republished":
+        from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+        try:
+            await write_audit_log(
+                ctx.pool, tenant_id=result["tenant_id"], actor=fanout.ACTOR,
+                action=TenantAuditAction.CONTENT_PUBLISHED, resource_type="content_piece",
+                resource_id=result["piece_id"],
+                details={"channel": "blog", "publish_id": result["publish_id"], "reason": "tour_restored",
+                         "success": True, "flag_id": str(flag_id)})
+        except Exception:  # noqa: BLE001 — the page is back; a lost audit row is logged only
+            logger.warning("restored_page_republish_audit_failed", flag_id=str(flag_id), exc_info=True)
+    mail_job = await _enqueue_notice_mail(ctx, result)
+    result = {**result, "mail_job": mail_job}
+    ctx.set_result(result)
+    return result
+
+
 async def _load_notices(pool, *, notice_id: Optional[str] = None) -> list[dict]:
     async with pool.acquire() as conn:
         if notice_id:
@@ -323,5 +375,6 @@ async def run_mail(ctx: JobContext) -> dict:
     return result
 
 
-__all__ = ["DRAFT_KIND", "FANOUT_KIND", "MAIL_KIND", "enqueue_daily_digest", "enqueue_due_drafts",
-           "enqueue_for_events", "requeue_schema_missing", "run_draft", "run_fanout", "run_mail", "sweep", "tick"]
+__all__ = ["DRAFT_KIND", "FANOUT_KIND", "MAIL_KIND", "REPUBLISH_KIND", "enqueue_daily_digest", "enqueue_due_drafts",
+           "enqueue_for_events", "requeue_schema_missing", "run_draft", "run_fanout", "run_mail", "run_republish",
+           "sweep", "tick"]
