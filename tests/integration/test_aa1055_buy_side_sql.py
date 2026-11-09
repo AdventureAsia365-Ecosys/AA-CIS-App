@@ -11,6 +11,7 @@ import os
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import asyncpg
 import pytest
@@ -157,8 +158,8 @@ async def test_landing_sweep_candidates(tx):
     tour = await _tour(tx)
     gone = await _tour(tx, active=False)
     await _segment(tx, tour, "zz1055_never", "Zarvok Lake")
-    await _segment(tx, tour, "zz1055_before", "Quellan Gorge", count=2, computed_at="2026-01-01T00:00:00Z")
-    await _segment(tx, tour, "zz1055_after", "Brindle Falls", count=1, computed_at="2026-12-01T00:00:00Z")
+    await _segment(tx, tour, "zz1055_before", "Quellan Gorge", count=2, computed_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    await _segment(tx, tour, "zz1055_after", "Brindle Falls", count=1, computed_at=datetime(2026, 12, 1, tzinfo=timezone.utc))
     await _segment(tx, gone, "zz1055_retired", "Ostrel Bay")
     await tx.execute("""INSERT INTO acp_contract.segment_research_log (canonical_place, market, tier, researched_at)
                         VALUES ('Quellan Gorge', 'US', 'serp', '2026-06-01'),
