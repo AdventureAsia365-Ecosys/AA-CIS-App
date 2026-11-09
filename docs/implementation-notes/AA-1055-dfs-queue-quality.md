@@ -71,5 +71,7 @@ SERP). The estimate also bounds the selection (`max_usd`), so the cap picked abo
   `estimate.unit_usd = {"volume_task": 0.06, "serp": 0.0006}` and about 2.4x more `places_selected` than before.
 - Run the report: `tools/ecs/ecsx.sh apps/AA-CIS-App/scripts/aa1055/research_quality.py JOB=<id>` (no write, no
   provider call).
+- `scripts/` is gitignored in this repo: the report script is tracked with `git add -f` (review fix pass; the first
+  push of this lane left it on disk only, so a clean checkout failed to import it in two test files).
 - `scripts/aa1058/ledger_attribution.py` should show no `dfs.(none)` / `dfs.unattributed` rows for balance reads after
   this deploy; the balance read appears as `dfs.dfs_balance.cis`.
