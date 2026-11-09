@@ -150,7 +150,8 @@ async def run_research(scope: ResearchScope, request: Request, x_admin_secret: s
     if balance is None or balance < needed:
         raise HTTPException(
             status_code=409,
-            detail=f"DataForSEO balance {balance} is below this run's capped estimate {needed}; top up or lower max_usd",
+            detail=(f"DataForSEO balance {balance} is below this run's capped estimate {needed}; "
+                    "top up or lower max_usd"),
         )
 
     job_id, _ = await enqueue(pool, JOB_KIND, {"markets": scope.markets, **_kwargs(scope)},

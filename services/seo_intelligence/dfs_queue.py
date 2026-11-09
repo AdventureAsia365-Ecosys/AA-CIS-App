@@ -5,7 +5,7 @@ highest price. Research is batch work nobody waits on, so it can use the Standar
 to 100 tasks (paid at post), ``tasks_ready`` lists the finished ones and ``task_get`` returns a result in the same
 shape as the live answer (both free). The audit (root docs/audits/2026-11-08-S273-session/dfs-cost-audit/design.vi.md
 section 6) expects about 0.0006 USD per SERP instead of 0.002 and about 2/3 of the live volume price: not verified,
-``scripts/aa1055_dfs_queue_trial.py`` reads the real cost of one task of each kind from DataForSEO's answer.
+``scripts/aa1055/dfs_queue_trial.py`` reads the real cost of one task of each kind from DataForSEO's answer.
 
 Which endpoint research uses is a setting: ``DFS_RESEARCH_QUEUE`` (env, ``live`` by default, ``standard`` to queue),
 overridden per job by the ``dfs_queue`` payload field. ``live`` keeps the code path of today unchanged.

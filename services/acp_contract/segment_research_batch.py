@@ -435,12 +435,14 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
                        pool, guard: _RunGuard, queue=None) -> dict:
     """Phase B. `queue` = a dfs_queue.StandardQueue, None = the live endpoint."""
     stats = {"volume_tasks": 0, "keywords_bought": 0, "keywords_cached": 0, "volume_splits": 0}
-    for loc, _name, lang in markets:
+
+    async def _market(loc: int, lang: str) -> None:
+        """One market: read the fresh store, buy the rest, log each place as soon as it is complete."""
         market = LOCATION_CODE_TO_MARKET[loc]
         active = [p for p in places if not p.failed and market in p.markets and p.keywords]
         need = sorted({kw for p in active for kw in p.keywords})
         if not need:
-            continue
+            return
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT keyword, search_volume FROM acp_contract.search_demand "
@@ -515,6 +517,9 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
         for chunk in _chunks([kw for kw in need if kw not in answers], VOLUME_TASK_MAX):
             await _buy(chunk)
         await _settle()
+
+    for loc, _name, lang in markets:
+        await _market(loc, lang)
     return stats
 
 

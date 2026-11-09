@@ -22,6 +22,7 @@ CLIENT_MODULE = "dataforseo_client"
 BUYERS = {
     "services/acp_contract/segment_research.py": "the segment research job: the one DataForSEO buyer",
     "services/acp_shared/question_topup.py": "the admin SERP top-up (scripts/aa779_serp_topup.py), kept by the design",
+    "scripts/aa1055/dfs_queue_trial.py": "the one-off Standard queue trial (1 volume + 1 SERP task, approved S273)",
 }
 # S1 still buys until PR 3 of the design (S1 reads the store only); remove each entry in that PR.
 S1_PENDING = {

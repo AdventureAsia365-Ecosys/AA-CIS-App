@@ -12,7 +12,7 @@ section 3, "Không ghi đè dữ liệu tháng 10"). This copies them into the s
 Merge, never overwrite: a volume is written only where the store has none or an older one, a SERP only where the row
 has no SERP date or an older one. A seed row created only for its SERP has no volume (search_volume NULL, retrieved_on
 at the epoch, so research still buys its volume). The market comes from the row's cache_key location code (S1 bought
-in the AA tenant's market, US). No DataForSEO or LLM call. Run by scripts/aa1055_seo_context_to_store.py (dry run by
+in the AA tenant's market, US). No DataForSEO or LLM call. Run by scripts/aa1055/seo_context_to_store.py (dry run by
 default).
 """
 from __future__ import annotations
@@ -146,7 +146,7 @@ async def run_copy(pool, *, apply: bool = False) -> dict:
         # and the next recompute pick them up). Best effort, after the commit.
         invalidated = 0
         from services.acp_contract.atom_ranking import invalidate_questions_cache_for_keyword
-        for kw in sorted({kw for (kw, _m), (paa, _r, _at) in plan.serps.items() if paa}):
+        for kw in sorted({seed for (seed, _m), (paa, _r, _at) in plan.serps.items() if paa}):
             try:
                 invalidated += await invalidate_questions_cache_for_keyword(conn, kw) or 0
             except Exception:  # noqa: BLE001 — a missed invalidation only delays the landing

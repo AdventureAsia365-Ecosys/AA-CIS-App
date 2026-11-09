@@ -3283,6 +3283,15 @@ the loop-skip freshness check — with NO tenant scoping at all. Since AA-631 it
 organic result domains of the same SERP call (`search_demand.serp_domains`, no extra DFS cost).
 When PAA or SERP data for a keyword is re-fetched, the `questions_count` / `contested` caches of
 every Segment claiming that keyword are reset to `NULL` (AA-630/631) — never recomputed inline.
+AA-1055 (CIS 393): segment research is the one buyer. Its scope is the Segments of active platform
+Masters (`v_active_tour_atoms`) minus the ranking exclusions; a place's keyword map is proposed once
+and kept in `acp_contract.place_keyword` (with Jev's verdict and the prompt version); volume is bought
+per market and logged per place in `segment_research_log` tier `volume`; each place gets ONE SERP
+(US / English, tier `serp`), whose PAA, related searches and domains sit on the keyword's US row
+(`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days. A run is bounded by a USD
+cap (not a place count), checked against the DFS balance, and enqueues one debounced platform
+recompute for the places it changed; the worker's night landing sweep catches Segments whose newest
+research never landed.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
 
 **Score** (Atom Ranking):
