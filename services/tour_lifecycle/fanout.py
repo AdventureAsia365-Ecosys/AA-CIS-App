@@ -44,6 +44,8 @@ from typing import Any, Optional
 import asyncpg
 import structlog
 
+from shared import tour_liveness as _tl
+
 from . import derivatives as _d
 
 logger = structlog.get_logger()
@@ -79,15 +81,21 @@ TOUR_NAME_SQL = """
         (SELECT rt.src_name FROM silver_aa_internal.raw_tours rt WHERE rt.tour_id = $1::uuid)) AS name
 """
 
-# The pieces of the tours ($1 uuid[]): the request's trip, else its atom's tour (the derivative rule of the service).
-_PIECES_CTE = """
+# The pieces of the tours ($1 uuid[]): the request's trip, else its atom's tour (the derivative rule of the service),
+# under the Subject rule (AA-1057 GAP 1, shared.tour_liveness.requests_about_tours_sql): a piece on a Segment Subject
+# whose Segment still has a served member on another tour is not about this event (no flag, no cancelled claim, no
+# mail); one whose representative tour left earlier is, when this event takes the last served member. Its flag then
+# names a tour of this key (`tour_id`), so the key's restore resolves it and the move to draft re-reads this key.
+_PIECES_CTE = f"""
     t AS (SELECT unnest($1::uuid[]) AS tour_id),
     piece AS (
-        SELECT cp.piece_id, cp.tenant_id, COALESCE(r.trip_id, ta.tour_id) AS tour_id
+        SELECT cp.piece_id, cp.tenant_id,
+               CASE WHEN {_tl.request_tour_sql()} IN (SELECT tour_id FROM t) THEN {_tl.request_tour_sql()}
+                    ELSE (SELECT tour_id FROM t ORDER BY tour_id LIMIT 1) END AS tour_id
           FROM acp_shared.content_piece cp
           JOIN acp_shared.angle_gate_request r ON r.request_id = cp.angle_gate_request_id AND r.tenant_id = cp.tenant_id
           LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = r.atom_id
-         WHERE COALESCE(r.trip_id, ta.tour_id) IN (SELECT tour_id FROM t))"""
+         WHERE {_tl.requests_about_tours_sql("SELECT tour_id FROM t")})"""
 
 # The live posts of the tours ($1) without an open tour_retired flag of an earlier event ($2 = this event's key): a
 # second retired event of a retired key (only the reason changed) never flags a post twice.
@@ -355,6 +363,15 @@ TOUR_STATE_SQL = """
      WHERE rt.tour_id = $1::uuid
 """
 
+# AA-1057 GAP 1: the piece's request is on a Segment Subject whose Segment has a served member again (another tour
+# came back or was added since the flag): the Subject is alive, so the page is not moved (resolved 'restored').
+PIECE_SUBJECT_ALIVE_SQL = f"""
+    SELECT {_tl.segment_served_member_sql('r')} AS alive
+      FROM acp_shared.content_piece cp
+      JOIN acp_shared.angle_gate_request r ON r.request_id = cp.angle_gate_request_id AND r.tenant_id = cp.tenant_id
+     WHERE cp.piece_id = $1::uuid
+"""
+
 RESOLVE_ONE_SQL = """
     UPDATE acp_shared.content_compliance_flag
        SET state = 'resolved', resolution = $2, resolved_at = now(), resolved_by = $3, updated_at = now(),
@@ -390,7 +407,8 @@ class DraftRefused(Exception):
 
 async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict:
     """Move the WordPress page of one open ``draft_after_notice`` flag to draft, after re-checking that it is still
-    due: the tour is still not served, the post is still live. `read_secret(name) -> dict` and
+    due: the tour is still not served, the piece's Segment Subject (if any) has no served member again (AA-1057 GAP 1),
+    the post is still live. `read_secret(name) -> dict` and
     `adapter_for(creds) -> WordPressAdapter` are injected (Secrets Manager / safe_http in the job, fakes in tests)."""
     from services.acp_publish.dispatch import other_account
 
@@ -405,6 +423,9 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict
         if (await conn.fetchval(TOUR_STATE_SQL, flag["tour_id"])) in ("served", None):
             await conn.execute(RESOLVE_ONE_SQL, flag_id, "restored", ACTOR, "{}")
             return {"status": "resolved", "resolution": "restored"}
+        if flag["piece_id"] and await conn.fetchval(PIECE_SUBJECT_ALIVE_SQL, flag["piece_id"]):
+            await conn.execute(RESOLVE_ONE_SQL, flag_id, "restored", ACTOR, json.dumps({"subject_alive": True}))
+            return {"status": "resolved", "resolution": "restored", "subject_alive": True}
         if flag["publish_status"] != "published" or flag["unpublished_at"] is not None:
             await conn.execute(RESOLVE_ONE_SQL, flag_id, "unpublished", ACTOR, "{}")
             return {"status": "resolved", "resolution": "unpublished"}
