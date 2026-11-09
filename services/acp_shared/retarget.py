@@ -31,8 +31,11 @@ Angle-gate requests whose atom is not a live atom of the platform or the tenant:
      same tour; moving the request away would be permanent).
 Every write is guarded on the value the plan read, so a concurrent pick or write is never overwritten.
 
-Mode: env ``RECOMPUTE_RETARGET_MODE`` = ``apply`` (default) | ``report`` (plan only, counts in the job result) |
-``off``. Ids only in results and logs, never tenant text.
+Mode: env ``RECOMPUTE_RETARGET_MODE`` = ``report`` (default: plan only, counts in the job result) | ``apply`` |
+``off``. The default stays ``report`` until the audited one-off has moved the rows the S273 audit listed (DRY RUN,
+then an apply pinned to the reviewed ids); a follow-up change makes ``apply`` the default. An ``apply`` run puts the
+restore list (``restore_rows``: ids and the old value of every row it changed, at most ``RESTORE_LOG_CAP`` per kind) in
+its result and log. Ids only in results and logs, never tenant text.
 """
 from __future__ import annotations
 
@@ -53,7 +56,8 @@ logger = structlog.get_logger()
 
 MODE_ENV = "RECOMPUTE_RETARGET_MODE"
 MODES = ("apply", "report", "off")
-DEFAULT_MODE = "apply"
+DEFAULT_MODE = "report"
+RESTORE_LOG_CAP = 200
 
 SUBJECT_OUTCOMES = ("retarget", "taken", "ambiguous", "no_match")
 REQUEST_OUTCOMES = ("repoint", "reseed", "ambiguous", "no_match", "no_atom", "paused")
@@ -101,7 +105,7 @@ TAKEN_ROUTES_SQL = """
 # and the served state of the old atom's tour family (NULL: never served or unknown).
 STALE_REQUESTS_SQL = """
     SELECT r.request_id::text AS request_id, r.tenant_id::text AS tenant_id, r.atom_id, r.status, r.channel,
-           r.trip_id::text AS trip_id, (r.route_segment_ids IS NOT NULL) AS is_route,
+           r.trip_id::text AS trip_id, r.route_segment_ids, (r.route_segment_ids IS NOT NULL) AS is_route,
            s.segment_id, tl.state AS key_state
       FROM acp_shared.angle_gate_request r
       LEFT JOIN acp_shared.subject s ON s.subject_id = r.subject_id AND s.tenant_id = r.tenant_id
@@ -144,6 +148,16 @@ def _segments(raw: Any) -> list[str]:
         except ValueError:
             return []
     return [str(s) for s in raw] if isinstance(raw, list) else []
+
+
+def _walk(raw: Any) -> Any:
+    """A stored ``route_segment_ids`` value as JSON data (asyncpg returns jsonb as text): None stays None."""
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw
+    return raw
 
 
 def _jaccard(a: Iterable[str], b: Iterable[str]) -> float:
@@ -195,8 +209,9 @@ def plan_route_subjects(subjects: list[dict], current: list[dict], taken: Iterab
 
 def plan_requests(requests: list[dict], old_atoms: dict[str, dict], candidates: list[dict]) -> list[dict]:
     """The AA-990 re-point decision per stale request, plus whether a Segment re-seed may follow:
-    {request_id, tenant_id, status, old_atom_id, new_atom_id, outcome, rule, segment_id, channel, may_reseed}.
-    ``may_reseed``: not re-pointed, on a Segment Subject, and the old atom's tour family is not paused."""
+    {request_id, tenant_id, status, old_atom_id, new_atom_id, outcome, rule, segment_id, channel, may_reseed,
+    old_trip_id, old_route_segment_ids}. ``may_reseed``: not re-pointed, on a Segment Subject, and the old atom's tour
+    family is not paused. ``old_trip_id`` / ``old_route_segment_ids``: what a re-seed overwrites (restore list)."""
     meta = {str(r["request_id"]): r for r in requests}
     out = []
     for d in ar.plan_repoints(requests, old_atoms, candidates):
@@ -205,6 +220,8 @@ def plan_requests(requests: list[dict], old_atoms: dict[str, dict], candidates: 
         r = meta[d["request_id"]]
         d["segment_id"] = r.get("segment_id")
         d["channel"] = r.get("channel")
+        d["old_trip_id"] = str(r["trip_id"]) if r.get("trip_id") else None
+        d["old_route_segment_ids"] = _walk(r.get("route_segment_ids"))
         d["may_reseed"] = (d["outcome"] != "repoint" and bool(r.get("segment_id"))
                            and r.get("key_state") != "paused")
         if d["outcome"] != "repoint" and r.get("segment_id") and r.get("key_state") == "paused":
@@ -269,7 +286,8 @@ async def _reseed(conn, d: dict) -> None:
     live = (await resolve_segment_aliases(conn, [d["segment_id"]])).get(d["segment_id"], d["segment_id"])
     atom, trip, walk = await _resolve_representative_atom(conn, UUID(d["tenant_id"]), live, None, d["channel"])
     if atom and atom != d["old_atom_id"]:
-        d.update(new_atom_id=atom, new_trip_id=trip, new_route_segment_ids=walk, outcome="reseed",
+        d.update(new_atom_id=atom, new_trip_id=str(trip) if trip else None, new_route_segment_ids=walk,
+                 outcome="reseed",
                  rule="segment_seed")
 
 
@@ -324,32 +342,53 @@ def _rowcount(status) -> int:
         return 0
 
 
+def _request_restore(d: dict) -> dict:
+    row = {"request_id": d["request_id"], "atom_id": d["old_atom_id"], "new_atom_id": d["new_atom_id"],
+           "outcome": d["outcome"]}
+    if d["outcome"] == "reseed":    # RESEED_REQUEST_SQL also overwrites trip_id and route_segment_ids
+        row.update(trip_id=d.get("old_trip_id"), route_segment_ids=d.get("old_route_segment_ids"),
+                   new_trip_id=d.get("new_trip_id"), new_route_segment_ids=d.get("new_route_segment_ids"))
+    return row
+
+
 def restore_rows(plan: Plan) -> dict:
-    """The rows an apply changes and their old values (ids only), to put a row back by hand."""
+    """The rows an apply changes and the old value of every column it writes (ids only), to put a row back by hand:
+    a Subject's ``route_id``; a request's ``atom_id``, and for a re-seed also its ``trip_id`` and
+    ``route_segment_ids`` (the Blog walk, JSON or None)."""
     return {
         "subjects": [{"subject_id": d["subject_id"], "route_id": d["old_route_id"], "new_route_id": d["new_route_id"]}
                      for d in plan.subject_changes],
-        "requests": [{"request_id": d["request_id"], "atom_id": d["old_atom_id"], "new_atom_id": d["new_atom_id"],
-                      "outcome": d["outcome"]} for d in plan.request_changes],
+        "requests": [_request_restore(d) for d in plan.request_changes],
     }
 
 
+def _capped_restore(plan: Plan) -> dict:
+    rows = restore_rows(plan)
+    out: dict[str, Any] = {k: v[:RESTORE_LOG_CAP] for k, v in rows.items()}
+    out["truncated"] = any(len(v) > RESTORE_LOG_CAP for v in rows.values())
+    return out
+
+
 async def run_retarget(pool, run_mode: Optional[str] = None) -> dict:
-    """The ``retarget`` recompute stage: plan, and in ``apply`` mode write the changes in one transaction."""
+    """The ``retarget`` recompute stage: plan, and in ``apply`` mode write the changes in one transaction. A run that
+    writes returns (and logs) the restore list of the rows it planned to change (``restore``)."""
     m = run_mode or mode()
     if m == "off":
         return {"mode": m}
     async with pool.acquire() as conn:
         plan = await build_plan(conn)
         changed = {"subjects": 0, "requests": 0}
-        if m == "apply" and (plan.subject_changes or plan.request_changes):
+        writes = m == "apply" and bool(plan.subject_changes or plan.request_changes)
+        if writes:
             async with conn.transaction():
                 changed = await apply_plan(conn, plan)
     out = {"mode": m, **plan.summary(), "changed": changed}
+    if writes:
+        out["restore"] = _capped_restore(plan)
     if plan.subjects or plan.requests:
         logger.info("recompute_retarget", **out)
     return out
 
 
-__all__ = ["DEFAULT_MODE", "MODE_ENV", "MODES", "Plan", "apply_plan", "build_plan", "fingerprint", "mode",
-           "plan_requests", "plan_route_subjects", "restore_rows", "run_retarget"]
+__all__ = ["DEFAULT_MODE", "MODE_ENV", "MODES", "Plan", "RESTORE_LOG_CAP", "apply_plan", "build_plan", "fingerprint",
+           "mode", "plan_requests", "plan_route_subjects", "restore_rows", "run_retarget"]

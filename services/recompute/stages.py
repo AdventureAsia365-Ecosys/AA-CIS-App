@@ -48,7 +48,7 @@ actually depend on:
   - `retarget` (AA-1057) — UPDATE in place of `acp_shared.subject.route_id` (a picked / used Route Subject on a
     superseded Route) and `acp_shared.angle_gate_request.atom_id` (a request on a replaced atom, or a Segment
     Subject's request whose seed tour retired), guarded on the old value (`services/acp_shared/retarget.py`; env
-    RECOMPUTE_RETARGET_MODE, default `apply`).
+    RECOMPUTE_RETARGET_MODE, default `report` until the audited one-off has run).
 
 The two named lists mirror the two old chains, plus the AA-1057 retarget after `route` and the AA-988 clean-up at
 the end of the platform pass:

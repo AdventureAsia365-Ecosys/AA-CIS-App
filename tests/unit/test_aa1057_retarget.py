@@ -75,9 +75,9 @@ def test_segment_ids_stored_as_a_json_string_are_read():
 
 # ── requests ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def _req(rid, atom, segment=None, key_state="served"):
+def _req(rid, atom, segment=None, key_state="served", trip=None, walk=None):
     return {"request_id": rid, "tenant_id": T1, "atom_id": atom, "status": "approved", "channel": "facebook",
-            "segment_id": segment, "key_state": key_state}
+            "segment_id": segment, "key_state": key_state, "trip_id": trip, "route_segment_ids": walk}
 
 
 def _atom(aid, place, source="src-1", day=2, scope="platform"):
@@ -101,6 +101,15 @@ def test_no_same_place_atom_on_a_segment_subject_may_reseed_unless_the_tour_is_p
     assert no_segment[0]["outcome"] == "no_match" and no_segment[0]["may_reseed"] is False
 
 
+def test_a_request_decision_keeps_the_old_trip_and_walk_a_reseed_overwrites():
+    old = {"old-1": _atom("old-1", "Lumen Lake")}
+    d = rt.plan_requests([_req("q1", "old-1", segment="seg-1", key_state="retired", trip=T2,
+                               walk='["seg-1", "seg-2"]')], old, [])[0]
+    assert (d["old_trip_id"], d["old_route_segment_ids"]) == (T2, ["seg-1", "seg-2"])
+    d = rt.plan_requests([_req("q1", "old-1", segment="seg-1", key_state="retired")], old, [])[0]
+    assert (d["old_trip_id"], d["old_route_segment_ids"]) == (None, None)
+
+
 def test_an_atom_that_is_live_again_is_left_out():
     out = rt.plan_requests([_req("q1", "a-1")], {"a-1": _atom("a-1", "Lumen Lake")}, [_atom("a-1", "Lumen Lake")])
     assert out == []
@@ -118,10 +127,20 @@ def test_plan_summary_counts_outcomes_and_pins_the_changed_ids():
 
 def test_restore_rows_carry_ids_and_old_values_only():
     plan = rt.Plan(subjects=[{"subject_id": "s1", "outcome": "retarget", "old_route_id": "r1", "new_route_id": "r2"}],
-                   requests=[{"request_id": "q1", "outcome": "repoint", "old_atom_id": "a1", "new_atom_id": "a2"}])
+                   requests=[{"request_id": "q1", "outcome": "repoint", "old_atom_id": "a1", "new_atom_id": "a2",
+                              "old_trip_id": T1, "old_route_segment_ids": None}])
     assert rt.restore_rows(plan) == {
         "subjects": [{"subject_id": "s1", "route_id": "r1", "new_route_id": "r2"}],
         "requests": [{"request_id": "q1", "atom_id": "a1", "new_atom_id": "a2", "outcome": "repoint"}]}
+
+
+def test_restore_rows_of_a_reseed_carry_every_column_it_overwrites():
+    plan = rt.Plan(requests=[{"request_id": "q2", "outcome": "reseed", "old_atom_id": "a3", "new_atom_id": "a4",
+                              "old_trip_id": T1, "old_route_segment_ids": ["x"], "new_trip_id": T2,
+                              "new_route_segment_ids": ["y", "z"]}])
+    assert rt.restore_rows(plan)["requests"] == [
+        {"request_id": "q2", "atom_id": "a3", "new_atom_id": "a4", "outcome": "reseed", "trip_id": T1,
+         "route_segment_ids": ["x"], "new_trip_id": T2, "new_route_segment_ids": ["y", "z"]}]
 
 
 # ── the stage: modes ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -152,12 +171,13 @@ def _conn():
 
 
 def test_mode_reads_the_env(monkeypatch):
+    # report until the audited one-off has moved the S273 rows (a follow-up makes apply the default)
     monkeypatch.delenv(rt.MODE_ENV, raising=False)
+    assert rt.mode() == "report" == rt.DEFAULT_MODE
+    monkeypatch.setenv(rt.MODE_ENV, "APPLY")
     assert rt.mode() == "apply"
-    monkeypatch.setenv(rt.MODE_ENV, "REPORT")
-    assert rt.mode() == "report"
     monkeypatch.setenv(rt.MODE_ENV, "nonsense")
-    assert rt.mode() == "apply"
+    assert rt.mode() == "report"
 
 
 @pytest.mark.asyncio
@@ -171,6 +191,7 @@ async def test_off_reads_nothing_and_report_writes_nothing(monkeypatch):
     out = await rt.run_retarget(_pool(conn), "report")
     assert out["mode"] == "report" and out["subjects"]["retarget"] == 1 and out["changed"] == {"subjects": 0,
                                                                                                "requests": 0}
+    assert "restore" not in out
     conn.execute.assert_not_awaited()
 
 
@@ -193,6 +214,20 @@ async def test_apply_writes_each_change_guarded_on_the_old_value(monkeypatch):
     assert calls[2] == (rt.RESEED_REQUEST_SQL, "q2", "a3", "a4", T2, '["x", "y"]')
     assert len(calls) == 3
     assert "AND s.route_id = $2" in rt.RETARGET_SUBJECT_SQL and "AND atom_id = $2" in rt.RESEED_REQUEST_SQL
+    # a run that writes leaves the restore trail of what it changed (ids and old values)
+    assert out["restore"]["truncated"] is False
+    assert [r["subject_id"] for r in out["restore"]["subjects"]] == ["s1"]
+    assert [(r["request_id"], r["atom_id"]) for r in out["restore"]["requests"]] == [("q1", "a1"), ("q2", "a3")]
+
+
+@pytest.mark.asyncio
+async def test_the_restore_trail_in_the_result_is_capped(monkeypatch):
+    monkeypatch.setattr(rt, "RESTORE_LOG_CAP", 2)
+    plan = rt.Plan(subjects=[{"subject_id": f"s{i}", "outcome": "retarget", "old_route_id": f"r{i}",
+                              "new_route_id": f"n{i}"} for i in range(3)])
+    monkeypatch.setattr(rt, "build_plan", AsyncMock(return_value=plan))
+    out = await rt.run_retarget(_pool(_conn()), "apply")
+    assert len(out["restore"]["subjects"]) == 2 and out["restore"]["truncated"] is True
 
 
 @pytest.mark.asyncio
@@ -215,13 +250,16 @@ def _script():
     return mod
 
 
-def test_script_apply_needs_both_expected_counts():
+def test_script_apply_needs_both_expected_counts_and_pins():
     s = _script()
     assert s.parse([]).apply is False
     with pytest.raises(SystemExit):
         s.parse(["--apply", "--expect-subjects", "7"])
-    a = s.parse(["--apply", "--expect-subjects", "7", "--expect-requests", "3"])
-    assert (a.expect_subjects, a.expect_requests) == (7, 3)
+    with pytest.raises(SystemExit):     # counts without the pins of the dry run
+        s.parse(["--apply", "--expect-subjects", "7", "--expect-requests", "3"])
+    a = s.parse(["--apply", "--expect-subjects", "7", "--expect-requests", "3", "--expect-subject-pin", "p1",
+                 "--expect-request-pin", "p2"])
+    assert (a.expect_subjects, a.expect_requests, a.expect_subject_pin, a.expect_request_pin) == (7, 3, "p1", "p2")
 
 
 @pytest.mark.asyncio
@@ -229,13 +267,21 @@ async def test_script_apply_refuses_when_the_plan_moved_and_verifies_on_a_new_co
     s = _script()
     plan = rt.Plan(subjects=[{"subject_id": "s1", "outcome": "retarget", "old_route_id": "r1", "new_route_id": "r2",
                               "rule": "identity"}])
-    monkeypatch.setattr(rt, "build_plan", AsyncMock(side_effect=[plan, plan, rt.Plan()]))
-    monkeypatch.setattr(rt, "apply_plan", AsyncMock(return_value={"subjects": 1, "requests": 0}))
+    pins = plan.summary()
+    s_pin, r_pin = pins["subjects"]["pin"], pins["requests"]["pin"]
+    # the same count on other ids (one row healed, another went stale): refused before any write
+    moved = rt.Plan(subjects=[{**plan.subjects[0], "subject_id": "s9"}])
+    apply_plan = AsyncMock(return_value={"subjects": 1, "requests": 0})
+    monkeypatch.setattr(rt, "build_plan", AsyncMock(side_effect=[plan, moved, plan, rt.Plan()]))
+    monkeypatch.setattr(rt, "apply_plan", apply_plan)
     with pytest.raises(SystemExit):
-        await s.apply(_conn(), 2, 0, None)
+        await s.apply(_conn(), 2, 0, s_pin, r_pin, None)
+    with pytest.raises(SystemExit, match="not the reviewed ones"):
+        await s.apply(_conn(), 1, 0, s_pin, r_pin, None)
+    apply_plan.assert_not_awaited()
     fresh = MagicMock()
     fresh.close = AsyncMock()
-    out = await s.apply(_conn(), 1, 0, None, reconnect=AsyncMock(return_value=fresh))
+    out = await s.apply(_conn(), 1, 0, s_pin, r_pin, None, reconnect=AsyncMock(return_value=fresh))
     assert out["changed"] == {"subjects": 1, "requests": 0} and out["after"]["subjects"]["stale"] == 0
     assert out["planned"]["rules"] == {"identity": 1}
     assert "AA1057-RESTORE" in capsys.readouterr().out
@@ -252,6 +298,11 @@ def test_subject_rule_fragments_use_the_served_member_rule_and_follow_merged_ids
     assert "ta_sm.tour_id NOT IN (SELECT tour_id FROM t)" in alive
     about = tl.requests_about_tours_sql("SELECT tour_id FROM t")
     assert about.count("EXISTS") >= 3 and "COALESCE(r.trip_id, ta.tour_id) IN (SELECT tour_id FROM t)" in about
+    # a paused representative is still a derivative of its pause (its queued T8 / T9 jobs are cancelled)
+    assert tl.tour_key_paused_sql("COALESCE(r.trip_id, ta.tour_id)") in about
     # the representative-tour rule is still the base of every request-tour read
     assert tl.request_tour_sql() in tl.REQUEST_TOURS_SQL
     assert "segment_id IS NOT NULL" in tl.LIVE_POST_TOUR_STATE_SQL
+    # the member substitution only for a retired representative: a paused one keeps its honest tour_paused 409
+    for sql in (tl.REQUEST_TOURS_SQL, tl.LIVE_POST_TOUR_STATE_SQL):
+        assert "state = 'retired'" in sql and "'paused'" not in sql

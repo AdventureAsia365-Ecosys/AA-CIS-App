@@ -199,6 +199,14 @@ def tour_served_sql(tour_col: str) -> str:
             f"         WHERE pt_ts.tour_id = {tour_col} AND {live_master_sql('pt_ts')})")
 
 
+def tour_key_paused_sql(tour_col: str) -> str:
+    """``EXISTS`` test: the catalog key of ``tour_col`` is paused now (gold_aa_internal.v_tour_liveness)."""
+    return (f"EXISTS (SELECT 1 FROM silver_aa_internal.raw_tours rt_kp\n"
+            f"          JOIN gold_aa_internal.v_tour_liveness tl_kp\n"
+            f"            ON tl_kp.source_id = (COALESCE(rt_kp.source_group_id, rt_kp.tour_id))::text\n"
+            f"         WHERE rt_kp.tour_id = {tour_col} AND tl_kp.state = 'paused')")
+
+
 def request_tour_sql(r: str = "r", ta: str = "ta") -> str:
     """The representative tour of request ``r``: its trip, else its atom's tour (``ta`` = its tour_atoms row)."""
     return f"COALESCE({r}.trip_id, {ta}.tour_id)"
@@ -207,25 +215,30 @@ def request_tour_sql(r: str = "r", ta: str = "ta") -> str:
 def requests_about_tours_sql(tours: str, *, r: str = "r", ta: str = "ta") -> str:
     """WHERE condition: request ``r`` is about the tours ``tours`` (a SQL list of tour ids, e.g. the versions of a key a
     lifecycle event changed) under the Subject rule. Either
-      1. its representative tour is one of them and its Segment Subject (if any) has no served member on another tour,
-         or
+      1. its representative tour is one of them and either its Segment Subject (if any) has no served member on another
+         tour, or that tour's key is paused (REQUEST_TOURS_SQL keeps a paused representative: the request is blocked
+         with tour_paused until the key is back, so a pause still cancels its queued T8 / T9 jobs), or
       2. its representative tour is another one that is not served (retired / paused earlier, while the Segment was
          still served elsewhere), its Segment has a member on these tours, and no served member outside them: the last
          member leaving ends the Subject, so the event is about the request after all.
     A request without a Segment Subject (a Route Subject, an atom request) follows its representative tour (1)."""
     rep = request_tour_sql(r, ta)
     alive = segment_served_member_sql(r, exclude_tours=tours)
-    return (f"(({rep} IN ({tours}) AND NOT {alive})\n"
+    return (f"(({rep} IN ({tours}) AND (NOT {alive} OR {tour_key_paused_sql(rep)}))\n"
             f"        OR ({r}.subject_id IS NOT NULL AND {rep} NOT IN ({tours}) AND NOT {tour_served_sql(rep)}\n"
             f"            AND {segment_member_on_tours_sql(r, tours)} AND NOT {alive}))")
 
 
 # The tour an angle-gate request is about: its trip, else the tour of its atom (the S248 probe / L2 derivative rule).
-# AA-1057 GAP 1: when that representative tour is paused or retired but the request's Segment Subject still has a
-# served member, the request is about that member's tour (served): the Subject rule. Same rows on both pools.
+# AA-1057 GAP 1: when that representative tour is RETIRED but the request's Segment Subject still has a served member,
+# the request is about that member's tour (served): the Subject rule; the `retarget` recompute stage then re-seeds the
+# request on that member. A PAUSED representative is not substituted: the retarget stage never re-seeds it (a pause or
+# a supersede waiting for its Master comes back on the same tour), so the request keeps the old atom, and the honest
+# answer is 409 tour_paused ("try again once it is out"), not a pass here and an atom_replaced 409 at T8 / T9.
+# Same rows on both pools.
 REQUEST_TOURS_SQL = f"""
     SELECT r.request_id::text AS request_id,
-           (CASE WHEN tl_rq.state IN ('paused', 'retired')
+           (CASE WHEN tl_rq.state = 'retired'
                  THEN COALESCE({segment_served_member_tour_sql('r')}, {request_tour_sql()})
                  ELSE {request_tour_sql()} END)::text AS tour_id
       FROM acp_shared.angle_gate_request r
@@ -239,9 +252,10 @@ REQUEST_TOURS_SQL = f"""
 # The served state of the tour a LIVE post (publish_log status 'published') is about, for staff routes on the main
 # pool (A4): the post's piece -> its angle-gate request (same tenant) -> REQUEST_TOURS_SQL's tour rule -> the key's
 # state in v_tour_liveness. NULL when the post is not live, has no tour, or the key has no state (never served).
-# AA-1057 GAP 1: 'served' while the request's Segment Subject still has a served member (the Subject rule).
+# AA-1057 GAP 1: 'served' while the request's Segment Subject still has a served member and the representative is
+# retired (the Subject rule, same substitution as REQUEST_TOURS_SQL; a paused representative reads 'paused').
 LIVE_POST_TOUR_STATE_SQL = f"""
-    SELECT CASE WHEN tl.state IN ('paused', 'retired') AND {segment_served_member_sql('r')}
+    SELECT CASE WHEN tl.state = 'retired' AND {segment_served_member_sql('r')}
                 THEN 'served' ELSE tl.state END AS state
       FROM acp_shared.publish_log pl
       JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id

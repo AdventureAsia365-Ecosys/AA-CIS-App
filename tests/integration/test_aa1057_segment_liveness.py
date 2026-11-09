@@ -170,6 +170,28 @@ async def test_retiring_the_representative_while_another_member_is_served_change
 
 
 @pytest.mark.asyncio
+async def test_pausing_the_representative_keeps_the_honest_tour_paused_answer(conn):
+    """A paused representative is not substituted (the retarget stage never re-seeds it): the write / goal gate
+    answers 409 tour_paused, not a pass followed by atom_replaced at T8 / T9; the pause is a derivative of the
+    request (its queued T8 / T9 jobs are cancelled), and A4 reads the post as paused."""
+    w = await _world(conn, "g1-paused")
+    await tl.pause_master(conn, w.a.tour)
+    assert (await l2._state(conn, w.a))[0] == "paused"
+
+    tours = await tlv.request_tours(conn, w.tenant, [w.request])
+    assert tours == {w.request: w.a.tour}
+    with pytest.raises(tlv.TourNotServedError) as err:
+        await tlv.ensure_served(conn, tours[w.request], "write new content")
+    assert err.value.code == tlv.TOUR_PAUSED
+    state = (await tlv.request_served_states(conn, w.tenant, [w.request]))[w.request]
+    assert state.state == "paused" and not state.served
+    assert w.tenant in await dv.tenant_derivatives(conn, [w.a.tour])
+    assert await conn.fetchval(tlv.LIVE_POST_TOUR_STATE_SQL, w.post) == "paused"
+    # the AA-subject gate still sees the Subject (a Segment with a served member)
+    assert (await sg.load_subject(conn, w.request, w.tenant)).ok
+
+
+@pytest.mark.asyncio
 async def test_a_request_without_a_segment_subject_still_follows_its_tour(conn):
     w = await _world(conn, "g1-plain")
     plain = str(await conn.fetchval(
@@ -285,6 +307,12 @@ async def test_retarget_moves_subjects_and_requests_onto_live_ids(conn):
 
     out = await rt.run_retarget(pool, "apply")
     assert out["changed"]["subjects"] >= 1 and out["changed"]["requests"] >= 2
+    # the restore trail of the write: the old route, the old atom, and for the re-seed the old trip and walk
+    restore = {r["request_id"]: r for r in out["restore"]["requests"]}
+    assert {"subject_id": subject, "route_id": base, "new_route_id": f"{base}:v2"} in out["restore"]["subjects"]
+    assert restore[replaced]["atom_id"] == gone and "trip_id" not in restore[replaced]
+    assert (restore[w.request]["atom_id"], restore[w.request]["trip_id"], restore[w.request]["route_segment_ids"],
+            restore[w.request]["new_trip_id"]) == (w.atom_a, w.a.tour, None, w.b.tour)
     assert await conn.fetchval("SELECT route_id FROM acp_shared.subject WHERE subject_id = $1::uuid",
                                uuid.UUID(subject)) == f"{base}:v2"
     assert await conn.fetchval("SELECT atom_id FROM acp_shared.angle_gate_request WHERE request_id = $1::uuid",
@@ -353,11 +381,16 @@ async def test_the_one_off_script_dry_run_writes_nothing_and_apply_matches_it(co
                 return None
         return _Keep()
 
+    s_pin, r_pin = dry["subjects"]["pin"], dry["requests"]["pin"]
     with pytest.raises(SystemExit):
-        await script.apply(conn, dry["subjects"]["retarget"] + 1, dry["requests"]["repoint"], None,
+        await script.apply(conn, dry["subjects"]["retarget"] + 1, dry["requests"]["repoint"], s_pin, r_pin, None,
                            reconnect=_same_conn)
     plan = await rt.build_plan(conn)
     n_s, n_r = len(plan.subject_changes), len(plan.request_changes)
-    out = await script.apply(conn, n_s, n_r, None, reconnect=_same_conn)
+    with pytest.raises(SystemExit, match="not the reviewed ones"):
+        await script.apply(conn, n_s, n_r, s_pin, "0" * 16, None, reconnect=_same_conn)
+    assert await conn.fetchval("SELECT atom_id FROM acp_shared.angle_gate_request WHERE request_id = $1::uuid",
+                               uuid.UUID(req)) == gone
+    out = await script.apply(conn, n_s, n_r, s_pin, r_pin, None, reconnect=_same_conn)
     assert out["changed"] == {"subjects": n_s, "requests": n_r}
     assert out["after"]["requests"]["repoint"] == 0 and out["after"]["requests"]["reseed"] == 0

@@ -1478,8 +1478,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     Route of the same tour family with the same day span, else the one sharing the most Segments; one already held
     by the tenant in that channel → left as is) and an angle-gate request off an atom that is no longer live (the
     AA-990 same-place re-point, else, for a Segment Subject whose old tour is not paused, the member a pick chooses
-    today: atom, `trip_id`, Blog walk). Guarded UPDATEs, never deletes. Mode env `RECOMPUTE_RETARGET_MODE` = `apply`
-    (default) | `report` | `off`; one-off audited run: `scripts/aa1057_retarget_once.py` (DRY RUN first).
+    today: atom, `trip_id`, Blog walk). Guarded UPDATEs, never deletes; a run that writes puts its restore list (ids
+    and every old value it overwrote) in its result. Mode env `RECOMPUTE_RETARGET_MODE` = `report` (default until the
+    audited one-off has run, then `apply`) | `apply` | `off`; one-off audited run: `scripts/aa1057_retarget_once.py`
+    (DRY RUN first; the apply is pinned to the reviewed ids).
   - **Segments follow a re-atomize (AA-988)**: the `segment` stage drops the member rows of its tour's dead atoms
     (soft-deleted by the re-atomize, or empty-day markers) in its write transaction; the `segment_gc` stage
     (`services/acp_contract/segment_gc.py`) deletes Segments nothing refers to any more (no member on a live atom, no
@@ -3244,8 +3246,10 @@ verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
 representative member (its seed atom and that atom's tour as `trip_id`), but the Subject lives while its Segment has
 any served member (the Slate's `segment_dead` rule). Every liveness gate on a request reads that rule through
 `shared/tour_liveness.py` (`segment_served_member_sql`, `requests_about_tours_sql`; a merged Segment id is read on its
-live id): the write / goal / publish 409s and served badges (`REQUEST_TOURS_SQL`: a paused / retired representative
-is replaced by a served member's tour), A4's live-post state, the derivatives (bell, job cancels, notices), the
+live id): the write / goal / publish 409s and served badges (`REQUEST_TOURS_SQL`: a retired representative is
+replaced by a served member's tour; a paused one is not, since the retarget stage never re-seeds it, so the request
+answers 409 `tour_paused` and its pause still cancels its queued T8 / T9 jobs), A4's live-post state, the derivatives
+(bell, job cancels, notices), the
 fan-out's flags / claims / mails (a request is about an event when the event takes the Segment's last served member,
 whichever member it was planned on) and the move to draft (resolved `restored` with `subject_alive` when a member is
 served again). A request with no Segment Subject follows its tour as before.
