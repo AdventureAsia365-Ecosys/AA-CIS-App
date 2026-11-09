@@ -45775,6 +45775,144 @@
         ]
       }
     },
+    "/admin/writing-memory/claim-shadow/summary": {
+      "get": {
+        "operationId": "summary_admin_writing_memory_claim_shadow_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 180,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_kind",
+            "required": false,
+            "schema": {
+              "default": "live",
+              "enum": [
+                "live",
+                "replay",
+                "all"
+              ],
+              "title": "Run Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "t2",
+                    "t9_blog",
+                    "t9_social"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Surface"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sample",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 200,
+              "minimum": 0,
+              "title": "Sample",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed",
+            "required": false,
+            "schema": {
+              "default": "aa1050",
+              "pattern": "^[A-Za-z0-9_-]{1,32}$",
+              "title": "Seed",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Summary Admin Writing Memory Claim Shadow Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Summary",
+        "tags": [
+          "admin-claim-shadow"
+        ]
+      }
+    },
     "/admin/writing-memory/disagreements": {
       "get": {
         "operationId": "list_disagreements_admin_writing_memory_disagreements_get",

@@ -37,6 +37,7 @@ from services.acp_shared.writing_progress import progress_show, progress_step
 import structlog
 
 from shared import tour_liveness as _tl
+from shared.llm_client.call_log import current_job_id
 from shared.llm_client.errors import stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
 from fastapi import Request
@@ -2789,6 +2790,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             "t9_write_and_check_done", request_id=str(request_id), status=status,
             attempts=attempt, cost_usd=total_cost,
         )
+        # AA-1050 W4 (root ADR 0020 D7): the pinned claim instrument in shadow beside F9, AFTER the piece and its status
+        # are written; it writes only shared.claim_shadow_verdict + the ledger and never raises. Off by default
+        # (CLAIM_SHADOW unset: returns before any read).
+        await _claim_shadow_after_write(
+            pool, piece_id=piece_id, tenant_id=tenant_id, job_id=current_job_id(), channel=channel,
+            content_text=content_text, seo_title=seo_meta.get("seo_title"),
+            meta_description=seo_meta.get("meta_description"), source_text=grounding_text, cta=cta,
+            gate_ledger=gate_ledger, status=status)
 
         # AA-770 (S233) — the AA-485 buffer retry (a second content_piece row per held request) is
         # gone: attempt 3 above is its replacement, on the same row.
@@ -3038,6 +3047,15 @@ async def _finalize_piece(
     if status in ("approved", "held"):
         await _subject_gate_after_write(pool, str(row["piece_id"]))
     return _row_to_dict(row)
+
+
+async def _claim_shadow_after_write(pool, **kw) -> None:
+    """AA-1050 W4: the claim-instrument shadow of the finished piece (never raises; unit tests stub this hook)."""
+    try:
+        from services.quality import claim_shadow
+        await claim_shadow.after_t9_piece(pool, **kw)
+    except Exception as e:  # noqa: BLE001 — inside the write's try: an error here must never fail the stored piece
+        logger.warning("t9_claim_shadow_hook_failed", error_type=type(e).__name__, error=str(e)[:200])
 
 
 async def _subject_gate_after_write(pool, piece_id: str) -> None:
