@@ -1035,6 +1035,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (AA-617), with correct Haiku 4.5 pricing and cache tokens (AA-635).
   - `shared.dfs_call_log` records each DataForSEO call, its real `cost` and cache hits (AA-618).
     The DFS cache TTL is 7 days (AA-625).
+  - Cost attribution (AA-1058): every `llm_call_log` row names its object through the gateway context. The job worker
+    binds the payload's `tour_id` / `piece_id` (`worker.job_attribution`) next to `bind_job`; `_execute_run_tour`,
+    `_revalidate_tour`, `run_a3_atomize`, `run_write_background` and the `a1_seo` Jev of the SEO prefetch bind theirs
+    (`call_log.bind_attribution` / `@attributed`). A row whose caller passes no `tour_id` / `content_piece_id` takes
+    the bound one (never on an eval-labelled row). Rules: `shared/llm_client/attribution.py` (s1_ / a1_ / t5_ /
+    a3_atomize -> tour, t9_ / t10_ -> piece, the A3 recompute Jev stages -> job); guard
+    `tests/unit/test_aa1058_cost_attribution.py`. An empty stage is written `unattributed` (logged); a ruled row
+    without its key logs `llm_call_log_attribution_missing`. DataForSEO rows always name stage and app: the caller's
+    stage, else the bound job kind, else `dfs_balance` for the balance read, else `unattributed`. S1 writes
+    `generated_content.prompt_version` (the registered version, else the writer's AA-289 hash), and the writer's
+    ledger row falls back to the same hash when the register has no version (`billed_fields(resp, prompt_version=)`).
+    Read-only coverage + cost-per-tour report: `scripts/aa1058/ledger_attribution.py` (run through the root ECS exec
+    tool).
   - `shared.dfs_balance_snapshot` + a daily Lambda alert on low DFS balance (AA-627).
   - `shared.cost_explorer_snapshot` holds real AWS Cost Explorer figures for acc2/acc3,
     fetched on demand through `POST /admin/cost-explorer/check` (AA-623). acc2 calls CE
@@ -1467,9 +1480,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `run(ctx, scope)` that declares the tables it reads, the tables it writes and its
     `write_strategy` (`segment`/`landing` upsert; `score`/`route` versioned-swap — the SQL itself
     is unchanged, only declared). The orchestrator `run_stages(names, scope, pool=, progress=)`
-    runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route, a tour's
-    publish / atom edit) and `PLATFORM_STAGES` (segment_catchup→landing→score→route→segment_gc: the AA-1059 catch-up,
-    platform score+route, then the AA-988 orphan-Segment clean-up).
+    runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route→retarget, a tour's
+    publish / atom edit) and `PLATFORM_STAGES` (segment_catchup→landing→score→route→retarget→segment_gc: the AA-1059
+    catch-up, platform score+route, the AA-1057 retarget, then the AA-988 orphan-Segment clean-up).
   - **Segment catch-up (AA-1059)**: the `segment` stage runs only per tour (a3 chain, tour-scope recompute), so a
     Master whose segment step failed (best-effort in the a3 chain), never ran, or read no atom (atomized while
     inactive, then restored) stayed without Segment / Score / Route. The platform pass now starts with
@@ -1482,7 +1495,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     The `recompute` job and the `a3_atomize` path (its inline segment matching) run their work
     only through `run_stages`; the thin wrappers `recompute_segment_score_route` /
     `recompute_rankings_and_routes` in `services/export/handler.py` map the stage results back to
-    the Jobs-page result keys (`{segment, ranking, route}` / `{ranking, route, segment_gc}`).
+    the Jobs-page result keys (`{segment, ranking, route, retarget}` / `{ranking, route, retarget, segment_gc}`).
+  - **Tenant ids follow a rewrite / supersede (AA-1057 GAP 2)**: the `retarget` stage
+    (`services/acp_shared/retarget.py`) moves a picked / used Route Subject off a superseded Route (the current
+    Route of the same tour family with the same day span, else the one sharing the most Segments; one already held
+    by the tenant in that channel → left as is) and an angle-gate request off an atom that is no longer live (the
+    AA-990 same-place re-point, else, for a Segment Subject whose old tour is not paused, the member a pick chooses
+    today: atom, `trip_id`, Blog walk). Guarded UPDATEs, never deletes; a run that writes puts its restore list (ids
+    and every old value it overwrote) in its result. Mode env `RECOMPUTE_RETARGET_MODE` = `report` (default until the
+    audited one-off has run, then `apply`) | `apply` | `off`; one-off audited run: `scripts/aa1057_retarget_once.py`
+    (DRY RUN first; the apply is pinned to the reviewed ids).
   - **Recompute is drain-safe and swept (AA-1056)**: the `recompute` job runs under ONE platform session advisory
     lock (`services/export/handler.job_session_lock`, class `recompute`, key `platform`; the generic body of the
     AA-993 G3 `a3_tour_lock`), has `release_delay_seconds` = the worker's ECS stopTimeout
@@ -3255,6 +3277,17 @@ and writes the "back on sale" notice only for tenants whose latest notice is `re
 CIS 360 is applied the fan-out fails retryable and the sampler re-queues those jobs once the tables exist.
 Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
 verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
+**Subject rule for Segment Subjects (AA-1057 GAP 1)**: a request on a Segment Subject is planned on one
+representative member (its seed atom and that atom's tour as `trip_id`), but the Subject lives while its Segment has
+any served member (the Slate's `segment_dead` rule). Every liveness gate on a request reads that rule through
+`shared/tour_liveness.py` (`segment_served_member_sql`, `requests_about_tours_sql`; a merged Segment id is read on its
+live id): the write / goal / publish 409s and served badges (`REQUEST_TOURS_SQL`: a retired representative is
+replaced by a served member's tour; a paused one is not, since the retarget stage never re-seeds it, so the request
+answers 409 `tour_paused` and its pause still cancels its queued T8 / T9 jobs), A4's live-post state, the derivatives
+(bell, job cancels, notices), the
+fan-out's flags / claims / mails (a request is about an event when the event takes the Segment's last served member,
+whichever member it was planned on) and the move to draft (resolved `restored` with `subject_alive` when a member is
+served again). A request with no Segment Subject follows its tour as before.
 **AA-subject gate** (AA-1039 R6, d21; `services/acp_shared/subject_gate.py`, no LLM): when T9 finishes a piece
 (`_finalize_piece`) and again right before `POST /v1/publish-log/{id}/publish`, a piece must be about a served AA
 tour, a live AA atom or a Slate Segment with a live member (brand content with no sales link and a non-sales goal is
@@ -3305,6 +3338,16 @@ the loop-skip freshness check — with NO tenant scoping at all. Since AA-631 it
 organic result domains of the same SERP call (`search_demand.serp_domains`, no extra DFS cost).
 When PAA or SERP data for a keyword is re-fetched, the `questions_count` / `contested` caches of
 every Segment claiming that keyword are reset to `NULL` (AA-630/631) — never recomputed inline.
+AA-1055 (CIS 393): segment research is the one buyer. Its scope is the Segments of active platform
+Masters (`v_active_tour_atoms`) minus the ranking exclusions; a place's keyword map is proposed once
+and kept in `acp_contract.place_keyword` (with Jev's verdict and the prompt version); volume is bought
+per market and logged per place in `segment_research_log` tier `volume`; each place gets ONE SERP
+(US / English, tier `serp`), whose PAA, related searches and domains sit on the keyword's US row
+(`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days. A run is bounded by a USD
+cap (not a place count, at most 50 USD) that is also its hard DFS spend limit, checked against the
+DFS balance; the per-place ReAct loop strategy is retired. A run enqueues one debounced platform
+recompute for the places it changed (more than 300 Segments outside the night window wait for the
+sweep); the worker's night landing sweep catches Segments whose newest research never landed.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
 
 **Score** (Atom Ranking):
@@ -3331,7 +3374,8 @@ Since AA-914 every reader of that copy (Slate pick, T8 angles, T9 write, admin r
 `services/acp_shared/route_guard.py`: a merged id is followed to its live Segment, and a Segment counts
 only when the request's trip has a live member atom in it; every dropped id is logged
 (`route_segment_dropped`). A pick or regenerate reads only the current Route version
-(`superseded_at IS NULL`); a Subject still on a superseded Route is not pickable.
+(`superseded_at IS NULL`); a Subject still on a superseded Route is not pickable. A picked / used one is moved to the
+current version by the `retarget` recompute stage (AA-1057).
 _Avoid_: itinerary segment, leg, journey (that's Hub).
 
 **Hub**:

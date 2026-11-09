@@ -47,19 +47,24 @@ class DFSCallError(Exception):
         return self.message
 
 
-def _dfs_status_error(data: dict) -> DFSCallError | None:
-    """Return a DFSCallError when a 200 response carries a failed top-level or task status."""
+def _dfs_status_error(data: dict, task_ok: tuple[int, ...] = (DFS_OK,)) -> DFSCallError | None:
+    """Return a DFSCallError when a 200 response carries a failed top-level or task status.
+
+    AA-1055: ``task_ok`` lists the task status codes that are not a failure. A live call answers 20000; a Standard
+    queue ``task_post`` answers 20100 ("Task Created") for every task it accepted (services/seo_intelligence/
+    dfs_queue.py). Every task of the body is read (a queue post carries up to 100), the top level must be 20000."""
     if not isinstance(data, dict):
         return DFSCallError("DataForSEO returned a non-object body")
-    codes = [data.get("status_code")]
-    tasks = data.get("tasks") or []
-    if tasks and isinstance(tasks[0], dict):
-        codes.append(tasks[0].get("status_code"))
-        message = tasks[0].get("status_message") or data.get("status_message")
-    else:
-        message = data.get("status_message")
-    for code in codes:
-        if code is not None and code != DFS_OK:
+    top = data.get("status_code")
+    if top is not None and top != DFS_OK:
+        return DFSCallError(f"DataForSEO status {top}: {data.get('status_message')}",
+                            fatal=str(top).startswith(_FATAL_DFS_PREFIXES), status_code=top)
+    for task in data.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        code = task.get("status_code")
+        if code is not None and code not in task_ok:
+            message = task.get("status_message") or data.get("status_message")
             return DFSCallError(f"DataForSEO status {code}: {message}",
                                 fatal=str(code).startswith(_FATAL_DFS_PREFIXES), status_code=code)
     return None
@@ -114,22 +119,31 @@ class DataForSEOClient:
         # AA-642 (S0): why the last fetch_all stopped before its last sub-call ({"reason": "budget" | "fatal",
         # "error": ..., "at": <step>}), None when it ran every step. A stopped result is partial: never cache it.
         self.last_stop: dict | None = None
+        # AA-1055: why the caller buys (e.g. {"job": "segment_research", "tier": "serp"}), written to the meta of
+        # every shared.dfs_call_log row this client writes. None = no meta (the old rows).
+        self.meta: dict | None = None
 
     def _log_live(self, endpoint: str, response: dict, keyword: str = None,
-                  location_code: int = None, keyword_count: int = None, latency_ms: int = None) -> None:
+                  location_code: int = None, keyword_count: int = None, latency_ms: int = None,
+                  task_ok: tuple[int, ...] = (DFS_OK,), meta: dict = None) -> None:
         """AA-618 — record one live DFS call (fetched_live=True) with the real cost from the
         response. Fire-and-forget; never raises into the fetch path. AA-804: with its latency, and a body whose
-        status is not 20000 is written as refused (auth / payment) or error, with the DFS message."""
+        status is not 20000 is written as refused (auth / payment) or error, with the DFS message.
+        AA-1055: ``task_ok`` = the task codes that are a success (a queue post: 20100); ``meta`` is merged over the
+        client's ``meta``."""
         cost = extract_cost(response)
         if self.budget is not None:
             self.budget.charge(cost if cost is not None else DFS_CALL_ESTIMATE_USD.get(endpoint, 0.0))
-        status_err = _dfs_status_error(response)
+        status_err = _dfs_status_error(response, task_ok)
+        merged = {**(self.meta or {}), **(meta or {})} or None
+        kwargs = {"meta": merged} if merged else {}
         record_dfs_call_sync(
             endpoint=endpoint, fetched_live=True, cost_usd=cost,
             tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
             location_code=location_code, keyword_count=keyword_count,
             status="ok" if status_err is None else ("refused" if status_err.fatal else "error"),
             latency_ms=latency_ms, error=str(status_err) if status_err is not None else None, stage=self.stage,
+            **kwargs,
         )
 
     def _log_failed(self, endpoint: str, *, status: str, error: str, keyword: str = None,
@@ -148,12 +162,13 @@ class DataForSEOClient:
             logger.warning("dfs_failed_call_log_failed", endpoint=endpoint, error=str(e)[:200])
 
     def _precheck(self, endpoint: str, *, keyword: str = None, location_code: int = None,
-                  keyword_count: int = None) -> None:
+                  keyword_count: int = None, tasks: int = 1) -> None:
         """AA-649 — raise BudgetExceeded before a paid call that would breach the run's budget. AA-804: the refusal
-        writes its 0 USD row (status refused)."""
+        writes its 0 USD row (status refused). AA-1055: ``tasks`` = how many paid tasks the request carries (a queue
+        post sends up to 100)."""
         if self.budget is not None:
             try:
-                self.budget.check(DFS_CALL_ESTIMATE_USD.get(endpoint, 0.1))
+                self.budget.check(DFS_CALL_ESTIMATE_USD.get(endpoint, 0.1) * max(tasks, 1))
             except BudgetExceeded as e:
                 self._log_failed(endpoint, status="refused", error=f"budget: {e}"[:500], keyword=keyword,
                                  location_code=location_code, keyword_count=keyword_count)

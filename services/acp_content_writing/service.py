@@ -37,7 +37,7 @@ from services.acp_shared.writing_progress import progress_show, progress_step
 import structlog
 
 from shared import tour_liveness as _tl
-from shared.llm_client.call_log import current_job_id
+from shared.llm_client.call_log import attributed, current_job_id
 from shared.llm_client.errors import stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
 from fastapi import Request
@@ -2080,6 +2080,8 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
             "cost_usd": cost_usd}
 
 
+# AA-1058: every T9 / T10 ledger row of the piece (writer, repairs, FAQ fit, judges, claims) names the piece.
+@attributed(content_piece_id=lambda *a, **k: k["piece_id"] if "piece_id" in k else a[1])
 async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, pool) -> None:
     """The write/rewrite + T10-check loop — UNCHANGED body from the pre-AA-466 single-function
     write_and_check(), just reading its inputs from `context` (built by start_write()) instead

@@ -203,12 +203,18 @@ async def test_suggestions_failure_raises_place_failed():
 
 # ── run_segment_research: scope + cap + dry run (AA-646) ──────────────────────────────────────
 
+def _scope_rows(*places):
+    return [{"segment_id": f"s-{p}", "canonical_place": p, "canonical_action": "explore", "activity_types": []}
+            for p in places]
+
+
 @pytest.mark.asyncio
 async def test_dry_run_makes_no_dfs_or_llm_call_and_applies_cap():
     pool, conn = _pool()
     conn.fetch = AsyncMock(side_effect=[
-        [{"canonical_place": p, "canonical_action": "explore"} for p in ("a", "b", "c")],  # scope
-        [], [], [],                                                                          # stale x3
+        _scope_rows("Zarvok Lake", "Melnith Gorge", "Quorra Temple"),   # scope (v_active_tour_atoms)
+        [],                           # fresh research log rows
+        [],                           # stored keyword maps
     ])
     with patch.object(sr, "DataForSEOClient") as m_client, patch.object(sr, "LLMClient") as m_llm:
         result = await sr.run_segment_research({"countries": ["US"]}, pool, max_places=2, dry_run=True)
@@ -227,21 +233,28 @@ async def test_country_scope_uses_scoped_query():
     conn.fetch = AsyncMock(return_value=[])
     await sr.run_segment_research({"countries": ["US"]}, pool, country="Bhutan", max_places=5, dry_run=True)
     sql, tour_ids, country = conn.fetch.await_args_list[0].args
-    assert "atom_segment_member" in sql and "raw_tours" in sql
+    assert "v_active_tour_atoms" in sql and "raw_tours" in sql
     assert tour_ids is None and country == "Bhutan"
 
 
 # ── admin endpoint validation ─────────────────────────────────────────────────────────────────
 
-def test_admin_scope_rejects_unknown_market_and_uncapped_runs():
+def test_admin_scope_rejects_unknown_market_and_bounds_the_usd_cap():
     from pydantic import ValidationError
 
-    from api.routers.admin_segment_research import MAX_PLACES_PER_RUN, ResearchScope
+    from api.routers.admin_segment_research import MAX_USD_PER_RUN, ResearchScope
 
-    assert ResearchScope(markets=["us"], max_places=10).markets == ["US"]
+    scope = ResearchScope(markets=["us"])
+    assert scope.markets == ["US"]
+    # AA-1055: no place cap by default, suggestions off, both tiers, endpoint from the setting
+    assert scope.max_places is None and scope.use_suggestions is False
+    assert scope.tiers == ["volume", "serp"] and scope.dfs_queue is None
+    assert ResearchScope(markets=["US"], max_places=5000).max_places == 5000
     with pytest.raises(ValidationError):
-        ResearchScope(markets=["XX"], max_places=10)
+        ResearchScope(markets=["XX"])
     with pytest.raises(ValidationError):
-        ResearchScope(markets=["US"], max_places=MAX_PLACES_PER_RUN + 1)
+        ResearchScope(markets=["US"], max_usd=MAX_USD_PER_RUN + 1)
     with pytest.raises(ValidationError):
-        ResearchScope(markets=["US"])  # max_places is mandatory
+        ResearchScope(markets=["US"], tiers=["paa"])
+    with pytest.raises(ValidationError):
+        ResearchScope(markets=["US"], dfs_queue="priority")

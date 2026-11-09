@@ -707,9 +707,12 @@ async def precompute_question_landings(
                      asg.questions_count
         """)
 
+        # AA-1055: a row that holds a bought SERP lands its PAA even before its own market's volume is measured (one
+        # SERP per place, stored on the SERP-market row, which may have no volume yet: CIS 393 paa_retrieved_on).
         demand_rows = await conn.fetch("""
             SELECT keyword, market, people_also_ask
-            FROM acp_contract.search_demand WHERE search_volume IS NOT NULL
+            FROM acp_contract.search_demand
+            WHERE search_volume IS NOT NULL OR paa_retrieved_on IS NOT NULL
         """)
         paa_tuples: list[tuple[str, str, list[str]]] = []
         for r in demand_rows:
@@ -817,11 +820,33 @@ def exclusion_after_pick(place: str, rule_reason: str | None, pick: str | None) 
     return rule_reason
 
 
-async def resolve_exclusions(pool, rows) -> dict[str, str | None]:
+async def _cached_type_picks(pool, moments: list[str]) -> list[tuple[str, str | None]]:
+    """(moment, stored enforced pick or None) for each moment, without a Jev call (AA-1055)."""
+    from shared.llm_client.decide import platform_verdicts
+
+    keys = {f"type:{m[:300]}": m for m in moments}
+    try:
+        async with pool.acquire() as conn:
+            got = await platform_verdicts(conn, [TYPE_Q], list(keys))
+    except Exception as exc:  # noqa: BLE001 — no stored pick = the rule's answer, like a failed decide()
+        logger.warning("segment_type_cached_picks_failed", error=str(exc)[:200])
+        got = {}
+    out = []
+    for key, moment in keys.items():
+        v = got.get((TYPE_Q, key))
+        out.append((moment, v.choice if v is not None and v.enforced and v.zone == "accept" else None))
+    return out
+
+
+async def resolve_exclusions(pool, rows, *, cached_only: bool = False) -> dict[str, str | None]:
     """segment_id -> exclusion reason, for rows with segment_id/canonical_place/canonical_action and
     `activity_types` (the member atoms' types). Jev is asked only where the rule and the atoms
     disagree (a Segment with no typed atom has no second opinion); one Verdict per distinct moment,
-    cached by decide()."""
+    cached by decide().
+
+    AA-1055 — `cached_only=True` never asks Jev: the stored pick of each disputed moment is read the way the decide()
+    cache reads it (decide.platform_verdicts); a moment with no stored pick keeps the rule's answer, exactly as a
+    failed decide() does. For a free preview (segment research dry run) and the landing sweep."""
     out: dict[str, str | None] = {}
     disputed: dict[str, list[str]] = {}
     for row in rows:
@@ -833,16 +858,21 @@ async def resolve_exclusions(pool, rows) -> dict[str, str | None]:
             disputed.setdefault(landing_moment(place, action), []).append(row["segment_id"])
     if not disputed:
         return out
-    sem = asyncio.Semaphore(TYPE_CONCURRENCY)
+    if cached_only:
+        picks = await _cached_type_picks(pool, list(disputed))
+    else:
+        sem = asyncio.Semaphore(TYPE_CONCURRENCY)
 
-    async def _one(moment: str):
-        async with sem:
-            dec = await decide(TYPE_STAGE, f"type:{moment[:300]}", {"moment": moment}, [TYPE_Q], pool=pool)
-        return moment, dec.choice(TYPE_Q)
+        async def _one(moment: str):
+            async with sem:
+                dec = await decide(TYPE_STAGE, f"type:{moment[:300]}", {"moment": moment}, [TYPE_Q], pool=pool)
+            return moment, dec.choice(TYPE_Q)
+
+        picks = await asyncio.gather(*[_one(m) for m in disputed])
 
     changed = 0
     by_id = {r["segment_id"]: r for r in rows}
-    for moment, pick in await asyncio.gather(*[_one(m) for m in disputed]):
+    for moment, pick in picks:
         for segment_id in disputed[moment]:
             new = exclusion_after_pick(by_id[segment_id]["canonical_place"] or "", out[segment_id], pick)
             changed += new != out[segment_id]

@@ -258,8 +258,9 @@ def build_row(request, resp, *, model: str, connection_key: Optional[str] = None
         "reply_withheld": withheld,
         "tenant_id": _uuid_or_none(call_log.current_tenant_id()),
         "job_id": _uuid_or_none(call_log.current_job_id()),
-        "content_piece_id": _uuid_or_none(owner.get("content_piece_id")),
-        "tour_id": _uuid_or_none(owner.get("tour_id")),
+        # AA-1058: what bind_owner did not name falls back to call_log's bound attribution (the ledger row's ids)
+        "content_piece_id": _uuid_or_none(owner.get("content_piece_id") or call_log.current_content_piece_id()),
+        "tour_id": _uuid_or_none(owner.get("tour_id") or call_log.current_tour_id()),
         "eval_run": label[1] if label else None,
         "eval_item": owner.get("eval_item"),
     }

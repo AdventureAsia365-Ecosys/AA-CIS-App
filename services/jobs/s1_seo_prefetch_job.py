@@ -59,7 +59,7 @@ async def run(ctx: JobContext) -> dict:
 
         async def _progress(**f):
             await ctx.progress(phase="fetching", **f)
-        client = DataForSEOClient(tenant_id=tenant_id, budget=budget)
+        client = DataForSEOClient(tenant_id=tenant_id, budget=budget, stage="s1_seo_prefetch")   # AA-1058
         summary = await prefetch(conn, rows, tenant_id=tenant_id, location_code=location_code,
                                  language_code=language_code, client=client, progress=_progress,
                                  pool=ctx.pool)

@@ -54,6 +54,7 @@ async def test_recompute_rankings_and_routes_runs_every_market_then_routes():
          patch("services.acp_contract.route_detection.run_route_detection",
                new=AsyncMock(return_value={"routes": 0})) as rrd, \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1, "UK": 2}), \
+         patch("services.acp_shared.retarget.run_retarget", new=AsyncMock(return_value={})), \
          patch("services.acp_contract.segment_gc.run_segment_gc", new=AsyncMock(return_value={})), \
          patch("services.recompute.segment_catchup.run_segment_catchup",
                new=AsyncMock(return_value={"status": "ok"})):

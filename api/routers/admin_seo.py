@@ -14,7 +14,8 @@ Data sources, merged (the main reason the old tab looked poor):
   - acp_contract.search_demand       — researched keywords + PAA + volume per market (US/UK/AU/DE/FR/NL).
   - silver_aa_internal.seo_context   — S1 per-tour keyword ideas (`:ideas_v3`).
   - gold_aa_internal.published_tours — seo_keywords_used + master coverage (join raw_tours for country).
-  - acp_contract.segment_research_log — research freshness (FRESH_FOR = 182 days).
+  - acp_contract.segment_research_log — research freshness of the volume tier (FRESH_FOR = 365 days, AA-1055; the
+                                        'serp' tier rows are left out of these counts).
 
 NOTE: search_demand carries only `search_volume` — there is no CPC / competition data anywhere in
 the pipeline, so the Keywords tab does not promise those columns.
@@ -37,7 +38,7 @@ router = APIRouter(prefix="/admin/seo-intelligence", tags=["admin-seo"],
 
 _AA_INTERNAL = "00000000-0000-0000-0000-000000000001"
 # The research cache's own freshness horizon (services/acp_contract/segment_research.py FRESH_FOR).
-_FRESH_DAYS = 182
+_FRESH_DAYS = 365  # AA-1055 (was 182)
 
 # ── market codes (seed_builder.DFS_LOCATION_MAP — the 6 targeted buyer markets) ─────────────
 _MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"]
@@ -88,13 +89,15 @@ FROM acp_contract.search_demand
 
 _FRESHNESS_SQL = """
 SELECT
-    (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log)        AS places_researched,
     (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log
-       WHERE researched_at < now() - make_interval(days => $1))                            AS places_expired,
+       WHERE tier = 'volume')                                                              AS places_researched,
+    (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log
+       WHERE tier = 'volume' AND researched_at < now() - make_interval(days => $1))        AS places_expired,
     (SELECT percentile_cont(0.5) WITHIN GROUP (
                 ORDER BY extract(epoch FROM (now() - researched_at)) / 86400)
-       FROM acp_contract.segment_research_log)                                             AS median_age_days,
-    (SELECT max(researched_at) FROM acp_contract.segment_research_log)                     AS last_researched
+       FROM acp_contract.segment_research_log WHERE tier = 'volume')                       AS median_age_days,
+    (SELECT max(researched_at) FROM acp_contract.segment_research_log
+       WHERE tier = 'volume')                                                              AS last_researched
 """
 
 # ── Keywords tab ──────────────────────────────────────────────────────────────────────────

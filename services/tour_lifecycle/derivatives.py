@@ -13,16 +13,21 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from shared import tour_liveness as _tl
+
 AA_TENANT = "00000000-0000-0000-0000-000000000001"
 
-# angle-gate requests / pieces / live posts of the tours: shared CTEs.
-_REQ_CTE = """
+# angle-gate requests / pieces / live posts of the tours: shared CTEs. AA-1057 GAP 1: a request on a Segment Subject
+# is about the tours only under the Subject rule (shared.tour_liveness.requests_about_tours_sql): retiring its
+# representative tour while the Segment has a served member on another tour is no derivative (no bell, no cancelled
+# job, no notice); the last served member leaving is one, whichever member the request was picked on.
+_REQ_CTE = f"""
     t AS (SELECT unnest($1::uuid[]) AS tour_id),
     req AS (
         SELECT r.request_id, r.tenant_id, r.status
           FROM acp_shared.angle_gate_request r
           LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = r.atom_id
-         WHERE COALESCE(r.trip_id, ta.tour_id) IN (SELECT tour_id FROM t)),
+         WHERE {_tl.requests_about_tours_sql("SELECT tour_id FROM t")}),
     piece AS (
         SELECT p.piece_id, p.tenant_id, p.status
           FROM acp_shared.content_piece p

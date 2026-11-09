@@ -70,9 +70,10 @@ MAX_SUGGESTIONS = 1
 # $10.27 / 7,856 calls ≈ $0.0013; rounded up for the budget check.
 LLM_CALL_ESTIMATE_USD = 0.005
 
-# 182 days (~6 months) — STEP0b: "the horizon over which travel demand for a place actually
-# moves", Ms. Thư's own measured constant, not re-derived here.
-FRESH_FOR = timedelta(days=182)
+# AA-1055 — 365 days (was 182, STEP0b). Google Ads volume is a 12-month average, so a refresh twice a year buys almost
+# nothing new (design docs/audits/2026-11-08-S273-session/dfs-cost-audit/design.vi.md section 5). Governs the
+# volume tier of segment_research_log and the volume store; the SERP tier has its own 365 days (batch SERP_FRESH_FOR).
+FRESH_FOR = timedelta(days=365)
 
 # How many places' ReAct loops run concurrently. Ms. Thư tunes WORKERS=16 against her own
 # per-minute DataForSEO account allowance and measured request-count curve (research.py:99-105)
@@ -576,9 +577,9 @@ async def _research_place(
                     await conn.execute(
                         """
                         INSERT INTO acp_contract.segment_research_log
-                            (canonical_place, market, researched_at)
-                        VALUES ($1, $2, now())
-                        ON CONFLICT (canonical_place, market) DO UPDATE SET researched_at = now()
+                            (canonical_place, market, tier, researched_at)
+                        VALUES ($1, $2, 'volume', now())
+                        ON CONFLICT (canonical_place, market, tier) DO UPDATE SET researched_at = now()
                         """,
                         place, market,
                     )
@@ -594,50 +595,141 @@ async def _research_place(
         )
 
 
-async def _stale_markets(conn, place: str, market_codes: list[str]) -> list[str]:
-    fresh_rows = await conn.fetch(
-        """
-        SELECT market FROM acp_contract.segment_research_log
-        WHERE canonical_place = $1 AND market = ANY($2::text[])
-          AND researched_at > now() - $3::interval
-        """,
-        place, market_codes, FRESH_FOR,
-    )
-    fresh = {r["market"] for r in fresh_rows}
-    return [m for m in market_codes if m not in fresh]
-
-
-_SCOPED_PLACES_SQL = """
-    SELECT DISTINCT s.canonical_place, s.canonical_action
+_SCOPED_SEGMENTS_SQL = """
+    SELECT s.segment_id, s.canonical_place, s.canonical_action,
+           array_agg(ta.activity_type) AS activity_types
     FROM acp_contract.atom_segment s
     JOIN acp_contract.atom_segment_member m ON m.segment_id = s.segment_id
-    JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
-    JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
-    WHERE ta.owner_scope = 'platform'
+    JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    WHERE ta.owner_scope = 'platform' AND NOT ta.deleted
       AND ($1::uuid[] IS NULL OR ta.tour_id = ANY($1::uuid[]))
       AND ($2::text IS NULL OR lower(rt.country) = lower($2::text))
+    GROUP BY s.segment_id, s.canonical_place, s.canonical_action
 """
+
+_FRESH_LOG_SQL = """
+    SELECT canonical_place, market, tier FROM acp_contract.segment_research_log
+    WHERE canonical_place = ANY($1::text[])
+      AND researched_at > now() - CASE WHEN tier = 'serp' THEN $3::interval ELSE $2::interval END
+"""
+
+_SEGMENTS_OF_PLACES_SQL = """
+    SELECT segment_id FROM acp_contract.atom_segment WHERE canonical_place = ANY($1::text[])
+"""
+
+TIERS = ("volume", "serp")
+
+# AA-1055 — a research run that changed more Segments than this does not ask for a recompute in working hours: a large
+# recompute takes long and blocks deploys while it runs (DM-11.4, design section 2). The nightly landing sweep
+# (landing_sweep.py, 00:00-06:00 ICT) re-lands them instead: it lists every Segment that landed before its place's
+# newest research row. Small runs (one country's top-up, an admin test) still land within minutes.
+IMMEDIATE_RECOMPUTE_MAX_SEGMENTS = 300
 
 
 async def _places_in_scope(
-    pool, places: list[str] | None, tour_ids: list[str] | None, country: str | None,
+    pool, places: list[str] | None, tour_ids: list[str] | None, country: str | None, *, cached_only: bool = False,
 ) -> dict[str, list[str]]:
-    """AA-646 — canonical place -> its canonical actions, limited to the requested scope.
-    No scope at all means the whole platform (the caller still caps it with `max_places`)."""
+    """AA-646 / AA-1055 — canonical place -> its canonical actions, limited to the requested scope: Segments with an
+    atom of an ACTIVE platform Master (acp_contract.v_active_tour_atoms, not every row of atom_segment: orphaned and
+    retired places were bought too), minus the Segments ranking never applies to (transit, unnamed place:
+    atom_ranking.resolve_exclusions, the same rule and Jev pick as the recompute). `cached_only` (a dry run) reads
+    the stored Jev picks only, so a preview never pays for a verdict."""
+    from services.acp_contract.atom_ranking import resolve_exclusions
+
     async with pool.acquire() as conn:
-        if tour_ids or country:
-            rows = await conn.fetch(_SCOPED_PLACES_SQL, tour_ids or None, country or None)
-        else:
-            rows = await conn.fetch(
-                "SELECT canonical_place, canonical_action FROM acp_contract.atom_segment"
-            )
+        rows = await conn.fetch(_SCOPED_SEGMENTS_SQL, tour_ids or None, country or None)
+    rows = [dict(r) for r in rows]
+    exclusions = await resolve_exclusions(pool, rows, cached_only=cached_only) if rows else {}
     wanted = set(places) if places else None
     by_place: dict[str, list[str]] = {}
     for r in rows:
+        if exclusions.get(r["segment_id"]):
+            continue
         if wanted is not None and r["canonical_place"] not in wanted:
             continue
         by_place.setdefault(r["canonical_place"], []).append(r["canonical_action"])
     return by_place
+
+
+async def _fresh_tiers(pool, names: list[str]) -> dict[str, set[tuple[str, str]]]:
+    """place -> {(market, tier)} rows of segment_research_log that are still fresh."""
+    from services.acp_contract.segment_research_batch import SERP_FRESH_FOR
+
+    if not names:
+        return {}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_FRESH_LOG_SQL, list(names), FRESH_FOR, SERP_FRESH_FOR)
+    out: dict[str, set[tuple[str, str]]] = {}
+    for r in rows:
+        out.setdefault(r["canonical_place"], set()).add((r["market"], r["tier"]))
+    return out
+
+
+async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...]):
+    """The stale places as batch `_Place`s (sorted by name), with their stale volume markets, SERP need and map.
+
+    A stale place with no usable map (none stored, or one of another prompt version) gets new keywords in phase A,
+    whose volumes were never bought: it is stale in every requested market even where its volume tier is fresh (the
+    ~1.3k places researched before CIS 393, accented names whose plain keyword changed with the accent folding).
+    The volume pass reads the fresh store first, so only the keywords really missing are bought."""
+    from services.acp_contract.segment_research_batch import (
+        SERP_MARKET, _Place, keywords_from_map, load_maps,
+    )
+
+    names = sorted(by_place)
+    fresh = await _fresh_tiers(pool, names)
+    stale: list = []
+    for name in names:
+        got = fresh.get(name, set())
+        markets = [m for m in market_codes if (m, "volume") not in got] if "volume" in tiers else []
+        serp = "serp" in tiers and (SERP_MARKET, "serp") not in got
+        if markets or serp:
+            stale.append(_Place(name, by_place[name], markets, serp=serp))
+    maps = await load_maps(pool, [p.name for p in stale])
+    for p in stale:
+        kws = keywords_from_map(maps.get(p.name, []))
+        if kws is not None:
+            p.keywords, p.has_map = kws, True
+        elif "volume" in tiers:
+            p.markets = list(market_codes)
+    return stale
+
+
+async def enqueue_recompute_for_places(pool, places: list[str], *, reason: str = "segment_research",
+                                       now=None) -> dict:
+    """AA-1055 (system picture item 1) — new demand reaches Score, the Questions axis and the Blog bar only through a
+    recompute; research never asked for one (S273: research + a manual recompute took the audit tenant's Blog from 4
+    to 31 Subjects). One platform recompute re-lands the Segments of the researched places, debounced: it folds into
+    a queued platform recompute when there is one (recompute_job.enqueue_recompute). More than
+    IMMEDIATE_RECOMPUTE_MAX_SEGMENTS Segments outside the night window are left to the nightly landing sweep
+    (`recompute_deferred`), unless the sweep is switched off. Never raises: a failed enqueue is reported in the result
+    and the landing sweep (landing_sweep.py) catches the Segments later."""
+    if not places:
+        return {"recompute_job_id": None, "recompute_segments": 0}
+    try:
+        from services.acp_contract import landing_sweep
+        from services.jobs.recompute_job import WAVE_DEBOUNCE_S, enqueue_recompute
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_SEGMENTS_OF_PLACES_SQL, list(places))
+        segment_ids = sorted({r["segment_id"] for r in rows})
+        if not segment_ids:
+            return {"recompute_job_id": None, "recompute_segments": 0}
+        if (len(segment_ids) > IMMEDIATE_RECOMPUTE_MAX_SEGMENTS and landing_sweep.enabled()
+                and not landing_sweep.in_window(now)):
+            logger.info("segment_research_recompute_deferred", segments=len(segment_ids),
+                        limit=IMMEDIATE_RECOMPUTE_MAX_SEGMENTS)
+            return {"recompute_job_id": None, "recompute_deferred": "landing_sweep",
+                    "recompute_segments": len(segment_ids)}
+        job_id, created = await enqueue_recompute(pool, scope="platform", reason=reason, segment_ids=segment_ids,
+                                                  debounce_s=WAVE_DEBOUNCE_S, created_by=f"system:{reason}")
+        logger.info("segment_research_recompute_enqueued", job_id=job_id, created=created,
+                    segments=len(segment_ids))
+        return {"recompute_job_id": job_id, "recompute_created": created, "recompute_segments": len(segment_ids)}
+    except Exception as exc:  # noqa: BLE001 — the purchase is already stored; the sweep re-asks
+        logger.warning("segment_research_recompute_enqueue_failed", error=str(exc)[:300])
+        return {"recompute_job_id": None, "recompute_segments": 0, "recompute_error": str(exc)[:300]}
 
 
 async def run_segment_research(
@@ -646,21 +738,26 @@ async def run_segment_research(
     tour_ids: list[str] | None = None,
     country: str | None = None,
     max_places: int | None = None,
+    max_usd: float | None = None,
     dry_run: bool = False,
     dfs_budget: RunBudget | None = None,
     llm_budget: RunBudget | None = None,
     strategy: str = "batch",
-    use_suggestions: bool = True,
+    use_suggestions: bool = False,
+    tiers: list[str] | tuple[str, ...] | None = None,
+    dfs_queue: str | None = None,
+    recompute: bool = True,
+    before_buy=None,
 ) -> dict:
     """Research the stale places in the requested scope, for the requested markets.
 
     AA-646 — this used to run after EVERY tenant T2 rewrite over the whole platform (AA-545 made
     Segments platform-wide, so "this tenant's Segments" became "every Segment"): one rewrite on
     25/09/2026 swept 2,215 places x AU/US/UK and spent $49 of DataForSEO. It is now admin-triggered
-    only (`POST /admin/segment-research/run`), with an explicit scope and a `max_places` cap.
+    only (`POST /admin/segment-research/run`), with an explicit scope.
     `target_market` uses the tenant-config shape, e.g. `{"countries": ["US", "UK"]}`.
 
-    `dry_run=True` returns the scope and stale counts without any LLM or DataForSEO call.
+    `dry_run=True` returns the scope, stale counts and the estimate without any LLM, Jev or DataForSEO call.
 
     AA-647 — a fatal DataForSEO error (auth/payment) aborts the run; places whose purchases failed
     are not marked researched, so they are retried by the next run.
@@ -668,88 +765,78 @@ async def run_segment_research(
     AA-649 — `dfs_budget` / `llm_budget` (shared.cost_guard.RunBudget) are checked before every
     paid DataForSEO / Haiku call; a breach stops the run the same way a fatal DFS error does.
 
-    AA-648 — `strategy="batch"` (default) runs `segment_research_batch.research_batch()`: few large
-    paid tasks instead of the per-place ReAct loop's many small ones. `strategy="loop"` keeps the
-    original per-place loop (for comparison; slated for removal once batch is proven on real runs).
+    AA-1055 — the selection is bounded by `max_usd` (the capped DFS estimate of the selected places, replacing the old
+    200-place cap; `max_places` stays as an optional extra limit). `tiers` picks what is bought: "volume" (per stale
+    market) and / or "serp" (one SERP per place); both by default. `use_suggestions` is off by default. `dfs_queue`
+    "live" | "standard" picks the endpoint (default: env DFS_RESEARCH_QUEUE, else live). `before_buy(summary)` is
+    awaited after the selection and before the first paid call (the job's balance check against the estimate). A
+    run that stored new demand enqueues one debounced platform recompute for the Segments of those places
+    (`recompute=False` skips it).
+
+    AA-648 — `strategy="batch"` runs `segment_research_batch.research_batch()`. AA-1055: `strategy="loop"` (the
+    original per-place ReAct loop) is refused: its USD estimate only counted volume tasks while each place could
+    still buy a SERP per market and a keyword suggestion, so a run spent well past `max_usd`. `_research_place` stays
+    only until it is deleted with its tests.
     """
-    if strategy not in ("batch", "loop"):
+    from services.acp_contract import segment_research_batch as rb
+    from services.seo_intelligence.dfs_queue import StandardQueue, research_queue_mode
+
+    if strategy == "loop":
+        raise ValueError("strategy 'loop' is retired (AA-1055): its estimate does not cover what it buys; use 'batch'")
+    if strategy != "batch":
         raise ValueError(f"unknown strategy {strategy!r}")
+    tiers_t = tuple(tiers) if tiers else TIERS
+    unknown = [t for t in tiers_t if t not in TIERS]
+    if unknown:
+        raise ValueError(f"unknown tier(s) {unknown}; supported: {TIERS}")
+    queue_mode = research_queue_mode(dfs_queue)
     markets = resolve_buyer_markets(target_market)
     market_codes = [LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in markets]
-    location_by_market = {
-        LOCATION_CODE_TO_MARKET[loc]: (loc, lang) for loc, _name, lang in markets
-    }
-
-    by_place = await _places_in_scope(pool, places, tour_ids, country)
-
-    stale: list[tuple[str, list[str]]] = []
-    async with pool.acquire() as conn:
-        for place in sorted(by_place):
-            missing = await _stale_markets(conn, place, market_codes)
-            if missing:
-                stale.append((place, missing))
+    by_place = await _places_in_scope(pool, places, tour_ids, country, cached_only=dry_run)
+    stale = await _plan(pool, by_place, market_codes, tiers_t)
     stale_total = len(stale)
+    selected = rb.select_within_usd(stale, max_usd, use_suggestions, queue_mode)
     if max_places is not None:
-        stale = stale[:max(max_places, 0)]
+        selected = selected[:max(max_places, 0)]
 
     summary = {
         "markets": market_codes,
+        "tiers": list(tiers_t),
+        "dfs_queue": queue_mode,
         "places_in_scope": len(by_place),
         "places_stale": stale_total,
-        "places_selected": len(stale),
+        "places_stale_volume": sum(1 for p in stale if p.markets),
+        "places_stale_serp": sum(1 for p in stale if p.serp),
+        "places_selected": len(selected),
+        "places_with_map": sum(1 for p in selected if p.has_map),
+        "max_usd": max_usd,
         "strategy": strategy,
+        "use_suggestions": use_suggestions,
+        "estimate": rb.estimate_plan(selected, use_suggestions, queue_mode),
     }
-    if strategy == "batch":
-        from services.acp_contract.segment_research_batch import estimate_cost
-        summary["estimate"] = estimate_cost(len(stale), len(market_codes), use_suggestions)
-    if dry_run or not stale:
+    if dry_run or not selected:
         return {**summary, "places_researched": 0, "places_failed": 0, "cost_usd": 0.0,
                 "aborted": False, "abort_reason": None}
+    if before_buy is not None:
+        await before_buy(summary)
 
     guard = _RunGuard()
-    client = DataForSEOClient(budget=dfs_budget)
+    client = DataForSEOClient(budget=dfs_budget, stage="a3_search_demand")
+    client.meta = {"job": "segment_research", "queue": queue_mode}
 
-    if strategy == "batch":
-        from services.acp_contract.segment_research_batch import research_batch
-        batch_result = await research_batch(
-            [(place, by_place[place], missing) for place, missing in stale], markets, pool, client, guard,
-            llm_budget=llm_budget, use_suggestions=use_suggestions,
-        )
-        return {
-            **summary, **batch_result,
-            "aborted": guard.aborted,
-            "abort_reason": guard.reason,
-            "dfs_spent_usd": round(dfs_budget.run_spent, 4) if dfs_budget else None,
-            "budgets": [b.summary() for b in (dfs_budget, llm_budget) if b is not None],
-        }
-
-    # strategy == "loop" — the original per-place ReAct loop.
-    batchers = {
-        market: _VolumeBatcher(client, location_by_market[market][0], location_by_market[market][1],
-                               guard=guard)
-        for market in market_codes
-    }
-    sem = asyncio.Semaphore(CONCURRENCY)
-    results = await asyncio.gather(*[
-        _research_place(
-            place, by_place[place], missing_markets, markets, batchers, client, pool, sem, guard,
-            llm_budget,
-        )
-        for place, missing_markets in stale
-    ])
-
-    return {
-        **summary,
-        "places_researched": sum(1 for r in results if not r.failed),
-        "places_failed": sum(1 for r in results if r.failed),
-        "keywords_bought": sum(r.keywords_bought for r in results),
-        "llm_calls": sum(r.llm_calls for r in results),
-        "cost_usd": round(sum(r.cost_usd for r in results), 5),
+    queue = StandardQueue(client) if queue_mode == "standard" else None
+    batch_result = await rb.research_batch(selected, markets, pool, client, guard, llm_budget=llm_budget,
+                                           use_suggestions=use_suggestions, queue=queue)
+    result = {
+        **summary, **batch_result,
         "aborted": guard.aborted,
         "abort_reason": guard.reason,
         "dfs_spent_usd": round(dfs_budget.run_spent, 4) if dfs_budget else None,
         "budgets": [b.summary() for b in (dfs_budget, llm_budget) if b is not None],
     }
+    if recompute:
+        result.update(await enqueue_recompute_for_places(pool, batch_result["places_changed"]))
+    return result
 
 
-__all__ = ["run_segment_research", "resolve_buyer_market"]
+__all__ = ["run_segment_research", "resolve_buyer_market", "enqueue_recompute_for_places"]

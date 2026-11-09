@@ -142,6 +142,7 @@ async def test_platform_pass_runs_catchup_first_and_lands_its_segments():
          patch("services.acp_contract.atom_ranking.precompute_question_landings", landing), \
          patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
          patch("services.acp_contract.route_detection.run_route_detection", AsyncMock(return_value={})), \
+         patch("services.acp_shared.retarget.run_retarget", AsyncMock(return_value={})), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1}), \
          patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})):
         res = await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids={"a"}), pool=object())

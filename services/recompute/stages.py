@@ -48,10 +48,17 @@ actually depend on:
     (`services/acp_contract/segment_gc.py`), in `report` mode by default (env SEGMENT_GC_MODE), under the
     segment-write lock the `segment` stage holds shared.
 
-The two named lists mirror the two old chains, plus the AA-988 clean-up at the end of the platform pass:
-  - `TOUR_STAGES`     = segment -> landing -> score -> route (one tour's publish / atom edit).
-  - `PLATFORM_STAGES` = segment_catchup -> landing -> score -> route -> segment_gc (AA-1059: first the segment
-    stage for the active Masters it missed, then platform score+route, then GC once ranking and routes are current).
+  - `retarget` (AA-1057) — UPDATE in place of `acp_shared.subject.route_id` (a picked / used Route Subject on a
+    superseded Route) and `acp_shared.angle_gate_request.atom_id` (a request on a replaced atom, or a Segment
+    Subject's request whose seed tour retired), guarded on the old value (`services/acp_shared/retarget.py`; env
+    RECOMPUTE_RETARGET_MODE, default `report` until the audited one-off has run).
+
+The two named lists mirror the two old chains, plus the AA-1059 catch-up at the start of the platform pass, the
+AA-1057 retarget after `route` and the AA-988 clean-up at the end of the platform pass:
+  - `TOUR_STAGES`     = segment -> landing -> score -> route -> retarget (one tour's publish / atom edit).
+  - `PLATFORM_STAGES` = segment_catchup -> landing -> score -> route -> retarget -> segment_gc (AA-1059: first the
+    segment stage for the active Masters it missed, then platform score+route, then GC once ranking and routes are
+    current).
 """
 from __future__ import annotations
 
@@ -211,6 +218,11 @@ async def _run_segment_catchup(ctx: RecomputeContext, scope: RecomputeScope) -> 
     return result
 
 
+async def _run_retarget(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
+    from services.acp_shared.retarget import run_retarget
+    return await run_retarget(ctx.pool)
+
+
 async def _run_segment_gc(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
     from services.acp_contract.segment_gc import run_segment_gc
     if ctx.progress:
@@ -299,6 +311,23 @@ _STAGES: dict[str, Stage] = {
         write_strategy="versioned_swap",  # route — AA-532; the strategy readers depend on
         run=_run_route,
     ),
+    "retarget": Stage(
+        name="retarget",
+        reads=("acp_shared.subject", "acp_contract.route", "acp_shared.angle_gate_request",
+               "acp_contract.tour_atoms", "acp_contract.v_active_tour_atoms", "acp_contract.atom_segment",
+               "acp_contract.atom_segment_member", "acp_contract.atom_segment_alias",
+               "acp_shared.atom_place_card", "silver_aa_internal.raw_tours", "gold_aa_internal.published_tours",
+               "gold_aa_internal.v_tour_liveness", "gold_aa_internal.tenant_tour_versions"),
+        writes=("acp_shared.subject", "acp_shared.angle_gate_request"),
+        # AA-1057 GAP 2: UPDATE in place of the id a Subject / request points at (route_id, atom_id), guarded on
+        # the old value; never an insert or delete (report mode: none). Declared "upsert", the in-place strategy.
+        table_strategies={
+            "acp_shared.subject": "upsert",
+            "acp_shared.angle_gate_request": "upsert",
+        },
+        write_strategy="upsert",
+        run=_run_retarget,
+    ),
     "segment_gc": Stage(
         name="segment_gc",
         reads=("acp_contract.atom_segment", "acp_contract.atom_segment_member", "acp_contract.tour_atoms",
@@ -330,8 +359,10 @@ def all_stages() -> dict[str, Stage]:
 
 
 # Named stage lists — these mirror the two hand-written chains they replace, exactly.
-TOUR_STAGES = ["segment", "landing", "score", "route"]
-PLATFORM_STAGES = ["segment_catchup", "landing", "score", "route", "segment_gc"]
+# AA-1057: `retarget` follows `route` on both (the new Route / atom ids exist by then).
+# AA-1059: `segment_catchup` opens the platform pass (its Segments feed `landing`).
+TOUR_STAGES = ["segment", "landing", "score", "route", "retarget"]
+PLATFORM_STAGES = ["segment_catchup", "landing", "score", "route", "retarget", "segment_gc"]
 
 
 async def run_stages(names: list[str], scope: RecomputeScope, *, pool,

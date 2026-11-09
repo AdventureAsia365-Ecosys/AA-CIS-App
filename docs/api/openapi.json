@@ -6425,6 +6425,21 @@
             ],
             "title": "Country"
           },
+          "dfs_queue": {
+            "anyOf": [
+              {
+                "enum": [
+                  "live",
+                  "standard"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dfs Queue"
+          },
           "markets": {
             "description": "Buyer market codes, e.g. ['US','UK']",
             "items": {
@@ -6435,10 +6450,30 @@
             "type": "array"
           },
           "max_places": {
-            "maximum": 200.0,
-            "minimum": 1.0,
-            "title": "Max Places",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Places"
+          },
+          "max_usd": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 50.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cap on the selection's capped DFS estimate (default: DFS budget)",
+            "title": "Max Usd"
           },
           "places": {
             "anyOf": [
@@ -6454,14 +6489,28 @@
             ],
             "title": "Places"
           },
+          "recompute": {
+            "default": true,
+            "title": "Recompute",
+            "type": "boolean"
+          },
           "strategy": {
+            "const": "batch",
             "default": "batch",
-            "enum": [
-              "batch",
-              "loop"
-            ],
             "title": "Strategy",
             "type": "string"
+          },
+          "tiers": {
+            "items": {
+              "enum": [
+                "volume",
+                "serp"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Tiers",
+            "type": "array"
           },
           "tour_ids": {
             "anyOf": [
@@ -6478,14 +6527,13 @@
             "title": "Tour Ids"
           },
           "use_suggestions": {
-            "default": true,
+            "default": false,
             "title": "Use Suggestions",
             "type": "boolean"
           }
         },
         "required": [
-          "markets",
-          "max_places"
+          "markets"
         ],
         "title": "ResearchScope",
         "type": "object"
