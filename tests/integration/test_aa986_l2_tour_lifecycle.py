@@ -599,7 +599,8 @@ async def test_the_service_runs_with_the_runtime_role_grants(conn):
                        "silver_aa_internal.raw_tours, silver_aa_internal.review_queue, shared.job, "
                        "shared.notifications, gold_aa_internal.tenant_tour_versions, acp_shared.subject, "
                        "acp_shared.angle_gate_request, acp_shared.content_piece, acp_shared.publish_log, "
-                       "acp_contract.route, acp_contract.tour_atoms, acp_contract.atom_segment_member TO cis_app")
+                       "acp_contract.route, acp_contract.tour_atoms, acp_contract.atom_segment_member, "
+                       "acp_contract.atom_segment_alias TO cis_app")   # alias: AA-1057 Subject rule (merged ids)
     await conn.execute("GRANT SELECT ON acp_contract.v_active_tour_atoms TO cis_app")
     await conn.execute("GRANT USAGE ON ALL SEQUENCES IN SCHEMA shared TO cis_app")
     await conn.execute(f"SET LOCAL app.tenant_id = '{MASTER}'")

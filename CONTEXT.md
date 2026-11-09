@@ -1466,13 +1466,20 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `run(ctx, scope)` that declares the tables it reads, the tables it writes and its
     `write_strategy` (`segment`/`landing` upsert; `score`/`route` versioned-swap — the SQL itself
     is unchanged, only declared). The orchestrator `run_stages(names, scope, pool=, progress=)`
-    runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route, a tour's
-    publish / atom edit) and `PLATFORM_STAGES` (landing→score→route→segment_gc, platform score+route, then the
-    AA-988 orphan-Segment clean-up).
+    runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route→retarget, a tour's
+    publish / atom edit) and `PLATFORM_STAGES` (landing→score→route→retarget→segment_gc, platform score+route, then
+    the AA-988 orphan-Segment clean-up).
     The `recompute` job and the `a3_atomize` path (its inline segment matching) run their work
     only through `run_stages`; the thin wrappers `recompute_segment_score_route` /
     `recompute_rankings_and_routes` in `services/export/handler.py` map the stage results back to
-    the Jobs-page result keys (`{segment, ranking, route}` / `{ranking, route, segment_gc}`).
+    the Jobs-page result keys (`{segment, ranking, route, retarget}` / `{ranking, route, retarget, segment_gc}`).
+  - **Tenant ids follow a rewrite / supersede (AA-1057 GAP 2)**: the `retarget` stage
+    (`services/acp_shared/retarget.py`) moves a picked / used Route Subject off a superseded Route (the current
+    Route of the same tour family with the same day span, else the one sharing the most Segments; one already held
+    by the tenant in that channel → left as is) and an angle-gate request off an atom that is no longer live (the
+    AA-990 same-place re-point, else, for a Segment Subject whose old tour is not paused, the member a pick chooses
+    today: atom, `trip_id`, Blog walk). Guarded UPDATEs, never deletes. Mode env `RECOMPUTE_RETARGET_MODE` = `apply`
+    (default) | `report` | `off`; one-off audited run: `scripts/aa1057_retarget_once.py` (DRY RUN first).
   - **Segments follow a re-atomize (AA-988)**: the `segment` stage drops the member rows of its tour's dead atoms
     (soft-deleted by the re-atomize, or empty-day markers) in its write transaction; the `segment_gc` stage
     (`services/acp_contract/segment_gc.py`) deletes Segments nothing refers to any more (no member on a live atom, no
@@ -3233,6 +3240,15 @@ and writes the "back on sale" notice only for tenants whose latest notice is `re
 CIS 360 is applied the fan-out fails retryable and the sampler re-queues those jobs once the tables exist.
 Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
 verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
+**Subject rule for Segment Subjects (AA-1057 GAP 1)**: a request on a Segment Subject is planned on one
+representative member (its seed atom and that atom's tour as `trip_id`), but the Subject lives while its Segment has
+any served member (the Slate's `segment_dead` rule). Every liveness gate on a request reads that rule through
+`shared/tour_liveness.py` (`segment_served_member_sql`, `requests_about_tours_sql`; a merged Segment id is read on its
+live id): the write / goal / publish 409s and served badges (`REQUEST_TOURS_SQL`: a paused / retired representative
+is replaced by a served member's tour), A4's live-post state, the derivatives (bell, job cancels, notices), the
+fan-out's flags / claims / mails (a request is about an event when the event takes the Segment's last served member,
+whichever member it was planned on) and the move to draft (resolved `restored` with `subject_alive` when a member is
+served again). A request with no Segment Subject follows its tour as before.
 **AA-subject gate** (AA-1039 R6, d21; `services/acp_shared/subject_gate.py`, no LLM): when T9 finishes a piece
 (`_finalize_piece`) and again right before `POST /v1/publish-log/{id}/publish`, a piece must be about a served AA
 tour, a live AA atom or a Slate Segment with a live member (brand content with no sales link and a non-sales goal is
@@ -3309,7 +3325,8 @@ Since AA-914 every reader of that copy (Slate pick, T8 angles, T9 write, admin r
 `services/acp_shared/route_guard.py`: a merged id is followed to its live Segment, and a Segment counts
 only when the request's trip has a live member atom in it; every dropped id is logged
 (`route_segment_dropped`). A pick or regenerate reads only the current Route version
-(`superseded_at IS NULL`); a Subject still on a superseded Route is not pickable.
+(`superseded_at IS NULL`); a Subject still on a superseded Route is not pickable. A picked / used one is moved to the
+current version by the `retarget` recompute stage (AA-1057).
 _Avoid_: itinerary segment, leg, journey (that's Hub).
 
 **Hub**:

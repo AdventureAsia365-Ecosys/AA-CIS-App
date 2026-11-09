@@ -184,7 +184,8 @@ def segment_member_on_tours_sql(r: str, tours: str) -> str:
     return (f"EXISTS (SELECT 1 FROM acp_shared.subject s_mo\n"
             f"          JOIN acp_contract.atom_segment_member m_mo\n"
             f"            ON m_mo.segment_id IN (s_mo.segment_id, (SELECT a_mo.segment_id_canonical\n"
-            f"                 FROM acp_contract.atom_segment_alias a_mo WHERE a_mo.segment_id_old = s_mo.segment_id))\n"
+            f"                 FROM acp_contract.atom_segment_alias a_mo\n"
+            f"                WHERE a_mo.segment_id_old = s_mo.segment_id))\n"
             f"          JOIN acp_contract.tour_atoms ta_mo ON ta_mo.atom_id = m_mo.atom_id\n"
             f"         WHERE s_mo.subject_id = {r}.subject_id AND s_mo.tenant_id = {r}.tenant_id\n"
             f"           AND s_mo.segment_id IS NOT NULL AND ta_mo.tour_id IN ({tours}))")
