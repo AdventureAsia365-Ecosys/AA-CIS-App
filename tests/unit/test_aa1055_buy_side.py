@@ -274,11 +274,7 @@ def test_task_post_20100_is_a_success_for_the_ledger():
     assert _dfs_status_error(second_bad, (20100,)).fatal     # every task is read, not only the first
 
 
-def test_queue_estimates_never_undercut_the_live_price_until_measured():
-    from shared.cost_guard import DFS_CALL_ESTIMATE_USD as E
-
-    assert E["search_volume_bulk_queue"] >= E["search_volume_bulk"]
-    assert E["serp_advanced_queue"] >= E["serp_advanced"]
+# The queue's unit prices are the measured ones since S274: tests/unit/test_aa1055_dfs_ledger_stage.py.
 
 
 # ── cached-only exclusions (free preview / sweep) ─────────────────────────────────────────────

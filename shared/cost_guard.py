@@ -52,12 +52,32 @@ DFS_CALL_ESTIMATE_USD = {
     # AA-779 (B) — the admin SERP top-up's own log label: a live advanced SERP with the PAA box
     # expanded 2 levels (billed per extra click). Deliberately high so the $3 cap is never overshot.
     "serp_advanced_paa_deep": 0.01,
-    # AA-1055 — the Standard queue (task_post; tasks_ready / task_get are free). Kept at the live price until the
-    # one-task trial (scripts/aa1055/dfs_queue_trial.py) has read the real cost from DataForSEO's answer: an estimate
-    # is a budget pre-check, so it must not undercut the price. Lower them in the PR that records the trial.
-    "search_volume_bulk_queue": 0.09,
-    "serp_advanced_queue": 0.002,
+    # AA-1055 — the Standard queue (task_post; tasks_ready / task_get are free), the price DataForSEO charged on Dev
+    # (09/11/2026, the first queued research run, US / UK / AU): 0.06 USD per search volume task of up to 1,000
+    # keywords, 0.0006 USD per SERP. Until then these held the live price, so that run's estimate (and the places its
+    # USD cap selected) was about 2.4 times too high.
+    "search_volume_bulk_queue": 0.06,
+    "serp_advanced_queue": 0.0006,
 }
+
+# AA-1055 — the endpoint labels research buys through, per `dfs_queue` mode: (volume task, SERP). The same labels the
+# buying code checks and charges the run budget with (DataForSEOClient.fetch_volumes_bulk / the live advanced SERP, and
+# services/seo_intelligence/dfs_queue.py VOLUME_ENDPOINT / SERP_ENDPOINT), so the estimate, the USD-cap selection and
+# the check before every paid post read one price table.
+DFS_RESEARCH_ENDPOINTS: dict[str, tuple[str, str]] = {
+    "live": ("search_volume_bulk", "serp_advanced"),
+    "standard": ("search_volume_bulk_queue", "serp_advanced_queue"),
+}
+
+
+def dfs_research_prices(queue: str) -> tuple[float, float]:
+    """(volume task, SERP) unit price in USD of a research run that buys through `queue` ("live" | "standard").
+    An unknown mode raises: an estimate must never silently fall back to another endpoint's price."""
+    try:
+        volume, serp = DFS_RESEARCH_ENDPOINTS[queue]
+    except KeyError:
+        raise ValueError(f"unknown DataForSEO queue mode {queue!r}; one of {sorted(DFS_RESEARCH_ENDPOINTS)}") from None
+    return DFS_CALL_ESTIMATE_USD[volume], DFS_CALL_ESTIMATE_USD[serp]
 
 _DAY_SPEND_SQL = {
     "dfs": "SELECT coalesce(sum(cost_usd), 0) FROM shared.dfs_call_log "

@@ -30,6 +30,9 @@ _FATAL_DFS_PREFIXES = ("401", "402")
 # AA-642 (S263 L2, B1): DataForSEO's row in shared.llm_provider_connection. Its ``enabled`` is the admin switch (read
 # before every live call, cached 30 s, connections.provider_enabled); the outcome of a call goes to its access_state.
 DFS_CONNECTION_KEY = "dataforseo"
+# AA-1055: the shared.dfs_call_log stage of the free balance read, whoever asks (a research job, the daily check): it is
+# no stage's purchase, so it never takes the caller's stage nor the bound job's kind.
+BALANCE_STAGE = "dfs_balance"
 
 
 class DFSCallError(Exception):
@@ -125,12 +128,12 @@ class DataForSEOClient:
 
     def _log_live(self, endpoint: str, response: dict, keyword: str = None,
                   location_code: int = None, keyword_count: int = None, latency_ms: int = None,
-                  task_ok: tuple[int, ...] = (DFS_OK,), meta: dict = None) -> None:
+                  task_ok: tuple[int, ...] = (DFS_OK,), meta: dict = None, stage: str = None) -> None:
         """AA-618 — record one live DFS call (fetched_live=True) with the real cost from the
         response. Fire-and-forget; never raises into the fetch path. AA-804: with its latency, and a body whose
         status is not 20000 is written as refused (auth / payment) or error, with the DFS message.
         AA-1055: ``task_ok`` = the task codes that are a success (a queue post: 20100); ``meta`` is merged over the
-        client's ``meta``."""
+        client's ``meta``; ``stage`` overrides the client's (the balance read)."""
         cost = extract_cost(response)
         if self.budget is not None:
             self.budget.charge(cost if cost is not None else DFS_CALL_ESTIMATE_USD.get(endpoint, 0.0))
@@ -142,13 +145,13 @@ class DataForSEOClient:
             tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
             location_code=location_code, keyword_count=keyword_count,
             status="ok" if status_err is None else ("refused" if status_err.fatal else "error"),
-            latency_ms=latency_ms, error=str(status_err) if status_err is not None else None, stage=self.stage,
-            **kwargs,
+            latency_ms=latency_ms, error=str(status_err) if status_err is not None else None,
+            stage=stage or self.stage, **kwargs,
         )
 
     def _log_failed(self, endpoint: str, *, status: str, error: str, keyword: str = None,
                     location_code: int = None, keyword_count: int = None, latency_ms: int = None,
-                    meta: dict = None) -> None:
+                    meta: dict = None, stage: str = None) -> None:
         """AA-804 (ledger v2): the 0 USD row of a call that was refused before it was sent (the run's budget) or did
         not answer (HTTP / transport error). Nothing is charged to the budget. Never raises."""
         try:
@@ -156,7 +159,7 @@ class DataForSEOClient:
                 endpoint=endpoint, fetched_live=False, cost_usd=0.0,
                 tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
                 location_code=location_code, keyword_count=keyword_count,
-                status=status, latency_ms=latency_ms, error=error, stage=self.stage, meta=meta,
+                status=status, latency_ms=latency_ms, error=error, stage=stage or self.stage, meta=meta,
             )
         except Exception as e:  # noqa: BLE001 — a log write never breaks the fetch path
             logger.warning("dfs_failed_call_log_failed", endpoint=endpoint, error=str(e)[:200])
@@ -175,18 +178,19 @@ class DataForSEOClient:
                 raise
 
     async def _request(self, endpoint: str, url: str, *, payload=None, timeout: float = 30, keyword: str = None,
-                       location_code: int = None, keyword_count: int = None) -> tuple[dict, int]:
+                       location_code: int = None, keyword_count: int = None, stage: str = None) -> tuple[dict, int]:
         """AA-804: one live HTTP call (POST with ``payload``, else GET), timed: (JSON body, latency ms). A failure
         (transport, HTTP status, a body that is not JSON) writes its 0 USD row — refused for 401 / 402 / 403, else
         error — and re-raises the exception unchanged, so every caller keeps its own handling.
 
         AA-642 (S263 L2, B1): switched off in the admin (the dataforseo row's ``enabled``) = nothing is sent: a 0 USD
         refused row (meta.connection_key) and a fatal DFSCallError, so a run stops like on an auth failure. The outcome
-        of a sent call goes to the row's access_state (ok, or the class a 401 / 402 / 403 proves)."""
+        of a sent call goes to the row's access_state (ok, or the class a 401 / 402 / 403 proves). AA-1055: ``stage``
+        overrides the client's on the rows a refused / failed call writes (the balance read)."""
         if not await conn_registry.provider_enabled(DFS_CONNECTION_KEY):
             reason = conn_registry.switched_off_reason(DFS_CONNECTION_KEY)
             self._log_failed(endpoint, status="refused", error=reason, keyword=keyword, location_code=location_code,
-                             keyword_count=keyword_count,
+                             keyword_count=keyword_count, stage=stage,
                              meta={"connection_key": DFS_CONNECTION_KEY, "refused": "switched_off"})
             raise DFSCallError(reason, fatal=True)
         # AA-1025 B3: the shared DataForSEO circuit (every api / worker task). Open = nothing is sent: a 0 USD refused
@@ -194,7 +198,7 @@ class DataForSEOClient:
         refusal = await provider_circuit.admit(DFS_CONNECTION_KEY)
         if refusal:
             self._log_failed(endpoint, status="refused", error=refusal[:500], keyword=keyword,
-                             location_code=location_code, keyword_count=keyword_count,
+                             location_code=location_code, keyword_count=keyword_count, stage=stage,
                              meta={"connection_key": DFS_CONNECTION_KEY, "refused": "circuit_open"})
             raise DFSCallError(refusal, fatal=True)
         started = time.monotonic()
@@ -210,7 +214,7 @@ class DataForSEOClient:
             err = as_dfs_error(e)
             self._log_failed(endpoint, status="refused" if err.fatal else "error", error=str(err)[:500],
                              keyword=keyword, location_code=location_code, keyword_count=keyword_count,
-                             latency_ms=int((time.monotonic() - started) * 1000))
+                             latency_ms=int((time.monotonic() - started) * 1000), stage=stage)
             await conn_registry.note_provider_access(DFS_CONNECTION_KEY, access_state_of(err))
             await provider_circuit.record_failure(DFS_CONNECTION_KEY, provider_circuit.failure_class(err.status_code),
                                                   str(err))
@@ -233,11 +237,12 @@ class DataForSEOClient:
         Returns the parsed `money` dict (balance/currency/...). Raises on HTTP/parse error — the
         caller (the daily-check endpoint) decides how to handle a failed read; unlike the fetch
         path we do NOT swallow here because a silent failure is exactly the blind spot AA-627 is
-        meant to remove. Logs one dfs_call_log row (cost 0) so External Spend still counts it."""
+        meant to remove. Logs one dfs_call_log row (cost 0) so External Spend still counts it, with stage
+        BALANCE_STAGE (AA-1055), also on a failed read."""
         data, ms = await self._request("appendix_user_data", f"{DATAFORSEO_BASE}/appendix/user_data",
-                                       keyword_count=0)
+                                       keyword_count=0, stage=BALANCE_STAGE)
         # cost:0 — free read; logged so the External Spend call counts stay complete.
-        self._log_live("appendix_user_data", data, keyword_count=0, latency_ms=ms)
+        self._log_live("appendix_user_data", data, keyword_count=0, latency_ms=ms, stage=BALANCE_STAGE)
         money = self._parse_money(data)
         logger.info("dfs_balance_fetched", balance=money.get("balance"))
         return money

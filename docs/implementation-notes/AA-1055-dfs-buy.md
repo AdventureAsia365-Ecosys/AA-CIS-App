@@ -90,7 +90,7 @@ count the `volume` tier only. `precompute_question_landings` also reads rows tha
 - `prompt_version` = `a3_propose@<sha12 of the prompt>`: editing the prompt re-proposes every place, no manual bump.
 - `country_activity` rows: the migration accepts them; nothing writes them yet (PR 3 of the design, S1 store read).
 - Queue unit prices stay at the live price in `DFS_CALL_ESTIMATE_USD` until the trial measured them: an estimate is a
-  pre-check and must not undercut the real price.
+  pre-check and must not undercut the real price. (Done in S274: measured prices, see `AA-1055-dfs-queue-quality.md`.)
 - The landing sweep runs in the worker loop (no new job kind, no Infra deploy-guard change); its recompute is the
   existing `recompute` kind.
 
