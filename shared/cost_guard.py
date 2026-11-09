@@ -52,6 +52,11 @@ DFS_CALL_ESTIMATE_USD = {
     # AA-779 (B) — the admin SERP top-up's own log label: a live advanced SERP with the PAA box
     # expanded 2 levels (billed per extra click). Deliberately high so the $3 cap is never overshot.
     "serp_advanced_paa_deep": 0.01,
+    # AA-1055 — the Standard queue (task_post; tasks_ready / task_get are free). Kept at the live price until the
+    # one-task trial (scripts/aa1055_dfs_queue_trial.py) has read the real cost from DataForSEO's answer: an estimate
+    # is a budget pre-check, so it must not undercut the price. Lower them in the PR that records the trial.
+    "search_volume_bulk_queue": 0.09,
+    "serp_advanced_queue": 0.002,
 }
 
 _DAY_SPEND_SQL = {

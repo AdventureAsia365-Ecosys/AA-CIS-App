@@ -4,8 +4,14 @@ Before AA-650 this ran as an asyncio task inside the API with its state in proce
 deploy mid-run lost both the run and its result. Re-running after an interruption is cheap: DFS
 results are cached for 7 days (AA-625) and places already researched are no longer stale.
 
-Payload: {"markets": [...], "max_places": int, "places"?, "tour_ids"?, "country"?,
-          "strategy": "batch"|"loop", "use_suggestions": bool}
+Payload: {"markets": [...], "max_usd"?: float, "max_places"?: int, "places"?, "tour_ids"?, "country"?,
+          "strategy": "batch"|"loop", "use_suggestions": bool, "tiers"?: ["volume", "serp"],
+          "dfs_queue"?: "live"|"standard", "recompute"?: bool}
+
+AA-1055 — the selection is bounded by `max_usd` (default: what the DFS budget still allows this run), not by a place
+count; the DataForSEO balance is checked against the selection's capped estimate (it used to be checked against the
+whole remaining budget, which refused small runs whenever the balance was low). A run that stored new demand enqueues
+one debounced platform recompute (segment_research.enqueue_recompute_for_places).
 """
 from __future__ import annotations
 
@@ -19,7 +25,8 @@ from shared.jobs.registry import JobContext, NonRetryable, job_kind
 logger = structlog.get_logger()
 
 KIND = "segment_research"
-_SCOPE_KEYS = ("places", "tour_ids", "country", "max_places", "strategy", "use_suggestions")
+_SCOPE_KEYS = ("places", "tour_ids", "country", "max_places", "max_usd", "strategy", "use_suggestions", "tiers",
+               "dfs_queue", "recompute")
 
 
 async def load_budgets(pool):
@@ -41,7 +48,25 @@ def scope_kwargs(payload: dict) -> dict:
     return {k: payload.get(k) for k in _SCOPE_KEYS if k in payload}
 
 
-# Research runs up to 200 places in 5 phases (AA-648).
+def max_usd_for(payload: dict, dfs_budget) -> float | None:
+    """The run's USD cap: the payload's, never above what the DFS budget still allows (None = no limit set)."""
+    remaining = dfs_budget.remaining_usd()
+    asked = payload.get("max_usd")
+    if asked is None:
+        return remaining
+    return float(asked) if remaining is None else min(float(asked), remaining)
+
+
+def balance_gate(balance: Optional[float]):
+    """AA-1055 — the before_buy check: refuse when the balance can not cover the selection's capped DFS estimate."""
+    async def _check(summary: dict) -> None:
+        need = (summary.get("estimate") or {}).get("dfs_usd_cap") or 0.0
+        if balance is None or balance < need:
+            raise NonRetryable(f"DataForSEO balance {balance} is below this run's capped estimate {need}")
+    return _check
+
+
+# Research runs its selection in phases (AA-648); a run is bounded by its USD cap (AA-1055).
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=3600)
 async def run(ctx: JobContext) -> dict:
     from services.acp_contract.segment_research import run_segment_research
@@ -58,14 +83,15 @@ async def run(ctx: JobContext) -> dict:
             raise BudgetExceeded(f"{budget.provider} budget exhausted before start",
                                  budget.provider, "per_day")
     balance = await dfs_balance()
-    needed = dfs_budget.remaining_usd()
-    if balance is None or (needed is not None and balance < needed):
-        raise NonRetryable(f"DataForSEO balance {balance} is below this run's DFS budget {needed}")
+    if balance is None:
+        raise NonRetryable("DataForSEO balance could not be read")
+    kwargs = scope_kwargs(ctx.payload)
+    kwargs["max_usd"] = max_usd_for(ctx.payload, dfs_budget)
 
     await ctx.progress(phase="researching", markets=markets, dfs_balance_usd=balance,
-                       max_spend_usd={"dfs": needed, "bedrock": llm_budget.remaining_usd()})
+                       max_spend_usd={"dfs": kwargs["max_usd"], "bedrock": llm_budget.remaining_usd()})
     result = await run_segment_research({"countries": markets}, ctx.pool, dfs_budget=dfs_budget,
-                                        llm_budget=llm_budget, **scope_kwargs(ctx.payload))
+                                        llm_budget=llm_budget, before_buy=balance_gate(balance), **kwargs)
     # LLM spend is already attributed through llm_call_log.job_id (read-side sum, queue.py);
     # only the non-LLM DataForSEO spend is reported here, so nothing is counted twice.
     ctx.add_cost(dfs_budget.run_spent)
