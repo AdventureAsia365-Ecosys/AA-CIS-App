@@ -71,15 +71,16 @@ jobs:
       BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The deployed commit (from deploy-admin-dev.yml); the dispatched ref otherwise.
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored, so `npm ci` fails
       # (first live dispatch, S220). The only root dependency is @playwright/test.
@@ -95,7 +96,7 @@ jobs:
 
       - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-smoke-${{ github.run_id }}
           # Only screenshots and the HTML report. Never upload tests/e2e/.auth (session cookies).
@@ -185,7 +186,7 @@ jobs:
           esac
 
       - name: Checkout the deployed commit
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -197,9 +198,10 @@ jobs:
           role-session-name: cis-ui-smoke-staff-${{ github.run_id }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (S220 lesson).
       - name: Install dependencies (repo root — Playwright lives here)
@@ -215,7 +217,7 @@ jobs:
       # Screenshots only. NOT the HTML/JSON reports: a `fill` step title would carry the typed sign-in code.
       - name: Upload smoke screenshots (NO report, NO auth state)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-smoke-staff-${{ github.run_id }}
           path: tests/e2e/results/smoke/**/*.png
