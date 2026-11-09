@@ -1216,6 +1216,13 @@ def validate_node(state: ContentState) -> ContentState:
     # B1: handle both flat {"top_keywords": [...]} and nested {"keywords": {"top_keywords": [...]}}
     _seo    = state.get("seo", {})
     seo_kws = _seo.get("top_keywords", []) or _seo.get("keywords", {}).get("top_keywords", [])
+    if state.get("is_tenant_rewrite"):
+        # AA-1055 PR 1 (S273 design decision 7): a T2 draft is judged only on a keyword it could have used — one
+        # the shared filter keeps (not transactional, every content word in the source it rewrites) for an English
+        # rewrite. A raw US query the source never covers, or any English query on a German rewrite, is no longer
+        # a 1.0 deduction. T2's SEO step gives the writer the same list (t2_rewrite_job.t2_seo).
+        from services.seo_intelligence.keyword_fit import writer_keywords
+        seo_kws = writer_keywords(_seo, state.get("tour") or {}, state.get("rewrite_language"))
     if seo_kws:
         kw_texts = [
             (kw["keyword"] if isinstance(kw, dict) else str(kw)).lower()

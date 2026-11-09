@@ -146,9 +146,14 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
     return tour_dict, brand_rules
 
 
-async def t2_seo(pool, pt, tenant_id: str) -> tuple[dict, dict]:
+async def t2_seo(pool, pt, tenant_id: str, *, tour_dict: "dict | None" = None,
+                 rewrite_language: "str | None" = None) -> tuple[dict, dict]:
     """(seo_data, diag): the SEO the T2 rewrite passes to the graph, read from the caches only (moved out of
-    `_rewrite_and_save`, AA-919, so the WM-20 release-0 replay rebuilds the same T2 prompt)."""
+    `_rewrite_and_save`, AA-919, so the WM-20 release-0 replay rebuilds the same T2 prompt).
+
+    AA-1055 PR 1: the keywords are then filtered by the shared rule (`keyword_fit.writer_keywords`): only those the
+    source it rewrites (``tour_dict``, default `source_tour_dict(pt)`) covers and that are not transactional, at most
+    5, and none when ``rewrite_language`` is not English. validate_node judges DFS_INTENT_UNDERUSED on the same list."""
     # AA-445-02 — T2 passes the tour's SEO context to the shared rewrite graph (it used to reach it
     # as {}). AA-646 follow-up (KAN-90, 29/09/2026): a tenant action never buys DataForSEO, so T2
     # only READS the cached seo_context row; it no longer calls process_seo() on a miss (~$0.18
@@ -200,7 +205,22 @@ async def t2_seo(pool, pt, tenant_id: str) -> tuple[dict, dict]:
         _sl_seo.get_logger().warning("t2_seo_step_failed", tour_id=pt["tour_id"], error=str(_seo_err))
         diag["seo_source"] = "error"
         diag["seo_error"] = str(_seo_err)[:300]
+    if seo_data:
+        seo_data = _fit_keywords(seo_data, tour_dict if tour_dict is not None else source_tour_dict(pt),
+                                 rewrite_language, diag)
     return seo_data, diag
+
+
+def _fit_keywords(seo_data: dict, tour_dict: dict, rewrite_language: "str | None", diag: dict) -> dict:
+    """AA-1055 PR 1 (S273 design decision 7): `seo_data` with its keyword list (flat and nested) replaced by the ones
+    the T2 writer may use (`keyword_fit.writer_keywords`). PAA questions are left as they are. Records in ``diag``
+    how many keywords came in, how many were kept and whether the rewrite language blocked them all."""
+    from services.seo_intelligence.keyword_fit import is_english, seo_keyword_texts, writer_keywords
+    before = seo_keyword_texts(seo_data)
+    kept = writer_keywords(seo_data, tour_dict, rewrite_language)
+    diag["seo_keywords"] = {"in": len(before), "kept": len(kept),
+                            "language_blocked": bool(before) and not is_english(rewrite_language)}
+    return {**seo_data, "top_keywords": kept, "keywords": {**(seo_data.get("keywords") or {}), "top_keywords": kept}}
 
 
 def t2_judge_breakdown(result: dict, rewritten: dict, tour_dict: dict, brand_rules: dict, *,
@@ -361,7 +381,8 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
 
     from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
 
-    seo_data, diag = await t2_seo(pool, pt, tenant_id)
+    seo_data, diag = await t2_seo(pool, pt, tenant_id, tour_dict=tour_dict,
+                                  rewrite_language=brand_rules.get("rewrite_language"))
     # AA-919 (WM-18 / WM-20): the T2 writing-memory release of this tenant (platform + tenant pointer; None = memory
     # off, fails open). Every T2 write (the first and the T3 repair rounds) goes through build_t2_system_prompt, which
     # consumes it; the job result records it (`writing_release`). Release 0 changes no prompt byte.

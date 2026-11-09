@@ -50,13 +50,13 @@ Channel proposed at Route grain: its pool was the current Routes of the tenant's
 `idx_subject_unique_route` + the `ON CONFLICT ... WHERE state = 'proposed'` upsert meant a used Route never came
 back, so an agency got one or two Blog Subjects ever (S271 phase-1 audit). The origin never had a Route Subject:
 its Blog Subject is a Segment (a moment) carrying its Route as the `walk` material (aa-social-media
-`stages/slate.py::_walk()`, `channels.toml` `takes_route`). Now: Blog is Segment grain with the same Bar
-(demand >= 1000 and questions >= 3, read from the Segment's best market — `_fetch_segment_candidates()`), the place
-rule applies to it like every Segment Channel, a place the tenant already picked / used / cut on Blog is not proposed
-again (`one_piece_per_place`, `_fetch_held_subjects()`), and `pick_subject()` fills the walk: the current Route on the
-seed atom's tour that contains the Segment (`_segment_walk()`), as `route_segment_ids`, so T8 / T9 keep the journey
-spine; no Route = a single-place piece. Route-grain Blog Subjects already picked / used stay valid (their pick, T8, T9
-and regenerate paths are unchanged); a still-`proposed` one is replaced by the next proposal.
+`stages/slate.py::_walk()`, `channels.toml` `takes_route`). Now: Blog is Segment grain with the same Bar (demand >=
+1000 and questions >= 3; AA-1055: the highest demand in any of the tenant's markets — `_fetch_segment_candidates()`),
+the place rule applies to it like every Segment Channel, a place the tenant already picked / used / cut on Blog is not
+proposed again (`one_piece_per_place`, `_fetch_held_subjects()`), and `pick_subject()` fills the walk: the current
+Route on the seed atom's tour that contains the Segment (`_segment_walk()`), as `route_segment_ids`, so T8 / T9 keep
+the journey spine; no Route = a single-place piece. Route-grain Blog Subjects already picked / used stay valid (their
+pick, T8, T9 and regenerate paths are unchanged); a still-`proposed` one is replaced by the next proposal.
 
 **Route/Blog pick now carries the whole Route (AA-511 Gap A, same follow-up)** —
 `pick_subject()` persists `angle_gate_request.route_segment_ids` (migration 134) as the Route's
@@ -166,6 +166,8 @@ class Candidate:
     # Gap B — Route's own hub (None for a standalone Route; a Segment candidate's hub is instead
     # resolved separately via _fetch_segment_hub_map(), keyed by segment_id, not carried here).
     hub_id: str | None = None
+    # AA-1055 PR 1 — the tenant market `demand` was read from (Segment candidates; None = no market has a number).
+    demand_market: str | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +213,54 @@ def _clears_bar(channel: str, candidate: Candidate) -> tuple[bool, dict]:
         "needs_said": spec["needs_said"], "said": candidate.said, "said_ok": said_ok,
     }
     return cleared, reason
+
+
+# AA-1055 PR 1 (S273 design section 3) — why a candidate misses a Channel's Bar. Internal / admin only.
+BAR_CLEARED = "cleared"
+BAR_NO_DATA = "no_data"              # the Bar needs demand and no tenant market has a number yet
+BAR_BELOW_BAR = "below_bar"          # a demand number exists but is under the Bar
+# (not BAR_FEW_QUESTIONS: services/quality/lint.py reads any *QUESTION* = "a_b" constant as a Jev question key)
+BAR_FEW_ASKED = "few_questions"      # fewer real questions than the Bar needs
+BAR_FEW_SAID = "few_said"            # the social Bar: fewer atom mentions than it needs
+BAR_MISS_REASONS = (BAR_NO_DATA, BAR_BELOW_BAR, BAR_FEW_ASKED, BAR_FEW_SAID)
+
+
+def bar_misses(channel: str, candidate: Candidate) -> list[str]:
+    """Every part of one Channel's Bar the candidate misses (the same `>=` tests as `_clears_bar`), demand first (no
+    data before a low number), then questions, then said. Empty = cleared. Kept out of `cleared_bar_reason`, which
+    the tenant Slate read returns: why a candidate missed is for the job result and the admin only."""
+    spec = CHANNEL_BARS[channel]
+    misses = []
+    if (candidate.demand or 0) < spec["needs_demand"]:
+        misses.append(BAR_NO_DATA if candidate.demand is None else BAR_BELOW_BAR)
+    if candidate.questions < spec["needs_questions"]:
+        misses.append(BAR_FEW_ASKED)
+    if candidate.said < spec["needs_said"]:
+        misses.append(BAR_FEW_SAID)
+    return misses
+
+
+def bar_status(channel: str, candidate: Candidate) -> str:
+    """`cleared`, or the first reason the candidate misses the Channel's Bar (`bar_misses`)."""
+    misses = bar_misses(channel, candidate)
+    return misses[0] if misses else BAR_CLEARED
+
+
+def bar_status_counts(channels: list[str], segments: list[Candidate],
+                      routes: list[Candidate]) -> dict[str, dict[str, int]]:
+    """AA-1055 PR 1 — per Channel with a Bar (not on-demand), how many candidates clear it and how many miss it per
+    `bar_status` (no_data / below_bar / few_questions / few_said). Before the place rule, the hub cap and held places:
+    it answers "why does this tenant get so few Blog Subjects", for the t7_slate job result and the admin. Pure."""
+    out: dict[str, dict[str, int]] = {}
+    for channel in channels:
+        spec = CHANNEL_BARS[channel]
+        if spec["on_demand"]:
+            continue
+        counts = {BAR_CLEARED: 0, **{r: 0 for r in BAR_MISS_REASONS}}
+        for candidate in (routes if spec["grain"] == "route" else segments):
+            counts[bar_status(channel, candidate)] += 1
+        out[channel] = counts
+    return out
 
 
 async def _tenant_tour_ids(tenant_id: UUID, conn) -> list:
@@ -269,8 +319,10 @@ async def _tenant_market_codes(tenant_id: UUID, conn) -> tuple[list[str], list[s
 
 
 # AA-741 S271 — one row per ranked, non-excluded Segment of the tenant's tours: `total_rank` / `said` the MIN over
-# every (market, tour) row as before; `demand_volume` / `questions` those of the Segment's best market (lowest
-# total_rank; ties by market code), so the Blog Bar reads one market's real numbers.
+# every (market, tour) row as before. AA-1055 PR 1 (S273 design section 3): `demand_volume` is the MAX over the
+# tenant's markets (NULL only when no market has a number), `demand_market` the market that gives it (ties: the
+# tenant's market order), `questions` the MAX over its markets. Until AA-1055 both were the numbers of the best-RANKED
+# market, so a market with no data (median rank) could win and hide the real US / UK demand.
 _SEGMENT_CANDIDATES_SQL = """
     WITH per_market AS (
         SELECT ar.segment_id, ar.market,
@@ -283,20 +335,18 @@ _SEGMENT_CANDIDATES_SQL = """
           AND ar.excluded_reason IS NULL
           AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
         GROUP BY ar.segment_id, ar.market
-    ), best AS (
-        SELECT DISTINCT ON (segment_id) segment_id, demand_volume, questions
-        FROM per_market
-        ORDER BY segment_id, total_rank ASC NULLS LAST, market
     )
     SELECT pm.segment_id,
            MIN(pm.total_rank)   AS total_rank,
-           MAX(b.demand_volume) AS demand_volume,
-           MAX(b.questions)     AS questions,
+           MAX(pm.demand_volume) AS demand_volume,
+           (array_agg(pm.market ORDER BY pm.demand_volume DESC NULLS LAST,
+                                         array_position($2::text[], pm.market))
+               FILTER (WHERE pm.demand_volume IS NOT NULL))[1] AS demand_market,
+           MAX(pm.questions)    AS questions,
            MIN(pm.said)         AS said,
            MAX(asg.canonical_place)  AS canonical_place,
            MAX(asg.canonical_action) AS canonical_action
     FROM per_market pm
-    JOIN best b ON b.segment_id = pm.segment_id
     JOIN acp_contract.atom_segment asg ON asg.segment_id = pm.segment_id
     GROUP BY pm.segment_id
 """
@@ -312,11 +362,12 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
     Linear issue's own grill-round-3 correction) — just relocated to read time, over rows that
     are now real per-market data instead of one already-merged row.
 
-    AA-741 S271 — `demand` / `questions` are the Segment's numbers in its BEST market (the market with the lowest
-    `total_rank`), travelling together, the rule Route candidates already used ("best market wins, its numbers
-    travel together"). Until S271 they were each the MIN across the tenant's markets, harmless while only Blog read
-    them (at Route grain), but a Blog Segment for a US + UK tenant would then need 1,000 searches in its weakest
-    market. `said` stays the MIN across markets and tours (the social Bar reads it, unchanged).
+    AA-741 S271 — `demand` / `questions` were the Segment's numbers in its BEST-ranked market. AA-1055 PR 1 (S273
+    design section 3): `demand` is the highest demand in any of the tenant's markets (`demand_market` names it) and
+    `questions` the highest count, so a market with no data can no longer win on its median rank and hide the US / UK
+    numbers. Before S271 they were each the MIN across the tenant's markets (a US + UK tenant needed 1,000 searches
+    in its weakest market). `said` stays the MIN across markets and tours (the social Bar reads it, unchanged). The
+    order (`score`) is unchanged.
     """
     async with pool.acquire() as conn:
         tour_ids = await _tenant_tour_ids(tenant_id, conn)
@@ -328,7 +379,7 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
         Candidate(
             segment_id=r["segment_id"], route_id=None, score=r["total_rank"],
             demand=r["demand_volume"], questions=r["questions"] or 0, said=r["said"] or 0,
-            place=r["canonical_place"], action=r["canonical_action"],
+            place=r["canonical_place"], action=r["canonical_action"], demand_market=r["demand_market"],
         )
         for r in rows
     ]
@@ -722,6 +773,8 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         "unmatched_markets": unmatched_markets,
         "channels": enabled_channels,
         "proposed_per_channel": {channel: len(chosen[channel]) for channel in enabled_channels},
+        # AA-1055 PR 1: per Channel with a Bar, candidates that clear it / miss it per reason (admin-only job result)
+        "bar_status": bar_status_counts(enabled_channels, segments, routes),
     }
 
 
@@ -1300,4 +1353,5 @@ __all__ = [
     "pick_subject_on", "write_pick_audit", "cut_subject", "cut_subject_on",
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",
+    "BAR_CLEARED", "BAR_MISS_REASONS", "bar_misses", "bar_status", "bar_status_counts",
 ]
