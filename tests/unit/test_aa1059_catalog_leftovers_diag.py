@@ -102,9 +102,31 @@ def test_segment_verdict(diag, counts, a3, after, verdict):
     (dict(latest_status=None, pending=None, blockers=None), "no_s1_version"),
     (dict(latest_status="hitl", pending={"on_latest": True}, blockers=[], has_master=True), "stale_item_dismiss"),
     (dict(latest_status="hitl", pending={"on_latest": True}, blockers=[], source_live=False), "stale_item_dismiss"),
+    # A trashed Master is no Master for _enqueue_review: the pending item on a live source is legitimate.
+    (dict(latest_status="hitl", pending={"on_latest": True}, blockers=[], master_trashed=True),
+     "trashed_master_pending"),
+    (dict(latest_status="hitl", pending={"on_latest": True}, blockers=["score_below_floor"], master_trashed=True),
+     "trashed_master_pending"),
+    # ... unless its source is dead too: then the item is stale.
+    (dict(latest_status="hitl", pending={"on_latest": True}, blockers=[], master_trashed=True, source_live=False),
+     "stale_item_dismiss"),
 ])
 def test_s1_next_step(diag, kw, step):
     assert diag.s1_next_step(**kw) == step
+
+
+@pytest.mark.parametrize("master_status,source_live,step", [
+    (None, True, "staff_approve"),
+    ("active", True, "stale_item_dismiss"),
+    ("inactive", True, "stale_item_dismiss"),
+    ("trashed", True, "trashed_master_pending"),
+    ("trashed", False, "stale_item_dismiss"),
+])
+def test_s1_next_step_master_status_matches_enqueue_review(diag, master_status, source_live, step):
+    """The loop's master_status -> flags -> step path, the same live-Master rule as _enqueue_review."""
+    has_master, master_trashed = diag.master_flags(master_status)
+    assert diag.s1_next_step("hitl", {"on_latest": True}, [], source_live=source_live, has_master=has_master,
+                             master_trashed=master_trashed) == step
 
 
 def test_tour_route_facts_and_the_every_day_what_if(diag):

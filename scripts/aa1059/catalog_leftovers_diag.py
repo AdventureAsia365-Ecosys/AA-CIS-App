@@ -150,9 +150,22 @@ def segment_verdict(counts, last_a3, events_after_a3):
     return "segment_ran_no_member"
 
 
-def s1_next_step(latest_status, pending, blockers, source_live=True, has_master=False):
+def master_flags(master_status):
+    """(has_live_master, master_trashed) from a published_tours.master_status (None = no row). The same rule as
+    `_enqueue_review` in api/routers/admin_pipeline.py: only a Master whose status is not 'trashed' is live, so a tour
+    whose Master is trashed and whose source is live gets a legitimate pending S1 item."""
+    if master_status is None:
+        return False, False
+    return master_status != "trashed", master_status == "trashed"
+
+
+def s1_next_step(latest_status, pending, blockers, source_live=True, has_master=False, master_trashed=False):
     """The next step for a live source with no Master (or a pending S1 item), as a fixed label:
-      stale_item_dismiss       the item's tour already has a Master or its source is not live: dismiss it
+      stale_item_dismiss       the item's tour already has a live (not trashed) Master or its source is not live:
+                               dismiss it
+      trashed_master_pending   pending item, live source, the tour's Master is trashed: a legitimate item (approve
+                               writes the Master again), outside the S273 no-Master set because that set excludes any
+                               published_tours row; decide approve vs keep the Master trashed (gate codes printed)
       staff_approve            pending item on the latest version, the approve gate finds no blocker
       staff_edit_or_regenerate pending item, the gate blocks it unedited (codes printed): edit + re-validate, or
                                regenerate (paid S1 run)
@@ -166,6 +179,8 @@ def s1_next_step(latest_status, pending, blockers, source_live=True, has_master=
     `pending` = None or {"on_latest": bool}; `blockers` = list of codes or None (gate not evaluated)."""
     if has_master or not source_live:
         return "stale_item_dismiss"
+    if master_trashed and pending is not None:
+        return "trashed_master_pending"
     if pending is not None:
         if not pending.get("on_latest", True):
             return "pending_not_latest"
@@ -379,7 +394,13 @@ async def section_s1(conn, now):
     out("S1.pending_s1_tours", len(b))
     out("S1.match.both", len(set(a) & b))
     out("S1.match.no_master_without_pending_item", len(set(a) - b))
-    out("S1.match.pending_item_tour_has_master_or_dead_source", len(b - set(a)))
+    # Pending items outside the no-Master set, split by why: a trashed Master with a live source is a legitimate item
+    # (`_enqueue_review` treats a trashed Master as no Master); a live Master or a dead source makes it stale.
+    outside = b - set(a)
+    trashed_live = {t for t in outside
+                    if any(p["master_status"] == "trashed" and p["source_live"] for p in by_tour_pending[t])}
+    out("S1.match.pending_item_tour_trashed_master_live_source", len(trashed_live))
+    out("S1.match.pending_item_tour_has_master_or_dead_source", len(outside - trashed_live))
     for cc, n in sorted(Counter(r["country"] for r in no_master).items()):
         out(f"S1.no_master_by_country.{cc}", n)
     ids = sorted(set(a) | b)
@@ -408,10 +429,10 @@ async def section_s1(conn, now):
                 for code in blockers:
                     blocker_codes[code] += 1
         pend = None if item is None else {"on_latest": lt is None or item["gc_id"] == lt["gc_id"]}
-        has_master = item is not None and item["master_status"] is not None
+        has_master, master_trashed = master_flags(item["master_status"] if item is not None else None)
         source_live = item["source_live"] if item is not None else True
         step = s1_next_step(lt["status"] if lt else None, pend, blockers, source_live=source_live,
-                            has_master=has_master)
+                            has_master=has_master, master_trashed=master_trashed)
         steps[step] += 1
         j = jobs.get(t)
         country = a[t]["country"] if t in a else (item["country"] if item else "??")
