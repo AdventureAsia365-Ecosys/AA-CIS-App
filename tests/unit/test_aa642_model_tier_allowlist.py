@@ -26,8 +26,6 @@ ALLOWED = {
     # App code: the six fixed tiers of the S262 audit (map "LLM call sites", AA-642 S11).
     ("api/routers/admin_pipeline.py", "model_tier='sonnet'"): 1,          # _sonnet_upgrade (AA-237 opt-in)
     ("api/routers/admin_pipeline.py", "model_tier='haiku'"): 1,           # revalidation graph state
-    ("services/acp_contract/segment_research.py", "model_tier='haiku'"): 1,
-    ("services/acp_contract/segment_research_batch.py", "model_tier='haiku'"): 1,
     ("services/eval/regression.py", "model_tier='haiku'"): 1,
     # App code: the caller's optional override, passed through (None = the stage route).
     ("services/acp_angle_gate/generate.py", EXPR): 1,                     # T8 A/B harness

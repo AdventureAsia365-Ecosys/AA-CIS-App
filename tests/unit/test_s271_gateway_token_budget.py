@@ -397,7 +397,6 @@ SUB_FLOOR_CEILINGS = {
                                                        "reasoning model, the literal bounds a non-reasoning one",
     "services/jobs/llm_probe_job.py:CANDIDATE_MAX_TOKENS": "availability sweep through LLMClient.probe",
     "services/acp_content_writing/seed_align/checks.py:MAX_TOKENS": "seed alignment one-word check",
-    "services/acp_contract/segment_research.py:484": "segment research questions (JSON list)",
     "services/acp_shared/place_cards.py:DRAFT_MAX_TOKENS": "place card draft",
     "services/acp_shared/place_cards.py:CHECK_MAX_TOKENS": "place card check verdict",
     "services/content_generation/s1_writer_v2.py:META_MAX_TOKENS": "S1 meta fields",
