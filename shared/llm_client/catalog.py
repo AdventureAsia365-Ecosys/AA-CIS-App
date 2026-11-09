@@ -315,6 +315,7 @@ async def list_catalog_rows() -> list[dict]:
 
 async def set_catalog_price(
     model_key: str, *, fields: dict[str, Any], updated_by: str, audit_actor: str,
+    evidence: Optional[dict] = None,
 ) -> dict:
     """AA-686 — update a catalog row's price/enabled fields and audit it (action
     `llm_catalog_changed`) in one transaction. Returns the updated row dict.
@@ -325,6 +326,10 @@ async def set_catalog_price(
 
     AA-1017 (D9): a price field (CATALOG_PRICE_FIELDS) raises CatalogPriceReadOnly before anything
     is read or written (router -> 422): prices change by migration only. ``enabled`` stays editable.
+
+    AA-1052 W6: ``evidence`` (the eval run or break-glass reason of a switch of a model that serves a gated stage,
+    services/quality/edit_gate.py) goes into the audit row; a break glass also writes the admin bell in the same
+    transaction.
     """
     prices = sorted(k for k in fields if k in CATALOG_PRICE_FIELDS)
     if prices:
@@ -378,8 +383,15 @@ async def set_catalog_price(
                 VALUES ($1, $2, $3, $4, $5::jsonb)
                 """,
                 audit_actor, "llm_catalog_changed", "llm_model_catalog", model_key,
-                json.dumps({"before": before_d, "after": after_d}, default=str),
+                json.dumps({"before": before_d, "after": after_d,
+                            **({"evidence": evidence} if evidence else {})}, default=str),
             )
+            if evidence:
+                from shared.llm_client import route_evidence
+                await route_evidence.record_break_glass(
+                    conn, stage=f"catalog:{model_key}"[:100], actor=audit_actor, evidence=evidence,
+                    change={"model_key": model_key, "before": before_d, "after": after_d},
+                    subject=f"Catalog row {model_key}")
         return _row_to_dict(row)
     finally:
         await conn.close()

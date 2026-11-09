@@ -555,6 +555,11 @@ export default function RouteControlTab() {
                 <div><strong style={{ fontSize: 12.5, color: K.amber }}>{t("warningsTitle")}</strong>
                   <ProblemList problems={shown.warnings.filter((w) => !w.existing)} tone="warning" /></div>
               )}
+              {(shown.frozen_by_waves?.length ?? 0) > 0 && (
+                <div role="alert" data-testid="route-control-frozen" style={{ fontSize: 12.5, color: K.danger }}>
+                  {t("frozenByWaves", (shown.frozen_by_waves ?? []).map((w) => w.name || w.id).join(", "))}
+                </div>
+              )}
               {needsEv && (
                 <>
                   <div style={{ fontSize: 12.5, color: K.ink }}>{t("evidenceNeeded", shown.evidence_stages.join(", "))}</div>

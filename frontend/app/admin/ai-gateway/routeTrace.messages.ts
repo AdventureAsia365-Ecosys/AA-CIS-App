@@ -126,6 +126,12 @@ export const RT = defineMessages(
     saved: (stage: string) => `Route alerts of ${stage} saved.`,
     resetDone: (stage: string) => `${stage} uses the defaults again.`,
     readOnly: "This session is read-only.",
+    // AA-1052 W6: the hold switch of a writing-path stage (or of the defaults) changes what a writer stores
+    holdEvidenceHint: "This changes the hold switch of a writing-path stage, so the change needs evidence. It is "
+      + "refused while a rerun wave is open.",
+    evidenceMissing: (min: number) => `Give an eval run id, or a break-glass reason of at least ${min} characters.`,
+    resetTitle: (stage: string) => `Reset ${stage} to the defaults`,
+    resetConfirm: "Reset",
     runCheck: "Run check now",
     runCheckDone: "The route check is queued; alerts show in the bell in a minute.",
     testOpen: "Route test",
@@ -249,6 +255,11 @@ export const RT = defineMessages(
     saved: (stage: string) => `Đã lưu cảnh báo lộ trình của ${stage}.`,
     resetDone: (stage: string) => `${stage} dùng lại mặc định.`,
     readOnly: "Phiên này chỉ được xem.",
+    holdEvidenceHint: "Thay đổi này đổi công tắc giữ lại của một bước trên đường viết nội dung, nên cần bằng chứng. "
+      + "Khi đang có một đợt chạy lại (wave), thay đổi bị từ chối.",
+    evidenceMissing: (min: number) => `Nhập mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} ký tự.`,
+    resetTitle: (stage: string) => `Đưa ${stage} về mặc định`,
+    resetConfirm: "Đưa về mặc định",
     runCheck: "Kiểm ngay",
     runCheckDone: "Đã xếp lượt kiểm lộ trình; cảnh báo hiện ở chuông sau khoảng một phút.",
     testOpen: "Kiểm lộ trình",

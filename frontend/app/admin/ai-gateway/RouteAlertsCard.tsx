@@ -10,20 +10,27 @@
 // check of the Trace tab and of the fallback / primary-back alerts. Writes show only when GET
 // /api/admin/ai-gateway/access allows them (usePageAccess "route_policy" / "route_test").
 // Built on the kit only (Section, DataTable, Badge, Drawer, Field / Input / Select / Textarea, Checkbox, Toast).
+// AA-1052 W6: a save or reset that moves the hold switch of a writing-path stage (or of the defaults) asks for the
+// evidence (ChangeEvidenceFields: an eval run id or a break-glass reason, lib/editGate.ts); the API refuses it
+// without one (422) and while a rerun wave is open (409, shown as the error).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, Pencil, Play } from "lucide-react";
 import {
-  Badge, Button, Checkbox, DataTable, Drawer, Field, Input, K, LinkButton, Section, Select, Spinner, Textarea,
-  apiGet, apiSend, mono, useT, useToast, type ColumnDef, type Translator,
+  Badge, Button, Checkbox, ConfirmModal, DataTable, Drawer, Field, Input, K, LinkButton, Section, Select, Spinner,
+  Textarea, apiGet, apiSend, mono, useT, useToast, type ColumnDef, type Translator,
 } from "../../_kit";
+import { holdChangeNeedsEvidence } from "@/lib/editGate";
 import { isReadOnlyRefusal, usd } from "@/lib/aiGateway";
 import {
   DEFAULT_STAGE, ROUTE_KEY, ROUTE_POLICY_API, ROUTE_TEST_API, ROUTE_WATCH_API, TEST_MAX_REQUESTS, policyBody,
   policyDraft, policyPath, rungLabel, type Inherit, type PolicyDraft, type PolicyValues, type RoutePolicyResp,
   type RouteTestResp, type StagePolicy,
 } from "@/lib/routeTrace";
+import {
+  BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, type ChangeEvidence,
+} from "./ChangeEvidenceFields";
 import { RT } from "./routeTrace.messages";
 import { usePageAccess } from "./usePageAccess";
 
@@ -38,11 +45,17 @@ function PolicyEditor({ row, onClose }: { row: Row; onClose: () => void }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<PolicyDraft>(() => policyDraft(row.row));
   const [apiError, setApiError] = useState("");
+  const [evidence, setEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
   const body = policyBody(draft);
   const set = (p: Partial<PolicyDraft>) => setDraft((d) => ({ ...d, ...p }));
   const name = row.isDefault ? t("defaultsRow") : row.stage;
+  // AA-1052 W6: the hold switch of a writing-path stage moves → the save carries its evidence.
+  const askEvidence = typeof body !== "string"
+    && holdChangeNeedsEvidence(row.stage, row.row?.hold_fallback_writes, body.hold_fallback_writes);
   const mut = useMutation({
-    mutationFn: () => apiSend(policyPath(row.stage), { method: "PUT", body, admin: true }),
+    mutationFn: () => apiSend(policyPath(row.stage), {
+      method: "PUT", body: { ...(body as object), ...(askEvidence ? evidenceBody(evidence) : {}) }, admin: true,
+    }),
     onSuccess: () => {
       toast.success(t("saved", name));
       qc.invalidateQueries({ queryKey: [...POLICY_KEY] });
@@ -60,8 +73,14 @@ function PolicyEditor({ row, onClose }: { row: Row; onClose: () => void }) {
       footer={
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>{t("cancel")}</Button>
-          <Button variant="primary" disabled={bad != null || mut.isPending} onClick={() => mut.mutate()}
-            testId="route-policy-save">{mut.isPending ? t("saving") : t("save")}</Button>
+          <Button variant="primary" disabled={bad != null || mut.isPending} testId="route-policy-save"
+            onClick={() => {
+              if (askEvidence && !evidenceReady(evidence)) {
+                setApiError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
+                return;
+              }
+              mut.mutate();
+            }}>{mut.isPending ? t("saving") : t("save")}</Button>
         </div>
       }>
       <div data-testid="route-policy-editor" style={{ display: "grid", gap: 14 }}>
@@ -100,6 +119,13 @@ function PolicyEditor({ row, onClose }: { row: Row; onClose: () => void }) {
           <Textarea rows={2} maxLength={500} value={draft.notes} disabled={mut.isPending}
             onChange={(e) => set({ notes: e.target.value })} />
         </Field>
+        {askEvidence && (
+          <div>
+            <p style={{ ...small, margin: 0 }}>{t("holdEvidenceHint")}</p>
+            <ChangeEvidenceFields stage={`policy-${row.stage}`} value={evidence}
+              onChange={(next) => { setEvidence(next); setApiError(""); }} />
+          </div>
+        )}
         {apiError && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{apiError}</span>}
       </div>
     </Drawer>
@@ -208,15 +234,23 @@ export default function RouteAlertsCard({ onOpenRequest }: {
   const canTest = access.can("route_test");
   const [editing, setEditing] = useState<Row | null>(null);
   const [testing, setTesting] = useState(false);
+  // AA-1052 W6: a reset that clears the hold switch of a writing-path stage waits here for its evidence.
+  const [resetting, setResetting] = useState<Row | null>(null);
+  const [resetEvidence, setResetEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
+  const [resetError, setResetError] = useState<string | null>(null);
   const q = useQuery({
     queryKey: [...POLICY_KEY],
     queryFn: () => apiGet<RoutePolicyResp>(ROUTE_POLICY_API, { admin: true }),
     retry: false,
   });
   const reset = useMutation({
-    mutationFn: (stage: string) => apiSend(policyPath(stage), { method: "DELETE", admin: true }),
-    onSuccess: (_d, stage) => {
+    mutationFn: ({ stage, proof }: { stage: string; proof?: ChangeEvidence }) => {
+      const q = new URLSearchParams(proof ? evidenceBody(proof) : {}).toString();
+      return apiSend(`${policyPath(stage)}${q ? `?${q}` : ""}`, { method: "DELETE", admin: true });
+    },
+    onSuccess: (_d, { stage }) => {
       toast.success(t("resetDone", stage === DEFAULT_STAGE ? t("defaultsRow") : stage));
+      setResetEvidence(EMPTY_EVIDENCE);
       qc.invalidateQueries({ queryKey: [...POLICY_KEY] });
     },
     onError: (e) => toast.error(isReadOnlyRefusal(e) ? t("readOnly") : e instanceof Error ? e.message : String(e)),
@@ -259,7 +293,9 @@ export default function RouteAlertsCard({ onOpenRequest }: {
         cell: ({ row: { original: r } }) => (
           <span style={{ display: "inline-flex", gap: 6, whiteSpace: "nowrap" }}>
             <LinkButton onClick={() => setEditing(r)}><Pencil size={12} /> {t("edit")}</LinkButton>
-            {r.row && <LinkButton tone="muted" disabled={reset.isPending} onClick={() => reset.mutate(r.stage)}>
+            {r.row && <LinkButton tone="muted" disabled={reset.isPending} onClick={() => (
+              holdChangeNeedsEvidence(r.stage, r.row?.hold_fallback_writes, null)
+                ? setResetting(r) : reset.mutate({ stage: r.stage }))}>
               {t("reset")}</LinkButton>}
           </span>
         ) });
@@ -285,6 +321,29 @@ export default function RouteAlertsCard({ onOpenRequest }: {
           tableMinWidth={820} paginate={rows.length > 25} />
       )}
       {editing && <PolicyEditor row={editing} onClose={() => setEditing(null)} />}
+      <ConfirmModal
+        open={resetting !== null}
+        onClose={() => { setResetting(null); setResetError(null); }}
+        onConfirm={() => {
+          if (!resetting) return;
+          if (!evidenceReady(resetEvidence)) {
+            setResetError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
+            return;
+          }
+          reset.mutate({ stage: resetting.stage, proof: resetEvidence });
+          setResetting(null);
+          setResetError(null);
+        }}
+        title={resetting ? t("resetTitle", resetting.isDefault ? t("defaultsRow") : resetting.stage) : ""}
+        confirmLabel={t("resetConfirm")}
+        body={resetting ? (
+          <div data-testid="route-policy-reset-confirm">
+            <p style={{ ...small, marginTop: 0 }}>{t("holdEvidenceHint")}</p>
+            <ChangeEvidenceFields stage={`policy-reset-${resetting.stage}`} value={resetEvidence} error={resetError}
+              onChange={(next) => { setResetEvidence(next); setResetError(null); }} />
+          </div>
+        ) : null}
+      />
       {testing && <RouteTestDrawer stages={stages} onClose={() => setTesting(false)}
         onOpenRequest={(id, at) => { setTesting(false); onOpenRequest(id, at); }} />}
     </Section>

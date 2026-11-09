@@ -296,7 +296,9 @@ async def test_catalog_patch_enable_without_price_maps_check_to_422():
     async def raiser(model_key, **kw):
         raise CatalogPriceRequired("cannot enable a model without both an input and an output price")
 
+    # AA-1052 W6: an on / off switch reads the routes (no gated stage serves the model here: no evidence needed)
     with patch.object(ops, "verify_admin_secret"), \
+            patch.object(ops, "list_stage_configs", AsyncMock(return_value=[])), \
             patch.object(ops, "set_catalog_price", raiser):
         with pytest.raises(HTTPException) as exc:
             await ops.patch_llm_catalog("opus-5-5", ops.LlmCatalogPatch(enabled=True),

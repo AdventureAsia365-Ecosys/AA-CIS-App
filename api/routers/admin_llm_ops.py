@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
+from services.quality import edit_gate
 from services.quality.registry import threshold
 from api.routers.admin import verify_admin_secret
 from shared.aws_client import accounts as aws_accounts
@@ -389,17 +390,31 @@ class LlmConfigPatch(_ChangeEvidence):
     account_route: Optional[str] = None
 
 
-async def _change_evidence(role: str, body: _ChangeEvidence) -> Optional[dict]:
-    """422 when a writer / judge model change carries no usable evidence; the evidence for the audit row otherwise
-    (None for a stage that needs none)."""
+async def _change_evidence(role: str, body: _ChangeEvidence, stage: Optional[str] = None, *,
+                           required: bool = False, what: Optional[str] = None) -> Optional[dict]:
+    """422 when a writer / judge model change (AA-1052 W6: or a change of a stage of the gated prefixes) carries no
+    usable evidence; the evidence for the audit row otherwise (None for a stage that needs none)."""
     try:
-        return await route_evidence.require(role, eval_run_id=body.eval_run_id,
-                                            break_glass_reason=body.break_glass_reason)
+        return await route_evidence.require(role, stage=stage, required=required, what=what,
+                                            eval_run_id=body.eval_run_id, break_glass_reason=body.break_glass_reason)
     except route_evidence.EvidenceRefused as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:  # noqa: BLE001 — the eval run table could not be read: refuse, never wave through
         logger.warning("llm_route_evidence_unreadable", error=str(e)[:200])
         raise HTTPException(status_code=503, detail="the eval run could not be checked; try again")
+
+
+async def _refuse_if_frozen(surface: str, stages, request: Optional[Request]) -> None:
+    """AA-1052 W6 (services/quality/edit_gate.py): 409 while a rerun wave is open and the edit touches a gated stage;
+    503 when the wave table cannot be read (fail closed, never wave through)."""
+    pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
+    try:
+        await edit_gate.refuse_if_frozen(surface, stages, pool=pool)
+    except edit_gate.EditFrozen as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_edit_gate_wave_unreadable", surface=surface, error=str(e)[:200])
+        raise HTTPException(status_code=503, detail="open rerun waves could not be checked; try again")
 
 
 # ── AA-1024 A6 — the failure-domain rule on a saved route (report only) ─────────────────────────────────────────────
@@ -452,6 +467,8 @@ async def get_llm_config():
                                     data_scope.normalize(r["allowed_scopes"]), reach)
         r["account_route_options"] = _account_route_options() if r["provider"] == "claude" else []
         r["route"] = _route_view(r, models)
+        # AA-1052 W6: a model / chain edit of this stage needs evidence and is frozen during a wave (edit_gate)
+        r["gated"] = edit_gate.is_gated_stage(r["stage"], r["role"])
     return {"stages": rows}
 
 
@@ -488,8 +505,13 @@ async def patch_llm_config(
     if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
         raise HTTPException(status_code=422,
                             detail="This account route is not allowed: models run on the LLM account only")
-    # AA-1026 D7: a new primary model of a writer / judge stage needs its eval run or a break-glass reason.
-    evidence = (await _change_evidence(current["role"], body)) if body.model_id != current["model_id"] else None
+    # AA-1052 W6: a gated stage's route row is frozen while a rerun wave is open (409).
+    if edit_gate.is_gated_stage(stage, current["role"]):
+        await _refuse_if_frozen(f"the model of stage {stage}", [stage], request)
+    # AA-1026 D7: a new primary model of a writer / judge stage needs its eval run or a break-glass reason
+    # (AA-1052 W6: any stage of the gated prefixes too).
+    evidence = (await _change_evidence(current["role"], body, stage)) \
+        if body.model_id != current["model_id"] else None
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
@@ -592,7 +614,10 @@ async def patch_llm_route(
     # AA-1026 D7: a new fallback chain of a writer / judge stage needs its eval run or a break-glass reason. A
     # shadow-only change does not (the shadow never serves a reply; it is how the evidence is gathered).
     chain_changed = list(fallbacks) != list(current.get("fallback_model_ids") or [])
-    evidence = (await _change_evidence(current["role"], body)) if chain_changed else None
+    # AA-1052 W6: frozen during a wave for a gated stage (the shadow too: it adds paid calls mid-wave).
+    if edit_gate.is_gated_stage(stage, current["role"]):
+        await _refuse_if_frozen(f"the route of stage {stage}", [stage], request)
+    evidence = (await _change_evidence(current["role"], body, stage)) if chain_changed else None
 
     try:
         updated = await set_stage_route(
@@ -671,16 +696,36 @@ async def _wm_reverify(request: Request, stage: Optional[str], admin_actor: str)
 # ── AA-686 — model catalog read + price/enabled edit ───────────────────────────────────────────
 
 
-class LlmCatalogPatch(BaseModel):
+class LlmCatalogPatch(_ChangeEvidence):
     price_in_per_mtok: Optional[float] = Field(None, ge=0)
     price_out_per_mtok: Optional[float] = Field(None, ge=0)
     price_source: Optional[str] = None
     enabled: Optional[bool] = None
 
 
+_EVIDENCE_FIELDS = ("eval_run_id", "break_glass_reason")
+
+
+def gated_stages_of(model_key: str, stage_rows: list[dict]) -> list[str]:
+    """AA-1052 W6 (pure): the gated stages whose route serves ``model_key`` (primary or fallback; a shadow never
+    serves a reply). A catalog switch of such a model changes what those stages answer with."""
+    return sorted(r["stage"] for r in stage_rows
+                  if (r.get("model_id") == model_key or model_key in (r.get("fallback_model_ids") or []))
+                  and edit_gate.is_gated_stage(r["stage"], r.get("role")))
+
+
 @router.get("/llm-catalog", summary="Every catalog row (prices, provenance, enabled)")
 async def get_llm_catalog():
-    return {"models": await list_catalog_rows()}
+    models = await list_catalog_rows()
+    try:
+        stage_rows = await list_stage_configs()
+    except Exception as e:  # noqa: BLE001 — the catalog read never fails on the route read (the PATCH re-checks)
+        logger.warning("llm_catalog_gated_stages_unreadable", error=str(e)[:200])
+        stage_rows = None
+    for m in models:
+        # AA-1052 W6: a switch of a model on a gated stage's route needs evidence (null = not known now)
+        m["gated_stages"] = gated_stages_of(m["model_key"], stage_rows) if stage_rows is not None else None
+    return {"models": models}
 
 
 @router.patch("/llm-catalog/{model_key}",
@@ -694,20 +739,34 @@ async def patch_llm_catalog(
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"
-    fields = body.model_dump(exclude_unset=True)
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k not in _EVIDENCE_FIELDS}
     if not fields:
         raise HTTPException(status_code=422, detail="no fields to update")
+    # AA-1052 W6: switching a model that serves a gated stage is frozen during a wave and needs evidence.
+    evidence = None
+    gated_on: list[str] = []
+    if "enabled" in fields:
+        try:
+            gated_on = gated_stages_of(model_key, await list_stage_configs())
+        except Exception as e:  # noqa: BLE001 — the routes could not be read: refuse, never wave a switch through
+            logger.warning("llm_catalog_gate_routes_unreadable", model_key=model_key, error=str(e)[:200])
+            raise HTTPException(status_code=503, detail="the stage routes could not be read; try again")
+    if gated_on:
+        await _refuse_if_frozen(f"the catalog row {model_key}", gated_on, request)
+        evidence = await _change_evidence(
+            None, body, required=True,
+            what=f"catalog switch of {model_key} (it serves the gated stage(s) {', '.join(gated_on[:6])})")
     try:
         updated = await set_catalog_price(
             model_key, fields=fields, updated_by=f"admin:{admin_actor}",
-            audit_actor=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}", evidence=evidence,
         )
     except (CatalogPriceRequired, CatalogPolicyBlocked, CatalogPriceReadOnly) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     logger.info("admin_llm_catalog_changed", model_key=model_key, fields=list(fields),
-                admin_actor=admin_actor)
+                admin_actor=admin_actor, evidence=sorted(evidence) if evidence else None)
     await _wm_reverify(request, None, admin_actor)      # AA-900 W0: a catalog row is part of config_fp
     return updated
 

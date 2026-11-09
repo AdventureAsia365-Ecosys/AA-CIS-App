@@ -483,9 +483,31 @@ class PolicyUnavailable(RuntimeError):
 POLICY_MISSING = "the route alert policy needs the llm_route_policy migration"
 
 
-async def write_policy(pool, stage: str, fields: dict, *, actor: str) -> dict:
+HOLD_SQL = "SELECT hold_fallback_writes FROM shared.llm_route_policy WHERE stage = $1"
+
+
+async def read_hold(pool, stage: str) -> tuple[bool, Optional[bool]]:
+    """AA-1052 W6: (row exists, its hold_fallback_writes) of one policy row. PolicyUnavailable before CIS 371."""
+    import asyncpg
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(HOLD_SQL, stage)
+    except asyncpg.exceptions.UndefinedTableError as e:
+        raise PolicyUnavailable(POLICY_MISSING) from e
+    return (row is not None, row["hold_fallback_writes"] if row is not None else None)
+
+
+async def _policy_bell(conn, stage: str, actor: str, evidence: Optional[dict], change: dict) -> None:
+    if evidence:
+        from shared.llm_client import route_evidence
+        await route_evidence.record_break_glass(conn, stage=stage, actor=actor, evidence=evidence, change=change,
+                                                subject=f"Route policy of stage {stage}")
+
+
+async def write_policy(pool, stage: str, fields: dict, *, actor: str, evidence: Optional[dict] = None) -> dict:
     """Create or replace one policy row (``*`` = the defaults), audited ``llm_route_policy_set``. ValueError on a bad
-    value; PolicyUnavailable before the llm_route_policy migration."""
+    value; PolicyUnavailable before the llm_route_policy migration. AA-1052 W6: ``evidence`` (a hold switch change of
+    a gated stage, services/quality/edit_gate.py) goes into the audit row; a break glass raises the admin bell."""
     import asyncpg
 
     from services.acp_shared.audit_log import write_audit_log
@@ -499,19 +521,21 @@ async def write_policy(pool, stage: str, fields: dict, *, actor: str) -> dict:
                 row = await conn.fetchrow(route_watch.UPSERT_SQL, stage, values["fallback_alert_pct"],
                                           values["min_requests"], values["alert_last_rung"], values["cost_shift_usd"],
                                           values["hold_fallback_writes"], values["notes"], actor[:128])
+                details = {k: v for k, v in values.items() if k != "notes"}
                 await write_audit_log(conn, tenant_id=PLATFORM_TENANT_ID, actor=actor,
                                       action="llm_route_policy_set", resource_type="llm_route_policy",
                                       resource_id=stage,
-                                      details={k: v for k, v in values.items() if k != "notes"})
+                                      details={**details, **({"evidence": evidence} if evidence else {})})
+                await _policy_bell(conn, stage, actor, evidence, details)
     except asyncpg.exceptions.UndefinedTableError as e:
         raise PolicyUnavailable(POLICY_MISSING) from e
     route_watch.reset()
     return route_watch.row_of(row)
 
 
-async def clear_policy(pool, stage: str, *, actor: str) -> dict:
+async def clear_policy(pool, stage: str, *, actor: str, evidence: Optional[dict] = None) -> dict:
     """Remove one policy row (back to the ``*`` row / the defaults), audited ``llm_route_policy_cleared``.
-    LookupError when there is none."""
+    LookupError when there is none. AA-1052 W6: ``evidence`` as in write_policy."""
     import asyncpg
 
     from services.acp_shared.audit_log import write_audit_log
@@ -524,7 +548,8 @@ async def clear_policy(pool, stage: str, *, actor: str) -> dict:
                     raise LookupError(stage)
                 await write_audit_log(conn, tenant_id=PLATFORM_TENANT_ID, actor=actor,
                                       action="llm_route_policy_cleared", resource_type="llm_route_policy",
-                                      resource_id=stage, details={})
+                                      resource_id=stage, details={"evidence": evidence} if evidence else {})
+                await _policy_bell(conn, stage, actor, evidence, {"cleared": True})
     except asyncpg.exceptions.UndefinedTableError as e:
         raise PolicyUnavailable(POLICY_MISSING) from e
     route_watch.reset()

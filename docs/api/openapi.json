@@ -3909,6 +3909,18 @@
       },
       "LlmCatalogPatch": {
         "properties": {
+          "break_glass_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Break Glass Reason"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -3919,6 +3931,18 @@
               }
             ],
             "title": "Enabled"
+          },
+          "eval_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Run Id"
           },
           "price_in_per_mtok": {
             "anyOf": [
@@ -6027,6 +6051,27 @@
         "title": "Readiness",
         "type": "object"
       },
+      "RecheckBody": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "source_kind": {
+            "default": "raw_tour",
+            "enum": [
+              "raw_tour",
+              "master"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          }
+        },
+        "title": "RecheckBody",
+        "type": "object"
+      },
       "RefreshBody": {
         "additionalProperties": false,
         "properties": {
@@ -6740,6 +6785,18 @@
             ],
             "title": "Alert Last Rung"
           },
+          "break_glass_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Break Glass Reason"
+          },
           "cost_shift_usd": {
             "anyOf": [
               {
@@ -6752,6 +6809,18 @@
               }
             ],
             "title": "Cost Shift Usd"
+          },
+          "eval_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Run Id"
           },
           "fallback_alert_pct": {
             "anyOf": [
@@ -13065,6 +13134,40 @@
               "pattern": "^(\\*|[a-z0-9][a-z0-9_.-]{0,63})$",
               "title": "Stage",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "eval_run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Eval Run Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "break_glass_reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Break Glass Reason"
             }
           },
           {
@@ -33526,6 +33629,206 @@
           }
         },
         "summary": "Get Lineage Coverage",
+        "tags": [
+          "admin-quality"
+        ]
+      }
+    },
+    "/admin/quality/lineage/fanout/{tour_id}": {
+      "get": {
+        "operationId": "get_tour_fanout_admin_quality_lineage_fanout__tour_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Tour Fanout Admin Quality Lineage Fanout  Tour Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tour Fanout",
+        "tags": [
+          "admin-quality"
+        ]
+      }
+    },
+    "/admin/quality/lineage/fanout/{tour_id}/recheck": {
+      "post": {
+        "description": "Queue the $0 re-check of one tour's dependents (job source_fanout, reason manual_recheck).",
+        "operationId": "post_tour_recheck_admin_quality_lineage_fanout__tour_id__recheck_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RecheckBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Tour Recheck Admin Quality Lineage Fanout  Tour Id  Recheck Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Tour Recheck",
         "tags": [
           "admin-quality"
         ]

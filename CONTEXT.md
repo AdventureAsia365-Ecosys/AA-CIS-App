@@ -1801,8 +1801,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   its leading comment block. The lint fails closed: a stage-scoped write is exempt only when every stage it selects
   is a literal outside the gated prefixes (`stage = '<lit>'`, `stage IN (...)`, INSERT ... VALUES, a LIKE pattern
   that cannot match a gated prefix); a write by role (as CIS 331-333 did), by subquery, regex, `<>` / `NOT`, `OR` or
-  with no stage selector counts as gated. Prompt registrations need none (they are the bump). Runtime admin edits of a gated route
-  are not gated yet (follow-up of AA-1052).
+  with no stage selector counts as gated. Prompt registrations need none (they are the bump). (3) The runtime edit gate
+  (`services/quality/edit_gate.py`, same prefixes, plus writer / judge stages): an admin edit of a gated stage's model
+  or chain (PATCH `/admin/llm-config/{stage}` and `/route`), a route-control save / preset / revert that moves a gated
+  stage, a catalog on / off of a model on a gated stage's route (PATCH `/admin/llm-catalog/{key}`) and a change of the
+  hold switch (`hold_fallback_writes`) of a gated stage's or the `*` route policy (PUT / DELETE
+  `/admin/ai-gateway/route-policy/{stage}`) is refused with 409 while a rerun wave is open (`shared.rerun_wave.status
+  = 'open'`, the deploy gate's check) and otherwise needs `eval_run_id` or `break_glass_reason` (422 without), kept in
+  the audit row (`details.evidence`; a break glass rings the admin bell). Not gated: the stage kill switch, a provider
+  connection on / off, alert-threshold-only policy edits. `shared.stage_model_params` has no runtime write path.
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
@@ -3150,6 +3157,21 @@ version only at a writer exit. An eval result reads its run's fingerprint (`conf
 (the share of recent objects carrying each field) and `GET /admin/quality/lineage/{s1|t2|t9|eval}/{id}` (one object,
 with `missing` / `complete`); ops.read or lab.read; ids and shas, never text.
 _Avoid_: provenance (that is a FactSheet line's source class), audit trail.
+
+**Source-change fan-out (AA-1052 W6, CIS 392)**:
+When a source a writer read changes — an admin raw-tour edit (`raw_tour`), a Master publish (`master`), an admin atom
+edit or delete (`atom`), an admin place card facts / status edit or merge (`place_card`) — the write path enqueues the
+`$0` job `source_fanout` (`services/quality/source_fanout.py`; one job per source and minute). It finds the writer
+objects written from that source BEFORE the change (S1: the live and the newest Master version; T2: each tenant's
+newest version of the tour; T9: approved / held pieces citing an atom of the tour, or the atom, or an atom linked to
+the card, by the angle request or a route moment), re-checks them (an S1 / T2 object of a raw-tour change whose stored
+FactSheet text equals the sheet rebuilt now is left alone) and marks the rest in `shared.source_change_mark` with a
+typed reason (`raw_tour_edited`, `master_published`, `atom_edited`, `atom_deleted`, `place_card_facts_edited`,
+`place_card_status_changed`, `place_cards_merged`, `manual_recheck`); one open mark per object and source. It never
+regenerates, never calls a model and never changes an object's status. `GET /admin/quality/lineage/fanout/{tour_id}`
+shows a tour's marks (ids and reasons); `POST .../fanout/{tour_id}/recheck` queues a manual re-check (dry run by
+default; quality.write).
+_Avoid_: stale (a mark says the source moved, not that the text is wrong), invalidation (nothing is deleted).
 
 **Claim shadow (AA-1050, root ADR 0020 W4, D6 / D7)**:
 The pinned claim instrument calibrated in W2 (`services/ground_truth/r1.py`, extraction mode, R1 prompts byte for byte,

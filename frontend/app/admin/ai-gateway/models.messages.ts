@@ -201,13 +201,17 @@ export const MODELS = defineMessages(
     // ChangeEvidenceFields (route governance: a writer / judge model change needs evidence)
     evidenceTitle: "Evidence for this change",
     evidenceHint:
-      "A writer or judge model change needs the eval run that backs it. When no eval can run (an outage), give a break-glass reason instead: it is kept in the audit log and raises an admin alert.",
+      "A model change of a writer, judge or writing-path stage needs the eval run that backs it. When no eval can run (an outage), give a break-glass reason instead: it is kept in the audit log and raises an admin alert. While a rerun wave is open these changes are refused.",
     evalRunId: "Eval run id",
     evalRunPlaceholder: "ID of a finished eval run",
     breakGlass: "Break-glass reason",
     breakGlassPlaceholder: "Why this change cannot wait for an eval run",
     evidenceMissing: (min: number) => `Give an eval run id, or a break-glass reason of at least ${min} characters.`,
     savedWithWarning: (warning: string) => `Saved. ${warning}`,
+    // CatalogTable — a switch of a model that serves a writing-path stage (AA-1052 W6)
+    catalogSwitchTitle: (key: string, on: boolean) => `${on ? "Switch on" : "Switch off"} ${key}`,
+    catalogSwitchBody: (stages: string) =>
+      `This model serves writing-path stages (${stages}). Switching it changes what those stages answer with, so the change needs evidence.`,
     // RoutingTab — routing by data class (AA-1039)
     dataClassTitle: "Routing by data class",
     dataClassIntro:
@@ -414,13 +418,16 @@ export const MODELS = defineMessages(
     noShadowBody: "Bật chạy bóng cho một bước ở tab Điều hướng, rồi quay lại sau khi nó đã chạy trên một số lượt gọi.",
     evidenceTitle: "Bằng chứng cho thay đổi này",
     evidenceHint:
-      "Đổi model của một bước viết hoặc chấm cần lượt đánh giá (eval run) làm căn cứ. Khi không chạy được đánh giá (sự cố), hãy ghi lý do khẩn cấp: lý do được lưu trong nhật ký kiểm tra và tạo một cảnh báo cho quản trị.",
+      "Đổi model của một bước viết, chấm hoặc một bước trên đường viết nội dung cần lượt đánh giá (eval run) làm căn cứ. Khi không chạy được đánh giá (sự cố), hãy ghi lý do khẩn cấp: lý do được lưu trong nhật ký kiểm tra và tạo một cảnh báo cho quản trị. Khi đang có một đợt chạy lại (wave), các thay đổi này bị từ chối.",
     evalRunId: "Mã lượt đánh giá",
     evalRunPlaceholder: "Mã của một lượt đánh giá đã xong",
     breakGlass: "Lý do khẩn cấp",
     breakGlassPlaceholder: "Vì sao thay đổi này không chờ được lượt đánh giá",
     evidenceMissing: (min: number) => `Nhập mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} ký tự.`,
     savedWithWarning: (warning: string) => `Đã lưu. ${warning}`,
+    catalogSwitchTitle: (key: string, on: boolean) => `${on ? "Bật" : "Tắt"} ${key}`,
+    catalogSwitchBody: (stages: string) =>
+      `Model này phục vụ các bước trên đường viết nội dung (${stages}). Bật hoặc tắt nó đổi model trả lời các bước đó, nên thay đổi cần bằng chứng.`,
     dataClassTitle: "Định tuyến theo loại dữ liệu",
     dataClassIntro:
       "Quy tắc: stage xử lý dữ liệu cá nhân chỉ chạy trên tài khoản AWS của mình, với route giữ ở Hoa Kỳ; stage chỉ xử lý nội dung được dùng thêm route toàn cầu hoặc API của nhà cung cấp mà phạm vi dữ liệu của nó cho phép. Loại của stage được đặt bằng thay đổi cơ sở dữ liệu, không đặt ở trang này.",

@@ -103,7 +103,9 @@ KIND_LINES: dict[str, Optional[str]] = {
     "recompute": None, "report_email": None,
     "report_generate": None, "retention_cost_explorer_snapshot": None, "retention_decision_log": None,
     "retention_job": None, "retention_llm_call_log": None, "retention_tenant_api_usage": None,
-    "s1_seo_prefetch": None, "staff_directory_reconcile": None, "staff_invite_email": None, "supply_media_purge": None,
+    "s1_seo_prefetch": None,
+    "source_fanout": None,       # AA-1052 W6: the source-change fan-out marks (database reads and upserts only)
+    "staff_directory_reconcile": None, "staff_invite_email": None, "supply_media_purge": None,
     "tenant_account_tick": None, "tenant_billing_tick": None, "tenant_provision": None,
     "tour_retirement_fanout": None, "retired_page_draft": None,
     "tour_notice_email": None,

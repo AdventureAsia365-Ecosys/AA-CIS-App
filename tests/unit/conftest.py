@@ -372,3 +372,15 @@ def t9_legacy_last_attempt(monkeypatch):
     """AA-900 W0 — the T9 loop's rollback mode (a paid attempt 3 + the AA-777 / AA-786 truth cuts). The tests that
     pin that path use it; the default is stop-and-label (attempt 3 at $0, no truth cut, ADR 0020 D6)."""
     monkeypatch.setenv("T9_LAST_ATTEMPT_MODE", "legacy")
+
+
+@pytest.fixture(autouse=True)
+def _no_open_waves(monkeypatch):
+    """AA-1052 W6: the runtime edit gate (services/quality/edit_gate.py) reads the open rerun waves before a gated
+    route / catalog / policy edit. Unit tests have no database: no wave is open unless a test sets its own reader
+    (monkeypatch edit_gate.read_open_waves again; the later patch wins)."""
+    from services.quality import edit_gate
+
+    async def _none(pool=None):
+        return []
+    monkeypatch.setattr(edit_gate, "read_open_waves", _none)

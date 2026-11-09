@@ -296,7 +296,9 @@ async def test_catalog_patch_maps_policy_block_to_422():
     async def raiser(model_key, **kw):
         raise CatalogPolicyBlocked("gpt-4.1 is retired (S235) and cannot be re-enabled")
 
-    with patch.object(ops, "verify_admin_secret"), patch.object(ops, "set_catalog_price", raiser):
+    # AA-1052 W6: the switch reads the routes first (no gated stage serves gpt-4.1 here)
+    with patch.object(ops, "verify_admin_secret"), patch.object(ops, "set_catalog_price", raiser), \
+            patch.object(ops, "list_stage_configs", AsyncMock(return_value=[])):
         with pytest.raises(HTTPException) as exc:
             await ops.patch_llm_catalog("gpt-4.1", ops.LlmCatalogPatch(enabled=True),
                                         x_admin_secret="x", x_admin_user_id="a")

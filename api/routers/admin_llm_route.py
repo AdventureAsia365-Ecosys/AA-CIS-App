@@ -46,6 +46,8 @@ from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import llm_route_trace as svc
 from services.acp_shared.audit_log import write_audit_log
+from services.quality import edit_gate
+from shared.llm_client import route_evidence
 
 logger = structlog.get_logger()
 
@@ -153,13 +155,51 @@ class RoutePolicyBody(BaseModel):
     cost_shift_usd: Optional[float] = Field(None, ge=0.01, le=10000)
     hold_fallback_writes: Optional[bool] = None
     notes: Optional[str] = Field(None, max_length=500)
+    # AA-1052 W6: what backs a hold switch change of a gated stage (or of the * defaults)
+    eval_run_id: Optional[str] = Field(None, max_length=64)
+    break_glass_reason: Optional[str] = Field(None, max_length=route_evidence.BREAK_GLASS_MAX_CHARS)
+
+
+_EVIDENCE_FIELDS = {"eval_run_id", "break_glass_reason"}
+
+
+async def _policy_gate(pool, stage: str, hold_after: Optional[bool], *, clearing: bool,
+                       eval_run_id: Optional[str], break_glass_reason: Optional[str]) -> Optional[dict]:
+    """AA-1052 W6 (services/quality/edit_gate.py): a change of the hold switch (what a writer stores when a fallback
+    model wrote it) of a gated stage or of the * defaults is frozen during a wave (409) and needs an eval run or a
+    break-glass reason (422). An alert-threshold-only edit changes no output and passes. The evidence, or None."""
+    if not edit_gate.is_gated_stage(stage):
+        return None
+    exists, hold_before = await svc.read_hold(pool, stage)
+    if clearing:
+        if not exists:
+            return None          # the 404 follows in clear_policy
+        hold_after = None
+    if hold_before == hold_after:
+        return None
+    try:
+        await edit_gate.refuse_if_frozen(f"the route policy of {stage}", [stage], pool=pool)
+        return await edit_gate.require_evidence(
+            stage, None, eval_run_id=eval_run_id, break_glass_reason=break_glass_reason,
+            what=f"hold switch change of the route policy {stage}")
+    except edit_gate.EditFrozen as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except route_evidence.EvidenceRefused as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — the wave / eval run table could not be read: refuse, never wave through
+        logger.warning("route_policy_gate_unreadable", stage=stage, error=str(e)[:200])
+        raise HTTPException(status_code=503, detail="the edit gate could not be checked; try again")
 
 
 @router.put("/route-policy/{stage}", summary="Set the route alert thresholds / hold switch of one stage (audited)")
 async def put_route_policy(body: RoutePolicyBody, request: Request, stage: str = _STAGE,
                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    pool = request.app.state.pool
+    fields = body.model_dump(exclude=_EVIDENCE_FIELDS)
     try:
-        return await svc.write_policy(request.app.state.pool, stage, body.model_dump(), actor=_actor(x_admin_user_id))
+        evidence = await _policy_gate(pool, stage, fields.get("hold_fallback_writes"), clearing=False,
+                                      eval_run_id=body.eval_run_id, break_glass_reason=body.break_glass_reason)
+        return await svc.write_policy(pool, stage, fields, actor=_actor(x_admin_user_id), evidence=evidence)
     except svc.PolicyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
@@ -168,9 +208,15 @@ async def put_route_policy(body: RoutePolicyBody, request: Request, stage: str =
 
 @router.delete("/route-policy/{stage}", summary="Remove one stage's route policy row (audited)")
 async def delete_route_policy(request: Request, stage: str = _STAGE,
-                              x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                              x_admin_user_id: Optional[str] = Header(None),
+                              eval_run_id: Optional[str] = Query(None, max_length=64),
+                              break_glass_reason: Optional[str] = Query(
+                                  None, max_length=route_evidence.BREAK_GLASS_MAX_CHARS)) -> dict:
+    pool = request.app.state.pool
     try:
-        return await svc.clear_policy(request.app.state.pool, stage, actor=_actor(x_admin_user_id))
+        evidence = await _policy_gate(pool, stage, None, clearing=True, eval_run_id=eval_run_id,
+                                      break_glass_reason=break_glass_reason)
+        return await svc.clear_policy(pool, stage, actor=_actor(x_admin_user_id), evidence=evidence)
     except svc.PolicyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except LookupError:

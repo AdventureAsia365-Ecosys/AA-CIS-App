@@ -82,7 +82,7 @@ export function StageRouteEditor({ row, readOnly = false }: { row: StageConfigRo
   const effShadow = shadowOn ? shadowModel : null;
   const effSample = shadowOn ? samplePct : 0;
   // A new fallback chain of a writer / judge stage needs its evidence (a shadow-only change does not).
-  const askEvidence = needsEvidence(row.role) && !sameFallbacks;
+  const askEvidence = needsEvidence(row.role, row.stage, row.gated) && !sameFallbacks;
   const dirty =
     !sameFallbacks ||
     effShadow !== (row.shadow_model_id ?? null) ||

@@ -4130,13 +4130,24 @@ async def update_tour_country(
     country = _tour_country(body.country)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        updated = await conn.fetchval(
-            "UPDATE silver_aa_internal.raw_tours SET country = $1 WHERE tour_id = $2::uuid RETURNING tour_id",
+        updated = await conn.fetchrow(
+            "UPDATE silver_aa_internal.raw_tours SET country = $1 WHERE tour_id = $2::uuid"
+            " RETURNING tour_id, now() AS changed_at",
             country, tour_id,
         )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
+    await _source_fanout_raw(pool, tour_id, updated["changed_at"], ["country"])
     return {"tour_id": tour_id, "country": country}
+
+
+async def _source_fanout_raw(pool, tour_id: str, changed_at, fields: list[str]) -> None:
+    """AA-1052 W6: a raw tour edit re-checks the writer objects written from it (job source_fanout, $0; marks only).
+    Best-effort after the commit: a failed enqueue never fails the edit."""
+    from services.quality import source_fanout
+    await source_fanout.enqueue_safe(pool, source_fanout.Change(
+        source_kind=source_fanout.RAW_TOUR, reason="raw_tour_edited", changed_at=changed_at, tour_id=str(tour_id),
+        fields=tuple(fields)), created_by="admin:raw_tour_edit")
 
 
 def _tour_country(value) -> str:
@@ -4188,13 +4199,14 @@ async def update_raw_tour_fields(
     )
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        updated = await conn.fetchval(
+        updated = await conn.fetchrow(
             f"UPDATE silver_aa_internal.raw_tours SET {set_clause}"
-            f" WHERE tour_id = ${len(fields)+1}::uuid RETURNING tour_id",
+            f" WHERE tour_id = ${len(fields)+1}::uuid RETURNING tour_id, now() AS changed_at",
             *values, tour_id,
         )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
+    await _source_fanout_raw(pool, tour_id, updated["changed_at"], fields)   # AA-1052 W6
     return {"tour_id": tour_id, "updated": fields}
 
 

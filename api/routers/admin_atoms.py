@@ -467,6 +467,14 @@ async def patch_atom(
     if not row:
         raise HTTPException(status_code=404, detail=f"Atom {atom_id} not found (or is an empty-marker row)")
 
+    # AA-1052 W6 — the T9 pieces that cite this atom were written from its old text / state: the $0 `source_fanout`
+    # job marks them (never regenerates). Best-effort after the commit, never fails the PATCH.
+    from services.quality import source_fanout
+    await source_fanout.enqueue_safe(pool, source_fanout.Change(
+        source_kind=source_fanout.ATOM, reason="atom_deleted" if body.deleted else "atom_edited",
+        changed_at=row["updated_at"], tour_id=str(row["tour_id"]), source_ref=str(atom_id)[:source_fanout.REF_MAX]),
+        created_by="admin:atom_curate")
+
     # AA-564 3.1 (decision 2, AA-563) — `deleted` is the only atom-curation flag that actually
     # affects Segment eligibility (`WHERE NOT ta.deleted`, segment_matching.py). Before this,
     # curating an atom's `deleted` flag never recomputed Segment/Score/Route at all — a real
