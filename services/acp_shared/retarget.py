@@ -31,9 +31,9 @@ Angle-gate requests whose atom is not a live atom of the platform or the tenant:
      same tour; moving the request away would be permanent).
 Every write is guarded on the value the plan read, so a concurrent pick or write is never overwritten.
 
-Mode: env ``RECOMPUTE_RETARGET_MODE`` = ``report`` (default: plan only, counts in the job result) | ``apply`` |
-``off``. The default stays ``report`` until the audited one-off has moved the rows the S273 audit listed (DRY RUN,
-then an apply pinned to the reviewed ids); a follow-up change makes ``apply`` the default. An ``apply`` run puts the
+Mode: env ``RECOMPUTE_RETARGET_MODE`` = ``apply`` (default) | ``report`` (plan only, counts in the job result) |
+``off``. The default was ``report`` until the audited one-off moved the rows the S273 audit listed (DRY RUN, then an
+apply pinned to the reviewed ids); since then the stage keeps the count at 0. An ``apply`` run puts the
 restore list (``restore_rows``: ids and the old value of every row it changed, at most ``RESTORE_LOG_CAP`` per kind) in
 its result and log. Ids only in results and logs, never tenant text.
 """
@@ -56,7 +56,7 @@ logger = structlog.get_logger()
 
 MODE_ENV = "RECOMPUTE_RETARGET_MODE"
 MODES = ("apply", "report", "off")
-DEFAULT_MODE = "report"
+DEFAULT_MODE = "apply"
 RESTORE_LOG_CAP = 200
 
 SUBJECT_OUTCOMES = ("retarget", "taken", "ambiguous", "no_match")
