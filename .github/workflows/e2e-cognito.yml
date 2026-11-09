@@ -60,6 +60,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (S220 lesson).
       - name: Install dependencies (repo root — Playwright lives here)
