@@ -202,3 +202,63 @@ async def test_seo_context_copy_merges_without_overwriting_newer_rows(tx):
     assert json.loads(rows["zarvok trek"]["related_searches"]) == ["zarvok trek map"]
     assert rows["zarvok trek"]["serp_location"] == "US"
     assert "zarvok pass" not in rows
+
+
+async def _card(conn, atom_id: str, key: str, *, locality=None, country="Brindland", status="auto_checked",
+                facts=None) -> None:
+    card_id = await conn.fetchval("""INSERT INTO acp_shared.place_card (place_key, display_name, locality, country,
+                                     facts, status) VALUES ($1, $1, $2, $3, $4::jsonb, $5) RETURNING card_id""",
+                                  key, locality, country, json.dumps(facts or []), status)
+    await conn.execute("INSERT INTO acp_shared.atom_place_card (atom_id, card_id) VALUES ($1, $2)", atom_id, card_id)
+
+
+@pytest.mark.asyncio
+async def test_place_locations_read_the_majority_card_and_its_what_it_is_fact(tx):
+    """AA-1055 (S274) — keyword_qualify reads where a place is from its place card (not a rejected one), else only
+    the tour country."""
+    tour = await _tour(tx)
+    await _segment(tx, tour, "zz1055_q1", "Holy Trinity Chapel zz")
+    await _card(tx, "zz1055_q1_atom", "holy trinity chapel zz|zarvoka|brindland", locality="Zarvoka",
+                facts=[{"text": "A stone chapel.", "kind": "history"},
+                       {"text": "Holy Trinity Chapel is a stone chapel.", "kind": "what_it_is"}])
+    await _segment(tx, tour, "zz1055_q2", "Quellberry tree zz")
+    await _card(tx, "zz1055_q2_atom", "quellberry tree zz|brindland", status="rejected",
+                facts=[{"text": "Quellberry is a species of palm.", "kind": "what_it_is"}])
+    await _segment(tx, tour, "zz1055_q3", "Golden Lotus Hotel zz")
+    where = await rb.load_locations(_Pool(tx), ["Holy Trinity Chapel zz", "Quellberry tree zz",
+                                                "Golden Lotus Hotel zz"])
+    chapel = where["Holy Trinity Chapel zz"]
+    assert (chapel.locality, chapel.country, chapel.what_it_is) == (
+        "Zarvoka", "Brindland", "Holy Trinity Chapel is a stone chapel.")
+    # the rejected card is ignored; both fall back to the tour country (tidied)
+    assert where["Quellberry tree zz"].what_it_is is None and where["Quellberry tree zz"].country == "mongolia"
+    assert where["Golden Lotus Hotel zz"].country == "mongolia"
+
+
+@pytest.mark.asyncio
+async def test_rule_rows_round_trip_and_plan_requalifies_only_affected_fresh_places(tx):
+    pool = _Pool(tx)
+    tour = await _tour(tx)
+    await _segment(tx, tour, "zz1055_r1", "Holy Trinity Chapel")
+    await _segment(tx, tour, "zz1055_r2", "Zarvok Temple")
+    await tx.execute("""INSERT INTO acp_contract.place_keyword (subject_kind, subject, keyword, rank, source,
+                        prompt_version, jev_zone) VALUES
+                        ('place', 'Holy Trinity Chapel', 'holy trinity chapel', 0, 'place_name', 'a3_propose@old',
+                         'not_asked'),
+                        ('place', 'Zarvok Temple', 'zarvok temple', 0, 'place_name', 'a3_propose@old', 'not_asked')""")
+    await tx.execute("""INSERT INTO acp_contract.segment_research_log (canonical_place, market, tier, researched_at)
+                        SELECT p, 'US', t, now() FROM unnest(ARRAY['Holy Trinity Chapel', 'Zarvok Temple']) p,
+                                                       unnest(ARRAY['volume', 'serp']) t""")
+    stale = await sr._plan(pool, {"Holy Trinity Chapel": ["visit"], "Zarvok Temple": ["visit"]}, ["US"],
+                           ("volume", "serp"))
+    assert [(p.name, p.requalify, p.markets, p.serp) for p in stale] == [("Holy Trinity Chapel", True, ["US"], True)]
+
+    p = stale[0]
+    p.plain, p.dropped = "holy trinity chapel zarvoka", {"holy trinity chapel": "unqualified"}
+    await rb._store_maps([p], {"Holy Trinity Chapel": ["holy trinity chapel zarvoka"]}, pool)
+    rows = (await rb.load_maps(pool, ["Holy Trinity Chapel"]))["Holy Trinity Chapel"]
+    assert [(r["keyword"], r["jev_zone"], r["jev_mode"]) for r in rows] == [
+        ("holy trinity chapel zarvoka", "not_asked", None), ("holy trinity chapel", "skipped", "rule:unqualified")]
+    assert rb.keywords_from_map(rows) == ["holy trinity chapel zarvoka"]
+    # rebuilt under the current prompt: the next plan leaves it alone
+    assert await sr._plan(pool, {"Holy Trinity Chapel": ["visit"]}, ["US"], ("volume", "serp")) == []
