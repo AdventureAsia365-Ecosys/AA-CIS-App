@@ -45,7 +45,11 @@ CIS 393 alone (contract, MIG-4), then this code PR, which raises readiness to 39
 **Standard queue (`services/seo_intelligence/dfs_queue.py`).** `task_post` (up to 100 tasks, paid), `tasks_ready` and
 `task_get` (free) for search volume and organic SERP (advanced). Picked by `DFS_RESEARCH_QUEUE` (env, default `live`)
 or the job payload `dfs_queue`; `live` keeps today's path. Same client checks (admin switch, circuit, budget per task,
-one ledger row per post with DataForSEO's cost). A task that errors or times out fails that task only.
+one ledger row per post with DataForSEO's cost). A task that errors or times out fails that task only. Posts are
+serialised behind a lock (budget check, paid post, charge), waits run in parallel: every SERP request of a run is
+posted before the first poll, and the volume tasks of a market are posted together. A budget stop or a fatal answer
+after some posts stops posting but still collects the tasks already paid for (stored and logged); the rest fail and
+the run's guard aborts.
 
 **Landing sweep (`services/acp_contract/landing_sweep.py`).** The worker calls it hourly; it acts only between 17:00
 and 23:00 UTC (00:00–06:00 ICT), once per 20 h, never beside a queued / running recompute. Candidates: live platform
@@ -90,6 +94,11 @@ count the `volume` tier only. `precompute_question_landings` also reads rows tha
   is not skipped in favour of cheaper later ones (simple, predictable, resumable).
 
 ## Should know
+- The first night sweep after deploy lists up to 5,000 Segments (S273: 1,272 never landed + 7,786 landed before the
+  newest demand) and enqueues one platform recompute for them: Jev landing verdicts and question embeddings are
+  mostly cached, but read its `llm_call_log` cost the next morning. `LANDING_SWEEP=off` (task env) stops it.
+- A line-numbered allow-list entry (`tests/unit/test_s271_gateway_token_budget.py`, `segment_research.py:<line>`)
+  moves with any edit above the research prompt; it moved from 483 to 484 here.
 - Order: the migration PR, Migration Apply (contract; the old `ON CONFLICT (canonical_place, market)` stops working
   after it, so no `segment_research` job between the apply and this deploy — admin-triggered only), the
   `bot/db-schema-reference` PR, then this PR.
