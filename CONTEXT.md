@@ -1502,8 +1502,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     by the tenant in that channel → left as is) and an angle-gate request off an atom that is no longer live (the
     AA-990 same-place re-point, else, for a Segment Subject whose old tour is not paused, the member a pick chooses
     today: atom, `trip_id`, Blog walk). Guarded UPDATEs, never deletes; a run that writes puts its restore list (ids
-    and every old value it overwrote) in its result. Mode env `RECOMPUTE_RETARGET_MODE` = `report` (default until the
-    audited one-off has run, then `apply`) | `apply` | `off`; one-off audited run: `scripts/aa1057_retarget_once.py`
+    and every old value it overwrote) in its result. Mode env `RECOMPUTE_RETARGET_MODE` = `apply` (default since the
+    audited one-off ran) | `report` | `off`; one-off audited run: `scripts/aa1057_retarget_once.py`
     (DRY RUN first; the apply is pinned to the reviewed ids).
   - **Recompute is drain-safe and swept (AA-1056)**: the `recompute` job runs under ONE platform session advisory
     lock (`services/export/handler.job_session_lock`, class `recompute`, key `platform`; the generic body of the

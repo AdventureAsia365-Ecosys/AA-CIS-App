@@ -3,9 +3,9 @@
 that are no longer live, with the rule of the ``retarget`` recompute stage (services/acp_shared/retarget.py).
 
 S273 audit: 7 used Subjects on a superseded Route, 3 requests on deleted atoms (2 approved, 1 pending_choice). The
-stage ships in ``report`` mode (it plans, writes nothing) so this script is the audited first run (DRY RUN procedure,
-skill/aa-cis-schema/references/destructive-ops.md: rows are re-pointed, nothing is deleted); after it, a follow-up
-change makes the stage's default ``apply`` and the stage keeps the count at 0.
+stage shipped in ``report`` mode (it plans, writes nothing) so this script was the audited first run (DRY RUN
+procedure, skill/aa-cis-schema/references/destructive-ops.md: rows are re-pointed, nothing is deleted); since then the
+stage's default is ``apply`` and it keeps the count at 0.
 
 Default = DRY RUN (read only). Prints a JSON summary between AA1057-JSON-BEGIN and AA1057-JSON-END:
   - ``subjects`` / ``requests``: rows found stale, the count per outcome (subjects: retarget, taken, ambiguous,

@@ -171,13 +171,13 @@ def _conn():
 
 
 def test_mode_reads_the_env(monkeypatch):
-    # report until the audited one-off has moved the S273 rows (a follow-up makes apply the default)
+    # apply since the audited one-off moved the S273 rows
     monkeypatch.delenv(rt.MODE_ENV, raising=False)
-    assert rt.mode() == "report" == rt.DEFAULT_MODE
-    monkeypatch.setenv(rt.MODE_ENV, "APPLY")
-    assert rt.mode() == "apply"
-    monkeypatch.setenv(rt.MODE_ENV, "nonsense")
+    assert rt.mode() == "apply" == rt.DEFAULT_MODE
+    monkeypatch.setenv(rt.MODE_ENV, "REPORT")
     assert rt.mode() == "report"
+    monkeypatch.setenv(rt.MODE_ENV, "nonsense")
+    assert rt.mode() == "apply"
 
 
 @pytest.mark.asyncio
