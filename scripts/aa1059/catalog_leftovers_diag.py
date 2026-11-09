@@ -26,9 +26,10 @@ Only counts, ids (tour, review, job), fixed codes, statuses and ages are printed
 texts, never error messages (exception class names only). Every query is isolated: a failure prints
 `ERR <section> <ExceptionName>` and the script goes on.
 
-Needs the image of the AA-1059 PR (it imports `route_detection.route_gap_reason`, `segment_catchup.plan` and the
-existing `segment_matching`, `segment_gc`, `approve_gate` code): a missing import prints `ERR import <module>` and
-skips only the parts that need it.
+Imports app code from the image (`segment_matching`, `atom_ranking`, `segment_gc`, `approve_gate` exist today;
+`route_detection.route_gap_reason` and `segment_catchup.plan` come with the AA-1059 PR): on an older image a missing
+import prints `ERR import <name>` and skips only what needs it (the per-tour route reasons, the catch-up count), so the
+script also runs BEFORE the deploy, to capture the Masters without a Segment before the catch-up stage segments them.
 
 Tables / columns: AA-Ecosys docs/architecture/db-schema-reference.md (verified 2026-11-08, CIS 390).
 """
@@ -488,6 +489,9 @@ SELECT result->'route' AS route, extract(epoch FROM now() - finished_at)::float8
 async def section_route(conn, countries):
     rd = _import("route_detection", lambda: __import__("services.acp_contract.route_detection",
                                                         fromlist=["route_gap_reason", "Moment", "derive_routes"]))
+    if rd is not None and not hasattr(rd, "route_gap_reason"):   # an image before this PR: country table only
+        print("ERR import route_gap_reason AttributeError")
+        rd = None
     for r in await rows(conn, "route_country", Q_ROUTE_COUNTRY) or []:
         ratio = f"{100.0 * r['with_route'] / r['ranked_kept']:.1f}" if r["ranked_kept"] else "null"
         out(f"ROUTE.country.{r['cc']}", f"masters={r['masters']} ranked_any={r['ranked_any']} "

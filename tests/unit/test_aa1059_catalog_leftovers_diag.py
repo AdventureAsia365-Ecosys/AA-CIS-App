@@ -115,3 +115,31 @@ def test_tour_route_facts_and_the_every_day_what_if(diag):
     assert none == {"reason": "no_ranked_moment", "segments": 0, "days": 0, "whatif_all_days": False}
     undated = diag.tour_route_facts([("s1", "Zzlo", [])], Moment, route_gap_reason, derive_routes)
     assert undated["reason"] == "no_day" and undated["whatif_all_days"] is False
+
+
+# ── the enqueue helper the orchestrator runs after the deploy ─────────────────────────────────────────────────────────
+
+_ENQ = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "aa1059", "enqueue_catchup_pass.py")
+
+
+def test_enqueue_helper_asks_for_one_platform_pass_with_an_empty_segment_scope(monkeypatch, capsys):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    spec = importlib.util.spec_from_file_location("aa1059_enqueue_catchup_pass", _ENQ)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    conn = MagicMock()
+    conn.close = AsyncMock()
+    enq = AsyncMock(return_value=("job-zz1059", True))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://zz:zz@127.0.0.1:1/zz")
+    with patch.object(mod.asyncpg, "connect", AsyncMock(return_value=conn)) as connect, \
+         patch("services.jobs.recompute_job.enqueue_recompute", enq):
+        asyncio.run(mod.main())
+    assert connect.await_args.kwargs["ssl"] == "require"
+    kw = enq.await_args.kwargs
+    # [] (only the touched and brand-new Segments are re-landed), never None (a full backfill)
+    assert kw["scope"] == "platform" and kw["segment_ids"] == [] and kw["debounce_s"] == 0
+    assert kw["created_by"] == "script:aa1059"
+    conn.close.assert_awaited()
+    assert "job=job-zz1059 created=True" in capsys.readouterr().out
