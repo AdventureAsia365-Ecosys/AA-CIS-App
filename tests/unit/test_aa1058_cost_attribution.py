@@ -463,3 +463,35 @@ def test_every_binder_still_binds_its_key(key, binder):
     ok = any(any(k.arg == key for k in c.keywords) for c in binds) or \
         any(any(k.arg is None and "job_attribution" in ast.unparse(k.value) for k in c.keywords) for c in binds)
     assert ok, binder
+
+
+# ── the read-only report (scripts/aa1058/ledger_attribution.py) ──────────────────────────────────────────────────
+
+def test_the_report_rules_match_the_registry():
+    from scripts.aa1058 import ledger_attribution as rep
+    assert rep.FALLBACK_RULES == attribution.RULES
+    assert rep.rules() == (attribution.RULES, "image")
+
+
+def test_the_report_stage_lines():
+    from scripts.aa1058 import ledger_attribution as rep
+    rows = [dict(stage="s1_generate", n=4, cost=0.2, with_tour=3, with_piece=0, with_job=4, with_prompt=4, no_app=0),
+            dict(stage="t2_generate", n=2, cost=0.1, with_tour=0, with_piece=0, with_job=2, with_prompt=0, no_app=1)]
+    lines, ruled, carried = rep.stage_lines(rows, attribution.RULES)
+    assert (ruled, carried) == (4, 3)
+    assert lines[0] == ("stage.s1_generate rows=4 cost=0.2000 tour=0.750 piece=0.000 job=1.000 prompt_version=1.000 "
+                        "no_app=0 rule=tour_id rule_ok=0.750")
+    assert lines[1].endswith("rule=- rule_ok=-")
+
+
+def test_the_report_hours_are_bounded(monkeypatch):
+    from scripts.aa1058 import ledger_attribution as rep
+    for raw, want in (("48", 48), ("0", 1), ("99999", rep.MAX_HOURS), ("x", 24)):
+        monkeypatch.setenv("HOURS", raw)
+        assert rep.hours_from_env() == want
+
+
+def test_the_report_is_read_only():
+    src = (ROOT / "scripts/aa1058/ledger_attribution.py").read_text(encoding="utf-8").upper()
+    for word in ("INSERT ", "UPDATE ", "DELETE ", "TRUNCATE", "ALTER ", "DROP "):
+        assert word not in src, word
