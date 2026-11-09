@@ -146,13 +146,19 @@ async def test_catchup_skips_a_tour_an_atomize_holds(seeded, pool, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_every_diagnostic_query_runs(seeded, diag, capsys):
-    conn = await asyncpg.connect(DSN, server_settings={"default_transaction_read_only": "on"})
+    conn = await asyncpg.connect(DSN)
+    tr = conn.transaction()
+    await tr.start()
     try:
+        # Dev has it (107); the CI replay fails 107 (no tenant_tour_versions): add it in this rolled-back transaction
+        await conn.execute("ALTER TABLE silver_aa_internal.review_queue "
+                           "ADD COLUMN IF NOT EXISTS tenant_tour_version_id uuid")
         await diag.section_seg(conn, None)
         await diag.section_s1(conn, None)
         await diag.section_route(conn, ("BT",))
         await diag.section_gc(conn)
     finally:
+        await tr.rollback()
         await conn.close()
     text = capsys.readouterr().out
     errors = [line for line in text.splitlines() if line.startswith("ERR ")]
