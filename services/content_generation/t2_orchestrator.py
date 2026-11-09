@@ -626,7 +626,8 @@ async def run_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: 
     from services.writing_memory.insertion import (generation_meta as _wm_meta, resolve as _wm_resolve,
                                                    stamp as _wm_stamp, writer_answer as _wm_answer)
 
-    seo_data, diag = await job.t2_seo(pool, pt, tenant_id)
+    seo_data, diag = await job.t2_seo(pool, pt, tenant_id, tour_dict=tour_dict,
+                                      rewrite_language=brand_rules.get("rewrite_language"))
     writing_memory = await _wm_resolve(pool, "t2", tenant_id)
     if writing_memory:
         diag["writing_release"] = _wm_stamp(writing_memory)

@@ -243,7 +243,7 @@ async def _load_t2(pool, conn, *, n, tenant, not_tenant, exclude) -> list[dict]:
         brand = brand_rules_from_pack(pack, r["rewrite_language"]) if pack else {}
         brand.pop("_brand_loaded", None)
         brand.setdefault("rewrite_language", r["rewrite_language"])
-        seo, _diag = await t2_seo(pool, dict(pt), r["tenant_id"])
+        seo, _diag = await t2_seo(pool, dict(pt), r["tenant_id"], rewrite_language=r["rewrite_language"])
         out.append({"input_source": "tenant_tour_version", "input_id": r["input_id"], "tenant_id": r["tenant_id"],
                     "channel": None, "input": {"tour": source_tour_dict(dict(pt)), "brand_rules": brand, "seo": seo,
                                                "tenant_id": r["tenant_id"],

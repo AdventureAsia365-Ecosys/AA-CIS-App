@@ -1,7 +1,7 @@
 """AA-741 S271 — the Blog Segment Slate's SQL on the real schema (services/acp_shared/slate.py).
 
-1. `_SEGMENT_CANDIDATES_SQL`: a Segment's demand / questions are its best market's (lowest total_rank), travelling
-   together; total_rank / said stay the MIN over every row.
+1. `_SEGMENT_CANDIDATES_SQL`: a Segment's demand is the highest over the tenant's markets (AA-1055 PR 1, with the
+   market that gives it) and questions the highest; total_rank / said stay the MIN over every row.
 2. `_HELD_SUBJECTS_SQL` + `_fetch_held_subjects`: the tenant's picked / used / cut Blog Segment Subjects with their
    place; proposed rows, other Channels and Route Subjects hold nothing.
 3. `_SEGMENT_ROUTES_SQL`: the current Routes of the given tours that hold the Segment, under its live id or an id
@@ -63,24 +63,58 @@ async def _rank(c, rows):
 
 
 @pytest.mark.asyncio
-async def test_segment_candidates_take_the_best_market_numbers(tx):
+async def test_segment_candidates_take_the_highest_demand_across_markets(tx):
+    """AA-1055 PR 1: demand is the MAX over the tenant's markets (with the market that gives it), questions the MAX;
+    a market with no number (median rank) no longer wins and hides the others. total_rank / said stay the MIN."""
     a, b = await _tour(tx, "zz741 Valdoria lakes"), await _tour(tx, "zz741 Valdoria passes")
-    await _segments(tx, ("zz741_lake", "Lake Aurel"), ("zz741_pass", "Corvin Pass"))
+    await _segments(tx, ("zz741_lake", "Lake Aurel"), ("zz741_pass", "Corvin Pass"), ("zz741_bay", "Selva Bay"),
+                    ("zz741_moor", "Brenn Moor"))
     await _rank(tx, [
-        # Lake Aurel: US is its best market (rank 4): demand 2400 / 5 questions travel together; UK is weak.
+        # Lake Aurel: US has the most searches and questions; UK is weak.
         ("US", a, "zz741_lake", 4, 2400, 5, 300), ("UK", a, "zz741_lake", 9, 300, 1, 280),
         ("US", b, "zz741_lake", 6, 2400, 4, 500),
-        # Corvin Pass: UK is best (rank 2) even though US has more searches.
+        # Corvin Pass: UK ranks best (2) but US has more searches: US's 9000 is read (was UK's 400 until AA-1055).
         ("US", a, "zz741_pass", 7, 9000, 8, 200), ("UK", a, "zz741_pass", 2, 400, 1, 190),
+        # Selva Bay: DE has no number and the best (median) rank; UK's real number is read.
+        ("DE", a, "zz741_bay", 1, None, 0, 90), ("UK", a, "zz741_bay", 5, 1800, 3, 95),
+        # Brenn Moor: no market has a number -> NULL demand and no demand market (Slate reason no_data)
+        ("US", a, "zz741_moor", 3, None, 2, 40), ("UK", a, "zz741_moor", 3, None, 0, 40),
     ])
-    rows = {r["segment_id"]: r for r in await tx.fetch(slate._SEGMENT_CANDIDATES_SQL, [a, b], ["US", "UK"])}
-    lake, pas = rows["zz741_lake"], rows["zz741_pass"]
+    markets = ["US", "UK", "DE"]
+    rows = {r["segment_id"]: r for r in await tx.fetch(slate._SEGMENT_CANDIDATES_SQL, [a, b], markets)}
+    lake, pas, bay, moor = (rows[k] for k in ("zz741_lake", "zz741_pass", "zz741_bay", "zz741_moor"))
     assert (lake["total_rank"], lake["demand_volume"], lake["questions"], lake["said"]) == (4, 2400, 5, 280)
+    assert lake["demand_market"] == "US"
     assert lake["canonical_place"] == "Lake Aurel" and lake["canonical_action"] == "visit"
-    assert (pas["total_rank"], pas["demand_volume"], pas["questions"], pas["said"]) == (2, 400, 1, 190)
-    # the market list still scopes the read: US only -> Corvin Pass's US numbers
-    us = {r["segment_id"]: r for r in await tx.fetch(slate._SEGMENT_CANDIDATES_SQL, [a, b], ["US"])}
-    assert (us["zz741_pass"]["demand_volume"], us["zz741_pass"]["questions"]) == (9000, 8)
+    assert (pas["total_rank"], pas["demand_volume"], pas["demand_market"], pas["questions"], pas["said"]) == \
+        (2, 9000, "US", 8, 190)
+    assert (bay["total_rank"], bay["demand_volume"], bay["demand_market"], bay["questions"]) == (1, 1800, "UK", 3)
+    assert (moor["demand_volume"], moor["demand_market"], moor["questions"]) == (None, None, 2)
+    # the market list still scopes the read: UK only -> Corvin Pass's UK numbers
+    uk = {r["segment_id"]: r for r in await tx.fetch(slate._SEGMENT_CANDIDATES_SQL, [a, b], ["UK"])}
+    assert (uk["zz741_pass"]["demand_volume"], uk["zz741_pass"]["questions"]) == (400, 1)
+    # a tie on demand goes to the tenant's first market
+    await _rank(tx, [("UK", b, "zz741_pass", 8, 9000, 1, 100)])
+    tie = {r["segment_id"]: r for r in await tx.fetch(slate._SEGMENT_CANDIDATES_SQL, [a, b], ["UK", "US"])}
+    assert tie["zz741_pass"]["demand_market"] == "UK"
+
+
+@pytest.mark.asyncio
+async def test_the_aa1055_compare_script_reads_both_rules(tx):
+    """scripts/aa1055/slate_bar_compare.py: its before rule (best-ranked market) and after rule (MAX) on the schema."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "aa1055", "slate_bar_compare.py")
+    spec = importlib.util.spec_from_file_location("aa1055_slate_bar_compare", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    a = await _tour(tx, "zz1055 Valdoria coast")
+    await _segments(tx, ("zz1055_bay", "Selva Bay"))
+    await _rank(tx, [("DE", a, "zz1055_bay", 1, None, 0, 90), ("UK", a, "zz1055_bay", 5, 1800, 3, 95)])
+    before = await tx.fetch(script.BEFORE_SQL, [a], ["US", "UK", "DE"])
+    after = await tx.fetch(script.AFTER_SQL, [a], ["US", "UK", "DE"])
+    blog = {"blog": slate.CHANNEL_BARS["blog"]}
+    assert script.count_statuses(before, ["blog"], blog)["blog"]["no_data"] == 1   # DE (no number) won on rank
+    assert script.count_statuses(after, ["blog"], blog)["blog"]["cleared"] == 1    # UK's 1800 / 3 questions
 
 
 @pytest.mark.asyncio

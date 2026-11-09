@@ -25,7 +25,9 @@ async def _run(seo_row):
          patch("api.routers.v1_pipeline._rewrite_tour", rewrite):
         with pytest.raises(RuntimeError, match="did not succeed"):
             await t2._rewrite_and_save(
-                _pool(conn), {"tour_id": "tour-1"}, {"name": "Sapa", "country": "Vietnam"}, {},
+                # AA-1055: T2 keeps a keyword only when its source covers it (keyword_fit), so "trekking" is stated
+                _pool(conn), {"tour_id": "tour-1"}, {"name": "Sapa", "summary": "Trekking near Sapa.",
+                                                     "country": "Vietnam"}, {},
                 "tenant-1", "version-1", "p-1")
     return m_seo, rewrite.call_args.kwargs["seo"]
 
