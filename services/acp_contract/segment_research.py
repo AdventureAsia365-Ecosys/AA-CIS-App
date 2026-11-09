@@ -669,7 +669,8 @@ async def _fresh_tiers(pool, names: list[str]) -> dict[str, set[tuple[str, str]]
 async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...]):
     """The stale places as batch `_Place`s (sorted by name), with their stale volume markets, SERP need and map.
 
-    A stale place with no usable map (none stored, or one of another prompt version) gets new keywords in phase A,
+    A stale place with no usable map (none stored, or an older one the qualification rules flag or that lacks the
+    place's current plain keyword: segment_research_batch.reusable_keywords) gets new keywords in phase A,
     whose volumes were never bought: it is stale in every requested market even where its volume tier is fresh (the
     ~1.3k places researched before CIS 393, accented names whose plain keyword changed with the accent folding).
     The volume pass reads the fresh store first, so only the keywords really missing are bought.
@@ -677,9 +678,11 @@ async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], t
     AA-1055 (S274) — a FRESH place whose stored map predates the keyword qualification rules and that they would
     change (a namesake or not-a-place name, a garbled stored keyword: segment_research_batch.needs_requalify) is
     planned too, stale in every requested market and in the SERP tier: its map is proposed again and its qualified
-    keywords bought, so the next run rebuilds exactly the affected places."""
+    keywords bought, so the next run rebuilds exactly the affected places. A stale place whose older-version map the
+    rules would NOT change reuses that map (reusable_keywords) and stays stale only in its own stale tiers: the prompt
+    edit alone never re-proposes a place nor widens it to every market."""
     from services.acp_contract.segment_research_batch import (
-        SERP_MARKET, _Place, keywords_from_map, load_maps, needs_requalify,
+        SERP_MARKET, _Place, load_maps, needs_requalify, reusable_keywords,
     )
 
     names = sorted(by_place)
@@ -701,7 +704,7 @@ async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], t
         p.requalify = True
     stale = sorted(stale + requalify, key=lambda p: p.name)
     for p in stale:
-        kws = keywords_from_map(maps.get(p.name, []))
+        kws = reusable_keywords(p.name, maps.get(p.name, []))
         if kws is not None:
             p.keywords, p.has_map = kws, True
         elif "volume" in tiers:

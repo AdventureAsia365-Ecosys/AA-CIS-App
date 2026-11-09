@@ -8,11 +8,15 @@ name, so it inflates demand and can push a wrong Subject over the Blog bar; (b) 
 
 Three deterministic rules, no LLM and no I/O:
 
-* `is_namesake_name(name)` — every word of the name is a generic TYPE word ("temple", "hotel", "lake", "fort"), a
-  common proper noun with many namesakes ("ganesh", "immaculate", "himalaya", "eagle") or a qualifier ("old", "grand"),
-  and at least one is a type word. A single distinctive word ("Zarvok Temple") clears it. Every keyword of such a place
-  must carry its locality (city / region / country, from the place card, else the tour country); the plain name is
-  replaced by "<name> <locality>"; a keyword that cannot be qualified is dropped.
+* `is_namesake_name(name)` — the name names many places around the world: it has a BUILDING or FACILITY type word
+  ("temple", "church", "mosque", "palace", "market", "hotel"; never a natural feature such as "mount", "rock", "wall")
+  and every other word is a dedication with many namesakes ("ganesh", "immaculate", "saint", "eagle", "himalaya"), a
+  kind word or a qualifier ("old", "night"; never "grand" / "great"); with a lodging or eatery type ("hotel",
+  "restaurant") stock name words count too ("golden", "royal", "lotus", "tiger"). A single distinctive word ("Zarvok
+  Temple") clears it, and so does a stock word on a landmark ("Golden Temple", "Blue Mosque", "Mount Everest" are
+  not namesakes). Every keyword of such a place must carry its locality (city / region / country, from the place
+  card, else the tour country); the plain name is replaced by "<name> <locality>"; a keyword that cannot be
+  qualified is dropped.
 * `not_a_place(name, what_it_is)` — a plant, animal or food, read from the place card's `what_it_is` fact ("... is a
   species of palm"); with no card, from the head noun of the name ("... tree"). Nothing is bought for it.
 * `garbled_reason(keyword)` — a number glued to a word ("km5"), a brochure verb people do not type ("sightsee",
@@ -21,6 +25,8 @@ Three deterministic rules, no LLM and no I/O:
 `unqualified_words(place)` is the same namesake rule on the ranking side: for a namesake place, a bought keyword made
 only of the place's own words (plus filler and generic search modifiers such as "hours", "tickets") is not claimed as
 the Segment's demand, so the global "ganesh temple" row bought before this rule stops counting for every Ganesh Temple.
+`bare_words_to_skip(place, keywords)` applies it only once the demand store holds a locality-qualified keyword of the
+place ("ganesh temple kandy"): until the requalify run buys one, the Segment keeps today's demand.
 """
 from __future__ import annotations
 
@@ -58,8 +64,22 @@ TYPE_WORDS = frozenset((PLACE_KIND_NOUNS - {"japan", "japanese"}) | {
     "stadium", "terminal", "pier", "jetty", "lighthouse", "garden", "gardens", "orchard", "grove",
 })
 
-# Common proper nouns and name words with many namesakes around the world: deities, saints and feasts, honorifics,
-# colours and stock descriptive names, famous ranges and animals used as place names.
+# What a namesake name is built around: buildings and facilities that people dedicate or name after the same few
+# words everywhere. Natural features ("mount", "rock", "wall", "peak", "lake") are left out: "Mount <name>" or a
+# "<colour> Rock" is one particular place.
+NAMESAKE_TYPES = frozenset({
+    "temple", "temples", "shrine", "shrines", "kovil", "kovils", "devale", "vihara", "gompa", "pagoda", "stupa",
+    "monastery", "church", "chapel", "cathedral", "basilica", "mosque", "masjid", "palace", "palaces", "fort",
+    "fortress", "market", "bazaar", "nest", "statue", "school", "college", "hospital",
+})
+# Lodging and eatery types: their names are stock words ("Golden Lotus Hotel", "Royal Inn").
+LODGING_TYPES = frozenset({
+    "hotel", "hotels", "resort", "resorts", "inn", "lodge", "guesthouse", "guest", "hostel", "homestay", "villa",
+    "cottage", "spa", "restaurant", "cafe", "bar", "camp",
+})
+
+# Dedications with many namesakes around the world, on any namesake type: deities, saints and feasts, honorifics, and
+# the panel's "Eagle's Nest" / "Himalaya" words.
 NAMESAKE_WORDS = frozenset({
     # Hindu / Buddhist / Jain deities and honorifics
     "ganesh", "ganesha", "ganapati", "ganapathi", "vinayaka", "vinayagar", "shiva", "siva", "shiv", "vishnu",
@@ -74,16 +94,22 @@ NAMESAKE_WORDS = frozenset({
     "angel", "all", "saints", "spirit", "family", "lourdes", "fatima", "baptist", "evangelist", "apostle",
     # Islamic dedications
     "jamia", "jama", "jami", "noor", "nur", "juma", "jummah",
-    # stock descriptive names (hotels, restaurants, viewpoints)
+    # the panel's namesake landmarks and lodgings
+    "himalaya", "himalayan", "himalayas", "eagle", "eagles",
+})
+# Stock name words of lodgings and eateries; they make a namesake only with a LODGING_TYPES word ("Golden Temple",
+# "Blue Mosque", "Tiger's Nest" stay distinctive).
+STOCK_NAME_WORDS = frozenset({
     "royal", "golden", "silver", "white", "black", "red", "blue", "green", "crystal", "paradise", "sunset",
     "sunrise", "rainbow", "peace", "lotus", "imperial", "star", "sun", "moon", "palm", "palms", "ocean", "sea",
     "view", "heritage", "lakeside", "riverside", "hillside", "mountain", "city", "grand", "plaza", "tourist",
     "dream", "dreams", "happy", "lucky", "friendship", "liberty", "independence", "victory", "unity", "freedom",
-    "central", "main", "kings", "king", "queen", "queens", "prince", "princess",
-    # famous ranges and animals used as place names
-    "himalaya", "himalayan", "himalayas", "everest", "alpine", "eagle", "eagles", "tiger", "tigers", "lion",
-    "lions", "elephant", "elephants", "dragon", "phoenix", "falcon", "hawk", "swan",
+    "central", "main", "kings", "king", "queen", "queens", "prince", "princess", "alpine", "everest", "tiger",
+    "tigers", "lion", "lions", "elephant", "elephants", "dragon", "phoenix", "falcon", "hawk", "swan",
 })
+# Kind words and qualifiers that may stand beside a namesake type ("Old Night Market", "City Palace"); "grand" and
+# "great" name one landmark ("Grand Palace", "Great Stupa") unless the place is a lodging.
+_NAMESAKE_COMPANIONS = PLACE_KINDS - {"grand", "great"}
 
 # A name whose last word is one of these is a thing, not a place (used only when there is no place card).
 NON_PLACE_HEADS = frozenset({
@@ -93,14 +119,30 @@ NON_PLACE_HEADS = frozenset({
     "snacks", "sweets", "delicacy",
 })
 # The place card's what_it_is fact naming a plant / animal / food ("Velk is a species of palm ...", "... is a sweet
-# dish made of ..."): the first of these nouns within the 4 words after "is a" / "are", with no type word ("lake",
-# "temple") before it. A fact that also names a site ("a sacred fig tree in the temple grounds") stays a place.
+# dish made of ..."). The HEAD noun of the phrase after "is a" / "are" decides: the last word before the first
+# connector ("of", "in", "made", "held", ...). A place or venue head keeps it a place, whatever food or plant word
+# comes before it ("a fish market", "a spice bazaar", "a food court", "a fruit market held on boats"); a plant /
+# animal / food head makes it a thing ("a species of palm", "a sweet dish made of rice"). An unknown head ("a palm
+# native to ...") falls back to the words of the phrase: any place word keeps it a place, else any thing noun makes
+# it a thing. A fact that also names a site ("a sacred fig tree in the temple grounds") stays a place.
 _NON_PLACE_NOUNS = frozenset({
     "species", "variety", "genus", "tree", "palm", "plant", "shrub", "flower", "orchid", "herb", "spice", "fruit",
     "bird", "animal", "mammal", "reptile", "fish", "dish", "food", "drink", "beverage", "dessert", "sweet", "snack",
     "delicacy", "liquor", "cuisine",
 })
-_IS_A = re.compile(r"\b(?:is|are|refers to)\s+(?:(?:a|an|the)\s+)?((?:[a-z-]+\s*){1,4})", re.IGNORECASE)
+# Venues where people go for food, plants or animals: a place, not the thing it sells or keeps.
+_VENUE_WORDS = frozenset({
+    "market", "markets", "bazaar", "court", "stall", "stalls", "shop", "shops", "stand", "eatery", "canteen",
+    "bakery", "brewery", "distillery", "winery", "vineyard", "farm", "farms", "plantation", "plantations",
+    "sanctuary", "reserve", "factory", "workshop", "mall", "emporium", "hawker", "restaurant", "cafe",
+})
+# Words that end the head noun phrase of the what_it_is fact.
+_HEAD_STOP = frozenset({
+    "of", "in", "on", "at", "from", "with", "for", "by", "to", "near", "that", "which", "where", "who", "made",
+    "found", "native", "endemic", "grown", "held", "served", "known", "called", "used", "eaten", "cooked", "sold",
+    "built", "located", "and", "or",
+})
+_IS_A = re.compile(r"\b(?:is|are|refers to)\s+(?:(?:a|an|the)\s+)?((?:[a-z-]+\s*){1,6})", re.IGNORECASE)
 _SITE_WORDS = re.compile(
     r"\b(?:temple|shrine|site|sacred|pilgrimage|monument|landmark|garden|gardens|park|grounds|village|town|museum"
     r"|reserve|sanctuary|estate|farm|plantation)\b",
@@ -129,27 +171,43 @@ def _words(name: Optional[str]) -> list[str]:
 
 
 def is_namesake_name(name: Optional[str]) -> bool:
-    """True when the name names many places around the world: only type words, namesake words and qualifiers, with
-    at least one type word ("Ganesh Temple", "Immaculate Conception Cathedral", "Hotel Himalaya", "City Palace")."""
+    """True when the name names many places around the world (module docstring): a namesake or lodging type word, and
+    every other word a dedication, a kind word or a qualifier — stock name words too when it is a lodging ("Ganesh
+    Temple", "Immaculate Conception Cathedral", "Hotel Himalaya", "City Palace", "Golden Lotus Hotel")."""
     words = _words(name)
-    if not words or not any(w in TYPE_WORDS for w in words):
+    lodging = any(w in LODGING_TYPES for w in words)
+    if not words or not (lodging or any(w in NAMESAKE_TYPES for w in words)):
         return False
-    return all(w in TYPE_WORDS or w in NAMESAKE_WORDS or w in PLACE_KINDS for w in words)
+    return all(w in NAMESAKE_TYPES or w in LODGING_TYPES or w in NAMESAKE_WORDS or w in _NAMESAKE_COMPANIONS
+               or (lodging and w in STOCK_NAME_WORDS) for w in words)
+
+
+def _is_place_word(word: str) -> bool:
+    return word in TYPE_WORDS or word in PLACE_KINDS or word in _VENUE_WORDS
 
 
 def not_a_place(name: Optional[str], what_it_is: Optional[str] = None) -> bool:
-    """True when the "place" is a plant, animal or food. The place card's what_it_is fact decides when there is one;
-    otherwise the head noun of the name."""
+    """True when the "place" is a plant, animal or food. The place card's what_it_is fact decides when there is one
+    (the head noun of its "is a ..." phrase, see _NON_PLACE_NOUNS); otherwise the head noun of the name."""
     if what_it_is and what_it_is.strip():
         if _SITE_WORDS.search(what_it_is):
             return False
         m = _IS_A.search(what_it_is)
-        for word in (m.group(1).lower().split() if m else []):
-            if word in TYPE_WORDS or word in PLACE_KINDS:
+        phrase = m.group(1).lower().split() if m else []
+        head_span: list[str] = []
+        for word in phrase:
+            if word in _HEAD_STOP:
+                break
+            head_span.append(word)
+        if head_span:
+            head = head_span[-1]
+            if _is_place_word(head):
                 return False
-            if word in _NON_PLACE_NOUNS:
+            if head in _NON_PLACE_NOUNS:
                 return True
-        return False
+        if any(_is_place_word(w) for w in phrase):
+            return False
+        return any(w in _NON_PLACE_NOUNS for w in phrase)
     words = _words(name)
     return bool(words) and words[-1] in NON_PLACE_HEADS
 
@@ -248,5 +306,21 @@ def unqualified_words(place: Optional[str]) -> Optional[frozenset[str]]:
     return frozenset(set(tidy(place).split()) | keyword_words(place or "") | FILLER | SEARCH_MODIFIERS)
 
 
+def bare_words_to_skip(place: Optional[str], keywords) -> Optional[frozenset[str]]:
+    """`unqualified_words(place)`, applied only once `keywords` (the demand store's keywords) hold a locality-qualified
+    keyword of the place: every word of the place plus a word outside that set ("ganesh temple kandy"). Until the
+    requalify run buys one, None: the Segment keeps claiming its bare name, so ranking never drops below today's
+    demand before the qualified rows exist. One pass over `keywords`, only for a namesake place."""
+    bare = unqualified_words(place)
+    if bare is None:
+        return None
+    own = keyword_words(place or "") - FILLER
+    for keyword in keywords:
+        words = keyword_words(keyword)
+        if own <= words and not words <= bare:
+            return bare
+    return None
+
+
 __all__ = ["tidy", "is_namesake_name", "not_a_place", "garbled_reason", "PlaceLocation", "carries", "Qualified",
-           "qualify", "unqualified_words"]
+           "qualify", "unqualified_words", "bare_words_to_skip"]

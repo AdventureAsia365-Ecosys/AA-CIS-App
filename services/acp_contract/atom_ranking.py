@@ -76,7 +76,7 @@ from services.acp_contract.atom_matching import (
     ensure_atom_embeddings_batch,
     land_question_on_atom,
 )
-from services.acp_contract.keyword_qualify import unqualified_words
+from services.acp_contract.keyword_qualify import bare_words_to_skip
 from services.acp_contract.ranking_reference import (
     PLACE_KINDS,
     claimable_words,
@@ -201,9 +201,10 @@ def compute_demand(
     are not free the way a local SQLite file's are; same output, cheaper).
 
     AA-1055 (S274): a namesake place ("<deity> Temple", "Hotel <range>") never claims a keyword made only of its own
-    words — that volume is about every place of the name (keyword_qualify.unqualified_words)."""
+    words — that volume is about every place of the name — once a locality-qualified keyword of it is in the store
+    (keyword_qualify.bare_words_to_skip)."""
     claimable = claimable_words(place, action)
-    bare = unqualified_words(place)
+    bare = bare_words_to_skip(place, (row[0] for row in demand_rows))
     best: dict[str, tuple[int, int]] = {}
     for keyword, market, volume in demand_rows:
         kw_words = keyword_words(keyword)
@@ -223,7 +224,7 @@ def demand_candidates(
     """AA-694 A3-6 — every keyword this Segment could claim for one market, best first by the same
     (fit, volume) order `compute_demand()` uses. `compute_demand()` returns the head of this list."""
     claimable = claimable_words(place, action)
-    bare = unqualified_words(place)
+    bare = bare_words_to_skip(place, (row[0] for row in demand_rows))
     scored = []
     for keyword, kw_market, volume in demand_rows:
         if kw_market != market:
@@ -444,7 +445,8 @@ def _candidate_questions(
     embedding-match (below) decides which SEGMENT among the shortlist a question actually lands
     on, this decides which questions are even in the running for THIS Segment's atoms."""
     claimable = claimable_words(place, action)
-    bare = unqualified_words(place)   # AA-1055 (S274): a namesake place lands no question of its bare name
+    # AA-1055 (S274): a namesake place lands no question of its bare name once a qualified keyword of it is stored
+    bare = bare_words_to_skip(place, (row[0] for row in paa_rows))
     seen: set[str] = set()
     for keyword, _market, questions in paa_rows:
         kw_words = keyword_words(keyword)

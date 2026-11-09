@@ -20,15 +20,30 @@ WHERE = kq.PlaceLocation(locality="Zarvoka", region="Quell Province", country="B
 @pytest.mark.parametrize("name, namesake", [
     ("Holy Trinity Chapel", True),          # dedication + type word
     ("Golden Lotus Hotel", True),           # stock hotel name
-    ("Falcon's Nest", True),                # possessive "s" is filler
-    ("Royal Palace", True),                 # only generic words
+    ("Hotel Falcon's Nest", True),          # possessive "s" is filler; stock words count on a lodging
+    ("Eagle's Nest", True),
+    ("Royal Palace Hotel", True),
+    ("Grand Inn", True),                    # "grand" is a stock word on a lodging
     ("Old Night Market", True),
+    ("City Palace", True),                  # a kind word beside a namesake type
     ("Zarvok Temple", False),               # one distinctive word clears it
     ("Holy Trinity Chapel (Zarvoka)", False),   # the parenthetical names where it is
     ("Saint Melnith Church", False),
     ("Golden Lotus", False),                # no type word: not a place name of that shape
     ("Zarvok", False),
     ("", False),
+    # a stock word on a landmark, a natural feature or "grand" / "great" names one particular place
+    ("Blue Pagoda", False),
+    ("Red Citadel Fort", False),
+    ("Golden Cliff Temple", False),
+    ("Silver Lotus Shrine", False),
+    ("Tiger Nest Monastery", False),
+    ("Dragon's Nest", False),
+    ("Lion Rock", False),
+    ("Great Rampart Wall", False),
+    ("Grand Palace", False),
+    ("Mount Phoenix", False),
+    ("Mount Zarvok", False),
 ])
 def test_namesake_name(name, namesake):
     assert kq.is_namesake_name(name) is namesake
@@ -42,6 +57,29 @@ def test_not_a_place_reads_the_card_fact_first():
     assert not kq.not_a_place("Zarvok Bodhi", "Zarvok Bodhi is a sacred fig tree in the temple grounds.")
     # the card wins over the head noun of the name
     assert not kq.not_a_place("Zarvok tree", "Zarvok Tree is a hill village above the river.")
+
+
+@pytest.mark.parametrize("fact", [
+    "Quell Fish Market is a fish market on the harbour front.",
+    "Zarvoka Flower Market is a flower market open at dawn.",
+    "The Melnith Spice Bazaar is a spice market under a stone roof.",
+    "It is a fruit market held on boats.",
+    "Brindle Hall is a food court with forty stalls.",
+    "Zarvok Bites is a famous food stall.",
+    "Quellberry Farm is a fruit farm on the slope.",
+])
+def test_a_venue_head_noun_keeps_a_food_or_plant_venue_a_place(fact):
+    assert not kq.not_a_place("Zarvok Venue", fact)
+
+
+@pytest.mark.parametrize("fact", [
+    "Quellberry is a palm native to the plateau.",
+    "Brindle rolls are a popular street food.",
+    "Melnith is a fish of the upper lake.",
+    "Zarvok cha is a variety of tea grown in the hills.",
+])
+def test_a_thing_head_noun_is_not_a_place(fact):
+    assert kq.not_a_place("Zarvok Thing", fact)
 
 
 def test_not_a_place_falls_back_to_the_head_noun_without_a_card():
@@ -69,7 +107,7 @@ def test_locality_phrases_skip_empty_generic_long_and_own_words():
     where = kq.PlaceLocation(locality="Old Town", region="Upper Quell Valley Region North", country="Brindland")
     assert where.phrases("Holy Trinity Chapel") == ["brindland"]
     assert kq.PlaceLocation(locality="Zarvoka").phrases("Zarvoka Chapel") == []
-    assert WHERE.phrases("Royal Palace") == ["zarvoka", "quell province", "brindland"]
+    assert WHERE.phrases("Royal Palace Hotel") == ["zarvoka", "quell province", "brindland"]
 
 
 def test_qualify_namesake_replaces_the_plain_name_and_drops_unqualified_keywords():
@@ -115,6 +153,17 @@ def test_namesake_segment_claims_only_qualified_keywords():
     # a distinct place is unchanged
     assert ar.compute_demand("Zarvok Temple", "visit", ROWS) == {"US": 1300}
     assert kq.unqualified_words("Zarvok Temple") is None
+
+
+def test_namesake_segment_keeps_its_bare_name_until_a_qualified_keyword_is_stored():
+    # before the requalify run buys "<name> <locality>", ranking keeps today's demand
+    rows = [r for r in ROWS if r[0] != "holy trinity chapel zarvoka"]
+    assert ar.compute_demand("Holy Trinity Chapel", "visit", rows) == {"US": 90500}
+    assert ar.demand_candidates("Holy Trinity Chapel", "visit", rows, "US")[0] == ("holy trinity chapel", 90500)
+    assert kq.bare_words_to_skip("Holy Trinity Chapel", [r[0] for r in rows]) is None
+    # a keyword of the bare words plus a search modifier is not a qualified one
+    assert kq.bare_words_to_skip("Holy Trinity Chapel", ["holy trinity chapel hours"]) is None
+    assert kq.bare_words_to_skip("Holy Trinity Chapel", ["holy trinity chapel zarvoka"]) is not None
 
 
 def test_namesake_segment_lands_no_question_of_its_bare_name():
@@ -269,6 +318,40 @@ async def test_plan_rebuilds_fresh_places_whose_old_map_the_rules_would_change()
     assert [p.name for p in stale] == ["Holy Trinity Chapel"]
     chapel = stale[0]
     assert chapel.requalify and chapel.markets == ["US"] and chapel.serp and not chapel.has_map
+
+
+def test_reusable_keywords_reuses_an_old_map_the_rules_would_not_change():
+    old = "a3_propose@oldprompt"
+    clean = [_row("Zarvok Temple", "zarvok temple", version=old, zone="not_asked"),
+             _row("Zarvok Temple", "zarvok temple sunrise", version=old),
+             _row("Zarvok Temple", "zarvok temple yoga", version=old, zone="reject", mode="enforce")]
+    assert rb.reusable_keywords("Zarvok Temple", clean) == ["zarvok temple", "zarvok temple sunrise"]
+    # a flagged old map, an old map without the current plain keyword and no map are proposed again
+    assert rb.reusable_keywords("Holy Trinity Chapel", [_row("Holy Trinity Chapel", "holy trinity chapel",
+                                                             version=old)]) is None
+    assert rb.reusable_keywords("Zarvok Temple", [_row("Zarvok Temple", "zarvok shrine", version=old)]) is None
+    assert rb.reusable_keywords("Zarvok Temple", []) is None
+    # a current map is read as before
+    assert rb.reusable_keywords("Zarvok Temple", [_row("Zarvok Temple", "zarvok temple")]) == ["zarvok temple"]
+
+
+@pytest.mark.asyncio
+async def test_plan_keeps_a_partly_stale_unflagged_place_on_its_old_map_and_its_stale_tiers():
+    old = "a3_propose@oldprompt"
+    maps = [_row("Zarvok Temple", "zarvok temple", version=old, zone="not_asked"),
+            _row("Zarvok Temple", "zarvok temple sunrise", version=old)]
+    # volume fresh in both markets, SERP stale: only the SERP is bought, with the old keywords, no new proposal
+    fresh = [("Zarvok Temple", "US", "volume"), ("Zarvok Temple", "UK", "volume")]
+    pool, _ = _pool(maps=maps, fresh=fresh)
+    stale = await sr._plan(pool, {"Zarvok Temple": ["visit"]}, ["US", "UK"], ("volume", "serp"))
+    assert len(stale) == 1
+    temple = stale[0]
+    assert temple.has_map and temple.keywords == ["zarvok temple", "zarvok temple sunrise"]
+    assert temple.markets == [] and temple.serp and not temple.requalify
+    # one volume market stale: only that market
+    pool, _ = _pool(maps=maps, fresh=[("Zarvok Temple", "US", "volume"), ("Zarvok Temple", "US", "serp")])
+    stale = await sr._plan(pool, {"Zarvok Temple": ["visit"]}, ["US", "UK"], ("volume", "serp"))
+    assert stale[0].has_map and stale[0].markets == ["UK"] and not stale[0].serp
 
 
 @pytest.mark.asyncio

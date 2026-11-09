@@ -4,7 +4,8 @@ Why: DataForSEO prices **per task**, not per keyword (a volume task carries up t
 price). This module runs research as phases over the whole selection, so each paid task carries as much as it can:
 
   A. map         — the place's keyword map (acp_contract.place_keyword, CIS 393). A place with a map of the current
-                   prompt version reuses it (no LLM, no Jev). Otherwise one LLM call per PROPOSE_CHUNK places proposes
+                   prompt version, or an older one the qualification rules would not change, reuses it (no LLM, no
+                   Jev; reusable_keywords). Otherwise one LLM call per PROPOSE_CHUNK places proposes
                    up to KEYWORDS_PER_PLACE keywords (the plain place name first), the qualification rules run
                    (keyword_qualify: a namesake name such as a deity + "temple" carries its locality, a plant / animal
                    / food buys nothing, a garbled phrase is dropped), Jev judges the rest (A3-3), and the map is stored
@@ -209,7 +210,7 @@ class _Place:
     volumes: dict[str, dict[str, int | None]] = field(default_factory=dict)  # kw -> market -> vol
     failed: bool = False
     serp: bool = False                 # the SERP tier is stale and requested this run
-    has_map: bool = False              # keywords came from a stored map of the current prompt version
+    has_map: bool = False              # keywords came from a stored map (reusable_keywords)
     logged: set = field(default_factory=set)  # (market, tier) rows written this run
     changed: bool = False              # this run stored new demand data for the place (volume or SERP)
     verdicts: dict = field(default_factory=dict)  # keyword -> Jev Verdict of this run's proposal (for the map)
@@ -348,15 +349,30 @@ def _rule_dropped(row: dict) -> bool:
     return str(row.get("jev_mode") or "").startswith(RULE_MODE_PREFIX)
 
 
-def keywords_from_map(rows: list[dict]) -> list[str] | None:
+def keywords_from_map(rows: list[dict], *, any_version: bool = False) -> list[str] | None:
     """The buyable keywords of a stored map of the current prompt version (enforced Jev rejects and rule-dropped rows
     left out), or None when the map is missing or from another prompt version (then the place is proposed again).
-    A map of only rule-dropped rows (a plant, a namesake with no known locality) is a usable map with nothing to buy."""
-    if not rows or any(r.get("prompt_version") != PROMPT_VERSION for r in rows):
+    A map of only rule-dropped rows (a plant, a namesake with no known locality) is a usable map with nothing to buy.
+    `any_version=True` reads a map of any prompt version the same way (reusable_keywords)."""
+    if not rows or (not any_version and any(r.get("prompt_version") != PROMPT_VERSION for r in rows)):
         return None
     kws = [r["keyword"] for r in rows
            if not (r.get("jev_zone") == "reject" and r.get("jev_mode") == "enforce") and not _rule_dropped(r)]
     return [k for k in (clean_keyword(k) for k in kws) if k][:KEYWORDS_PER_PLACE]
+
+
+def reusable_keywords(name: str, rows: list[dict]) -> list[str] | None:
+    """AA-1055 (S274) — the keywords a stale place reuses from its stored map, or None when it is proposed again.
+    A map of the current prompt version is reused (keywords_from_map). A map of an OLDER version is reused as it is
+    when the qualification rules would not change it (needs_requalify is False) and it holds the place's current plain
+    keyword: the prompt edit alone is no reason to pay for a new proposal and to buy new keyword text in markets whose
+    volume is still fresh. Only the places the rules flag (or with a changed plain keyword) are re-proposed."""
+    kws = keywords_from_map(rows)
+    if kws is not None or not rows or needs_requalify(name, rows):
+        return kws
+    if clean_keyword(name) not in {r["keyword"] for r in rows}:
+        return None
+    return keywords_from_map(rows, any_version=True)
 
 
 def needs_requalify(name: str, rows: list[dict]) -> bool:
@@ -925,4 +941,5 @@ async def research_batch(
 
 
 __all__ = ["research_batch", "estimate_plan", "estimate_cost", "select_within_usd", "clean_keyword", "load_maps",
-           "keywords_from_map", "PROMPT_VERSION", "SERP_MARKET", "SERP_FRESH_FOR", "PlacePurchaseFailed"]
+           "keywords_from_map", "reusable_keywords", "PROMPT_VERSION", "SERP_MARKET", "SERP_FRESH_FOR",
+           "PlacePurchaseFailed"]
