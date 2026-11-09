@@ -13,7 +13,8 @@ Two kinds of checks:
   ``aa-cis-dev-jobs-queue-age``), ``jobs_overdue`` (a running attempt past 2 x its kind's expected seconds, was
   ``-jobs-overdue-running``), ``rds_role_connections`` (a LOGIN role above 80 % of its CONNECTION LIMIT, was the six
   ``-rds-role-connections-*``), ``rds_xid_age`` (``max(age(datfrozenxid))`` above 1,000,000,000, was
-  ``-rds-max-used-xid-high``). See :func:`state_findings`.
+  ``-rds-max-used-xid-high``), ``recompute_lifecycle_lag`` (AA-1056: a tour retired / paused / restored more than
+  30 minutes ago with no finished recompute since). See :func:`state_findings`.
 - **App spend** (AA-1025 H1b), evaluated on the same tick from the database (:func:`app_spend_findings`): for each app
   in :data:`APP_SPEND_APPS` whose app profile (``shared.llm_app_profile``, CIS 345) sets ``default_daily_budget_usd``,
   today's (UTC) ``shared.llm_call_log`` spend of that app against it. TripPlanner takes its daily cap from the same row
@@ -96,6 +97,12 @@ CHECKS: dict[str, Check] = {
                                   "(data standard C2.2) before raising the limit."),
     "rds_xid_age": Check("Database transaction ID age high", "max(age(datfrozenxid)) is above 1,000,000,000: "
                          "autovacuum is not freezing some table (wraparound guard). Find it with age(relfrozenxid)."),
+    # AA-1056: services/recompute/lifecycle.lag_summary, read by the api ops sampler every tick.
+    "recompute_lifecycle_lag": Check("Tour on/off change not in Score and Route yet", "A tour was retired, paused or "
+                                     "restored more than 30 minutes ago and no recompute has finished since, so the "
+                                     "Slate and tenant Subjects can still show its old state. The 2-hourly sweep "
+                                     "queues a recompute; check the recompute rows on the Jobs page.",
+                                     JOB_RUNNER_PAGE),
     "cis_app_too_many_connections": Check("cis_app connection refused", "The api or worker could not get a database "
                                           "connection (too many connections for role cis_app). Check pool sizes "
                                           "before raising the limit."),
@@ -373,6 +380,15 @@ def state_findings(tick: dict) -> list[Finding]:
     xid = tick.get("xid_age")
     if xid is not None and int(xid) > XID_AGE_LIMIT:
         out.append(Finding("rds_xid_age", f"max(age(datfrozenxid)) = {int(xid)}", {"xid_age": int(xid)}))
+    lag = tick.get("recompute_lifecycle") or {}
+    waiting = int(lag.get("waiting_over_limit") or 0)
+    if waiting:
+        oldest = lag.get("oldest_waiting_s")
+        out.append(Finding("recompute_lifecycle_lag",
+                           f"{waiting} tour on/off event(s) waited more than 30 minutes for a finished recompute"
+                           + (f" (oldest {int(float(oldest))} s)" if oldest is not None else ""),
+                           {"waiting_over_limit": waiting, "oldest_waiting_s": oldest,
+                            "events": lag.get("events"), "swept": tick.get("recompute_sweep")}))
     return out
 
 

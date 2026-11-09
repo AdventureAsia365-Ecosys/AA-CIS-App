@@ -300,16 +300,30 @@ PLATFORM_STAGES = ["landing", "score", "route", "segment_gc"]
 
 
 async def run_stages(names: list[str], scope: RecomputeScope, *, pool,
-                     progress: Optional[Callable[[dict], None]] = None) -> dict:
+                     progress: Optional[Callable[[dict], None]] = None,
+                     should_stop: Optional[Callable[[], bool]] = None,
+                     on_stage: Optional[Callable[[str], None]] = None) -> dict:
     """Run `names` in order on one shared `ctx`, return `{stage_name: result}`.
 
     Validates every name against the registry first (an unknown name is a programming error, not
     a runtime one — fail before touching the DB). `question_counts` and anything else a stage
     leaves in `ctx.data` is visible to the stages that follow it.
+
+    AA-1056 — `should_stop` (the `recompute` job's cancel event) is asked before every stage and raises
+    RecomputeStopped, so a job released by a deploy stops at the next stage boundary instead of running on beside the
+    attempt that re-claims it; `on_stage(name)` is told which stage starts (the job names it in a stage failure).
+    Both default to None: every other caller is unchanged.
     """
+    from .errors import RecomputeStopped
+
     stages = [get_stage(n) for n in names]  # raises KeyError on an unknown name, before running
     ctx = RecomputeContext(pool=pool, progress=progress)
     results: dict = {}
     for stage in stages:
+        if should_stop is not None and should_stop():
+            logger.info("recompute_stopped", before=stage.name, tour_id=scope.log_tour_id or scope.tour_id)
+            raise RecomputeStopped(f"before stage {stage.name} (job cancelled)")
+        if on_stage is not None:
+            on_stage(stage.name)
         results[stage.name] = await stage.run(ctx, scope)
     return results
