@@ -145,6 +145,17 @@ def _missing(row: reg.Row, value: int, den: Optional[int]) -> Optional[int]:
     return value
 
 
+def shown(row: reg.Row, sources: dict) -> bool:
+    """AA-1055: False only when the row's ``shown_if`` reads a 0 (e.g. a research market no tenant targets). A source
+    that failed keeps the row, so it turns n/a with the reason instead of disappearing."""
+    if row.shown_if is None:
+        return True
+    try:
+        return bool(int(row.shown_if(_getter(sources))))
+    except _Missing:
+        return True
+
+
 def evaluate(row: reg.Row, sources: dict, tier_as_of: dict) -> dict:
     """One CoverageRow. Status: info rows never get a colour; ok when missing <= expected gap; na with the reason
     when a source the row reads failed, or ``expected gap unavailable`` when only the expected gap's source did."""
@@ -206,7 +217,7 @@ async def build(pool: Any, tenant_pool: Any, redis: Any, *, authorization: Optio
     tier_as_of = {"fast": fast.get("computed_at"), "slow": slow.get("computed_at"), "crm": crm.get("computed_at")}
     groups = []
     for gid, label in reg.GROUPS:
-        rows = [evaluate(r, sources, tier_as_of) for r in reg.ROWS if r.group == gid]
+        rows = [evaluate(r, sources, tier_as_of) for r in reg.ROWS if r.group == gid and shown(r, sources)]
         groups.append({"id": gid, "label": label, "note": reg.GROUP_NOTES.get(gid), "rows": rows})
     all_rows = [r for grp in groups for r in grp["rows"]]
     atoms = sources.get("atoms") or {}

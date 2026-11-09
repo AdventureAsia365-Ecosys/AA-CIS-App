@@ -38,6 +38,11 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   the ops check `recompute_lifecycle_lag` alerts on an event waiting over 30 min), and every 2 hours (the loop's
   monotonic schedule, like the Jev check) sweeps: one platform recompute for the events nothing covered (field
   `recompute_sweep`, or `recompute_lifecycle_error`).
+- AA-1055: once a day (the loop's monotonic schedule, research_coverage.CHECK_EVERY_S; the first on the first tick) the
+  tick also measures the share of the search demand research scope that is stale per market an active tenant targets
+  and the places waiting for research after an atomize (services/acp_contract/research_coverage.measure, READ ONLY,
+  bounded statements, $0). Field `research_stale` (the summary) or `research_stale_error`; the ops check
+  `research_stale_share` alerts above 20 % in any market (bell once per 20 h, one e-mail a day).
 - AA-835: each tick also pulls one batch of the Booking supply feed (services/supply_content/pull.pull_once: the
   booking.v_supply_outbox events after the shared.supply_feed_cursor, applied to shared.supply_entity, one
   `supply_content_draft` job per applied facts version), DB only. Field `supply_pull_applied` (the batch counts, when
@@ -228,6 +233,16 @@ async def _recompute_lifecycle_part(pool, kinds: dict, out: dict, sweep: bool) -
         swept = await lifecycle.sweep(pool)
         if swept.get("events"):
             out["recompute_sweep"] = swept
+
+
+async def _research_stale_part(pool, out: dict) -> None:
+    """AA-1055: the stale share of the research scope per targeted market and the places waiting after an atomize
+    (services/acp_contract/research_coverage.measure, read only, $0; field `research_stale`, which the ops check
+    `research_stale_share` reads). Called once a day on the loop's schedule; every statement is READ ONLY and
+    bounded."""
+    from services.acp_contract import research_coverage as rc
+
+    out["research_stale"] = await rc.measure(rc.ReadOnlyPool(pool, rc.CHECK_STATEMENT_TIMEOUT))
 
 
 async def _tour_retirement_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
@@ -439,7 +454,7 @@ def _err(e: BaseException) -> str:
 
 async def sample_once(pool, client, kinds: Optional[dict] = None,
                       part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None,
-                      recompute_sweep: bool = False) -> dict:
+                      recompute_sweep: bool = False, research_stale: bool = False) -> dict:
     """One tick: the role connections and XID age, the alert-recipient reconcile (AA-913), the retired-kind sweep,
     the TripPlanner purge sweep (AA-987), the Booking supply feed pull (AA-835), the daily writing-memory fact filter
     (AA-917), the shared.job backlog, then the S263 ops checks, each part on its own and under part_timeout_s (one
@@ -487,6 +502,15 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
                                timeout=min(10.0, part_timeout_s))
     except Exception as e:
         out["recompute_lifecycle_error"] = _err(e)
+
+    # AA-1055: once a day (the loop's schedule), a few bounded reads; before the ops checks, which read its field
+    if research_stale:
+        from services.acp_contract.research_coverage import CHECK_TIMEOUT_S
+
+        try:
+            await asyncio.wait_for(_research_stale_part(pool, out), timeout=min(CHECK_TIMEOUT_S, part_timeout_s))
+        except Exception as e:
+            out["research_stale_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_supply_pull_part(pool, kinds, out), timeout=part_timeout_s)
@@ -599,6 +623,7 @@ async def provider_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> 
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
                               "tripplanner_purge_error", "recompute_lifecycle_error", "recompute_sweep",
+                              "research_stale_error",
                               "supply_pull_error", "writing_memory_error",
                               "writing_memory_kpi_weekly_error",
                               "reports_error", "ops_checks_error")) or out.get("ops_checks"):
@@ -612,11 +637,14 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
                                   client_factory: Callable[[], Any] = alerts_client,
                                   part_timeout_s: float = PART_TIMEOUT_S,
                                   jev_check_every_s: Optional[float] = None,
-                                  recompute_sweep_every_s: Optional[float] = None) -> None:
+                                  recompute_sweep_every_s: Optional[float] = None,
+                                  research_stale_every_s: Optional[float] = None) -> None:
     """Loops until cancelled. Reads app.state.pool on every tick, so it never holds a stale pool; the
     SNS client of the ops-check alerts is made once (in a thread), and again on the next tick if making it failed.
     AA-1056: every `recompute_sweep_every_s` (services/recompute/lifecycle.SWEEP_EVERY_S, 2 h; the first on the first
-    tick with a pool) the tick also sweeps the tour on/off events nothing recomputed after."""
+    tick with a pool) the tick also sweeps the tour on/off events nothing recomputed after.
+    AA-1055: every `research_stale_every_s` (services/acp_contract/research_coverage.CHECK_EVERY_S, a day; the first on
+    the first tick with a pool) the tick also measures the research stale share (ops check research_stale_share)."""
     if jev_check_every_s is None:
         from shared.jev_credit import JEV_CREDIT_CHECK_EVERY_S
 
@@ -625,9 +653,14 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
         from services.recompute.lifecycle import SWEEP_EVERY_S
 
         recompute_sweep_every_s = SWEEP_EVERY_S
+    if research_stale_every_s is None:
+        from services.acp_contract.research_coverage import CHECK_EVERY_S
+
+        research_stale_every_s = CHECK_EVERY_S
     client = None
     next_jev_check = 0.0          # time.monotonic() deadline of the next AA-845 Jev credit check
     next_recompute_sweep = 0.0    # time.monotonic() deadline of the next AA-1056 lifecycle recompute sweep
+    next_research_stale = 0.0     # time.monotonic() deadline of the next AA-1055 research stale-share measure
     await asyncio.sleep(first_delay_s)
     while True:
         try:
@@ -638,8 +671,12 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
                 sweep_due = time.monotonic() >= next_recompute_sweep
                 if sweep_due:
                     next_recompute_sweep = time.monotonic() + recompute_sweep_every_s
+                research_due = time.monotonic() >= next_research_stale
+                if research_due:
+                    next_research_stale = time.monotonic() + research_stale_every_s
                 _log(await sample_once(pool, client, part_timeout_s=part_timeout_s,
-                                       redis=getattr(app.state, "redis", None), recompute_sweep=sweep_due))
+                                       redis=getattr(app.state, "redis", None), recompute_sweep=sweep_due,
+                                       research_stale=research_due))
         except Exception as e:  # never kill the loop (CancelledError is not an Exception)
             logger.warning("ops_metrics_sampled", error=_err(e))
         pool = getattr(app.state, "pool", None)

@@ -164,6 +164,22 @@ async def recompute_lag(ctx: Ctx) -> dict:
     return await _cis_row(ctx, q.RECOMPUTE_LAG, *lag_args())
 
 
+# AA-1055: the research stale share is several statements (scope, stored Jev picks, research log, tenant markets), each
+# under the CIS statement / lock timeouts and the page's connection gate; the whole read is bounded here, inside the
+# slow tier's deadline.
+RESEARCH_WAIT_S = 12.0
+
+
+async def research(ctx: Ctx) -> dict:
+    """AA-1055: stale share of the research scope per targeted market + places waiting after an atomize
+    (services/acp_contract/research_coverage, the function the daily ops check research_stale_share reads)."""
+    from services.acp_contract import research_coverage as rc
+
+    pool = rc.ReadOnlyPool(ctx.pool, CIS_STATEMENT_TIMEOUT, CIS_LOCK_TIMEOUT, gate=ctx.gate)
+    summary = await asyncio.wait_for(rc.measure(pool), timeout=RESEARCH_WAIT_S)
+    return rc.coverage_values(summary)
+
+
 async def in_drops(ctx: Ctx) -> dict:
     rows = await _cis_rows(ctx, q.IN_DROPS, MASTER_TENANT)
     by = {r["reason"]: int(r["n"] or 0) for r in rows}
@@ -334,6 +350,7 @@ FUNCTIONS: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "gc": _simple(q.GC, with_master=False),
     "recompute_lag": recompute_lag,
     "rank": rank,
+    "research": research,
     "route": _simple(q.ROUTE),
     "paa": _simple(q.PAA, with_master=False),
     "emb": _simple(q.EMB, with_master=False),
