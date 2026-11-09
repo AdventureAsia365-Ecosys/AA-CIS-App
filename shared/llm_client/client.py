@@ -1905,19 +1905,21 @@ class LLMClient:
         # live-progress stream sink bound to the primary call. The job id and tenant ARE carried
         # over explicitly (AA-741 G1) so the shadow's llm_call_log row is attributed like the
         # primary's.
-        from .call_log import current_job_id, current_tenant_id
+        # AA-1058: and the bound tour / content piece, like the job id and tenant.
+        from .call_log import current_attribution, current_job_id, current_tenant_id
         threading.Thread(
             target=self._run_shadow,
             args=(request.model_copy(), cfg, primary, primary_acct,
-                  current_job_id(), current_tenant_id()),
+                  current_job_id(), current_tenant_id(), current_attribution()),
             daemon=True,
         ).start()
 
     def _run_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
                     primary_acct: str,
-                    job_id: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
-        from .call_log import bind_job, bind_tenant
-        with bind_job(job_id), bind_tenant(tenant_id):
+                    job_id: Optional[str] = None, tenant_id: Optional[str] = None,
+                    attribution: Optional[dict] = None) -> None:
+        from .call_log import bind_attribution, bind_job, bind_tenant
+        with bind_job(job_id), bind_tenant(tenant_id), bind_attribution(**(attribution or {})):
             self._run_shadow_bound(request, cfg, primary, primary_acct)
 
     def _run_shadow_bound(self, request: LLMRequest, cfg, primary: LLMResponse,

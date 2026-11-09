@@ -135,6 +135,11 @@ def bind_kind(kind: Optional[str]) -> Iterator[None]:
         _kind.reset(token)
 
 
+def current_kind() -> Optional[str]:
+    """The bound job kind (None outside a job)."""
+    return _kind.get()
+
+
 def line_of_kind(kind: Optional[str]) -> Optional[str]:
     return KIND_LINES.get(kind or "")
 

@@ -123,6 +123,7 @@ async def jev_review(spec: dict, candidates: list[dict], kept: list[dict], *, po
     drops one it kept."""
     import asyncio
 
+    from shared.llm_client.call_log import bind_attribution
     from shared.llm_client.decide import decide
 
     ask = sorted(candidates, key=lambda i: -_vol(i))[:JEV_PER_TOUR]
@@ -133,9 +134,11 @@ async def jev_review(spec: dict, candidates: list[dict], kept: list[dict], *, po
                   "title_places": spec["places"], "activity": spec["activity"]}
 
     async def _one(idea):
+        # AA-1058: the a1_seo ledger rows name the tour (one prefetch job covers many tours); own task, own context
         async with sem:
-            return idea, await decide(JEV_STAGE, f"kw:{spec['tour_id']}:{idea['keyword'].lower()}",
-                                      {**state_base, "keyword": idea["keyword"]}, [JEV_Q], pool=pool)
+            with bind_attribution(tour_id=spec["tour_id"]):
+                return idea, await decide(JEV_STAGE, f"kw:{spec['tour_id']}:{idea['keyword'].lower()}",
+                                          {**state_base, "keyword": idea["keyword"]}, [JEV_Q], pool=pool)
 
     results = await asyncio.gather(*[_one(i) for i in ask])
     keep = {i["keyword"].casefold(): i for i in kept}

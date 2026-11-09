@@ -48,7 +48,7 @@ from services.content_generation.itinerary_utils import parse_canonical_itinerar
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import get_stage_config
-from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
+from shared.llm_client.call_log import attributed, billed_fields, record_call_with_pool, record_unusable
 from shared.llm_client.decide import decide
 from shared.llm_client.errors import is_truncated
 from shared.llm_client.token_floor import route_ended_on_cut
@@ -175,6 +175,8 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
     return None, None, _READ_ATTEMPTS, error
 
 
+# AA-1058: every a3_atomize ledger row (and the Jev atom check below it) names the tour.
+@attributed(tour_id=lambda *a, **k: k["tour_id"] if "tour_id" in k else a[0])
 async def run_a3_atomize(
     tour_id: str, rewritten: dict, pool, country: str = "",
     version_id: str | None = None, force: bool = False,

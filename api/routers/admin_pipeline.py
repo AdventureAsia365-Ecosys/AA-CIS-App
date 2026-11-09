@@ -28,6 +28,7 @@ from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.routers.v1_pipeline import ReviewApproveBody, _rewrite_tour
+from shared.llm_client import call_log as _call_log  # AA-1058: the tour every S1 ledger row names
 from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
@@ -302,6 +303,18 @@ def _trim_to_word_boundary(text, limit, sentence=False):
         return window[:space].rstrip()
     # single over-long token with no space — hard cut at limit
     return window.rstrip()
+
+
+def _s1_prompt_version(result: dict) -> Optional[str]:
+    """AA-1058 — generated_content.prompt_version of a new version: the writer stage's registered prompt version
+    (prompt_registry, the value the gateway writes on the writer's llm_call_log row), else the writer's AA-289 prompt
+    hash (metadata.prompt_version; the writer row carries the same hash as its fallback, call_log.billed_fields), so
+    a version joins the cost of the prompt it was written with. None when the writer never ran. varchar(50)."""
+    from shared.llm_client import prompt_registry
+    stage = result.get("generate_stage") or "s1_generate"
+    registered = prompt_registry.version_for(stage)
+    value = registered or result.get("prompt_version") or None
+    return str(value)[:50] if value else None
 
 
 def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
@@ -599,6 +612,8 @@ _CONTENT_INSERT_ERRORS = (
 )
 
 
+# AA-1058: every ledger row of the rewrite (writer, judges, flag fix, brand audit, grounding, Jev a1_*) names the tour.
+@_call_log.attributed(tour_id=lambda *a, **k: (k["req"] if "req" in k else a[0]).tour_id)
 async def _execute_run_tour(
     req: TourRunRequest,
     job_id: str | None = None,
@@ -915,7 +930,7 @@ async def _execute_run_tour(
                         seo_title, seo_meta, seo_keywords_used,
                         model_editorial, status, og_tags, metadata,
                         brand_rules_version, requested_tier, fallback_used, satellite_used,
-                        satellite_account, revalidate_passed
+                        satellite_account, revalidate_passed, prompt_version
                     ) VALUES (
                         $1::uuid, $2::uuid,
                         COALESCE((SELECT MAX(version_num) + 1
@@ -923,7 +938,7 @@ async def _execute_run_tour(
                         WHERE tour_id = $1::uuid), 1),
                         $3, $4, $5, $6, $7::jsonb, $8,
                         $9, $10, $11::jsonb, $12, $13::content_status_enum, $14::jsonb, $15::jsonb,
-                        $16, $17, $18, $19, $20, $21
+                        $16, $17, $18, $19, $20, $21, $22
                     ) RETURNING id
                 """,
                     req.tour_id, tenant_uuid,
@@ -949,6 +964,9 @@ async def _execute_run_tour(
                     result.get("satellite_account"),         # AA-397: satellite_account (text, 'acc3'/None)
                     # S218 audit: the column existed but was never written (0/681 rows); metadata had it.
                     result.get("revalidate_passed") if result.get("revalidate_ran") else None,
+                    # AA-1058: the column was never written (only metadata.prompt_version): 1,219 versions in 30 days
+                    # had none. The writer stage's registered version, else the writer's own prompt hash.
+                    _s1_prompt_version(result),
                 )
                 if version_id:
                     logger.info("version_inserted", tour_id=req.tour_id, version_id=str(version_id))
@@ -1353,11 +1371,16 @@ async def _revalidate_tour(content_id: str) -> dict:
             loop = _a.new_event_loop()
             _a.set_event_loop(loop)
             try:
-                return graph.invoke(initial_state)
+                # AA-1058: the re-validation's judge / brand audit / Jev rows name the tour.
+                with _call_log.bind_attribution(tour_id=gc["tour_id"]):
+                    return graph.invoke(initial_state)
             finally:
                 loop.close()
 
-        result = await asyncio.get_event_loop().run_in_executor(None, _run)
+        # AA-1058: run_in_executor does not copy contextvars (asyncio.to_thread does): without the copy the rows lost
+        # the bound job id (revalidate job) and tenant.
+        import contextvars as _cv
+        result = await asyncio.get_event_loop().run_in_executor(None, _cv.copy_context().run, _run)
 
         passed = bool(result.get("revalidate_passed", False))
         q_score = float(result.get("quality_score", 0.0))
