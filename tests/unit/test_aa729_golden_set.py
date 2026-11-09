@@ -630,7 +630,8 @@ def test_patched_names_still_exist():
         assert hasattr(owner, name), name
     from shared.llm_client import embed as embed_mod
     assert hasattr(embed_mod, "_call")  # AA-927: the embedding counter wraps it
-    assert "_finalize_piece" in service.run_write_background.__code__.co_names
+    # AA-1058: run_write_background is wrapped by call_log.attributed (functools.wraps): read the function it wraps
+    assert "_finalize_piece" in inspect.unwrap(service.run_write_background).__code__.co_names
     fin = inspect.signature(service._finalize_piece).parameters
     assert "piece_id" in fin and fin["piece_id"].kind is inspect.Parameter.KEYWORD_ONLY
     for name in ("channel_spec", "hygiene", "trip_facts", "run_quality_gates", "F9PassMemory", "_grounding_text",
