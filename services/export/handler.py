@@ -125,6 +125,8 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
     AA-735 nac 3 — the body now runs through `services.recompute.run_stages(PLATFORM_STAGES, ...)`
     (landing -> score -> route); same SQL, order and (absent) progress as the old inline chain.
     AA-988 — then `segment_gc` (orphan Segments; report mode unless SEGMENT_GC_MODE=apply), result key `segment_gc`.
+    AA-1059 — first `segment_catchup` (the segment stage for active Masters with matchable atoms and no Segment, at
+    most SEGMENT_CATCHUP_MAX per pass), result key `segment_catchup`.
     AA-1057 — `retarget` after `route` (Subjects / requests onto live ids), result key `retarget`.
     AA-1056 — `should_stop` / `on_stage` go to run_stages (the `recompute` job's cancel event and stage name)."""
     from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
@@ -133,7 +135,7 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
         log_reason=log_reason)
     results = await run_stages(PLATFORM_STAGES, scope, pool=pool, should_stop=should_stop, on_stage=on_stage)
     out = {"ranking": results["score"], "route": results["route"], "retarget": results.get("retarget"),
-           "segment_gc": results.get("segment_gc")}
+           "segment_gc": results.get("segment_gc"), "segment_catchup": results.get("segment_catchup")}
     logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=out["route"])
     return out
 

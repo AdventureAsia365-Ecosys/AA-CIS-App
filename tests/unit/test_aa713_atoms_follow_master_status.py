@@ -55,7 +55,9 @@ async def test_recompute_rankings_and_routes_runs_every_market_then_routes():
                new=AsyncMock(return_value={"routes": 0})) as rrd, \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1, "UK": 2}), \
          patch("services.acp_shared.retarget.run_retarget", new=AsyncMock(return_value={})), \
-         patch("services.acp_contract.segment_gc.run_segment_gc", new=AsyncMock(return_value={})):
+         patch("services.acp_contract.segment_gc.run_segment_gc", new=AsyncMock(return_value={})), \
+         patch("services.recompute.segment_catchup.run_segment_catchup",
+               new=AsyncMock(return_value={"status": "ok"})):
         out = await handler.recompute_rankings_and_routes(object(), log_reason="test")
     assert pql.await_count == 1
     assert set(calls) == {"US", "UK"} and rar.await_count == 2

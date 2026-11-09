@@ -1481,8 +1481,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `write_strategy` (`segment`/`landing` upsert; `score`/`route` versioned-swap — the SQL itself
     is unchanged, only declared). The orchestrator `run_stages(names, scope, pool=, progress=)`
     runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route→retarget, a tour's
-    publish / atom edit) and `PLATFORM_STAGES` (landing→score→route→retarget→segment_gc, platform score+route, then
-    the AA-988 orphan-Segment clean-up).
+    publish / atom edit) and `PLATFORM_STAGES` (segment_catchup→landing→score→route→retarget→segment_gc: the AA-1059
+    catch-up, platform score+route, the AA-1057 retarget, then the AA-988 orphan-Segment clean-up).
+  - **Segment catch-up (AA-1059)**: the `segment` stage runs only per tour (a3 chain, tour-scope recompute), so a
+    Master whose segment step failed (best-effort in the a3 chain), never ran, or read no atom (atomized while
+    inactive, then restored) stayed without Segment / Score / Route. The platform pass now starts with
+    `segment_catchup` (`services/recompute/segment_catchup.py`): active Masters none of whose live atoms is in a
+    Segment and with >= 1 atom `forms_segment` accepts get `run_segment_matching`, at most `SEGMENT_CATCHUP_MAX`
+    (env, default 10, 0 = off) per pass, each under the tour's A3 lock taken without waiting (`busy` when an
+    `a3_atomize` holds it); failures counted per class, never failing the pass; touched Segments go to `landing`.
+    Result key `segment_catchup`. A Master whose atoms are all transit / unnamed by rule has no Segment by design
+    (`all_excluded`).
     The `recompute` job and the `a3_atomize` path (its inline segment matching) run their work
     only through `run_stages`; the thin wrappers `recompute_segment_score_route` /
     `recompute_rankings_and_routes` in `services/export/handler.py` map the stage results back to

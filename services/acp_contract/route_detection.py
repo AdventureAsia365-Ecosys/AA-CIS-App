@@ -149,6 +149,38 @@ def _spans(runs: list[list[Moment]]) -> list[list[Moment]]:
     return spans
 
 
+# AA-1059 — why one tour gets no Route, in the order derive_routes rules a tour out.
+ROUTE_GAP_REASONS = ("no_ranked_moment", "no_day", "one_day", "no_consecutive_days", "one_place", "derivable")
+
+
+def route_gap_reason(moments: Iterable[Moment]) -> str:
+    """AA-1059 — why `derive_routes` gives ONE tour no Route (pure; diagnostics only, the stage records no reason):
+      - `no_ranked_moment`    the tour has no ranked, non-excluded Segment at all;
+      - `no_day`              its ranked Segments carry no itinerary day (atoms without `itinerary_day`);
+      - `one_day`             every ranked Segment sits on one day;
+      - `no_consecutive_days` ranked days exist but no two are consecutive (each run is one day: transfer days and
+                              days whose every Segment is excluded break the run);
+      - `one_place`           a run of >= LEAST_DAYS days exists, but each span names fewer than LEAST_PLACES places;
+      - `derivable`           derive_routes DOES give this tour a Route (a missing current Route is then a stale
+                              route set, not a rule).
+    `moments` are one tour's (as `run_route_detection` builds them: one per ranked Segment, at its first day); a
+    moment whose `day` is None counts as undated."""
+    held = list(moments)
+    if not held:
+        return "no_ranked_moment"
+    dated = [m for m in held if m.day is not None]
+    if not dated:
+        return "no_day"
+    if derive_routes(dated):
+        return "derivable"
+    if len({m.day for m in dated}) < LEAST_DAYS:
+        return "one_day"
+    spans = _spans(_runs(sorted(dated, key=lambda m: (m.day, m.segment_id))))
+    if not any(len({m.day for m in span}) >= LEAST_DAYS for span in spans):
+        return "no_consecutive_days"
+    return "one_place"
+
+
 def families(tours: Mapping[str, set[str]], share: float = SHARED_ENOUGH) -> dict[str, str]:
     """Which tours sell one journey, as tour_id -> family key (the alphabetically-smallest
     member's tour_id). A tour sharing nothing with any other is not in the map — a family of
@@ -558,7 +590,7 @@ async def run_route_detection(pool) -> dict:
 
 __all__ = [
     "Moment", "Route", "Stop",
-    "LEAST_DAYS", "LEAST_PLACES", "MOST_DAYS", "SHARED_ENOUGH",
-    "derive_routes", "families", "stops", "journey_name",
+    "LEAST_DAYS", "LEAST_PLACES", "MOST_DAYS", "SHARED_ENOUGH", "ROUTE_GAP_REASONS",
+    "derive_routes", "families", "stops", "journey_name", "route_gap_reason",
     "run_route_detection",
 ]

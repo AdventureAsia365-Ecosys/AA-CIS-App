@@ -41,6 +41,9 @@ actually depend on:
       * `hub` — UPSERT (an UPDATE of `updated_at` on reuse, an INSERT on a new family; never
         superseded or rebuilt — implementation notes Decision 10).
 
+  - `segment_catchup` (AA-1059) — the `segment` stage for the active Masters with matchable atoms and no Segment
+    (`services/recompute/segment_catchup.py`), at most SEGMENT_CATCHUP_MAX tours per pass; same tables and strategies
+    as `segment` (it calls the same function), plus the Segments it touched handed to `landing`.
   - `segment_gc` (AA-988) — DELETE of zero-reference orphan Segments and of their member rows on dead atoms
     (`services/acp_contract/segment_gc.py`), in `report` mode by default (env SEGMENT_GC_MODE), under the
     segment-write lock the `segment` stage holds shared.
@@ -50,11 +53,12 @@ actually depend on:
     Subject's request whose seed tour retired), guarded on the old value (`services/acp_shared/retarget.py`; env
     RECOMPUTE_RETARGET_MODE, default `report` until the audited one-off has run).
 
-The two named lists mirror the two old chains, plus the AA-1057 retarget after `route` and the AA-988 clean-up at
-the end of the platform pass:
+The two named lists mirror the two old chains, plus the AA-1059 catch-up at the start of the platform pass, the
+AA-1057 retarget after `route` and the AA-988 clean-up at the end of the platform pass:
   - `TOUR_STAGES`     = segment -> landing -> score -> route -> retarget (one tour's publish / atom edit).
-  - `PLATFORM_STAGES` =            landing -> score -> route -> retarget -> segment_gc (platform score+route, then
-    GC once ranking and routes are current).
+  - `PLATFORM_STAGES` = segment_catchup -> landing -> score -> route -> retarget -> segment_gc (AA-1059: first the
+    segment stage for the active Masters it missed, then platform score+route, then GC once ranking and routes are
+    current).
 """
 from __future__ import annotations
 
@@ -153,6 +157,11 @@ async def _run_landing(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
         segment_ids: Optional[set[str]] = {r["segment_id"] for r in rows}
     else:
         segment_ids = scope.segment_ids
+        # AA-1059 — the Segments `segment_catchup` touched this pass are landed too (brand-new ones would be anyway:
+        # questions_count IS NULL; an existing one a caught-up atom joined has a new atom to land questions on).
+        extra = ctx.data.get("catchup_segment_ids")
+        if segment_ids is not None and extra:
+            segment_ids = set(segment_ids) | set(extra)
     # AA-688: `progress` reports the embedding pre-pass to the Jobs page. The platform chain never
     # passed one (ctx.progress is None there), so landing stays progress-silent on that path.
     question_counts = await precompute_question_landings(ctx.pool, segment_ids, ctx.progress)
@@ -198,6 +207,17 @@ async def _run_route(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
     return route_result
 
 
+async def _run_segment_catchup(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
+    from services.recompute.segment_catchup import run_segment_catchup
+    if ctx.progress:
+        ctx.progress({"step": "segment_catchup", "done": 0, "total": 1})
+    result = await run_segment_catchup(ctx.pool)
+    ctx.data["catchup_segment_ids"] = set(result.pop("segment_ids", None) or [])
+    if ctx.progress:
+        ctx.progress({"step": "segment_catchup", "done": 1, "total": 1})
+    return result
+
+
 async def _run_retarget(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
     from services.acp_shared.retarget import run_retarget
     return await run_retarget(ctx.pool)
@@ -232,6 +252,22 @@ _STAGES: dict[str, Stage] = {
         },
         write_strategy="upsert",  # the dominant / id-stable strategy readers depend on
         run=_run_segment,
+    ),
+    "segment_catchup": Stage(
+        name="segment_catchup",
+        reads=("acp_contract.v_active_tour_atoms", "acp_contract.tour_atoms",
+               "acp_contract.atom_segment", "acp_contract.atom_segment_member",
+               "silver_aa_internal.raw_tours"),
+        writes=("acp_contract.atom_segment", "acp_contract.atom_segment_member",
+                "acp_contract.atom_segment_alias"),
+        # AA-1059 — runs `run_segment_matching` per caught-up tour: the same writes as the `segment` stage.
+        table_strategies={
+            "acp_contract.atom_segment": "upsert",
+            "acp_contract.atom_segment_member": "delete_insert",
+            "acp_contract.atom_segment_alias": "upsert",
+        },
+        write_strategy="upsert",
+        run=_run_segment_catchup,
     ),
     "landing": Stage(
         name="landing",
@@ -324,8 +360,9 @@ def all_stages() -> dict[str, Stage]:
 
 # Named stage lists — these mirror the two hand-written chains they replace, exactly.
 # AA-1057: `retarget` follows `route` on both (the new Route / atom ids exist by then).
+# AA-1059: `segment_catchup` opens the platform pass (its Segments feed `landing`).
 TOUR_STAGES = ["segment", "landing", "score", "route", "retarget"]
-PLATFORM_STAGES = ["landing", "score", "route", "retarget", "segment_gc"]
+PLATFORM_STAGES = ["segment_catchup", "landing", "score", "route", "retarget", "segment_gc"]
 
 
 async def run_stages(names: list[str], scope: RecomputeScope, *, pool,
