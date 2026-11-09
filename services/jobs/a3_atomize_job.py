@@ -51,7 +51,7 @@ from typing import Optional
 
 import structlog
 
-from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
+from shared.jobs.registry import WORKER_STOP_TIMEOUT_SECONDS, JobContext, NonRetryable, enqueue, job_kind
 
 logger = structlog.get_logger()
 
@@ -92,7 +92,7 @@ def _force_since(progress: Optional[dict]) -> datetime:
 
 
 # AA-993 G3: = the worker container's ECS stopTimeout (AA-CIS-Infra modules/ecs), see the module docstring.
-RELEASE_DELAY_SECONDS = 120
+RELEASE_DELAY_SECONDS = WORKER_STOP_TIMEOUT_SECONDS
 
 
 # Platform-wide recompute ≈ 5 min after AA-688 (first run after a reset embeds more).

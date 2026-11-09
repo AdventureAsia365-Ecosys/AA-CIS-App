@@ -36,6 +36,7 @@ from _ttv_live_standin import TTV_LIVE_STANDIN_DDL  # noqa: E402
 from api.services.data_coverage import queries as q  # noqa: E402
 from api.services.data_coverage.defs import MASTER_TENANT  # noqa: E402
 from services.acp_shared.real_questions import TOPUP_MARKET  # noqa: E402
+from services.recompute import lifecycle  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)
@@ -64,6 +65,7 @@ CIS_STATEMENTS = [
     ("SEG", q.SEG, (MASTER_TENANT,)),
     ("SEG_NO_MEMBER_ATOMS", q.SEG_NO_MEMBER_ATOMS, (MASTER_TENANT,)),
     ("GC", q.GC, ()),
+    ("RECOMPUTE_LAG", q.RECOMPUTE_LAG, lifecycle.lag_args()),
     ("RANK", q.RANK, (MASTER_TENANT, TOPUP_MARKET)),
     ("ROUTE", q.ROUTE, (MASTER_TENANT,)),
     ("PAA", q.PAA, ()),

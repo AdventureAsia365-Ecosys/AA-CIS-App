@@ -340,7 +340,9 @@ def _pool(rows=None, error=None, execute="UPDATE 0"):
     async def fetch(sql, *args):
         if error is not None:
             raise error
-        return [] if "shared.llm_app_profile" in sql else answer    # AA-1025 H1b: no app profile budget set
+        if "shared.llm_app_profile" in sql or "tour_lifecycle_event" in sql:
+            return []        # AA-1025 H1b: no app profile budget set; AA-1056: no tour on/off event to sweep
+        return answer
 
     pool.fetch = AsyncMock(side_effect=fetch)
     pool.execute = AsyncMock(return_value=execute)   # the retired-kind sweep

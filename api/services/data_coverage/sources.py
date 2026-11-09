@@ -158,6 +158,12 @@ async def rank(ctx: Ctx) -> dict:
     return await _cis_row(ctx, q.RANK, MASTER_TENANT, TOPUP_MARKET)
 
 
+async def recompute_lag(ctx: Ctx) -> dict:
+    """AA-1056: tour on/off events to a finished recompute (services/recompute/lifecycle, the ops check's numbers)."""
+    from services.recompute.lifecycle import lag_args
+    return await _cis_row(ctx, q.RECOMPUTE_LAG, *lag_args())
+
+
 async def in_drops(ctx: Ctx) -> dict:
     rows = await _cis_rows(ctx, q.IN_DROPS, MASTER_TENANT)
     by = {r["reason"]: int(r["n"] or 0) for r in rows}
@@ -326,6 +332,7 @@ FUNCTIONS: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "seg": _simple(q.SEG),
     "seg_classify": seg_classify,
     "gc": _simple(q.GC, with_master=False),
+    "recompute_lag": recompute_lag,
     "rank": rank,
     "route": _simple(q.ROUTE),
     "paa": _simple(q.PAA, with_master=False),

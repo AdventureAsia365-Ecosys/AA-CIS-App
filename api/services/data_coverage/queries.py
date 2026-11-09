@@ -12,6 +12,8 @@ S252 audit's (``coverage.py``) with the sample arrays and per-country ROLLUPs dr
 """
 from __future__ import annotations
 
+from services.recompute import lifecycle as _lifecycle
+
 from .defs import ACTIVE_ATOMS, LIVE, PLACE_ATOM, SERVED_DEST
 
 # ── 1.1 Inputs (S0) ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -187,6 +189,10 @@ SELECT (result->'segment_gc'->>'orphans')::int AS orphans,
  WHERE kind = 'recompute' AND status = 'succeeded' AND result->>'scope' = 'platform'
    AND jsonb_typeof(result->'segment_gc') = 'object'
  ORDER BY finished_at DESC NULLS LAST LIMIT 1"""
+
+# AA-1056: tour on/off events (last 30 days) to the first recompute that finished after them, the same SQL the api ops
+# sampler alerts on (services/recompute/lifecycle.LAG_SQL; bind lifecycle.lag_args()).
+RECOMPUTE_LAG = _lifecycle.LAG_SQL
 
 # Markets: the ranking markets only. ``search_demand`` also stores the admin SERP top-up under its own market
 # (``services.acp_shared.real_questions.TOPUP_MARKET``, bound as $2), which is never ranked (r3 review).

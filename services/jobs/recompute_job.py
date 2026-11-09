@@ -21,22 +21,68 @@ Debounce (enqueue_recompute): a burst of atom edits / status flips should not qu
 platform rebuilds. If a `recompute` job for the same (scope, tour_id) is already QUEUED (not yet
 started), reuse it — the pending job will pick up the latest committed state when it runs. A job
 already RUNNING does not block a new enqueue (changes made after it started still need a rerun).
+`enqueue_recompute` is THE one enqueue helper: the status-change path, the atom edit, the a3 chain, the lifecycle
+sweep (services/recompute/lifecycle.py, AA-1056) and the research path all call it.
+
+AA-1056 (root S273 system picture §5 item 8) — drain-safe like a3_atomize (AA-993 G3), reusing its code:
+* one platform-wide session advisory lock for the whole run (handler.job_session_lock, class `recompute`, key
+  `platform`: both scopes rebuild the platform Score and Route), so two recompute runs never overlap, also when a
+  deploy releases a running job whose thread keeps going on the draining task;
+* `release_delay_seconds` = the worker's ECS stopTimeout (registry.WORKER_STOP_TIMEOUT_SECONDS): the released row is
+  due again only after the old task is gone, so the lock wait is the exception;
+* a cancel event: set when the handler is cancelled; the thread stops at the next stage boundary (RecomputeStopped)
+  and drops its late progress writes;
+* fixed error codes (services/recompute/errors.py) at the start of every failure message.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import structlog
 
+from services.recompute.errors import (
+    BAD_PAYLOAD, RecomputeError, RecomputeLockTimeout, RecomputeStageFailed, RecomputeStopped,
+)
 from shared.jobs import queue
-from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
+from shared.jobs.registry import WORKER_STOP_TIMEOUT_SECONDS, JobContext, NonRetryable, enqueue, job_kind
 
 logger = structlog.get_logger()
 
 KIND = "recompute"
+
+# AA-1056: one lock for the whole kind (both scopes rebuild the platform-wide Score and Route).
+LOCK_CLASS = "recompute"
+LOCK_KEY = "platform"
+LOCK_POLL_SECONDS = 2.0
+EXPECTED_SECONDS = 1800
+LOCK_MAX_WAIT_SECONDS = EXPECTED_SECONDS   # an older run holding it longer than its expected time is stuck
+RELEASE_DELAY_SECONDS = WORKER_STOP_TIMEOUT_SECONDS
+
+
+@asynccontextmanager
+async def recompute_lock(should_stop: Optional[Callable[[], bool]] = None, *,
+                         poll_seconds: Optional[float] = None, max_wait_seconds: Optional[float] = None):
+    """Hold the platform recompute lock for the body (services/export/handler.job_session_lock). A waiting run that is
+    cancelled itself stops waiting (RecomputeStopped); one that waits longer than LOCK_MAX_WAIT_SECONDS gives up
+    (RecomputeLockTimeout, retryable)."""
+    from services.export.handler import job_session_lock
+
+    def _check_stop() -> None:
+        if should_stop is not None and should_stop():
+            logger.info("recompute_stopped", before="lock")
+            raise RecomputeStopped("while waiting for the recompute lock (job cancelled)")
+
+    async with job_session_lock(
+            LOCK_CLASS, LOCK_KEY, check_stop=_check_stop,
+            poll_seconds=LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds,
+            max_wait_seconds=LOCK_MAX_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds,
+            timeout_error=RecomputeLockTimeout):
+        yield
 
 
 # AA-743 — sliding debounce for the platform pass. Each enqueue pushes the queued job's start to
@@ -113,7 +159,8 @@ async def enqueue_recompute(pool, *, scope: str, reason: str, tour_id: Optional[
 
 
 # Platform-wide recompute ~1-5 min (6 markets + route detection + embedding pre-pass).
-@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1800)
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=EXPECTED_SECONDS,
+          release_delay_seconds=RELEASE_DELAY_SECONDS)
 async def run(ctx: JobContext) -> dict:
     from services.export.handler import (
         recompute_rankings_and_routes, recompute_segment_score_route,
@@ -125,12 +172,14 @@ async def run(ctx: JobContext) -> dict:
     reason = p.get("reason") or ""
     segment_ids = p.get("segment_ids")            # AA-743: None = every Segment
     if scope not in ("tour", "platform"):
-        raise NonRetryable(f"payload.scope must be 'tour' or 'platform', got {scope!r}")
+        raise NonRetryable(f"{BAD_PAYLOAD}: payload.scope must be 'tour' or 'platform', got {scope!r}")
     if scope == "tour" and not tour_id:
-        raise NonRetryable("scope='tour' needs tour_id")
+        raise NonRetryable(f"{BAD_PAYLOAD}: scope='tour' needs tour_id")
 
     await ctx.progress(phase="recomputing", scope=scope, tour_id=tour_id, reason=reason)
     worker_loop = asyncio.get_running_loop()
+    stop = threading.Event()        # AA-1056: set when this handler is cancelled
+    stage: dict = {"name": "lock"}  # the step running now (named in a stage failure); the lock comes first
 
     def _log_failure(future) -> None:
         if not future.cancelled() and future.exception() is not None:
@@ -138,8 +187,14 @@ async def run(ctx: JobContext) -> dict:
                            error=str(future.exception()))
 
     def _report(fields: dict) -> None:
-        # Sub-steps use "step", never "phase", so a late write never overwrites phase="done".
+        # Sub-steps use "step", never "phase", so a late write never overwrites phase="done". AA-1056: nothing once
+        # the handler was cancelled (the row may already belong to the attempt that re-claimed it).
+        if stop.is_set():
+            return
         asyncio.run_coroutine_threadsafe(ctx.progress(**fields), worker_loop).add_done_callback(_log_failure)
+
+    def _on_stage(name: str) -> None:
+        stage["name"] = name
 
     result: dict = {}
 
@@ -147,20 +202,36 @@ async def run(ctx: JobContext) -> dict:
         from services.export.handler import open_job_pool
 
         async def _body():
-            # S219: a real pool, not one shared connection — concurrent decide() calls collided.
-            own_pool = await open_job_pool()
-            try:
-                if scope == "tour":
-                    return await recompute_segment_score_route(
-                        tour_id, own_pool, log_tour_id=tour_id, progress=_report)
-                return await recompute_rankings_and_routes(own_pool, log_reason=reason,
-                                                            segment_ids=segment_ids)
-            finally:
-                await own_pool.close()
+            # AA-1056: the lock first (a waiting run holds no pool), for the whole run.
+            async with recompute_lock(stop.is_set):
+                # S219: a real pool, not one shared connection — concurrent decide() calls collided.
+                own_pool = await open_job_pool()
+                try:
+                    if scope == "tour":
+                        return await recompute_segment_score_route(
+                            tour_id, own_pool, log_tour_id=tour_id, progress=_report,
+                            should_stop=stop.is_set, on_stage=_on_stage)
+                    return await recompute_rankings_and_routes(own_pool, log_reason=reason,
+                                                                segment_ids=segment_ids,
+                                                                should_stop=stop.is_set, on_stage=_on_stage)
+                finally:
+                    await own_pool.close()
 
         result.update(asyncio.run(_body()) or {})
 
-    await asyncio.to_thread(_in_own_loop)
+    try:
+        await asyncio.to_thread(_in_own_loop)
+    except asyncio.CancelledError:
+        # The thread cannot be cancelled; tell it to stop at its next stage boundary (or lock poll).
+        stop.set()
+        logger.warning("recompute_thread_stop_requested", job_id=ctx.job_id, scope=scope, stage=stage["name"])
+        raise
+    except RecomputeError:
+        raise
+    except Exception as e:
+        logger.warning("recompute_stage_failed", job_id=ctx.job_id, scope=scope, stage=stage["name"],
+                       error=f"{type(e).__name__}: {str(e)[:300]}")
+        raise RecomputeStageFailed.for_stage(stage["name"], f"{type(e).__name__}: {str(e)[:700]}") from e
     await ctx.progress(phase="done")
     logger.info("recompute_job_done", job_id=ctx.job_id, scope=scope, tour_id=tour_id, reason=reason)
     return {"scope": scope, "tour_id": tour_id, "reason": reason, "coalesced": p.get("coalesced", 0),
