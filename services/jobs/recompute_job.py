@@ -179,7 +179,7 @@ async def run(ctx: JobContext) -> dict:
     await ctx.progress(phase="recomputing", scope=scope, tour_id=tour_id, reason=reason)
     worker_loop = asyncio.get_running_loop()
     stop = threading.Event()        # AA-1056: set when this handler is cancelled
-    stage: dict = {"name": None}    # the stage running now (named in a stage failure)
+    stage: dict = {"name": "lock"}  # the step running now (named in a stage failure); the lock comes first
 
     def _log_failure(future) -> None:
         if not future.cancelled() and future.exception() is not None:
@@ -231,7 +231,7 @@ async def run(ctx: JobContext) -> dict:
     except Exception as e:
         logger.warning("recompute_stage_failed", job_id=ctx.job_id, scope=scope, stage=stage["name"],
                        error=f"{type(e).__name__}: {str(e)[:300]}")
-        raise RecomputeStageFailed(stage["name"], f"{type(e).__name__}: {str(e)[:700]}") from e
+        raise RecomputeStageFailed.for_stage(stage["name"], f"{type(e).__name__}: {str(e)[:700]}") from e
     await ctx.progress(phase="done")
     logger.info("recompute_job_done", job_id=ctx.job_id, scope=scope, tour_id=tour_id, reason=reason)
     return {"scope": scope, "tour_id": tour_id, "reason": reason, "coalesced": p.get("coalesced", 0),

@@ -1350,7 +1350,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
       the last time one was seen), so a full wave or the few seconds before the next poll read 0.
     **S263 alert diet (AA-1025): no CloudWatch metric or alarm any more.** The tick evaluates the values itself
     (`shared/ops_checks.py` state checks `jobs_starved` > 900 s, `jobs_overdue` > 0, `rds_role_connections` > 80 %,
-    `rds_xid_age` > 1e9) and flushes the log events the process counted (structlog processor `ops_checks.capture`
+    `rds_xid_age` > 1e9, `recompute_lifecycle_lag`: a tour on/off event waiting over 30 min for a finished
+    recompute, AA-1056) and flushes the log events the process counted (structlog processor `ops_checks.capture`
     on the JSON handler: the `*_write_failed` cost-log events, the `aa817_tenant_*` fail-closed events, a tenant route
     on the admin pool, `too many connections for role "cis_app"`; the worker flushes its own every 5 minutes). A
     finding writes the admin bell (`shared.notifications`, `platform.ops_check.<check>`, roles admin, at most one per
@@ -1473,6 +1474,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     only through `run_stages`; the thin wrappers `recompute_segment_score_route` /
     `recompute_rankings_and_routes` in `services/export/handler.py` map the stage results back to
     the Jobs-page result keys (`{segment, ranking, route}` / `{ranking, route, segment_gc}`).
+  - **Recompute is drain-safe and swept (AA-1056)**: the `recompute` job runs under ONE platform session advisory
+    lock (`services/export/handler.job_session_lock`, class `recompute`, key `platform`; the generic body of the
+    AA-993 G3 `a3_tour_lock`), has `release_delay_seconds` = the worker's ECS stopTimeout
+    (`shared/jobs/registry.WORKER_STOP_TIMEOUT_SECONDS`, also a3_atomize's), stops at the next stage boundary once
+    its handler is cancelled (`run_stages(..., should_stop=, on_stage=)`), and fails with fixed codes
+    (`services/recompute/errors.py`: `recompute_bad_payload`, `recompute_lock_timeout`, `recompute_stopped`,
+    `recompute_stage_failed` with the stage). `services/recompute/lifecycle.py` measures each tour on/off event
+    (`retired` / `paused` / `restored`) to the first recompute that STARTED after it and finished: the api ops sampler
+    reads it every tick (ops check `recompute_lifecycle_lag`: an event waiting over 30 min), sweeps every 2 h (one
+    platform recompute through `enqueue_recompute` for the events nothing covered, `created_by`
+    `scheduler:recompute_sweep`), and Data coverage shows it (rows `recompute.lifecycle_*`, source `recompute_lag`).
+    `enqueue_recompute` is the one enqueue helper for every trigger.
   - **Segments follow a re-atomize (AA-988)**: the `segment` stage drops the member rows of its tour's dead atoms
     (soft-deleted by the re-atomize, or empty-day markers) in its write transaction; the `segment_gc` stage
     (`services/acp_contract/segment_gc.py`) deletes Segments nothing refers to any more (no member on a live atom, no

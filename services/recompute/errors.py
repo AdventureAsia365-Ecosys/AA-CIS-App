@@ -26,7 +26,12 @@ class RecomputeError(RuntimeError):
     code = "recompute_failed"
 
     def __init__(self, detail: str = "") -> None:
-        super().__init__(f"{self.code}: {detail}" if detail else self.code)
+        # Idempotent, so a copy / unpickle (which passes the full message back) keeps one prefix.
+        if not detail:
+            detail = self.code
+        elif not str(detail).startswith(self.code):
+            detail = f"{self.code}: {detail}"
+        super().__init__(detail)
 
 
 class RecomputeStopped(RecomputeError):
@@ -39,7 +44,10 @@ class RecomputeLockTimeout(RecomputeError):
 
 class RecomputeStageFailed(RecomputeError):
     code = STAGE_FAILED
+    stage: str | None = None
 
-    def __init__(self, stage: str | None, detail: str = "") -> None:
-        self.stage = stage
-        super().__init__(f"stage {stage or 'none'}: {detail}" if detail else f"stage {stage or 'none'}")
+    @classmethod
+    def for_stage(cls, stage: str | None, detail: str = "") -> "RecomputeStageFailed":
+        err = cls(f"stage {stage or 'none'}: {detail}" if detail else f"stage {stage or 'none'}")
+        err.stage = stage
+        return err

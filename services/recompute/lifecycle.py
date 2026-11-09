@@ -93,6 +93,8 @@ def _num(v: Any) -> Any:
 async def lag_summary(db) -> dict:
     """The lag measure of the last LAG_WINDOW_DAYS (counts and seconds only, never ids). `db` = pool or connection."""
     row = await db.fetchrow(LAG_SQL, *lag_args())
+    if row is None:
+        return {}
     return {k: _num(row[k]) for k in ("events", "followed", "waiting", "waiting_over_limit", "late", "lag_p50_s",
                                       "lag_p95_s", "lag_max_s", "oldest_waiting_s")}
 
