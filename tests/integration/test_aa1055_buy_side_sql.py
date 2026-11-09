@@ -60,7 +60,7 @@ async def _tour(conn, country: str = "Mongolia", *, active: bool = True) -> uuid
                        tour_id, uuid.UUID(TENANT_ID), uuid.UUID(BATCH_ID), country, uuid.uuid4())
     await conn.execute("""INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, aa_name,
                           master_status) VALUES ($1, gen_random_uuid(), 'Zarvok trek zz1055', $2)""",
-                       tour_id, "active" if active else "retired")
+                       tour_id, "active" if active else "inactive")
     return tour_id
 
 
