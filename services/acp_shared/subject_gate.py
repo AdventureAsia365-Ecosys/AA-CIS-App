@@ -376,13 +376,12 @@ def content_sha256(text: str) -> str:
 
 # ── DB reads (main pool) ─────────────────────────────────────────────────────────────────────────────────────────────
 
-SUBJECT_SQL = """
+# AA-1057 GAP 1: `segment_live` is the Subject rule of shared.tour_liveness (a served member of the Segment, a merged
+# id read on its live id), the same fragment every other liveness gate on a request uses.
+SUBJECT_SQL = f"""
     SELECT r.goal, r.cta, r.atom_id, COALESCE(r.trip_id, ta.tour_id)::text AS tour_id,
            EXISTS (SELECT 1 FROM acp_contract.v_active_tour_atoms v WHERE v.atom_id = r.atom_id) AS atom_live,
-           EXISTS (SELECT 1 FROM acp_shared.subject s
-                     JOIN acp_contract.atom_segment_member m ON m.segment_id = s.segment_id
-                     JOIN acp_contract.v_active_tour_atoms v ON v.atom_id = m.atom_id
-                    WHERE s.subject_id = r.subject_id AND s.tenant_id = r.tenant_id) AS segment_live
+           {_tl.segment_served_member_sql('r')} AS segment_live
       FROM acp_shared.angle_gate_request r
       LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = r.atom_id
      WHERE r.request_id = $1::uuid AND r.tenant_id = $2::uuid

@@ -122,13 +122,15 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
 
     AA-735 nac 3 — the body now runs through `services.recompute.run_stages(PLATFORM_STAGES, ...)`
     (landing -> score -> route); same SQL, order and (absent) progress as the old inline chain.
-    AA-988 — then `segment_gc` (orphan Segments; report mode unless SEGMENT_GC_MODE=apply), result key `segment_gc`."""
+    AA-988 — then `segment_gc` (orphan Segments; report mode unless SEGMENT_GC_MODE=apply), result key `segment_gc`.
+    AA-1057 — `retarget` after `route` (Subjects / requests onto live ids), result key `retarget`."""
     from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(
         segment_ids=set(segment_ids) if segment_ids is not None else None,
         log_reason=log_reason)
     results = await run_stages(PLATFORM_STAGES, scope, pool=pool)
-    out = {"ranking": results["score"], "route": results["route"], "segment_gc": results.get("segment_gc")}
+    out = {"ranking": results["score"], "route": results["route"], "retarget": results.get("retarget"),
+           "segment_gc": results.get("segment_gc")}
     logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=out["route"])
     return out
 
@@ -148,11 +150,13 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
     itself is incremental and does stay scoped to this one tour.
 
     AA-735 nac 3 — the body now runs through `services.recompute.run_stages(TOUR_STAGES, ...)`
-    (segment -> landing -> score -> route); same SQL, order and progress as the old inline chain."""
+    (segment -> landing -> score -> route); same SQL, order and progress as the old inline chain.
+    AA-1057 — then `retarget` (Subjects / requests onto the new Route / atom ids), result key `retarget`."""
     from services.recompute import TOUR_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(tour_id=tour_id, log_tour_id=log_tour_id)
     results = await run_stages(TOUR_STAGES, scope, pool=pool, progress=progress)
-    return {"segment": results["segment"], "ranking": results["score"], "route": results["route"]}
+    return {"segment": results["segment"], "ranking": results["score"], "route": results["route"],
+            "retarget": results.get("retarget")}
 
 
 # AA-993 G3 (ADR 0016 D1): one A3 run per tour at a time, across processes. A deploy releases a running `a3_atomize`

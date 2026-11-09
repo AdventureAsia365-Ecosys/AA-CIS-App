@@ -28,7 +28,7 @@ TOUR = "11111111-1111-1111-1111-111111111111"
 
 def test_every_stage_declares_reads_writes_and_a_valid_strategy():
     stages = all_stages()
-    assert set(stages) == {"segment", "landing", "score", "route", "segment_gc"}
+    assert set(stages) == {"segment", "landing", "score", "route", "retarget", "segment_gc"}
     for name, stage in stages.items():
         assert stage.name == name
         assert stage.reads and all(isinstance(t, str) for t in stage.reads), name
@@ -89,9 +89,19 @@ def test_declared_write_strategies_match_the_real_sql():
 
 
 def test_named_lists_mirror_the_two_old_chains():
-    assert TOUR_STAGES == ["segment", "landing", "score", "route"]
+    # AA-1057: retarget follows route on both passes (the new Route / atom ids exist by then)
+    assert TOUR_STAGES == ["segment", "landing", "score", "route", "retarget"]
     # AA-988: the platform pass ends with the orphan GC, after ranking and routes are current
-    assert PLATFORM_STAGES == ["landing", "score", "route", "segment_gc"]
+    assert PLATFORM_STAGES == ["landing", "score", "route", "retarget", "segment_gc"]
+
+
+def test_retarget_updates_ids_in_place_and_declares_what_it_reads():
+    # AA-1057: subject.route_id / angle_gate_request.atom_id are UPDATEd in place (guarded), never inserted or deleted
+    rt = get_stage("retarget")
+    assert rt.write_strategy == "upsert"
+    assert rt.table_strategies == {"acp_shared.subject": "upsert", "acp_shared.angle_gate_request": "upsert"}
+    assert {"acp_contract.route", "acp_contract.v_active_tour_atoms", "acp_contract.atom_segment_member",
+            "gold_aa_internal.v_tour_liveness"} <= set(rt.reads)
 
 
 # ── orchestrator ─────────────────────────────────────────────────────────────────────────────
@@ -169,6 +179,7 @@ async def test_tour_stages_call_the_four_functions_with_the_old_arguments():
     landing = AsyncMock(return_value={"s1": 2})
     ranking = AsyncMock(return_value={"ranked": 1})
     route = AsyncMock(return_value={"routes": 1})
+    retarget = AsyncMock(return_value={"mode": "apply"})
 
     # the tour's own current Segments, the exact query the old chain inlined
     conn = MagicMock()
@@ -180,6 +191,7 @@ async def test_tour_stages_call_the_four_functions_with_the_old_arguments():
          patch("services.acp_contract.atom_ranking.precompute_question_landings", landing), \
          patch("services.acp_contract.atom_ranking.run_atom_ranking", ranking), \
          patch("services.acp_contract.route_detection.run_route_detection", route), \
+         patch("services.acp_shared.retarget.run_retarget", retarget), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP",
                {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}):
         out = await run_stages(TOUR_STAGES, RecomputeScope(tour_id=TOUR, log_tour_id=TOUR),
@@ -194,10 +206,11 @@ async def test_tour_stages_call_the_four_functions_with_the_old_arguments():
     for c in ranking.await_args_list:
         assert c.args[1] is pool and c.args[2] == {"s1": 2}
     assert [c.args[0] for c in ranking.await_args_list] == ["US", "UK", "AU", "DE", "FR", "NL"]
-    # route: once, platform-wide
+    # route: once, platform-wide; then the AA-1057 retarget on the same pool
     route.assert_awaited_once_with(pool)
-    # result shape per stage (handler wrappers remap to {segment, ranking, route})
-    assert set(out) == {"segment", "landing", "score", "route"}
+    retarget.assert_awaited_once_with(pool)
+    # result shape per stage (handler wrappers remap to {segment, ranking, route, retarget})
+    assert set(out) == {"segment", "landing", "score", "route", "retarget"}
 
 
 @pytest.mark.asyncio
@@ -214,6 +227,7 @@ async def test_tour_stages_emit_the_same_progress_events_as_the_old_chain():
          patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
          patch("services.acp_contract.route_detection.run_route_detection",
                AsyncMock(return_value={})), \
+         patch("services.acp_shared.retarget.run_retarget", AsyncMock(return_value={})), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP",
                {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}):
         await run_stages(TOUR_STAGES, RecomputeScope(tour_id=TOUR), pool=pool,
@@ -241,6 +255,7 @@ async def test_platform_stages_pass_the_segment_scope_straight_to_landing():
          patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
          patch("services.acp_contract.route_detection.run_route_detection",
                AsyncMock(return_value={})), \
+         patch("services.acp_shared.retarget.run_retarget", AsyncMock(return_value={})), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1}), \
          patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})):
         # scoped Segment set
@@ -263,6 +278,7 @@ async def test_platform_stages_are_progress_silent_and_emit_no_per_tour_logs():
          patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
          patch("services.acp_contract.route_detection.run_route_detection",
                AsyncMock(return_value={})), \
+         patch("services.acp_shared.retarget.run_retarget", AsyncMock(return_value={})), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP",
                {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}), \
          patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})), \
@@ -323,9 +339,10 @@ async def test_recompute_segment_score_route_result_keys_unchanged():
     from services.export import handler
     with patch("services.recompute.run_stages",
                AsyncMock(return_value={"segment": {"a": 1}, "landing": {}, "score": {"US": {}},
-                                      "route": {"r": 1}})):
+                                      "route": {"r": 1}, "retarget": {"mode": "apply"}})):
         out = await handler.recompute_segment_score_route(TOUR, object())
-    assert set(out) == {"segment", "ranking", "route"}
+    assert set(out) == {"segment", "ranking", "route", "retarget"}
+    assert out["retarget"] == {"mode": "apply"}
     assert out["ranking"] == {"US": {}} and out["segment"] == {"a": 1}
 
 
@@ -334,9 +351,9 @@ async def test_recompute_rankings_and_routes_result_keys_unchanged():
     from services.export import handler
     with patch("services.recompute.run_stages",
                AsyncMock(return_value={"landing": {}, "score": {"US": {}}, "route": {"r": 1},
-                                      "segment_gc": {"mode": "report"}})):
+                                      "retarget": {"mode": "apply"}, "segment_gc": {"mode": "report"}})):
         out = await handler.recompute_rankings_and_routes(object(), segment_ids=["s1"])
-    assert set(out) == {"ranking", "route", "segment_gc"}
+    assert set(out) == {"ranking", "route", "retarget", "segment_gc"}
     assert out["segment_gc"] == {"mode": "report"}
     assert out["ranking"] == {"US": {}} and out["route"] == {"r": 1}
 
