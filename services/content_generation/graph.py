@@ -650,7 +650,8 @@ def generate_node(state: ContentState) -> ContentState:
                 quality_signal={"json_parsed": False, "fallback_used": resp.fallback_used},
                 stop_reason=getattr(resp, "stop_reason", None),
                 account=getattr(resp, "satellite_account", None),
-                fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
+                fallback_used=getattr(resp, "fallback_used", None),
+                **billed_fields(resp, prompt_version=prompt_version),  # AA-1058: the hash when unregistered
             )
             logged = True
             return {**state, "generated": {}, "is_branded": is_branded,
@@ -686,7 +687,8 @@ def generate_node(state: ContentState) -> ContentState:
                             **({"revision": True} if revising else {})},  # AA-793
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
+            fallback_used=getattr(resp, "fallback_used", None),
+            **billed_fields(resp, prompt_version=prompt_version),  # AA-1058: the hash when unregistered
         )
         logged = True
         return {

@@ -109,6 +109,21 @@ def job_tenant_id(payload: Optional[dict]) -> Optional[str]:
     return None if tid == call_log.PLATFORM_TENANT_ID else tid
 
 
+def job_attribution(payload: Optional[dict]) -> dict:
+    """AA-1058 — the tour and content piece a job works on, for call_log.bind_attribution: the payload's top-level
+    `tour_id` (s1_rewrite, a3_atomize, recompute scope tour, ...) and `piece_id` / `content_piece_id` (t9_write). A
+    value that is not a UUID binds nothing (bind_attribution logs it); a payload without them binds nothing."""
+    if not isinstance(payload, dict):
+        return {}
+    out = {}
+    if payload.get("tour_id") is not None:
+        out["tour_id"] = payload.get("tour_id")
+    piece = payload.get("content_piece_id") or payload.get("piece_id")
+    if piece is not None:
+        out["content_piece_id"] = piece
+    return out
+
+
 def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
     """How a handler exception ends its attempt: (shared.job.error text, may the runner retry, reason).
 
@@ -360,7 +375,9 @@ class Worker:
         # AA-925 — and every Jev outage (zone=error) the handler meets is counted into this job's collector
         # (services/quality/degraded.py), written to shared.job.result.degraded below.
         # AA-1025 H2: and the job's kind, so each LLM call reserves its tokens on its line (capacity.KIND_LINES).
+        # AA-1058: and the tour / content piece the payload names, so every ledger row of the job carries them.
         with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)), \
+                call_log.bind_attribution(**job_attribution(job.payload)), \
                 capacity.bind_kind(job.kind), _degraded_collect() as degraded_box:
             handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False

@@ -51,6 +51,7 @@ TOPUP_CALL_ESTIMATE_USD = 0.01
 SERP_PAA_DEEP_ENDPOINT = "serp_advanced_paa_deep"
 MIN_REAL_PER_PLACE = 3        # a place with fewer real questions than this gets a SERP
 JOB_KIND = "aa779_serp_topup"
+DFS_STAGE = "a3_question_topup"   # AA-1058: shared.dfs_call_log.stage of the top-up's paid SERP calls
 
 # Places of blog work a tenant can still write (Subjects) and of blog requests already made.
 _BLOG_WORK_SQL = """
@@ -253,7 +254,7 @@ async def run_topup(pool, *, dry_run: bool = True, cap_usd: float = TOPUP_CAP_US
         budget = await load_run_budget(pool, "dfs", JOB_KIND)
     budget.per_run_usd = min(run_cap, budget.per_run_usd) if budget.per_run_usd is not None else run_cap
     budget.hard_stop = True
-    client = client or DataForSEOClient(budget=budget)
+    client = client or DataForSEOClient(budget=budget, stage=DFS_STAGE)   # AA-1058: every DFS row names its stage
     if getattr(client, "budget", None) is None:
         client.budget = budget
     bought, stored, empty, failed, stop = [], 0, 0, [], None

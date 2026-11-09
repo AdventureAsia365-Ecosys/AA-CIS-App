@@ -1035,6 +1035,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (AA-617), with correct Haiku 4.5 pricing and cache tokens (AA-635).
   - `shared.dfs_call_log` records each DataForSEO call, its real `cost` and cache hits (AA-618).
     The DFS cache TTL is 7 days (AA-625).
+  - Cost attribution (AA-1058): every `llm_call_log` row names its object through the gateway context. The job worker
+    binds the payload's `tour_id` / `piece_id` (`worker.job_attribution`) next to `bind_job`; `_execute_run_tour`,
+    `_revalidate_tour`, `run_a3_atomize`, `run_write_background` and the `a1_seo` Jev of the SEO prefetch bind theirs
+    (`call_log.bind_attribution` / `@attributed`). A row whose caller passes no `tour_id` / `content_piece_id` takes
+    the bound one (never on an eval-labelled row). Rules: `shared/llm_client/attribution.py` (s1_ / a1_ / t5_ /
+    a3_atomize -> tour, t9_ / t10_ -> piece, the A3 recompute Jev stages -> job); guard
+    `tests/unit/test_aa1058_cost_attribution.py`. An empty stage is written `unattributed` (logged); a ruled row
+    without its key logs `llm_call_log_attribution_missing`. DataForSEO rows always name stage and app: the caller's
+    stage, else the bound job kind, else `dfs_balance` for the balance read, else `unattributed`. S1 writes
+    `generated_content.prompt_version` (the registered version, else the writer's AA-289 hash), and the writer's
+    ledger row falls back to the same hash when the register has no version (`billed_fields(resp, prompt_version=)`).
+    Read-only coverage + cost-per-tour report: `scripts/aa1058/ledger_attribution.py` (run through the root ECS exec
+    tool).
   - `shared.dfs_balance_snapshot` + a daily Lambda alert on low DFS balance (AA-627).
   - `shared.cost_explorer_snapshot` holds real AWS Cost Explorer figures for acc2/acc3,
     fetched on demand through `POST /admin/cost-explorer/check` (AA-623). acc2 calls CE

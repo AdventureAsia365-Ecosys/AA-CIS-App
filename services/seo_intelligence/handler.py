@@ -43,6 +43,8 @@ _SEO_CACHE_TTL_SECONDS = 7 * 24 * 3600  # 604800
 # kind gets DEFAULT_BUDGET_KIND, i.e. the dfs `global` row only.
 S1_REWRITE_BUDGET_KIND = "s1_rewrite"
 DEFAULT_BUDGET_KIND = "global"
+# AA-1058: shared.dfs_call_log.stage of the S1 SEO fetch (live calls and cache hits)
+DFS_STAGE = "s1_seo"
 
 
 async def _load_budget(kind: str) -> "cost_guard.RunBudget":
@@ -180,7 +182,7 @@ async def process_seo(
         await record_dfs_call(
             endpoint="fetch_all", cache_hit=True, cost_usd=0.0,
             tenant_id=tenant_id, tour_id=tour_id, keyword=effective_seed,
-            location_code=location_code, meta={"seo_mode": seo_mode},
+            location_code=location_code, meta={"seo_mode": seo_mode}, stage=DFS_STAGE,   # AA-1058
         )
     else:
         # "custom_keywords" — use existing seo_context from DB, skip DataForSEO API call
@@ -224,7 +226,7 @@ async def process_seo(
         # row with tenant_id/tour_id + real cost.
         if budget is None:
             budget = await _load_budget(budget_kind or DEFAULT_BUDGET_KIND)
-        client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id, budget=budget)
+        client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id, budget=budget, stage=DFS_STAGE)  # AA-1058
         seo_data = await client.fetch_all(
             effective_seed, location_code, location_name, language_code, activity,
             extra_seeds=extra_seeds, place_terms=place_terms, activity_words=activity_words,

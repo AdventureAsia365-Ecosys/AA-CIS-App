@@ -89,10 +89,32 @@ def extract_cost(response: dict) -> Optional[float]:
         return None
 
 
-def _v2_values(status, latency_ms, error, stage, app) -> tuple:
+# AA-1058: every row names its stage and app (the S273 picture found the stage empty on every DFS row since 01/10).
+# A caller that passes no stage gets the bound job's kind (the worker binds it: segment_research, s1_seo_prefetch, ...),
+# else a stage the endpoint implies (the free balance read), else UNATTRIBUTED_STAGE (logged: a caller to fix).
+ENDPOINT_STAGES = {"appendix_user_data": "dfs_balance"}
+UNATTRIBUTED_STAGE = "unattributed"
+
+
+def row_stage(stage, endpoint: str = "") -> str:
+    """The stage a row is written with (never empty; see above)."""
+    if isinstance(stage, str) and stage.strip():
+        return stage.strip()[:100]
+    from shared.llm_client.capacity import current_kind
+    kind = current_kind()
+    if kind:
+        return str(kind)[:100]
+    if endpoint in ENDPOINT_STAGES:
+        return ENDPOINT_STAGES[endpoint]
+    logger.warning("dfs_call_log_stage_missing", endpoint=endpoint)
+    return UNATTRIBUTED_STAGE
+
+
+def _v2_values(status, latency_ms, error, stage, app, endpoint: str = "") -> tuple:
     lat = latency_ms if isinstance(latency_ms, int) and not isinstance(latency_ms, bool) and latency_ms >= 0 else None
+    app_value = app.strip() if isinstance(app, str) and app.strip() else APP
     return (status if status in STATUSES else "ok", lat,
-            str(error)[:500] if error else None, str(stage)[:100] if stage else None, str(app or APP)[:40])
+            str(error)[:500] if error else None, row_stage(stage, endpoint), app_value[:40])
 
 
 def _v2_ready() -> bool:
@@ -138,7 +160,7 @@ async def record_dfs_call(
                 tenant_id, tour_id, endpoint, keyword, location_code,
                 cost_usd, cache_hit, fetched_live, keyword_count,
                 json.dumps(meta) if meta is not None else None, job,
-            ), _v2_values(status, latency_ms, error, stage, app))
+            ), _v2_values(status, latency_ms, error, stage, app, endpoint))
         finally:
             await conn.close()
     except Exception as e:
@@ -163,7 +185,7 @@ async def record_dfs_call_with_pool(
                 tenant_id, tour_id, endpoint, keyword, location_code,
                 cost_usd, cache_hit, fetched_live, keyword_count,
                 json.dumps(meta) if meta is not None else None, job,
-            ), _v2_values(status, latency_ms, error, stage, app))
+            ), _v2_values(status, latency_ms, error, stage, app, endpoint))
     except Exception as e:
         logger.warning("dfs_call_log_write_failed", endpoint=endpoint, error=str(e))
 
@@ -177,6 +199,8 @@ def record_dfs_call_sync(**kwargs) -> None:
     asyncio.ensure_future task could be garbage-collected or cancelled when the caller's loop closed, losing the row
     of a billed call."""
     kwargs["job_id"] = _job_id(kwargs.get("job_id", _UNSET), endpoint=kwargs.get("endpoint") or "")
+    # AA-1058: the stage too (its job-kind fallback reads the caller's context, like the job id)
+    kwargs["stage"] = row_stage(kwargs.get("stage"), kwargs.get("endpoint") or "")
     try:
         asyncio.get_running_loop()
     except RuntimeError:

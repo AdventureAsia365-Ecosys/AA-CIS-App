@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import functools
 import json
 import threading
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 import asyncpg
 import structlog
@@ -369,6 +370,118 @@ def bind_tenant(tenant_id: Optional[str]) -> Iterator[None]:
         _current_tenant_id.reset(token)
 
 
+# AA-1058 — the object the calls below produce: the tour (S1 / A1 / A3 atomize) and the content piece (T9 / T10),
+# bound by the stage's entry point (the job worker binds both from the job payload; `_execute_run_tour`,
+# `run_a3_atomize` and `run_write_background` bind them themselves). Same propagation as `_current_job_id`. A
+# record_call*() / record_calls() row whose caller passes no tour_id / content_piece_id takes the bound one, so cost
+# per tour and per piece is one GROUP BY on shared.llm_call_log without every call site threading the ids through.
+# The shared/llm_client/attribution.py rules say which stages must carry which key (the AA-1058 guard test).
+_ATTRIBUTION_KEYS = ("tour_id", "content_piece_id")
+_attribution: ContextVar[Optional[dict]] = ContextVar("llm_call_log_attribution", default=None)
+
+
+def _uuid_text(value) -> Optional[str]:
+    """`value` as a canonical UUID string, None for None / "" / "None" / anything that is not a UUID."""
+    if value is None or str(value) in ("", "None"):
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def current_attribution() -> dict:
+    """The bound {"tour_id", "content_piece_id"} (a key is absent when nothing bound it)."""
+    return dict(_attribution.get() or {})
+
+
+def current_tour_id() -> Optional[str]:
+    return (_attribution.get() or {}).get("tour_id")
+
+
+def current_content_piece_id() -> Optional[str]:
+    return (_attribution.get() or {}).get("content_piece_id")
+
+
+@contextmanager
+def bind_attribution(*, tour_id=None, content_piece_id=None) -> Iterator[None]:
+    """Bind the tour / content piece the calls below produce. A key left None (or not a UUID: logged, dropped) keeps
+    the outer binding's value, so a T9 piece bound inside a job that bound its tour keeps both."""
+    merged = current_attribution()
+    for key, value in (("tour_id", tour_id), ("content_piece_id", content_piece_id)):
+        clean = _uuid_text(value)
+        if clean is not None:
+            merged[key] = clean
+        elif value is not None and str(value) not in ("", "None"):
+            logger.warning("llm_call_log_attribution_not_uuid", key=key, value=str(value)[:64])
+    token = _attribution.set(merged)
+    try:
+        yield
+    finally:
+        _attribution.reset(token)
+
+
+def attributed(**getters: Callable[..., Any]) -> Callable:
+    """Decorator: run an async function inside ``bind_attribution(key=getter(*args, **kwargs), ...)``, for an entry
+    point whose arguments name the object (``@attributed(tour_id=lambda req, *a, **k: req.tour_id)``). A getter that
+    raises binds nothing for its key."""
+    unknown = set(getters) - set(_ATTRIBUTION_KEYS)
+    if unknown:
+        raise TypeError(f"attributed: unknown key(s) {sorted(unknown)}")
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        async def inner(*args, **kwargs):
+            values = {}
+            for key, get in getters.items():
+                try:
+                    values[key] = get(*args, **kwargs)
+                except Exception:  # noqa: BLE001 — attribution never breaks the call
+                    values[key] = None
+            with bind_attribution(**values):
+                return await fn(*args, **kwargs)
+        return inner
+    return wrap
+
+
+def _attributed(content_piece_id, v2: dict) -> tuple:
+    """(content_piece_id, v2) of a row with the bound tour / piece filled in where the caller passed none. An eval run
+    (bind_eval_stage) keeps its rows off production attribution: nothing is filled while an eval label is bound."""
+    bound = _attribution.get()
+    if not bound or _eval_label.get() is not None:
+        return content_piece_id, v2
+    if _clean_tenant(content_piece_id) is None and bound.get("content_piece_id"):
+        content_piece_id = bound["content_piece_id"]
+    if _clean_tenant(v2.get("tour_id")) is None and bound.get("tour_id"):
+        v2 = {**v2, "tour_id": bound["tour_id"]}
+    return content_piece_id, v2
+
+
+# The stage of a row whose caller passed none (llm_call_log.stage is NOT NULL; an empty stage is a caller bug the
+# row must survive): written under this name and logged, so the admin cost pages show the gap instead of hiding it.
+UNATTRIBUTED_STAGE = "unattributed"
+
+
+def _row_stage(stage) -> str:
+    if isinstance(stage, str) and stage.strip():
+        return stage
+    logger.warning("llm_call_log_stage_missing", stage=repr(stage)[:40])
+    return UNATTRIBUTED_STAGE
+
+
+def _check_attribution(stage: str, content_piece_id, v2: dict) -> None:
+    """AA-1058: log (never raise: the call was billed, its row is kept) a row of a stage whose attribution rule
+    (attribution.py) names a key the row does not carry. The guard test keeps call sites from getting here."""
+    from .attribution import required_key
+    if _eval_label.get() is not None:
+        return
+    key = required_key(stage)
+    if key == "tour_id" and _clean_tenant(v2.get("tour_id")) is None:
+        logger.warning("llm_call_log_attribution_missing", stage=stage, key=key)
+    elif key == "content_piece_id" and _clean_tenant(content_piece_id) is None:
+        logger.warning("llm_call_log_attribution_missing", stage=stage, key=key)
+
+
 # AA-919 WM-19 / WM-21 — an eval run (the writing-memory R2 runner, the targeted shadow) drives the REAL writer paths,
 # so their rows would land under the production stages (s1_generate, t2_generate, t9_write, the judges, Jev) and on the
 # tenant's usage. While an eval label is bound, every row of this module is written under the eval stage instead
@@ -518,14 +631,18 @@ def _int_or_none(value) -> Optional[int]:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def billed_fields(resp) -> dict:
+def billed_fields(resp, *, prompt_version: Optional[str] = None) -> dict:
     """AA-1002 (S6): the billing facts of a gateway reply that a call site passes on to ``record_call*`` next to
     ``model=resp.model_used``: the cache split of the prompt (``cache_read_tokens`` / ``cache_write_tokens``), how
     ``cost_usd`` was priced (``pricing_mode``) and the vendor connection that answered (``connection_key``, stored
     as the row's account when the caller passes none). Read defensively: a test double (MagicMock) or an older
     response object gives None for anything that is not of the right type. Usage:
     ``record_call_sync(stage=..., model=resp.model_used, ..., **billed_fields(resp))``. The guard
-    ``tests/unit/test_aa1002_s6_billed_fields.py`` fails on a site that logs ``model=<x>.model_used`` without it."""
+    ``tests/unit/test_aa1002_s6_billed_fields.py`` fails on a site that logs ``model=<x>.model_used`` without it.
+
+    AA-1058: ``prompt_version`` = the caller's own prompt id (the S1 writer's AA-289 prompt hash), written only when the
+    gateway has no registered version for the stage (prompt_registry.version_for gave None), so a writer row always
+    names the prompt it was written with."""
     mode = getattr(resp, "pricing_mode", None)
     conn = getattr(resp, "connection_key", None)
     out = {
@@ -553,6 +670,8 @@ def billed_fields(resp) -> dict:
     reason = getattr(resp, "truncation_retry_reason", None)        # S271 W0: why the gateway retried
     out["truncation_retry_reason"] = reason if isinstance(reason, str) and reason else None
     out["route_degraded"] = _degraded_entries(getattr(resp, "route_degraded", None))   # S271 W0: degraded marks
+    if not out.get("prompt_version") and isinstance(prompt_version, str) and prompt_version.strip():
+        out["prompt_version"] = prompt_version.strip()[:100]                          # AA-1058: the caller's own
     return out
 
 
@@ -606,6 +725,9 @@ async def record_call(
     caller may state itself (status, error_class, tour_id, prompt_version, units, unit_kind, is_shadow,
     is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
     _check_v2(v2)
+    stage = _row_stage(stage)                                                 # AA-1058: never an empty stage
+    content_piece_id, v2 = _attributed(content_piece_id, v2)                  # AA-1058: the bound tour / piece
+    _check_attribution(stage, content_piece_id, v2)
     quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
                                  truncation_retry_max_tokens, truncation_retry_reason,        # S271
                                  route_degraded)                                              # S271 W0
@@ -654,6 +776,9 @@ async def record_call_with_pool(
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
     _check_v2(v2)
+    stage = _row_stage(stage)                                                 # AA-1058: never an empty stage
+    content_piece_id, v2 = _attributed(content_piece_id, v2)                  # AA-1058: the bound tour / piece
+    _check_attribution(stage, content_piece_id, v2)
     quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
                                  truncation_retry_max_tokens, truncation_retry_reason,        # S271
                                  route_degraded)                                              # S271 W0
@@ -775,6 +900,17 @@ def _fold_route(row: dict) -> dict:
     return out
 
 
+def _attribute_row(row: dict) -> dict:
+    """AA-1058: a record_calls row with a non-empty stage and the bound tour / piece filled in (as record_call)."""
+    v2 = {k: row[k] for k in V2_FIELDS if k in row}
+    piece, v2 = _attributed(row.get("content_piece_id"), v2)
+    out = {**row, **v2, "stage": _row_stage(row.get("stage"))}
+    if piece is not None:
+        out["content_piece_id"] = piece
+    _check_attribution(out["stage"], out.get("content_piece_id"), out)
+    return out
+
+
 def _check_v2(v2: dict) -> None:
     unknown = set(v2) - set(V2_FIELDS)
     if unknown:
@@ -811,7 +947,7 @@ async def record_calls(rows: list[dict]) -> None:
         unknown = set(r) - set(_ROW_FIELDS)
         if unknown:
             raise TypeError(f"record_calls: unknown field(s) {sorted(unknown)}")
-    rows = [_fold_route(r) for r in rows]
+    rows = [_fold_route(_attribute_row(r)) for r in rows]
     try:
         conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=15)
         try:

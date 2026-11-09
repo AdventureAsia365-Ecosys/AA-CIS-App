@@ -67,6 +67,8 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
     calls pass False: they run after a paid draft, which is kept; the refusal is then ``access_denied`` in the result.
     The row: written right after generate() returns; a reply billed then lost to a post-call error gets a
     billed_unusable row; a call that raised inside the gateway was logged by the gateway (AA-927)."""
+    from .batch_prompt import prompt_version_of
+
     stage = state.get("generate_stage") or A1_WRITE_STAGE
     out = {"call": call, "ok": False, "parsed": None, "cost_usd": 0.0}
     resp = None
@@ -82,7 +84,9 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
             quality_signal={"writer_version": WRITER_VERSION, "call": call, "json_parsed": parsed is not None,
                             "fallback_used": resp.fallback_used},
             stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
+            fallback_used=getattr(resp, "fallback_used", None),
+            # AA-1058: this call's own prompt hash (AA-289) when the register has no version for the stage
+            **billed_fields(resp, prompt_version=prompt_version_of(system)),
         )
         logged = True
         out.update(ok=parsed is not None, parsed=parsed, cost_usd=resp.cost_usd or 0.0, model_used=resp.model_used,
