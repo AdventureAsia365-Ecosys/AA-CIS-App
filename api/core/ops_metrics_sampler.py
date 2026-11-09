@@ -33,6 +33,11 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   tour lifecycle event of the last 2 h without a `tripplanner_purge` job gets one (one idempotent INSERT ... SELECT),
   so an after-commit enqueue lost to a crash still reaches TripPlanner a few minutes later. Field
   `tripplanner_purge_swept` (jobs created) or `tripplanner_purge_error`.
+- AA-1056: each tick also reads the lag of the tour on/off events (retired / paused / restored, last 30 days) to the
+  first recompute that finished after them (services/recompute/lifecycle.lag_summary, field `recompute_lifecycle`;
+  the ops check `recompute_lifecycle_lag` alerts on an event waiting over 30 min), and every 2 hours (the loop's
+  monotonic schedule, like the Jev check) sweeps: one platform recompute for the events nothing covered (field
+  `recompute_sweep`, or `recompute_lifecycle_error`).
 - AA-835: each tick also pulls one batch of the Booking supply feed (services/supply_content/pull.pull_once: the
   booking.v_supply_outbox events after the shared.supply_feed_cursor, applied to shared.supply_entity, one
   `supply_content_draft` job per applied facts version), DB only. Field `supply_pull_applied` (the batch counts, when
@@ -210,6 +215,19 @@ async def _tripplanner_purge_part(pool, kinds: dict, out: dict) -> None:
     n = await sweep(pool)
     if n:
         out["tripplanner_purge_swept"] = n
+
+
+async def _recompute_lifecycle_part(pool, kinds: dict, out: dict, sweep: bool) -> None:
+    """AA-1056: the lag of tour on/off events to a finished recompute (field `recompute_lifecycle`, which the ops check
+    `recompute_lifecycle_lag` reads) every tick; when `sweep` (every lifecycle.SWEEP_EVERY_S, the loop's schedule) and
+    the kind is registered, one platform recompute for the events nothing covered (field `recompute_sweep`)."""
+    from services.recompute import lifecycle
+
+    out["recompute_lifecycle"] = await lifecycle.lag_summary(pool)
+    if sweep and "recompute" in kinds:
+        swept = await lifecycle.sweep(pool)
+        if swept.get("events"):
+            out["recompute_sweep"] = swept
 
 
 async def _tour_retirement_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
@@ -420,7 +438,8 @@ def _err(e: BaseException) -> str:
 
 
 async def sample_once(pool, client, kinds: Optional[dict] = None,
-                      part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None) -> dict:
+                      part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None,
+                      recompute_sweep: bool = False) -> dict:
     """One tick: the role connections and XID age, the alert-recipient reconcile (AA-913), the retired-kind sweep,
     the TripPlanner purge sweep (AA-987), the Booking supply feed pull (AA-835), the daily writing-memory fact filter
     (AA-917), the shared.job backlog, then the S263 ops checks, each part on its own and under part_timeout_s (one
@@ -461,6 +480,13 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tour_retirement_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["tour_retirement_error"] = _err(e)
+
+    # AA-1056: one small aggregate a tick, plus the sweep (a few reads and one enqueue) every 2 h; own short budget
+    try:
+        await asyncio.wait_for(_recompute_lifecycle_part(pool, kinds, out, recompute_sweep),
+                               timeout=min(10.0, part_timeout_s))
+    except Exception as e:
+        out["recompute_lifecycle_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_supply_pull_part(pool, kinds, out), timeout=part_timeout_s)
@@ -572,7 +598,8 @@ async def provider_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> 
 
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
-                              "tripplanner_purge_error", "supply_pull_error", "writing_memory_error",
+                              "tripplanner_purge_error", "recompute_lifecycle_error", "recompute_sweep",
+                              "supply_pull_error", "writing_memory_error",
                               "writing_memory_kpi_weekly_error",
                               "reports_error", "ops_checks_error")) or out.get("ops_checks"):
         logger.warning("ops_metrics_sampled", **out)
@@ -584,15 +611,23 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
                                   first_delay_s: float = OPS_METRICS_FIRST_DELAY_S,
                                   client_factory: Callable[[], Any] = alerts_client,
                                   part_timeout_s: float = PART_TIMEOUT_S,
-                                  jev_check_every_s: Optional[float] = None) -> None:
+                                  jev_check_every_s: Optional[float] = None,
+                                  recompute_sweep_every_s: Optional[float] = None) -> None:
     """Loops until cancelled. Reads app.state.pool on every tick, so it never holds a stale pool; the
-    SNS client of the ops-check alerts is made once (in a thread), and again on the next tick if making it failed."""
+    SNS client of the ops-check alerts is made once (in a thread), and again on the next tick if making it failed.
+    AA-1056: every `recompute_sweep_every_s` (services/recompute/lifecycle.SWEEP_EVERY_S, 2 h; the first on the first
+    tick with a pool) the tick also sweeps the tour on/off events nothing recomputed after."""
     if jev_check_every_s is None:
         from shared.jev_credit import JEV_CREDIT_CHECK_EVERY_S
 
         jev_check_every_s = JEV_CREDIT_CHECK_EVERY_S
+    if recompute_sweep_every_s is None:
+        from services.recompute.lifecycle import SWEEP_EVERY_S
+
+        recompute_sweep_every_s = SWEEP_EVERY_S
     client = None
     next_jev_check = 0.0          # time.monotonic() deadline of the next AA-845 Jev credit check
+    next_recompute_sweep = 0.0    # time.monotonic() deadline of the next AA-1056 lifecycle recompute sweep
     await asyncio.sleep(first_delay_s)
     while True:
         try:
@@ -600,8 +635,11 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
             if pool is not None:
                 if client is None:
                     client = await asyncio.to_thread(client_factory)
+                sweep_due = time.monotonic() >= next_recompute_sweep
+                if sweep_due:
+                    next_recompute_sweep = time.monotonic() + recompute_sweep_every_s
                 _log(await sample_once(pool, client, part_timeout_s=part_timeout_s,
-                                       redis=getattr(app.state, "redis", None)))
+                                       redis=getattr(app.state, "redis", None), recompute_sweep=sweep_due))
         except Exception as e:  # never kill the loop (CancelledError is not an Exception)
             logger.warning("ops_metrics_sampled", error=_err(e))
         pool = getattr(app.state, "pool", None)

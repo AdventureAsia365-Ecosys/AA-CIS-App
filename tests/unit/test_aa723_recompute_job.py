@@ -15,6 +15,21 @@ from shared.jobs.registry import JobContext, NonRetryable
 TOUR = "11111111-1111-1111-1111-111111111111"
 
 
+@pytest.fixture(autouse=True)
+def _no_recompute_lock(monkeypatch):
+    """AA-1056: the job takes the platform recompute lock (a real DB connection); these tests are about routing and
+    debounce, the lock has its own tests (tests/unit/jobs/test_aa1056_recompute_lock_and_sweep.py)."""
+    from contextlib import asynccontextmanager
+
+    from services.jobs import recompute_job
+
+    @asynccontextmanager
+    async def _no_lock(*a, **kw):
+        yield
+
+    monkeypatch.setattr(recompute_job, "recompute_lock", _no_lock)
+
+
 def _ctx(payload):
     job = queue.Job(id="job-1", kind="recompute", payload=payload, status="running", attempt=1,
                     max_attempts=2, progress={}, cost_usd=0.0)

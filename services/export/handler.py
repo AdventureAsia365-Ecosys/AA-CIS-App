@@ -106,7 +106,9 @@ async def open_job_pool():
 
 
 async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
-                                        segment_ids: list[str] | None = None) -> dict:
+                                        segment_ids: list[str] | None = None,
+                                        should_stop: Optional[Callable[[], bool]] = None,
+                                        on_stage: Optional[Callable[[str], None]] = None) -> dict:
     """AA-713 — re-run platform-wide Score + Route only (no per-tour segment matching).
 
     Called when a tour's master_status changes (active <-> inactive/trashed). Segments are an
@@ -123,12 +125,13 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
     AA-735 nac 3 — the body now runs through `services.recompute.run_stages(PLATFORM_STAGES, ...)`
     (landing -> score -> route); same SQL, order and (absent) progress as the old inline chain.
     AA-988 — then `segment_gc` (orphan Segments; report mode unless SEGMENT_GC_MODE=apply), result key `segment_gc`.
-    AA-1057 — `retarget` after `route` (Subjects / requests onto live ids), result key `retarget`."""
+    AA-1057 — `retarget` after `route` (Subjects / requests onto live ids), result key `retarget`.
+    AA-1056 — `should_stop` / `on_stage` go to run_stages (the `recompute` job's cancel event and stage name)."""
     from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(
         segment_ids=set(segment_ids) if segment_ids is not None else None,
         log_reason=log_reason)
-    results = await run_stages(PLATFORM_STAGES, scope, pool=pool)
+    results = await run_stages(PLATFORM_STAGES, scope, pool=pool, should_stop=should_stop, on_stage=on_stage)
     out = {"ranking": results["score"], "route": results["route"], "retarget": results.get("retarget"),
            "segment_gc": results.get("segment_gc")}
     logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=out["route"])
@@ -136,7 +139,8 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
 
 
 async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str | None = None,
-                                       progress=None) -> dict:
+                                       progress=None, should_stop: Optional[Callable[[], bool]] = None,
+                                       on_stage: Optional[Callable[[str], None]] = None) -> dict:
     """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below (which still calls this
     right after atomize, unchanged) so it can ALSO be fired on its own, from
     `api/routers/admin_atoms.py::patch_atom()`, whenever an atom's `deleted` flag changes. Before
@@ -151,10 +155,12 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 
     AA-735 nac 3 — the body now runs through `services.recompute.run_stages(TOUR_STAGES, ...)`
     (segment -> landing -> score -> route); same SQL, order and progress as the old inline chain.
-    AA-1057 — then `retarget` (Subjects / requests onto the new Route / atom ids), result key `retarget`."""
+    AA-1057 — then `retarget` (Subjects / requests onto the new Route / atom ids), result key `retarget`.
+    AA-1056 — `should_stop` / `on_stage` go to run_stages (the `recompute` job's cancel event and stage name)."""
     from services.recompute import TOUR_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(tour_id=tour_id, log_tour_id=log_tour_id)
-    results = await run_stages(TOUR_STAGES, scope, pool=pool, progress=progress)
+    results = await run_stages(TOUR_STAGES, scope, pool=pool, progress=progress, should_stop=should_stop,
+                               on_stage=on_stage)
     return {"segment": results["segment"], "ranking": results["score"], "route": results["route"],
             "retarget": results.get("retarget")}
 
@@ -182,39 +188,57 @@ async def _connect_tour_lock():
 
 
 @asynccontextmanager
-async def a3_tour_lock(tour_id: str, should_stop: Optional[Callable[[], bool]] = None, *,
-                       poll_seconds: Optional[float] = None, max_wait_seconds: Optional[float] = None):
-    """Hold the tour's A3 session lock for the body. Polls `pg_try_advisory_lock` (not a blocking
-    `pg_advisory_lock`, which nothing could interrupt) so a waiting run still honours `should_stop` (it was cancelled
-    itself) and gives up after `max_wait_seconds` (TourLockTimeout)."""
-    from services.acp_contract.a3_atomize import stop_if_asked
-    poll_seconds = A3_TOUR_LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds
-    max_wait_seconds = A3_TOUR_LOCK_MAX_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds
+async def job_session_lock(lock_class: str, key: str, *, check_stop: Optional[Callable[[], None]] = None,
+                           poll_seconds: float, max_wait_seconds: float,
+                           timeout_error: Callable[[str], Exception] = TimeoutError):
+    """AA-993 G3, made generic for AA-1056 — hold the session advisory lock (`lock_class`, `key`) on one dedicated
+    connection for the body, across every transaction the body commits on other connections, so a job attempt
+    re-claimed after a deploy release waits until the old thread let go (or its process, and so its connection,
+    ended). Polls `pg_try_advisory_lock` (not a blocking `pg_advisory_lock`, which nothing could interrupt): every poll
+    calls `check_stop` (raise there when the waiting run was cancelled itself) and gives up after `max_wait_seconds`
+    with `timeout_error(message)`. Used by `a3_tour_lock` (class `a3_atomize`, one key per tour) and the `recompute`
+    job (class `recompute`, one platform key)."""
     conn = await _connect_tour_lock()
     try:
         started = time.monotonic()
         waiting_logged = False
-        while not await conn.fetchval(A3_TOUR_LOCK_SQL, A3_TOUR_LOCK_CLASS, str(tour_id)):
-            stop_if_asked(should_stop, tour_id, "tour_lock")
+        while not await conn.fetchval(A3_TOUR_LOCK_SQL, lock_class, str(key)):
+            if check_stop is not None:
+                check_stop()
             waited = time.monotonic() - started
             if waited >= max_wait_seconds:
-                raise TourLockTimeout(f"tour {tour_id}: another a3 run held the lock for {int(waited)} s")
+                raise timeout_error(f"{lock_class} {key}: another run held the lock for {int(waited)} s")
             if not waiting_logged:
-                logger.info("a3_atomize_waiting_for_tour_lock", tour_id=tour_id)
+                logger.info("job_session_lock_waiting", lock=lock_class, key=str(key))
                 waiting_logged = True
             await asyncio.sleep(poll_seconds)
         if waiting_logged:
-            logger.info("a3_atomize_tour_lock_acquired", tour_id=tour_id,
+            logger.info("job_session_lock_acquired", lock=lock_class, key=str(key),
                         waited_seconds=round(time.monotonic() - started, 1))
         try:
             yield
         finally:
             try:
-                await conn.fetchval(A3_TOUR_UNLOCK_SQL, A3_TOUR_LOCK_CLASS, str(tour_id))
+                await conn.fetchval(A3_TOUR_UNLOCK_SQL, lock_class, str(key))
             except Exception as e:  # noqa: BLE001 — closing the connection below drops the lock anyway
-                logger.warning("a3_tour_lock_release_failed", tour_id=tour_id, error=str(e)[:200])
+                logger.warning("job_session_lock_release_failed", lock=lock_class, key=str(key), error=str(e)[:200])
     finally:
         await conn.close()
+
+
+@asynccontextmanager
+async def a3_tour_lock(tour_id: str, should_stop: Optional[Callable[[], bool]] = None, *,
+                       poll_seconds: Optional[float] = None, max_wait_seconds: Optional[float] = None):
+    """Hold the tour's A3 session lock for the body (job_session_lock, class `a3_atomize`). A waiting run still honours
+    `should_stop` (it was cancelled itself: AtomizeStopped) and gives up after `max_wait_seconds` (TourLockTimeout)."""
+    from services.acp_contract.a3_atomize import stop_if_asked
+    async with job_session_lock(
+            A3_TOUR_LOCK_CLASS, str(tour_id),
+            check_stop=lambda: stop_if_asked(should_stop, tour_id, "tour_lock"),
+            poll_seconds=A3_TOUR_LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds,
+            max_wait_seconds=A3_TOUR_LOCK_MAX_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds,
+            timeout_error=TourLockTimeout):
+        yield
 
 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,

@@ -25,6 +25,12 @@ class NonRetryable(Exception):
     """The job fails at once, without using its remaining attempts."""
 
 
+# AA-993 G3 / AA-1056: the worker container's ECS stopTimeout (AA-CIS-Infra modules/ecs). A kind whose handler runs in
+# a thread that outlives its cancel (a3_atomize, recompute) sets release_delay_seconds to this, so the old task is gone
+# before another worker re-claims the released row.
+WORKER_STOP_TIMEOUT_SECONDS = 120
+
+
 @dataclass(frozen=True)
 class JobKind:
     name: str
