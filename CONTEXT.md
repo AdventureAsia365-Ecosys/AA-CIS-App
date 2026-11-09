@@ -3348,6 +3348,11 @@ cap (not a place count, at most 50 USD) that is also its hard DFS spend limit, c
 DFS balance; the per-place ReAct loop strategy is retired. A run enqueues one debounced platform
 recompute for the places it changed (more than 300 Segments outside the night window wait for the
 sweep); the worker's night landing sweep catches Segments whose newest research never landed.
+S274 (`keyword_qualify.py`): before Jev, the proposed map is qualified — a namesake place name (only type and
+namesake words: "<saint> Cathedral", "Hotel <range>", "City Palace") must carry its locality (place card, else tour
+country), a plant / animal / food (card `what_it_is`) buys nothing, a garbled phrase is dropped; dropped keywords are
+stored as `jev_zone 'skipped'`, `jev_mode 'rule:<reason>'`. A fresh place whose older map the rules would change is
+re-proposed on the next run. Ranking never claims a namesake place's bare-name keyword as its demand.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
 
 **Score** (Atom Ranking):

@@ -5,8 +5,10 @@ price). This module runs research as phases over the whole selection, so each pa
 
   A. map         — the place's keyword map (acp_contract.place_keyword, CIS 393). A place with a map of the current
                    prompt version reuses it (no LLM, no Jev). Otherwise one LLM call per PROPOSE_CHUNK places proposes
-                   up to KEYWORDS_PER_PLACE keywords (the plain place name first), Jev judges each (A3-3), and the map
-                   is stored right away, the rejected keywords included, so they are never proposed nor bought again.
+                   up to KEYWORDS_PER_PLACE keywords (the plain place name first), the qualification rules run
+                   (keyword_qualify: a namesake name such as a deity + "temple" carries its locality, a plant / animal
+                   / food buys nothing, a garbled phrase is dropped), Jev judges the rest (A3-3), and the map is stored
+                   right away, the dropped and rejected keywords included, so they are never proposed nor bought again.
   B. volumes     — per market the place is stale in: read the fresh store in one query, buy the rest in tasks of up to
                    VOLUME_TASK_MAX cleaned keywords (live, or the Standard queue). A task DataForSEO refused is
                    split in two (down to SPLIT_MIN keywords) before its keywords count as failed; a queued task it
@@ -32,14 +34,13 @@ import asyncio
 import hashlib
 import json
 import math
-import re
-import unicodedata
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 import structlog
 from json_repair import repair_json
 
+from services.acp_contract import keyword_qualify as kq
 from services.acp_contract.segment_research import (
     FRESH_FOR,
     PlacePurchaseFailed,
@@ -93,9 +94,10 @@ LLM_PROPOSE_ESTIMATE_USD = 0.02
 MAX_KEYWORD_WORDS = 10
 MAX_KEYWORD_CHARS = 80
 
-_TIDY = re.compile(r"[^a-z0-9 ]+")
-# Letters NFKD does not decompose to ASCII.
-_FOLD = str.maketrans({"đ": "d", "Đ": "d", "ß": "ss", "æ": "ae", "ø": "o", "ł": "l", "œ": "oe", "þ": "th"})
+# AA-1055 (S274) — a map row dropped by a deterministic rule (keyword_qualify) is stored with jev_zone 'skipped' and
+# jev_mode '<RULE_MODE_PREFIX><reason>' (e.g. 'rule:unqualified'): never bought, never proposed again under this
+# prompt version, and visible to whoever reads the map. No migration: jev_mode is free text, 'skipped' is allowed.
+RULE_MODE_PREFIX = "rule:"
 
 PROPOSE_SYSTEM = """\
 You propose what travellers type into a search engine about places on travel itineraries.
@@ -105,7 +107,11 @@ For EACH place you are given, return up to 4 search keywords:
   not "the sacred Tiger's Nest"). Add the country only if the name alone is ambiguous.
 - The others qualify the place with what the itineraries do there ("taktsang monastery hike",
   "paro festival dates"). Real search phrasing, never brochure language.
-- Lowercase, no punctuation, 1-6 words each.
+- A place name shared by many places around the world (a deity or saint with "temple", "church" or
+  "cathedral", a hotel name, "City Palace") is marked with "always add: <town>": EVERY keyword of it
+  must include that town or country ("city palace jaipur", never "city palace").
+- Only places: never a plant, an animal or a dish. Never a verb ("sightsee"), never a number glued to a word.
+- Lowercase, no punctuation, 2-6 words each.
 
 Respond with ONLY a JSON object, no markdown fences:
 {"places": [{"place": "<the place exactly as given>", "keywords": ["...", "..."]}]}
@@ -148,6 +154,21 @@ LOG_RESEARCHED_SQL = """
     INSERT INTO acp_contract.segment_research_log (canonical_place, market, tier, researched_at)
     VALUES ($1, $2, $3, now())
     ON CONFLICT (canonical_place, market, tier) DO UPDATE SET researched_at = now()
+"""
+# AA-1055 (S274) — where each place is, for keyword_qualify: the place card most of the place's atoms link to (not an
+# admin-rejected one), with its first what_it_is fact.
+_PLACE_CARDS_SQL = """
+    SELECT DISTINCT ON (s.canonical_place) s.canonical_place, c.locality, c.region, c.country,
+           (SELECT f->>'text'
+              FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.facts) = 'array' THEN c.facts ELSE '[]'::jsonb END) f
+             WHERE f->>'kind' = 'what_it_is' LIMIT 1) AS what_it_is
+    FROM acp_contract.atom_segment s
+    JOIN acp_contract.atom_segment_member m ON m.segment_id = s.segment_id
+    JOIN acp_shared.atom_place_card apc ON apc.atom_id = m.atom_id
+    JOIN acp_shared.place_card c ON c.card_id = apc.card_id
+    WHERE s.canonical_place = ANY($1::text[]) AND c.status <> 'rejected'
+    GROUP BY s.canonical_place, c.card_id, c.locality, c.region, c.country, c.facts
+    ORDER BY s.canonical_place, count(*) DESC, c.card_id
 """
 _MAPS_SQL = """
     SELECT subject, keyword, rank, jev_zone, jev_mode, prompt_version
@@ -192,6 +213,9 @@ class _Place:
     logged: set = field(default_factory=set)  # (market, tier) rows written this run
     changed: bool = False              # this run stored new demand data for the place (volume or SERP)
     verdicts: dict = field(default_factory=dict)  # keyword -> Jev Verdict of this run's proposal (for the map)
+    plain: str | None = None           # the place's own keyword this run (qualified with its locality when namesake)
+    dropped: dict = field(default_factory=dict)   # keyword -> keyword_qualify reason (stored as a rule row)
+    requalify: bool = False            # fresh, planned only to rebuild a map the qualification rules would change
 
     def has_volume(self) -> bool:
         return any(v for per in self.volumes.values() for v in per.values())
@@ -199,10 +223,8 @@ class _Place:
 
 def _tidy(text: str) -> str:
     """Lowercase ASCII words: accents folded ("Hội An" -> "hoi an", until AA-1055 it became "h i an"), everything
-    that is not a letter or digit becomes a space."""
-    folded = unicodedata.normalize("NFKD", (text or "").translate(_FOLD))
-    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
-    return " ".join(_TIDY.sub(" ", folded.lower()).split())
+    that is not a letter or digit becomes a space (keyword_qualify.tidy, one tokenizer for the map and its rules)."""
+    return kq.tidy(text)
 
 
 def clean_keyword(text: str) -> str | None:
@@ -322,14 +344,60 @@ async def load_maps(pool, names: list[str]) -> dict[str, list[dict]]:
     return out
 
 
+def _rule_dropped(row: dict) -> bool:
+    return str(row.get("jev_mode") or "").startswith(RULE_MODE_PREFIX)
+
+
 def keywords_from_map(rows: list[dict]) -> list[str] | None:
-    """The buyable keywords of a stored map of the current prompt version (enforced Jev rejects left out), or None
-    when the map is missing or from another prompt version (then the place is proposed again)."""
+    """The buyable keywords of a stored map of the current prompt version (enforced Jev rejects and rule-dropped rows
+    left out), or None when the map is missing or from another prompt version (then the place is proposed again).
+    A map of only rule-dropped rows (a plant, a namesake with no known locality) is a usable map with nothing to buy."""
     if not rows or any(r.get("prompt_version") != PROMPT_VERSION for r in rows):
         return None
     kws = [r["keyword"] for r in rows
-           if not (r.get("jev_zone") == "reject" and r.get("jev_mode") == "enforce")]
+           if not (r.get("jev_zone") == "reject" and r.get("jev_mode") == "enforce") and not _rule_dropped(r)]
     return [k for k in (clean_keyword(k) for k in kws) if k][:KEYWORDS_PER_PLACE]
+
+
+def needs_requalify(name: str, rows: list[dict]) -> bool:
+    """AA-1055 (S274) — a place whose stored map predates the qualification rules and that they would change: a
+    namesake or not-a-place name, or a stored keyword that is garbled. Such a place is re-proposed (and its new
+    keywords bought) on the next run even when its research is fresh; any other fresh place waits for its own
+    freshness to run out. Name-only (no place card): the card-based not-a-place test runs at propose time."""
+    if not rows or keywords_from_map(rows) is not None:
+        return False
+    if kq.is_namesake_name(name) or kq.not_a_place(name):
+        return True
+    plain = clean_keyword(name)
+    return any(r["keyword"] != plain and kq.garbled_reason(r["keyword"]) for r in rows
+               if not (r.get("jev_zone") == "reject" and r.get("jev_mode") == "enforce"))
+
+
+async def load_locations(pool, names: list[str]) -> dict[str, kq.PlaceLocation]:
+    """place -> where it is: its place card (locality / region / country / what_it_is), else only the most common tour
+    country. A failed lookup returns what it has (the rules then drop what they cannot qualify)."""
+    if not names:
+        return {}
+    out: dict[str, kq.PlaceLocation] = {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_PLACE_CARDS_SQL, list(names))
+        for r in rows:
+            out[r["canonical_place"]] = kq.PlaceLocation(r["locality"], r["region"], r["country"], r["what_it_is"])
+    except Exception as exc:  # noqa: BLE001 — a missing card only means fewer qualified keywords
+        logger.warning("segment_research_place_cards_failed", places=len(names), error=str(exc)[:200])
+    missing = [n for n in names if n not in out or not out[n].country]
+    if missing:
+        try:
+            countries = await _place_countries(pool, missing)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("segment_research_place_countries_failed", places=len(missing), error=str(exc)[:200])
+            countries = {}
+        for n in missing:
+            if countries.get(n):
+                old = out.get(n) or kq.PlaceLocation()
+                out[n] = kq.PlaceLocation(old.locality, old.region, countries[n], old.what_it_is)
+    return out
 
 
 async def _gate_keywords(places: list[_Place], pool) -> dict:
@@ -337,7 +405,7 @@ async def _gate_keywords(places: list[_Place], pool) -> dict:
     rather than the kind of thing it is (Ms. Thư's ticket 03: "Nyuto Hot Spring" → "hot springs" 368k/mo). The plain
     place name is never asked — it is the place by definition. A keyword is dropped only on an enforced, confident
     reject; grey/error/shadow keep it. AA-1055: every verdict is kept on the place (`verdicts`) for the map."""
-    pairs = [(p, kw) for p in places if not p.failed for kw in p.keywords if kw != _tidy(p.name)]
+    pairs = [(p, kw) for p in places if not p.failed for kw in p.keywords if kw != (p.plain or _tidy(p.name))]
     if not pairs:
         return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
     sem = asyncio.Semaphore(JEV_CONCURRENCY)
@@ -361,15 +429,23 @@ async def _store_maps(places: list[_Place], proposed: dict[str, list[str]], pool
     ones included). A map row of another source (seo_context_copy, country_activity) is never touched."""
     rows = []
     for p in places:
-        plain = _tidy(p.name)
+        plain = p.plain or _tidy(p.name)
+        original = _tidy(p.name)
         verdicts = p.verdicts
-        for rank, kw in enumerate(proposed.get(p.name, [])):
+        kept = proposed.get(p.name, [])
+        for rank, kw in enumerate(kept):
             v = verdicts.get(kw)
             if kw == plain:
                 rows.append((p.name, kw, rank, "place_name", PROMPT_VERSION, "not_asked", None, None))
             else:
                 rows.append((p.name, kw, rank, "llm_propose", PROMPT_VERSION, v.zone if v else None,
                              v.mode if v else None, v.probability if v else None))
+        # AA-1055 (S274) — the keywords a qualification rule dropped, after the kept ones.
+        for rank, (kw, reason) in enumerate(p.dropped.items(), start=len(kept)):
+            if kw in kept:
+                continue
+            rows.append((p.name, kw, rank, "place_name" if kw == original else "llm_propose", PROMPT_VERSION,
+                         "skipped", f"{RULE_MODE_PREFIX}{reason}", None))
     if not rows:
         return
     async with pool.acquire() as conn:
@@ -383,7 +459,10 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
     llm = LLMClient()
     calls, cost = 0, 0.0
     jev = {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
-    for chunk in _chunks([p for p in places if not p.has_map], PROPOSE_CHUNK):
+    rules = {"keywords_rule_dropped": 0, "places_namesake": 0, "places_not_a_place": 0}
+    proposing = [p for p in places if not p.has_map]
+    where = await load_locations(pool, [p.name for p in proposing]) if proposing else {}
+    for chunk in _chunks(proposing, PROPOSE_CHUNK):
         if guard.aborted:
             for p in chunk:
                 p.failed = True
@@ -396,9 +475,7 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
                 for p in chunk:
                     p.failed = True
                 continue
-        listing = "\n".join(
-            f"- {p.name} (itineraries: {', '.join(sorted(set(p.actions))[:6]) or 'visit'})" for p in chunk
-        )
+        listing = "\n".join(_listing_line(p, where.get(p.name)) for p in chunk)
         request = LLMRequest(system_prompt=PROPOSE_SYSTEM, user_prompt=f"Places:\n{listing}",
                              model_tier="haiku", max_tokens=4096)
         resp = await asyncio.to_thread(llm.generate, request)
@@ -420,10 +497,19 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
         for p in chunk:
             kws = proposals.get(p.name.casefold()) or []
             plain = clean_keyword(p.name)
-            # The plain place name is always researched, even if the LLM output was unusable.
+            # The plain place name is always researched (qualified when namesake), even if the LLM output was unusable.
             ordered = list(dict.fromkeys([k for k in ([plain] if plain else []) + kws if k]))
-            p.keywords = ordered[:KEYWORDS_PER_PLACE]
+            q = kq.qualify(p.name, ordered, plain, where.get(p.name))
+            kept = list(dict.fromkeys(k for k in (clean_keyword(k) for k in q.kept) if k))
+            p.plain = clean_keyword(q.plain) if q.plain else None
+            p.dropped = q.dropped
+            p.keywords = kept[:KEYWORDS_PER_PLACE]
             proposed[p.name] = list(p.keywords)
+            rules["keywords_rule_dropped"] += len(q.dropped)
+            if q.flag == "namesake":
+                rules["places_namesake"] += 1
+            elif q.flag == "not_a_place":
+                rules["places_not_a_place"] += 1
         stats = await _gate_keywords(chunk, pool)
         for k in jev:
             jev[k] += stats[k]
@@ -431,7 +517,17 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
             await _store_maps(chunk, proposed, pool)
         except Exception as exc:  # noqa: BLE001 — the map is a saving, never a reason to lose the purchase
             logger.warning("place_keyword_store_failed", places=len(chunk), error=str(exc)[:200])
-    return {"llm_calls": calls, "llm_usd": round(cost, 5), **jev}
+    return {"llm_calls": calls, "llm_usd": round(cost, 5), **jev, **rules}
+
+
+def _listing_line(p: _Place, where: kq.PlaceLocation | None) -> str:
+    """One place of the propose prompt; a namesake name carries the town to add ("always add: <town>")."""
+    line = f"- {p.name} (itineraries: {', '.join(sorted(set(p.actions))[:6]) or 'visit'})"
+    if kq.is_namesake_name(p.name):
+        phrases = (where or kq.PlaceLocation()).phrases(p.name)
+        if phrases:
+            line += f" — always add: {phrases[0]}"
+    return line
 
 
 async def _write_logs(pool, rows: list[tuple[str, str, str]]) -> None:
@@ -448,6 +544,13 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
     async def _market(loc: int, lang: str) -> None:
         """One market: read the fresh store, buy the rest, log each place as soon as it is complete."""
         market = LOCATION_CODE_TO_MARKET[loc]
+        # AA-1055 (S274) — a place the qualification rules left with no keyword (a plant, a namesake with no known
+        # locality) has nothing to buy: logged researched, so it is not planned (and counted stale) on every run.
+        empty = [p for p in places if not p.failed and market in p.markets and not p.keywords
+                 and (market, "volume") not in p.logged]
+        for p in empty:
+            p.logged.add((market, "volume"))
+        await _write_logs(pool, [(p.name, market, "volume") for p in empty])
         active = [p for p in places if not p.failed and market in p.markets and p.keywords]
         need = sorted({kw for p in active for kw in p.keywords})
         if not need:
@@ -569,6 +672,11 @@ async def _store_serp(pool, keyword: str, market: str, paa: list[str], related: 
 async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard: _RunGuard, queue=None) -> dict:
     """Phase C: one SERP per place (module docstring)."""
     stats = {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 0}
+    empty = [p for p in places if p.serp and not p.failed and not p.keywords]   # nothing to buy (see _buy_volumes)
+    for p in empty:
+        stats["serp_no_volume"] += 1
+        p.logged.add((SERP_MARKET, "serp"))
+    await _write_logs(pool, [(p.name, SERP_MARKET, "serp") for p in empty])
     wanted = [p for p in places if p.serp and not p.failed and p.keywords]
     if not wanted:
         return stats
@@ -806,6 +914,9 @@ async def research_batch(
         "ideas_returned": idea_stats["ideas_returned"],
         "jev_keywords_checked": llm_stats["jev_keywords_checked"],
         "jev_keywords_rejected": llm_stats["jev_keywords_rejected"],
+        "keywords_rule_dropped": llm_stats.get("keywords_rule_dropped", 0),
+        "places_namesake": llm_stats.get("places_namesake", 0),
+        "places_not_a_place": llm_stats.get("places_not_a_place", 0),
         "jev_ideas_rejected": idea_stats.get("jev_ideas_rejected", 0),
         "maps_reused": sum(1 for p in places if p.has_map),
         "llm_calls": llm_stats["llm_calls"],

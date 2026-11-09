@@ -76,6 +76,7 @@ from services.acp_contract.atom_matching import (
     ensure_atom_embeddings_batch,
     land_question_on_atom,
 )
+from services.acp_contract.keyword_qualify import unqualified_words
 from services.acp_contract.ranking_reference import (
     PLACE_KINDS,
     claimable_words,
@@ -197,12 +198,17 @@ def compute_demand(
     NAME (word-overlap), never embedding-match. `demand_rows` = every (keyword, market, volume)
     row in `search_demand` with a non-null volume, loaded once per ranking run (not re-queried
     per Segment, unlike the reference repo's own per-call SQLite query — Postgres round-trips
-    are not free the way a local SQLite file's are; same output, cheaper)."""
+    are not free the way a local SQLite file's are; same output, cheaper).
+
+    AA-1055 (S274): a namesake place ("<deity> Temple", "Hotel <range>") never claims a keyword made only of its own
+    words — that volume is about every place of the name (keyword_qualify.unqualified_words)."""
     claimable = claimable_words(place, action)
+    bare = unqualified_words(place)
     best: dict[str, tuple[int, int]] = {}
     for keyword, market, volume in demand_rows:
-        shared = keyword_words(keyword) & claimable
-        if not shared - PLACE_KINDS:
+        kw_words = keyword_words(keyword)
+        shared = kw_words & claimable
+        if not shared - PLACE_KINDS or (bare is not None and kw_words <= bare):
             continue
         fit = len(shared)
         held = best.get(market)
@@ -217,12 +223,14 @@ def demand_candidates(
     """AA-694 A3-6 — every keyword this Segment could claim for one market, best first by the same
     (fit, volume) order `compute_demand()` uses. `compute_demand()` returns the head of this list."""
     claimable = claimable_words(place, action)
+    bare = unqualified_words(place)
     scored = []
     for keyword, kw_market, volume in demand_rows:
         if kw_market != market:
             continue
-        shared = keyword_words(keyword) & claimable
-        if not shared - PLACE_KINDS:
+        kw_words = keyword_words(keyword)
+        shared = kw_words & claimable
+        if not shared - PLACE_KINDS or (bare is not None and kw_words <= bare):
             continue
         scored.append((len(shared), volume, keyword))
     scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
@@ -436,10 +444,12 @@ def _candidate_questions(
     embedding-match (below) decides which SEGMENT among the shortlist a question actually lands
     on, this decides which questions are even in the running for THIS Segment's atoms."""
     claimable = claimable_words(place, action)
+    bare = unqualified_words(place)   # AA-1055 (S274): a namesake place lands no question of its bare name
     seen: set[str] = set()
     for keyword, _market, questions in paa_rows:
-        shared = keyword_words(keyword) & claimable
-        if not shared - PLACE_KINDS:
+        kw_words = keyword_words(keyword)
+        shared = kw_words & claimable
+        if not shared - PLACE_KINDS or (bare is not None and kw_words <= bare):
             continue
         seen.update(questions)
     return seen

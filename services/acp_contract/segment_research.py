@@ -672,21 +672,34 @@ async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], t
     A stale place with no usable map (none stored, or one of another prompt version) gets new keywords in phase A,
     whose volumes were never bought: it is stale in every requested market even where its volume tier is fresh (the
     ~1.3k places researched before CIS 393, accented names whose plain keyword changed with the accent folding).
-    The volume pass reads the fresh store first, so only the keywords really missing are bought."""
+    The volume pass reads the fresh store first, so only the keywords really missing are bought.
+
+    AA-1055 (S274) — a FRESH place whose stored map predates the keyword qualification rules and that they would
+    change (a namesake or not-a-place name, a garbled stored keyword: segment_research_batch.needs_requalify) is
+    planned too, stale in every requested market and in the SERP tier: its map is proposed again and its qualified
+    keywords bought, so the next run rebuilds exactly the affected places."""
     from services.acp_contract.segment_research_batch import (
-        SERP_MARKET, _Place, keywords_from_map, load_maps,
+        SERP_MARKET, _Place, keywords_from_map, load_maps, needs_requalify,
     )
 
     names = sorted(by_place)
     fresh = await _fresh_tiers(pool, names)
     stale: list = []
+    fresh_names: list[str] = []
     for name in names:
         got = fresh.get(name, set())
         markets = [m for m in market_codes if (m, "volume") not in got] if "volume" in tiers else []
         serp = "serp" in tiers and (SERP_MARKET, "serp") not in got
         if markets or serp:
             stale.append(_Place(name, by_place[name], markets, serp=serp))
-    maps = await load_maps(pool, [p.name for p in stale])
+        else:
+            fresh_names.append(name)
+    maps = await load_maps(pool, [p.name for p in stale] + fresh_names)
+    requalify = [_Place(n, by_place[n], [], serp="serp" in tiers) for n in fresh_names
+                 if needs_requalify(n, maps.get(n, []))]
+    for p in requalify:
+        p.requalify = True
+    stale = sorted(stale + requalify, key=lambda p: p.name)
     for p in stale:
         kws = keywords_from_map(maps.get(p.name, []))
         if kws is not None:
@@ -807,6 +820,7 @@ async def run_segment_research(
         "places_stale": stale_total,
         "places_stale_volume": sum(1 for p in stale if p.markets),
         "places_stale_serp": sum(1 for p in stale if p.serp),
+        "places_requalify": sum(1 for p in stale if p.requalify),
         "places_selected": len(selected),
         "places_with_map": sum(1 for p in selected if p.has_map),
         "max_usd": max_usd,
