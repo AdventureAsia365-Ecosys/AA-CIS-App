@@ -74,6 +74,7 @@ IDEAS_MIN_SEEDS = 5
 # shared.decision_question (migration 182); they only drop anything once set to `enforce` with calibrated floors
 # (AA-661). Until then every verdict is logged as calibration data.
 JEV_STAGE = "a3_research"
+LLM_STAGE_BATCH = "segment_research_batch"   # shared.llm_role_config row (CIS 335)
 JEV_KEYWORD_Q = "a3_keyword_belongs"
 JEV_IDEA_Q = "a3_idea_traveller"
 JEV_CONCURRENCY = 8
@@ -492,8 +493,10 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
                     p.failed = True
                 continue
         listing = "\n".join(_listing_line(p, where.get(p.name)) for p in chunk)
+        # S274: route through the gateway stage (CIS 335 route + model-first fallbacks), never the legacy "haiku" tier:
+        # with acc3 refusing the 5.x models the legacy chain had no fallback and failed the whole run.
         request = LLMRequest(system_prompt=PROPOSE_SYSTEM, user_prompt=f"Places:\n{listing}",
-                             model_tier="haiku", max_tokens=4096)
+                             stage=LLM_STAGE_BATCH, max_tokens=4096)
         resp = await asyncio.to_thread(llm.generate, request)
         calls += 1
         cost += resp.cost_usd

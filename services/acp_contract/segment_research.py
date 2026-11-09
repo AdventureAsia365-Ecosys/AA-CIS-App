@@ -479,9 +479,10 @@ async def _research_place(
                 transcript="\n".join(transcript_lines) or "(nothing bought yet)",
                 step=step_num, max_steps=MAX_STEPS,
             )
+            # S274: the gateway stage route (CIS 335), not the legacy "haiku" tier (no fallback while acc3 refuses 5.x).
             request = LLMRequest(
                 system_prompt=SYSTEM_PROMPT, user_prompt=prompt,
-                model_tier="haiku", max_tokens=1024,
+                stage="segment_research", max_tokens=4096,
             )
             if llm_budget is not None:
                 try:
