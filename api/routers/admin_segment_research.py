@@ -32,6 +32,7 @@ from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field, field_validator
 
 from api.routers.admin import verify_admin_secret
+from services.seo_intelligence.dfs_queue import research_queue_mode
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
 from services.jobs.segment_research_job import KIND as JOB_KIND, MAX_USD_PER_RUN, dfs_balance, load_budgets
 from shared.jobs import queue as job_queue
@@ -84,7 +85,9 @@ def _kwargs(scope: ResearchScope) -> dict:
         "strategy": scope.strategy,
         "use_suggestions": scope.use_suggestions,
         "tiers": list(scope.tiers),
-        "dfs_queue": scope.dfs_queue,
+        # AA-1055: the mode is resolved here (payload, else DFS_RESEARCH_QUEUE of this task) and written into the job
+        # payload, so the job buys through the endpoint the preview and the balance check were priced at.
+        "dfs_queue": research_queue_mode(scope.dfs_queue),
         "recompute": scope.recompute,
     }
 

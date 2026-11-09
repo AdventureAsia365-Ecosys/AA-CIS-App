@@ -48,7 +48,7 @@ from services.acp_contract.segment_research import (
 from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs_error
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
-from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded, RunBudget
+from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded, RunBudget, dfs_research_prices
 from shared.dfs_client.call_log import record_dfs_call_with_pool
 from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
@@ -79,6 +79,8 @@ SERP_CONCURRENCY = 4
 # AA-1055 — one SERP per place, bought in this market only (content is written in English; T9 drops non-English PAA;
 # a DE/FR/NL SERP returns mostly German/French/Dutch questions). Design section 4.
 SERP_MARKET = "US"
+# AA-1055: the stage of every shared.dfs_call_log row a research run writes (paid, refused, failed and store hits).
+RESEARCH_STAGE = "a3_search_demand"
 SERP_LANGUAGE = "en"
 SERP_FRESH_FOR = timedelta(days=365)
 # Measured on the 08/11/2026 run (154 US places): 2.565 keywords per place, 77.3 % of places had a keyword with volume
@@ -221,11 +223,9 @@ def _chunks(items: list, size: int):
 
 
 def _prices(queue: str) -> tuple[float, float]:
-    """(volume task, SERP) unit price for the estimate: the live price, or the queue's (kept at the live price until
-    the trial has measured it, shared/cost_guard.py)."""
-    if queue == "standard":
-        return (DFS_CALL_ESTIMATE_USD["search_volume_bulk_queue"], DFS_CALL_ESTIMATE_USD["serp_advanced_queue"])
-    return DFS_CALL_ESTIMATE_USD["search_volume_bulk"], DFS_CALL_ESTIMATE_USD["serp_advanced"]
+    """(volume task, SERP) unit price of the endpoint the run buys through (`queue` "live" | "standard"), from the
+    one price table the run budget's check before every paid post reads too (shared/cost_guard.py)."""
+    return dfs_research_prices(queue)
 
 
 def estimate_plan(places: list[_Place], use_suggestions: bool = False, queue: str = "live") -> dict:
@@ -234,11 +234,14 @@ def estimate_plan(places: list[_Place], use_suggestions: bool = False, queue: st
         SERP_HIT_RATE of the places that need one;
       - cap:  KEYWORDS_PER_PLACE per place and a SERP for every place that needs one.
     Both ignore the store (a cached keyword is not bought): an upper bound for the paid part. The balance check and
-    the USD cap read `dfs_usd_cap`."""
+    the USD cap read `dfs_usd_cap`. Both are priced at the unit prices of the endpoint the run buys through (`queue`,
+    shared.cost_guard.dfs_research_prices), returned as `unit_usd`; keyword suggestions are always bought live."""
+    volume_price, serp_price = _prices(queue)
+    unit_usd = {"volume_task": volume_price, "serp": serp_price}
     if not places:
         return {"places": 0, "llm_calls": 0, "volume_tasks": 0, "volume_tasks_cap": 0, "serp_calls": 0,
                 "serp_calls_cap": 0, "idea_tasks": 0, "dfs_usd": 0.0, "dfs_usd_cap": 0.0, "llm_usd": 0.0,
-                "queue": queue}
+                "queue": queue, "unit_usd": unit_usd}
     real_kw: dict[str, float] = {}
     cap_kw: dict[str, int] = {}
     for p in places:
@@ -253,7 +256,6 @@ def estimate_plan(places: list[_Place], use_suggestions: bool = False, queue: st
     proposing = sum(1 for p in places if not p.has_map)
     llm_calls = math.ceil(proposing / PROPOSE_CHUNK)
     idea_tasks = math.ceil(len(places) / IDEAS_SEEDS_PER_TASK) if use_suggestions else 0
-    volume_price, serp_price = _prices(queue)
     ideas = idea_tasks * DFS_CALL_ESTIMATE_USD["keywords_for_keywords"]
     return {
         "places": len(places), "llm_calls": llm_calls,
@@ -261,7 +263,7 @@ def estimate_plan(places: list[_Place], use_suggestions: bool = False, queue: st
         "serp_calls": serp_calls, "serp_calls_cap": serp_need, "idea_tasks": idea_tasks,
         "dfs_usd": round(volume_tasks * volume_price + serp_calls * serp_price + ideas, 4),
         "dfs_usd_cap": round(volume_tasks_cap * volume_price + serp_need * serp_price + ideas, 4),
-        "llm_usd": round(llm_calls * LLM_PROPOSE_ESTIMATE_USD, 4), "queue": queue,
+        "llm_usd": round(llm_calls * LLM_PROPOSE_ESTIMATE_USD, 4), "queue": queue, "unit_usd": unit_usd,
     }
 
 
@@ -462,6 +464,7 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
             await record_dfs_call_with_pool(
                 pool, endpoint="search_volume_bulk", cache_hit=True, cost_usd=0.0, location_code=loc,
                 keyword_count=len(answers), meta={"job": "segment_research", "phase": "volumes"},
+                stage=client.stage or RESEARCH_STAGE,   # AA-1055: the run's stage, as on its paid rows
             )
         failed_kw: set[str] = set()
         bought: set[str] = set()

@@ -821,7 +821,7 @@ async def run_segment_research(
         await before_buy(summary)
 
     guard = _RunGuard()
-    client = DataForSEOClient(budget=dfs_budget, stage="a3_search_demand")
+    client = DataForSEOClient(budget=dfs_budget, stage=rb.RESEARCH_STAGE)
     client.meta = {"job": "segment_research", "queue": queue_mode}
 
     queue = StandardQueue(client) if queue_mode == "standard" else None
