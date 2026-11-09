@@ -68,3 +68,6 @@ Channel, Bar counts per reason under the old rule (best-ranked market) and the n
 - Slate output changes after deploy only when a t7_slate proposal runs (stale after its window or a refresh).
 - Existing T2 versions are not rescored; new rewrites get the new rule.
 - No new tenant-visible field: `GET /v1/slate` shape unchanged.
+- `.gitignore` ignores `scripts/`: the compare script and its `__init__.py` are force-added (`git add -f`, like
+  `scripts/aa1048/*`). The unit and integration tests load it by path, so an untracked copy passes locally and
+  fails on a clean CI checkout; the fix pass re-ran the AA-1055 tests from a `git archive HEAD` export (91 passed).
