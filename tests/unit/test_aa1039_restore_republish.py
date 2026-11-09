@@ -14,6 +14,7 @@ those that were public before. No database.
 - The WordPress calls and the mail wording (content words only).
 Invented names and hosts only.
 """
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -108,9 +109,15 @@ def _flag(**over):
            "tour_id": TOUR, "publish_id": PUBLISH, "piece_id": PIECE, "flag_url": PAGE,
            "publish_status": "unpublished", "unpublished_by": fanout.ACTOR, "external_id": "41",
            "external_url": PAGE, "channel": "blog", "piece_status": "approved", "request_id": REQUEST,
-           "superseded": False}
+           "superseded": False, "told_kept": False}
     row.update(over)
     return row
+
+
+def _claimed_flag(**over):
+    """A flag whose claim a stopped run left in place (publish_log live again, claimed_at set)."""
+    return _flag(publish_status="published", unpublished_by=None, detail=_detail(**{fanout.REPUBLISH_MARK: {
+        "event_key": RESTORE_KEY, "state": "queued", "claimed_at": "2026-11-10T09:00:00"}}), **over)
 
 
 def _conn(flag=None, *, tour_state="served", waiting=0, gate=False, other_live=False, integ=True, log=None):
@@ -155,6 +162,8 @@ class FakeWP:
             if self.after_publish_status:
                 self.status = self.after_publish_status
             raise RuntimeError("WP API update 502 returned an unexpected response")
+        if self.fail == "cancel":                       # the worker stops mid-call (BaseException)
+            raise asyncio.CancelledError()
         self.published.append(post_id)
         self.status = "publish"
         return "published"
@@ -233,7 +242,7 @@ async def test_a_page_drafted_before_the_public_check_stays_in_draft_and_the_ten
     out = await fanout._restored(conn, _event(), [TOUR])
     assert out["pages_to_republish"] == 0 and out["pages_kept_in_draft"] == 1 and out["immediate_notices"] == ["n-1"]
     summary = json.loads(conn.ran(fanout.INSERT_NOTICE_SQL)[0][7])
-    assert summary["pages_kept"] == [{"url": PAGE}] and summary["pages_returning"] == []
+    assert summary["pages_kept"] == [{"url": PAGE, "flag_id": FLAG}] and summary["pages_returning"] == []
 
 
 @pytest.mark.asyncio
@@ -349,6 +358,8 @@ async def test_a_restore_that_won_the_race_gets_the_page_published_back():
     assert wp.drafted == ["41"] and wp.published == ["41"] and out["status"] == "reverted"
     assert conn.ran(fanout.MARK_UNPUBLISHED_SQL) == []
     notes = [json.loads(a[1]) for a in conn.ran(fanout.NOTE_SQL)]
+    assert notes[0] == {fanout.DRAFT_ATTEMPT: {"before": "publish", "at": notes[0][fanout.DRAFT_ATTEMPT]["at"]}}
+    notes = [n for n in notes if fanout.DRAFT_REVERT in n]
     assert notes[0][fanout.DRAFT_REVERT] == {"state": "pending"}
     assert notes[-1][fanout.DRAFT_REVERT]["state"] == "done"
 
@@ -417,9 +428,10 @@ async def test_a_page_the_tenant_removed_published_or_scheduled_is_left_alone(re
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("conn_kw,flag_kw,state,reason", [
-    ({"tour_state": "retired"}, {}, "skipped", "tour_not_served"),
-    ({"tour_state": "paused"}, {}, "skipped", "tour_not_served"),
-    ({"tour_state": None}, {}, "skipped", "tour_not_served"),
+    ({"tour_state": "retired"}, {}, "deferred", "tour_not_served"),
+    ({"tour_state": "paused"}, {}, "deferred", "tour_not_served"),
+    ({"tour_state": None}, {}, "deferred", "tour_not_served"),
+    ({}, {"told_kept": True}, "kept", "told_kept"),
     ({}, {"piece_status": "failed"}, "kept", "piece_not_publishable"),
     ({}, {"piece_status": None, "request_id": None, "superseded": None}, "skipped", "piece_deleted"),
     ({}, {"superseded": True}, "kept", "newer_version"),
@@ -457,7 +469,7 @@ async def test_the_piece_s_own_tour_must_be_served_the_aa986_rule():
     with patch.object(fanout._tl, "request_tours", AsyncMock(return_value={REQUEST: TOUR})), \
             patch.object(fanout._tl, "ensure_served", refuse):
         out = await _republish(conn, wp)
-    assert out["reason"] == "tour_not_served" and wp.published == []
+    assert out["status"] == "kept" and out["reason"] == "request_tour_not_served" and wp.published == []
 
 
 @pytest.mark.asyncio
@@ -466,7 +478,7 @@ async def test_a_retire_between_the_first_check_and_the_claim_stops_it():
     conn, wp = _conn(), FakeWP("draft")
     conn.answers[fanout.TOUR_STATE_SQL] = lambda *a: next(states)
     out = await _republish(conn, wp)
-    assert out["status"] == "skipped" and out["reason"] == "tour_not_served" and wp.published == []
+    assert out["status"] == "deferred" and out["reason"] == "tour_not_served" and wp.published == []
     assert conn.ran(fanout.MARK_REPUBLISHED_SQL) == []
 
 
@@ -527,12 +539,165 @@ async def test_an_unmarked_or_finished_flag_is_not_touched_again(detail, reason)
 
 @pytest.mark.asyncio
 async def test_give_up_reverts_a_claim_keeps_the_page_and_tells_the_tenant():
-    conn = _conn(_flag(detail=_detail(**{fanout.REPUBLISH_MARK: {"event_key": RESTORE_KEY, "state": "queued",
-                                                                 "claimed_at": "2026-11-10T09:00:00"}})))
+    conn = _conn(_claimed_flag())
     out = await fanout.give_up_republish(FakePool(conn), FLAG, "WP API read 502")
     assert out["status"] == "kept" and out["reason"] == "wordpress_error" and out["mail_notice_id"] == "n-1"
     assert conn.ran(fanout.UNCLAIM_SQL) == [(PUBLISH, TENANT, fanout.ACTOR)]
     assert conn.ran(fanout.NOTICE_PAGE_SQL)[0][4] == "pages_kept"
+
+
+# ── a claim left by a stopped run is resumed (review 2, MAJOR) ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_worker_stop_after_the_claim_leaves_it_and_the_next_run_publishes():
+    conn = _conn()
+    with pytest.raises(asyncio.CancelledError):
+        await _republish(conn, FakeWP("draft", fail="cancel"))
+    assert conn.ran(fanout.MARK_REPUBLISHED_SQL) and conn.ran(fanout.UNCLAIM_SQL) == []
+    assert conn.ran(fanout.REPUBLISH_DONE_SQL) == []
+    # the next attempt reads the claim it left (publish_log live, claimed_at set): WordPress still has the draft
+    nxt, wp = _conn(_claimed_flag()), FakeWP("draft")
+    out = await _republish(nxt, wp)
+    assert out["status"] == "republished" and wp.published == ["41"]
+    assert nxt.ran(fanout.MARK_REPUBLISHED_SQL) == [] and nxt.ran(fanout.UNCLAIM_SQL) == []
+    assert _outcome(nxt)["resumed"] is True and out["mail_notice_id"] == "n-1"
+
+
+@pytest.mark.asyncio
+async def test_a_db_error_after_wordpress_published_is_recorded_republished_by_the_next_run():
+    def broken(*args):
+        raise ConnectionResetError("connection lost")
+
+    conn, wp = _conn(), FakeWP("draft")
+    conn.answers[fanout.REPUBLISH_DONE_SQL] = broken
+    with pytest.raises(ConnectionResetError):
+        await _republish(conn, wp)
+    assert wp.published == ["41"]
+    nxt = _conn(_claimed_flag())
+    out = await _republish(nxt, wp)                     # WordPress already shows it published
+    assert out["status"] == "republished" and wp.published == ["41"]
+    assert nxt.ran(fanout.UNCLAIM_SQL) == [] and _outcome(nxt)["resumed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag_kw,remote,modified,state,reason", [
+    ({}, "draft", "2026-11-12T10:00:00", "kept", "changed_on_site"),
+    ({"told_kept": True}, "draft", MODIFIED, "kept", "told_kept"),
+    ({}, "trash", MODIFIED, "skipped", "removed_on_site"),
+    ({}, "private", MODIFIED, "skipped", "changed_on_site"),
+])
+async def test_a_resumed_claim_whose_page_changed_is_reverted(flag_kw, remote, modified, state, reason):
+    conn, wp = _conn(_claimed_flag(**flag_kw)), FakeWP(remote, modified=modified)
+    out = await _republish(conn, wp)
+    assert out["status"] == state and out["reason"] == reason and wp.published == []
+    assert conn.ran(fanout.UNCLAIM_SQL) == [(PUBLISH, TENANT, fanout.ACTOR)]
+
+
+@pytest.mark.asyncio
+async def test_give_up_with_a_claim_wordpress_already_published_records_it_and_keeps_the_claim():
+    conn, wp = _conn(_claimed_flag()), FakeWP("publish")
+    out = await fanout.give_up_republish(FakePool(conn), FLAG, "lease lost", read_secret=_secret,
+                                         adapter_for=lambda creds: wp)
+    assert out["status"] == "republished" and conn.ran(fanout.UNCLAIM_SQL) == []
+    assert conn.ran(fanout.NOTICE_PAGE_SQL)[0][4] == "pages_back"
+
+
+# ── lost answer on the draft call (review 2, minor 1) ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_draft_whose_answer_was_lost_is_recorded_as_ours_on_the_retry():
+    flag = _open_flag(detail=json.dumps({fanout.DRAFT_ATTEMPT: {"before": "publish", "at": "2026-11-10T08:00:00"}}))
+    conn, wp = _draft_conn(flag), FakeWP("draft", modified="2026-11-10T08:00:01")
+    out = await _draft(conn, wp)
+    assert out["status"] == "drafted" and wp.drafted == []
+    (resolve,) = conn.ran(fanout.RESOLVE_ONE_SQL)
+    assert resolve[1] == "drafted" and json.loads(resolve[3]) == {
+        "wordpress": "drafted", "wordpress_before": "publish", "wordpress_modified_gmt": "2026-11-10T08:00:01",
+        "lost_answer": True}
+
+
+@pytest.mark.asyncio
+async def test_without_a_draft_attempt_a_draft_post_is_the_tenant_s_and_never_touched():
+    conn, wp = _draft_conn(), FakeWP("draft")
+    out = await _draft(conn, wp)
+    assert out["resolution"] == "unpublished" and wp.drafted == []
+
+
+# ── deferred while the key is off sale again (review 2, minor 2) ───────────────────────────────────────────────────
+
+def test_the_next_restore_takes_a_deferred_page_and_its_job_key_names_the_restore():
+    mark = fanout.MARK_REPUBLISH_SQL
+    assert "->> 'state' = 'deferred'" in mark and "->> 'event_key' <> $2::text" in mark
+    assert "|| ':' || left(md5($1::text), 12)" in fanout.ENQUEUE_REPUBLISH_SQL
+    assert fanout._state_for("tour_not_served") == "deferred"
+    assert fanout._state_for("request_tour_not_served") == "kept"
+
+
+def test_a_page_put_back_leaves_pages_kept_and_lists_are_kept_once():
+    sql = fanout.NOTICE_PAGE_SQL
+    assert "WHEN $5::text = 'pages_back' THEN jsonb_build_object('pages_kept'" in sql
+    assert "y ->> 'flag_id' = $3::text" in sql
+    assert "x ->> 'flag_id' = f.flag_id::text" in fanout.REPUBLISH_FLAG_SQL       # told_kept
+
+
+# ── a revert that cannot be done tells the tenant (review 2, minor 4) ──────────────────────────────────────────────
+
+def _revert_flag():
+    return _open_flag(state="resolved", resolution="restored",
+                      detail=json.dumps({fanout.DRAFT_REVERT: {"state": "pending"}}))
+
+
+@pytest.mark.asyncio
+async def test_a_refused_revert_adds_the_page_to_the_unmailed_back_on_sale_notice():
+    conn = _draft_conn(_revert_flag())
+    conn.answers[fanout.INTEGRATION_SQL] = None
+    conn.answers[fanout.NEWEST_RESTORED_NOTICE_SQL] = {
+        "notice_id": "n-1", "event_key": RESTORE_KEY, "tour_id": TOUR, "source_id": "src-1",
+        "tour_name": "Lake Walk", "summary": json.dumps({"back_on": "10 November 2026"}), "mailed_at": None}
+    out = await _draft(conn, FakeWP("draft"))
+    assert out["status"] == "revert_failed" and "mail_notice_id" not in out
+    assert conn.ran(fanout.PAGE_KEPT_SQL) == [("n-1", FLAG, PAGE)]
+    assert conn.ran(fanout.NEWEST_RESTORED_NOTICE_SQL) == [(TENANT, "src-1")]
+
+
+@pytest.mark.asyncio
+async def test_a_revert_given_up_after_the_mail_went_writes_a_follow_up_notice_to_mail():
+    conn = _draft_conn(_revert_flag())
+    conn.answers[fanout.NEWEST_RESTORED_NOTICE_SQL] = {
+        "notice_id": "n-1", "event_key": RESTORE_KEY, "tour_id": TOUR, "source_id": "src-1",
+        "tour_name": "Lake Walk", "summary": json.dumps({"back_on": "10 November 2026"}),
+        "mailed_at": datetime.now(timezone.utc)}
+    conn.answers[fanout.INSERT_NOTICE_SQL] = "n-2"
+    out = await fanout.give_up_revert(FakePool(conn), FLAG, "WP API update 502")
+    assert out["status"] == "revert_failed" and out["mail_notice_id"] == "n-2"
+    (notice,) = conn.ran(fanout.INSERT_NOTICE_SQL)
+    assert notice[3] == f"{RESTORE_KEY}#kept:{FLAG}" and notice[4] == "restored" and notice[6] == "immediate"
+    assert json.loads(notice[7]) == {"back_on": "10 November 2026", "pages_kept": [{"url": PAGE, "flag_id": FLAG}]}
+    assert json.loads(conn.ran(fanout.NOTE_SQL)[0][1])[fanout.DRAFT_REVERT]["state"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_give_up_revert_is_a_no_op_without_a_pending_revert():
+    conn = _draft_conn()
+    assert (await fanout.give_up_revert(FakePool(conn), FLAG, "x"))["reason"] == "no_pending_revert"
+    assert conn.ran(fanout.INSERT_NOTICE_SQL) == []
+
+
+@pytest.mark.asyncio
+async def test_the_draft_job_s_last_attempt_gives_up_a_pending_revert_and_mails():
+    from shared.jobs.registry import NonRetryable
+    refused = fanout.DraftRefused("draft revert: WP API update 502", permanent=False)
+    ctx_last = _ctx(attempt=4, kind=trj.DRAFT_KIND)
+    with patch.object(trj.fanout, "move_to_draft", AsyncMock(side_effect=refused)), \
+            patch.object(trj.fanout, "give_up_revert", AsyncMock(return_value={"mail_notice_id": "n-2"})) as gu, \
+            patch.object(trj, "enqueue", AsyncMock(return_value=("mail-2", True))) as enq:
+        with pytest.raises(RuntimeError):
+            await trj.run_draft(_ctx(attempt=1, kind=trj.DRAFT_KIND))
+        assert gu.await_count == 0
+        with pytest.raises(NonRetryable):
+            await trj.run_draft(ctx_last)
+    assert gu.await_count == 1 and enq.await_args.kwargs["idempotency_key"] == "tour_notice_email:n-2"
+    assert enq.await_args.args[2]["trigger"] == trj.DRAFT_KIND
 
 
 # ── the jobs ───────────────────────────────────────────────────────────────────────────────────────────────────────

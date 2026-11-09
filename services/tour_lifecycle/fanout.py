@@ -198,7 +198,8 @@ OUTSTANDING_RETIRED_SQL = """
 # touched. Marked once (the mark is the idempotency: a replay marks nothing new). Only a page this system moved from
 # `publish` to draft gets a job (`queued`): move_to_draft records `wordpress = 'drafted'`, `wordpress_before =
 # 'publish'` and the post's `wordpress_modified_gmt`. A page drafted before those were recorded is `kept` (the tenant is
-# told it stays in draft; we cannot tell it was public); anything else (not drafted by us) is `skipped`.
+# told it stays in draft; we cannot tell it was public); anything else (not drafted by us) is `skipped`. A page an
+# earlier restore `deferred` (its job found the key off sale again) is taken by the next restore of the key.
 _PUBLIC_BEFORE_SQL = ("f.detail ->> 'wordpress' = 'drafted' AND f.detail ->> 'wordpress_before' = 'publish' "
                       "AND f.detail ->> 'wordpress_modified_gmt' IS NOT NULL")
 MARK_REPUBLISH_SQL = f"""
@@ -218,20 +219,23 @@ MARK_REPUBLISH_SQL = f"""
            updated_at = now()
      WHERE f.kind = '{FLAG_KIND}' AND f.state = 'resolved' AND f.resolution = 'drafted'
        AND f.action = 'draft_after_notice' AND f.tour_id = ANY($1::uuid[])
-       AND f.event_key IN (SELECT idempotency_key FROM cycle)
-       AND NOT (f.detail ? '{REPUBLISH_MARK}')
+       AND ((f.event_key IN (SELECT idempotency_key FROM cycle) AND NOT (f.detail ? '{REPUBLISH_MARK}'))
+            -- deferred by an earlier restore whose job found the key off sale again: this restore takes it
+            OR (f.detail -> '{REPUBLISH_MARK}' ->> 'state' = 'deferred'
+                AND f.detail -> '{REPUBLISH_MARK}' ->> 'event_key' <> $2::text))
     RETURNING f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, f.external_url,
               f.detail -> '{REPUBLISH_MARK}' ->> 'state' AS state
 """
 
 # One republish job per marked page of this restore ($1), in the fan-out transaction (no enqueue lost after the
-# commit; the job key makes a replay a no-op), due now.
+# commit; the job key, flag + restore, makes a replay a no-op and lets a later restore take a deferred page), due now.
 ENQUEUE_REPUBLISH_SQL = f"""
     WITH created AS (
     INSERT INTO shared.job (kind, payload, idempotency_key, max_attempts, created_by)
     SELECT '{REPUBLISH_KIND}', jsonb_build_object('flag_id', f.flag_id::text, 'event_key', $1::text,
                                                   'trigger', 'restored'),
-           '{REPUBLISH_KIND}:' || f.flag_id::text, $2, 'system:{REPUBLISH_KIND}'
+           '{REPUBLISH_KIND}:' || f.flag_id::text || ':' || left(md5($1::text), 12), $2,
+           'system:{REPUBLISH_KIND}'
       FROM acp_shared.content_compliance_flag f
      WHERE f.kind = '{FLAG_KIND}' AND f.tour_id = ANY($3::uuid[])
        AND f.detail -> '{REPUBLISH_MARK}' ->> 'event_key' = $1
@@ -417,7 +421,7 @@ async def _restored(conn, event, tour_ids: list[str]) -> dict:
         if m["state"] == "queued":
             returning.setdefault(m["tenant_id"], []).append({"url": m["external_url"], "flag_id": m["flag_id"]})
         elif m["state"] == "kept":
-            kept.setdefault(m["tenant_id"], []).append({"url": m["external_url"]})
+            kept.setdefault(m["tenant_id"], []).append({"url": m["external_url"], "flag_id": m["flag_id"]})
     tenants = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids, key)} | had_live
     tenants |= set(returning) | set(kept)
     tenants.discard(_d.AA_TENANT)
@@ -498,6 +502,9 @@ INTEGRATION_SQL = ("SELECT secret_key FROM shared.tenant_integrations "
 # A page moved to draft after the restore had already resolved its flag (a race with the restore fan-out): published
 # again at once. The flag's detail key: {state: pending|done|failed, ...}; `pending` makes the draft job retry it.
 DRAFT_REVERT = "draft_revert"
+# Written before the draft call ({before: 'publish', at}): a retry that finds the post a draft knows the move was ours
+# (the answer was lost), so the restore can still put it back.
+DRAFT_ATTEMPT = "draft_attempt"
 
 
 class DraftRefused(Exception):
@@ -542,14 +549,16 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict
     the post is still live. Only a post WordPress says is ``publish`` is moved (a private, pending, scheduled, draft
     or trashed one is left as the tenant set it, and the flag is resolved ``unpublished``); the flag records
     ``wordpress_before = 'publish'`` and the post's ``modified_gmt`` after the move, which the restore needs to put
-    the page back. The final write holds the key's fan-out lock: when a restore resolved the flag meanwhile, the page
-    is published again at once (``detail.draft_revert``). `read_secret(name) -> dict` and
+    the page back. ``detail.draft_attempt`` is written before the draft call, so a retry after a lost answer (the post
+    is a draft now) records the move as ours. The final write holds the key's fan-out lock: when a restore resolved the
+    flag meanwhile, the page is published again at once (``detail.draft_revert``). `read_secret(name) -> dict` and
     `adapter_for(creds) -> WordPressAdapter` are injected (Secrets Manager / safe_http in the job, fakes in tests)."""
     async with pool.acquire() as conn:
         flag = await conn.fetchrow(FLAG_SQL, flag_id)
         if flag is None:
             return {"status": "skipped", "reason": "flag_not_found"}
-        if (_detail(flag["detail"]).get(DRAFT_REVERT) or {}).get("state") == "pending":
+        detail = _detail(flag["detail"])
+        if (detail.get(DRAFT_REVERT) or {}).get("state") == "pending":
             revert = True
         else:
             revert = False
@@ -581,7 +590,11 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict
     except Exception as exc:  # noqa: BLE001 — recorded on the flag, the job decides on the retry
         await _note(pool, flag_id, str(exc)[:300])
         raise DraftRefused(str(exc)[:300], permanent=False) from exc
-    if before.status != "publish":
+    lost_answer = before.status == "draft" and (detail.get(DRAFT_ATTEMPT) or {}).get("before") == "publish"
+    if lost_answer:
+        # an earlier attempt asked WordPress to draft this public post and lost the answer: the draft is ours
+        outcome, modified = "drafted", before.modified_gmt
+    elif before.status != "publish":
         # not public now (the tenant made it private / pending / a draft, scheduled or trashed it, or it is gone):
         # never touched, so a restore never publishes what was not public
         async with pool.acquire() as conn:
@@ -593,25 +606,29 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict
                     await conn.execute(MARK_UNPUBLISHED_SQL, flag["publish_id"], flag["tenant_id"], ACTOR)
         return {"status": "resolved" if done else "skipped", "resolution": "unpublished",
                 "wordpress_status": before.status}
-    try:
-        change = await adapter.draft_post(flag["external_id"])
-    except Exception as exc:  # noqa: BLE001 — recorded on the flag, the job decides on the retry
-        await _note(pool, flag_id, str(exc)[:300])
-        raise DraftRefused(str(exc)[:300], permanent=False) from exc
-    record = {"wordpress": change.outcome, "wordpress_before": "publish",
-              "wordpress_modified_gmt": change.modified_gmt}
+    else:
+        async with pool.acquire() as conn:
+            await conn.execute(NOTE_SQL, flag_id, json.dumps({DRAFT_ATTEMPT: {"before": "publish", "at": _now()}}))
+        try:
+            change = await adapter.draft_post(flag["external_id"])
+        except Exception as exc:  # noqa: BLE001 — recorded on the flag, the job decides on the retry
+            await _note(pool, flag_id, str(exc)[:300])
+            raise DraftRefused(str(exc)[:300], permanent=False) from exc
+        outcome, modified = change.outcome, change.modified_gmt
+    record = {"wordpress": outcome, "wordpress_before": "publish", "wordpress_modified_gmt": modified,
+              **({"lost_answer": True} if lost_answer else {})}
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _lock_tour_key(conn, flag["tour_id"])    # a restore fan-out of the key waits for this, or ran before
             done = await conn.fetchval(RESOLVE_ONE_SQL, flag_id, "drafted", ACTOR, json.dumps(record))
             if done:
                 await conn.execute(MARK_UNPUBLISHED_SQL, flag["publish_id"], flag["tenant_id"], ACTOR)
-            elif change.outcome == "drafted":
+            elif outcome == "drafted":
                 await conn.execute(NOTE_SQL, flag_id, json.dumps({**record, DRAFT_REVERT: {"state": "pending"}}))
     if done:
-        return {"status": "drafted", "outcome": change.outcome, "publish_id": flag["publish_id"],
+        return {"status": "drafted", "outcome": outcome, "publish_id": flag["publish_id"],
                 "tenant_id": flag["tenant_id"], "piece_id": flag["piece_id"]}
-    if change.outcome != "drafted":
+    if outcome != "drafted":
         return {"status": "skipped", "reason": "flag_resolved_meanwhile"}
     # the restore resolved the flag while WordPress moved the page: it was public, so it goes back at once
     return await _revert_draft(pool, flag, read_secret=read_secret, adapter_for=adapter_for)
@@ -619,12 +636,13 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict
 
 async def _revert_draft(pool, flag, *, read_secret, adapter_for) -> dict:
     """Publish again a page moved to draft after its flag was resolved (a restore won the race). Retryable; the
-    outcome is kept in ``detail.draft_revert``."""
+    outcome is kept in ``detail.draft_revert``. When it cannot be done (no connection, another site) the tenant is
+    told the page is still in draft (:func:`_tell_kept`); the draft job does the same on its last attempt
+    (:func:`give_up_revert`)."""
     flag_id = flag["flag_id"]
     adapter, refused = await _site(pool, flag, read_secret, adapter_for)
     if refused:
-        await _note_revert(pool, flag_id, {"state": "failed", "reason": refused})
-        return {"status": "revert_failed", "reason": refused}
+        return await _revert_failed(pool, flag, refused)
     try:
         now = await adapter.post_status(flag["external_id"])
         if now.status != "draft":                           # the tenant changed it since: theirs now
@@ -636,6 +654,70 @@ async def _revert_draft(pool, flag, *, read_secret, adapter_for) -> dict:
         raise DraftRefused(f"draft revert: {str(exc)[:280]}", permanent=False) from exc
     await _note_revert(pool, flag_id, {"state": "done", "wordpress": outcome, "at": _now()})
     return {"status": "reverted", "outcome": outcome, "flag_id": flag_id}
+
+
+# The newest "back on sale" notice of the tenant for the key ($2 = source_id).
+NEWEST_RESTORED_NOTICE_SQL = """
+    SELECT n.notice_id::text AS notice_id, n.event_key, n.tour_id::text AS tour_id, n.source_id, n.tour_name,
+           n.summary, n.mailed_at
+      FROM acp_shared.tenant_tour_notice n
+     WHERE n.tenant_id = $1::uuid AND n.event = 'restored' AND n.source_id = $2
+     ORDER BY n.created_at DESC, n.notice_id DESC
+     LIMIT 1
+"""
+
+# The page ($2 flag id, $3 url) joins an unmailed notice's pages_kept (once).
+PAGE_KEPT_SQL = """
+    UPDATE acp_shared.tenant_tour_notice n
+       SET summary = n.summary || jsonb_build_object('pages_kept', COALESCE(n.summary -> 'pages_kept', '[]'::jsonb)
+                                                     || jsonb_build_array(jsonb_build_object('url', $3::text,
+                                                                                            'flag_id', $2::text)))
+     WHERE n.notice_id = $1::uuid AND n.mailed_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(n.summary -> 'pages_kept', '[]'::jsonb)) x
+                        WHERE x ->> 'flag_id' = $2::text)
+    RETURNING n.notice_id::text
+"""
+
+
+async def _tell_kept(pool, flag) -> Optional[str]:
+    """Tell the tenant a page we moved to draft stays in draft although its tour is back on sale (a revert that could
+    not be done). The page joins the newest "back on sale" notice of the tenant for the key while it is unmailed (its
+    mail says so); once that mail went, a follow-up notice is written (event key ``<that notice's key>#kept:<flag>``,
+    ``immediate``) and its id returned for the caller to mail. Returns None when no new mail is needed."""
+    url = flag["external_url"]
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _lock_tour_key(conn, flag["tour_id"])
+            source_id = _key(await conn.fetchval(TOUR_KEY_SQL, flag["tour_id"]), flag["tour_id"])
+            notice = await conn.fetchrow(NEWEST_RESTORED_NOTICE_SQL, flag["tenant_id"], source_id)
+            if notice is not None and notice["mailed_at"] is None:
+                await conn.fetchval(PAGE_KEPT_SQL, notice["notice_id"], flag["flag_id"], url)
+                return None
+            base = notice["event_key"] if notice is not None else f"draft_revert:{source_id}"
+            back_on = (_detail(notice["summary"]) if notice is not None else {}).get("back_on")
+            summary = {"back_on": back_on, "pages_kept": [{"url": url, "flag_id": flag["flag_id"]}]}
+            return await conn.fetchval(
+                INSERT_NOTICE_SQL, flag["tenant_id"], notice["tour_id"] if notice is not None else flag["tour_id"],
+                source_id, f"{base}#kept:{flag['flag_id']}", "restored",
+                (notice["tour_name"] if notice is not None else None) or await _tour_name(conn, flag["tour_id"]),
+                "immediate", json.dumps(summary))
+
+
+async def _revert_failed(pool, flag, reason: str) -> dict:
+    await _note_revert(pool, flag["flag_id"], {"state": "failed", "reason": reason[:300], "at": _now()})
+    mail = await _tell_kept(pool, flag)
+    return {"status": "revert_failed", "reason": reason, "flag_id": flag["flag_id"],
+            **({"mail_notice_id": mail} if mail else {})}
+
+
+async def give_up_revert(pool, flag_id: str, reason: str) -> dict:
+    """The draft job's last attempt failed while a revert was pending: the page stays in draft and the tenant is told
+    (:func:`_tell_kept`). A no-op for any other flag."""
+    async with pool.acquire() as conn:
+        flag = await conn.fetchrow(FLAG_SQL, flag_id)
+    if flag is None or (_detail(flag["detail"]).get(DRAFT_REVERT) or {}).get("state") != "pending":
+        return {"status": "skipped", "reason": "no_pending_revert"}
+    return await _revert_failed(pool, flag, reason)
 
 
 async def _note_revert(pool, flag_id: str, revert: dict) -> None:
@@ -650,6 +732,8 @@ async def _note(pool, flag_id: str, text: str) -> None:
 
 # ── the WordPress page put back after a restore (one drafted flag) ─────────────────────────────────────────────────
 
+# told_kept: the restore's notice already went out saying this page stays in draft (the digest backstop took a page
+# whose job had not finished): the tenant was told, so it is not published later.
 REPUBLISH_FLAG_SQL = f"""
     SELECT f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, f.state, f.resolution, f.detail,
            f.tour_id::text AS tour_id, f.publish_id::text AS publish_id, f.piece_id::text AS piece_id,
@@ -658,7 +742,13 @@ REPUBLISH_FLAG_SQL = f"""
            cp.status AS piece_status, cp.angle_gate_request_id::text AS request_id,
            EXISTS (SELECT 1 FROM acp_shared.content_piece newer
                     WHERE newer.angle_gate_request_id = cp.angle_gate_request_id AND newer.tenant_id = cp.tenant_id
-                      AND newer.created_at > cp.created_at) AS superseded
+                      AND newer.created_at > cp.created_at) AS superseded,
+           EXISTS (SELECT 1 FROM acp_shared.tenant_tour_notice n
+                    WHERE n.tenant_id = f.tenant_id AND n.event_key = f.detail -> '{REPUBLISH_MARK}' ->> 'event_key'
+                      AND n.mailed_at IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(n.summary -> 'pages_kept',
+                                                                              '[]'::jsonb)) x
+                                   WHERE x ->> 'flag_id' = f.flag_id::text)) AS told_kept
       FROM acp_shared.content_compliance_flag f
       LEFT JOIN acp_shared.publish_log pl ON pl.publish_id = f.publish_id
       LEFT JOIN acp_shared.content_piece cp ON cp.piece_id = f.piece_id AND cp.tenant_id = f.tenant_id
@@ -712,16 +802,23 @@ REPUBLISH_NOTE_SQL = f"""
 """
 
 # The restored notice of the tenant ($1, event $2): the page ($3 = flag id, $4 = url) leaves `pages_returning` and,
-# when $5 names a list (`pages_back` / `pages_kept`), joins it. Returns whether the notice still waits for pages.
+# when $5 names a list (`pages_back` / `pages_kept`), joins it once. Returns whether the notice still waits for pages.
 NOTICE_PAGE_SQL = """
     UPDATE acp_shared.tenant_tour_notice n
        SET summary = n.summary
            || jsonb_build_object('pages_returning', COALESCE((
                   SELECT jsonb_agg(x) FROM jsonb_array_elements(COALESCE(n.summary -> 'pages_returning', '[]'::jsonb)) x
                    WHERE x ->> 'flag_id' IS DISTINCT FROM $3::text), '[]'::jsonb))
-           || CASE WHEN $5::text IS NULL THEN '{}'::jsonb
+           -- put back after all: no longer listed as kept (an unsent backstop may have listed it)
+           || CASE WHEN $5::text = 'pages_back' THEN jsonb_build_object('pages_kept', COALESCE((
+                  SELECT jsonb_agg(k) FROM jsonb_array_elements(COALESCE(n.summary -> 'pages_kept', '[]'::jsonb)) k
+                   WHERE k ->> 'flag_id' IS DISTINCT FROM $3::text), '[]'::jsonb)) ELSE '{}'::jsonb END
+           || CASE WHEN $5::text IS NULL
+                     OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(n.summary -> $5::text, '[]'::jsonb)) y
+                                 WHERE y ->> 'flag_id' = $3::text) THEN '{}'::jsonb
                    ELSE jsonb_build_object($5::text, COALESCE(n.summary -> $5::text, '[]'::jsonb)
-                                                     || jsonb_build_array(jsonb_build_object('url', $4::text))) END
+                                                     || jsonb_build_array(jsonb_build_object('url', $4::text,
+                                                                                            'flag_id', $3::text))) END
      WHERE n.tenant_id = $1::uuid AND n.event_key = $2 AND n.event = 'restored'
     RETURNING n.notice_id::text AS notice_id, n.delivery, n.mailed_at,
               jsonb_array_length(COALESCE(n.summary -> 'pages_returning', '[]'::jsonb)) AS waiting
@@ -731,9 +828,18 @@ NOTICE_PAGE_SQL = """
 REMOTE_SKIP = {"missing": "removed_on_site", "trash": "removed_on_site", "publish": "already_published",
                "future": "scheduled_on_site"}
 # The blockers the tenant is told about ("still in draft: we could not put it back"); the others (a deleted piece,
-# the tour off sale again, a newer post of it already live, a record changed by someone else) say nothing.
+# a newer post of it already live, a record changed by someone else) say nothing; the key off sale again defers the
+# page to the key's next restore.
 KEPT_REASONS = frozenset({"wordpress_not_connected", "other_site", "content_needs_change", "piece_not_publishable",
-                          "newer_version", "changed_on_site", "wordpress_error"})
+                          "newer_version", "changed_on_site", "wordpress_error", "request_tour_not_served",
+                          "told_kept"})
+DEFERRED_REASONS = frozenset({"tour_not_served"})
+
+
+def _state_for(reason: str) -> str:
+    if reason in DEFERRED_REASONS:
+        return "deferred"
+    return "kept" if reason in KEPT_REASONS else "skipped"
 
 
 class RepublishRefused(DraftRefused):
@@ -748,8 +854,10 @@ async def _republish_blocker(conn, flag) -> Optional[str]:
         return "not_wordpress"
     if flag["publish_status"] != "unpublished" or flag["unpublished_by"] != ACTOR:
         return "publish_record_changed"
+    if flag["told_kept"]:                                     # the tenant was told it stays in draft
+        return "told_kept"
     if not served(await conn.fetchval(TOUR_STATE_SQL, flag["tour_id"])):
-        return "tour_not_served"
+        return "tour_not_served"                              # deferred: the key's next restore takes it
     if flag["piece_status"] is None:                          # the piece was deleted
         return "piece_deleted"
     if flag["piece_status"] not in ("approved", "held"):     # the publish route's rule (AA-770)
@@ -761,7 +869,7 @@ async def _republish_blocker(conn, flag) -> Optional[str]:
         try:
             await _tl.ensure_served(conn, tours.get(flag["request_id"]), "publish a new post")
         except _tl.TourNotServedError:
-            return "tour_not_served"
+            return "request_tour_not_served"                  # e.g. a Segment Subject's tour of another key
         if await conn.fetchval(OTHER_LIVE_POST_SQL, flag["request_id"], flag["tenant_id"],
                                list(WORDPRESS_CHANNELS), flag["publish_id"]):
             return "published_again_from_studio"
@@ -800,14 +908,25 @@ async def _republish_note(pool, flag_id: str, note: dict) -> None:
         await conn.execute(REPUBLISH_NOTE_SQL, flag_id, json.dumps(note))
 
 
+def _mark(flag) -> dict:
+    return _detail(flag["detail"]).get(REPUBLISH_MARK) or {}
+
+
 def _queued(flag) -> Optional[str]:
     """None when the restore mark is there and still queued, else why the flag is not touched."""
-    mark = _detail(flag["detail"]).get(REPUBLISH_MARK) or {}
+    mark = _mark(flag)
     if not mark:
         return "not_marked"
     if mark.get("state") != "queued":
         return f"already_{mark.get('state')}"
     return None
+
+
+def _own_claim(flag) -> bool:
+    """Our claim is still in place: a run stopped (worker stop, lease lost, a DB error) between the claim and the end.
+    The next run resumes it instead of reading the live publish_log row as someone else's."""
+    return bool(_mark(flag).get("claimed_at")) and flag["publish_status"] == "published" \
+        and flag["unpublished_by"] is None
 
 
 async def _claim(pool, flag_id: str):
@@ -822,9 +941,11 @@ async def _claim(pool, flag_id: str):
             not_queued = _queued(flag)
             if not_queued:
                 return None, {"status": "skipped", "reason": not_queued}
+            if _own_claim(flag):
+                return flag, None
             blocker = await _republish_blocker(conn, flag)
             if blocker:
-                return None, await _finish(conn, flag, "kept" if blocker in KEPT_REASONS else "skipped", blocker)
+                return None, await _finish(conn, flag, _state_for(blocker), blocker)
             try:
                 async with conn.transaction():      # a savepoint: a studio publish of the same revision keeps its row
                     claimed = await conn.execute(MARK_REPUBLISHED_SQL, flag["publish_id"], flag["tenant_id"], ACTOR)
@@ -844,14 +965,61 @@ async def _unclaim(pool, flag, error: str) -> None:
             await conn.execute(REPUBLISH_NOTE_SQL, flag["flag_id"], json.dumps({"claimed_at": None, "error": error}))
 
 
+async def _publish_claimed(pool, flag, adapter, extra: Optional[dict] = None) -> dict:
+    """Ask WordPress to publish a claimed page. A lost answer is checked (status ``publish`` counts as done); a
+    refusal reverts the claim and raises :class:`RepublishRefused` (retryable)."""
+    try:
+        outcome = await adapter.set_published(flag["external_id"])
+    except Exception as exc:  # noqa: BLE001 — the answer was lost or refused: ask WordPress what it did
+        try:
+            published = (await adapter.post_status(flag["external_id"])).status == "publish"
+        except Exception:  # noqa: BLE001
+            published = False
+        if not published:
+            await _unclaim(pool, flag, str(exc)[:300])
+            raise RepublishRefused(str(exc)[:300], permanent=False) from exc
+        outcome = "published"
+    return await _finish_pool(pool, flag, "republished", None,
+                              {"wordpress": outcome, "republished_at": _now(), **(extra or {})})
+
+
+async def _resume_claim(pool, flag, *, read_secret, adapter_for) -> dict:
+    """A claim left by a stopped run: WordPress decides. ``publish`` → republished; the same draft (status ``draft``,
+    ``modified_gmt`` unchanged, the tenant not told it stays in draft) → published now; anything else → the claim is
+    reverted and the page left as it is."""
+    adapter, refused = await _site(pool, flag, read_secret, adapter_for)
+    if refused:
+        reason, _, site = refused.partition(":")
+        await _unclaim(pool, flag, reason)
+        return await _finish_pool(pool, flag, "kept", reason, {"site": site} if site else None)
+    try:
+        now = await adapter.post_status(flag["external_id"])
+    except Exception as exc:  # noqa: BLE001 — the claim stays; the next run resumes again
+        await _republish_note(pool, flag["flag_id"], {"error": str(exc)[:300]})
+        raise RepublishRefused(str(exc)[:300], permanent=False) from exc
+    if now.status == "publish":
+        return await _finish_pool(pool, flag, "republished", None,
+                                  {"wordpress": "published", "republished_at": _now(), "resumed": True})
+    recorded = _detail(flag["detail"]).get("wordpress_modified_gmt")
+    if now.status == "draft" and recorded and now.modified_gmt == recorded and not flag["told_kept"]:
+        return await _publish_claimed(pool, flag, adapter, {"resumed": True})
+    await _unclaim(pool, flag, f"resumed: WordPress says {now.status}")
+    if now.status == "draft":
+        reason = "told_kept" if flag["told_kept"] else "changed_on_site"
+        return await _finish_pool(pool, flag, "kept", reason, {"resumed": True})
+    return await _finish_pool(pool, flag, "skipped", REMOTE_SKIP.get(now.status, "changed_on_site"),
+                              {"wordpress_status": now.status, "resumed": True})
+
+
 async def republish_page(pool, flag_id: str, *, read_secret, adapter_for) -> dict:
     """Publish again the WordPress page of one ``tour_retired`` flag the retirement moved to draft, after a restore
     marked it (``detail.restore_republish`` queued). Only a page this system moved from ``publish`` to draft (the
     restore's mark checks that) and that WordPress still has as that same draft (status ``draft``, ``modified_gmt``
     unchanged since the move) is published; a page the tenant removed, published, scheduled or edited is left alone.
-    Claim first (:func:`_claim`, under the key's fan-out lock), then WordPress; a refusal reverts the claim. Every
-    ending is recorded once on the flag and on the tenant's restored notice (``pages_back`` / ``pages_kept``).
-    Transient WordPress errors raise :class:`RepublishRefused` (retryable)."""
+    Claim first (:func:`_claim`, under the key's fan-out lock), then WordPress; a refusal reverts the claim, and a run
+    stopped after the claim is resumed by the next one (:func:`_resume_claim`). Every ending is recorded once on the
+    flag and on the tenant's restored notice (``pages_back`` / ``pages_kept``); the key off sale again defers the page
+    to the key's next restore. Transient WordPress errors raise :class:`RepublishRefused` (retryable)."""
     async with pool.acquire() as conn:
         flag = await conn.fetchrow(REPUBLISH_FLAG_SQL, flag_id)
         if flag is None:
@@ -859,10 +1027,16 @@ async def republish_page(pool, flag_id: str, *, read_secret, adapter_for) -> dic
         not_queued = _queued(flag)
         if not_queued:
             return {"status": "skipped", "reason": not_queued}
-        blocker = await _republish_blocker(conn, flag)                     # cheap first pass, re-checked at the claim
-        if blocker:
-            async with conn.transaction():
-                return await _finish(conn, flag, "kept" if blocker in KEPT_REASONS else "skipped", blocker)
+        if _own_claim(flag):
+            resume = True
+        else:
+            resume = False
+            blocker = await _republish_blocker(conn, flag)                 # cheap first pass, re-checked at the claim
+            if blocker:
+                async with conn.transaction():
+                    return await _finish(conn, flag, _state_for(blocker), blocker)
+    if resume:
+        return await _resume_claim(pool, flag, read_secret=read_secret, adapter_for=adapter_for)
     adapter, refused = await _site(pool, flag, read_secret, adapter_for)
     if refused:
         reason, _, site = refused.partition(":")
@@ -882,23 +1056,13 @@ async def republish_page(pool, flag_id: str, *, read_secret, adapter_for) -> dic
     flag, done = await _claim(pool, flag_id)
     if done is not None:
         return done
-    try:
-        outcome = await adapter.set_published(flag["external_id"])
-    except Exception as exc:  # noqa: BLE001 — the answer was lost or refused: ask WordPress what it did
-        try:
-            published = (await adapter.post_status(flag["external_id"])).status == "publish"
-        except Exception:  # noqa: BLE001
-            published = False
-        if not published:
-            await _unclaim(pool, flag, str(exc)[:300])
-            raise RepublishRefused(str(exc)[:300], permanent=False) from exc
-        outcome = "published"
-    return await _finish_pool(pool, flag, "republished", None, {"wordpress": outcome, "republished_at": _now()})
+    return await _publish_claimed(pool, flag, adapter)
 
 
-async def give_up_republish(pool, flag_id: str, reason: str) -> dict:
-    """The job's last attempt failed: the page stays in draft (a claim left behind is reverted) and the tenant is told
-    (``pages_kept``)."""
+async def give_up_republish(pool, flag_id: str, reason: str, *, read_secret=None, adapter_for=None) -> dict:
+    """The job's last attempt failed: the page stays in draft and the tenant is told (``pages_kept``). A claim left
+    behind is checked with WordPress first: a page WordPress already shows as ``publish`` is recorded republished
+    (never unclaimed); otherwise the claim is reverted."""
     async with pool.acquire() as conn:
         flag = await conn.fetchrow(REPUBLISH_FLAG_SQL, flag_id)
     if flag is None:
@@ -906,7 +1070,17 @@ async def give_up_republish(pool, flag_id: str, reason: str) -> dict:
     not_queued = _queued(flag)
     if not_queued:
         return {"status": "skipped", "reason": not_queued}
-    if (_detail(flag["detail"]).get(REPUBLISH_MARK) or {}).get("claimed_at"):
+    if _own_claim(flag):
+        status = None
+        if read_secret is not None and adapter_for is not None:
+            try:
+                adapter, refused = await _site(pool, flag, read_secret, adapter_for)
+                status = None if refused else (await adapter.post_status(flag["external_id"])).status
+            except Exception:  # noqa: BLE001 — unknown: the claim is reverted below
+                status = None
+        if status == "publish":
+            return await _finish_pool(pool, flag, "republished", None,
+                                      {"wordpress": "published", "republished_at": _now(), "given_up": True})
         await _unclaim(pool, flag, reason[:300])
     return await _finish_pool(pool, flag, "kept", "wordpress_error", {"error": reason[:300]})
 
@@ -917,5 +1091,5 @@ def immediate_ids(result: dict[str, Any]) -> list[str]:
 
 __all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "REPUBLISH_ATTEMPTS", "REPUBLISH_KIND",
            "RepublishRefused", "SchemaMissing", "enqueue_due_drafts", "fan_out", "give_up_republish",
-           "immediate_ids", "move_to_draft", "notice_days", "page_message", "post_message", "republish_page",
-           "served"]
+           "give_up_revert", "immediate_ids", "move_to_draft", "notice_days", "page_message", "post_message",
+           "republish_page", "served"]

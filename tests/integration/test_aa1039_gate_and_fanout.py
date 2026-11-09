@@ -18,6 +18,7 @@ fan-out (d20).
 Every test runs in one rolled-back transaction (the seed helpers of test_aa986_l2_tour_lifecycle). No network: the
 WordPress adapter, SES and the partner pool are fakes. Invented names only.
 """
+import asyncio
 import json
 import os
 import sys
@@ -574,7 +575,7 @@ class _WPRemote:
         self.modified = "2026-11-01T08:00:00"
         self.calls = []
         self.on_draft = on_draft
-        self.fail_publish = False
+        self.fail_publish = False      # True: a refusal; "cancel": the worker stops mid-call
 
     async def draft_post(self, post_id):
         self.calls.append(("draft", post_id))
@@ -589,6 +590,8 @@ class _WPRemote:
 
     async def set_published(self, post_id):
         self.calls.append(("publish", post_id))
+        if self.fail_publish == "cancel":
+            raise asyncio.CancelledError()
         if self.fail_publish:
             raise RuntimeError("WP API update 502 returned an unexpected response")
         self.status = "publish"
@@ -629,9 +632,11 @@ async def test_restore_republishes_the_page_the_retirement_drafted(conn):
     flag_id = await _retire_and_draft(conn, w, site)
     key, result = await _restore(conn, w)
     assert result["status"] == "done" and result["pages_to_republish"] == 1 and result["republish_jobs"] == 1
-    job_key = f"{fanout.REPUBLISH_KIND}:{flag_id}"
-    job = await conn.fetchrow("SELECT kind, status, payload FROM shared.job WHERE idempotency_key = $1", job_key)
-    assert job["kind"] == trj.REPUBLISH_KIND and job["status"] == "queued"
+    job = await conn.fetchrow("SELECT idempotency_key, status, payload FROM shared.job WHERE kind = $1 "
+                              "AND payload ->> 'flag_id' = $2", trj.REPUBLISH_KIND, flag_id)
+    job_key = job["idempotency_key"]
+    assert job_key.startswith(f"{fanout.REPUBLISH_KIND}:{flag_id}:") and job["status"] == "queued"
+    assert json.loads(job["payload"])["event_key"] == key
     notice = await conn.fetchrow("SELECT notice_id::text, delivery, summary FROM acp_shared.tenant_tour_notice "
                                  "WHERE event_key = $1 AND tenant_id = $2::uuid", key, w.posting)
     assert notice["delivery"] == "immediate"
@@ -656,7 +661,8 @@ async def test_restore_republishes_the_page_the_retirement_drafted(conn):
     assert mark["state"] == "republished" and mark["event_key"] == key and mark["republished_at"]
     summary = json.loads(await conn.fetchval("SELECT summary FROM acp_shared.tenant_tour_notice "
                                              "WHERE notice_id = $1::uuid", notice["notice_id"]))
-    assert summary["pages_returning"] == [] and summary["pages_back"] == [{"url": "https://agency.example/lake-walk"}]
+    assert summary["pages_returning"] == []
+    assert summary["pages_back"] == [{"url": "https://agency.example/lake-walk", "flag_id": flag_id}]
 
     second = await fanout.republish_page(l2._OneConnPool(conn), flag_id, read_secret=_wp_secret,
                                          adapter_for=lambda creds: site)
@@ -742,7 +748,7 @@ async def test_a_page_drafted_before_the_public_check_stays_in_draft_and_the_ten
                                           "WHERE flag_id = $1::uuid", flag_id))[fanout.REPUBLISH_MARK]
     assert mark["state"] == "kept" and mark["reason"] == "drafted_before_check"
     summary = await _summary(conn, key, w.posting)
-    assert summary["pages_kept"] == [{"url": "https://agency.example/lake-walk"}]
+    assert summary["pages_kept"] == [{"url": "https://agency.example/lake-walk", "flag_id": flag_id}]
     notice_id = await conn.fetchval("SELECT notice_id::text FROM acp_shared.tenant_tour_notice WHERE event_key = $1 "
                                     "AND tenant_id = $2::uuid", key, w.posting)
     assert notice_id in result["immediate_notices"]                     # nothing to wait for: mailed at once
@@ -760,7 +766,8 @@ async def test_a_draft_the_tenant_edited_since_is_kept(conn):
     assert out["status"] == "kept" and out["reason"] == "changed_on_site" and site.status == "draft"
     assert await conn.fetchval("SELECT status FROM acp_shared.publish_log WHERE publish_id = $1::uuid",
                                w.wp) == "unpublished"
-    assert (await _summary(conn, key, w.posting))["pages_kept"] == [{"url": "https://agency.example/lake-walk"}]
+    assert (await _summary(conn, key, w.posting))["pages_kept"] == [
+        {"url": "https://agency.example/lake-walk", "flag_id": flag_id}]
 
 
 @pytest.mark.asyncio
@@ -842,6 +849,90 @@ async def test_a_restore_that_resolves_the_flag_while_the_page_is_drafted_gets_i
     assert row["resolution"] == "restored" and json.loads(row["detail"])[fanout.DRAFT_REVERT]["state"] == "done"
     assert await conn.fetchval("SELECT status FROM acp_shared.publish_log WHERE publish_id = $1::uuid",
                                w.wp) == "published"
+
+
+@pytest.mark.asyncio
+async def test_a_worker_stop_after_the_claim_is_resumed_by_the_next_run(conn):
+    w = await _world(conn, "fan-resume")
+    site = _WPRemote()
+    flag_id = await _retire_and_draft(conn, w, site)
+    await _restore(conn, w)
+    site.fail_publish = "cancel"
+    with pytest.raises(asyncio.CancelledError):
+        await _republish(conn, flag_id, site)
+    row = await conn.fetchrow("SELECT status, unpublished_by FROM acp_shared.publish_log WHERE publish_id = $1::uuid",
+                              w.wp)
+    assert row["status"] == "published" and row["unpublished_by"] is None          # our claim, left behind
+    site.fail_publish = False
+    out = await _republish(conn, flag_id, site)
+    assert out["status"] == "republished" and site.status == "publish"
+    mark = json.loads(await conn.fetchval("SELECT detail FROM acp_shared.content_compliance_flag "
+                                          "WHERE flag_id = $1::uuid", flag_id))[fanout.REPUBLISH_MARK]
+    assert mark["state"] == "republished" and mark["resumed"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_page_deferred_while_the_key_is_off_sale_again_is_taken_by_the_next_restore(conn):
+    w = await _world(conn, "fan-deferred")
+    site = _WPRemote()
+    flag_id = await _retire_and_draft(conn, w, site)
+    _, first = await _restore(conn, w)
+    assert first["republish_jobs"] == 1
+    await tl.trash_master(conn, w.t.tour)                                    # off sale again before the job ran
+    out = await _republish(conn, flag_id, site)
+    assert out["status"] == "deferred" and out["reason"] == "tour_not_served" and site.status == "draft"
+    second_retire = await fanout.fan_out(l2._OneConnPool(conn), await _event_key(conn, w.t, "retired"))
+    assert second_retire["flags_created"] == 1                               # the Facebook post only
+    _, second = await _restore(conn, w)
+    assert second["pages_to_republish"] == 1 and second["republish_jobs"] == 1
+    assert await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = $1 AND payload ->> 'flag_id' = $2",
+                               fanout.REPUBLISH_KIND, flag_id) == 2
+    out2 = await _republish(conn, flag_id, site)
+    assert out2["status"] == "republished" and site.status == "publish"
+
+
+@pytest.mark.asyncio
+async def test_a_page_the_backstop_mail_said_stays_in_draft_is_not_published_later(conn):
+    w = await _world(conn, "fan-told")
+    site = _WPRemote()
+    flag_id = await _retire_and_draft(conn, w, site)
+    key, _ = await _restore(conn, w)
+    notice_id = await conn.fetchval("SELECT notice_id::text FROM acp_shared.tenant_tour_notice WHERE event_key = $1 "
+                                    "AND tenant_id = $2::uuid", key, w.posting)
+    await conn.fetchval(trj.KEEP_WAITING_SQL, notice_id)                     # the digest backstop took it
+    await conn.execute("UPDATE acp_shared.tenant_tour_notice SET mailed_at = now() WHERE notice_id = $1::uuid",
+                       notice_id)
+    out = await _republish(conn, flag_id, site)
+    assert out["status"] == "kept" and out["reason"] == "told_kept" and site.status == "draft"
+    summary = await _summary(conn, key, w.posting)
+    assert summary["pages_kept"] == [{"url": "https://agency.example/lake-walk", "flag_id": flag_id}]
+
+
+@pytest.mark.asyncio
+async def test_a_revert_that_cannot_be_done_tells_the_tenant_in_the_back_on_sale_notice(conn):
+    w = await _world(conn, "fan-race-refused")
+    pool = l2._OneConnPool(conn)
+    await conn.execute("INSERT INTO shared.tenant_integrations (tenant_id, integration_type, config, secret_key) "
+                       "VALUES ($1, 'wordpress', '{}'::jsonb, 'tenant/wp-test')", w.posting)
+    await tl.trash_master(conn, w.t.tour)
+    await fanout.fan_out(pool, await _event_key(conn, w.t, "retired"))
+    flag_id = await conn.fetchval("SELECT flag_id::text FROM acp_shared.content_compliance_flag "
+                                  "WHERE publish_id = $1::uuid", uuid.UUID(w.wp))
+    await conn.execute("UPDATE acp_shared.content_compliance_flag SET draft_due_at = now() - interval '1 minute' "
+                       "WHERE flag_id = $1::uuid", flag_id)
+
+    async def restore_and_disconnect():
+        await tl.restore_master(conn, w.t.tour)
+        await tl.activate_master(conn, w.t.tour)
+        await fanout.fan_out(pool, await _event_key(conn, w.t, "restored"))
+        await conn.execute("DELETE FROM shared.tenant_integrations WHERE tenant_id = $1", w.posting)
+
+    site = _WPRemote(on_draft=restore_and_disconnect)
+    out = await fanout.move_to_draft(pool, flag_id, read_secret=_wp_secret, adapter_for=lambda creds: site)
+    assert out["status"] == "revert_failed" and out["reason"] == "wordpress_not_connected"
+    key = await _event_key(conn, w.t, "restored")
+    assert (await _summary(conn, key, w.posting))["pages_kept"] == [
+        {"url": "https://agency.example/lake-walk", "flag_id": flag_id}]
 
 
 class _Ses:

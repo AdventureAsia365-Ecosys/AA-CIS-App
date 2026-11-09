@@ -110,7 +110,7 @@ KEEP_WAITING_SQL = """
     UPDATE acp_shared.tenant_tour_notice n
        SET summary = n.summary
            || jsonb_build_object('pages_kept', COALESCE(n.summary -> 'pages_kept', '[]'::jsonb)
-                                 || COALESCE((SELECT jsonb_agg(jsonb_build_object('url', x ->> 'url'))
+                                 || COALESCE((SELECT jsonb_agg(x)
                                                 FROM jsonb_array_elements(n.summary -> 'pages_returning') x),
                                              '[]'::jsonb))
            || jsonb_build_object('pages_returning', '[]'::jsonb)
@@ -248,10 +248,18 @@ async def run_draft(ctx: JobContext) -> dict:
     adapter_for = ctx.resources.get("wordpress") or _wordpress
     try:
         result = await fanout.move_to_draft(ctx.pool, str(flag_id), read_secret=read_secret, adapter_for=adapter_for)
-    except fanout.DraftRefused as exc:
-        if exc.permanent:
-            raise NonRetryable(f"page not moved: {exc.reason}") from exc
-        raise RuntimeError(f"page not moved yet: {exc.reason}") from exc
+    except Exception as exc:  # noqa: BLE001 — retried; on the last try a pending revert is given up (tenant told)
+        reason = exc.reason if isinstance(exc, fanout.DraftRefused) else f"{type(exc).__name__}: {exc}"[:300]
+        last = ctx.job.attempt >= ctx.job.max_attempts or getattr(exc, "permanent", False) \
+            or isinstance(exc, NonRetryable)
+        if last:
+            await _enqueue_notice_mail(ctx, await fanout.give_up_revert(ctx.pool, str(flag_id), reason))
+            raise NonRetryable(f"page not moved: {reason}") from exc
+        if isinstance(exc, fanout.DraftRefused):
+            raise RuntimeError(f"page not moved yet: {reason}") from exc
+        raise
+    if result.get("mail_notice_id"):          # a revert that could not be done: the tenant is told
+        result = {**result, "mail_job": await _enqueue_notice_mail(ctx, result)}
     if result.get("status") == "drafted":
         from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
         try:
@@ -273,9 +281,9 @@ async def _enqueue_notice_mail(ctx: JobContext, result: dict) -> Optional[str]:
     notice_id = result.get("mail_notice_id")
     if not notice_id:
         return None
-    job_id, _ = await enqueue(ctx.pool, MAIL_KIND, {"notice_id": notice_id, "trigger": REPUBLISH_KIND},
+    job_id, _ = await enqueue(ctx.pool, MAIL_KIND, {"notice_id": notice_id, "trigger": ctx.job.kind},
                               idempotency_key=f"{MAIL_KIND}:{notice_id}", parent_job_id=str(ctx.job_id),
-                              created_by=f"job:{REPUBLISH_KIND}")
+                              created_by=f"job:{ctx.job.kind}")
     return job_id
 
 
@@ -295,7 +303,8 @@ async def run_republish(ctx: JobContext) -> dict:
             or isinstance(exc, NonRetryable)
         if last:
             # the page stays in draft (a claim left behind is reverted), the tenant's mail says so and goes out
-            given_up = await fanout.give_up_republish(ctx.pool, str(flag_id), reason)
+            given_up = await fanout.give_up_republish(ctx.pool, str(flag_id), reason, read_secret=read_secret,
+                                                      adapter_for=adapter_for)
             await _enqueue_notice_mail(ctx, given_up)
             raise NonRetryable(f"page not put back: {reason}") from exc
         if isinstance(exc, fanout.DraftRefused):

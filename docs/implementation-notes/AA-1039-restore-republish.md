@@ -69,6 +69,33 @@ Second commit: fixes from an independent review (B1, M1–M4, m1–m4 below).
   `publish`. Same AA-460 rule: a non-JSON 2xx or a host error page raises.
 - **Facebook:** unchanged (notice only).
 
+### Second review (third commit)
+
+- **A claim is resumable.** A run stopped after the claim (worker stop, `CancelledError`, lease lost, a DB error after
+  WordPress published) leaves `publish_log` live with `restore_republish.claimed_at` set. The next run recognises its
+  own claim (`claimed_at` set, `publish_log` `published`, `unpublished_by` NULL) instead of reading it as
+  `publish_record_changed`, and asks WordPress: `publish` → republished (`resumed: true`); the same draft (status
+  `draft`, `modified_gmt` unchanged, the tenant not told it stays in draft) → published now; anything else → the claim
+  is reverted and the page left (kept for an edited / told draft, skipped otherwise). `give_up_republish` reads the
+  status the same way before it reverts a claim: a page WordPress shows as `publish` is recorded republished.
+- **A lost answer on the draft call.** `move_to_draft` writes `detail.draft_attempt = {before: 'publish', at}` before
+  `draft_post`; a retry that finds the post a draft with that note records the move as ours (`lost_answer: true`,
+  `modified_gmt` from the read), so the restore can still put it back.
+- **Deferred.** A republish job that finds the key off sale again records `deferred` (not `skipped`). The next restore
+  of the key marks deferred flags again (from any earlier restore), and the job key is now
+  `restored_page_republish:<flag>:<12 hex of md5(restore key)>` so that restore can enqueue its own job; a replay of
+  one restore still creates none. A Segment Subject piece whose request tour (another key) is not served is `kept`
+  (`request_tour_not_served`, the tenant is told).
+- **Told kept stays kept.** Page entries in the notice lists carry the `flag_id`. When the restore's notice was
+  mailed with the page in `pages_kept` (the digest backstop), the job does not publish it later (`kept`,
+  `told_kept`). A page put back after all is removed from `pages_kept`; a list never holds a page twice.
+- **A revert that cannot be done is told.** When the draft job's revert (M4) is refused (not connected, other site)
+  or its last attempt fails (`give_up_revert`, called by the draft job on any last-attempt failure), the page joins the
+  newest "back on sale" notice of the tenant for the key while it is unmailed; once that mail went, a follow-up
+  `restored` notice is written (event key `<that notice's key>#kept:<flag>`, `immediate`, summary `back_on` +
+  `pages_kept`) and mailed. Its event key matches no lifecycle event, so it never counts as the tenant's latest
+  "retired" notice.
+
 ## Changed
 
 - `services/tour_lifecycle/fanout.py`: `served()`; the fan-out reads the state under the lock; `_restored` marks
@@ -94,19 +121,26 @@ Second commit: fixes from an independent review (B1, M1–M4, m1–m4 below).
   page, which then follows the normal notice period. Reverted on a WordPress refusal.
 - The mail waits for the republish jobs (seconds, or until the last retry); the digest backstop sends it after 1 h
   with the waiting pages listed as still in draft, even if a late retry later succeeds.
-- A revert after a lost race (M4) that keeps failing past the draft job's attempts stays `pending` on the flag (shown
-  in admin data); nothing re-queues it automatically.
+- A revert after a lost race (M4) that keeps failing past the draft job's attempts is marked `failed` and the tenant
+  is told the page stays in draft; nothing re-queues it automatically.
+- A resumed claim publishes the same draft even if the key went off sale again after the claim: the claim made the
+  page live in `publish_log`, so a retire fan-out in between flagged it and its normal notice period applies.
+- The follow-up notice for a failed revert repeats "back on sale" in its mail (the mail template's restored section);
+  the extra line names the page still in draft.
 
 ## Should know
 
 - A permanent refusal at republish time (not connected, other site) ends the job `succeeded` with `status = kept`.
-- Tests: `tests/unit/test_aa1039_restore_republish.py` (69 tests: B1 private / pending / draft / scheduled / trashed /
+- Tests: `tests/unit/test_aa1039_restore_republish.py` (85 tests: B1 private / pending / draft / scheduled / trashed /
   gone and old flags, M1, M2, M3 claim order / revert / lost answer / unique clash / retire at the claim, M4 race and
-  retried revert, m1–m4, the WordPress calls, the mail) and eight integration tests in
-  `tests/integration/test_aa1039_gate_and_fanout.py` (end to end with one job and an idempotent replay; the tenant
-  published it themselves; older cycle not resurrected; private at draft time; old flag kept and mailed at once;
-  edited draft kept; newer version / other live post of the request; claim reverted then retried; restore wins the
-  race with the draft job). Integration ran locally on a throwaway PostgreSQL 16.
+  retried revert, m1–m4, the resumed claim after `CancelledError` and after a DB error, give-up with a published
+  claim, the lost draft answer, deferred / told-kept, the told failed revert, the WordPress calls, the mail) and
+  twelve integration tests in `tests/integration/test_aa1039_gate_and_fanout.py` (end to end with one job and an
+  idempotent replay; the tenant published it themselves; older cycle not resurrected; private at draft time; old flag
+  kept and mailed at once; edited draft kept; newer version / other live post of the request; claim reverted then
+  retried; restore wins the race with the draft job; a worker stop after the claim resumed; deferred then taken by
+  the next restore; told kept by the backstop; a refused revert told in the notice). Integration ran locally on a
+  throwaway PostgreSQL 16.
 - The WordPress adapter has no live test against a real site here; the first live check is the WordPress test site
   rehearsal (retire → draft → restore → the page is public again, `publish_log` back to `published`), plus one with
   the post set to private before the notice period ends (it must stay private).
