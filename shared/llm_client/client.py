@@ -1124,6 +1124,51 @@ def _provider_of(conn: Optional[connections.ProviderConnection]) -> Optional[str
     return conn.kind
 
 
+# S276 (lane l6): the most connections a not-sent row lists in ``quality_signal.skipped_connections``.
+_SKIPPED_CONNECTIONS_MAX = 8
+
+
+def not_sent_facts(exc: BaseException, model: str, connection_key: Optional[str] = None
+                   ) -> tuple[Optional[str], Optional[str], Optional[str], dict]:
+    """S276 (lane l6): (connection, wire id, provider, quality_signal keys) for the ledger row of ``exc`` when the
+    gateway raised it without sending anything because every deployment of ``model`` was left out:
+
+    - ``breaker.CircuitOpen`` (an open circuit, or a half-open one whose probe another call holds): marked
+      ``quality_signal.refusal = circuit_open`` (``provider_circuit.refusal_signal``: the root gateway status tool
+      counts such rows apart from errors), whether or not the caller already knows the connection
+      (``breaker.guarded`` inside an attempt does); its ``skips`` name the connections when the caller does not
+      (``circuit_error`` from an empty plan: the shadow call, a deferred route rung tried last or logged after the
+      deadline, a single-model request);
+    - ``ConnectionBudgetExceeded`` (every usable connection at its hard monthly budget): its ``connection_keys``.
+
+    The row's connection is the first skipped one (the plan's priority order), its wire id and provider those of that
+    deployment; with more than one connection skipped, ``skipped_connections`` lists them all. Before S276 these rows
+    had no connection: the expected-refusal rule (``expected_refusal``, keyed by connection) never matched them and
+    every one counted as an error. Only the exception itself is read (an aggregate route error keeps its own row
+    shape). ``connection_key`` given = only the marker is added. Never raises."""
+    try:
+        extra: dict = {}
+        keys: tuple = ()
+        if isinstance(exc, breaker.CircuitOpen):
+            from shared import provider_circuit
+            extra = provider_circuit.refusal_signal()
+            keys = tuple(dict.fromkeys(k for k, _ in (exc.skips or ()) if k))
+        elif isinstance(exc, connection_budget.ConnectionBudgetExceeded):
+            keys = tuple(dict.fromkeys(k for k in (exc.connection_keys or ()) if k))
+        if connection_key is not None or not keys:
+            return None, None, None, extra
+        if len(keys) > 1:
+            extra["skipped_connections"] = list(keys[:_SKIPPED_CONNECTIONS_MAX])
+        first = keys[0]
+        from . import deployments as deployment_registry
+        wire = next((d.wire_id for d in deployment_registry.deployments_for_sync(model, enabled_only=False)
+                     if d.connection_key == first), None)
+        return first, wire, _provider_of(connections.connection_or_builtin(first)), extra
+    except Exception as e:  # noqa: BLE001 — the row is written without these facts, as before S276
+        logger.warning("llm_not_sent_facts_failed", model=str(model)[:80], error=str(e)[:200])
+        return None, None, None, {}
+
+
 def log_gateway_failed_attempt(request: LLMRequest, exc: BaseException, *, model: str,
                                connection_key: Optional[str] = None, wire_id: Optional[str] = None,
                                provider: Optional[str] = None, latency_ms: Optional[int] = None,
@@ -1140,12 +1185,17 @@ def log_gateway_failed_attempt(request: LLMRequest, exc: BaseException, *, model
     try:
         scope = _ATTEMPT_SCOPE.get() or _scope_for(request, "writer")
         status, error_class = attempt_outcome(exc)
+        # S276 (lane l6): a deployment that was skipped, not called, still names its connection (and is marked).
+        skipped_conn, skipped_wire, skipped_provider, not_sent = not_sent_facts(exc, model, connection_key)
+        if skipped_conn is not None:
+            connection_key, wire_id, provider = skipped_conn, wire_id or skipped_wire, provider or skipped_provider
         row = gateway_failure_row(
             stage=request.stage or "unstaged", role=scope.role, model=model, status=status, error_class=error_class,
             error=f"{type(exc).__name__}: {exc}", provider=provider, connection_key=connection_key,
             latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=wire_id, prompt_hash=scope.prompt_hash,
             prompt_version=scope.prompt_version, is_shadow=bool(scope.extra.get("shadow")),
-            quality_signal_extra={**scope.extra, "position": scope.position, "route_trace": scope.trace_id})
+            quality_signal_extra={**scope.extra, "position": scope.position, "route_trace": scope.trace_id,
+                                  **not_sent})
         _in_background(record_calls, {"rows": [row]})
     except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
         logger.warning("llm_gateway_failed_attempt_log_failed", stage=request.stage, error=str(e)[:200])
