@@ -274,6 +274,10 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Label sets lists every set version with who decided its labels. Open one to read every labelled sentence: "
             + "who decided it, when and why. A tech lead can change a label there; the old one stays in the history "
             + "and the newest one counts.",
+          "Pre-filter: a sentence the panel mostly called correct, that Jev is at least 90% sure the source supports and "
+            + "that no doubting lens calls a wrong pairing of facts, can be settled without a review. Such a label shows "
+            + "as Pre-filter, leaves the queue and never counts as release evidence. It runs in shadow (report only) "
+            + "until the pre-filter switch is turned on.",
         ] },
 
         { kind: "subheading", text: "Header buttons" },
