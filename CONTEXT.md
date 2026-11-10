@@ -3287,9 +3287,20 @@ same value), which purges the TripPlanner ISR / CDN caches. 4 attempts with back
 Tenant fan-out (AA-1039 R6, root ADR 0019 d20; CIS 360): every `retired` / `restored` event also gets one
 `tour_retirement_fanout` job (`services/tour_lifecycle/fanout.py`, `services/jobs/tour_retirement_jobs.py`; same
 after-commit enqueue + 2 h sweep). `retired`: each live post of the key's tours gets a `tour_retired` row in
-`acp_shared.content_compliance_flag` (WordPress: `draft_after_notice`, the page goes to draft at `draft_due_at` =
-event + `acp_shared.tour_retirement_policy` days, default 7, through a `retired_page_draft` job the sampler enqueues
-due-now; Facebook: `notice_only`, nothing deleted); stale `requested` publish claims are closed; every derivative
+`acp_shared.content_compliance_flag`, `notice_only` by default (tech lead decision S276, ADR 0019 d20 amended:
+nothing changes on the agency's site unless it asked; WordPress and Facebook alike). Only an agency that turned on
+**Automatically move posts about a discontinued tour to draft** (`acp_shared.tour_retirement_policy.auto_draft`, CIS
+397, agency row only, off by default; `GET` / `PATCH /v1/account/tour-retirement`, owner only, 1-30 days, default 7,
+audited `tenant.tour_retirement_settings_changed`) gets WordPress `draft_after_notice`: the page goes to draft at
+`draft_due_at` = event + its days through a `retired_page_draft` job the sampler enqueues due-now; the job re-reads
+the opt-in and turns the flag `notice_only` when the agency switched it off after the flag was written. The tenant's
+bell gets one `tour.pages_to_review` row listing its live WordPress pages, and the Content studio lists every flagged
+live post (`GET /v1/publish-log/retired-pages`) with a one-click **Move to draft** for a WordPress page (`POST
+/v1/publish-log/{publish_id}/move-to-draft`: own page with an open `tour_retired` flag only, 404 otherwise; the same
+`move_to_draft` path and re-checks as the job, the tenant as `resolved_by`, audited `content_piece.moved_to_draft`;
+a repeat click replays "already a draft"). Either way the `publish_log` row is unpublished by
+`system:tour_retirement`, so the restore notice and Put back online treat both the same. Open `draft_after_notice`
+flags written before S276 are left as they are. Stale `requested` publish claims are closed; every derivative
 tenant gets an `acp_shared.tenant_tour_notice` row, mailed at once (`tour_notice_email`, SES) when it still has live
 posts, else in the daily digest (08:00 UTC). A fan-out replay re-enqueues every unmailed `immediate` notice of the
 event (mail job key `tour_notice_email:<notice_id>`), and the digest also takes an `immediate` notice left unmailed
