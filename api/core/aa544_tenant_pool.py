@@ -132,8 +132,8 @@ TENANT_NOTIFICATIONS_FLAG = "aa986:tenant_notifications_pool"  # GET /v1/notific
 # AA-814: the tenant's own Facts Entries (GET / POST / PATCH / DELETE /v1/facts). Reads and writes need CIS 229's
 # facts policies (applied), DELETE needs CIS 302 (GRANT DELETE to aa_app_user); a 302 rollback turns it off first.
 FACTS_FLAG = "aa814:facts_pool"                                # /v1/facts (list, create, edit, delete); needs 302
-# AA-1039 (option A, S275): POST /v1/publish-log/{publish_id}/put-back, the tenant's "Put back online" of a page the tour
-# retirement drafted (publish_log reads / claim / finish; the retirement flags stay on MAIN). No new grant (229).
+# AA-1039 (option A, S275): POST /v1/publish-log/{publish_id}/put-back, the tenant's "Put back online" of a page the
+# tour retirement drafted (publish_log reads / claim / finish; the retirement flags stay on MAIN). No new grant (229).
 PUT_BACK_FLAG = "aa1039:put_back_pool"                         # POST /v1/publish-log/{publish_id}/put-back
 
 # Every flag above. A new *_FLAG constant must be added here too (a unit test checks it), and to the

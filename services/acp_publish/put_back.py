@@ -89,7 +89,8 @@ ROW_SQL = """
            EXISTS (SELECT 1 FROM acp_shared.publish_log other
                      JOIN acp_shared.content_piece op ON op.piece_id = other.piece_id
                     WHERE op.angle_gate_request_id = cp.angle_gate_request_id AND other.tenant_id = pl.tenant_id
-                      AND other.publish_id <> pl.publish_id AND other.status IN ('published', 'requested')) AS other_live
+                      AND other.publish_id <> pl.publish_id
+                      AND other.status IN ('published', 'requested')) AS other_live
       FROM acp_shared.publish_log pl
       JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id AND cp.tenant_id = pl.tenant_id
       JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
