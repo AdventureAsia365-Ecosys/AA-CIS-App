@@ -169,7 +169,9 @@ def test_only_the_r2_runner_imports_the_eval_judge():
     comparison, both exec'd by hand, never imported by a pipeline; S258: the AA-729 label pack, which reads only
     `panel_source_text`, the judge's source layout uncut, and never calls the judge; S263: the AA-1026 acc2 contract
     smoke job, which sends one invented fixture through the judge's prompt and parser on stage adhoc_aa1026, by an
-    admin's request, never from a pipeline). A new importer must be a deliberate change of this test."""
+    admin's request, never from a pipeline; S275: the AA-1063 claim review service, which like the AA-729 label pack
+    reads only `panel_source_text` to rebuild the source an admin reviews, and never calls the judge). A new importer
+    must be a deliberate change of this test."""
     importers = set()
     for top in ("api", "services", "shared", "worker", "scripts"):
         for f in (REPO / top).rglob("*.py"):
@@ -177,7 +179,7 @@ def test_only_the_r2_runner_imports_the_eval_judge():
                 importers.add(f.relative_to(REPO).as_posix())
     assert importers == {"services/writing_memory/r2.py", "scripts/aa919/kappa_diag.py",
                          "scripts/aa919/judge_compare.py", "scripts/aa729/labels.py",
-                         "services/jobs/llm_contract_smoke_job.py"}
+                         "services/jobs/llm_contract_smoke_job.py", "services/ground_truth/review.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):
