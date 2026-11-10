@@ -265,13 +265,13 @@ async def test_the_agency_moves_its_page_to_draft_with_one_click(conn):
     flag = await _flag(conn, w.page)
     assert flag["state"] == "resolved" and flag["resolution"] == "drafted"
     assert flag["resolved_by"] == f"membership:{w.member}" and json.loads(flag["detail"])["drafted_by"] == "tenant"
-    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1::uuid "
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                "AND action = 'content_piece.moved_to_draft' AND resource_id = $2 AND actor = $3",
                                w.tenant, w.piece, f"membership:{w.member}") == 1
 
     again = await _click(conn, w)                                     # double click: replay, no WordPress call
     assert again["replayed"] and again["outcome"] == "already_drafted" and len(w.site.calls) == 1
-    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1::uuid "
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                "AND action = 'content_piece.moved_to_draft'", w.tenant) == 1
     assert (await pub_mod.list_retired_pages(l2._req(conn), tenant=_tenant(w)))["data"] == []
 
@@ -324,7 +324,7 @@ async def test_settings_upsert_audit_and_the_next_retirement_follows_them(conn):
                             "WHERE tenant_id = $1::uuid", w.tenant)
     assert [(r["notice_days"], r["auto_draft"], r["updated_by"]) for r in rows] == \
         [(5, True, f"membership:{w.member}")]
-    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1::uuid "
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                "AND action = 'tenant.tour_retirement_settings_changed'", w.tenant) == 2
     assert (await settings_mod.get_tour_retirement_settings(l2._req(conn), tenant=_tenant(w, w.other)))[
         "auto_draft"] is False                                   # another agency is not opted in
