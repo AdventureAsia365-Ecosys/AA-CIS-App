@@ -4925,6 +4925,50 @@
         "title": "MetricsRunBody",
         "type": "object"
       },
+      "MoveToDraftResult": {
+        "properties": {
+          "external_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Url"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "publish_id": {
+            "title": "Publish Id",
+            "type": "string"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "publish_id",
+          "outcome",
+          "status",
+          "message"
+        ],
+        "title": "MoveToDraftResult",
+        "type": "object"
+      },
       "OffboardRequest": {
         "properties": {
           "reason": {
@@ -7074,6 +7118,104 @@
         "title": "RetentionRunRequest",
         "type": "object"
       },
+      "RetiredPage": {
+        "properties": {
+          "can_move_to_draft": {
+            "title": "Can Move To Draft",
+            "type": "boolean"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "draft_due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Due At"
+          },
+          "external_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Url"
+          },
+          "flagged_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flagged At"
+          },
+          "piece_id": {
+            "title": "Piece Id",
+            "type": "string"
+          },
+          "publish_id": {
+            "title": "Publish Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tour_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tour Name"
+          }
+        },
+        "required": [
+          "publish_id",
+          "piece_id",
+          "title",
+          "channel",
+          "can_move_to_draft"
+        ],
+        "title": "RetiredPage",
+        "type": "object"
+      },
+      "RetiredPageList": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RetiredPage"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "RetiredPageList",
+        "type": "object"
+      },
       "RetryLlmDeniedRequest": {
         "additionalProperties": false,
         "properties": {
@@ -8983,6 +9125,66 @@
           "amount_usd"
         ],
         "title": "TopupCreate",
+        "type": "object"
+      },
+      "TourRetirementSettings": {
+        "properties": {
+          "auto_draft": {
+            "title": "Auto Draft",
+            "type": "boolean"
+          },
+          "default_notice_days": {
+            "default": 7,
+            "title": "Default Notice Days",
+            "type": "integer"
+          },
+          "max_days": {
+            "default": 30,
+            "title": "Max Days",
+            "type": "integer"
+          },
+          "min_days": {
+            "default": 1,
+            "title": "Min Days",
+            "type": "integer"
+          },
+          "notice_days": {
+            "title": "Notice Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "auto_draft",
+          "notice_days"
+        ],
+        "title": "TourRetirementSettings",
+        "type": "object"
+      },
+      "TourRetirementSettingsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_draft": {
+            "title": "Auto Draft",
+            "type": "boolean"
+          },
+          "notice_days": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice Days"
+          }
+        },
+        "required": [
+          "auto_draft"
+        ],
+        "title": "TourRetirementSettingsIn",
         "type": "object"
       },
       "TourRunRequest": {
@@ -52003,6 +52205,76 @@
         ]
       }
     },
+    "/v1/account/tour-retirement": {
+      "get": {
+        "operationId": "get_tour_retirement_settings_v1_account_tour_retirement_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourRetirementSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The agency's setting for posts about a discontinued tour (automatic draft, off by default)",
+        "tags": [
+          "tenant-account"
+        ]
+      },
+      "patch": {
+        "operationId": "set_tour_retirement_settings_v1_account_tour_retirement_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TourRetirementSettingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourRetirementSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Turn automatic drafts of posts about a discontinued tour on or off (Content studio owner)",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
     "/v1/angle-gate/goals": {
       "get": {
         "operationId": "list_goals_v1_angle_gate_goals_get",
@@ -53114,7 +53386,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "The tenant's own notifications (tour no longer served / served again / pages to put back)",
+        "summary": "The tenant's own notifications (tour no longer served / served again / pages to put back / pages about a tour no longer offered)",
         "tags": [
           "tenant-notifications"
         ]
@@ -53863,6 +54135,33 @@
         ]
       }
     },
+    "/v1/publish-log/retired-pages": {
+      "get": {
+        "description": "Each live post with an open retirement notice: WordPress pages can be moved to draft with one click, Facebook\nposts are edited or removed on Facebook. Nothing on the site changes until the agency acts (or, if it turned\nautomatic drafts on, until ``draft_due_at``). Read on MAIN with the tenant condition in the statement.",
+        "operationId": "list_retired_pages_v1_publish_log_retired_pages_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetiredPageList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The tenant's live posts about a tour Adventure Asia no longer offers",
+        "tags": [
+          "publish-log"
+        ]
+      }
+    },
     "/v1/publish-log/{piece_id}/publish": {
       "post": {
         "description": "AA-458 — the real publish endpoint. No AA pre-gate (ADR-2026-038 §0.2, same principle\nAA-455's force-unpublish exists to police after the fact, not before). Ownership + approval\nverified in one query; 404 covers both \"not yours\" and \"not approved yet\" identically (no\nexistence leak). A retryable prior 'failed' publish_log row for this piece is updated in\nplace rather than accumulating duplicate failure rows; a 'published' or 'unpublished' row is\nleft untouched and a fresh attempt gets its own new row (preserves that row's real\nunpublished_at/unpublished_by audit trail — AA-455's whole reason for those columns).\n\nAA-497 — same angle_gate_option_id-first join as list_pending() above, same reason.\n\nAA-469 Việc 4 — same cp.channel-first (COALESCE onto agr.channel) read as list_pending()\nabove, same reason (angle_gate_request.channel is no longer stable after a piece is\nwritten — see set_channel()).\n\nAA-726 — idempotent: a 'requested' row is written before the remote call (one per piece\nrevision + channel, services/acp_publish/idempotency.py). The same revision already published\nis replayed from publish_log (no second post); one in flight returns 409; a retry after a\nlost response looks the post up on the remote first (WordPress by revision slug, Facebook by\nmessage) before posting.\n\nAA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code\ndefault 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only\nwhen the column exists). A NEW publish over the limit gets 429 with a clear message and a\nRetry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused.",
@@ -53952,6 +54251,55 @@
           }
         ],
         "summary": "Unpublish",
+        "tags": [
+          "publish-log"
+        ]
+      }
+    },
+    "/v1/publish-log/{publish_id}/move-to-draft": {
+      "post": {
+        "description": "One click, one WordPress call, only on the tenant's own live page with an open retirement notice (404 for any\nother page, also another tenant's: no existence leak). Re-checked first, as for an automatic draft: the tour is\nstill not offered (409), the page is still live (409), WordPress is connected and the page is on the connected\nsite (422). Idempotent: a repeat click answers \"already a draft\" (replayed) with no WordPress call. Audited as\ncontent_piece.moved_to_draft; the page can be put back online after a restore like an automatic draft.",
+        "operationId": "move_page_to_draft_v1_publish_log__publish_id__move_to_draft_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "publish_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Publish Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveToDraftResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Move to draft a WordPress page about a tour Adventure Asia no longer offers",
         "tags": [
           "publish-log"
         ]

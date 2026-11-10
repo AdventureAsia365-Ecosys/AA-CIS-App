@@ -38,6 +38,7 @@ from api.routers.v1_facts import router as v1_facts_router  # AA-814
 from api.routers.v1_account import router as v1_account_router
 from api.routers.v1_account_members import router as v1_account_members_router  # AA-978
 from api.routers.v1_account_addons import router as v1_account_addons_router  # AA-1036 R3 add-on requests
+from api.routers.v1_account_tour_retirement import router as v1_account_tour_retirement_router  # AA-1039 S276
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
 from api.routers.v1_trip_page import admin_router as admin_trip_page_router  # AA-482
 from api.routers.admin import router as admin_router
@@ -331,6 +332,7 @@ app.include_router(v1_facts_router)  # AA-814 — tenant Facts Entries: /v1/fact
 app.include_router(v1_account_router)  # AA-761 — tenant Account pages: activity trail + CSV, API key facts
 app.include_router(v1_account_members_router)  # AA-978 — tenant Account › Members (CIS 276 directory)
 app.include_router(v1_account_addons_router)  # AA-1036 R3 — the agency app's add-ons and "Request add-on"
+app.include_router(v1_account_tour_retirement_router)  # AA-1039 (S276) — automatic draft setting
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
 app.include_router(admin_tenant_provision_router)  # before admin_router: /tenants/provision is no tenant id

@@ -50,6 +50,8 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "content_piece.published": ("content", "Published a post"),
     "content_piece.unpublished": ("content", "Unpublished a post"),
     "content_piece.put_back_online": ("content", "Put a page back online"),  # AA-1039 (option A)
+    "content_piece.moved_to_draft": ("content", "Moved a page to draft"),  # AA-1039 (S276)
+    "tenant.tour_retirement_settings_changed": ("account", "Changed the discontinued tour setting"),  # AA-1039 (S276)
     "tour.rewrite_triggered": ("tours", "Requested a tour rewrite"),
     "tenant_tour_version.exported": ("tours", "Downloaded a tour"),
     "integration.disconnected": ("account", "Disconnected a channel"),
@@ -188,6 +190,15 @@ def detail_text(action: str, raw_details: Any) -> str:
         label = {"published": "online again", "already_online": "already online",
                  "changed_on_wordpress": "left as is"}.get(str(d.get("outcome") or ""), "")
         return " · ".join(p for p in (channel, label) if p)
+    if action == "content_piece.moved_to_draft":
+        return " · ".join(p for p in (channel, "tour no longer offered") if p)
+    if action == "tenant.tour_retirement_settings_changed":
+        after = d.get("after") if isinstance(d.get("after"), dict) else {}
+        if after.get("auto_draft") is True and isinstance(after.get("notice_days"), int):
+            return f"Automatic draft on, after {after['notice_days']} days"
+        if after.get("auto_draft") is False:
+            return "Automatic draft off"
+        return ""
     if action == "integration.disconnected":
         return channel
     if action in ("fact.created", "fact.updated", "fact.deleted"):

@@ -9,8 +9,13 @@ TripPlanner purge) runs :func:`fan_out`:
 ``retired`` (only while the key is still retired when the job runs):
   - every live post of a piece about the key's tours (``publish_log`` published, not unpublished; the piece's request
     is about one of the tours) gets one ``tour_retired`` row in ``acp_shared.content_compliance_flag`` (CIS 360):
-    WordPress ``draft_after_notice`` with ``draft_due_at`` = event time + the notice period
-    (``acp_shared.tour_retirement_policy``, default 7 days), Facebook ``notice_only`` (nothing is deleted);
+    ``notice_only`` by default (tech lead decision S276, ADR 0019 d20 amended: Adventure Asia never changes an
+    agency's site unless the agency asked). A WordPress page gets ``draft_after_notice`` with ``draft_due_at`` = event
+    time + the notice period only when the agency opted in (``acp_shared.tour_retirement_policy.auto_draft``, CIS 395,
+    Content studio Settings; notice period default 7 days). Facebook is always ``notice_only`` (nothing is deleted).
+    The agency can move a listed WordPress page to draft itself with one click (:func:`move_to_draft` with the
+    tenant as actor, ``POST /v1/publish-log/{publish_id}/move-to-draft``), and the bell gets one
+    ``tour.pages_to_review`` row listing its pages;
   - publish claims left ``requested`` past the stale window are closed as ``failed`` ("cancelled: ..."); new publishes
     of these pieces are already refused (409 ``tour_discontinued``, AA-986 L3), so nothing else is pending;
   - every tenant with a derivative (the tenants the service warned with ``tour.discontinued``, the bell) gets one
@@ -28,9 +33,13 @@ the tenant puts each page back with one click in the Content studio (services/ac
 One fan-out of a key runs at a time (a transaction advisory lock on the key).
 ``paused`` and ``superseded`` do nothing here (ADR 0019 d20: a paused tour gets no mail; a supersede is invisible).
 
-The WordPress move to draft runs at ``draft_due_at`` as a ``retired_page_draft`` job (:func:`move_to_draft`),
-enqueued due-now by the sweep (:data:`DUE_DRAFTS_SQL`) so no row waits queued for days in the job table (the deploy
-gate and the migration idle check count queued rows).
+The automatic WordPress move to draft (opted-in agencies only) runs at ``draft_due_at`` as a ``retired_page_draft``
+job (:func:`move_to_draft`), enqueued due-now by the sweep (:data:`DUE_DRAFTS_SQL`) so no row waits queued for days in
+the job table (the deploy gate and the migration idle check count queued rows). The job re-reads the opt-in: an agency
+that turned it off after the flag was written gets its flag turned into ``notice_only`` and its page left online.
+Either way (job or the agency's click) the ``publish_log`` row is marked ``unpublished`` by
+``system:tour_retirement`` and the flag resolved ``drafted``, so the restore notice and "Put back online" treat both
+the same; the flag's ``resolved_by`` / ``detail.drafted_by`` and the audit row say who asked.
 
 Flags are admin data: the tenant sees the bell, the e-mail and its content, never a flag (Tenant content QA ›
 Compliance). Booking and TripPlanner read the served state themselves (Booking 409 ``tour_not_served`` on quotes and
@@ -128,6 +137,17 @@ RETURNING pl.publish_id::text AS publish_id, pl.tenant_id::text AS tenant_id
 
 NOTICE_DAYS_SQL = """
     SELECT notice_days FROM acp_shared.tour_retirement_policy
+     WHERE tenant_id = $1::uuid OR tenant_id IS NULL
+     ORDER BY (tenant_id IS NULL) LIMIT 1
+"""
+
+# The migration that adds the agency opt-in (tour_retirement_policy.auto_draft). Before it: everyone is notice only.
+POLICY_MIGRATION = "395"
+# The agency's notice period (its row, else the platform row) and its own opt-in: auto_draft counts only on the agency's
+# row (the platform row can never opt everyone in; CIS 395 CHECK).
+POLICY_SQL = """
+    SELECT notice_days, (tenant_id IS NOT NULL AND auto_draft) AS auto_draft
+      FROM acp_shared.tour_retirement_policy
      WHERE tenant_id = $1::uuid OR tenant_id IS NULL
      ORDER BY (tenant_id IS NULL) LIMIT 1
 """
@@ -242,9 +262,16 @@ def _fmt_day(ts: Optional[datetime]) -> Optional[str]:
 
 
 def page_message(tour_name: str, draft_due_at: datetime) -> str:
-    return (f"Adventure Asia no longer offers {tour_name}. This page will be moved to draft on "
-            f"{_fmt_day(draft_due_at)}. You can rewrite it around another Adventure Asia tour, or remove it, before "
-            "then.")
+    """An opted-in agency's page (automatic draft on): the draft date it chose."""
+    return (f"Adventure Asia no longer offers {tour_name}. As set in your Content studio, this page will be moved to "
+            f"draft on {_fmt_day(draft_due_at)}. You can rewrite it around another Adventure Asia tour, or move it to "
+            "draft now, before then.")
+
+
+def page_notice_message(tour_name: str) -> str:
+    """The default (tech lead decision S276): the page stays online; the agency decides."""
+    return (f"Adventure Asia no longer offers {tour_name}. This page stays online: you can rewrite it around another "
+            "Adventure Asia tour, move it to draft with one click in your Content studio, or keep it.")
 
 
 def post_message(tour_name: str) -> str:
@@ -262,12 +289,25 @@ class SchemaMissing(RuntimeError):
 
 
 async def notice_days(conn, tenant_id: str) -> int:
+    return (await policy(conn, tenant_id))[0]
+
+
+async def policy(conn, tenant_id: str) -> tuple[int, bool]:
+    """(notice days, auto_draft) of the agency. Not opted in when there is no row, when only the platform row exists,
+    before CIS 395 (no column: the old notice-days read) and before CIS 360 (no table)."""
     try:
         async with conn.transaction():      # a savepoint: a missing table never aborts the caller's transaction
-            days = await conn.fetchval(NOTICE_DAYS_SQL, tenant_id)
+            row = await conn.fetchrow(POLICY_SQL, tenant_id)
+        days, auto = (row["notice_days"], bool(row["auto_draft"])) if row else (None, False)
+    except asyncpg.UndefinedColumnError:
+        try:
+            async with conn.transaction():
+                days, auto = await conn.fetchval(NOTICE_DAYS_SQL, tenant_id), False
+        except asyncpg.UndefinedTableError:
+            days, auto = None, False
     except asyncpg.UndefinedTableError:
-        days = None
-    return int(days) if days else DEFAULT_NOTICE_DAYS
+        days, auto = None, False
+    return (int(days) if days else DEFAULT_NOTICE_DAYS), auto
 
 
 async def _tour_name(conn, tour_id: str) -> str:
@@ -310,28 +350,35 @@ async def fan_out(pool, event_key: str) -> dict:
 
 
 async def _retired(conn, event, tour_ids: list[str]) -> dict:
+    from services.notifications import EventType, NotificationService
+
     tour_name = await _tour_name(conn, event["tour_id"])
     key = event["idempotency_key"]
     posts = await conn.fetch(LIVE_POSTS_SQL, tour_ids, key)
     told = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids, key)}
-    flags, per_tenant, days_cache = 0, {}, {}
+    flags, per_tenant, policies = 0, {}, {}
     for p in posts:
         tid = p["tenant_id"]
-        if tid not in days_cache:
-            days_cache[tid] = await notice_days(conn, tid)
-        if p["channel"] in WORDPRESS_CHANNELS:
-            due = event["occurred_at"] + timedelta(days=days_cache[tid])
+        if tid not in policies:
+            policies[tid] = await policy(conn, tid)
+        days, auto = policies[tid]
+        wordpress = p["channel"] in WORDPRESS_CHANNELS
+        if wordpress and auto:
+            due = event["occurred_at"] + timedelta(days=days)
             action, message = "draft_after_notice", page_message(tour_name, due)
+        elif wordpress:
+            due, action, message = None, "notice_only", page_notice_message(tour_name)
         else:
             due, action, message = None, "notice_only", post_message(tour_name)
-        detail = {"tour_name": tour_name, "reason": event["reason"], "notice_days": days_cache[tid]}
+        detail = {"tour_name": tour_name, "reason": event["reason"], "notice_days": days, "auto_draft": auto}
         flag_id = await conn.fetchval(
             INSERT_FLAG_SQL, tid, p["piece_id"], p["publish_id"], p["tour_id"], p["channel"], p["external_url"],
             json.dumps(detail), message, event["idempotency_key"], action, due)
         flags += 1 if flag_id else 0
         entry = per_tenant.setdefault(tid, {"pages": [], "posts": []})
-        if p["channel"] in WORDPRESS_CHANNELS:
-            entry["pages"].append({"url": p["external_url"], "draft_on": _fmt_day(due)})
+        if wordpress:
+            entry["pages"].append({"url": p["external_url"], "publish_id": p["publish_id"],
+                                   "draft_on": _fmt_day(due), "auto_draft": auto})
         else:
             entry["posts"].append({"url": p["external_url"], "channel": p["channel"]})
     cancelled = await conn.fetch(CANCEL_STALE_SQL, tour_ids, STALE_REQUESTED_SECONDS)
@@ -342,7 +389,7 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
     already = tenants & told - set(per_tenant)
     tenants -= already
     replacement = await _tour_name(conn, event["replaced_by_tour_id"]) if event["replaced_by_tour_id"] else None
-    immediate = []
+    immediate, review_told = [], 0
     for tid in sorted(tenants):
         entry = per_tenant.get(tid, {"pages": [], "posts": []})
         live = bool(entry["pages"] or entry["posts"])
@@ -354,8 +401,18 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
             tour_name, "immediate" if live else "digest", json.dumps(summary))
         if notice_id and live:
             immediate.append(notice_id)
+        if notice_id and entry["pages"]:    # written once with the notice: a replay inserts no notice, no second row
+            await NotificationService(conn).emit(
+                event_type=EventType.TOUR_PAGES_TO_REVIEW, entity_type="tour", entity_id=event["tour_id"],
+                tenant_id=tid, payload={"tour_name": tour_name, "event_key": event["idempotency_key"],
+                                        "pages": [{"publish_id": pg["publish_id"], "url": pg["url"],
+                                                   "draft_on": pg["draft_on"]} for pg in entry["pages"]],
+                                        "count": len(entry["pages"])})
+            review_told += 1
     return {"flags_created": flags, "live_posts": len(posts), "publishes_cancelled": len(cancelled),
-            "tenants_noticed": len(tenants), "tenants_already_told": len(already), "immediate_notices": immediate}
+            "tenants_noticed": len(tenants), "tenants_already_told": len(already), "immediate_notices": immediate,
+            "auto_draft_pages": sum(1 for t in per_tenant.values() for pg in t["pages"] if pg["auto_draft"]),
+            "tenants_told_pages_to_review": review_told}
 
 
 async def _restored(conn, event, tour_ids: list[str]) -> dict:
@@ -401,6 +458,7 @@ async def enqueue_due_drafts(pool, max_attempts: int) -> int:
 
 FLAG_SQL = f"""
     SELECT f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, f.state, f.action, f.draft_due_at,
+           f.created_at, f.detail ->> 'tour_name' AS tour_name,
            f.tour_id::text AS tour_id, f.publish_id::text AS publish_id, f.piece_id::text AS piece_id,
            pl.status AS publish_status, pl.unpublished_at, pl.external_id, pl.external_url, pl.channel
       FROM acp_shared.content_compliance_flag f
@@ -437,6 +495,21 @@ NOTE_SQL = """
      WHERE flag_id = $1::uuid
 """
 
+# The job's re-read of the opt-in (CIS 395): the agency turned automatic drafts off after this flag was written ($2 =
+# the flag's created_at). A flag of an agency that never had a row, or whose row is older, keeps its draft date (open
+# draft_after_notice flags from before S276 are left as they are, tech lead decision S276).
+OPTED_OUT_SINCE_SQL = """
+    SELECT EXISTS (SELECT 1 FROM acp_shared.tour_retirement_policy
+                    WHERE tenant_id = $1::uuid AND NOT auto_draft AND updated_at > $2) AS opted_out
+"""
+
+TO_NOTICE_ONLY_SQL = """
+    UPDATE acp_shared.content_compliance_flag
+       SET action = 'notice_only', draft_due_at = NULL, tenant_message = $2, updated_at = now(),
+           detail = detail || jsonb_build_object('auto_draft_off_at', now())
+     WHERE flag_id = $1::uuid AND state = 'open' AND action = 'draft_after_notice'
+"""
+
 MARK_UNPUBLISHED_SQL = """
     UPDATE acp_shared.publish_log SET status = 'unpublished', unpublished_at = now(), unpublished_by = $3
      WHERE publish_id = $1::uuid AND tenant_id = $2::uuid AND status = 'published'
@@ -456,21 +529,42 @@ class DraftRefused(Exception):
         self.permanent = permanent
 
 
-async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict:
-    """Move the WordPress page of one open ``draft_after_notice`` flag to draft, after re-checking that it is still
-    due: the tour is still not served, the piece's Segment Subject (if any) has no served member again (AA-1057 GAP 1),
-    the post is still live. `read_secret(name) -> dict` and
-    `adapter_for(creds) -> WordPressAdapter` are injected (Secrets Manager / safe_http in the job, fakes in tests)."""
+async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for, actor: str = ACTOR,
+                        tenant_id: Optional[str] = None) -> dict:
+    """Move the WordPress page of one open ``tour_retired`` flag to draft, after re-checking that it still should be:
+    the tour is still not served, the piece's Segment Subject (if any) has no served member again (AA-1057 GAP 1),
+    the post is still live. `read_secret(name) -> dict` and `adapter_for(creds) -> WordPressAdapter` are injected
+    (Secrets Manager / safe_http in the job and the route, fakes in tests).
+
+    Two callers. The ``retired_page_draft`` job (``actor`` = the system, ``tenant_id`` None): only a
+    ``draft_after_notice`` flag past its ``draft_due_at``, and only while the agency has not turned automatic drafts
+    off since the flag was written (else the flag becomes ``notice_only``). The agency's own click (``actor`` = the
+    tenant, ``tenant_id`` its id; tech lead decision S276): any open WordPress flag of that tenant, at once. Either way
+    the ``publish_log`` row is marked unpublished by ``system:tour_retirement`` (the retirement's draft, which the
+    restore notice and "Put back online" read) and the flag is resolved ``drafted`` by ``actor``. The flag is resolved
+    first in the final transaction (``state = 'open'``), so of two concurrent runs only one records the draft and
+    audits it; the other answers ``already_drafted``."""
     from services.acp_publish.dispatch import other_account
 
+    by_tenant = tenant_id is not None
     async with pool.acquire() as conn:
         flag = await conn.fetchrow(FLAG_SQL, flag_id)
-        if flag is None:
+        if flag is None or (by_tenant and flag["tenant_id"] != str(tenant_id)):
             return {"status": "skipped", "reason": "flag_not_found"}
-        if flag["state"] != "open" or flag["action"] != "draft_after_notice":
+        if flag["state"] != "open":
             return {"status": "skipped", "reason": f"flag_{flag['state']}"}
-        if flag["draft_due_at"] and flag["draft_due_at"] > datetime.now(flag["draft_due_at"].tzinfo):
-            return {"status": "skipped", "reason": "not_due"}
+        if by_tenant:
+            if flag["channel"] not in WORDPRESS_CHANNELS:
+                return {"status": "skipped", "reason": "not_wordpress"}
+        else:
+            if flag["action"] != "draft_after_notice":
+                return {"status": "skipped", "reason": f"flag_{flag['action']}"}
+            if flag["draft_due_at"] and flag["draft_due_at"] > datetime.now(flag["draft_due_at"].tzinfo):
+                return {"status": "skipped", "reason": "not_due"}
+            if await _opted_out_since(conn, flag["tenant_id"], flag["created_at"]):
+                await conn.execute(TO_NOTICE_ONLY_SQL, flag_id,
+                                   page_notice_message(flag["tour_name"] or "this tour"))
+                return {"status": "skipped", "reason": "auto_draft_off"}
         if (await conn.fetchval(TOUR_STATE_SQL, flag["tour_id"])) in ("served", None):
             await conn.execute(RESOLVE_ONE_SQL, flag_id, "restored", ACTOR, "{}")
             return {"status": "resolved", "resolution": "restored"}
@@ -494,12 +588,26 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for) -> dict
     except Exception as exc:  # noqa: BLE001 — recorded on the flag, the job decides on the retry
         await _note(pool, flag_id, str(exc)[:300])
         raise DraftRefused(str(exc)[:300], permanent=False) from exc
+    note = {"wordpress": outcome, "drafted_by": "tenant" if by_tenant else "auto_draft"}
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(MARK_UNPUBLISHED_SQL, flag["publish_id"], flag["tenant_id"], ACTOR)
-            await conn.execute(RESOLVE_ONE_SQL, flag_id, "drafted", ACTOR, json.dumps({"wordpress": outcome}))
+            resolved = await conn.fetchval(RESOLVE_ONE_SQL, flag_id, "drafted", actor, json.dumps(note))
+            if resolved:
+                await conn.execute(MARK_UNPUBLISHED_SQL, flag["publish_id"], flag["tenant_id"], ACTOR)
+    if not resolved:     # another run (the job, a second click) recorded it between the read and here
+        return {"status": "already_drafted", "publish_id": flag["publish_id"], "tenant_id": flag["tenant_id"],
+                "piece_id": flag["piece_id"]}
     return {"status": "drafted", "outcome": outcome, "publish_id": flag["publish_id"],
             "tenant_id": flag["tenant_id"], "piece_id": flag["piece_id"]}
+
+
+async def _opted_out_since(conn, tenant_id: str, since) -> bool:
+    """True when the agency turned automatic drafts off after ``since`` (False before CIS 395 / 360)."""
+    try:
+        async with conn.transaction():
+            return bool(await conn.fetchval(OPTED_OUT_SINCE_SQL, tenant_id, since))
+    except (asyncpg.UndefinedColumnError, asyncpg.UndefinedTableError):
+        return False
 
 
 async def _note(pool, flag_id: str, text: str) -> None:
@@ -511,5 +619,6 @@ def immediate_ids(result: dict[str, Any]) -> list[str]:
     return list(result.get("immediate_notices") or [])
 
 
-__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "SchemaMissing", "enqueue_due_drafts", "fan_out",
-           "immediate_ids", "move_to_draft", "notice_days", "page_message", "post_message"]
+__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "POLICY_MIGRATION", "SchemaMissing",
+           "enqueue_due_drafts", "fan_out", "immediate_ids", "move_to_draft", "notice_days", "page_message",
+           "page_notice_message", "policy", "post_message"]

@@ -123,8 +123,11 @@ async def _event_key(conn, t, event):
 
 
 async def _retire_draft_restore(conn, w, before_restore=None):
-    """The S274 rehearsal path: retire, the notice period ends, the page goes to draft, the tour comes back."""
+    """The S274 rehearsal path: retire, the notice period ends, the page goes to draft, the tour comes back. Since S276
+    the automatic draft needs the agency's opt-in (the drill of a click: test_aa1039_retire_notice_only)."""
     pool = l2._OneConnPool(conn)
+    await conn.execute("INSERT INTO acp_shared.tour_retirement_policy (tenant_id, notice_days, auto_draft, updated_by) "
+                       "VALUES ($1, 7, true, 'test')", w.tenant)   # S276: automatic drafts are the agency's opt-in
     await tl.trash_master(conn, w.t.tour)
     await fanout.fan_out(pool, await _event_key(conn, w.t, "retired"))
     flag_id = await conn.fetchval("SELECT flag_id::text FROM acp_shared.content_compliance_flag "

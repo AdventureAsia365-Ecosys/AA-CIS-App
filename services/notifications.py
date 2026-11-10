@@ -25,6 +25,10 @@ class EventType(str, Enum):
     # AA-1039 (option A, S275) — tenant-facing: the tour is back on sale and the tenant has WordPress pages the
     # retirement moved to draft; the bell lists them with "Put back online" (written by the restore fan-out).
     TOUR_PAGES_TO_PUT_BACK = "tour.pages_to_put_back"
+    # AA-1039 (tech lead decision S276) — tenant-facing: the tour is no longer offered and the tenant has live WordPress
+    # pages about it; nothing is changed on its site by default, the bell lists them with "Move to draft" (written by
+    # the retire fan-out).
+    TOUR_PAGES_TO_REVIEW = "tour.pages_to_review"
     MASTER_ACTIVATED = "tour.master.activated"
     MASTER_DEACTIVATED = "tour.master.deactivated"
     MASTER_TRASHED = "tour.master.trashed"
@@ -55,6 +59,7 @@ _DEFAULT_ROLES: dict[EventType, list[str]] = {
     EventType.TOUR_DISCONTINUED:   ["tenant"],   # AA-716 — tenant-facing
     EventType.TOUR_REINSTATED:     ["tenant"],   # AA-716 — tenant-facing
     EventType.TOUR_PAGES_TO_PUT_BACK: ["tenant"],  # AA-1039 — tenant-facing
+    EventType.TOUR_PAGES_TO_REVIEW: ["tenant"],  # AA-1039 (S276) — tenant-facing
     EventType.MASTER_ACTIVATED:    ["admin"],
     EventType.MASTER_DEACTIVATED:  ["admin"],
     EventType.MASTER_TRASHED:      ["admin", "content"],

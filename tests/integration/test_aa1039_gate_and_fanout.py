@@ -283,8 +283,8 @@ async def _event_key(conn, t, event):
 @pytest.mark.asyncio
 async def test_retire_flags_live_posts_and_writes_notices(conn):
     w = await _world(conn, "fan-retire")
-    await conn.execute("INSERT INTO acp_shared.tour_retirement_policy (tenant_id, notice_days, updated_by) "
-                       "VALUES ($1, 3, 'test')", w.posting)
+    await conn.execute("INSERT INTO acp_shared.tour_retirement_policy (tenant_id, notice_days, auto_draft, updated_by) "
+                       "VALUES ($1, 3, true, 'test')", w.posting)   # S276: the automatic draft is an opt-in
     out = await tl.trash_master(conn, w.t.tour)
     await tl.run_after_commit(l2._OneConnPool(conn), out)
     key = await _event_key(conn, w.t, "retired")
@@ -394,18 +394,17 @@ async def test_before_the_tables_exist_the_fanout_fails_retryable_and_is_requeue
 
 
 @pytest.mark.asyncio
-async def test_a_missing_policy_table_falls_back_to_seven_days_without_aborting_the_fanout(conn):
+async def test_a_missing_policy_table_falls_back_to_notice_only_without_aborting_the_fanout(conn):
     w = await _world(conn, "fan-nopolicy")
     await tl.trash_master(conn, w.t.tour)
     key = await _event_key(conn, w.t, "retired")
     await conn.execute("ALTER TABLE acp_shared.tour_retirement_policy RENAME TO tour_retirement_policy_hidden")
     out = await fanout.fan_out(l2._OneConnPool(conn), key)
     assert out["status"] == "done" and out["flags_created"] == 2
-    due, occurred = await conn.fetchrow(
-        "SELECT f.draft_due_at, e.occurred_at FROM acp_shared.content_compliance_flag f "
-        "JOIN gold_aa_internal.tour_lifecycle_event e ON e.idempotency_key = f.event_key "
+    action, due = await conn.fetchrow(
+        "SELECT f.action, f.draft_due_at FROM acp_shared.content_compliance_flag f "
         "WHERE f.event_key = $1 AND f.channel = 'blog'", key)
-    assert due == occurred + timedelta(days=fanout.DEFAULT_NOTICE_DAYS)
+    assert action == "notice_only" and due is None
 
 
 def _job(kind, payload, job_id=None):
@@ -506,6 +505,8 @@ async def test_the_digest_skips_a_notice_a_live_mail_job_holds(conn, monkeypatch
 @pytest.mark.asyncio
 async def test_move_to_draft_after_the_notice_period(conn):
     w = await _world(conn, "fan-draft")
+    await conn.execute("INSERT INTO acp_shared.tour_retirement_policy (tenant_id, notice_days, auto_draft, updated_by) "
+                       "VALUES ($1, 7, true, 'test')", w.posting)   # S276: automatic drafts are the agency's opt-in
     await tl.trash_master(conn, w.t.tour)
     key = await _event_key(conn, w.t, "retired")
     await fanout.fan_out(l2._OneConnPool(conn), key)
