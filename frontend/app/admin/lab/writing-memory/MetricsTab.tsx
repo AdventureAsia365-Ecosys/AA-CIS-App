@@ -9,7 +9,8 @@
 //   Soft stops    per active release with content: the codes that fired, what the job did (rolled back, kept, …) and
 //                 Keep: a reason (and the codes, or all) that stops the next run from taking it out of service.
 //   Rules / stop  expired and re-confirmed rules, and the project stop rule (two releases without improvement).
-//   Queue         the 5-10 weekly cases where the judge or the gates and a human disagree, resolved in one click.
+//   Queue         the 5-10 weekly cases where the judge or the gates and a human disagree, resolved in one click
+//                 (AA-1063: the W2 claim items are left out here; the Claim labels tab reviews them).
 // Header actions: Measure now (dry run: nothing stored or moved) and Run the weekly job now (queues the job).
 // Every action is a backend route (api/routers/admin_writing_memory.py, ai.admin); the buttons show only for a role
 // with ai.admin. Admin only: tenants never see any of this (memory: tenant sees content only).
@@ -82,7 +83,8 @@ function Queue({ canAdmin }: { canAdmin: boolean }) {
   const qc = useQueryClient();
   const wm = useWmText();
   const q = useQuery({ queryKey: ["wm", "disagreements"],
-    queryFn: () => apiGet<{ items: Disagreement[] }>(`${WM_API}/disagreements?status=open`) });
+    // AA-1063: the claim-label items (source golden_claim) are reviewed on the Claim labels tab
+    queryFn: () => apiGet<{ items: Disagreement[] }>(`${WM_API}/disagreements?status=open&exclude_source=golden_claim`) });
   const [busy, setBusy] = useState<string | null>(null);
 
   async function resolve(d: Disagreement, resolution: Resolution) {

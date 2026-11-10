@@ -109,10 +109,18 @@ async def fill_queue(conn, week: date, *, apply: bool) -> dict:
     return {"found": len(found), "added": added, "below_min": added < QUEUE_MIN, "dry_run": not apply}
 
 
-async def list_items(conn, *, status: Optional[str] = "open", limit: int = 50) -> list[dict]:
-    where, args = "true", []
+async def list_items(conn, *, status: Optional[str] = "open", limit: int = 50,
+                     exclude_source: Optional[str] = None) -> list[dict]:
+    """The queue, newest week first. `exclude_source` leaves one source out (AA-1063: the Metrics tab leaves out the
+    golden_claim items, which the Claim labels tab reviews)."""
+    conds, args = [], []
     if status:
-        where, args = "status = $1", [status]
+        args.append(status)
+        conds.append(f"status = ${len(args)}")
+    if exclude_source:
+        args.append(exclude_source)
+        conds.append(f"source <> ${len(args)}")
+    where = " AND ".join(conds) or "true"
     rows = await conn.fetch(f"SELECT {_COLUMNS} FROM shared.writing_memory_disagreement WHERE {where} "
                             f"ORDER BY week_start DESC, created_at DESC LIMIT {int(limit)}", *args)
     return [serialise(dict(r)) for r in rows]

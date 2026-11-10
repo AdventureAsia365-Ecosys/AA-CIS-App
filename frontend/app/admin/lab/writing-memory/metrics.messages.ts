@@ -48,7 +48,8 @@ export const MX = defineMessages(
     projectStop: (writers: string) => `Project stop rule: ${writers} had two releases without improvement`,
     projectOk: "Project stop rule: no writer has two releases without improvement",
     queueTitle: "Disagreement queue",
-    queueHelp: "Cases where the judge or the gates and a human label disagree, 5-10 a week. Pick who was right.",
+    queueHelp: "Cases where the judge or the gates and a human label disagree, 5-10 a week. Pick who was right. "
+      + "Claim labels (sentence by sentence) are reviewed on the Claim labels tab.",
     queueEmpty: "Nothing to review this week.",
     colSource: "Source",
     colMachine: "Judge / gates",
@@ -103,7 +104,8 @@ export const MX = defineMessages(
     projectStop: (writers: string) => `Luật dừng dự án: ${writers} có hai bản phát hành không cải thiện`,
     projectOk: "Luật dừng dự án: chưa writer nào có hai bản phát hành không cải thiện",
     queueTitle: "Hàng đợi bất đồng",
-    queueHelp: "Các trường hợp judge hoặc cổng kiểm và nhãn của người không khớp, 5-10 mỗi tuần. Chọn bên đúng.",
+    queueHelp: "Các trường hợp judge hoặc cổng kiểm và nhãn của người không khớp, 5-10 mỗi tuần. Chọn bên đúng. "
+      + "Nhãn từng câu được duyệt ở tab Nhãn câu.",
     queueEmpty: "Tuần này không có gì để xem.",
     colSource: "Nguồn",
     colMachine: "Judge / cổng",

@@ -248,6 +248,21 @@ export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
             + "đúng, Người đúng hoặc Chưa rõ.",
         ] },
 
+        { kind: "subheading", text: "Tab Nhãn câu" },
+        { kind: "paragraph", text: "Dữ liệu chuẩn theo từng câu mà các cổng chất lượng được đo trên đó. Ba góc nhìn agent "
+          + "đã gán nhãn từng câu; những câu chúng bất đồng, và một phần năm ngẫu nhiên của các câu đồng thuận, chờ ở "
+          + "Hàng chờ duyệt." },
+        { kind: "list", items: [
+          "Mỗi thẻ có câu cùng đoạn văn quanh nó, các dòng nguồn khớp, toàn bộ nguồn (mở khi cần), ba góc nhìn kèm lý "
+            + "do và đề xuất của agent với phần đáng ngờ được tô.",
+          "Đúng nghĩa là nguồn ủng hộ câu (diễn đạt lại vẫn được). Sai nghĩa là có phần không có trong nguồn hoặc trái "
+            + "nguồn. Không chắc nghĩa là nguồn không đủ để quyết. Mỗi lần bấm được lưu ngay thành nhãn của tech lead.",
+          "Đồng ý mọi đề xuất còn lại trả lời mọi câu đang mở theo bộ lọc đúng như đề xuất. Trang hỏi bấm thêm một lần "
+            + "nữa trước khi lưu.",
+          "Bộ nhãn liệt kê mọi phiên bản bộ nhãn và ai đã quyết các nhãn. Mở một bộ để đọc mọi câu đã gán nhãn: ai quyết, "
+            + "khi nào và vì sao. Tech lead có thể đổi nhãn ở đó; nhãn cũ vẫn trong lịch sử và nhãn mới nhất được tính.",
+        ] },
+
         { kind: "subheading", text: "Các nút ở đầu trang" },
         { kind: "paragraph", text: "Làm mới chỉ tải lại dữ liệu trang. Mọi nút khác xếp một job nền, và một thông báo "
           + "hiện 'Đã xếp hàng (job …); xem Nền tảng › Jobs'. Kết quả số liệu nằm ở Nền tảng › Jobs, không phải trên "

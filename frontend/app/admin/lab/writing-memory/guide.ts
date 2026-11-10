@@ -258,6 +258,24 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "Judge right, Human right or Unclear.",
         ] },
 
+        { kind: "subheading", text: "Claim labels tab" },
+        { kind: "paragraph", text: "The sentence-by-sentence ground truth the quality gates are measured on. Three "
+          + "agent lenses labelled each sentence; the sentences they disagreed on, and a random fifth of the agreed "
+          + "ones, wait in the Review queue." },
+        { kind: "list", items: [
+          "Each card shows the sentence with the text around it, the source lines that match, the full source (open "
+            + "it when needed), the three lenses with their reasons and the agent's proposal with the doubtful part "
+            + "highlighted.",
+          "Correct means the source supports the sentence (rewording is fine). Wrong means part of it is not in the "
+            + "source or contradicts it. Unsure means the source is not enough to decide. Each click is saved at once "
+            + "as a tech-lead label.",
+          "Accept every remaining proposal answers every open sentence under the filters exactly as proposed. It asks "
+            + "for a second click on the page first.",
+          "Label sets lists every set version with who decided its labels. Open one to read every labelled sentence: "
+            + "who decided it, when and why. A tech lead can change a label there; the old one stays in the history "
+            + "and the newest one counts.",
+        ] },
+
         { kind: "subheading", text: "Header buttons" },
         { kind: "paragraph", text: "Refresh only reloads the page data. Every other button queues one background job, "
           + "and a message says 'Queued (job …); see Platform › Jobs'. The result numbers are on Platform › Jobs, not "
