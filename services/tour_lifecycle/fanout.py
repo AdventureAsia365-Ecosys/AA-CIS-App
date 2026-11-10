@@ -21,7 +21,10 @@ TripPlanner purge) runs :func:`fan_out`:
   draft date stands), and a tenant whose latest notice for the tours is ``retired`` gets no second one.
 ``restored``: the open ``tour_retired`` flags of the key's tours are resolved (``restored``); every tenant whose latest
 notice for them is ``retired`` (still told "no longer offered") gets a ``restored`` notice ("back on sale"), at once
-when it had live posts flagged. A restore that follows a pause or a supersede, or a second restore, mails nobody.
+when it had live posts flagged or pages the retirement moved to draft. A restore that follows a pause or a supersede,
+or a second restore, mails nobody. A drafted page is never published again here (AA-1039 option A, S275): the notice
+lists it (``summary.pages_drafted``) and the tenant's bell gets a ``tour.pages_to_put_back`` row with the same list, so
+the tenant puts each page back with one click in the Content studio (services/acp_publish/put_back.py).
 One fan-out of a key runs at a time (a transaction advisory lock on the key).
 ``paused`` and ``superseded`` do nothing here (ADR 0019 d20: a paused tour gets no mail; a supersede is invisible).
 
@@ -177,6 +180,22 @@ OUTSTANDING_RETIRED_SQL = """
      WHERE latest.event = 'retired'
 """
 
+# AA-1039 (option A): the tours' ($1) WordPress pages the retirement moved to draft and nobody put back since: per page
+# its latest drafted flag (WordPress did draft it), the publish_log row still the retirement's draft, no click noted.
+DRAFTED_PAGES_OF_TOURS_SQL = f"""
+    WITH latest AS (
+        SELECT DISTINCT ON (f.publish_id) f.publish_id, f.tenant_id, f.detail
+          FROM acp_shared.content_compliance_flag f
+         WHERE f.kind = '{FLAG_KIND}' AND f.resolution = 'drafted' AND f.tour_id = ANY($1::uuid[])
+         ORDER BY f.publish_id, f.drafted_at DESC NULLS LAST, f.created_at DESC, f.flag_id)
+    SELECT pl.tenant_id::text AS tenant_id, pl.publish_id::text AS publish_id, pl.external_url
+      FROM latest
+      JOIN acp_shared.publish_log pl ON pl.publish_id = latest.publish_id AND pl.tenant_id = latest.tenant_id
+     WHERE COALESCE(latest.detail ->> 'wordpress', 'drafted') = 'drafted' AND NOT (latest.detail ? 'put_back')
+       AND pl.status = 'unpublished' AND pl.unpublished_by = '{ACTOR}'
+     ORDER BY pl.tenant_id, pl.published_at, pl.publish_id
+"""
+
 # One fan-out of a key at a time (two events of one key, or a replay racing the first run): the outstanding checks
 # above read what the other run writes.
 KEY_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('tour_retirement_fanout:' || $1, 0))"
@@ -322,21 +341,35 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
 
 
 async def _restored(conn, event, tour_ids: list[str]) -> dict:
+    from services.notifications import EventType, NotificationService
+
     tour_name = await _tour_name(conn, event["tour_id"])
     resolved = await conn.fetch(RESOLVE_RESTORED_SQL, tour_ids, ACTOR)
     had_live = {r["tenant_id"] for r in resolved}
     tenants = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids,
                                                          event["idempotency_key"])} | had_live
-    immediate = []
+    drafted: dict[str, list[dict]] = {}
+    for r in await conn.fetch(DRAFTED_PAGES_OF_TOURS_SQL, tour_ids):
+        drafted.setdefault(r["tenant_id"], []).append({"publish_id": r["publish_id"], "url": r["external_url"]})
+    immediate, put_back_told = [], 0
     for tid in sorted(tenants):
+        pages = drafted.get(tid, [])
+        urgent = tid in had_live or bool(pages)
         summary = {"back_on": _fmt_day(event["occurred_at"]), "flags_cleared": sum(
-            1 for r in resolved if r["tenant_id"] == tid)}
+            1 for r in resolved if r["tenant_id"] == tid), "pages_drafted": pages}
         notice_id = await conn.fetchval(
             INSERT_NOTICE_SQL, tid, event["tour_id"], event["source_id"], event["idempotency_key"], "restored",
-            tour_name, "immediate" if tid in had_live else "digest", json.dumps(summary))
-        if notice_id and tid in had_live:
+            tour_name, "immediate" if urgent else "digest", json.dumps(summary))
+        if notice_id and urgent:
             immediate.append(notice_id)
-    return {"flags_resolved": len(resolved), "tenants_noticed": len(tenants), "immediate_notices": immediate}
+        if notice_id and pages:     # written once with the notice: a replay inserts no notice, so no second bell row
+            await NotificationService(conn).emit(
+                event_type=EventType.TOUR_PAGES_TO_PUT_BACK, entity_type="tour", entity_id=event["tour_id"],
+                tenant_id=tid, payload={"tour_name": tour_name, "event_key": event["idempotency_key"],
+                                        "pages": pages, "count": len(pages)})
+            put_back_told += 1
+    return {"flags_resolved": len(resolved), "tenants_noticed": len(tenants), "immediate_notices": immediate,
+            "pages_drafted": sum(len(drafted.get(t, [])) for t in tenants), "tenants_told_put_back": put_back_told}
 
 
 async def enqueue_due_drafts(pool, max_attempts: int) -> int:

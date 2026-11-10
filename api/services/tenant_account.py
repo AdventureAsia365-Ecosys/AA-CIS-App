@@ -49,6 +49,7 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "content_piece.exported": ("content", "Downloaded a post"),
     "content_piece.published": ("content", "Published a post"),
     "content_piece.unpublished": ("content", "Unpublished a post"),
+    "content_piece.put_back_online": ("content", "Put a page back online"),  # AA-1039 (option A)
     "tour.rewrite_triggered": ("tours", "Requested a tour rewrite"),
     "tenant_tour_version.exported": ("tours", "Downloaded a tour"),
     "integration.disconnected": ("account", "Disconnected a channel"),
@@ -183,6 +184,10 @@ def detail_text(action: str, raw_details: Any) -> str:
     if action == "content_piece.exported":
         fmt = str(d.get("format") or "").upper()
         return " · ".join(p for p in (channel, fmt) if p)
+    if action == "content_piece.put_back_online":
+        label = {"published": "online again", "already_online": "already online",
+                 "changed_on_wordpress": "left as is"}.get(str(d.get("outcome") or ""), "")
+        return " · ".join(p for p in (channel, label) if p)
     if action == "integration.disconnected":
         return channel
     if action in ("fact.created", "fact.updated", "fact.deleted"):

@@ -22,6 +22,9 @@ class EventType(str, Enum):
     # admin/content-facing events for the same action.
     TOUR_DISCONTINUED = "tour.discontinued"
     TOUR_REINSTATED = "tour.reinstated"
+    # AA-1039 (option A, S275) — tenant-facing: the tour is back on sale and the tenant has WordPress pages the
+    # retirement moved to draft; the bell lists them with "Put back online" (written by the restore fan-out).
+    TOUR_PAGES_TO_PUT_BACK = "tour.pages_to_put_back"
     MASTER_ACTIVATED = "tour.master.activated"
     MASTER_DEACTIVATED = "tour.master.deactivated"
     MASTER_TRASHED = "tour.master.trashed"
@@ -51,6 +54,7 @@ _DEFAULT_ROLES: dict[EventType, list[str]] = {
     EventType.SOURCE_RESTORED:     ["admin"],
     EventType.TOUR_DISCONTINUED:   ["tenant"],   # AA-716 — tenant-facing
     EventType.TOUR_REINSTATED:     ["tenant"],   # AA-716 — tenant-facing
+    EventType.TOUR_PAGES_TO_PUT_BACK: ["tenant"],  # AA-1039 — tenant-facing
     EventType.MASTER_ACTIVATED:    ["admin"],
     EventType.MASTER_DEACTIVATED:  ["admin"],
     EventType.MASTER_TRASHED:      ["admin", "content"],

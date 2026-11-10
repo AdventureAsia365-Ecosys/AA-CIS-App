@@ -48,6 +48,7 @@ _READ_ALL_SQL = f"UPDATE shared.notifications SET is_read = true WHERE {_TENANT_
 _TITLES = {
     "tour.discontinued": "Tour no longer served",
     "tour.reinstated": "Tour served again",
+    "tour.pages_to_put_back": "Pages to put back online",   # AA-1039 (option A): the restore fan-out writes it
 }
 
 
@@ -75,7 +76,19 @@ def _message(event_type: str, p: dict) -> str:
         return msg
     if event_type == "tour.reinstated":
         return f"{name} is served by Adventure Asia again. You can work on it as before."
+    if event_type == "tour.pages_to_put_back":
+        n = len(_pages(p))
+        return (f"{name} is back on sale. {n} of your WordPress page{'s' if n != 1 else ''} moved to draft while it "
+                f"was off sale {'stay' if n != 1 else 'stays'} in draft until you put "
+                f"{'them' if n != 1 else 'it'} back online.")
     return p.get("message") or ""
+
+
+def _pages(p: dict) -> list[dict]:
+    """AA-1039: the drafted pages of a tour.pages_to_put_back row ({publish_id, url}); the action is
+    POST /v1/publish-log/{publish_id}/put-back, which answers "already online" for a page put back since."""
+    return [{"publish_id": str(x.get("publish_id")), "url": x.get("url")}
+            for x in (p.get("pages") or []) if isinstance(x, dict) and x.get("publish_id")]
 
 
 def _item(r) -> dict:
@@ -89,12 +102,13 @@ def _item(r) -> dict:
         "tour_name": p.get("tour_name"),
         "reason": p.get("reason"),
         "live_posts": int(p.get("live_posts") or 0),
+        "pages": _pages(p) if r["event_type"] == "tour.pages_to_put_back" else [],
         "is_read": bool(r["is_read"]),
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
     }
 
 
-@router.get("", summary="The tenant's own notifications (tour no longer served / served again)")
+@router.get("", summary="The tenant's own notifications (tour no longer served / served again / pages to put back)")
 async def list_notifications(
     request: Request,
     tenant=Depends(get_tenant),

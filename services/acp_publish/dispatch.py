@@ -93,6 +93,14 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str) -> tupl
     return str(result.post_id), result.post_url
 
 
+async def put_back_remote(creds: dict, external_id: str) -> tuple:
+    """AA-1039 (put back online): read the WordPress page the tour retirement drafted and publish it only when it is
+    still a draft. Returns (outcome, WordPress status), see services/acp_publish/put_back.py; raises when WordPress
+    cannot be read or refuses."""
+    from services.acp_publish.put_back import remote_put_back
+    return await remote_put_back(_wordpress(creds), external_id)
+
+
 def _site_host(url: Optional[str]) -> str:
     host = (urlparse(url or "").hostname or "").lower()
     return host[4:] if host.startswith("www.") else host
@@ -120,4 +128,4 @@ async def delete_remote(channel: str, creds: dict, external_id: str) -> str:
 
 
 __all__ = ["INTEGRATION_TYPE", "SUPPORTED_CHANNELS", "channel_display_name", "delete_remote", "find_remote",
-           "other_account", "piece_ai_mark", "publish_to_channel"]
+           "other_account", "piece_ai_mark", "publish_to_channel", "put_back_remote"]
