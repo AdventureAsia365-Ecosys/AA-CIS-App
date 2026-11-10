@@ -476,7 +476,7 @@ def central_app_caps(rows: list) -> dict:
         if not scope.startswith("app:"):
             continue
 
-        def num(key):
+        def num(key, raw=raw):
             v = raw.get(key)
             return None if v is None else round(float(v), 4)
 
