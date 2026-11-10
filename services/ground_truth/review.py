@@ -29,9 +29,12 @@ item without a new row; `pull_resolutions` skips a corrected claim; the browser'
 decision and a new correction's previous_source all come from that same row. `relabel` and `answer_item` lock the
 claim's queue items first, so the two paths never interleave.
 
-Context. Label rows hold the claim span only. The golden item the claim was exported from (shared.eval_golden_item,
-matched by sample_id and the content sha of its output as the panel saw it) gives the field text, the context, the
-evidence lines and the full source, built like `panel.export_records`.
+Context. Label rows hold the claim span only. The object the claim was cut from gives the field text, the context, the
+evidence lines and the full source, built like `panel.export_records`, found by `resolve_sources` (one resolver for the
+page, the context route and the pre-filter): the golden item (shared.eval_golden_item, by sample_id and the content sha
+of its output as the panel saw it), else the claim's own stored object of the claim's tenant: the live T9 piece, or the
+T2 version (S276: a round-2 addendum's T2 samples were never imported as golden items and their sample ids name other
+items), whose source is its Master as the T2 writer reads it.
 
 Text. Every read here returns tour or tenant text: the routes are Writing Lab text reads (LAB_TEXT_LOGGED).
 """
@@ -348,21 +351,26 @@ def source_text(writer: str, channel: Optional[str], inp: dict) -> str:
     return _flatten(src)
 
 
-def context_of(claim: dict, golden: Optional[dict]) -> dict:
-    """The context of one claim from the golden item it was exported from (None: not stored)."""
-    if golden is None:
-        return {"found": False, "before": None, "after": None, "evidence": [], "source_text": None}
-    output = panel_output(_json(golden.get("control_output")))
+def context_from(claim: dict, output: Any, source: Optional[str]) -> dict:
+    """The context of one claim in `output` (the object as the panel saw it) with `source` (the full source text)."""
     text = dict(cl.field_texts(output)).get(claim["field"]) or ""
     s, e = int(claim.get("span_start") or 0), int(claim.get("span_end") or 0)
     if text[s:e] != claim.get("claim_text"):
         i = text.find(claim.get("claim_text") or "\x00")
         s, e = (i, i + len(claim["claim_text"])) if i >= 0 else (0, 0)
-    src = source_text(golden.get("writer") or claim.get("writer"), golden.get("channel"),
-                      _json(golden.get("input")) or {})
+    src = source or ""
     return {"found": True, "before": text[max(0, s - CONTEXT_CHARS):s].strip() if e else None,
             "after": text[e:e + CONTEXT_CHARS].strip() if e else None,
             "evidence": cl.align(claim.get("claim_text") or "", src), "source_text": src}
+
+
+def context_of(claim: dict, golden: Optional[dict]) -> dict:
+    """The context of one claim from the golden item it was exported from (None: not stored)."""
+    if golden is None:
+        return {"found": False, "before": None, "after": None, "evidence": [], "source_text": None}
+    src = source_text(golden.get("writer") or claim.get("writer"), golden.get("channel"),
+                      _json(golden.get("input")) or {})
+    return context_from(claim, panel_output(_json(golden.get("control_output"))), src)
 
 
 def match_golden(claim: dict, candidates: list[dict]) -> Optional[dict]:
@@ -440,7 +448,7 @@ async def golden_candidates(conn, sample_ids: Iterable[str]) -> dict[str, list[d
     if not ids:
         return {}
     rows = await conn.fetch(
-        "SELECT sample_id, writer, channel, input, control_output, tenant_id::text AS tenant_id, trap "
+        "SELECT sample_id, writer, channel, input, control_output, tenant_id::text AS tenant_id, trap, refs "
         "FROM shared.eval_golden_item "
         "WHERE sample_id = ANY($1::text[]) AND control_output IS NOT NULL ORDER BY created_at DESC", ids)
     out: dict[str, list[dict]] = defaultdict(list)
@@ -449,10 +457,25 @@ async def golden_candidates(conn, sample_ids: Iterable[str]) -> dict[str, list[d
     return out
 
 
-# ── the source of a claim: the golden item, else the live T9 piece (the S275 pre-filter's order) ──────────────────
+# ── the source of a claim: the golden item, else the live T9 piece / T2 version (the S275 pre-filter's order) ─────
 
 LIVE_OUTPUT_KEYS = ("content_text", "seo_title", "meta_description", "slug")    # a T9 piece's object (content sha)
-SOURCE_KINDS = ("golden_sha", "live_sha", "golden_id", "live_id", "live_wi")
+# a T2 version's object: the projection of rewritten_content scripts/aa729/select_samples.freeze_t2 freezes
+T2_OUTPUT_KEYS = ("name", "subtitle", "summary", "highlights", "itineraries", "seo_title", "seo_meta", "trip_type")
+SOURCE_KINDS = ("golden_sha", "live_sha", "t2_sha", "golden_id", "live_id", "t2_id", "live_wi")
+_T2_VERSIONS_SQL = """
+    SELECT v.id::text AS version_id, v.tenant_id::text AS tenant_id, v.published_tour_id::text AS published_tour_id,
+           v.rewritten_content, v.created_at, v.fs_id::text AS fs_id
+      FROM gold_aa_internal.tenant_tour_versions v
+     WHERE v.id = ANY($1::uuid[]) AND v.tenant_id = ANY($2::uuid[])
+"""
+# when the Master text a T2 version was written from last changed: its generated_content row (regenerated or edited)
+_MASTER_AT_SQL = """
+    SELECT pt.id::text AS published_tour_id, greatest(gc.created_at, gc.edited_at) AS master_at
+      FROM gold_aa_internal.published_tours pt
+      JOIN silver_aa_internal.generated_content gc ON gc.id = pt.generated_content_id
+     WHERE pt.id = ANY($1::uuid[])
+"""
 _LIVE_PIECES_SQL = """
     SELECT cp.piece_id::text AS piece_id, cp.tenant_id::text AS tenant_id, cp.channel, cp.writer_input,
            cp.content_text, cp.seo_title, cp.meta_description, cp.slug, cp.job_id::text AS job_id,
@@ -477,6 +500,67 @@ async def live_pieces(conn, piece_ids: Iterable[str], tenant_ids: Iterable[str])
         r["out_sha"] = cl.content_sha({k: r.get(k) for k in LIVE_OUTPUT_KEYS})
         out[r["piece_id"]] = r
     return out
+
+
+def t2_object(rewritten_content: Any) -> dict:
+    """The object of a T2 version as the AA-729 freeze stored it (its content sha is the claims' content_sha256)."""
+    rc = _json(rewritten_content)
+    rc = rc if isinstance(rc, dict) else {}
+    return {k: rc.get(k) for k in T2_OUTPUT_KEYS}
+
+
+async def t2_versions(conn, version_ids: Iterable[str], tenant_ids: Iterable[str]) -> dict[str, dict]:
+    """version_id -> the stored T2 version (`output` = its object, `out_sha` = that object's content sha), only
+    versions of the named tenants."""
+    vids, tids = sorted({v for v in version_ids if v}), sorted({t for t in tenant_ids if t})
+    if not vids or not tids:
+        return {}
+    out = {}
+    for r in await conn.fetch(_T2_VERSIONS_SQL, vids, tids):
+        r = dict(r)
+        r["output"] = t2_object(r.pop("rewritten_content"))
+        r["out_sha"] = cl.content_sha(r["output"])
+        out[r["version_id"]] = r
+    return out
+
+
+async def t2_masters(conn, published_tour_ids: Iterable[str]) -> dict[str, dict]:
+    """published_tour_id -> the T2 writer's source row (the T2 job's own `_PT_SQL`: the Master text and the raw
+    source columns), with `master_at` (when its Master text last changed). One read per Master."""
+    ids = sorted({p for p in published_tour_ids if p})
+    if not ids:
+        return {}
+    from services.jobs.t2_rewrite_job import _PT_SQL
+
+    at = {r["published_tour_id"]: r["master_at"] for r in await conn.fetch(_MASTER_AT_SQL, ids)}
+    out = {}
+    for pid in ids:
+        row = await conn.fetchrow(_PT_SQL, pid)
+        if row is not None:
+            out[pid] = {**dict(row), "master_at": at.get(pid)}
+    return out
+
+
+def t2_source_text(pt: dict) -> str:
+    """The full source of a T2 claim: the T2 writer's source dict (`source_tour_dict`, the Master text) flattened as the
+    panel read a frozen T2 sample (`source_text` on {"tour": ...}, scripts/aa729/labels._source_text)."""
+    from services.jobs.t2_rewrite_job import source_tour_dict
+
+    return source_text("t2", None, {"tour": dict(source_tour_dict(pt))})
+
+
+def _refs_agree(anchor: dict, golden: dict) -> bool:
+    """A golden item matched by sample id names the claim's object: its version id / piece id do not contradict the
+    claim's (a round-2 addendum numbers its samples from 1 again, so a sample id alone can name another object)."""
+    refs = _json(golden.get("refs")) or {}
+    inp = _json(golden.get("input")) or {}
+    refs, inp = (refs if isinstance(refs, dict) else {}), (inp if isinstance(inp, dict) else {})
+    theirs_by_key = {"version_id": refs.get("version_id"), "piece_id": refs.get("piece_id") or inp.get("piece_id")}
+    for key, theirs in theirs_by_key.items():
+        mine = anchor.get(key)
+        if mine and theirs and str(mine) != str(theirs):
+            return False
+    return True
 
 
 async def live_t9_context(pool, piece: dict, wi: dict) -> tuple[dict, str]:
@@ -540,23 +624,47 @@ def _t9_panel_source(writer: str, inp: dict) -> str:
     return panel_source_text(writer, inp)
 
 
-async def claim_sources(pool, anchors: list[dict]) -> tuple[dict[str, tuple[str, str]], Counter]:
-    """claim_hash -> (the full source the panel read, kind), and the count of each kind (plus `unmatched` and
-    `source_error:<type>`), in the S275 pre-filter's order for each claim object:
+class _ConnPool:
+    """One connection as a pool (`acquire` yields it): the resolver on a caller's connection."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def one():
+            yield self.conn
+
+        return one()
+
+
+async def resolve_sources(pool, anchors: list[dict]) -> tuple[dict[str, dict], Counter]:
+    """claim_hash -> {text: the full source the panel read, kind, output: the object as the panel saw it (the claim's
+    context is read in it), t2: the version and Master of a T2 claim (else None)}, and the count of each kind (plus
+    `unmatched` and `source_error:<type>`), in the S275 pre-filter's order for each claim object:
       golden_sha  the claim's golden item (by sample id) whose panel-visible output has the claim's content sha;
       live_sha    the live T9 piece (acp_shared.content_piece by piece_id) whose object still has that content sha,
                   its writer context rebuilt (live_t9_context) and the panel's source sections read from it;
-      golden_id / live_id   the same, matched by sample id / piece id only (the text changed since);
+      t2_sha      the T2 version (gold_aa_internal.tenant_tour_versions by version_id) whose object still has that
+                  content sha; the source is its Master as the T2 writer reads it (t2_source_text);
+      golden_id / live_id / t2_id   the same, matched by sample id / piece id / version id only (the text changed
+                  since); a golden item by sample id only when its version / piece id does not contradict the claim's;
       live_wi     the piece's writer_input snapshot only (a live_* candidate whose context rebuild failed).
-    Never across tenants: a golden item or a piece of another tenant than the claim's is not a candidate."""
+    Never across tenants: a golden item, a piece or a T2 version of another tenant than the claim's is not a
+    candidate. A claim with neither a golden item nor its own stored object has no source."""
+    t2 = [a for a in anchors if a.get("writer") == "t2" and a.get("version_id")]
     async with pool.acquire() as conn:
         golden = await golden_candidates(conn, (a.get("sample_id") for a in anchors))
-        pieces = await live_pieces(conn, (a.get("piece_id") for a in anchors),
+        pieces = await live_pieces(conn, (a.get("piece_id") for a in anchors if a.get("writer") != "t2"),
                                    (a.get("tenant_id") for a in anchors))
+        versions = await t2_versions(conn, (a.get("version_id") for a in t2), (a.get("tenant_id") for a in t2))
+        masters = await t2_masters(conn, (v["published_tour_id"] for v in versions.values()))
     kinds: Counter = Counter()
-    by_object: dict[tuple, Optional[tuple[str, str]]] = {}
+    by_object: dict[tuple, Optional[dict]] = {}
     live_ctx: dict[str, Any] = {}
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, dict] = {}
 
     async def live_text(writer: str, p: dict) -> tuple[str, str]:
         if p["piece_id"] not in live_ctx:
@@ -570,56 +678,123 @@ async def claim_sources(pool, anchors: list[dict]) -> tuple[dict[str, tuple[str,
         return source_text(writer, p.get("channel"), {"context": ctx}), ""
 
     for a in anchors:
-        tenant, writer = a.get("tenant_id"), a.get("writer")
-        key = (a.get("content_sha256"), tenant, a.get("sample_id"), a.get("piece_id"), writer)
+        tenant, writer, sha = a.get("tenant_id"), a.get("writer"), a.get("content_sha256")
+        key = (sha, tenant, a.get("sample_id"), a.get("piece_id"), a.get("version_id"), writer)
         if key not in by_object:
             items = [g for g in golden.get(a.get("sample_id") or "", []) if not g.get("trap")]
-            p = pieces.get(a.get("piece_id") or "")
+            p = pieces.get(a.get("piece_id") or "") if writer in ("t9_blog", "t9_social") else None
             if p is not None and p["tenant_id"] != tenant:
                 p = None                                                      # never cross tenants
+            v = versions.get(a.get("version_id") or "") if writer == "t2" else None
+            if v is not None and (v["tenant_id"] != tenant or v["published_tour_id"] not in masters):
+                v = None                                                      # never cross tenants; no Master
             cand: list[tuple[str, dict]] = []
             g = match_golden(a, [x for x in items if x.get("tenant_id") in (None, tenant)])
             if g is not None:
                 cand.append(("golden_sha", g))
-            if p is not None and p["out_sha"] == a.get("content_sha256"):
+            if p is not None and p["out_sha"] == sha:
                 cand.append(("live_sha", p))
-            gs = next((x for x in items if x.get("tenant_id") == tenant and isinstance(_json(x.get("input")), dict)),
-                      None)
-            gs_piece = str((_json(gs.get("input")) or {}).get("piece_id") or "") if gs is not None else ""
-            if gs is not None and gs is not g and (not a.get("piece_id") or not gs_piece
-                                                   or gs_piece == a.get("piece_id")):
+            if v is not None and v["out_sha"] == sha:
+                cand.append(("t2_sha", v))
+            gs = next((x for x in items if x.get("tenant_id") == tenant and isinstance(_json(x.get("input")), dict)
+                       and _refs_agree(a, x)), None)
+            if gs is not None and gs is not g:
                 cand.append(("golden_id", gs))
-            if p is not None and p["out_sha"] != a.get("content_sha256"):
+            if p is not None and p["out_sha"] != sha:
                 cand.append(("live_id", p))
+            if v is not None and v["out_sha"] != sha:
+                cand.append(("t2_id", v))
             found = None
             for kind, src in cand:
+                t2_info = None
                 try:
                     if kind.startswith("golden"):
                         text = source_text(src.get("writer") or writer, src.get("channel"),
                                            _json(src.get("input")) or {})
+                        output = panel_output(_json(src.get("control_output")))
+                    elif kind.startswith("t2"):
+                        pt = masters[src["published_tour_id"]]
+                        text, output = t2_source_text(pt), src["output"]
+                        t2_info = {"version": src, "master": pt}
                     else:
-                        if writer not in ("t9_blog", "t9_social"):
-                            continue
                         text, fallback = await live_text(writer, src)
                         kind = fallback or kind
+                        output = {k: src.get(k) for k in LIVE_OUTPUT_KEYS}
                 except Exception as exc:  # noqa: BLE001 -- a broken stored input: try the next candidate
                     kinds[f"source_error:{type(exc).__name__}"] += 1
                     continue
                 if text and text.strip():
-                    found = (text, kind)
+                    found = {"text": text, "kind": kind, "output": output, "t2": t2_info}
                     break
             by_object[key] = found
-            kinds[found[1] if found else "unmatched"] += 1
+            kinds[found["kind"] if found else "unmatched"] += 1
         if by_object[key] is not None:
             out[a["claim_hash"]] = by_object[key]
     return out, kinds
 
 
-async def contexts(conn, claims: list[dict]) -> dict[str, dict]:
-    """claim_hash -> context_of for each claim (one golden-item read for the page)."""
-    cands = await golden_candidates(conn, (c.get("sample_id") for c in claims))
-    return {c["claim_hash"]: context_of(c, match_golden(c, cands.get(c.get("sample_id") or "", [])))
-            for c in claims}
+async def claim_sources(pool, anchors: list[dict]) -> tuple[dict[str, tuple[str, str]], Counter]:
+    """claim_hash -> (the full source the panel read, kind), and the count of each kind (`resolve_sources`)."""
+    found, kinds = await resolve_sources(pool, anchors)
+    return {h: (f["text"], f["kind"]) for h, f in found.items()}, kinds
+
+
+def _master_changed(t2_info: Optional[dict]) -> Optional[bool]:
+    """A T2 source: True when the Master text was regenerated or edited after the version was written (the source
+    shown is today's Master, maybe not the one the writer read); None for any other source."""
+    if not t2_info:
+        return None
+    at, written = t2_info["master"].get("master_at"), t2_info["version"].get("created_at")
+    return bool(at is not None and written is not None and at > written)
+
+
+async def raw_facts(conn, t2_info: dict) -> tuple[Optional[str], Optional[str]]:
+    """(text, kind) of the raw source facts of a T2 claim's tour: the FactSheet stored with the version (its fs_id,
+    the same tenant's row: 'stored'), else the sheet rebuilt from the raw tour row now ('rebuilt'); (None, None)
+    when neither exists. Shown beside the source, never part of it: the panel judged against the Master."""
+    v, pt = t2_info["version"], t2_info["master"]
+    if v.get("fs_id"):
+        import asyncpg
+
+        try:
+            async with conn.transaction():      # a savepoint: a failed read never aborts the caller's transaction
+                text = await conn.fetchval(
+                    "SELECT render_text FROM acp_shared.fact_sheet WHERE fs_id = $1::uuid AND tenant_id = $2::uuid",
+                    v["fs_id"], v["tenant_id"])
+        except asyncpg.PostgresError:           # no table / no grant: the rebuilt sheet below
+            text = None
+        if text and str(text).strip():
+            return str(text), "stored"
+    try:
+        from services.quality.factsheet import build_tour_factsheet, raw_source_tour
+
+        tour, agency = raw_source_tour(pt)
+        if not str(tour.get("name") or "").strip():
+            return None, None
+        text = build_tour_factsheet(tour, agency=agency).render()
+    except Exception:  # noqa: BLE001 -- a raw row the builder cannot read: no facts shown
+        return None, None
+    return (text, "rebuilt") if text and text.strip() else (None, None)
+
+
+async def contexts(conn, claims: list[dict], *, pool=None, with_raw_facts: bool = False) -> dict[str, dict]:
+    """claim_hash -> the context of each claim (context_from on its resolved source, `resolve_sources`) with
+    `source_kind`; a T2 claim also gets `master_changed` and, with `with_raw_facts`, `raw_facts` / `raw_facts_kind`.
+    `pool` is the app pool (the live T9 rebuild acquires connections); without one the resolver runs on `conn`."""
+    found, _kinds = await resolve_sources(pool or _ConnPool(conn), claims)
+    out = {}
+    for c in claims:
+        f = found.get(c["claim_hash"])
+        if f is None:
+            out[c["claim_hash"]] = {**context_of(c, None), "source_kind": None}
+            continue
+        ctx = {**context_from(c, f["output"], f["text"]), "source_kind": f["kind"]}
+        if f["t2"] is not None:
+            ctx["master_changed"] = _master_changed(f["t2"])
+            if with_raw_facts:
+                ctx["raw_facts"], ctx["raw_facts_kind"] = await raw_facts(conn, f["t2"])
+        out[c["claim_hash"]] = ctx
+    return out
 
 
 _ITEM_COLS = """
@@ -676,7 +851,7 @@ def _item(r: dict) -> dict:
 
 async def list_items(conn, *, set_id: Optional[str] = None, set_version: Optional[str] = None,
                      writer: Optional[str] = None, state: str = "open", proposal: Optional[str] = None,
-                     limit: int = 25, offset: int = 0, with_context: bool = True) -> dict:
+                     limit: int = 25, offset: int = 0, with_context: bool = True, pool=None) -> dict:
     """One page of golden_claim items in adjudication order, each with its claim, panel lenses, newest proposal, the
     tech-lead decision (once answered) and its context (no full source: GET .../context has it); the total and the
     facets of the whole queue (counts per set version, state, writer and proposal) for the filters."""
@@ -690,12 +865,12 @@ async def list_items(conn, *, set_id: Optional[str] = None, set_version: Optiona
         f"SELECT l.set_id, l.set_version, d.status, d.writer, coalesce(p.label, 'none') AS proposal, count(*) AS n "
         f"{_ITEM_FROM} GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3, 4, 5")]
     items = [_item(r) for r in rows]
-    await attach_claims(conn, items, with_context=with_context)
+    await attach_claims(conn, items, with_context=with_context, pool=pool)
     return {"items": items, "total": total, "limit": int(limit), "offset": int(offset),
             "facets": [{**f, "n": int(f["n"])} for f in facets]}
 
 
-async def attach_claims(conn, items: list[dict], *, with_context: bool) -> None:
+async def attach_claims(conn, items: list[dict], *, with_context: bool, pool=None) -> None:
     keys = [(i["set_id"], i["set_version"], i["claim_hash"]) for i in items]
     rows = await claim_rows(conn, keys)
     by: dict[tuple, list[dict]] = defaultdict(list)
@@ -704,7 +879,11 @@ async def attach_claims(conn, items: list[dict], *, with_context: bool) -> None:
     fixes: dict[tuple, list[dict]] = defaultdict(list)
     for x in await relabels_for(conn, keys):
         fixes[(x["set_id"], x["set_version"], x["claim_hash"])].append(x)
-    ctx = await contexts(conn, items) if with_context else {}
+    # the context is read from the claim's own label row (its tenant, piece and version ids name its object)
+    claims = [{**i, **(sorted(by[k], key=lambda r: (r["labeller_kind"] != "agent_panel", r.get("lens") or ""))[0]
+                       if by.get(k) else {})}
+              for i in items for k in [(i["set_id"], i["set_version"], i["claim_hash"])]]
+    ctx = await contexts(conn, claims, pool=pool) if with_context else {}
     for i in items:
         key = (i["set_id"], i["set_version"], i["claim_hash"])
         rs = by.get(key, [])
@@ -721,16 +900,20 @@ async def attach_claims(conn, items: list[dict], *, with_context: bool) -> None:
             i["context"] = {k: c.get(k) for k in ("found", "before", "after", "evidence")}
 
 
-async def item_context(conn, item_id: str) -> dict:
+async def item_context(conn, item_id: str, *, pool=None) -> dict:
+    """The full context of one golden_claim item: the sentence's context, evidence lines and full source, the source
+    kind, and for a T2 claim whether its Master changed since and the tour's raw source facts."""
     row = await conn.fetchrow(
         "SELECT l.claim_hash, l.claim_text, l.field, l.span_start, l.span_end, l.sample_id, l.content_sha256, "
-        "l.writer FROM shared.writing_memory_disagreement d "
+        "l.writer, l.tenant_id::text AS tenant_id, l.piece_id::text AS piece_id, l.version_id::text AS version_id "
+        "FROM shared.writing_memory_disagreement d "
         "JOIN shared.eval_claim_label l ON l.label_id = d.source_ref "
         "WHERE d.item_id = $1::uuid AND d.source = 'golden_claim'", str(item_id))
     if row is None:
         raise ReviewError(404, "not_found", "Unknown claim item")
     claim = dict(row)
-    return {"item_id": str(item_id), **(await contexts(conn, [claim]))[claim["claim_hash"]]}
+    ctx = (await contexts(conn, [claim], pool=pool, with_raw_facts=True))[claim["claim_hash"]]
+    return {"item_id": str(item_id), **ctx}
 
 
 async def answer_item(conn, item_id: str, *, answer: str, actor: str, note: Optional[str] = None,
@@ -958,5 +1141,5 @@ __all__ = ["ANSWERS", "CONFIDENCE", "MAX_BULK", "NOTE_KEYS", "PROPOSAL_FILTERS",
            "claim_entries",
            "context_of", "effective_rows", "filter_claims", "import_proposals", "item_context", "lead_row",
            "list_items", "list_sets", "lock_claim_items", "match_golden", "newest_lead", "pick_class", "read_relabels",
-           "read_relabels_soft", "relabel", "relabels_for",
-           "set_summary", "source_text"]
+           "read_relabels_soft", "relabel", "relabels_for", "resolve_sources", "context_from", "raw_facts",
+           "set_summary", "source_text", "t2_masters", "t2_object", "t2_source_text", "t2_versions"]

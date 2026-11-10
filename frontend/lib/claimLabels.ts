@@ -57,9 +57,25 @@ export interface Facet { set_id: string; set_version: string; status: string; wr
 
 export interface ReviewPage { items: ReviewItem[]; total: number; limit: number; offset: number; facets: Facet[] }
 
+/** Where the full source of a claim came from (review.SOURCE_KINDS): the golden item, the stored T9 post or the
+ * T2 agency version's Master; `*_id`: matched by id only, the written text changed since. */
+export type SourceKind = "golden_sha" | "live_sha" | "t2_sha" | "golden_id" | "live_id" | "t2_id" | "live_wi";
+
 export interface ItemContext {
   item_id: string; found: boolean; before: string | null; after: string | null; evidence: string[];
-  source_text: string | null;
+  source_text: string | null; source_kind: SourceKind | null;
+  /** T2 only: the Master changed after the agency version was written. */
+  master_changed?: boolean | null;
+  /** T2 only: the tour's raw source facts (stored with the version, or rebuilt now). */
+  raw_facts?: string | null; raw_facts_kind?: "stored" | "rebuilt" | null;
+}
+
+/** The plain-language family of a source kind and whether the written text changed after the panel read it. */
+export function sourceFamily(kind: SourceKind | null | undefined): { family: "golden" | "live" | "t2" | null;
+  changed: boolean } {
+  if (!kind) return { family: null, changed: false };
+  const family = kind.startsWith("golden") ? "golden" : kind.startsWith("t2") ? "t2" : "live";
+  return { family, changed: kind.endsWith("_id") };
 }
 
 export interface AnswerResult { item_id: string; answer: Answer; label: ClaimLabel; resolution: string; inserted: number }
