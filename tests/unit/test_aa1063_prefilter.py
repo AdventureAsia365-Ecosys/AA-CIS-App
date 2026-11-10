@@ -344,3 +344,64 @@ def test_route_passes_the_body_and_maps_refusals(client, monkeypatch):
     for bad in ({"limit": 0}, {"limit": 101}, {"max_usd": 0.6}, {"writers": ["s1"]}, {"run_id": "bad id"},
                 {"extra": 1}):
         assert client.post(URL, json=bad, headers=_h()).status_code == 422, bad
+
+
+# ── the source and the write, with the DB helpers faked ─────────────────────────────────────────────────────────────
+
+
+def test_sources_come_from_the_matching_golden_item():
+    import json
+
+    lines, rows = _rows()
+    anchor = next(r for r in rows if r["claim_hash"] == lines[0]["claim_hash"])
+    other = {**anchor, "claim_hash": "c" * 64, "sample_id": "zz-none"}
+
+    class Conn:
+        async def fetch(self, sql, *args):
+            assert "shared.eval_golden_item" in sql
+            return [{"sample_id": "zz-1063-p1", "writer": "a1", "channel": None, "input": json.dumps({"tour": TOUR}),
+                     "control_output": json.dumps(OUTPUT)}]
+
+    got = asyncio.run(pf._sources(Conn(), [anchor, other]))
+    assert set(got) == {anchor["claim_hash"]} and "Ostrin Valley" in got[anchor["claim_hash"]]
+
+
+def test_apply_writes_the_label_and_resolves_open_items(monkeypatch):
+    from services.writing_memory import disagreements as dis
+
+    lines, rows = _rows()
+    h0, h1 = lines[0]["claim_hash"], lines[1]["claim_hash"]
+    panel = {h: [r for r in rows if r["claim_hash"] == h] for h in (h0, h1)}
+    lead_for = {h1: [_lead(panel[h1][0], labeller="admin:someone")]}       # decided by a human meanwhile
+    inserted, resolved = [], []
+
+    async def lock(conn, set_id, set_version, claim_hash):
+        return [{"item_id": f"item-{claim_hash[:6]}", "status": "open"}]
+
+    async def claim_rows(conn, keys):
+        [(_s, _v, h)] = keys
+        return panel[h] + lead_for.get(h, [])
+
+    async def read_relabels(conn, set_id, set_version, claim_hash=None):
+        return []
+
+    async def insert_rows(conn, new_rows, *, apply):
+        inserted.extend(new_rows)
+        return {"inserted": len(new_rows)}
+
+    async def resolve(conn, item_id, *, resolution, actor, note=None):
+        resolved.append((item_id, resolution, actor))
+        return {"status": "resolved"}
+
+    monkeypatch.setattr(rv, "lock_claim_items", lock)
+    monkeypatch.setattr(rv, "claim_rows", claim_rows)
+    monkeypatch.setattr(rv, "read_relabels", read_relabels)
+    monkeypatch.setattr(store, "insert_rows", insert_rows)
+    monkeypatch.setattr(dis, "resolve", resolve)
+    entries = [{"claim_hash": h, "set_id": SET, "set_version": "1.0.0", "p": 0.97} for h in (h0, h1)]
+    out = asyncio.run(pf._apply(FakePool(FakeConn()), entries, run_id="pf-unit-1"))
+    assert out == {"written": 1, "resolved_items": 1, "decided_meanwhile": 1}
+    [row] = inserted
+    assert row["claim_hash"] == h0 and row["labeller"] == pf.LABELLER and row["label"] == "ok"
+    assert row["labeller_kind"] == "tech_lead" and row["adjudication"] == "final" and "pf-unit-1" in row["reason"]
+    assert resolved == [(f"item-{h0[:6]}", "judge_right", pf.LABELLER)]
