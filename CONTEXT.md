@@ -4349,10 +4349,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     code composes the contract fields after the writer (day headings numbered and ordered by the day plan, the
     source day's verbatim fact lines in place of the writer's, the SEO title fit, a code meta template when the meta
     is still out of band; the writer prompt is unchanged); the `s1` rows of
-    `services/acp_content_writing/route_table.yaml` (one per taxonomy `a1_codes` code: repair_sentence / cut /
+    `services/acp_content_writing/route_table.yaml` (one per taxonomy `a1_codes` code: cut /
     regenerate_section / rewrite / hold) drive a class router (a `rewrite` code redrafts once, 2 drafts in total) and
     a deterministic local fix that replaces flag_fix and its meta re-repair (no model call; repair contract, then the
-    detectors re-run; what is left is `manual_check`, no second grounding repair round); the judge stays off even with
+    detectors re-run; what is left is `manual_check`, no second grounding repair round); the grounding node's sentence
+    repair is a code cut too (`grounding.cut_and_recheck`, S277), so the train's path makes no `s1_flag_fix` call; the judge stays off even with
     `S1_JUDGE_LIVE=on`. Report in `generated_content.metadata.s1_train`. The publish gate is unchanged (its enforce
     switch is AA-1048). Free replay `scripts/quality/replay_aa1049_s1.py` over stored v2 Masters (export
     `export_aa1049_s1.py`, runner `replay_aa1049_s1_local.sh`).

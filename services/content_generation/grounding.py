@@ -491,14 +491,120 @@ def repair_and_recheck(generated: dict, violations: list[dict], tour: dict, *, m
             "fields": kept, "cost_usd": fixed["cost_usd"], "check": res, "contract": contract}
 
 
+def _is_fact_line(line: str) -> bool:
+    from .s1_train import _FACT_ONLY_LINE_RE
+    return bool(_FACT_ONLY_LINE_RE.match(line))
+
+
+def _day_prose_sentences(itin: str) -> dict:
+    """{day number (None before any title): prose sentences} of an itinerary string. Title lines and fact lines
+    ("Overnight: Velmora.") are not prose."""
+    counts: dict = {}
+    day = None
+    for ln in itin.splitlines():
+        m = _GEN_DAY_NUM_RE.match(ln)
+        if m:
+            day = int(m.group(1))
+            if _DAY_TITLE_RE.match(ln):
+                continue
+        if not ln.strip() or _is_fact_line(ln):
+            continue
+        counts[day] = counts.get(day, 0) + len([s for s in _SENT_SPLIT_RE.split(ln) if s.strip()])
+    return counts
+
+
+def _cut_itinerary_sentence(itin: str, sentence: str, day) -> Optional[str]:
+    """The itinerary without ``sentence`` (a prose sentence of ``day``), or None when it may not be cut: it sits in
+    a title or fact line, it is not found under that day, or its day would keep no other prose sentence."""
+    if _day_prose_sentences(itin).get(day, 0) <= 1:
+        return None
+    lines, cur = itin.splitlines(), None
+    for i, ln in enumerate(lines):
+        m = _GEN_DAY_NUM_RE.match(ln)
+        if m:
+            cur = int(m.group(1))
+            if _DAY_TITLE_RE.match(ln):
+                continue
+        if cur != day or _is_fact_line(ln) or sentence not in ln:
+            continue
+        rest = " ".join(s.strip() for s in _SENT_SPLIT_RE.split(ln.replace(sentence, "", 1)) if s.strip())
+        rest = re.sub(r"  +", " ", rest).strip()
+        return "\n".join(lines[:i] + ([rest] if rest else []) + lines[i + 1:])
+    return None
+
+
+def _cut_text_sentence(text: str, sentence: str) -> Optional[str]:
+    """A subtitle / summary without ``sentence``, or None when the field would keep no other sentence."""
+    if sentence not in text:
+        return None
+    rest = re.sub(r"  +", " ", re.sub(r"[ \t]*" + re.escape(sentence) + r"[ \t]*", " ", text, count=1)).strip()
+    return rest if re.search(r"[A-Za-z]", rest) else None
+
+
+def cut_violations(generated: dict, violations: list[dict]) -> tuple[dict, list[str], list[dict]]:
+    """AA-1049 W3 (S1 train, S277): the code stand-in of the grounding sentence repair (no model call). Each violating
+    sentence is deleted when its field keeps the rest: a highlight while 3+ remain, an itinerary prose sentence while
+    its day keeps another prose sentence (title and fact lines are never cut), a subtitle / summary sentence while the
+    field keeps another one. Returns (new_generated, fields_changed, sentences_cut); a sentence that may not be cut
+    stays (its violation goes to review as before)."""
+    out = dict(generated)
+    changed: set[str] = set()
+    cut: list[dict] = []
+    for v in violations:
+        field, sentence = v.get("field"), str(v.get("sentence") or "")
+        value = out.get(field)
+        if not sentence or value is None:
+            continue
+        new = None
+        if field == "highlights" and isinstance(value, list):
+            items = [str(x) for x in value]
+            if sentence in items and len(items) > 3:
+                new = [x for x in items if x != sentence]
+        elif field == "itineraries" and isinstance(value, str):
+            new = _cut_itinerary_sentence(value, sentence, v.get("day"))
+        elif field in GROUNDED_FIELDS and isinstance(value, str):
+            new = _cut_text_sentence(value, sentence)
+        if new is None:
+            continue
+        out[field] = new
+        changed.add(field)
+        cut.append({"field": field, "code": v.get("code"), "day": v.get("day")})
+    return out, sorted(changed), cut
+
+
+def cut_and_recheck(generated: dict, violations: list[dict], tour: dict) -> dict:
+    """AA-1049 W3 (S1 train, S277): ``repair_and_recheck``'s shape with the sentence cut instead of the
+    ``s1_flag_fix`` sentence repair: the cut (``cut_violations``), the repair contract over it, then a re-check
+    (Jev answers the unchanged sentences from its Verdict cache). cost_usd is 0: no model call."""
+    from services.quality import repair_contract
+
+    new, fields, cut = cut_violations(generated, violations)
+    if not fields:
+        return {"generated": generated, "violations": violations, "notes": None, "fields": [], "cost_usd": 0.0,
+                "check": None, "contract": None, "cut": []}
+    flagged = {v["field"] for v in violations}
+    repaired, contract = repair_contract.enforce_fields(generated, new, allowed=flagged, source=source_text(tour))
+    kept = [f for f in fields if f not in contract.fields()]
+    if not kept:
+        return {"generated": generated, "violations": violations, "notes": None, "fields": [], "cost_usd": 0.0,
+                "check": None, "contract": contract, "cut": []}
+    res = check_grounding(repaired, tour)
+    return {"generated": repaired, "violations": res["violations"], "notes": res["notes"], "fields": kept,
+            "cost_usd": 0.0, "check": res, "contract": contract, "cut": [c for c in cut if c["field"] in kept]}
+
+
 def grounding_node(state: dict) -> dict:
     """S1 graph node between brand_audit and flag_fix (A1 only): check, repair the violating
     sentences once, re-check. What is still unsupported stays in `grounding_violations` (and its
-    codes in failure_codes); revalidate sends it to manual_check."""
+    codes in failure_codes); revalidate sends it to manual_check.
+
+    AA-1049 W3 (S1 train, S277): with S1_CONTROL=contract on an A1 v2 draft the repair is the code cut
+    (``cut_and_recheck``, route-table action ``cut``): the train's path makes no ``s1_flag_fix`` call."""
     from services.quality import degraded
 
     if state.get("is_tenant_rewrite"):
         return {**state, "grounding_ran": False}   # T3 checks a tenant rewrite: not a degraded path
+    train_report = None
     try:
         generated, tour = state.get("generated", {}), state.get("tour", {})
         first = check_grounding(generated, tour)
@@ -506,8 +612,13 @@ def grounding_node(state: dict) -> dict:
         cost, fields, violations, notes = 0.0, [], found, first["notes"]
         last_check, contract = first, None
         if found:
-            rr = repair_and_recheck(generated, found, tour, model_tier=state.get("model_tier"),
-                                    brand_forbidden_words=state.get("brand_forbidden_words"))
+            from . import s1_train
+            if s1_train.active(state):
+                rr = cut_and_recheck(generated, found, tour)
+                train_report = {"found": len(found), "cut": rr["cut"], "left": len(rr["violations"])}
+            else:
+                rr = repair_and_recheck(generated, found, tour, model_tier=state.get("model_tier"),
+                                        brand_forbidden_words=state.get("brand_forbidden_words"))
             generated, violations, fields, cost = rr["generated"], rr["violations"], rr["fields"], rr["cost_usd"]
             notes = rr["notes"] if rr["notes"] is not None else notes
             last_check, contract = rr.get("check") or first, rr.get("contract")
@@ -524,8 +635,13 @@ def grounding_node(state: dict) -> dict:
                            detail=", ".join(contract.invariants()))
     logger.info("grounding_done", units=first["units"], jev_asked=first["jev_asked"], found=len(found),
                 repaired_fields=fields, remaining=len(violations), notes=len(notes))
+    extra = {}
+    if train_report is not None:       # AA-1049 W3: the train's report (absent on main's path)
+        from . import s1_train
+        extra[s1_train.REPORT_KEY] = s1_train._report(state, "grounding", train_report)
     return {
         **state,
+        **extra,
         "generated": generated,
         "cost_usd": state.get("cost_usd", 0) + cost,
         "failure_codes": list(dict.fromkeys((state.get("failure_codes") or []) + _codes(violations))),
