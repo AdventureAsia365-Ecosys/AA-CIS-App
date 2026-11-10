@@ -24,8 +24,11 @@ tech-lead row, no correction), queued or not, minus:
   - tenant claims whose tenant may not reach Jev: tenant content goes to TypeSafe only for a tenant on
     shared.jev_tenant_allowlist that is a demo tenant, not a pilot and not offboarded (decide() checks the
     allow-list again);
-  - claims with no stored source: the source is the bytes the panel read, rebuilt from the golden item
-    (review.match_golden / review.source_text, the review view's context).
+  - claims with no source: the source is the bytes the panel read, rebuilt in the S275 order (review.claim_sources):
+    the golden item with the claim's content sha, then the live T9 piece (acp_shared.content_piece) whose object
+    still has that sha (its writer context rebuilt as the AA-729 freeze did, review.live_t9_context), then the golden
+    item / live piece by sample id / piece id only; never across tenants. In the S275 run every eligible CL-1 1.1.0
+    claim took the live path, so its answers are read back only through it.
 
 Switch. CLAIM_PREFILTER_MODE (environment of the api service): 'shadow' (default, also any other value) or
 'enforce'. In shadow the pre-filter asks Jev and reports what it would do; it never writes a label. A write needs
@@ -44,7 +47,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import os
 from collections import Counter, defaultdict
 from typing import Any, Iterable, Mapping, Optional
@@ -173,30 +175,14 @@ def estimate_tokens(source: str, sentence: str) -> int:
     return (len(source or "") + len(sentence or "")) // 4 + 60
 
 
-def _input(value: Any) -> dict:
-    if isinstance(value, (str, bytes)):
-        try:
-            value = json.loads(value)
-        except (TypeError, ValueError):
-            return {}
-    return value if isinstance(value, dict) else {}
-
-
 # ── the run ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-async def _sources(conn, anchors: list[dict]) -> dict[str, str]:
-    """claim_hash -> the full source the panel read, from the matching golden item (absent: not stored)."""
-    cands = await rv.golden_candidates(conn, (a.get("sample_id") for a in anchors))
-    out: dict[str, str] = {}
-    for a in anchors:
-        g = rv.match_golden(a, cands.get(a.get("sample_id") or "", []))
-        if g is None:
-            continue
-        text = rv.source_text(g.get("writer") or a.get("writer"), g.get("channel"), _input(g.get("input")))
-        if text and text.strip():
-            out[a["claim_hash"]] = text
-    return out
+async def _sources(pool, anchors: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
+    """claim_hash -> the full source the panel read, and the count of each source kind (review.claim_sources: the
+    golden item by content sha, then the live T9 piece by content sha, then by sample id / piece id; absent: none)."""
+    found, kinds = await rv.claim_sources(pool, anchors)
+    return {h: text for h, (text, _kind) in found.items()}, dict(sorted(kinds.items()))
 
 
 async def _ask(pool, todo: list[dict], *, limit: int, max_usd: float, price_in: float) -> dict:
@@ -306,7 +292,6 @@ async def run(pool, set_id: str, set_version: str, *, ask: bool = False, apply: 
         tids = sorted({c["tenant_id"] for c in cands if c.get("tenant_id")})
         tenants = {r["tenant_id"]: dict(r) for r in await conn.fetch(TENANT_SQL, tids)} if tids else {}
         disputed = [c for c in cands if c["human_label"] == "disputed"]
-        sources = await _sources(conn, [by_id[c["source_ref"]] for c in disputed])
 
     skipped: Counter = Counter({"audit_draw": len(cands) - len(disputed)})
     entries: list[dict] = []
@@ -316,20 +301,25 @@ async def run(pool, set_id: str, set_version: str, *, ask: bool = False, apply: 
         e = {"claim_hash": c["claim_hash"], "writer": c["writer"], "split": c.get("split"), "scope": c["scope"],
              "tenant_id": c.get("tenant_id"), "set_id": set_id, "set_version": set_version,
              "queue": q["status"] if q else None, "panel": panels[c["claim_hash"]], "p": None, "skip": None,
-             "sentence": anchor.get("claim_text") or ""}
+             "sentence": anchor.get("claim_text") or "", "anchor": anchor}
         if q is not None and q["status"] != "open":
             e["skip"] = "queue_resolved"
         else:
             e["skip"] = tenant_gate(c["scope"], c.get("tenant_id"), tenants.get(c.get("tenant_id") or ""))
-        if e["skip"] is None and c["claim_hash"] not in sources:
+        entries.append(e)
+
+    # the source is rebuilt only for the claims that passed the queue and tenant gates
+    sources, source_kinds = await _sources(pool, [e.pop("anchor") for e in entries if e["skip"] is None])
+    for e in entries:
+        e.pop("anchor", None)
+        if e["skip"] is None and e["claim_hash"] not in sources:
             e["skip"] = "no_source"
         if e["skip"] is None:
-            e["source"] = sources[c["claim_hash"]]
-            e["subject"] = subject_key(c["claim_hash"], e["source"])
+            e["source"] = sources[e["claim_hash"]]
+            e["subject"] = subject_key(e["claim_hash"], e["source"])
             e["est_tokens"] = estimate_tokens(e["source"], e["sentence"])
         else:
             skipped[e["skip"]] += 1
-        entries.append(e)
 
     live = [e for e in entries if e["skip"] is None]
     if live:
@@ -395,7 +385,7 @@ async def run(pool, set_id: str, set_version: str, *, ask: bool = False, apply: 
             "filter": {"split": split, "writers": sorted(writers) if writers is not None else None},
             "candidates": len(cands), "corrected_left_out": len(
                 {c["claim_hash"] for c in store.queue_candidates(rows, split=split, writers=writers)} & corrected),
-            "skipped": dict(sorted(skipped.items())), "verdicts": verdicts, "usd": usd,
+            "skipped": dict(sorted(skipped.items())), "sources": source_kinds, "verdicts": verdicts, "usd": usd,
             "decisions": {"auto_ok": decisions["auto_ok"], "review": decisions["review"]},
             "auto_ok_writable": len(to_write), "auto_ok_shadow_writer": shadow_writer,
             "review_reasons": dict(sorted(reasons.items())),

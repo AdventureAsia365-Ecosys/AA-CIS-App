@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from services.ground_truth import claims as cl
 from services.ground_truth import panel as pn
 from services.ground_truth import prefilter as pf
 from services.ground_truth import review as rv
@@ -197,8 +198,9 @@ def world(monkeypatch):
     async def relabelled(conn, set_id, set_version):
         return set()
 
-    async def sources(conn, anchors):
-        return {a["claim_hash"]: "Day 1: Arrive in Velmora. Harbour Lodge.\nDay 2: Walk 12 km." for a in anchors}
+    async def sources(pool, anchors):
+        text = "Day 1: Arrive in Velmora. Harbour Lodge.\nDay 2: Walk 12 km."
+        return {a["claim_hash"]: text for a in anchors}, {"golden_sha": 1}
 
     async def decide(stage, subject, state, keys, *, tenant_id=None, pool=None, use_cache=True):
         assert stage == pf.STAGE and keys == [pf.QUESTION] and use_cache is False
@@ -349,21 +351,124 @@ def test_route_passes_the_body_and_maps_refusals(client, monkeypatch):
 # ── the source and the write, with the DB helpers faked ─────────────────────────────────────────────────────────────
 
 
+T9_TENANT = "22222222-2222-4222-8222-222222222222"
+OTHER_TENANT = "33333333-3333-4333-8333-333333333333"
+PIECE = "44444444-4444-4444-8444-444444444444"
+JOB = "55555555-5555-4555-8555-555555555555"
+T9_OUT = {"content_text": "Zz Velmora harbour walk at dawn.", "seo_title": "Zz Velmora", "meta_description": None,
+          "slug": "zz-velmora"}
+T9_WI = {"seed": "Zz Velmora harbour seed line.", "facts": "Zz Ostrin Inn opens at six.", "trip": "Zz Velmora Walk",
+         "destination": "Zz Velmora", "cta": "Ask Zzbrand."}
+
+
+class SourceConn:
+    """The reads of review.claim_sources: golden items by sample id, live pieces by piece id, a t9_write payload."""
+
+    def __init__(self, *, golden=(), pieces=(), payload=None):
+        self.golden, self.pieces, self.payload, self.calls = list(golden), list(pieces), payload, []
+
+    async def fetch(self, sql, *args):
+        self.calls.append(sql)
+        if "shared.eval_golden_item" in sql:
+            return [g for g in self.golden if g["sample_id"] in args[0]]
+        if "acp_shared.content_piece" in sql:
+            return [p for p in self.pieces if p["piece_id"] in args[0] and p["tenant_id"] in args[1]]
+        raise AssertionError(f"unexpected SQL: {sql[:80]}")
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(sql)
+        assert "shared.job" in sql and args == (JOB,)
+        return self.payload
+
+
+def _piece(**over):
+    import json
+
+    return {"piece_id": PIECE, "tenant_id": T9_TENANT, "channel": "blog", "writer_input": json.dumps(T9_WI),
+            "job_id": JOB, "request_id": "66666666-6666-4666-8666-666666666666", "route_hub_name": None,
+            **T9_OUT, **over}
+
+
+def _t9_anchor(**over):
+    return {"claim_hash": "d" * 64, "writer": "t9_blog", "tenant_id": T9_TENANT, "piece_id": PIECE,
+            "sample_id": "zz-live-piece", "content_sha256": cl.content_sha(T9_OUT), **over}
+
+
 def test_sources_come_from_the_matching_golden_item():
     import json
 
     lines, rows = _rows()
     anchor = next(r for r in rows if r["claim_hash"] == lines[0]["claim_hash"])
     other = {**anchor, "claim_hash": "c" * 64, "sample_id": "zz-none"}
-
-    class Conn:
-        async def fetch(self, sql, *args):
-            assert "shared.eval_golden_item" in sql
-            return [{"sample_id": "zz-1063-p1", "writer": "a1", "channel": None, "input": json.dumps({"tour": TOUR}),
-                     "control_output": json.dumps(OUTPUT)}]
-
-    got = asyncio.run(pf._sources(Conn(), [anchor, other]))
+    conn = SourceConn(golden=[{"sample_id": "zz-1063-p1", "writer": "a1", "channel": None, "tenant_id": None,
+                               "trap": False, "input": json.dumps({"tour": TOUR}),
+                               "control_output": json.dumps(OUTPUT)}])
+    got, kinds = asyncio.run(pf._sources(FakePool(conn), [anchor, other]))
     assert set(got) == {anchor["claim_hash"]} and "Ostrin Valley" in got[anchor["claim_hash"]]
+    assert kinds == {"golden_sha": 1, "unmatched": 1}
+
+
+def test_a_claim_without_a_golden_item_takes_the_live_piece():
+    """The S275 run: every eligible CL-1 1.1.0 claim took the live path (live_sha). The source is the panel's T9
+    sections of the context the AA-729 freeze rebuilt (job payload, writer_input laid over it): the same bytes, so
+    the S275 subject key (and its answer) is found again."""
+    from services.writing_memory import eval_judge as ej
+
+    payload = {"context": {"channel": "blog", "goal": {"name": "Zz trust"}, "chosen": {"name": "Zz dawn walk"},
+                           "atom_text": "old seed", "keyword": "zz velmora walk"}}
+    conn = SourceConn(pieces=[_piece()], payload=payload)
+    anchors = [_t9_anchor(), _t9_anchor(claim_hash="e" * 64)]
+    found, kinds = asyncio.run(rv.claim_sources(FakePool(conn), anchors))
+    assert kinds == {"live_sha": 1} and set(found) == {"d" * 64, "e" * 64}
+    text, kind = found["d" * 64]
+    assert kind == "live_sha" and "Zz Velmora harbour seed line." in text and "Zz Ostrin Inn opens at six." in text
+    assert "old seed" not in text and "Zz dawn walk" in text and "zz velmora walk" in text
+    ctx, how = asyncio.run(rv.live_t9_context(FakePool(conn), {**_piece(), "writer_input": T9_WI}, T9_WI))
+    assert how == "job_payload" and text == ej.panel_source_text("t9_blog", {"context": ctx})
+    assert sum("shared.job" in c for c in conn.calls) == 2       # one rebuild per piece, then the explicit call
+    # the pre-filter's subject key is a pure function of the claim and those bytes
+    assert pf.subject_key("d" * 64, text) == pf.subject_key("d" * 64, found["d" * 64][0])
+
+
+def test_live_piece_order_fallbacks_and_tenants(monkeypatch):
+    import json
+
+    async def no_context(pool, piece, wi):
+        raise ValueError("cannot rebuild the writer context")
+
+    # an edited piece (the object sha moved on): live_id; the context cannot be rebuilt: the writer_input snapshot
+    monkeypatch.setattr(rv, "live_t9_context", no_context)
+    conn = SourceConn(pieces=[_piece(content_text="Zz edited later.")])
+    found, kinds = asyncio.run(rv.claim_sources(FakePool(conn), [_t9_anchor()]))
+    assert kinds == {"live_wi": 1} and "Zz Velmora harbour seed line." in found["d" * 64][0]
+    # a piece of another tenant is never a candidate, nor is another tenant's golden item
+    golden = {"sample_id": "zz-live-piece", "writer": "t9_blog", "channel": "blog", "tenant_id": OTHER_TENANT,
+              "trap": False, "input": json.dumps({"context": {"channel": "blog", "atom_text": "Zz other seed."}}),
+              "control_output": json.dumps(T9_OUT)}
+    conn = SourceConn(pieces=[_piece(tenant_id=OTHER_TENANT)], golden=[golden])
+    found, kinds = asyncio.run(rv.claim_sources(FakePool(conn), [_t9_anchor()]))
+    assert found == {} and kinds == {"unmatched": 1}
+    # the claim's own tenant's golden item wins over the live piece (golden_sha first)
+    conn = SourceConn(pieces=[_piece()], golden=[{**golden, "tenant_id": T9_TENANT}])
+    found, kinds = asyncio.run(rv.claim_sources(FakePool(conn), [_t9_anchor()]))
+    assert kinds == {"golden_sha": 1} and "Zz other seed." in found["d" * 64][0]
+    # a trap item is never a source; a T2 claim has no live path
+    conn = SourceConn(golden=[{**golden, "tenant_id": T9_TENANT, "trap": True}])
+    assert asyncio.run(rv.claim_sources(FakePool(conn), [_t9_anchor(piece_id=None)]))[1] == {"unmatched": 1}
+    conn = SourceConn(pieces=[_piece()])
+    t2 = _t9_anchor(writer="t2")
+    assert asyncio.run(rv.claim_sources(FakePool(conn), [t2]))[1] == {"unmatched": 1}
+
+
+def test_run_reports_the_source_kinds_and_skips_claims_without_one(world, monkeypatch):
+    async def sources(pool, anchors):
+        assert anchors and all(a["writer"] == "a1" for a in anchors)
+        return {a["claim_hash"]: "Day 1: Velmora." for a in anchors[1:]}, {"live_sha": 1, "unmatched": 1}
+
+    monkeypatch.setattr(pf, "_sources", sources)
+    out = _run(FakeConn(), mode="shadow")
+    assert out["sources"] == {"live_sha": 1, "unmatched": 1} and out["skipped"]["no_source"] == 1
+    assert out["verdicts"]["to_ask"] == 3
 
 
 def test_apply_writes_the_label_and_resolves_open_items(monkeypatch):

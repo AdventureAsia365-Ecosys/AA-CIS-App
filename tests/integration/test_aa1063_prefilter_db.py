@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
+from services.ground_truth import claims as cl  # noqa: E402
 from services.ground_truth import panel as pn  # noqa: E402
 from services.ground_truth import prefilter as pf  # noqa: E402
 from services.ground_truth import review as rv  # noqa: E402
@@ -195,3 +196,77 @@ async def test_prefilter_plan_shadow_then_enforce(conn, jev):
 
     again = await pf.run(pool, SET, "1.0.0", ask=True, apply=True, mode="enforce", run_id="pf-zz-3", actor=ACTOR)
     assert again["applied"]["written"] == 0 and again["candidates"] == 3       # the two settled claims left
+
+
+# ── the live T9 piece path (review fix: in S275 every eligible CL-1 1.1.0 claim took it) ───────────────────────────
+
+T9_OUTPUT = {"content_text": "Zz Velmora harbour is quiet at dawn. The Ostrin Inn serves breakfast from six.",
+             "seo_title": None, "meta_description": None, "slug": None}
+T9_WI = {"seed": "Zz Velmora harbour seed line.", "facts": "Zz the Ostrin Inn opens at six.", "trip": "Zz Velmora Walk",
+         "destination": "Zz Velmora", "cta": "Ask Zzbrand."}
+T9_PAYLOAD = {"context": {"channel": "blog", "goal": {"name": "Zz trust"}, "chosen": {"name": "Zz dawn walk"},
+                          "atom_text": "Zz old seed", "keyword": "zz velmora walk"}}
+
+
+async def _seed_live_t9(c) -> tuple[str, list[dict]]:
+    tid = await c.fetchval(
+        "INSERT INTO shared.tenants (name, slug, posts_per_week, kind) VALUES ('Zz AA-1063 demo', "
+        "'zz-aa1063-demo', 3, 'demo') RETURNING tenant_id::text")
+    await c.execute("INSERT INTO shared.jev_tenant_allowlist (tenant_id, reason, added_by) VALUES ($1::uuid, "
+                    "'pytest', 'pytest')", tid)
+    req = await c.fetchval("INSERT INTO acp_shared.angle_gate_request (tenant_id, atom_id, channel, status) "
+                           "VALUES ($1::uuid, 'zz-atom', 'blog', 'approved') RETURNING request_id", tid)
+    job = await c.fetchval("INSERT INTO shared.job (kind, payload, status) VALUES ('zz_aa1063_t9', $1::jsonb, "
+                           "'succeeded') RETURNING id", json.dumps(T9_PAYLOAD))
+    piece = await c.fetchval(
+        "INSERT INTO acp_shared.content_piece (tenant_id, angle_gate_request_id, attempt_number, content_text, status, "
+        "gate_ledger, repair_log, channel, writer_input, job_id) VALUES ($1::uuid, $2, 1, $3, 'approved', '[]'::jsonb, "
+        "'[]'::jsonb, 'blog', $4::jsonb, $5) RETURNING piece_id::text",
+        tid, req, T9_OUTPUT["content_text"], json.dumps(T9_WI), job)
+    lines = pn.export_records(set_id=SET, writer="t9_blog", scope="tenant", tenant_id=tid,
+                              refs={"sample_id": "zz-1063-live1", "piece_id": piece}, output=T9_OUTPUT,
+                              source_text="Zz the panel's source")
+    assert lines and all(e["content_sha256"] == cl.content_sha(T9_OUTPUT) for e in lines)
+    raw = [{"claim_hash": e["claim_hash"], "lens": ln, "class": "fact.number", "label": lab,
+            "reason": f"{ln}: invented", "labeller": "panel:zz"}
+           for e in lines for ln, lab in zip(pn.LENSES, ("ok", "ok", "violation"))]
+    js = pn.parse_judgements(raw, export_by_hash={e["claim_hash"]: e for e in lines})
+    cons = pn.consolidate(lines, js, set_id=SET, set_version="1.1.0", policy_sha="d" * 64, audit_pct=0.0)
+    await store.insert_rows(c, cons.rows, apply=True)
+    return tid, lines
+
+
+@pytest.mark.asyncio
+async def test_prefilter_rebuilds_a_live_piece_source_and_reads_back_an_earlier_answer(conn, jev):
+    """No golden item: the source is the live piece's (job payload context, writer_input laid over it), the same
+    bytes the AA-729 freeze builds, so an answer stored earlier under the S275 subject key is read back, not asked."""
+    from services.writing_memory.eval_judge import panel_source_text
+
+    tid, lines = await _seed_live_t9(conn)
+    await conn.execute("GRANT SELECT ON acp_shared.content_piece, shared.job, acp_shared.angle_gate_request "
+                       "TO cis_app")
+    await _as_cis_app(conn)
+    pool = _Pool(conn)
+    anchors = [r for r in await store.read_rows(conn, SET, "1.1.0") if r["labeller_kind"] == "agent_panel"
+               and r["lens"] == pn.LENSES[0]]
+    found, kinds = await rv.claim_sources(pool, anchors)
+    assert kinds == {"live_sha": 1} and set(found) == {e["claim_hash"] for e in lines}
+    text = found[lines[0]["claim_hash"]][0]
+    assert "Zz Velmora harbour seed line." in text and "Zz old seed" not in text and "Zz dawn walk" in text
+    piece = (await rv.live_pieces(conn, [anchors[0]["piece_id"]], [tid]))[anchors[0]["piece_id"]]
+    ctx, how = await rv.live_t9_context(pool, piece, piece["writer_input"])
+    assert how == "job_payload" and text == panel_source_text("t9_blog", {"context": ctx})
+
+    first = lines[0]
+    await conn.execute(
+        "INSERT INTO shared.decision_log (stage, question_key, subject_key, tenant_id, mode, zone, probability, "
+        "cached) VALUES ($1, $2, $3, $4::uuid, 'enforce', 'accept', 0.97, false)",
+        pf.STAGE, pf.QUESTION, pf.subject_key(first["claim_hash"], text), tid)
+    plan = await pf.run(pool, SET, "1.1.0", mode="shadow")
+    assert plan["sources"] == {"live_sha": 1} and "no_source" not in plan["skipped"]
+    assert plan["verdicts"]["known"] == 1 and plan["verdicts"]["to_ask"] == len(lines) - 1 and jev["asked"] == []
+    got = {i["claim_hash"]: (i["decision"], i["p"]) for i in plan["items"]}
+    assert got[first["claim_hash"]] == ("auto_ok", 0.97)
+    # another tenant's claim on the same piece id is never given this tenant's source
+    other = [{**a, "tenant_id": "33333333-3333-4333-8333-333333333333"} for a in anchors]
+    assert await rv.claim_sources(pool, other) == ({}, {"unmatched": 1})
