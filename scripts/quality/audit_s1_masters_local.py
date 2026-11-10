@@ -36,6 +36,11 @@ def tmp_session(start: Path) -> Path | None:
     return None
 
 
+def short(tour_id) -> str:
+    """A tour id as the public audit pages name it: its first 8 hex characters (the full ids stay in .tmp-session)."""
+    return str(tour_id or "")[:8]
+
+
 def decode_block(text: str, name: str) -> bytes:
     m = re.search(rf"=== BEGIN {re.escape(name)}\n(.*?)\n=== END {re.escape(name)}", text, re.S)
     if not m:
@@ -74,7 +79,9 @@ def readme(summary: dict) -> str:
         f"Generated {summary.get('generated_at')} by `apps/AA-CIS-App/scripts/quality/audit_s1_masters.py` "
         f"(schema `{summary.get('schema')}`, contract `{summary.get('contract_version')}`), read-only, no model call.",
         "Every active Master of the AA master tenant, judged on its published version and its raw source with the "
-        "code that is on CIS main today. Ids, codes and counts only.", "",
+        "code that is on CIS main today. Public-repo rules applied: ids, codes and counts only, no page or source "
+        "text, no brand words; tours are named by the first 8 hex characters of their id (the full per-Master lines "
+        "stay in the gitignored .tmp-session).", "",
         "## How many Masters", "",
         f"- Active Masters (master tenant): **{act.get('master_tenant')}**; other tenants: {act.get('other_tenants')}.",
         f"- Audited: **{m.get('all', 0)}** = S1 writer v2 **{m.get('v2', 0)}** + older writers **{m.get('older', 0)}**"
@@ -94,7 +101,7 @@ def readme(summary: dict) -> str:
     out += _counts("Their latest version status", pop.get("latest_unmastered") or {}, "status")
     if unm:
         out += ["| tour_id | pipeline | lifecycle | master | reason | latest version |", "|---|---|---|---|---|---|"]
-        out += [f"| `{u['tour_id']}` | {u['pipeline_status']} | {u['lifecycle_stage']} | {u['master_status']} | "
+        out += [f"| `{short(u['tour_id'])}` | {u['pipeline_status']} | {u['lifecycle_stage']} | {u['master_status']} | "
                 f"{u['master_status_reason'] or ''} | {u['latest_version_status'] or 'none'} |" for u in unm]
         out += [""]
     out += ["## Final contract verdict (recomputed today, brand words included)", ""]
@@ -131,7 +138,7 @@ def readme(summary: dict) -> str:
     out += [f"## Masters whose verdict is not publish: {len(np_)}", ""]
     if np_:
         out += ["| tour_id | writer | verdict | blocking codes |", "|---|---|---|---|"]
-        out += [f"| `{r['tour_id']}` | {r['writer_group']} | {r['verdict']} | {', '.join(r['block_codes'])} |"
+        out += [f"| `{short(r['tour_id'])}` | {r['writer_group']} | {r['verdict']} | {', '.join(r['block_codes'])} |"
                 for r in np_]
     return "\n".join(out).rstrip() + "\n"
 

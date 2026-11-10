@@ -198,7 +198,7 @@ def test_the_blocks_decode_locally_and_the_readme_holds_ids_and_codes_only(tmp_p
     decoded = (tmp_path / "work" / audit.LINES_BLOCK).read_text(encoding="utf-8").splitlines()
     assert json.loads(decoded[0])["tour_id"] == "t-velmora"
     md = readme.read_text(encoding="utf-8")
-    assert "`t-velmora`" in md and "FORBIDDEN_WORD" in md and "review" in md
+    assert "`t-velmor`" in md and "t-velmora" not in md and "FORBIDDEN_WORD" in md and "review" in md
     for text in _texts(r) + ["velvety", "Velmora Canal and Corran Ridge Walk"]:
         assert text not in md
 
