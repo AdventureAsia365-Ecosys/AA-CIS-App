@@ -108,7 +108,9 @@ MODE_FLAGS: dict[str, tuple[str, ...]] = {
     # (f9_policy) and T9_LAST_ATTEMPT_MODE (acp_content_writing.service, S271 W0 t9 lane): classified here ahead of
     # those PRs, so the env-switch guard below stays green whichever PR merges first.
     "a1": ("S1_WRITER_V2", "S1_STRUCTURED_FACTS", "S1_PER_DAY_TARGETS", "S1_WRITER_TEMPERATURE",
-           "A1_BRAND_FIT_RUBRIC", "A1_V2_BRAND_FIT_GATE", "S1_JUDGE_LIVE"),
+           "A1_BRAND_FIT_RUBRIC", "A1_V2_BRAND_FIT_GATE", "S1_JUDGE_LIVE",
+           # AA-1049 W3 (S1 train): the S1 control plane (opt-in; unset / unknown = main's A1 path)
+           "S1_CONTROL"),
     "t2": ("T2_JUDGE_GATE", "T2_JUDGE_REPEAT", "T2_JUDGE_ANCHORS", "T2_BRAND_CLAIM_CHECK", "T2_FACTS",
            "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM",
            # AA-1049 W3 (T2 train): the linear orchestrator (opt-in; unset / unknown = main's graph path)
@@ -217,8 +219,14 @@ def _t2_orchestrator_value(value: str, env: Mapping[str, str]) -> Optional[str]:
     return value if value == "linear" and interim_on else None
 
 
+def _s1_control_value(value: str, env: Mapping[str, str]) -> Optional[str]:
+    """AA-1049 W3: ``S1_CONTROL`` changes the A1 path only as ``contract`` (``s1_train.mode``); any other value runs
+    main's path, exactly like unset, so it is not recorded."""
+    return value if value == "contract" else None
+
+
 # Switches whose set values can still mean the default path: {name: (normalised value, env) -> value or None}.
-_DEFAULT_PATH_VALUES = {"T2_ORCHESTRATOR": _t2_orchestrator_value}
+_DEFAULT_PATH_VALUES = {"T2_ORCHESTRATOR": _t2_orchestrator_value, "S1_CONTROL": _s1_control_value}
 
 
 def mode_flags(writer: str, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:

@@ -168,8 +168,12 @@ def s1_judge_live() -> bool:
 
 
 def s1_judge_off_live_path(state: dict) -> bool:
-    """True when judge_node makes no call for this draft: an A1 writer-v2 draft with S1_JUDGE_LIVE off."""
-    return not state.get("is_tenant_rewrite") and is_v2_draft(state) and not s1_judge_live()
+    """True when judge_node makes no call for this draft: an A1 writer-v2 draft with S1_JUDGE_LIVE off, or (AA-1049
+    W3, S1 train) any A1 writer-v2 draft while S1_CONTROL=contract: the break glass does not bring it back there."""
+    if state.get("is_tenant_rewrite") or not is_v2_draft(state):
+        return False
+    from services.content_generation import s1_train
+    return not s1_judge_live() or s1_train.active(state)
 
 
 def a1_v2_gate_enforced() -> bool:

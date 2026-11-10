@@ -173,6 +173,11 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
     page["seo_keywords_used"] = keywords
     if page.get("trip_type") is None:
         page.pop("trip_type", None)
+    # AA-1049 W3 (S1 train, S1_CONTROL=contract; off = main): code composes the contract fields (day headings, the
+    # source fact lines, the title fit, the meta template); the writer's text is the narrative only. No model call.
+    from . import s1_train
+    if s1_train.applies_to_write(state):
+        page, result["s1_compose"] = s1_train.compose_page(page, w["parsed"], tour, facts, plan, forbidden, problems)
     result["generated"] = page
     result["meta_problems"] = problems
     logger.info("s1_writer_v2_done", plan_mode=plan["mode"], days=len(plan["days"]), calls=result["calls"],

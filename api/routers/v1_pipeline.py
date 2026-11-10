@@ -359,6 +359,8 @@ async def _rewrite_tour(
             "writing_release":     result.get("writing_release"),
             # AA-1047 W1: same strip class — the REPORT-mode final contract of the run's exit (A1; None on T2).
             "final_contract":      result.get("final_contract"),
+            # AA-1049 W3 (S1 train): the S1 control plane's report (None unless S1_CONTROL=contract ran this draft)
+            "s1_train":            result.get("s1_train"),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 
