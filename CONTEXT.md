@@ -706,7 +706,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s
   snapshot, row-locked writes, per-process fallback when the table cannot be read), so both ECS tasks see the same
   state. Each client asks `admit` before a call (open = nothing sent, its own 0 USD refused ledger row: Jev
-  `llm_call_log`, DataForSEO `dfs_call_log` meta `circuit_open`, Geoapify `GeocoderUnavailable`) and records one outcome
+  `llm_call_log` with the class that opened the circuit and `quality_signal.refusal = circuit_open` (S275; the class
+  CHECK has no circuit class; the Jev health on AI providers counts it under `refused`, never `errors`), DataForSEO
+  `dfs_call_log` meta `circuit_open`, Geoapify `GeocoderUnavailable`) and records one outcome
   per call after its own retries: HTTP 401 / 403 `access_denied`, 402 `quota_exhausted`, 429 `throttled`, 404 / 405 /
   408 / 410 / 5xx / timeout `other`, any other 4xx not counted. On opening: one admin bell `provider_circuit_open` (one unread per
   connection per 24 h) and one `ops_alert_email` job (template `provider_circuit_open`, once per connection, class and
@@ -1029,6 +1031,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - Every verdict is logged in `shared.decision_log`, and each call in `llm_call_log` (provider
     `typesafe`, role `decide` since AA-1025 D3, `validate` before), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
     Key: secret `aa-cis/dev/typesafe`. Migration 181.
+  - Transport (S275): `_call_jev` keeps ONE keep-alive `httpx.AsyncClient` per event loop (the api and worker loops
+    one each; a job body in its own `asyncio.run` gets its own, closed by that run's async-generator shutdown) and
+    passes the connection row's timeout per request. A failed call whose text says nothing is classified by its HTTP
+    status (`jev_failure_class`: 401 / 403 access_denied, 402 quota_exhausted, 429 throttled), so a refused key moves
+    the row's access_state. A timed-out attempt may still be billed by TypeSafe; the ledger writes it at 0 USD.
 - **Cost observability (epic AA-616)**:
   - `shared.llm_call_log` records account (acc3 / acc2; rows before AA-998 may hold acc1), provider and
     `fallback_used` per call

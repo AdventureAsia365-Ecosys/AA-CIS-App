@@ -402,31 +402,98 @@ def tenant_allowed(tenant_id: Optional[str], stage: Optional[str] = None) -> boo
 
 # ── the call ──────────────────────────────────────────────────────────────────────────────────
 
+# S275 (AI gateway hardening): ONE keep-alive httpx.AsyncClient per event loop for every Jev call, instead of a new
+# client (TCP + TLS handshake) per call. On 09/11 one recompute sent > 240 asks a minute, each on a fresh connection;
+# 20 failed with ConnectTimeout and opened the shared circuit. A client belongs to the loop that made it (its pooled
+# connections are that loop's transports), so the api / worker loops keep one each and a job body that runs in its own
+# ``asyncio.run`` (recompute, a3 atomize, decide_sync) gets its own. Closing: a small async generator started in the
+# loop holds the client; ``asyncio.run`` finalizes every async generator of its loop (``shutdown_asyncgens``) before it
+# closes the loop, which runs the generator's ``finally`` and closes the client there. A loop closed another way is
+# dropped from the registry on the next new client (its client is left to the garbage collector).
+_jev_clients: dict[int, tuple[Any, httpx.AsyncClient, Any]] = {}     # id(loop) -> (loop, client, holder generator)
+_jev_clients_lock = threading.Lock()
+
+
+def _new_jev_client() -> httpx.AsyncClient:
+    """The shared client (tests replace it with one on an httpx.MockTransport). The timeout is passed per request
+    (the connection row can change it), so the client's own default is only a fallback."""
+    return httpx.AsyncClient(timeout=_TIMEOUT_S)
+
+
+async def _hold_jev_client(key: int, client: httpx.AsyncClient):
+    """Keeps ``client`` until its loop finalizes this generator (``asyncio.run`` shutdown), then closes it."""
+    try:
+        yield client                                 # never resumed: only aclose() ends it
+    finally:
+        with _jev_clients_lock:
+            entry = _jev_clients.get(key)
+            if entry is not None and entry[1] is client:
+                _jev_clients.pop(key, None)
+        try:
+            await client.aclose()
+        except Exception as exc:  # noqa: BLE001 — closing never fails a loop's shutdown
+            logger.info("jev_client_close_failed", error=str(exc)[:200])
+
+
+async def _jev_client() -> httpx.AsyncClient:
+    """This event loop's Jev client, made on first use."""
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    with _jev_clients_lock:
+        entry = _jev_clients.get(key)
+        if entry is not None and entry[0] is loop and not entry[1].is_closed:
+            return entry[1]
+        for k in [k for k, (lp, _c, _h) in _jev_clients.items() if lp.is_closed()]:
+            _jev_clients.pop(k, None)                # a loop closed without asyncio.run's shutdown
+    client = _new_jev_client()
+    holder = _hold_jev_client(key, client)
+    await holder.__anext__()                         # first iteration: the loop now tracks the generator
+    with _jev_clients_lock:
+        _jev_clients[key] = (loop, client, holder)
+    return client
+
+
+async def close_jev_client() -> None:
+    """Close this event loop's Jev client now (a later call makes a new one). Never raises."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    with _jev_clients_lock:
+        entry = _jev_clients.pop(id(loop), None)
+    if entry is None or entry[0] is not loop:
+        return
+    try:
+        await entry[2].aclose()                      # its finally closes the client
+    except Exception as exc:  # noqa: BLE001
+        logger.info("jev_client_close_failed", error=str(exc)[:200])
+
+
 async def _call_jev(state: Any, questions: dict[str, dict]) -> dict:
     body = {"state": state, "model": JEV_MODEL, "questions": questions}
     headers = {"Authorization": f"Bearer {get_typesafe_api_key()}", "Content-Type": "application/json"}
     last: Exception | None = None
     url, timeout_s, attempts = jev_endpoint()          # AA-1017: from Jev's connection row, else the constants
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
-        for attempt in range(attempts):
-            try:
-                resp = await client.post(url, json=body, headers=headers)
-                if resp.status_code == 402:          # AA-720 — credit exhausted, do not retry
-                    try:
-                        parsed = resp.json()
-                    except Exception:
-                        parsed = None
-                    if is_billing_error(402, parsed):
-                        raise JevBillingError("TypeSafe 402 billing_error (credit exhausted)")
-                if resp.status_code in _RETRY_STATUS and attempt < attempts - 1:
-                    await asyncio.sleep(0.5 * (attempt + 1))
-                    continue
-                resp.raise_for_status()
-                return resp.json()
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last = exc
-                if attempt < attempts - 1:
-                    await asyncio.sleep(0.5 * (attempt + 1))
+    client = await _jev_client()                       # S275: this loop's keep-alive client
+    for attempt in range(attempts):
+        try:
+            resp = await client.post(url, json=body, headers=headers, timeout=timeout_s)
+            if resp.status_code == 402:          # AA-720 — credit exhausted, do not retry
+                try:
+                    parsed = resp.json()
+                except Exception:
+                    parsed = None
+                if is_billing_error(402, parsed):
+                    raise JevBillingError("TypeSafe 402 billing_error (credit exhausted)")
+            if resp.status_code in _RETRY_STATUS and attempt < attempts - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last = exc
+            if attempt < attempts - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
     raise last or RuntimeError("TypeSafe call failed")
 
 
@@ -944,8 +1011,10 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
         if refusal:
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=refusal)
+            # S275: the row names the class that opened the circuit (the ledger CHECK has no circuit class) and is
+            # marked quality_signal.refusal = circuit_open, so readers count it as a refusal, not a provider error.
             failed_ask = ("refused", provider_circuit.open_class(JEV_CONNECTION_KEY) or "other", refusal,
-                          len(to_ask), None)
+                          len(to_ask), None, provider_circuit.refusal_signal())
             to_ask = {}
 
     if to_ask:
@@ -991,9 +1060,9 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             logger.warning("decide_call_failed", stage=stage, subject=subject_key, error=err[:200])
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=err[:500])
-            cls = classify(exc)
+            cls = jev_failure_class(exc)
             access_state = _ACCESS_OF_CLASS.get(cls)
-            await _circuit_failure(getattr(getattr(exc, "response", None), "status_code", None), err)
+            await _circuit_failure(_http_status(exc), err)
             failed_ask = ("refused" if cls in ("access_denied", "quota_exhausted", "throttled") else "error",
                           cls if cls in ("access_denied", "quota_exhausted", "throttled") else "other",
                           err, len(to_ask), decision.latency_ms)
@@ -1001,6 +1070,27 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask, failed_ask=failed_ask)
     await note_jev_access(db, access_state)
     return decision
+
+
+def _http_status(exc: BaseException) -> Optional[int]:
+    """The HTTP status of a failed call (an httpx.HTTPStatusError's response), else None (timeout / transport)."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def jev_failure_class(exc: BaseException) -> str:
+    """S275: the ledger class of a failed Jev call. ``classify`` reads the text, and httpx's "Client error '401
+    Unauthorized'" matches none of its patterns, so a refused key was written ``other`` and Jev's access_state never
+    moved. When the text says nothing, the HTTP status decides through the circuit's own table
+    (``provider_circuit.failure_class``: 401 / 403 access_denied, 402 quota_exhausted, 429 throttled); a content 4xx,
+    a 5xx, a 404 and a timeout stay ``other``. Pure."""
+    cls = classify(exc)
+    status = _http_status(exc)
+    if cls != "other" or status is None:
+        return cls
+    from shared import provider_circuit
+
+    return provider_circuit.failure_class(status) or "other"
 
 
 async def _circuit_success() -> None:
@@ -1033,7 +1123,8 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
     (AA-742): it is counted into shared.decision_cache_hits_daily, flushed in batches.
 
     llm_call_log: one row per answered ask (its cost, latency, the questions as units); AA-804 (ledger v2): one 0 USD
-    row per refused or failed ask (``failed_ask`` = status, error_class, error, questions, latency_ms)."""
+    row per refused or failed ask (``failed_ask`` = status, error_class, error, questions, latency_ms[, extra
+    quality_signal keys: S275, the circuit-open marker])."""
     job_id = current_job_id()
     per_q_cost = decision.cost_usd / len(asked) if asked else 0.0
     rows = []
@@ -1084,12 +1175,12 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
                       connection_key=JEV_CONNECTION_KEY)      # AA-642 (S263 L2): account = the Jev connection
         await record_call_with_pool(db, **kwargs)       # its own, separate acquisition
     elif failed_ask is not None:
-        status, error_class, error, questions, latency_ms = failed_ask
+        status, error_class, error, questions, latency_ms, *extra = failed_ask
         row = gateway_failure_row(
             stage=stage, role=JEV_ROLE, model=JEV_MODEL, status=status, error_class=error_class, error=error,
             provider="typesafe", connection_key=JEV_CONNECTION_KEY, latency_ms=latency_ms, units=questions,
             unit_kind="question",
-            quality_signal_extra={"source": "decide", "questions": questions},
+            quality_signal_extra={"source": "decide", "questions": questions, **(extra[0] if extra else {})},
             tenant_id=str(tenant_id) if tenant_id else None)
         await record_call_with_pool(db, **row)          # its own, separate acquisition
 

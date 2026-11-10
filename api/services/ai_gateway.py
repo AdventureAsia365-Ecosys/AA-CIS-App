@@ -152,9 +152,37 @@ BUDGETS_SQL = """
      WHERE scope = 'global'
 """
 
-DECISIONS_SQL = """
+# AA-1025 D3: the decision_log error texts of a Jev ask that the gateway or the provider refused with nothing answered
+# (shared/llm_client/decide.py: the Jev switch, the app profile and the circuit end with the suffix; the daily cap, the
+# credit breaker and a 402 are the exact texts). Their llm_call_log row says status refused; the Calls tab says so too.
+JEV_REFUSED_SUFFIX = "nothing was sent to the provider"
+JEV_REFUSED_ERRORS = ("budget_exceeded", "credit_exhausted", "credit_exhausted (breaker open)")
+
+
+def jev_verdict_status(r: dict) -> str:
+    """decision_log has no status column. AA-1025 D3: an ask refused before an answer (``JEV_REFUSED_*``, or a
+    ``skipped`` verdict with a reason: the tenant guard) is ``refused``; another verdict with an error (zone
+    ``error`` or an error text) is ``error``; else ``ok``. The SQL twin is ``JEV_STATUS_SQL``. Pure."""
+    error = r.get("error")
+    if error and (str(error).endswith(JEV_REFUSED_SUFFIX) or error in JEV_REFUSED_ERRORS
+                  or r.get("zone") == "skipped"):
+        return "refused"
+    return "error" if error or r.get("zone") == "error" else "ok"
+
+
+JEV_STATUS_SQL = (
+    "CASE WHEN error IS NOT NULL AND (error LIKE '%" + JEV_REFUSED_SUFFIX + "' OR error IN ("
+    + ", ".join(f"'{e}'" for e in JEV_REFUSED_ERRORS) + ") OR zone = 'skipped') THEN 'refused' "
+    "WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END")
+
+
+# S275: errors are the asks that failed at the provider (JEV_STATUS_SQL 'error'); an ask the gateway refused before
+# sending (the switch, the cap, the credit breaker, an open circuit) is counted in ``refused``. The 09/11 burst wrote
+# 4,997 circuit-open refusals next to 20 real failures: counted as errors they made Jev look 24 % failed.
+DECISIONS_SQL = f"""
     SELECT count(*)::int AS calls,
-           count(*) FILTER (WHERE zone = 'error' OR error IS NOT NULL)::int AS errors,
+           count(*) FILTER (WHERE {JEV_STATUS_SQL} = 'error')::int AS errors,
+           count(*) FILTER (WHERE {JEV_STATUS_SQL} = 'refused')::int AS refused,
            count(*) FILTER (WHERE cached)::int AS cached,
            avg(latency_ms) FILTER (WHERE NOT cached AND latency_ms IS NOT NULL)::float AS mean_latency_ms,
            max(created_at) AS last_at
@@ -558,7 +586,8 @@ def jev_row(estimate: dict, threshold: float, spend: dict, decisions: Optional[d
         calls = int(decisions.get("calls") or 0)
         errors = int(decisions.get("errors") or 0)
         health = {"window_hours": DECISION_WINDOW_HOURS, "calls": calls, "errors": errors,
-                  "error_pct": _pct(errors, calls), "cached": int(decisions.get("cached") or 0),
+                  "error_pct": _pct(errors, calls), "refused": int(decisions.get("refused") or 0),
+                  "cached": int(decisions.get("cached") or 0),
                   "mean_latency_ms": None if decisions.get("mean_latency_ms") is None
                   else round(float(decisions["mean_latency_ms"])),
                   "last_at": _iso(decisions.get("last_at"))}
@@ -1036,30 +1065,6 @@ def llm_event(r: dict) -> dict:
                        "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id"),
                        # AA-1042: the gateway request of the row (AI gateway > Trace opens it)
                        "route_trace": r.get("route_trace")}}
-
-
-# AA-1025 D3: the decision_log error texts of a Jev ask that the gateway or the provider refused with nothing answered
-# (shared/llm_client/decide.py: the Jev switch, the app profile and the circuit end with the suffix; the daily cap, the
-# credit breaker and a 402 are the exact texts). Their llm_call_log row says status refused; the Calls tab says so too.
-JEV_REFUSED_SUFFIX = "nothing was sent to the provider"
-JEV_REFUSED_ERRORS = ("budget_exceeded", "credit_exhausted", "credit_exhausted (breaker open)")
-
-
-def jev_verdict_status(r: dict) -> str:
-    """decision_log has no status column. AA-1025 D3: an ask refused before an answer (``JEV_REFUSED_*``, or a
-    ``skipped`` verdict with a reason: the tenant guard) is ``refused``; another verdict with an error (zone
-    ``error`` or an error text) is ``error``; else ``ok``. The SQL twin is ``JEV_STATUS_SQL``. Pure."""
-    error = r.get("error")
-    if error and (str(error).endswith(JEV_REFUSED_SUFFIX) or error in JEV_REFUSED_ERRORS
-                  or r.get("zone") == "skipped"):
-        return "refused"
-    return "error" if error or r.get("zone") == "error" else "ok"
-
-
-JEV_STATUS_SQL = (
-    "CASE WHEN error IS NOT NULL AND (error LIKE '%" + JEV_REFUSED_SUFFIX + "' OR error IN ("
-    + ", ".join(f"'{e}'" for e in JEV_REFUSED_ERRORS) + ") OR zone = 'skipped') THEN 'refused' "
-    "WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END")
 
 
 def jev_event(r: dict) -> dict:
