@@ -54,6 +54,7 @@ OTHER = "44444444-4444-4444-8444-444444444444"
 CLOSED = "55555555-5555-4555-8555-555555555555"
 SESSION = "66666666-6666-4666-8666-666666666666"
 NOW = datetime.now(timezone.utc).replace(microsecond=0)   # the minted token expires NOW + minutes
+CANCELLED_AT = datetime(2026, 1, 15, 9, 0, tzinfo=timezone.utc)   # a fixed past time for parametrize (S276 lint)
 ROLES = ("admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance",
          "ai_ops", "viewer")
 VIEW_AS_ROLES = {"admin", "customer_success", "support"}
@@ -400,7 +401,8 @@ def _ended(db: FakeDb) -> list[tuple]:
     ({"staff_role": "finance"}, "role_lost_view_as"),
     ({"staff_role": "content"}, "role_lost_view_as"),
     # S268 fix round 2: the tenant rule of the start, re-checked on every request
-    ({"tenant_cancelled_at": NOW, "tenant_status": "offboarding", "tenant_active": False}, "tenant_inactive"),
+    ({"tenant_cancelled_at": CANCELLED_AT, "tenant_status": "offboarding", "tenant_active": False},
+     "tenant_inactive"),
     ({"tenant_status": "closed", "tenant_active": False}, "tenant_inactive"),
     ({"tenant_status": "suspended", "tenant_active": False}, "tenant_inactive"),
     ({"tenant_kind": "internal"}, "tenant_inactive"),
@@ -453,7 +455,7 @@ def test_a_failed_close_still_refuses_the_request():
     ({}, None),
     ({"tenant_id": ts.AA_INTERNAL_TENANT}, "internal"),
     ({"kind": "internal"}, "internal"),
-    ({"cancelled_at": NOW}, "offboarded"),
+    ({"cancelled_at": CANCELLED_AT}, "offboarded"),
     ({"account_status": "offboarding"}, "offboarded"),
     ({"account_status": "closed", "is_active": False}, "offboarded"),
     ({"account_status": "suspended", "is_active": False}, "inactive"),
