@@ -247,10 +247,10 @@ class FinalLabel:
 
 
 def final_labels(rows: list[dict]) -> dict[str, FinalLabel]:
-    """claim_hash -> final label: a tech-lead row wins (source tech_lead; source prefilter when the newest one was written
-    by a machine rule, AA-1063); else an agreed or audit-drawn panel claim takes the panel's common label (source
-    panel_agreed); a disputed claim without a tech-lead row has no final label (source none, label unsure). Which
-    labels may count as release evidence is `release_evidence`."""
+    """claim_hash -> final label: a tech-lead row wins (source tech_lead; source prefilter when the newest one was
+    written by a machine rule, AA-1063); else an agreed or audit-drawn panel claim takes the panel's common label
+    (source panel_agreed); a disputed claim without a tech-lead row has no final label (source none, label unsure).
+    Which labels may count as release evidence is `release_evidence`."""
     by_hash: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_hash[r["claim_hash"]].append(r)
@@ -410,4 +410,5 @@ def rederive(fixture: dict, finals: dict[str, FinalLabel], *,
 
 __all__ = ["AUDIT_PCT", "Consolidated", "EXPORT_SCHEMA", "FinalLabel", "Judgement", "LENSES", "PREFILTER_PREFIX",
            "PanelError", "agreement_report", "consolidate", "contradictions", "export_records", "manifest",
-           "final_labels", "is_prefilter", "parse_judgements", "read_jsonl", "rederive", "release_evidence", "verdict_rule"]
+           "final_labels", "is_prefilter", "parse_judgements", "read_jsonl", "rederive", "release_evidence",
+           "verdict_rule"]

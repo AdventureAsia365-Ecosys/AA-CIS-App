@@ -112,7 +112,8 @@ def _rows():
 
 
 def _lead(row, *, labeller, label="ok", minute=1):
-    out = rv.lead_row(row, label=label, claim_class="fact.number", labeller=labeller, reason="invented", policy_sha=None)
+    out = rv.lead_row(row, label=label, claim_class="fact.number", labeller=labeller, reason="invented",
+                      policy_sha=None)
     return {**out, "label_id": f"00000000-0000-4000-9000-{minute:012d}",
             "created_at": datetime(2026, 11, 10, 0, minute, tzinfo=timezone.utc)}
 
