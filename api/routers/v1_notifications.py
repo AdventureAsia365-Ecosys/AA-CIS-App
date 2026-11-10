@@ -49,7 +49,10 @@ _TITLES = {
     "tour.discontinued": "Tour no longer served",
     "tour.reinstated": "Tour served again",
     "tour.pages_to_put_back": "Pages to put back online",   # AA-1039 (option A): the restore fan-out writes it
+    "tour.pages_to_review": "Pages about a tour no longer offered",   # AA-1039 (S276): the retire fan-out writes it
 }
+# Rows that carry a page list with a one-click action per page (put back online / move to draft).
+_PAGE_ROWS = ("tour.pages_to_put_back", "tour.pages_to_review")
 
 
 def _payload(raw) -> dict:
@@ -71,8 +74,8 @@ def _message(event_type: str, p: dict) -> str:
         live = int(p.get("live_posts") or 0)
         if live:
             msg += (f" {live} published post{'s' if live != 1 else ''} about it "
-                    f"{'are' if live != 1 else 'is'} still live: remove or edit {'them' if live != 1 else 'it'} "
-                    "(Publish, Published).")
+                    f"{'are' if live != 1 else 'is'} still live and stay{'' if live != 1 else 's'} online: you can "
+                    f"rewrite, move to draft or keep {'them' if live != 1 else 'it'} (Publish).")
         return msg
     if event_type == "tour.reinstated":
         return f"{name} is served by Adventure Asia again. You can work on it as before."
@@ -81,13 +84,27 @@ def _message(event_type: str, p: dict) -> str:
         return (f"{name} is back on sale. {n} of your WordPress page{'s' if n != 1 else ''} moved to draft while it "
                 f"was off sale {'stay' if n != 1 else 'stays'} in draft until you put "
                 f"{'them' if n != 1 else 'it'} back online.")
+    if event_type == "tour.pages_to_review":
+        pages = _pages(p, review=True)
+        n = len(pages)
+        dated = any(x.get("draft_on") for x in pages)
+        msg = (f"Adventure Asia no longer offers {name}. {n} of your WordPress page{'s' if n != 1 else ''} about it "
+               f"{'are' if n != 1 else 'is'} still online. You can rewrite {'them' if n != 1 else 'it'}, move "
+               f"{'each one' if n != 1 else 'it'} to draft with one click, or keep {'them' if n != 1 else 'it'}.")
+        if dated:
+            msg += " Pages with a date go to draft on that date, as set in your Content studio Settings."
+        return msg
     return p.get("message") or ""
 
 
-def _pages(p: dict) -> list[dict]:
-    """AA-1039: the drafted pages of a tour.pages_to_put_back row ({publish_id, url}); the action is
-    POST /v1/publish-log/{publish_id}/put-back, which answers "already online" for a page put back since."""
-    return [{"publish_id": str(x.get("publish_id")), "url": x.get("url")}
+def _pages(p: dict, review: bool = False) -> list[dict]:
+    """AA-1039: the pages of a page row ({publish_id, url, draft_on}). tour.pages_to_put_back: the drafted pages, action
+    POST /v1/publish-log/{publish_id}/put-back ("already online" for a page put back since). tour.pages_to_review
+    (S276): the live pages about a tour no longer offered, action POST /v1/publish-log/{publish_id}/move-to-draft
+    ("already in draft" for a page drafted since); draft_on is the automatic draft date of an opted-in agency, else
+    None."""
+    return [{"publish_id": str(x.get("publish_id")), "url": x.get("url"),
+             **({"draft_on": x.get("draft_on")} if review else {})}
             for x in (p.get("pages") or []) if isinstance(x, dict) and x.get("publish_id")]
 
 
@@ -102,13 +119,14 @@ def _item(r) -> dict:
         "tour_name": p.get("tour_name"),
         "reason": p.get("reason"),
         "live_posts": int(p.get("live_posts") or 0),
-        "pages": _pages(p) if r["event_type"] == "tour.pages_to_put_back" else [],
+        "pages": _pages(p, review=r["event_type"] == "tour.pages_to_review") if r["event_type"] in _PAGE_ROWS else [],
         "is_read": bool(r["is_read"]),
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
     }
 
 
-@router.get("", summary="The tenant's own notifications (tour no longer served / served again / pages to put back)")
+@router.get("", summary="The tenant's own notifications (tour no longer served / served again / pages to put back / "
+                        "pages about a tour no longer offered)")
 async def list_notifications(
     request: Request,
     tenant=Depends(get_tenant),

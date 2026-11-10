@@ -77,6 +77,8 @@ from services.acp_publish.dispatch import (
 )
 from services.acp_publish.idempotency import claim, finish, publish_key
 from services.acp_publish import put_back as _pb
+from services.acp_publish import retired_pages as _rp
+from services.tour_lifecycle import fanout as _fanout
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/publish-log", tags=["publish-log"])
@@ -819,6 +821,144 @@ async def put_back(publish_id: UUID, request: Request, tenant=Depends(get_tenant
     except Exception as exc:  # noqa: BLE001
         logger.warning("put_back_audit_log_failed", tenant_id=tenant_id, publish_id=pid, error=str(exc))
     return _put_back_result(pid, outcome, wp_status, status, row["external_url"])
+
+
+# ── AA-1039 (tech lead decision S276): "Move to draft" ─────────────────────────────────────────────────────────────
+# A retirement changes nothing on the agency's site by default: its live posts about the tour are listed (GET) and the
+# agency moves a WordPress page to draft with one click (POST), through the same path as the automatic draft of an
+# opted-in agency (services/tour_lifecycle/fanout.move_to_draft; services/acp_publish/retired_pages.py).
+
+class RetiredPage(BaseModel):
+    publish_id: str
+    piece_id: str
+    title: str
+    channel: str
+    external_url: Optional[str] = None
+    tour_name: Optional[str] = None
+    can_move_to_draft: bool
+    draft_due_at: Optional[str] = None       # the automatic draft date of an opted-in agency, else None
+    flagged_at: Optional[str] = None
+
+
+class RetiredPageList(BaseModel):
+    data: list[RetiredPage]
+    total: int
+
+
+class MoveToDraftResult(BaseModel):
+    publish_id: str
+    outcome: str                             # drafted | already_drafted
+    status: str                              # the publish_log status after the click: unpublished
+    external_url: Optional[str] = None
+    replayed: bool = False
+    message: str
+
+
+MOVE_NOT_OFFERED = ("This page is not about a tour Adventure Asia no longer offers, so there is nothing to move to "
+                    "draft here.")
+MOVE_NOT_WORDPRESS = "This post is not on WordPress: edit or remove it on its own site."
+MOVE_TOUR_BACK = "This tour is back on sale, so the page stays online."
+MOVE_NOT_LIVE = "This page is no longer online, so there is nothing to move to draft."
+MOVE_DRAFTED = "The page is now a draft on WordPress. You can put it back online if the tour comes back on sale."
+MOVE_ALREADY = "The page is already a draft on WordPress."
+
+
+def _move_result(publish_id: str, outcome: str, external_url: Optional[str], *, replayed: bool = False) -> dict:
+    return {"publish_id": publish_id, "outcome": outcome, "status": "unpublished", "external_url": external_url,
+            "replayed": replayed, "message": MOVE_DRAFTED if outcome == "drafted" else MOVE_ALREADY}
+
+
+@router.get("/retired-pages", response_model=RetiredPageList,
+            summary="The tenant's live posts about a tour Adventure Asia no longer offers")
+async def list_retired_pages(request: Request, tenant=Depends(get_tenant)):
+    """Each live post with an open retirement notice: WordPress pages can be moved to draft with one click, Facebook
+    posts are edited or removed on Facebook. Nothing on the site changes until the agency acts (or, if it turned
+    automatic drafts on, until ``draft_due_at``). Read on MAIN with the tenant condition in the statement."""
+    tenant_id = tenant["sub"]
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            rows = await conn.fetch(_rp.RETIRED_PAGES_SQL, tenant_id)
+    except asyncpg.UndefinedTableError:      # before CIS 360: no retirement notice
+        rows = []
+    data = [_rp.page_row(r) for r in rows]
+    logger.info("retired_pages_listed", tenant_id=tenant_id, count=len(data))
+    return {"data": data, "total": len(data)}
+
+
+@router.post("/{publish_id}/move-to-draft", response_model=MoveToDraftResult,
+             summary="Move to draft a WordPress page about a tour Adventure Asia no longer offers")
+async def move_page_to_draft(publish_id: UUID, request: Request, tenant=Depends(get_tenant)):
+    """One click, one WordPress call, only on the tenant's own live page with an open retirement notice (404 for any
+    other page, also another tenant's: no existence leak). Re-checked first, as for an automatic draft: the tour is
+    still not offered (409), the page is still live (409), WordPress is connected and the page is on the connected
+    site (422). Idempotent: a repeat click answers "already a draft" (replayed) with no WordPress call. Audited as
+    content_piece.moved_to_draft; the page can be put back online after a restore like an automatic draft."""
+    pool = request.app.state.pool
+    tenant_id = tenant["sub"]
+    pid = str(publish_id)
+    actor = _rp.actor_of(tenant, tenant_id)
+    try:
+        async with pool.acquire() as conn:
+            flag = await conn.fetchrow(_rp.OPEN_FLAG_OF_PAGE_SQL, tenant_id, pid)
+            done = None if flag else await conn.fetchrow(_rp.DRAFTED_PAGE_SQL, tenant_id, pid, _rp.RETIREMENT_ACTOR)
+    except asyncpg.UndefinedTableError:
+        flag = done = None
+    if flag is None:
+        if done is not None:
+            return _move_result(pid, "already_drafted", done["external_url"], replayed=True)
+        raise HTTPException(status_code=404, detail=MOVE_NOT_OFFERED)
+    if not _rp.can_move_to_draft(flag["channel"]):
+        raise HTTPException(status_code=409, detail=MOVE_NOT_WORDPRESS)
+
+    async def read_secret(name: str) -> dict:
+        try:
+            creds = await asyncio.to_thread(_get_secret, name)
+        except ClientError as exc:
+            logger.error("move_to_draft_secret_read_failed", tenant_id=tenant_id, error=str(exc))
+            raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
+        if is_tombstoned_secret(creds):
+            raise HTTPException(status_code=422, detail=reconnect_detail("WordPress"))
+        return creds
+
+    try:
+        out = await _fanout.move_to_draft(pool, flag["flag_id"], read_secret=read_secret, adapter_for=_wp_adapter,
+                                          actor=actor, tenant_id=tenant_id)
+    except _fanout.DraftRefused as exc:
+        logger.warning("move_to_draft_refused", tenant_id=tenant_id, publish_id=pid, reason=exc.reason)
+        if exc.reason == "wordpress_not_connected":
+            raise HTTPException(status_code=422, detail="Connect WordPress to move this page to draft.")
+        if exc.reason == "other_site":
+            raise HTTPException(status_code=422, detail="This page lives on another WordPress site than the one "
+                                                        "connected now — move it to draft there directly.")
+        raise HTTPException(status_code=502, detail=f"Could not move the page to draft: {exc.reason}. It is still "
+                                                    "online; try again in a minute.")
+    status = out.get("status")
+    if status == "resolved":
+        raise HTTPException(status_code=409, detail=MOVE_TOUR_BACK if out.get("resolution") == "restored"
+                            else MOVE_NOT_LIVE)
+    if status == "already_drafted":
+        return _move_result(pid, "already_drafted", None, replayed=True)
+    if status != "drafted":                  # the flag closed between the read and the call (restore, job)
+        raise HTTPException(status_code=409, detail=MOVE_NOT_OFFERED)
+    logger.info("move_to_draft_done", tenant_id=tenant_id, publish_id=pid, wordpress=out.get("outcome"))
+    try:  # AA-859 MAIN exception: audit_log has no tenant-pool grant; best-effort like publish()
+        await write_audit_log(
+            pool, tenant_id=str(tenant_id), actor=actor, action=TenantAuditAction.CONTENT_MOVED_TO_DRAFT,
+            resource_type="content_piece", resource_id=out["piece_id"],
+            details={"channel": "blog", "publish_id": pid, "reason": "tour_retired", "wordpress": out.get("outcome"),
+                     "flag_id": flag["flag_id"]},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("move_to_draft_audit_log_failed", tenant_id=tenant_id, publish_id=pid, error=str(exc))
+    async with pool.acquire() as conn:
+        url = await conn.fetchval("SELECT external_url FROM acp_shared.publish_log "
+                                  "WHERE publish_id = $1::uuid AND tenant_id = $2::uuid", pid, tenant_id)
+    return _move_result(pid, "drafted", url)
+
+
+def _wp_adapter(creds: dict):
+    from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+    return WordPressAdapter(wp_url=creds["wp_url"], username=creds["username"], app_password=creds["app_password"])
 
 
 async def _pages_to_put_back(pool, tenant_id, piece_ids) -> dict:

@@ -209,6 +209,8 @@ async def test_a_request_without_a_segment_subject_still_follows_its_tour(conn):
 @pytest.mark.asyncio
 async def test_the_last_member_leaving_flags_and_mails_and_a_member_coming_back_stops_the_draft(conn):
     w = await _world(conn, "g1-last")
+    await conn.execute("INSERT INTO acp_shared.tour_retirement_policy (tenant_id, notice_days, auto_draft, updated_by) "
+                       "VALUES ($1, 7, true, 'test')", w.tenant)   # S276: automatic drafts are the agency's opt-in
     pool = l2._OneConnPool(conn)
     await tl.trash_master(conn, w.a.tour)
     assert (await fanout.fan_out(pool, await _event_key(conn, w.a, "retired")))["flags_created"] == 0

@@ -7,8 +7,11 @@ identity ``(cognito_iss, cognito_sub)`` only, AA-978), so the address is read at
 ListUsers does not count as a Cognito MAU). Only a verified address is used; a member of another pool is skipped.
 Nothing is stored: the notice row keeps ids and counts only.
 
-Wording is content-style (TL-20): the tour, the stop date, what the system already did, when each WordPress page
-goes to draft, which Facebook posts to edit, a replacement tour if any. Never "flag", "QA" or an internal code.
+Wording is content-style (TL-20): the tour, the stop date, what the system already did, which WordPress pages the
+agency can rewrite, move to draft with one click or keep (tech lead decision S276: notice only by default; a draft date
+only for an agency that turned automatic drafts on), which Facebook posts to edit, a replacement tour if any. Never
+"flag", "QA" or an internal code. English only: no language preference is stored per member (the Content studio
+itself shows the same pages in English or Vietnamese).
 """
 from __future__ import annotations
 
@@ -121,9 +124,22 @@ def _retired_lines(n: dict) -> list[str]:
     if s.get("publishes_cancelled"):
         did.append(f"{s['publishes_cancelled']} publish request(s) still waiting were cancelled")
     lines.append("What we already did: " + "; ".join(did) + ". Everything you made stays in your account.")
-    for page in s.get("pages") or []:
-        lines.append(f"Your page {page.get('url')} will be moved to draft on {page.get('draft_on')}. You can rewrite "
-                     "it around another Adventure Asia tour, or remove it, before then.")
+    # AA-1039 (tech lead decision S276): by default nothing changes on the agency's site; a page gets a draft date only
+    # when the agency turned automatic drafts on in its Content studio (a notice written before S276 has a draft_on
+    # without auto_draft: same sentence).
+    pages = s.get("pages") or []
+    kept = [p for p in pages if not p.get("draft_on")]
+    for page in pages:
+        if page.get("draft_on"):
+            lines.append(f"Your page {page.get('url')} will be moved to draft on {page.get('draft_on')}, as set in "
+                         "your Content studio. You can rewrite it around another Adventure Asia tour, or move it to "
+                         "draft now, before then.")
+    if kept:
+        lines.append("These pages of yours stay online. For each one you can rewrite it around another Adventure Asia "
+                     "tour, move it to draft with one click (open Publish in your Content studio), or keep it:")
+        lines += [f"  - {p.get('url')}" for p in kept]
+        lines.append("Adventure Asia does not change your website. If you prefer, you can have pages like these "
+                     "moved to draft automatically: turn it on in your Content studio Settings.")
     posts = s.get("posts") or []
     if posts:
         lines.append("Please edit or remove these posts (nothing is deleted for you):")
