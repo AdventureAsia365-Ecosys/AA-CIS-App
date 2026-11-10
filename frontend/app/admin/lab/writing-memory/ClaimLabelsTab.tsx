@@ -23,7 +23,8 @@ import {
 import { can } from "@/lib/rbac";
 import {
   ANSWERS, ANSWER_OF_LABEL, CLAIM_API, CLAIM_WRITERS, CLAIMS_PAGE, LABELS, REVIEW_PAGE, acceptable, acceptableCount,
-  chunks, claimsUrl, deciderLabel, facetCounts, labelTone, note, proposalReason, reviewUrl, setKey, splitMark,
+  chunks, claimsUrl, deciderLabel, facetCounts, labelTone, note, proposalReason, reviewPageOffset, reviewUrl, setKey,
+  splitMark,
   type AcceptResult, type Answer, type AnswerResult, type ClaimEntry, type ClaimFilters, type ClaimLabel,
   type ClaimsPage, type ItemContext, type ReviewFilters, type ReviewItem, type ReviewPage, type SetSummary,
 } from "@/lib/claimLabels";
@@ -161,6 +162,10 @@ function ItemCard({ item, canAdmin, lang, onAnswered }: {
         ))}
       </div>
       <FullSource itemId={item.item_id} />
+      {open && decision && (
+        <div role="note" style={{ fontSize: 12.5, padding: "6px 10px", borderRadius: 8, background: K.amberSoft }}>
+          {t("alreadyDecided", labelName(t, decision.label), deciderLabel(decision.by))}</div>
+      )}
       {open ? (canAdmin ? (
         <ButtonGroup label={t("answerAria")}>
           {ANSWERS.map((a) => (
@@ -190,11 +195,15 @@ function ReviewView({ canAdmin }: { canAdmin: boolean }) {
   const wm = useWmText();
   const [f, setF] = useState<ReviewFilters>({ set: "", writer: "", proposal: "", state: "open" });
   const [offset, setOffset] = useState(0);
+  const [answered, setAnswered] = useState(0);
   const [armedAt, setArmedAt] = useState<number | null>(null);
   const [bulk, setBulk] = useState<string | null>(null);
   const q = useQuery({ queryKey: ["wm", "claims", "review", f, offset],
     queryFn: () => apiGet<ReviewPage>(reviewUrl(f, offset)) });
-  const facets = useMemo(() => q.data?.facets ?? [], [q.data]);
+  // the whole queue's counts (progress, accept count), refreshed after each answer while the page's cards stay put
+  const fq = useQuery({ queryKey: ["wm", "claims", "review", "facets"],
+    queryFn: () => apiGet<ReviewPage>(reviewUrl({ set: "", writer: "", proposal: "", state: "open" }, 0, 1, false)) });
+  const facets = useMemo(() => fq.data?.facets ?? q.data?.facets ?? [], [fq.data, q.data]);
   const counts = useMemo(() => facetCounts(facets, f.set), [facets, f.set]);
   const toAccept = acceptableCount(facets, f);
   const total = q.data?.total ?? 0;
@@ -204,7 +213,23 @@ function ReviewView({ canAdmin }: { canAdmin: boolean }) {
   function set<K extends keyof ReviewFilters>(k: K, v: ReviewFilters[K]) {
     setF((x) => ({ ...x, [k]: v }));
     setOffset(0);
+    setAnswered(0);
     setArmedAt(null);
+  }
+
+  // answered open items have left the open list on the server: refetch and step back by their number (the next page
+  // can be this same offset, so the cached page must not be reused)
+  function go(dir: 1 | -1) {
+    const next = reviewPageOffset(f.state, offset, answered, dir);
+    setAnswered(0);
+    qc.invalidateQueries({ queryKey: ["wm", "claims", "review"] });
+    setOffset(next);
+  }
+
+  function onAnswered() {
+    setAnswered((n) => n + 1);
+    qc.invalidateQueries({ queryKey: ["wm", "claims", "review", "facets"] });
+    qc.invalidateQueries({ queryKey: ["wm", "claims", "sets"] });
   }
 
   // the second click must come soon after the first one; the armed bar closes by itself
@@ -248,6 +273,8 @@ function ReviewView({ canAdmin }: { canAdmin: boolean }) {
     }
     setBulk(null);
     toast.success(t("acceptDone", saved, refused));
+    setOffset(0);
+    setAnswered(0);
     qc.invalidateQueries({ queryKey: ["wm", "claims"] });
   }
 
@@ -301,19 +328,17 @@ function ReviewView({ canAdmin }: { canAdmin: boolean }) {
         : (
           <div style={{ display: "grid", gap: 12 }}>
             {q.data.items.map((it) => (
-              <ItemCard key={it.item_id} item={it} canAdmin={canAdmin} lang={lang}
-                onAnswered={() => qc.invalidateQueries({ queryKey: ["wm", "claims", "sets"] })} />
+              <ItemCard key={it.item_id} item={it} canAdmin={canAdmin} lang={lang} onAnswered={onAnswered} />
             ))}
           </div>
         )}
       {total > REVIEW_PAGE && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
-          <Button size="sm" variant="ghost" disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - REVIEW_PAGE))}>{t("prev")}</Button>
+          <Button size="sm" variant="ghost" disabled={offset === 0} onClick={() => go(-1)}>{t("prev")}</Button>
           <span style={{ fontSize: 12.5, color: K.muted }}>
             {t("page", offset + 1, Math.min(offset + REVIEW_PAGE, total), total)}</span>
-          <Button size="sm" variant="ghost" disabled={offset + REVIEW_PAGE >= total}
-            onClick={() => setOffset(offset + REVIEW_PAGE)}>{t("next")}</Button>
+          <Button size="sm" variant="ghost" disabled={offset + REVIEW_PAGE >= total} onClick={() => go(1)}>
+            {t("next")}</Button>
         </div>
       )}
     </div>

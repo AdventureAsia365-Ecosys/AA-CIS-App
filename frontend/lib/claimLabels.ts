@@ -38,7 +38,10 @@ export interface Proposal {
   confidence: "high" | "medium" | "low" | null; run_id: string; notes: ProposalNotes; created_at: string | null;
 }
 
-export interface Decision { label: ClaimLabel; claim_class: string; by: string; at: string | null; reason: string | null }
+/** The claim's decision: its newest tech-lead row or correction (relabel = a correction from the label set browser). */
+export interface Decision {
+  label: ClaimLabel; claim_class: string; by: string; at: string | null; reason: string | null; relabel?: boolean;
+}
 
 export interface ReviewItem {
   item_id: string; status: "open" | "resolved"; resolution: string | null; note: string | null;
@@ -161,6 +164,15 @@ export function facetCounts(facets: Facet[], set: string) {
   }
   return { sets: [...sets.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => a.key.localeCompare(b.key)),
     state, proposal, writer };
+}
+
+/** The offset of the next (dir 1) or previous (dir -1) review page. The open list shrinks as items are answered:
+ * `answered` items of the current page have left it on the server, so the next page starts that many earlier (else
+ * those items would be skipped). Other states keep every item and page by the plain offset. */
+export function reviewPageOffset(state: ReviewFilters["state"], offset: number, answered: number, dir: 1 | -1,
+  page = REVIEW_PAGE): number {
+  if (dir < 0) return Math.max(0, offset - page);
+  return state === "open" ? Math.max(0, offset + page - answered) : offset + page;
 }
 
 /** The open items of a list that carry a proposal (what "accept every remaining proposal" answers). */

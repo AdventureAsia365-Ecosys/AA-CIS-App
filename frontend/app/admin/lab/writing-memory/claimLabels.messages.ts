@@ -62,6 +62,8 @@ export const CL = defineMessages(
     proposed: "(proposed)",
     saved: (label: string) => `Saved: ${label}`,
     decided: (label: string, by: string, at: string) => `Decided: ${label} by ${by}, ${at}`,
+    alreadyDecided: (label: string, by: string) => `Already labelled ${label} by ${by} in the label sets. `
+      + "An answer that differs is refused: change the label there, or answer the same here to close the item.",
     resolution: (r: string) => `queue: ${r}`,
     readOnly: "Only an admin can answer.",
     prev: "Previous",
@@ -179,6 +181,8 @@ export const CL = defineMessages(
     proposed: "(đề xuất)",
     saved: (label: string) => `Đã lưu: ${label}`,
     decided: (label: string, by: string, at: string) => `Đã quyết: ${label} bởi ${by}, ${at}`,
+    alreadyDecided: (label: string, by: string) => `Đã gán nhãn ${label} bởi ${by} trong bộ nhãn. `
+      + "Trả lời khác sẽ bị từ chối: hãy sửa nhãn ở đó, hoặc trả lời giống vậy ở đây để đóng mục này.",
     resolution: (r: string) => `hàng đợi: ${r}`,
     readOnly: "Chỉ admin mới trả lời được.",
     prev: "Trước",

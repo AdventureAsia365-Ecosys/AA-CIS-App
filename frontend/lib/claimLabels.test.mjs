@@ -8,7 +8,8 @@ import { test } from "node:test";
 
 import {
   ANSWERS, ANSWER_OF_LABEL, BULK_MAX, CLAIM_API, LABEL_OF_ANSWER, acceptable, acceptableCount, chunks, claimsUrl,
-  deciderLabel, facetCounts, labelTone, note, parseSetKey, proposalReason, reviewUrl, setKey, splitMark,
+  deciderLabel, facetCounts, labelTone, note, parseSetKey, proposalReason, reviewPageOffset, reviewUrl, setKey,
+  splitMark,
 } from "./claimLabels.ts";
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
@@ -110,4 +111,17 @@ test("the tab's messages: both languages, no issue id, no window.confirm in the 
   const wm = read("app/admin/lab/writing-memory/WritingMemory.tsx");
   assert.match(wm, /key: "claims"/);
   assert.match(read("app/admin/lab/writing-memory/MetricsTab.tsx"), /exclude_source=golden_claim/);
+});
+
+test("review paging: answered open items leave the list, so the next page starts that many earlier", () => {
+  // page 1 of the open list fully answered: the next unseen items are now at offset 0
+  assert.equal(reviewPageOffset("open", 0, 25, 1), 0);
+  // 10 of page 2 answered: items 51-75 (original order) now start at offset 40
+  assert.equal(reviewPageOffset("open", 25, 10, 1), 40);
+  assert.equal(reviewPageOffset("open", 25, 0, 1), 50);
+  // resolved / all keep every item: plain offsets
+  assert.equal(reviewPageOffset("all", 25, 10, 1), 50);
+  assert.equal(reviewPageOffset("resolved", 0, 0, 1), 25);
+  assert.equal(reviewPageOffset("open", 25, 3, -1), 0);
+  assert.equal(reviewPageOffset("all", 10, 0, -1), 0);
 });
