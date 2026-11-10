@@ -33,7 +33,8 @@ import { useWmText } from "./useWmText";
 
 type T = Translator<typeof CL.en>;
 const LABEL_KEY = { ok: "label_ok", violation: "label_violation", unsure: "label_unsure" } as const;
-const SOURCE_KEY = { tech_lead: "src_tech_lead", panel_agreed: "src_panel_agreed", none: "src_none" } as const;
+const SOURCE_KEY = { tech_lead: "src_tech_lead", prefilter: "src_prefilter", panel_agreed: "src_panel_agreed",
+  none: "src_none" } as const;
 
 const box: React.CSSProperties = { background: K.bg, borderRadius: 8, padding: "10px 12px", display: "grid", gap: 4,
   fontSize: 13, minWidth: 0, overflowWrap: "anywhere" };
@@ -507,7 +508,7 @@ function ClaimsBrowser({ set, canAdmin }: { set: SetSummary; canAdmin: boolean }
         <Field label={t("fSource")}>
           <Select size="sm" value={f.source} onChange={(e) => put("source", e.target.value as ClaimFilters["source"])}>
             <option value="">{t("fAll")}</option>
-            {(["tech_lead", "panel_agreed", "none"] as const).map((s) => (
+            {(["tech_lead", "prefilter", "panel_agreed", "none"] as const).map((s) => (
               <option key={s} value={s}>{sourceName(s)}</option>))}
           </Select>
         </Field>
@@ -567,6 +568,7 @@ function SetsView({ canAdmin }: { canAdmin: boolean }) {
       cell: (c) => <span style={{ fontFamily: mono }}>{setKey(c.row.original.set_id, c.row.original.set_version)}</span> },
     { accessorKey: "claims", header: t("colClaims") },
     { id: "lead", accessorFn: (s) => s.evidence_sources.tech_lead, header: t("colTechLead") },
+    { id: "prefilter", accessorFn: (s) => s.evidence_sources.prefilter ?? 0, header: t("colPrefilter") },
     { id: "panel", accessorFn: (s) => s.evidence_sources.panel_agreed, header: t("colPanel") },
     { id: "none", accessorFn: (s) => s.evidence_sources.none, header: t("colNone") },
     { accessorKey: "relabels", header: t("colRelabels") },
