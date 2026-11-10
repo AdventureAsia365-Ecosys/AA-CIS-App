@@ -67,3 +67,7 @@ from the live rows, with no model call.
 - Live steps: the orchestrator runs the ecsx command, then the local decode, which writes the per-Master JSONL into the
   gitignored `.tmp-session/` and the public-safe README under `docs/audits/2026-11-11-S277-s1-master-audit/`.
 - `ecsx` ships one file: the container script imports only the image's `services` / `shared` packages.
+- The README names tours by the first 8 hex characters of their id, like the other public audit pages
+  (`docs/audits/2026-11-10-S276-aa741-phase3/`); the full ids stay in the decoded summary under `.tmp-session/`.
+- The container script imports `s1_train`, `s1_checks` and `final_contract_store` from the deployed image: run it only
+  on an api task whose image carries the S1 train (CIS main from the S1 train merge on). A trial with `LIMIT=3` first.
