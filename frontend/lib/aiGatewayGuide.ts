@@ -7,9 +7,11 @@
 // coverage). Pure helpers here (node --test loads this file directly): which language to show, how a link in the page
 // renders, and the rows of each table. The tab: app/admin/ai-gateway/GuideTab.tsx.
 
-import { resolveLink } from "./docsReader.ts";
+import { imageTarget, resolveLink } from "./docsReader.ts";
 
 export const GUIDE_API = "/api/admin/ai-gateway/guide";
+/** AA-1064: the BFF route of an image the guide page links (backend GET /admin/ai-gateway/guide/asset, spend.read). */
+export const GUIDE_ASSET_API = "/api/admin/ai-gateway/guide/asset";
 export const GUIDE_QUERY_KEY = ["ai-gateway", "guide"] as const;
 
 export type GuideTranslation = { lang: string; path: string; title: string | null; markdown: string };
@@ -25,6 +27,8 @@ export type GuideDoc = {
   /** reader: this caller may open /admin/docs (backend POLICY of GET /admin/docs/page); published: the staff pages
    *  of the bundle, sent only to a reader. */
   links: { reader: boolean; published: string[] };
+  /** AA-1064: the staff images of the bundle the page (or a translation) links; absent from an older API answer. */
+  assets?: string[];
 };
 export type GuideDocMissing = { missing: true; reason: "not_published" | "unavailable" | string };
 
@@ -165,6 +169,15 @@ export function guideLink(href: string | undefined, fromPath: string, links: Gui
   if (r.kind === "anchor") return { kind: "anchor", id: r.hash };
   if (r.kind === "external") return { kind: "external", href: r.href };
   return { kind: "text" };
+}
+
+/** AA-1064: the BFF URL of an image of the guide page (`![alt](src)` on page `fromPath`), or null (alt text shows) when
+ *  it is not one of the bundle images the backend listed for this page (`doc.assets`). Served by the tab's own
+ *  route (spend.read), so a viewer who may not open /admin/docs still sees the page's pictures. */
+export function guideImage(src: string | undefined, fromPath: string, assets: readonly string[] | undefined):
+  string | null {
+  const target = imageTarget(src, fromPath, new Set(assets ?? []));
+  return target ? `${GUIDE_ASSET_API}?path=${encodeURIComponent(target)}` : null;
 }
 
 // ── table rows ─────────────────────────────────────────────────────────────────────────────────────────────────

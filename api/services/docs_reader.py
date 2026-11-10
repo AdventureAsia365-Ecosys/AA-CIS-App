@@ -33,6 +33,17 @@ asset (503) instead of serving it. Assets are staff tier: an asset whose access 
 readers only. The route sends it as image/svg+xml with a sandbox CSP, and the page shows it through <img>, where an SVG
 can neither run script nor fetch anything.
 
+Screenshots (root build_docs_reader.py rule 10, AA-1064): ``assets`` may also list PNG and WebP files (type image/png or
+image/webp, path ending .png / .webp), the screenshots a published page links. The builder publishes one only when it
+is at most 300 KB with a valid signature and no ID in its metadata; load_asset() re-checks the size cap
+(MAX_RASTER_BYTES) and the signature on every read and refuses the asset (503) otherwise. Their access is the tier of
+the pages that link them, owner tier served to owner readers only. ``asset_type(path)`` gives the Content-Type the route
+sends. The API Gateway REST API in front of this service has no binaryMediaTypes, so raw image bytes would be corrupted
+on the way to the admin BFF: the route also answers ``encoding=base64`` with JSON (``asset_json``), which the BFF
+decodes (frontend/lib/docsAsset.ts). ``linked_images(markdown, path)`` lists the images a page links, resolved like
+the builder and the admin reader do: the AI gateway Guide tab serves only the staff images its own page links (AA-1042
+below).
+
 AA-1042 (S270) — ``load_staff_page_by_id(page_id)``: one STAFF-tier catalog page by its catalog id (the English entry
 and its published translations), for a page that shows one fixed document outside /admin/docs (the AI gateway Guide
 tab, ARCH-01-ai-gateway). The entry is found in the manifest by id and read by the key the manifest names, never by a
@@ -46,11 +57,14 @@ DocsMissing -> 404 (no manifest yet, or no such page for this caller), DocsUnava
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
+import posixpath
 import re
 import time
+import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -74,10 +88,14 @@ ACCESS_OWNER = "owner"
 # What a page key may look like: pages/<repo>/<relative path>.md, no climbing, no absolute or odd characters.
 _KEY = re.compile(r"^pages/[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md$")
 _PATH = re.compile(r"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md$")
-_ASSET_KEY = re.compile(r"^assets/[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.svg$")
-_ASSET_PATH = re.compile(r"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.svg$")
+_ASSET_KEY = re.compile(r"^assets/[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:svg|png|webp)$")
+_ASSET_PATH = re.compile(r"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:svg|png|webp)$")
 ASSET_TYPE = "image/svg+xml"
+# AA-1064: the type each asset suffix must carry in the manifest, and the Content-Type the route sends.
+ASSET_TYPES = {".svg": ASSET_TYPE, ".png": "image/png", ".webp": "image/webp"}
 MAX_ASSET_BYTES = 2 * 1024 * 1024   # the builder skips SVGs over 1 MB
+MAX_RASTER_BYTES = 300 * 1024       # docs/STYLE.md screenshot cap; the builder refuses a larger one (rule 10)
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_ASSETS = 500
 ASSET_CACHE_MAX = 32
 
@@ -256,6 +274,86 @@ def _svg_tree_is_safe(text: str) -> bool:
     return not _ACCOUNT_ID.search(" ".join(decoded))
 
 
+def asset_type(path: str) -> str:
+    """The media type of an asset path the shape check accepted (.svg, .png or .webp)."""
+    return ASSET_TYPES[path[path.rfind("."):].lower()]
+
+
+def raster_is_valid(data: bytes, media_type: str) -> bool:
+    """Rule 10 re-check: a PNG / WebP within the size cap that starts with its format's signature."""
+    if len(data) > MAX_RASTER_BYTES:
+        return False
+    if media_type == "image/png":
+        return data.startswith(_PNG_SIGNATURE)
+    if media_type == "image/webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return False
+
+
+def asset_json(repo: str, path: str, data: bytes) -> dict:
+    """The base64 JSON form of an image (the admin BFF decodes it: the API Gateway in front is not binary safe)."""
+    return {"repo": repo, "path": path, "type": asset_type(path), "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(), "data": base64.b64encode(data).decode("ascii")}
+
+
+# AA-1064: the images a page links, resolved the way the builder (root build_docs_reader.py image_links /
+# resolve_image) and the admin reader (frontend lib/docsReader.ts resolveImage) resolve them. Used to tell which
+# bundle images a page outside /admin/docs (the AI gateway Guide tab) may load.
+_IMAGE_LINK = re.compile(r"!\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
+_EXTERNAL = re.compile(r"^(?://|[a-z][a-z0-9+.-]*:)", re.I)
+
+
+def resolve_image(src: str, from_path: str) -> Optional[str]:
+    """The repo-relative path an image link on page ``from_path`` points at; None for a remote or other-scheme image,
+    an empty or fragment-only src, or a path that climbs above the repo root."""
+    s = src.strip()
+    if not s or s.startswith("#") or _EXTERNAL.match(s):
+        return None
+    s = s.split("#")[0].split("?")[0]
+    try:
+        s = urllib.parse.unquote(s, errors="strict")
+    except UnicodeDecodeError:
+        return None
+    joined = s[1:] if s.startswith("/") else posixpath.join(posixpath.dirname(from_path), s)
+    parts: list[str] = []
+    for seg in joined.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(seg)
+    return "/".join(parts) or None
+
+
+def linked_images(markdown: str, from_path: str) -> set[str]:
+    """Every repo-relative image path the page links with ``![alt](src)`` (fenced code and inline code skipped)."""
+    found: set[str] = set()
+    fence: Optional[str] = None
+    for line in markdown.splitlines():
+        m = _FENCE.match(line)
+        if m:
+            if fence is None:
+                fence = m.group(1)
+            elif m.group(1) == fence:
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        for img in _IMAGE_LINK.finditer(_INLINE_CODE.sub("", line)):
+            src = img.group(2)
+            if src.startswith("<") and src.endswith(">"):
+                src = src[1:-1]
+            target = resolve_image(src, from_path)
+            if target:
+                found.add(target)
+    return found
+
+
 def _clean_asset(raw: Any) -> Optional[dict]:
     """A manifest asset reduced to what the API needs, or None when it is not usable."""
     if not isinstance(raw, dict):
@@ -267,7 +365,7 @@ def _clean_asset(raw: Any) -> Optional[dict]:
         return None
     if not (isinstance(key, str) and _ASSET_KEY.match(key) and key == f"assets/{repo}/{path}"):
         return None
-    if raw.get("type") != ASSET_TYPE:
+    if raw.get("type") != asset_type(path):
         return None
     sha = raw.get("sha256")
     return {"repo": repo, "path": path, "key": key,
@@ -526,8 +624,10 @@ async def load_page(repo: str, path: str, owner_read: bool,
 def _read_asset(client_factory: Callable[[], Any], key: str, expected_sha: Optional[str]) -> bytes:
     client = client_factory()
     full_key = f"{s3_prefix()}/{key}"
+    media_type = asset_type(key)
     try:
-        raw = _read_bytes(client, _bucket(), full_key, MAX_ASSET_BYTES)
+        raw = _read_bytes(client, _bucket(), full_key,
+                          MAX_ASSET_BYTES if media_type == ASSET_TYPE else MAX_RASTER_BYTES)
     except Exception as err:
         logger.warning("docs_reader_asset_read_failed", key=full_key, error=type(err).__name__)
         raise DocsUnavailable("The image could not be read from storage") from err
@@ -535,10 +635,13 @@ def _read_asset(client_factory: Callable[[], Any], key: str, expected_sha: Optio
         raise DocsMissing("The image is listed but not stored yet; try again in a minute")
     if expected_sha and hashlib.sha256(raw).hexdigest() != expected_sha:
         logger.info("docs_reader_asset_sha_mismatch", key=full_key)
-    try:
-        safe = svg_is_safe(raw.decode("utf-8"))
-    except UnicodeDecodeError:
-        safe = False
+    if media_type != ASSET_TYPE:
+        safe = raster_is_valid(raw, media_type)
+    else:
+        try:
+            safe = svg_is_safe(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            safe = False
     if not safe:
         # The builder refuses such a file, so this one did not come from Docs sync: never serve it.
         logger.warning("docs_reader_asset_refused", key=full_key)
@@ -548,7 +651,8 @@ def _read_asset(client_factory: Callable[[], Any], key: str, expected_sha: Optio
 
 async def load_asset(repo: str, path: str, owner_read: bool,
                      client_factory: Optional[Callable[[], Any]] = None) -> bytes:
-    """One SVG asset by (repo, path), only when the manifest lists it for this caller; 404 otherwise."""
+    """One image asset (SVG, PNG or WebP) by (repo, path), only when the manifest lists it for this caller; 404
+    otherwise. Its Content-Type is asset_type(path)."""
     m = await _manifest(False, client_factory)
     asset = next((a for a in _visible(m.get("assets", []), owner_read) if a["repo"] == repo and a["path"] == path),
                  None)

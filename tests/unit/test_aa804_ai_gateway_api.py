@@ -87,6 +87,8 @@ def test_routes_are_served_and_run_the_policy():
                           ("GET", "/admin/ai-gateway/capacity"),
                           # AA-1042 (S270): the Guide tab (the gateway page from the docs catalog + live tables)
                           ("GET", "/admin/ai-gateway/guide"),
+                          # AA-1064: an image the Guide page links
+                          ("GET", "/admin/ai-gateway/guide/asset"),
                           ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"),
                           ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"),
                           # AA-1042: the Route control tab (its own router, admin_llm_route_control.py)

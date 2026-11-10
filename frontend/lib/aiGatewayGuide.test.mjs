@@ -12,7 +12,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  cellTone, coverageRows, docView, guideLink, matrixRows, routeRows, stripIssueIdsMarkdown,
+  GUIDE_ASSET_API, cellTone, coverageRows, docView, guideImage, guideLink, matrixRows, routeRows,
+  stripIssueIdsMarkdown,
 } from "./aiGatewayGuide.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -151,6 +152,27 @@ test("stripIssueIdsMarkdown keeps the Markdown structure, fences and code spans"
   ].join("\n"));
 });
 
+test("guideImage: an image the backend listed for the page loads through the tab's own route (AA-1064)", () => {
+  const assets = ["docs/architecture/images/zz-panel.png", "docs/architecture/diagrams/zz-flow.svg",
+    "docs/architecture/images/zz-panel-vi.webp"];
+  assert.equal(GUIDE_ASSET_API, "/api/admin/ai-gateway/guide/asset");
+  assert.equal(guideImage("images/zz-panel.png", PATH, assets),
+    "/api/admin/ai-gateway/guide/asset?path=docs%2Farchitecture%2Fimages%2Fzz-panel.png");
+  assert.equal(guideImage("./diagrams/zz-flow.svg?v=1", PATH, assets),
+    "/api/admin/ai-gateway/guide/asset?path=docs%2Farchitecture%2Fdiagrams%2Fzz-flow.svg");
+  assert.equal(guideImage("images/zz-panel-vi.webp", "docs/architecture/ai-gateway.vi.md", assets),
+    "/api/admin/ai-gateway/guide/asset?path=docs%2Farchitecture%2Fimages%2Fzz-panel-vi.webp");
+});
+
+test("guideImage: anything not listed stays alt text, an older API answer (no assets) too", () => {
+  const assets = ["docs/architecture/images/zz-panel.png", "docs/architecture/zz.md"];
+  for (const src of [undefined, "", "#x", "images/other.png", "https://zz.example/zz-panel.png",
+    "//zz.example/a.png", "data:image/png;base64,AAAA", "../../../../zz-panel.png", "zz.md"]) {
+    assert.equal(guideImage(src, PATH, assets), null, String(src));
+  }
+  assert.equal(guideImage("images/zz-panel.png", PATH, undefined), null);
+});
+
 test("the Guide tab is wired into the page, kit only, with its test ids", () => {
   const page = read("../app/admin/ai-gateway/AiGateway.tsx");
   assert.match(page, /import GuideTab from "\.\/GuideTab"/);
@@ -160,6 +182,8 @@ test("the Guide tab is wired into the page, kit only, with its test ids", () => 
     assert.ok(tab.includes(`"${id}"`), `test id ${id}`);
   }
   assert.match(tab, /<MarkdownView /, "the kit MarkdownView renders the page");
+  assert.match(tab, /resolveImage=\{resolveImage\}/, "the page's images load (AA-1064)");
+  assert.match(tab, /guideImage\(src, fromPath, doc\?\.assets\)/);
   assert.match(tab, /<DataTable<RouteRow>/);
   assert.doesNotMatch(tab, /from "react-markdown"|<table[\s>]/, "kit components only");
   assert.doesNotMatch(tab, /secret_value|api_key/i, "names only");

@@ -83,7 +83,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     through `docs_reader.load_staff_page_by_id`, plus live tables from `GET /admin/ai-gateway/guide` (spend.read,
     `api/services/ai_gateway_guide.py`: routes with the serving deployment of `llm_route_control.serving`, model x
     connection matrix, connection register with secret NAMES only, connection caps, stage coverage); finance and
-    ai_ops read that one docs page here although they cannot open /admin/docs), and the Trace drawer
+    ai_ops read that one docs page here although they cannot open /admin/docs; AA-1064: the staff bundle images that page
+    links are listed in `doc.assets` and served by `GET /admin/ai-gateway/guide/asset` (spend.read, only those paths)),
+    and the Trace drawer
     opened from a Calls row, the job drawer, tour detail and decisions; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
     there in UI part 2 and their old `?tab=` links are sent on in the browser), `tenants`,
     `jobs`, `decisions` (**Jev Decisions**, AA-660), `facts` (**Facts**, AA-814: platform Facts Entries the T9 writer cites; every staff role reads, `quality.write` edits), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
@@ -2555,7 +2557,19 @@ under `docs-reader/assets/<repo>/<path>.svg`, the architecture diagrams); `GET /
 served) and sends it as `image/svg+xml` with a sandbox CSP + nosniff, which the BFF re-adds (`lib/upstreamHeaders.ts`).
 The manifest response lists `assets` as `{repo, path}` (no key). A page's `![alt](relative.svg)` that resolves to a listed
 asset (`resolveImage` in `lib/docsReader.ts`) is drawn by `MarkdownView` as `<img>` in a white frame linking to the
-full-size image; every other image stays alt text. This repo is public: no page content lives here.
+full-size image; every other image stays alt text. **Screenshots (AA-1064, root rule 10):** `assets` may also list PNG /
+WebP files (`type` must match the suffix), the screenshots a published page links; tier = the most open tier of the
+linking pages. The route re-checks the 300 KB cap (`MAX_RASTER_BYTES`) and the signature on every read (else 503) and
+sends the type of the suffix (`docs_reader.asset_type`) with the same image headers (5 min private cache). The REST API
+Gateway in front has no `binaryMediaTypes` and would corrupt binary bodies, so the admin BFF asks
+`?encoding=base64` (JSON `{repo, path, type, bytes, sha256, data}`) and sends the decoded bytes itself
+(`frontend/lib/docsAsset.ts`, branch in `app/api/admin/[...path]/route.ts`; length, sha256, type and signature checked).
+The AI gateway Guide tab shows its page's images too, through its own route: `GET /admin/ai-gateway/guide` lists in
+`doc.assets` the staff-tier bundle images the guide page or its translation links (`docs_reader.linked_images`, resolved
+like the builder and `resolveImage`), and `GET /admin/ai-gateway/guide/asset?path=` (spend.read like the tab, so
+finance and ai_ops see them without ops.read) serves only a path in that list, never the rest of the bundle, nothing when
+the guide is owner tier (`ai_gateway_guide.read_asset`); the BFF decodes it like docs/asset, the tab passes
+`guideImage` (lib/aiGatewayGuide.ts) to `MarkdownView`. This repo is public: no page content lives here.
 
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
