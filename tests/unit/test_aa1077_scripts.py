@@ -85,7 +85,8 @@ def test_trial_piece_runs_base_extend_after_with_stored_f9(monkeypatch):
     f4 = qg.gate_extreme_length(qg.strip_citation_tags(BODY), "blog")
     row = {"piece_id": "ffffffff-0000", "tenant_id": "t-1", "tenant": "audit-x", "status": "held",
            "content_text": BODY, "gate_ledger": [f4],
-           "writer_input": {"seed": SOURCE, "channel": "blog", "cta": CTA, "brand_pack": {"brand_name": "Orrin Trails"}}}
+           "writer_input": {"seed": SOURCE, "channel": "blog", "cta": CTA,
+                            "brand_pack": {"brand_name": "Orrin Trails"}}}
     out = trial.trial_piece(row, call=fake, live_f9=False)
     assert "length_short" in out["base_codes"] and out["cost_usd"] == 0.02
     assert out["extend"]["added"] == 1 and out["chars_after"] > out["chars_before"]

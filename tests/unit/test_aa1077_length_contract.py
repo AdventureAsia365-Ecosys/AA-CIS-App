@@ -1,6 +1,6 @@
-"""AA-1077 — the blog length contract (services/acp_content_writing/length_contract.py): one owner for the writer target,
-the F4 band, the extend repair and the post-loop re-check; F4 typed `length_short` / `length_long`; F4 re-run on the
-text a blog stores (service._recheck_length); the FAQ answer fit never takes a blog under the floor.
+"""AA-1077 — the blog length contract (services/acp_content_writing/length_contract.py): one owner for the writer
+target, the F4 band, the extend repair and the post-loop re-check; F4 typed `length_short` / `length_long`; F4
+re-run on the text a blog stores (service._recheck_length); the FAQ answer fit never takes a blog under the floor.
 
 Invented places only (Vellmar Gorge, Lake Orrin). No model call, no DB.
 """
