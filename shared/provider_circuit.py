@@ -131,6 +131,21 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# S275: the marker of a ledger row refused because a provider circuit was open (nothing was sent). The row keeps the
+# class that opened the circuit (llm_call_log's error_class CHECK has no circuit class; adding one needs a migration),
+# and quality_signal.refusal = circuit_open says why it was refused. Readers count such a row as a refusal, never as a
+# provider error: the failures that opened the circuit are rows of their own (the root tool tools/llm/gateway_status.py
+# keeps the same rule; rows written before the marker it matches by ``refusal_text``'s "circuit open (" ... "nothing
+# was sent to the provider").
+REFUSAL_SIGNAL_KEY = "refusal"
+REFUSAL_CIRCUIT_OPEN = "circuit_open"
+
+
+def refusal_signal() -> dict:
+    """The quality_signal keys of a circuit-open refused ledger row."""
+    return {REFUSAL_SIGNAL_KEY: REFUSAL_CIRCUIT_OPEN}
+
+
 def refusal_text(h: Health) -> str:
     """The refusal of a call while the circuit is open (ledger ``error``, job results)."""
     until = h.circuit_open_until.isoformat() if h.circuit_open_until else "the next probe"

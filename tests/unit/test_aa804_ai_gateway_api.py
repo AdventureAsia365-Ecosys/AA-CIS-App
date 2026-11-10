@@ -213,8 +213,8 @@ def test_jev_row_health_and_degraded():
                      {"calls": 10, "errors": 6, "cached": 2, "mean_latency_ms": 812.4, "last_at": NOW},
                      {"jev": {"per_day_usd": 2, "hard_stop": True, "alert_pct": 80}}, {"jev": 0.1})
     assert row["status"] == "degraded" and row["status_reason"] == "most_calls_failed"
-    assert row["health"] == {"window_hours": 24, "calls": 10, "errors": 6, "error_pct": 60.0, "cached": 2,
-                             "mean_latency_ms": 812, "last_at": NOW.isoformat()}
+    assert row["health"] == {"window_hours": 24, "calls": 10, "errors": 6, "error_pct": 60.0, "refused": 0,
+                             "cached": 2, "mean_latency_ms": 812, "last_at": NOW.isoformat()}
     assert row["balance"]["usd"] == 12.0 and row["balance"]["estimated"] is True
     assert row["daily_cap"]["per_day_usd"] == 2.0 and row["spend"]["month_usd"] == 0.9
     quiet = gw.jev_row(est, 3.0, {}, {"calls": 0, "errors": 0}, None, {})

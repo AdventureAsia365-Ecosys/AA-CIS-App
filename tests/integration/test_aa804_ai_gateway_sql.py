@@ -323,6 +323,23 @@ async def test_stats_queries_count_attempts_errors_and_latency(pool):
 
 
 @pytest.mark.asyncio
+async def test_jev_health_counts_gateway_refusals_apart_from_errors(pool):
+    """S275: DECISIONS_SQL (the Jev row's health) counts an ask the gateway refused before sending (an open circuit,
+    the daily cap, a skipped tenant ask) in ``refused``, and only a failure at the provider in ``errors``."""
+    since, until = _utc(2024, 7, 25, 0), _utc(2024, 7, 25, 12)
+    circuit = ("connection 'typesafe' circuit open (other) until 2024-07-25T03:01:00+00:00: "
+               "nothing was sent to the provider")
+    async with pool.acquire() as c:
+        await _decision(c, _utc(2024, 7, 25, 1), None)                                       # answered
+        await _decision(c, _utc(2024, 7, 25, 2), None, zone="error", error="ConnectTimeout")
+        await _decision(c, _utc(2024, 7, 25, 3), None, zone="error", error=circuit)
+        await _decision(c, _utc(2024, 7, 25, 4), None, zone="error", error="budget_exceeded")
+        await _decision(c, _utc(2024, 7, 25, 5), None, zone="skipped", error="tenant not on Jev allow-list")
+    r = dict(await pool.fetchrow(gw.DECISIONS_SQL, since, until))
+    assert (r["calls"], r["errors"], r["refused"]) == (5, 1, 3)
+
+
+@pytest.mark.asyncio
 async def test_budgets_queries_run_on_the_real_schema(pool):
     scope = f"job:{KIND}"
     async with pool.acquire() as c:
