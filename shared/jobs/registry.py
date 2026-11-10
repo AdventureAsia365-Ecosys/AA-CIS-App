@@ -25,6 +25,17 @@ class NonRetryable(Exception):
     """The job fails at once, without using its remaining attempts."""
 
 
+class OutputFailed(NonRetryable):
+    """AA-1078: the handler ran to its end but its output failed (a T9 piece the writer stored as 'failed'). The job
+    fails at once and its error starts with ``code`` (a typed reason the Jobs page filter and the failed counts read),
+    instead of a green job over a failed output. ``detail``: the output's own reason (e.g. the exception class)."""
+
+    def __init__(self, code: str, detail: str = ""):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}" if detail else code)
+
+
 # AA-993 G3 / AA-1056: the worker container's ECS stopTimeout (AA-CIS-Infra modules/ecs). A kind whose handler runs in
 # a thread that outlives its cancel (a3_atomize, recompute) sets release_delay_seconds to this, so the old task is gone
 # before another worker re-claims the released row.
