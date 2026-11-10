@@ -198,7 +198,7 @@ async def test_the_owner_puts_it_back_once_and_another_tenant_cannot(conn):
         detail = json.loads(await conn.fetchval("SELECT detail FROM acp_shared.content_compliance_flag "
                                                 "WHERE flag_id = $1::uuid", r.flag_id))
         assert detail["put_back"]["outcome"] == "published" and detail["put_back"]["by"] == f"tenant:{w.tenant}"
-        assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1::uuid "
+        assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                    "AND action = 'content_piece.put_back_online' AND resource_id = $2",
                                    w.tenant, w.piece) == 1
 
