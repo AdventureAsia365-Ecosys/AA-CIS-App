@@ -73,6 +73,11 @@ thresholds:
     used_by: [services/acp_shared/debate.py]
     description: "T7 debate brand-fit cut (the Jev reject score is derived as cut - 0.5 in debate.py)."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  t2.cross_brand_overlap_warn:
+    value: 0.35
+    used_by: [services/quality/brand_overlap.py]
+    description: "AA-1079 deterministic cross-brand check: word 5-gram Jaccard of two brands' versions of one tour at or above it warns (AA-741 phase 3: 8 rewritten tours mean 0.18, max 0.37)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
 
   # --------------------------------------------------------------------------------------------- T10
   t10.reuse_similarity:
