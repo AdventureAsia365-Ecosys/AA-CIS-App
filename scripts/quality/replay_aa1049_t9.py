@@ -22,9 +22,10 @@ Per piece it records, through the code of the checkout it runs in:
   acceptance tests (band + keyword, scope places, taken title, unsupported products, date authority, rarity,
   authenticity) over the writer's values and the delivered values;
 - guard (pieces with a repair_log): the AA-528 decision for each consecutive pair of attempt ledgers, main's gate-name
-  view of both ledgers (service._regression_failures) and their hold gate (quality_gates.hold_failure) on every
-  checkout, with the stable-key evidence (keys added / removed, key counts, gate sets) when the checkout has
-  stable_keys;
+  view of both ledgers (service._regression_failures), their hold gate (quality_gates.hold_failure), their hold-capable
+  gates (quality_gates.never_holds) and whether the previous attempt has the AA-780 under-floor block, on every
+  checkout, with the stable-key evidence (keys added / removed, key counts, gate sets, the same for the hold-capable
+  keys, the rule that decided) when the checkout has stable_keys;
 - contract: the REPORT-mode final contract over the stored text; for a content_piece export with a stored contract
   (writer_input.final_contract), the gated sha vs the sha _finalize_piece stored (a mismatch = a post-gate edit in
   production) and vs the row's text now (a later tenant edit, reported only). Golden samples carry no stored
@@ -63,9 +64,12 @@ Known limits of the declared-diff classifier (review S272 round 3; they matter o
   main is that both sides judge the WRITER's values the same, so a loosened predicate that still fails the writer's
   value (for example a lower meta floor) certifies its own shortened value as D-seo-1. Not every predicate change shows
   as UNDECLARED; the unit tests of the predicates (test_aa1047_contradictions.py and the band tests) are the guard.
-- Guard: D-guard-1 / D-guard-2 are decided on the branch's own stable-key COUNTS (stable_keys output). The gate sets
-  are checked against main's gate-name view, the counts are not: a key-folding bug that keeps every gate name can
-  certify itself. test_aa1049_stable_keys.py is the guard for the key extraction.
+- Guard: D-guard-1 / D-guard-2 / D-guard-3 are decided on the branch's own stable-key COUNTS (stable_keys output).
+  The gate sets (all and hold-capable) are checked against main's views, the counts are not: a key-folding bug that
+  keeps every gate name can certify itself. test_aa1049_stable_keys.py is the guard for the key extraction. Two
+  outcomes are never declared, whatever the evidence says (S275, the two S272 review findings, judged on the BASE
+  row's views): a keep of a rewrite that holds over a previous attempt that does not (approved->held), and a revert
+  main did not make into an attempt with the AA-780 under-floor block (the call site would waive it).
 - Guard: the decision is taken through service.guard_decision when the checkout has it (main: the same rule written
   out here); the AA-780 floor-only exception and the revert wiring of the call site are not replayed (pinned by
   test_aa450 TestDiscardedAttempts and test_aa780), so a floor-only attempt-1 pair can differ from what production did.
@@ -101,8 +105,11 @@ DECLARED = {
     "D-guard-1": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys: a same-gate swap of flagged sentences (same gate "
                   "set, as many keys or more) is reverted"),
     "D-guard-2": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys: clearing more findings than it adds is kept (the "
-                  "piece status can flip: held->approved when the kept rewrite clears every hold gate, "
-                  "approved->held when it traded style findings for a hold gate)"),
+                  "piece status can flip held->approved when the kept rewrite clears every hold gate; never "
+                  "approved->held: a new hold-capable key fails closed, S275)"),
+    "D-guard-3": ("opt-in T9_REGRESSION_GUARD_MODE=stable_keys (S275): a rewrite with a hold-capable key the previous "
+                  "attempt did not have, and as many hold-capable keys and gates or more, is reverted (main kept it "
+                  "because it cleared more style gates than it added: a new truth failure is never traded for style)"),
 }
 SEO_FIELDS = ("seo_title", "meta_description", "slug")
 NOT_DECLARED = {
@@ -314,13 +321,23 @@ def _guard(p: dict) -> Optional[list]:
     def hold(ledger):
         h = qg.hold_failure(ledger)
         return h["gate"] if h else None
+
+    def hold_gates(ledger):  # main's hold-capable failing gates (never_holds, the test hold_failure uses)
+        held = {g["gate"] for g in qg.expand_ledger(ledger) if not g["passed"] and g.get("blocking", True)
+                and not qg.never_holds(g)}
+        return sorted(held & service._regression_failures(ledger))
+
+    def floor(ledger):  # the AA-780 under-floor block (a failed blocking F14_social_shape that never holds)
+        return any(g["gate"] == qg.F14_GATE and not g["passed"] and g.get("blocking", True) and qg.never_holds(g)
+                   for g in qg.expand_ledger(ledger))
     out = []
     for prev, cur in zip(ledgers, ledgers[1:]):
         # main's gate-name view and hold gate of both ledgers, on every checkout: the classifier checks the branch's
         # stable-key evidence against the base row's view, never against the branch's own (a key-extraction bug
         # would certify itself)
         pb, cb = service._regression_failures(prev), service._regression_failures(cur)
-        row = {"gates": {"prev": sorted(pb), "cur": sorted(cb)}, "hold": {"prev": hold(prev), "cur": hold(cur)}}
+        row = {"gates": {"prev": sorted(pb), "cur": sorted(cb)}, "hold": {"prev": hold(prev), "cur": hold(cur)},
+               "hold_gates": {"prev": hold_gates(prev), "cur": hold_gates(cur)}, "floor_prev": floor(prev)}
         decide = getattr(service, "guard_decision", None)
         if decide is not None:  # the production decision function (before the AA-780 floor-only exception)
             new, revert = decide(prev, cur)[:2]
@@ -332,7 +349,10 @@ def _guard(p: dict) -> Optional[list]:
             out.append({"revert": revert, **row, "keys": {
                 "new": sorted(map(list, c["new"])), "removed": sorted(map(list, c["removed"])),
                 "prev_keys": c["prev_keys"], "cur_keys": c["cur_keys"],
-                "prev_gates": sorted(c["prev_gates"]), "cur_gates": sorted(c["cur_gates"])}})
+                "prev_gates": sorted(c["prev_gates"]), "cur_gates": sorted(c["cur_gates"]),
+                "new_hold": sorted(map(list, c.get("new_hold", ()))), "prev_hold_keys": c.get("prev_hold_keys"),
+                "cur_hold_keys": c.get("cur_hold_keys"), "prev_hold_gates": sorted(c.get("prev_hold_gates", ())),
+                "cur_hold_gates": sorted(c.get("cur_hold_gates", ())), "rule": c.get("rule")}})
         else:
             out.append({"revert": revert, **row, "keys": None})
     return out
@@ -543,8 +563,11 @@ def _classify_seo(base: dict, cur: dict) -> tuple[str, str]:
 
 def _classify_guard_pair(base: dict, cur: dict) -> tuple[str, str]:
     """One flipped guard decision. D-guard-1 (branch reverts, main kept): the new keys are all in gates the previous
-    attempt already failed and the gate set is unchanged (a same-gate swap). D-guard-2 (branch keeps, main reverted):
-    the rewrite has fewer keys. Anything else, or no stable-key evidence, is UNDECLARED."""
+    attempt already failed and the gate set is unchanged (a same-gate swap). D-guard-3 (branch reverts, main kept):
+    a new hold-capable key and as many hold-capable keys and hold-capable gates or more. D-guard-2 (branch keeps, main
+    reverted): the rewrite has fewer keys. Never declared (S275, judged on the base row): a revert main did not make
+    into an attempt with the AA-780 under-floor block, a keep of a rewrite that holds over one that does not. Anything
+    else, or no stable-key evidence, is UNDECLARED."""
     k = cur.get("keys")
     if not k:
         return "UNDECLARED", "guard flipped without stable-key evidence"
@@ -556,12 +579,28 @@ def _classify_guard_pair(base: dict, cur: dict) -> tuple[str, str]:
     prev_g, cur_g = set(k["prev_gates"]), set(k["cur_gates"])
     new_g = {g for g, _ in k["new"]}
     if cur["revert"] and not base["revert"]:
+        if base.get("floor_prev") is not False:
+            return "UNDECLARED", ("revert main did not make into an attempt with the under-floor block (or no floor "
+                                  "view in the base row): the call site would waive it")
         if (k["new"] and new_g <= prev_g and cur_g == prev_g and len(cur_g) >= len(prev_g)
                 and k["cur_keys"] >= k["prev_keys"]):
             return "D-guard-1", "stable keys revert a same-gate swap"
+        hold_view = base.get("hold_gates")
+        new_hold = k.get("new_hold") or []
+        if hold_view and new_hold and k.get("rule") == "hold_keys":
+            if (sorted(k.get("prev_hold_gates") or []) != list(hold_view["prev"])
+                    or sorted(k.get("cur_hold_gates") or []) != list(hold_view["cur"])):
+                return "UNDECLARED", "hold-key evidence disagrees with main's hold view"
+            hp, hc = set(hold_view["prev"]), set(hold_view["cur"])
+            if ({g for g, _ in new_hold} <= hc and len(hc) >= len(hp)
+                    and (k.get("cur_hold_keys") or 0) >= (k.get("prev_hold_keys") or 0)):
+                return "D-guard-3", "stable keys revert a rewrite that added a hold-capable finding"
         return "UNDECLARED", (f"revert not a same-gate swap (new gates {sorted(new_g - prev_g)}, gates "
                               f"{len(prev_g)}->{len(cur_g)}, keys {k['prev_keys']}->{k['cur_keys']})")
     if base["revert"] and not cur["revert"]:
+        hold = base.get("hold") or {}
+        if hold.get("prev") is None and hold.get("cur") is not None:
+            return "UNDECLARED", "keep of a rewrite that holds over an attempt that does not (approved->held)"
         if k["cur_keys"] < k["prev_keys"]:
             return "D-guard-2", "stable keys keep a rewrite with fewer findings"
         return "UNDECLARED", f"keep without fewer keys ({k['prev_keys']}->{k['cur_keys']})"
@@ -629,7 +668,8 @@ def _diff(base: dict, cur: dict) -> dict:
                     bp = bp if isinstance(bp, dict) else {"revert": bp, "keys": None}
                     cp = cp if isinstance(cp, dict) else {"revert": cp, "keys": None}
                     entry = {"piece": pid, "section": f"guard[{i}]"}
-                    if bp.get("gates") != cp.get("gates") or bp.get("hold") != cp.get("hold"):
+                    views = ("gates", "hold", "hold_gates", "floor_prev")
+                    if any(bp.get(v) != cp.get(v) for v in views if v in bp or v in cp):
                         out.append({**entry, "declared": "UNDECLARED",
                                     "note": "the gate-name view or the hold gate of an attempt changed"})
                     elif _revert(bp) != _revert(cp):

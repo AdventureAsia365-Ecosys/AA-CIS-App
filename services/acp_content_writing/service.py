@@ -133,9 +133,9 @@ def last_attempt_mode() -> str:
 
 
 # AA-1049 W3 (root ADR 0020 S5) — the AA-528 regression guard. Default `gate_names`: main's comparison of failing
-# gate names, unchanged. `stable_keys` (opt-in, not on until W2 data) compares stable keys instead (what failed: the
-# gate and the quoted sentence, stable_keys.py); two review findings on it are still open (docs/implementation-notes/
-# AA-1049-l13-t9.md, "Known limits"), so it stays off by default.
+# gate names, unchanged. `stable_keys` (opt-in, off until the tech lead turns it on) compares stable keys instead (what
+# failed: the gate and the quoted sentence, stable_keys.py). The two S272 review findings on it are fixed (S275,
+# docs/implementation-notes/AA-1049-l3-stable-keys.md): hold-capable keys fail closed, F14 keys by violation class.
 REGRESSION_GUARD_ENV = "T9_REGRESSION_GUARD_MODE"
 GUARD_STABLE_KEYS = "stable_keys"
 GUARD_GATE_NAMES = "gate_names"
@@ -686,7 +686,8 @@ def guard_decision(prev_ledger: list, cur_ledger: list) -> tuple[set, bool, set,
     exception the call site applies: (new regressions, revert-if-new, prev failing gates, cur failing gates).
 
     Default (`gate_names`, main): a gate failing now that did not before is a regression, reverted unless the rewrite
-    has fewer failing gates. `stable_keys` (opt-in): stable_keys.regressed decides and names the gates of its new keys.
+    has fewer failing gates. `stable_keys` (opt-in): stable_keys.regressed decides (main's rule when the previous
+    attempt has the AA-780 under-floor block; a new hold-capable key fails closed) and names the gates of its new keys.
     The call site reverts when both the new set and `revert` are truthy (the offline replay calls this function)."""
     prev_fail, cur_fail = _regression_failures(prev_ledger), _regression_failures(cur_ledger)
     if regression_guard_mode() == GUARD_STABLE_KEYS:
@@ -2623,8 +2624,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # this rewrite to trade against: reverting would ship the short post the rewrite was for (the
                 # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
                 # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
-                # text is the full-length, truth-clean one. AA-1049: true in the default gate_names mode; the opt-in
-                # stable_keys mode can keep a rewrite that trades 2 F15 keys for 1 F1 key, a known limit.)
+                # text is the full-length, truth-clean one, in both guard modes: AA-1049 S275, stable_keys reverts a
+                # rewrite that trades style keys for a new hold-capable key.)
                 prev_fail = [g for g in expand_ledger(prev_ledger) if g.get("blocking", True) and not g["passed"]]
                 if (new_regressions and attempt < paid_attempts and _floor_only_failure(prev_fail)
                         and first_failure["repairable"]

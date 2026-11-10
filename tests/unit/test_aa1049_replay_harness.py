@@ -3,6 +3,7 @@ harness with its declared-diff report. Invented places, brands and texts only (C
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -194,18 +195,29 @@ def test_seo_diffs_are_classified_by_shape(base, cur, want):
     assert rp._classify("seo", base, cur)[0] == want
 
 
-def _keys(new, prev_gates, cur_gates, prev_n, cur_n):
-    return {"new": new, "removed": [], "prev_keys": prev_n, "cur_keys": cur_n, "prev_gates": prev_gates,
-            "cur_gates": cur_gates}
+def _keys(new, prev_gates, cur_gates, prev_n, cur_n, hold=None):
+    """Stable-key evidence; `hold` = (new_hold, prev_hold_gates, cur_hold_gates, prev_hold_n, cur_hold_n, rule)."""
+    out = {"new": new, "removed": [], "prev_keys": prev_n, "cur_keys": cur_n, "prev_gates": prev_gates,
+           "cur_gates": cur_gates}
+    if hold:
+        nh, phg, chg, phn, chn, rule = hold
+        out.update({"new_hold": nh, "prev_hold_gates": phg, "cur_hold_gates": chg, "prev_hold_keys": phn,
+                    "cur_hold_keys": chn, "rule": rule})
+    return out
 
 
-def _main(revert, prev_gates, cur_gates, hold=(None, None)):
-    """A base (main) guard pair: its decision, its gate-name view and its hold gate of both attempts."""
+def _main(revert, prev_gates, cur_gates, hold=(None, None), hold_gates=None, floor_prev=False):
+    """A base (main) guard pair: its decision, its gate-name view, its hold gate, its hold-capable gates of both
+    attempts and whether the previous attempt has the AA-780 under-floor block."""
+    hg = hold_gates or ([], [])
     return {"revert": revert, "keys": None, "gates": {"prev": sorted(prev_gates), "cur": sorted(cur_gates)},
-            "hold": {"prev": hold[0], "cur": hold[1]}}
+            "hold": {"prev": hold[0], "cur": hold[1]},
+            "hold_gates": {"prev": sorted(hg[0]), "cur": sorted(hg[1])}, "floor_prev": floor_prev}
 
 
 F9, F17, F13, F1 = "F9_cta_fact", "F17_trip_fact", "F13_repeat", "F1_grounding"
+F15, F2S, F14 = "F15_voice", "F2_superlatives", "F14_social_shape"
+VIEWS = ("gates", "hold", "hold_gates", "floor_prev")  # main's views, recorded on every checkout
 
 
 @pytest.mark.parametrize("base, cur, want", [
@@ -231,6 +243,24 @@ F9, F17, F13, F1 = "F9_cta_fact", "F17_trip_fact", "F13_repeat", "F1_grounding"
     ({"revert": False}, {"revert": True, "keys": _keys([[F9, "b"]], [F9], [F9], 1, 1)}, "UNDECLARED"),
     # a flip with no stable-key evidence (gate_names mode)
     (_main(False, [F9], [F9]), {"revert": True, "keys": None}, "UNDECLARED"),
+    # S275 D-guard-3: two style gates cleared for one new F1 (main keeps: 1 gate < 2), the hold rule reverts
+    (_main(False, [F15, F2S], [F1], hold_gates=([], [F1])),
+     {"revert": True, "keys": _keys([[F1, "n"]], [F15, F2S], [F1], 2, 1, ([[F1, "n"]], [], [F1], 0, 1, "hold_keys"))},
+     "D-guard-3"),
+    # ... but hold-key evidence that disagrees with main's hold view certifies nothing
+    (_main(False, [F15, F2S], [F1], hold_gates=([], [])),
+     {"revert": True, "keys": _keys([[F1, "n"]], [F15, F2S], [F1], 2, 1, ([[F1, "n"]], [], [F1], 0, 1, "hold_keys"))},
+     "UNDECLARED"),
+    # ... nor a base row without a hold view
+    ({**_main(False, [F15, F2S], [F1]), "hold_gates": None},
+     {"revert": True, "keys": _keys([[F1, "n"]], [F15, F2S], [F1], 2, 1, ([[F1, "n"]], [], [F1], 0, 1, "hold_keys"))},
+     "UNDECLARED"),
+    # S275 finding 3: a revert main did not make into an under-floor attempt is never declared (even a swap shape)
+    (_main(False, [F14, F15], [F14, F15], floor_prev=True),
+     {"revert": True, "keys": _keys([[F14, "far_over"], [F15, "s2"]], [F14, F15], [F14, F15], 2, 2)}, "UNDECLARED"),
+    # S275 finding 2: a keep of a rewrite that holds over one that does not (approved->held) is never declared
+    (_main(True, [F15], [F1], hold=(None, F1), hold_gates=([], [F1])),
+     {"revert": False, "keys": _keys([[F1, "n"]], [F15], [F1], 3, 1)}, "UNDECLARED"),
 ])
 def test_guard_flips_are_classified_by_shape(base, cur, want):
     assert rp._classify("guard", base, cur)[0] == want
@@ -250,9 +280,9 @@ def test_a_guard_flip_reports_the_status_each_side_continues_with(hold, base_rev
 
 
 def test_mixed_guard_flips_are_one_diff_per_pair(tmp_path):
-    swap = {"revert": True, **{k: v for k, v in _main(False, [F9], [F9]).items() if k in ("gates", "hold")},
+    swap = {"revert": True, **{k: v for k, v in _main(False, [F9], [F9]).items() if k in VIEWS},
             "keys": _keys([[F9, "b"]], [F9], [F9], 1, 1)}
-    keep_bad = {"revert": False, **{k: v for k, v in _main(True, [F9], [F17]).items() if k in ("gates", "hold")},
+    keep_bad = {"revert": False, **{k: v for k, v in _main(True, [F9], [F17]).items() if k in VIEWS},
                 "keys": _keys([[F17, "d"]], [F9], [F17], 1, 1)}
     row = {"input": {}, "route": {}, "seo": None, "contract": {}}
     base = {"rows": {"p": {**row, "guard": [_main(False, [F9], [F9]), _main(True, [F9], [F17])]}}}
@@ -293,7 +323,8 @@ def test_guard_section_reads_attempt_pairs_of_a_piece_export(tmp_path, monkeypat
     monkeypatch.delenv(service.REGRESSION_GUARD_ENV)  # the default: main's guard
     rp.main(["--pieces", str(p), "--out", str(base)])
     assert json.loads(base.read_text())["rows"]["p-1"]["guard"] == [
-        {"revert": False, "keys": None, "gates": {"prev": [F9], "cur": [F9]}, "hold": {"prev": F9, "cur": F9}}]
+        {"revert": False, "keys": None, "gates": {"prev": [F9], "cur": [F9]}, "hold": {"prev": F9, "cur": F9},
+         "hold_gates": {"prev": [F9], "cur": [F9]}, "floor_prev": False}]
     # the default run equals main: no diff at all
     assert rp.main(["--pieces", str(p), "--base", str(base), "--out", str(out)]) == 0
     s = json.loads(out.read_text())["summary"]
@@ -449,6 +480,69 @@ def test_m4_key_evidence_that_lost_a_gate_cannot_certify_itself(tmp_path, monkey
     assert clean == 0 and code == 1
     d = doc["diff"]["diffs"]
     assert [x["declared"] for x in d] == ["UNDECLARED"] and "main's gate view" in d[0]["note"]
+
+
+UNDER_TEXT = "post is 60 words, under the band 120–250 words for this brand on LinkedIn — rewrite it longer"
+FAR_TEXT = "post is 320 words, far over the 120–250-word band for this brand on LinkedIn — cut it"
+N1 = "The ride covers 42 km in four hours."
+
+
+def _f14r(text):
+    return {"gate": F14, "passed": False, "blocking": True, "violations": [text]}
+
+
+def _f1r(sentence):
+    return {"gate": F1, "passed": False, "blocking": True,
+            "violations": [f"not present in the content seed: '{sentence}'"]}
+
+
+def test_s275_style_traded_for_a_truth_failure_is_declared_d_guard_3(tmp_path, monkeypatch):
+    """Two style gates cleared for one new F1 number: main keeps (1 gate < 2), the opt-in mode reverts (fail closed).
+    End to end through --pieces: D-guard-3, status held->approved (the truth-clean attempt ships)."""
+    prev = [{"gate": F15, "passed": False, "blocking": True, "violations": [f"stock phrase: '{SX}'"]},
+            {"gate": F2S, "passed": False, "blocking": True, "violations": [f"second stock superlative: '{SY}'"]}]
+    clean, _code, doc = _guard_run(tmp_path, monkeypatch, prev, [_f1r(N1)], contextlib.nullcontext())
+    assert clean == 0
+    (d,) = doc["diff"]["diffs"]
+    assert d["declared"] == "D-guard-3" and d["status_flip"] == "held->approved"
+
+
+def test_s275_m8_dropping_the_hold_rule_is_undeclared(tmp_path, monkeypatch):
+    """M8: compare without the hold rule keeps F15 x2 -> F1 x1 (S272 behaviour, fewer keys) where main reverts: the
+    approved->held keep is never declared."""
+    from services.acp_content_writing import stable_keys
+    real = stable_keys.compare
+
+    def no_hold(prev, cur):
+        c = real(prev, cur)
+        if c["rule"] != stable_keys.RULE_HOLD:
+            return c
+        keys = bool(c["new"]) and c["cur_keys"] >= c["prev_keys"] and len(c["cur_gates"]) >= len(c["prev_gates"])
+        return {**c, "rule": stable_keys.RULE_KEYS if keys else stable_keys.RULE_KEEP, "revert": keys}
+    prev = [{"gate": F15, "passed": False, "blocking": True, "violations": [f"stock phrase: '{q}'" for q in (SX, SY)]}]
+    clean, code, doc = _guard_run(tmp_path, monkeypatch, prev, [_f1r(N1)],
+                                  patch.object(stable_keys, "compare", no_hold))
+    assert clean == 0 and code == 1
+    (d,) = doc["diff"]["diffs"]
+    assert d["declared"] == "UNDECLARED" and "approved->held" in d["note"]
+
+
+def test_s275_m9_dropping_the_floor_rule_is_undeclared(tmp_path, monkeypatch):
+    """M9: compare without the under-floor rule reverts under-floor F14 + F15 s1 -> far-over F14 + F15 s2 (main keeps):
+    a revert into the attempt the call site would waive is never declared."""
+    from services.acp_content_writing import stable_keys
+    real = stable_keys.compare
+
+    def no_floor(prev, cur):
+        with patch.object(stable_keys, "has_floor_block", lambda _l: False):
+            return real(prev, cur)
+    prev = [_f14r(UNDER_TEXT), {"gate": F15, "passed": False, "blocking": True,
+                                "violations": [f"stock phrase: '{SX}'"]}]
+    cur = [_f14r(FAR_TEXT), {"gate": F15, "passed": False, "blocking": True, "violations": [f"stock phrase: '{SY}'"]}]
+    clean, code, doc = _guard_run(tmp_path, monkeypatch, prev, cur, patch.object(stable_keys, "compare", no_floor))
+    assert clean == 0 and code == 1
+    (d,) = doc["diff"]["diffs"]
+    assert d["declared"] == "UNDECLARED" and "under-floor" in d["note"]
 
 
 def test_a_default_run_equals_main_and_the_seo_prefix_is_opt_in_only(tmp_path, monkeypatch):
