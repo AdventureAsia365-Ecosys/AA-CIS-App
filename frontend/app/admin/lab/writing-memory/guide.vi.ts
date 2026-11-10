@@ -261,6 +261,10 @@ export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
             + "nữa trước khi lưu.",
           "Bộ nhãn liệt kê mọi phiên bản bộ nhãn và ai đã quyết các nhãn. Mở một bộ để đọc mọi câu đã gán nhãn: ai quyết, "
             + "khi nào và vì sao. Tech lead có thể đổi nhãn ở đó; nhãn cũ vẫn trong lịch sử và nhãn mới nhất được tính.",
+          "Lọc trước: câu mà đa số panel cho là đúng, Jev chắc ít nhất 90% là nguồn ủng hộ và không góc nhìn nghi ngờ nào "
+            + "cho là gán sai dữ kiện, có thể được chốt mà không cần duyệt. Nhãn đó hiện là Lọc trước, rời hàng chờ và "
+            + "không bao giờ được tính là bằng chứng phát hành. Nó chạy ở chế độ shadow (chỉ báo cáo) cho tới khi bật "
+            + "công tắc lọc trước.",
         ] },
 
         { kind: "subheading", text: "Các nút ở đầu trang" },

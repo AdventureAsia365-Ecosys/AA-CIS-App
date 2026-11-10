@@ -5673,6 +5673,87 @@
         "title": "PostActivationBody",
         "type": "object"
       },
+      "PrefilterBody": {
+        "additionalProperties": false,
+        "description": "AA-1063: the Jev pre-filter. ask=false is a plan (no Jev call); ask=true asks up to `limit` claims and reports;\napply=true writes the auto_ok labels (switch on enforce only, else 409 switched_off).",
+        "properties": {
+          "apply": {
+            "default": false,
+            "title": "Apply",
+            "type": "boolean"
+          },
+          "ask": {
+            "default": false,
+            "title": "Ask",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "max_usd": {
+            "default": 0.05,
+            "exclusiveMinimum": 0.0,
+            "maximum": 0.5,
+            "title": "Max Usd",
+            "type": "number"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9:@._-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "split": {
+            "anyOf": [
+              {
+                "enum": [
+                  "held_out",
+                  "train"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Split"
+          },
+          "writers": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "a1",
+                    "t2",
+                    "t9_blog",
+                    "t9_social"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writers"
+          }
+        },
+        "title": "PrefilterBody",
+        "type": "object"
+      },
       "PreviewBody": {
         "additionalProperties": false,
         "properties": {
@@ -46723,6 +46804,7 @@
                 {
                   "enum": [
                     "tech_lead",
+                    "prefilter",
                     "panel_agreed",
                     "none"
                   ],
@@ -47226,6 +47308,113 @@
           }
         },
         "summary": "Finals",
+        "tags": [
+          "admin-claim-labels"
+        ]
+      }
+    },
+    "/admin/writing-memory/claim-labels/{set_id}/{set_version}/prefilter": {
+      "post": {
+        "operationId": "prefilter_admin_writing_memory_claim_labels__set_id___set_version__prefilter_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "set_id",
+            "required": true,
+            "schema": {
+              "title": "Set Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "set_version",
+            "required": true,
+            "schema": {
+              "title": "Set Version",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrefilterBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prefilter",
         "tags": [
           "admin-claim-labels"
         ]

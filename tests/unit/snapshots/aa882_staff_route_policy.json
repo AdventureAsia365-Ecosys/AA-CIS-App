@@ -1691,6 +1691,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_claim_labels"
   },
+  "POST /admin/writing-memory/claim-labels/{set_id}/{set_version}/prefilter": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_claim_labels"
+  },
   "POST /admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions": {
     "capability": "ai.admin",
     "module": "api.routers.admin_claim_labels"

@@ -1,0 +1,577 @@
+{
+ "clean": {
+  "llm": [
+   [
+    "s1_generate",
+    "018a6ba237b1df3d"
+   ],
+   [
+    "s1_generate",
+    "785ef07be827be25"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [],
+   "brand_audit_fields": [],
+   "brand_audit_status": "pass",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "ee5a2210861d6df972c7f474619ab34cfc47fd6f88c6d33ed85a8ce23e92ae5c",
+    "verdict": "publish",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": false,
+   "fix_pass_fields": [],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market. In the evening there is a stroll along the canal.\nOvernight: Velmora. Meals: dinner.\n\nDay 2 — Corran Ridge walk\nWalk up Corran Ridge through pine woods to the ridge chapel, then lunch at a farm kitchen.\nDistance: 12 km. Overnight: Velmora. Meals: breakfast, lunch.\n\nDay 3 — Velmora market and departure\nA free morning at the market, then the transfer to the station.\nMeals: breakfast.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge through pine woods to the ridge chapel, with lunch at a farm kitchen.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [],
+   "grounding_violations": [],
+   "publishable": true,
+   "quality_score": 10.0,
+   "quality_shadow": [],
+   "retry_count": 0,
+   "revalidate_passed": false,
+   "revalidate_ran": false,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ },
+ "day_dropped": {
+  "llm": [
+   [
+    "s1_generate",
+    "018a6ba237b1df3d"
+   ],
+   [
+    "s1_generate",
+    "785ef07be827be25"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [],
+   "brand_audit_fields": [],
+   "brand_audit_status": "pass",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [
+    "ITINERARY_DAY_COUNT_MISMATCH"
+   ],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [
+     {
+      "class_id": "struct.day_structure",
+      "code": "ITINERARY_DAY_COUNT_MISMATCH",
+      "count": 1,
+      "detail": "source day 2 missing",
+      "field": "itineraries",
+      "severity": "block"
+     },
+     {
+      "class_id": "struct.day_structure",
+      "code": "DAY_OUTPUT_GAP",
+      "count": 1,
+      "detail": "day 2 skipped",
+      "field": "itineraries",
+      "severity": "block"
+     },
+     {
+      "class_id": "struct.day_structure",
+      "code": "DAY_COUNT_VS_DURATION",
+      "count": 1,
+      "detail": "2 output day(s) for a 3-day duration",
+      "field": "itineraries",
+      "severity": "block"
+     }
+    ],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "85f08bdef1ad51352b4326d61ae5f43ee157927fb56c8fd82bbf0b426875728c",
+    "verdict": "review",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": false,
+   "fix_pass_fields": [],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market. In the evening there is a stroll along the canal.\nOvernight: Velmora. Meals: dinner.\n\nDay 3 — Velmora market and departure\nA free morning at the market, then the transfer to the station.\nMeals: breakfast.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge through pine woods to the ridge chapel, with lunch at a farm kitchen.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [],
+   "grounding_violations": [],
+   "publishable": false,
+   "quality_score": 9.75,
+   "quality_shadow": [
+    {
+     "class_id": "struct.day_structure",
+     "code": "DAY_OUTPUT_GAP",
+     "detail": "day 2 skipped",
+     "detector": "day_oracle",
+     "mode": "shadow"
+    },
+    {
+     "class_id": "struct.day_structure",
+     "code": "DAY_COUNT_VS_DURATION",
+     "detail": "2 output day(s) for a 3-day duration",
+     "detector": "day_oracle",
+     "mode": "shadow"
+    }
+   ],
+   "retry_count": 0,
+   "revalidate_passed": false,
+   "revalidate_ran": false,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ },
+ "elephant": {
+  "llm": [
+   [
+    "s1_generate",
+    "af397f5c713f7eae"
+   ],
+   [
+    "s1_generate",
+    "785ef07be827be25"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [
+    "FACT_CHECK_MANUAL_CHECK"
+   ],
+   "brand_audit_fields": [],
+   "brand_audit_status": "manual_check",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [
+     {
+      "class_id": "policy.elephant_riding",
+      "code": "ELEPHANT_RIDING",
+      "count": 1,
+      "detail": "source itineraries",
+      "severity": "block"
+     }
+    ],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "ee5a2210861d6df972c7f474619ab34cfc47fd6f88c6d33ed85a8ce23e92ae5c",
+    "verdict": "policy_hold",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": false,
+   "fix_pass_fields": [],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market. In the evening there is a stroll along the canal.\nOvernight: Velmora. Meals: dinner.\n\nDay 2 — Corran Ridge walk\nWalk up Corran Ridge through pine woods to the ridge chapel, then lunch at a farm kitchen.\nDistance: 12 km. Overnight: Velmora. Meals: breakfast, lunch.\n\nDay 3 — Velmora market and departure\nA free morning at the market, then the transfer to the station.\nMeals: breakfast.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge through pine woods to the ridge chapel, with lunch at a farm kitchen.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [],
+   "grounding_violations": [],
+   "publishable": false,
+   "quality_score": 10.0,
+   "quality_shadow": [],
+   "retry_count": 0,
+   "revalidate_passed": false,
+   "revalidate_ran": false,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ },
+ "fact_line_wrong": {
+  "llm": [
+   [
+    "s1_generate",
+    "018a6ba237b1df3d"
+   ],
+   [
+    "s1_generate",
+    "785ef07be827be25"
+   ],
+   [
+    "s1_flag_fix",
+    "fd338b435a87a623"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [
+    "ITINERARY_MEAL_TIME_INVENTED"
+   ],
+   "brand_audit_fields": [],
+   "brand_audit_status": "fixed",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "e52da71587715bb9dc6a45100df26f78a6edc49cfeb20b32aa55e32ceaed2c54",
+    "verdict": "publish",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": true,
+   "fix_pass_fields": [
+    "itineraries"
+   ],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market.\n\nDay 2 — Corran Ridge walk\nWalk up Corran Ridge to the ridge chapel.\n\nDay 3 — Velmora market and departure\nA free morning at the market.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge through pine woods to the ridge chapel, with lunch at a farm kitchen.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [],
+   "grounding_violations": [],
+   "publishable": true,
+   "quality_score": 10.0,
+   "quality_shadow": [
+    {
+     "code": "ITINERARY_STILL_COMPRESSED",
+     "detail": "day 1: 12 words vs source 21 words (ratio 0.571); day 2: 8 words vs source 25 words (ratio 0.32); day 3: 6 words vs source 12 words (ratio 0.5)",
+     "detector": "s1_writer_v2",
+     "mode": "report"
+    }
+   ],
+   "retry_count": 0,
+   "revalidate_passed": true,
+   "revalidate_ran": true,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ },
+ "meal_in_prose": {
+  "llm": [
+   [
+    "s1_generate",
+    "018a6ba237b1df3d"
+   ],
+   [
+    "s1_generate",
+    "785ef07be827be25"
+   ],
+   [
+    "s1_flag_fix",
+    "ce53ae47739d1025"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [
+    "ITINERARY_MEAL_TIME_INVENTED"
+   ],
+   "brand_audit_fields": [],
+   "brand_audit_status": "fixed",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "e52da71587715bb9dc6a45100df26f78a6edc49cfeb20b32aa55e32ceaed2c54",
+    "verdict": "publish",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": true,
+   "fix_pass_fields": [
+    "itineraries"
+   ],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market.\n\nDay 2 — Corran Ridge walk\nWalk up Corran Ridge to the ridge chapel.\n\nDay 3 — Velmora market and departure\nA free morning at the market.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge through pine woods to the ridge chapel, with lunch at a farm kitchen.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [],
+   "grounding_violations": [],
+   "publishable": true,
+   "quality_score": 10.0,
+   "quality_shadow": [
+    {
+     "code": "ITINERARY_STILL_COMPRESSED",
+     "detail": "day 1: 12 words vs source 21 words (ratio 0.571); day 2: 8 words vs source 25 words (ratio 0.32); day 3: 6 words vs source 12 words (ratio 0.5)",
+     "detector": "s1_writer_v2",
+     "mode": "report"
+    }
+   ],
+   "retry_count": 0,
+   "revalidate_passed": true,
+   "revalidate_ran": true,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ },
+ "meta_long": {
+  "llm": [
+   [
+    "s1_generate",
+    "018a6ba237b1df3d"
+   ],
+   [
+    "s1_generate",
+    "785ef07be827be25"
+   ],
+   [
+    "s1_generate",
+    "2c6e958fc3d5121a"
+   ],
+   [
+    "s1_flag_fix",
+    "4509c761dffeb0d2"
+   ],
+   [
+    "s1_flag_fix",
+    "b7fc002c70a8fa37"
+   ],
+   [
+    "s1_flag_fix",
+    "b7fc002c70a8fa37"
+   ],
+   [
+    "s1_flag_fix",
+    "b7fc002c70a8fa37"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [],
+   "brand_audit_fields": [],
+   "brand_audit_status": "fixed",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [
+    "SEO_META_TOO_LONG"
+   ],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [
+     {
+      "class_id": "gate.hard_code",
+      "code": "SEO_META_TOO_LONG",
+      "count": 1,
+      "severity": "block"
+     },
+     {
+      "class_id": "struct.seo",
+      "code": "META_OUT_OF_BAND",
+      "count": 1,
+      "detail": "229 characters (band 140-155)",
+      "field": "seo_meta",
+      "severity": "warn"
+     }
+    ],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "7cc5dfe4edfa820a6e8e944f0c5d492eab965d3e34b2cf45da05b24d3f890143",
+    "verdict": "review",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": true,
+   "fix_pass_fields": [
+    "seo_meta"
+   ],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market. In the evening there is a stroll along the canal.\nOvernight: Velmora. Meals: dinner.\n\nDay 2 — Corran Ridge walk\nWalk up Corran Ridge through pine woods to the ridge chapel, then lunch at a farm kitchen.\nDistance: 12 km. Overnight: Velmora. Meals: breakfast, lunch.\n\nDay 3 — Velmora market and departure\nA free morning at the market, then the transfer to the station.\nMeals: breakfast.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way, followed by a free morning at the old market before the transfer to the station.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge through pine woods to the ridge chapel, with lunch at a farm kitchen.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [],
+   "grounding_violations": [],
+   "publishable": false,
+   "quality_score": 9.875,
+   "quality_shadow": [],
+   "retry_count": 0,
+   "revalidate_passed": true,
+   "revalidate_ran": true,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ },
+ "number": {
+  "llm": [
+   [
+    "s1_generate",
+    "018a6ba237b1df3d"
+   ],
+   [
+    "s1_generate",
+    "ff8aaac368127c92"
+   ],
+   [
+    "s1_flag_fix",
+    "8d08cb78b48ebccc"
+   ]
+  ],
+  "result": {
+   "brand_audit_codes": [],
+   "brand_audit_fields": [],
+   "brand_audit_status": "pass",
+   "degraded": [],
+   "error": "",
+   "exit_path": null,
+   "failure_codes": [],
+   "final_contract": {
+    "actual": null,
+    "agrees": null,
+    "exit": "done",
+    "findings": [],
+    "flip": null,
+    "mode": "report",
+    "text_sha": "e1e873fcc125d94250d7cd24d1facd877530a793d27a098361ac3fa82f009d2d",
+    "verdict": "publish",
+    "version": "fc-w1-report-1",
+    "workflow": "s1"
+   },
+   "fix_pass_applied": false,
+   "fix_pass_fields": [],
+   "generated": {
+    "description": "",
+    "highlights": [
+     "Evening stroll along the Velmora canal",
+     "Pine-wood walk up Corran Ridge",
+     "Lunch at a farm kitchen",
+     "Free morning at the old market"
+    ],
+    "itineraries": "Day 1 — Arrive in Velmora\nArrive in Velmora and transfer to the guesthouse near the old market. In the evening there is a stroll along the canal.\nOvernight: Velmora. Meals: dinner.\n\nDay 2 — Corran Ridge walk\nWalk up Corran Ridge through pine woods to the ridge chapel, then lunch at a farm kitchen.\nDistance: 12 km. Overnight: Velmora. Meals: breakfast, lunch.\n\nDay 3 — Velmora market and departure\nA free morning at the market, then the transfer to the station.\nMeals: breakfast.",
+    "name": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "seo_keywords_used": [],
+    "seo_meta": "A three-day walking break in Velmora, Testland, with a canal stroll, a 12 km walk up Corran Ridge to the chapel and a farm kitchen lunch on the way.",
+    "seo_title": "Velmora Canal and Corran Ridge Walk — 3 Days",
+    "subtitle": "Three days of easy walking from the canal town of Velmora to Corran Ridge.",
+    "summary": "A three-day walking break in Velmora, an old market town on a canal. Day two walks up Corran Ridge to the ridge chapel.",
+    "trip_type": "trekking"
+   },
+   "grounding_ran": true,
+   "grounding_repaired_fields": [
+    "summary"
+   ],
+   "grounding_violations": [],
+   "publishable": true,
+   "quality_score": 10.0,
+   "quality_shadow": [],
+   "retry_count": 0,
+   "revalidate_passed": false,
+   "revalidate_ran": false,
+   "status": "success",
+   "writer_version": "v2"
+  },
+  "unexpected": []
+ }
+}

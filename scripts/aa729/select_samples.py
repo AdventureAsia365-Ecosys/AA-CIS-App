@@ -490,51 +490,12 @@ async def t9_context(pool, r: dict, wi: dict) -> tuple[dict, str]:
     """The T9 writer context for a stored piece: the t9_write job payload's context when the job row is
     still kept, else rebuilt from the angle request (goal, chosen angle); then the stored `writer_input`
     (what the writer really got: seed after the place-card re-read, route moments, Facts, brand pack,
-    CTA, keyword, scope) laid over it, with `facts_pending = False` so nothing is re-read at score time."""
-    from services.acp_angle_gate import service as angle_gate_service
-    from services.acp_angle_gate.channel_style import get_channel_style
-    from services.acp_angle_gate.goals import get_goal
+    CTA, keyword, scope) laid over it, with `facts_pending = False` so nothing is re-read at score time.
+    AA-1063 (S276): the code lives in services/ground_truth/review.live_t9_context, so the Jev pre-filter in
+    the api image rebuilds a live piece's source with exactly this freeze's bytes."""
+    from services.ground_truth.review import live_t9_context
 
-    ctx: Optional[dict] = None
-    source = "job_payload"
-    if r.get("job_id"):
-        async with pool.acquire() as conn:
-            payload = await conn.fetchval("SELECT payload FROM shared.job WHERE id = $1::uuid", r["job_id"])
-        payload = _j(payload, {}) or {}
-        if isinstance(payload, dict) and isinstance(payload.get("context"), dict):
-            ctx = copy.deepcopy(payload["context"])
-    if ctx is None:
-        source = "angle_request"
-        req = await angle_gate_service.fetch_request(UUID(r["tenant_id"]), UUID(r["request_id"]), pool)
-        chosen = next((a for a in req.get("angles") or [] if a.get("chosen")), None)
-        goal = get_goal(req.get("goal") or wi.get("goal") or "")
-        style = get_channel_style(r["channel"])
-        if chosen is None or goal is None or style is None:
-            raise ValueError("cannot rebuild the writer context (no chosen angle / goal / channel style)")
-        ctx = {"goal": dict(goal), "channel_style": dict(style), "chosen": dict(chosen),
-               "atom_id": req.get("atom_id"), "real_questions": [], "sibling_openers": [],
-               "route_hub_name": r.get("route_hub_name"), "route_segment_count": None, "route_atoms": []}
-    moments = wi.get("route_moments") or []
-    ctx.update({
-        "atom_text": wi.get("seed") or ctx.get("atom_text") or "",
-        "route_segments": ([[m.get("atom_id"), m.get("seed")] for m in moments] if moments
-                           else ctx.get("route_segments")),
-        "facts_text": wi.get("facts") or "", "facts_pending": False,
-        "brand_audience": wi.get("brand_pack") or ctx.get("brand_audience") or {},
-        "brand_rubric_text": wi.get("brand_rubric") if wi.get("brand_rubric") is not None
-        else ctx.get("brand_rubric_text"),
-        "channel": r["channel"], "keyword": wi.get("keyword", ctx.get("keyword")),
-        "cta": wi.get("cta") or ctx.get("cta"), "trip_name": wi.get("trip", ctx.get("trip_name")),
-        "destination": wi.get("destination", ctx.get("destination")), "scope": wi.get("scope", ctx.get("scope")),
-        "trip_places": wi.get("trip_places") or ctx.get("trip_places") or [],
-        "tenant_id": r["tenant_id"],
-    })
-    if r["channel"] == "blog" and wi.get("search_questions") is not None:
-        ctx["people_also_ask"] = [q.get("q") if isinstance(q, dict) else q for q in wi.get("search_questions") or []]
-    ctx.setdefault("people_also_ask", [])
-    for k in ("writer_trip_name", "paa_questions", "search_questions", "faq_questions"):
-        ctx.pop(k, None)  # derived by run_write_background itself
-    return ctx, source
+    return await live_t9_context(pool, r, wi)
 
 
 async def freeze_t9(pool, c: Candidate, shared: dict) -> dict:

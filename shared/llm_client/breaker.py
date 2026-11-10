@@ -446,7 +446,11 @@ def _transition(key: Key, fn: Callable[[Health], Optional[Health]]) -> tuple[Opt
 class CircuitOpen(RuntimeError):
     """A deployment was not called because its circuit is open (or another call holds its half-open probe).
     ``llm_error_class`` is the class that opened it, so a route whose every model is refused at account level still
-    ends in LLMAccessDenied (the job fails at once) although no provider call was made."""
+    ends in LLMAccessDenied (the job fails at once) although no provider call was made. S276: ``skips`` = the
+    (connection, class that opened it) pairs it stands for, in plan (priority) order, so the gateway's ledger row of a
+    model none of whose deployments was called names the connection (``circuit_error``)."""
+
+    skips: tuple = ()
 
     def __init__(self, message: str, error_class: str = OTHER):
         super().__init__(message, error_class)
@@ -879,7 +883,9 @@ def circuit_error(model_key: str, skips: list[tuple[str, Optional[str]]]) -> Cir
     classes = [c if c in RULES else OTHER for _, c in skips] or [OTHER]
     cls = account_level_class(classes) or (classes[0] if len(set(classes)) == 1 else OTHER)
     names = ", ".join(f"{k} ({c or OTHER})" for k, c in skips)
-    return CircuitOpen(f"Model {model_key!r} not called: circuit open on {names}", cls)
+    exc = CircuitOpen(f"Model {model_key!r} not called: circuit open on {names}", cls)
+    exc.skips = tuple((k, c) for k, c in skips)
+    return exc
 
 
 # ── limiter ──────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -34,6 +34,17 @@ AUDIT_PCT = 0.20
 AUDIT_SEED = "aa1048-audit"
 EXPORT_SCHEMA = "aa1048-claim-export/1"
 REASON_MAX = 600
+# AA-1063: a tech-lead row written by a machine rule (the Jev pre-filter, services/ground_truth/prefilter.py) carries a
+# labeller that starts with this prefix. Its final label has source 'prefilter': it decides the claim's label (and
+# keeps it out of the review queue) but it is never release evidence and never an audit adjudication (critic F14:
+# "labels with panel-only provenance never count as release evidence"; S275 lesson: machine-chosen labels stay out of
+# the R1 decision record).
+PREFILTER_PREFIX = "prefilter:"
+
+
+def is_prefilter(row: dict) -> bool:
+    """A tech-lead row written by a machine rule (labeller 'prefilter:<rule>')."""
+    return row.get("labeller_kind") == "tech_lead" and str(row.get("labeller") or "").startswith(PREFILTER_PREFIX)
 
 
 class PanelError(ValueError):
@@ -226,7 +237,7 @@ class FinalLabel:
     claim_hash: str
     claim_class: str
     label: str
-    source: str                 # tech_lead | panel_agreed | panel_majority | none
+    source: str                 # tech_lead | prefilter | panel_agreed | none
     writer: str
     content_sha256: str
     claim_text: str
@@ -236,9 +247,10 @@ class FinalLabel:
 
 
 def final_labels(rows: list[dict]) -> dict[str, FinalLabel]:
-    """claim_hash -> final label: a tech-lead row wins (source tech_lead); else an agreed or audit-drawn panel claim
-    takes the panel's common label (source panel_agreed); a disputed claim without a tech-lead row has no final label
-    (source none, label unsure). Whether panel_agreed labels may count as release evidence is `release_evidence`."""
+    """claim_hash -> final label: a tech-lead row wins (source tech_lead; source prefilter when the newest one was
+    written by a machine rule, AA-1063); else an agreed or audit-drawn panel claim takes the panel's common label
+    (source panel_agreed); a disputed claim without a tech-lead row has no final label (source none, label unsure).
+    Which labels may count as release evidence is `release_evidence`."""
     by_hash: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_hash[r["claim_hash"]].append(r)
@@ -250,7 +262,8 @@ def final_labels(rows: list[dict]) -> dict[str, FinalLabel]:
                       split=base.get("split") or "train")
         lead = [r for r in rs if r["labeller_kind"] == "tech_lead"]
         if lead:
-            out[h] = FinalLabel(h, lead[-1]["claim_class"], lead[-1]["label"], "tech_lead", **common)
+            out[h] = FinalLabel(h, lead[-1]["claim_class"], lead[-1]["label"],
+                                "prefilter" if is_prefilter(lead[-1]) else "tech_lead", **common)
             continue
         panel = [r for r in rs if r["labeller_kind"] == "agent_panel"]
         state = panel[0]["adjudication"] if panel else "disputed"
@@ -264,7 +277,8 @@ def final_labels(rows: list[dict]) -> dict[str, FinalLabel]:
 def release_evidence(finals: dict[str, FinalLabel], *, audit_ok: bool = False) -> dict[str, FinalLabel]:
     """The labels that may count for a gate's measurement record (critic F14: "labels with panel-only provenance never
     count as release evidence"): tech-lead labels always; agreed panel labels only when the caller states that the
-    set's audit draw was adjudicated and its panel error rate accepted (`audit_ok`)."""
+    set's audit draw was adjudicated and its panel error rate accepted (`audit_ok`). A machine-rule label (source
+    prefilter, AA-1063) never counts, with or without `audit_ok`."""
     keep = {"tech_lead", "panel_agreed"} if audit_ok else {"tech_lead"}
     return {h: f for h, f in finals.items() if f.source in keep}
 
@@ -287,7 +301,8 @@ def contradictions(finals: dict[str, FinalLabel]) -> list[dict]:
 def agreement_report(rows: list[dict]) -> dict:
     """Per class: claims, panel agreement (share of claims whose 3 lenses agreed), and on claims the tech lead
     labelled: how often the panel's common label stood. The panel error rate is measured on the AUDIT draw only (a
-    random sample of agreed claims, critic F14); disputes are not an error-rate sample."""
+    random sample of agreed claims, critic F14); disputes are not an error-rate sample. Machine-rule rows (source
+    prefilter) are not adjudications here."""
     by_hash: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_hash[r["claim_hash"]].append(r)
@@ -295,7 +310,8 @@ def agreement_report(rows: list[dict]) -> dict:
     audit_n = audit_flipped = 0
     for rs in by_hash.values():
         panel = [r for r in rs if r["labeller_kind"] == "agent_panel"]
-        lead = [r for r in rs if r["labeller_kind"] == "tech_lead"]
+        # AA-1063: only a human decision adjudicates (a machine-rule row would measure the panel against itself)
+        lead = [r for r in rs if r["labeller_kind"] == "tech_lead" and not is_prefilter(r)]
         if not panel:
             continue
         cls = Counter(r["claim_class"] for r in panel).most_common(1)[0][0]
@@ -392,6 +408,7 @@ def rederive(fixture: dict, finals: dict[str, FinalLabel], *,
     return {"flips": flips, "unchanged": len(same), "unverified": unverified, "not_covered": len(not_covered)}
 
 
-__all__ = ["AUDIT_PCT", "Consolidated", "EXPORT_SCHEMA", "FinalLabel", "Judgement", "LENSES", "PanelError",
-           "agreement_report", "consolidate", "contradictions", "export_records", "manifest", "final_labels",
-           "parse_judgements", "read_jsonl", "rederive", "release_evidence", "verdict_rule"]
+__all__ = ["AUDIT_PCT", "Consolidated", "EXPORT_SCHEMA", "FinalLabel", "Judgement", "LENSES", "PREFILTER_PREFIX",
+           "PanelError", "agreement_report", "consolidate", "contradictions", "export_records", "manifest",
+           "final_labels", "is_prefilter", "parse_judgements", "read_jsonl", "rederive", "release_evidence",
+           "verdict_rule"]

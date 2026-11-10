@@ -1,0 +1,145 @@
+{
+ "flags": {},
+ "opt_in": false,
+ "rows": [
+  {
+   "brand_audit_codes": [],
+   "brand_audit_status": "pass",
+   "contract_verdict": "publish",
+   "error": null,
+   "exit_path": null,
+   "failure_codes": [],
+   "hard_left": [],
+   "llm_calls": {
+    "s1_generate:meta": 1,
+    "s1_generate:writer": 1
+   },
+   "misses": [],
+   "publishable": true,
+   "retry_count": 0,
+   "s1_train": null,
+   "status": "success",
+   "stored_sha": "ee5a2210861d6df972c7f474619ab34cfc47fd6f88c6d33ed85a8ce23e92ae5c",
+   "tour_id": "m-clean"
+  },
+  {
+   "brand_audit_codes": [
+    "ITINERARY_MEAL_TIME_INVENTED"
+   ],
+   "brand_audit_status": "flagged",
+   "contract_verdict": "review",
+   "error": null,
+   "exit_path": null,
+   "failure_codes": [],
+   "hard_left": [],
+   "llm_calls": {
+    "s1_flag_fix:miss": 1,
+    "s1_generate:meta": 1,
+    "s1_generate:writer": 1
+   },
+   "misses": [
+    "s1_flag_fix"
+   ],
+   "publishable": false,
+   "retry_count": 0,
+   "s1_train": null,
+   "status": "success",
+   "stored_sha": "fef3bfe22a4c82e45e1e61be9f99334d95f77ebd161ee1c254b5d4d9bf4adef4",
+   "tour_id": "m-fact-line"
+  },
+  {
+   "brand_audit_codes": [],
+   "brand_audit_status": "pass",
+   "contract_verdict": "review",
+   "error": null,
+   "exit_path": null,
+   "failure_codes": [
+    "SEO_META_TOO_LONG"
+   ],
+   "hard_left": [
+    "SEO_META_TOO_LONG"
+   ],
+   "llm_calls": {
+    "s1_flag_fix:miss": 1,
+    "s1_generate:meta": 2,
+    "s1_generate:writer": 1
+   },
+   "misses": [
+    "s1_flag_fix"
+   ],
+   "publishable": false,
+   "retry_count": 0,
+   "s1_train": null,
+   "status": "success",
+   "stored_sha": "7cc5dfe4edfa820a6e8e944f0c5d492eab965d3e34b2cf45da05b24d3f890143",
+   "tour_id": "m-meta-long"
+  },
+  {
+   "brand_audit_codes": [],
+   "brand_audit_status": "fixed",
+   "contract_verdict": "publish",
+   "error": null,
+   "exit_path": null,
+   "failure_codes": [],
+   "hard_left": [],
+   "llm_calls": {
+    "s1_generate:meta": 2,
+    "s1_generate:writer": 1
+   },
+   "misses": [],
+   "publishable": true,
+   "retry_count": 0,
+   "s1_train": null,
+   "status": "success",
+   "stored_sha": "69f0851bf97758e9386539d2fa24e3ef1176053e1c13c0a95dc363d477cd5f56",
+   "tour_id": "m-title-long"
+  },
+  {
+   "brand_audit_codes": [
+    "FACT_CHECK_MANUAL_CHECK"
+   ],
+   "brand_audit_status": "manual_check",
+   "contract_verdict": "policy_hold",
+   "error": null,
+   "exit_path": null,
+   "failure_codes": [],
+   "hard_left": [],
+   "llm_calls": {
+    "s1_generate:meta": 1,
+    "s1_generate:writer": 1
+   },
+   "misses": [],
+   "publishable": false,
+   "retry_count": 0,
+   "s1_train": null,
+   "status": "success",
+   "stored_sha": "ee5a2210861d6df972c7f474619ab34cfc47fd6f88c6d33ed85a8ce23e92ae5c",
+   "tour_id": "m-elephant"
+  }
+ ],
+ "schema": "aa1049-s1-replay/1",
+ "summary": {
+  "brand_audit_status": {
+   "fixed": 1,
+   "flagged": 1,
+   "manual_check": 1,
+   "pass": 2
+  },
+  "contract_verdict": {
+   "policy_hold": 1,
+   "publish": 2,
+   "review": 2
+  },
+  "crash": 0,
+  "llm_calls": {
+   "s1_flag_fix:miss": 2,
+   "s1_generate:meta": 7,
+   "s1_generate:writer": 5
+  },
+  "misses": {
+   "s1_flag_fix": 2
+  },
+  "publishable": 2,
+  "versions": 5
+ }
+}

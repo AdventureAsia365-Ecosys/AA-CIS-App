@@ -100,3 +100,10 @@ def test_seo_field_violation_reads_the_parse():
     assert rt.is_seo_field_violation(qr.F9_CTA_FACT, "meta claims a sunrise boat")
     assert not rt.is_seo_field_violation(qr.F1_GROUNDING, "title states 12")
     assert not rt.is_seo_field_violation(qr.F12_SCOPE, "scope: 'A sentence about Velmora harbour.'")
+
+
+def test_s1_rows_cover_every_s1_code_of_the_taxonomy():
+    """AA-1049 W3 (S1 train): the `s1` section routes exactly the taxonomy's S1 codes (a1_codes), one row each; the
+    full S1 lint tests live in tests/unit/test_aa1049_s1_train.py."""
+    assert rt.s1_schema_errors() == [] and rt.s1_coverage_errors() == []
+    assert set(rt.S1_TABLE) == set(qr.a1_codes())

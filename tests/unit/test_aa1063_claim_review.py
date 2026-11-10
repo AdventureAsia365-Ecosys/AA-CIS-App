@@ -153,7 +153,7 @@ def test_effective_rows_leave_the_stored_rows_alone_without_corrections():
 def test_set_summary_counts_sources_corrections_and_audit():
     agreed = _rows(labels=["ok", "ok", "ok"], state="audit")
     s = rv.set_summary(agreed, [])
-    assert s["claims"] == 1 and s["evidence_sources"] == {"tech_lead": 0, "panel_agreed": 1, "none": 0}
+    assert s["claims"] == 1 and s["evidence_sources"] == {"tech_lead": 0, "prefilter": 0, "panel_agreed": 1, "none": 0}
     assert s["panel_states"] == {"audit": 1} and s["relabels"] == 0
     flipped = rv.set_summary(agreed, [_relabel(agreed, "violation")])
     assert flipped["evidence_sources"]["tech_lead"] == 1 and flipped["audit"]["flipped"] == 1
@@ -416,7 +416,7 @@ def test_sets_claims_report_and_finals_read_the_correction(client, monkeypatch):
     assert rep["rows"] == 4 and rep["relabels"] == 1 and rep["by_labeller_kind"] == {"agent_panel": 3,
                                                                                      "tech_lead": 1}
     assert rep["labels_by_class"] == {"fact.number": {"ok": 1}}
-    assert rep["evidence_sources"] == {"tech_lead": 1, "panel_agreed": 0, "none": 0}
+    assert rep["evidence_sources"] == {"tech_lead": 1, "prefilter": 0, "panel_agreed": 0, "none": 0}
     fin = client.get(f"{BASE}/{SET}/1.0.0/finals", headers=_h()).json()["finals"]
     assert [f["label"] for f in fin] == ["ok"]
     page = client.get(f"{BASE}/{SET}/1.0.0/claims?relabelled=true", headers=_h()).json()

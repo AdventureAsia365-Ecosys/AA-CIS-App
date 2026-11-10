@@ -243,7 +243,7 @@ async def test_review_proposals_answers_corrections(conn):
     sets = {(s["set_id"], s["set_version"]): s for s in await rv.list_sets(conn)}
     s = sets[(SET, "1.0.0")]
     assert s["claims"] == 3 and s["relabels"] == 2 and s["queue"] == {"open": 0, "resolved": 3}
-    assert s["evidence_sources"] == {"tech_lead": 3, "panel_agreed": 0, "none": 0}
+    assert s["evidence_sources"] == {"tech_lead": 3, "prefilter": 0, "panel_agreed": 0, "none": 0}
 
     # audit rows: ids and labels, no text
     n = await conn.fetchval("SELECT count(*) AS n FROM acp_shared.audit_log WHERE action = ANY($1::text[])",
