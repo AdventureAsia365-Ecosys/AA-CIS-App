@@ -303,7 +303,7 @@ async def cmd_report(a, conn) -> dict:
     return {"rows": len(rows), "claims": len(finals), "agreement": pn.agreement_report(rows),
             "contradictions": pn.contradictions(finals), "labels_by_class": by,
             "evidence_sources": {s: sum(1 for f in finals.values() if f.source == s)
-                                 for s in ("tech_lead", "panel_agreed", "none")}}
+                                 for s in ("tech_lead", "prefilter", "panel_agreed", "none")}}
 
 
 async def cmd_manifest(a, conn) -> dict:

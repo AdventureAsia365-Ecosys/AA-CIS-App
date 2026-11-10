@@ -52,7 +52,7 @@ LABEL_ANSWER = {v: k for k, v in ANSWERS.items()}
 CONFIDENCE = ("high", "medium", "low")
 STATES = ("open", "resolved", "all")
 PROPOSAL_FILTERS = ("ok", "violation", "unsure", "none")
-SOURCES = ("tech_lead", "panel_agreed", "none")
+SOURCES = ("tech_lead", "prefilter", "panel_agreed", "none")
 NOTE_KEYS = ("claim_vi", "claim_en", "source_says_en", "source_says_vi", "doubt_en", "doubt_vi")
 NOTE_MAX = 1200
 REASON_MAX = pn.REASON_MAX
@@ -765,7 +765,9 @@ async def relabel(conn, set_id: str, set_version: str, claim_hash: str, *, label
             raise ReviewError(422, "unchanged", "the claim already has this label")
         anchor = sorted(rows, key=lambda r: (r["labeller_kind"] != "agent_panel", r.get("lens") or ""))[0]
         top = newest_lead(rows, chain)      # the row the current final label comes from
-        previous_source = "relabel" if top is not None and top.get("relabel") else final.source
+        # a machine-rule label (source prefilter) is a stored tech-lead row: the column's CHECK names the row kind
+        previous_source = ("relabel" if top is not None and top.get("relabel")
+                           else "tech_lead" if final.source == "prefilter" else final.source)
         try:
             rid = await conn.fetchval(
                 "INSERT INTO shared.eval_claim_relabel (set_id, set_version, claim_hash, anchor_label_id, claim_class, "

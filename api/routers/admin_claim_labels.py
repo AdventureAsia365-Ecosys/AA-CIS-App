@@ -43,6 +43,12 @@ AA-1063 (S275) — the Writing Lab review view, agent proposals, the label set b
                                                         decided it, when and why, and its history (logged)
   POST  /admin/writing-memory/claim-labels/{set_id}/{set_version}/claims/{claim_hash}/relabel   {label,
                                                         claim_class?, reason, supersedes}: an append-only correction
+  POST  /admin/writing-memory/claim-labels/{set_id}/{set_version}/prefilter   {ask, apply, split?, writers?, limit,
+                                                        max_usd, run_id?}: the Jev pre-filter (rule jev090+panel,
+                                                        services/ground_truth/prefilter.py): plan (no call), shadow
+                                                        (ask Jev, report) or apply (switch CLAIM_PREFILTER_MODE=enforce
+                                                        only: label + resolve the auto_ok claims); counts, hashes and
+                                                        probabilities only
 The report and finals routes read the newest correction of a claim as its final label (review.effective_rows).
 Writes need a signed-in admin (x-admin-user-id) and ai.admin; 503 `unavailable` before CIS 394.
 
@@ -356,6 +362,43 @@ async def enqueue(set_id: str, set_version: str, body: EnqueueBody, request: Req
     return result
 
 
+class PrefilterBody(BaseModel):
+    """AA-1063: the Jev pre-filter. ask=false is a plan (no Jev call); ask=true asks up to `limit` claims and reports;
+    apply=true writes the auto_ok labels (switch on enforce only, else 409 switched_off)."""
+    model_config = ConfigDict(extra="forbid")
+    ask: bool = False
+    apply: bool = False
+    split: Optional[Literal["held_out", "train"]] = None
+    writers: Optional[list[WriterLit]] = Field(None, min_length=1, max_length=4)
+    limit: int = Field(50, ge=1, le=100)
+    max_usd: float = Field(0.05, gt=0, le=0.5)
+    run_id: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9][A-Za-z0-9:@._-]{0,63}$")
+
+
+@router.post("/{set_id}/{set_version}/prefilter")
+async def prefilter(set_id: str, set_version: str, body: PrefilterBody, request: Request,
+                    x_admin_user_id: Optional[str] = Header(None)):
+    from services.ground_truth import prefilter as pf
+
+    set_id, set_version = _set(set_id, set_version)
+    actor = _need_actor(x_admin_user_id)
+    try:
+        result = await pf.run(_pool(request), set_id, set_version, ask=body.ask, apply=body.apply, split=body.split,
+                              writers=body.writers, limit=body.limit, max_usd=body.max_usd, run_id=body.run_id,
+                              actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e, "CIS 394")
+    except pf.PrefilterError as e:
+        raise HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
+    except store.StoreRefused as e:
+        raise _refused(e, 409, "set_version_holds_other_labels")
+    logger.info("aa1063_claim_prefilter", set=result["set"], call=result["call"], switch=result["switch"],
+                candidates=result["candidates"], auto_ok=result["decisions"]["auto_ok"],
+                asked=result["verdicts"]["asked"], usd=result["usd"]["actual_this_call"],
+                written=(result["applied"] or {}).get("written"))
+    return result
+
+
 @router.post("/{set_id}/{set_version}/pull-resolutions")
 async def pull_resolutions(set_id: str, set_version: str, body: DryRunBody, request: Request):
     from services.ground_truth import policy
@@ -392,7 +435,7 @@ async def finals(set_id: str, set_version: str, request: Request, audit_ok: bool
 
 @router.get("/{set_id}/{set_version}/claims", dependencies=LAB_TEXT_LOGGED)
 async def set_claims(set_id: str, set_version: str, request: Request,
-                     source: Optional[Literal["tech_lead", "panel_agreed", "none"]] = None,
+                     source: Optional[Literal["tech_lead", "prefilter", "panel_agreed", "none"]] = None,
                      label: Optional[LabelLit] = None, writer: Optional[WriterLit] = None,
                      claim_class: Optional[str] = Query(None, max_length=48),
                      split: Optional[Literal["held_out", "train"]] = None, relabelled: Optional[bool] = None,
