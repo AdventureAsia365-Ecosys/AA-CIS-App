@@ -9,7 +9,7 @@ import { test } from "node:test";
 import {
   ANSWERS, ANSWER_OF_LABEL, BULK_MAX, CLAIM_API, LABEL_OF_ANSWER, acceptable, acceptableCount, chunks, claimsUrl,
   deciderLabel, facetCounts, labelTone, note, parseSetKey, proposalReason, reviewPageOffset, reviewUrl, setKey,
-  splitMark,
+  sourceFamily, splitMark,
 } from "./claimLabels.ts";
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
@@ -124,4 +124,15 @@ test("review paging: answered open items leave the list, so the next page starts
   assert.equal(reviewPageOffset("resolved", 0, 0, 1), 25);
   assert.equal(reviewPageOffset("open", 25, 3, -1), 0);
   assert.equal(reviewPageOffset("all", 10, 0, -1), 0);
+});
+
+test("source kinds read as a family; *_id means the written text changed (review.SOURCE_KINDS)", () => {
+  const py = readFileSync(new URL("../../services/ground_truth/review.py", import.meta.url), "utf8");
+  const kinds = JSON.parse(py.match(/^SOURCE_KINDS = \(([^)]*)\)/m)[1].replace(/,\s*$/, "").replace(/^/, "[")
+    .concat("]"));
+  assert.deepEqual(kinds, ["golden_sha", "live_sha", "t2_sha", "golden_id", "live_id", "t2_id", "live_wi"]);
+  assert.deepEqual(kinds.map((k) => sourceFamily(k).family),
+    ["golden", "live", "t2", "golden", "live", "t2", "live"]);
+  assert.deepEqual(kinds.map((k) => sourceFamily(k).changed), [false, false, false, true, true, true, false]);
+  assert.deepEqual(sourceFamily(null), { family: null, changed: false });
 });

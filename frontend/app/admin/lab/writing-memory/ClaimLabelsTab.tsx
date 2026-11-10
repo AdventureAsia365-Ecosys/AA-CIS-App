@@ -24,7 +24,7 @@ import { can } from "@/lib/rbac";
 import {
   ANSWERS, ANSWER_OF_LABEL, CLAIM_API, CLAIM_WRITERS, CLAIMS_PAGE, LABELS, REVIEW_PAGE, acceptable, acceptableCount,
   chunks, claimsUrl, deciderLabel, facetCounts, labelTone, note, proposalReason, reviewPageOffset, reviewUrl, setKey,
-  splitMark,
+  sourceFamily, splitMark,
   type AcceptResult, type Answer, type AnswerResult, type ClaimEntry, type ClaimFilters, type ClaimLabel,
   type ClaimsPage, type ItemContext, type ReviewFilters, type ReviewItem, type ReviewPage, type SetSummary,
 } from "@/lib/claimLabels";
@@ -77,12 +77,38 @@ function FullSource({ itemId }: { itemId: string }) {
       <summary style={{ cursor: "pointer", color: K.muted, fontSize: 13 }}>{t("fullSource")}</summary>
       {q.isLoading ? <div style={{ fontSize: 12.5, color: K.muted, marginTop: 6 }}>{t("loadingSource")}</div>
         : q.error ? <ErrorState message={(q.error as Error).message} onRetry={() => q.refetch()} />
-        : q.data && (q.data.found ? (
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "inherit", fontSize: 12.5,
-            background: K.bg, padding: "10px 12px", borderRadius: 8, maxHeight: 420, overflow: "auto",
-            margin: "8px 0 0" }}>{q.data.source_text}</pre>
-        ) : <div style={{ fontSize: 12.5, color: K.muted, marginTop: 6 }}>{t("noContext")}</div>)}
+        : q.data && (q.data.found ? <SourceBody ctx={q.data} />
+          : <div style={{ fontSize: 12.5, color: K.muted, marginTop: 6 }}>{t("noContext")}</div>)}
     </details>
+  );
+}
+
+const sourcePre: React.CSSProperties = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "inherit",
+  fontSize: 12.5, background: K.bg, padding: "10px 12px", borderRadius: 8, maxHeight: 420, overflow: "auto",
+  margin: "8px 0 0" };
+const FAMILY_KEY = { golden: "kind_golden", live: "kind_live", t2: "kind_t2" } as const;
+
+// The full source with where it came from (golden item, stored post, the agency version's Master); for a T2 claim a
+// warning when the Master changed after the version, and the tour's raw source facts (collapsible, not the source).
+function SourceBody({ ctx }: { ctx: ItemContext }) {
+  const t = useT(CL);
+  const { family, changed } = sourceFamily(ctx.source_kind);
+  const hint: React.CSSProperties = { fontSize: 12.5, color: K.muted, margin: "6px 0 0" };
+  return (
+    <div>
+      {family && <p style={hint}>{t(FAMILY_KEY[family])}{changed ? ` ${t("kindTextChanged")}` : ""}</p>}
+      {ctx.master_changed && <p style={{ ...hint, color: K.ink, background: K.amberSoft, padding: "6px 10px",
+        borderRadius: 6 }}>{t("masterChanged")}</p>}
+      <pre style={sourcePre}>{ctx.source_text}</pre>
+      {ctx.raw_facts && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ cursor: "pointer", color: K.muted, fontSize: 13 }}>{t("rawFacts")}</summary>
+          {ctx.raw_facts_kind && <p style={hint}>{t(ctx.raw_facts_kind === "stored" ? "rawFacts_stored"
+            : "rawFacts_rebuilt")}</p>}
+          <pre style={sourcePre}>{ctx.raw_facts}</pre>
+        </details>
+      )}
+    </div>
   );
 }
 
