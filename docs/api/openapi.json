@@ -21719,12 +21719,12 @@
         "operationId": "get_asset_admin_docs_asset_get",
         "parameters": [
           {
-            "description": "repo-relative path of an .svg in the bundle",
+            "description": "repo-relative path of an .svg, .png or .webp in the bundle",
             "in": "query",
             "name": "path",
             "required": true,
             "schema": {
-              "description": "repo-relative path of an .svg in the bundle",
+              "description": "repo-relative path of an .svg, .png or .webp in the bundle",
               "maxLength": 300,
               "minLength": 5,
               "title": "Path",
@@ -21740,6 +21740,22 @@
               "maxLength": 64,
               "minLength": 1,
               "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "raw: the image bytes; base64: JSON {repo, path, type, bytes, sha256, data} (the admin BFF reads this form: the API Gateway in front is not binary safe)",
+            "in": "query",
+            "name": "encoding",
+            "required": false,
+            "schema": {
+              "default": "raw",
+              "description": "raw: the image bytes; base64: JSON {repo, path, type, bytes, sha256, data} (the admin BFF reads this form: the API Gateway in front is not binary safe)",
+              "enum": [
+                "raw",
+                "base64"
+              ],
+              "title": "Encoding",
               "type": "string"
             }
           },
@@ -21796,7 +21812,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "One published SVG image (architecture diagrams) by repo and path",
+        "summary": "One published image (SVG diagram, PNG or WebP screenshot) by repo and path",
         "tags": [
           "admin-docs"
         ]

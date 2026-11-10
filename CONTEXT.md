@@ -2555,7 +2555,15 @@ under `docs-reader/assets/<repo>/<path>.svg`, the architecture diagrams); `GET /
 served) and sends it as `image/svg+xml` with a sandbox CSP + nosniff, which the BFF re-adds (`lib/upstreamHeaders.ts`).
 The manifest response lists `assets` as `{repo, path}` (no key). A page's `![alt](relative.svg)` that resolves to a listed
 asset (`resolveImage` in `lib/docsReader.ts`) is drawn by `MarkdownView` as `<img>` in a white frame linking to the
-full-size image; every other image stays alt text. This repo is public: no page content lives here.
+full-size image; every other image stays alt text. **Screenshots (AA-1064, root rule 10):** `assets` may also list PNG /
+WebP files (`type` must match the suffix), the screenshots a published page links; tier = the most open tier of the
+linking pages. The route re-checks the 300 KB cap (`MAX_RASTER_BYTES`) and the signature on every read (else 503) and
+sends the type of the suffix (`docs_reader.asset_type`) with the same image headers (5 min private cache). The REST API
+Gateway in front has no `binaryMediaTypes` and would corrupt binary bodies, so the admin BFF asks
+`?encoding=base64` (JSON `{repo, path, type, bytes, sha256, data}`) and sends the decoded bytes itself
+(`frontend/lib/docsAsset.ts`, branch in `app/api/admin/[...path]/route.ts`; length, sha256, type and signature checked).
+The AI gateway Guide tab renders without `resolveImage`, so its page shows images as alt text. This repo is public: no
+page content lives here.
 
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):

@@ -30,7 +30,8 @@ export type DocEntry = {
 
 export type DocTranslation = { lang: string; path: string; title: string | null };
 
-// AA-697: an SVG image of the bundle (root build_docs_reader.py rule 9), e.g. an architecture diagram.
+// AA-697: an SVG image of the bundle (root build_docs_reader.py rule 9), e.g. an architecture diagram; AA-1064: also a
+// PNG / WebP screenshot a published page links (rule 10).
 export type DocAsset = { repo: string; path: string };
 
 export type DocsManifestResp = {
@@ -38,7 +39,7 @@ export type DocsManifestResp = {
   rule: string | null;
   source: { repo: string | null; sha: string | null; ref: string | null };
   pages: DocEntry[];
-  assets?: DocAsset[];    // AA-697: SVG images this caller may load (absent from an older API answer)
+  assets?: DocAsset[];    // AA-697 / AA-1064: images (SVG, PNG, WebP) this caller may load (absent from an older API)
   counts: { shown: number; owner_only_shown: number; hidden_owner_only: number };
   is_owner: boolean;
   owner_read?: boolean;   // owner-only pages are listed for this caller (an owner, or the Dev-only E2E admin)
@@ -180,9 +181,13 @@ export function resolveLink(href: string | undefined, from: string, published: S
   return { kind: "none" };
 }
 
-/** AA-697: the BFF URL of an image found on page `from` (`![alt](src)`), or null when it is not a published SVG of the
- *  bundle. Only a relative path that resolves to a listed asset qualifies: remote (http, https, protocol-relative),
- *  data: and other scheme URLs never load (a remote image would leak the viewer's IP), so the alt text shows instead. */
+/** Image types the docs bundle publishes: SVG diagrams (AA-697) and PNG / WebP screenshots (AA-1064). */
+export const DOC_IMAGE_SUFFIXES = [".svg", ".png", ".webp"] as const;
+
+/** AA-697 / AA-1064: the BFF URL of an image found on page `from` (`![alt](src)`), or null when it is not a published
+ *  image (SVG, PNG or WebP) of the bundle. Only a relative path that resolves to a listed asset qualifies: remote (http,
+ *  https, protocol-relative), data: and other scheme URLs never load (a remote image would leak the viewer's IP), so
+ *  the alt text shows instead. */
 export function resolveImage(src: string | undefined, from: string, repo: string, assets: Set<string>): string | null {
   if (!src) return null;
   const h = src.trim();
@@ -196,7 +201,9 @@ export function resolveImage(src: string | undefined, from: string, repo: string
   const base = from.includes("/") ? from.slice(0, from.lastIndexOf("/")) : "";
   const joined = decoded.startsWith("/") ? decoded.slice(1) : base ? `${base}/${decoded}` : decoded;
   const target = normalizePath(joined);
-  if (!target || !target.toLowerCase().endsWith(".svg") || !assets.has(target)) return null;
+  if (!target || !assets.has(target)) return null;
+  const lower = target.toLowerCase();
+  if (!DOC_IMAGE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) return null;
   return `/api/admin/docs/asset?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(target)}`;
 }
 

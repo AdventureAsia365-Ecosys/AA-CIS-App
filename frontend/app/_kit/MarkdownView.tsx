@@ -8,7 +8,8 @@
 //     still strips javascript: / data: URLs first;
 //   - images are not loaded (a remote image would leak the viewer's IP): the alt text is shown instead, except an
 //     image the page resolves with `resolveImage` (AA-697: an SVG of the docs bundle, served by the same-origin BFF
-//     after a safety check), drawn with <img> so the SVG can neither run script nor fetch anything;
+//     after a safety check; AA-1064: also a PNG / WebP screenshot), drawn with <img> so an SVG can neither run script
+//     nor fetch anything;
 //   - GitHub-flavoured Markdown (tables, task lists, strikethrough, autolinks) via remark-gfm. ```mermaid blocks are
 //     drawn by MermaidDiagram (lazy-loaded, strict mode, SVG sanitised; the labelled source on any error);
 //   - GitHub alerts ("> [!NOTE]", [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]) are callouts with a label
@@ -194,7 +195,7 @@ export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage 
         if (url) {
           return (
             <a className="aa-md-figure" href={url} target="_blank" rel="noopener noreferrer" title={t("openFullSize")}>
-              {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin SVG from the BFF, not an optimisable photo */}
+              {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin docs image (SVG, PNG, WebP) from the BFF */}
               <img src={url} alt={alt ?? ""} loading="lazy" decoding="async" />
             </a>
           );

@@ -26,6 +26,9 @@
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
 //
+// AA-1064: GET docs/asset (docs reader images) is read upstream as base64 JSON and answered with the decoded bytes
+// (lib/docsAsset.ts): the REST API Gateway in front of the API corrupts binary bodies.
+//
 // AA-1035 R2 slice 2 (S268 fix pass): the view-as start (backend POST /admin/tenants/{id}/view-as) answers a
 // read-only tenant bearer token; this proxy streams bodies back to the page, so it refuses that path for every
 // method and role (lib/viewAs.ts isViewAsStartPath). Only app/api/view-as/route.ts starts a session, and it keeps
@@ -36,6 +39,7 @@ import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib
 import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
+import { base64Search, decodeDocsAsset, isDocsAssetRead } from "@/lib/docsAsset";
 import { isViewAsStartPath } from "@/lib/viewAs";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
@@ -94,6 +98,21 @@ async function handler(
   const reviewerId = req.headers.get("x-reviewer-id");
   if (reviewerId) {
     outHeaders["x-reviewer-id"] = reviewerId;
+  }
+
+  // AA-1064 — docs reader images (SVG, PNG, WebP): the API Gateway in front of the API is not binary safe, so the image
+  // comes as base64 JSON and the BFF sends the decoded bytes with the image headers (lib/docsAsset.ts).
+  if (isDocsAssetRead(req.method, pathStr)) {
+    try {
+      const res = await fetch(`${API_URL}/admin/${upstreamPath}${base64Search(search)}`,
+        { method: "GET", headers: outHeaders });
+      if (!res.ok) return streamUpstream(res);
+      const asset = decodeDocsAsset(await res.json().catch(() => null));
+      if (!asset) return NextResponse.json({ detail: "The image could not be read" }, { status: 502 });
+      return new NextResponse(asset.body, { status: 200, headers: asset.headers });
+    } catch {
+      return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
+    }
   }
 
   let body: ArrayBuffer | string | undefined;

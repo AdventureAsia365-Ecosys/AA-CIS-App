@@ -16,6 +16,7 @@
 // page language follows the admin UI language (AA-994: the topbar EN | VI). The list shows originals only; a page
 // without the chosen language shows English with a note. ```mermaid blocks are drawn as diagrams (MarkdownView).
 // AA-697: `![alt](x.svg)` shows an SVG of the bundle (GET /api/admin/docs/asset, checked server-side) through <img>.
+// AA-1064: a PNG / WebP screenshot a page links loads the same way (lib/docsAsset.ts decodes it in the BFF).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookMarked, Lock, RefreshCw, Search, X } from "lucide-react";
@@ -441,7 +442,7 @@ function DocsReaderPage() {
     [allPages, selectedRepo],
   );
   const published = useMemo(() => new Set(byPath.keys()), [byPath]);
-  // AA-697: SVG images of the bundle (architecture diagrams) the pages may show.
+  // AA-697 / AA-1064: images of the bundle (SVG diagrams, PNG / WebP screenshots) the pages may show.
   const assets = useMemo(
     () => new Set((data?.assets ?? []).filter((a) => a.repo === selectedRepo).map((a) => a.path)),
     [data, selectedRepo],

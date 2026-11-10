@@ -154,9 +154,21 @@ test("resolveImage: a relative SVG listed in the bundle loads through the BFF", 
 });
 
 test("resolveImage: anything else stays alt text", () => {
-  const assets = new Set(["docs/x.svg", "docs/y.png"]);
+  const assets = new Set(["docs/x.svg", "docs/y.png", "docs/z.gif", "docs/w.md"]);
   for (const src of [undefined, "", "#a", "https://example.com/x.svg", "http://example.com/x.svg", "//example.com/x.svg",
-    "data:image/svg+xml;base64,PHN2Zz4=", "javascript:alert(1)", "y.png", "other.svg", "../../../x.svg", "%E0%A4%A.svg"]) {
+    "data:image/svg+xml;base64,PHN2Zz4=", "javascript:alert(1)", "other.svg", "other.png", "../../../x.svg",
+    "%E0%A4%A.svg", "https://example.com/y.png", "z.gif", "w.md"]) {
     assert.equal(resolveImage(src, "docs/a.md", "AA-Ecosys", assets), null, String(src));
   }
+});
+
+test("resolveImage: a listed PNG or WebP screenshot loads through the same BFF route (AA-1064)", () => {
+  const assets = new Set(["docs/guides/images/list-page.png", "docs/guides/images/list-page.webp"]);
+  assert.equal(resolveImage("images/list-page.png", "docs/guides/run.md", "AA-Ecosys", assets),
+    "/api/admin/docs/asset?repo=AA-Ecosys&path=docs%2Fguides%2Fimages%2Flist-page.png");
+  assert.equal(resolveImage("images/list-page.webp", "docs/guides/run.vi.md", "AA-Ecosys", assets),
+    "/api/admin/docs/asset?repo=AA-Ecosys&path=docs%2Fguides%2Fimages%2Flist-page.webp");
+  assert.equal(resolveImage("../guides/images/list-page.png?v=2", "docs/ops/a.md", "AA-Ecosys", assets),
+    "/api/admin/docs/asset?repo=AA-Ecosys&path=docs%2Fguides%2Fimages%2Flist-page.png");
+  assert.equal(resolveImage("images/missing.png", "docs/guides/run.md", "AA-Ecosys", assets), null);
 });
