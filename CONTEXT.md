@@ -3290,7 +3290,7 @@ after-commit enqueue + 2 h sweep). `retired`: each live post of the key's tours 
 `acp_shared.content_compliance_flag`, `notice_only` by default (tech lead decision S276, ADR 0019 d20 amended:
 nothing changes on the agency's site unless it asked; WordPress and Facebook alike). Only an agency that turned on
 **Automatically move posts about a discontinued tour to draft** (`acp_shared.tour_retirement_policy.auto_draft`, CIS
-397, agency row only, off by default; `GET` / `PATCH /v1/account/tour-retirement`, owner only, 1-30 days, default 7,
+395, agency row only, off by default; `GET` / `PATCH /v1/account/tour-retirement`, owner only, 1-30 days, default 7,
 audited `tenant.tour_retirement_settings_changed`) gets WordPress `draft_after_notice`: the page goes to draft at
 `draft_due_at` = event + its days through a `retired_page_draft` job the sampler enqueues due-now; the job re-reads
 the opt-in and turns the flag `notice_only` when the agency switched it off after the flag was written. The tenant's

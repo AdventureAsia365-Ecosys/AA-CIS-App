@@ -10,19 +10,20 @@ the notice period (default 7 days).
 - **Default = `notice_only` for WordPress too.** The fan-out writes `draft_after_notice` (with `draft_due_at`) only
   when the agency opted in; otherwise `notice_only`, no `draft_due_at`, tenant message "This page stays online: you can
   rewrite it …, move it to draft with one click …, or keep it."
-- **Opt-in column `acp_shared.tour_retirement_policy.auto_draft`** (CIS 397, boolean NOT NULL DEFAULT false), with a
+- **Opt-in column `acp_shared.tour_retirement_policy.auto_draft`** (CIS 395, boolean NOT NULL DEFAULT false), with a
   CHECK that the platform row (`tenant_id IS NULL`) can never be opted in: a platform switch would turn automatic
   drafts on for every agency, which is exactly what the decision forbids. The fan-out reads `auto_draft` only from the
   agency's own row (`tenant_id IS NOT NULL AND auto_draft`).
 - **Migration class: contract** (ALTER TABLE ADD COLUMN + ADD CONSTRAINT on an existing table). MIG-4: migration-only
-  PR, applied by Infra Migration Apply, then this code PR raises readiness (`REQUIRED_CIS_ABOVE_GAP` gets 397).
-- **Number 397** as assigned by the orchestrator (395 and 396 held by other S276 lanes). If they do not ship first,
+  PR, applied by Infra Migration Apply, then this code PR raises readiness (`REQUIRED_CIS_ABOVE_GAP` gets 395).
+- **Number 395** = CIS main max + 1 on 10/11 (the migration preflight refuses any other number; the orchestrator's
+  hint 397 assumed 395/396 for other S276 lanes, none of which has a CIS migration). If another file takes 395 first,
   renumber per the header of the migration file.
 - **Settings route `GET` / `PATCH /v1/account/tour-retirement`.** Under `/v1/account`, so the existing tenant role
   middleware makes the PATCH owner-only (editor, viewer, "view as tenant" get 403). Body `{auto_draft, notice_days?}`,
   days 1–30 (pydantic 422 outside), `extra="forbid"`. Upsert on the existing unique expression index
   (`COALESCE(tenant_id, zero uuid)`). Audit row `tenant.tour_retirement_settings_changed` (before/after) only when
-  something changed. 503 before CIS 397 (UndefinedColumn).
+  something changed. 503 before CIS 395 (UndefinedColumn).
 - **One-click route `POST /v1/publish-log/{publish_id}/move-to-draft`** reuses `fanout.move_to_draft` with the tenant
   as actor (`membership:<mid>` or `tenant:<id>`): same re-checks as the job (tour still not served / Segment Subject
   still dead, post still live, WordPress connected, same site), same WordPress call (`set_draft` path), same record
@@ -47,14 +48,14 @@ the notice period (default 7 days).
 
 ## Changed (vs the original R6 behaviour)
 
-- `services/tour_lifecycle/fanout.py`: `policy()` (days + opt-in; falls back to the notice-days read before 397 and to
+- `services/tour_lifecycle/fanout.py`: `policy()` (days + opt-in; falls back to the notice-days read before 395 and to
   defaults before 360), notice-only branch, `page_notice_message`, `tour.pages_to_review` emit, `move_to_draft` gains
   `actor` / `tenant_id`, the opt-out re-read, resolve-first ordering.
 - `services/tour_lifecycle/notice_mail.py`: the e-mail lists pages that stay online with the three choices and says
   Adventure Asia does not change the site; a dated line only for opted-in pages ("as set in your Content studio").
 - `api/routers/v1_notifications.py`: title/message for `tour.pages_to_review`; the "tour no longer served" message no
   longer says "remove or edit".
-- `api/core/readiness.py`: 397 in `REQUIRED_CIS_ABOVE_GAP`.
+- `api/core/readiness.py`: 395 in `REQUIRED_CIS_ABOVE_GAP`.
 - Tests that relied on the old automatic draft now insert an opted-in policy row (gate/fan-out, put-back,
   segment liveness).
 
@@ -73,5 +74,5 @@ the notice period (default 7 days).
 - The click and the job both mark `publish_log.unpublished_by = 'system:tour_retirement'` on purpose: the restore
   fan-out and Put back online select drafted pages by that value. Who asked is on the flag (`resolved_by`,
   `detail.drafted_by` = `tenant` | `auto_draft`) and in the audit row.
-- Before CIS 397 the code treats everyone as not opted in (UndefinedColumn caught), and the settings routes answer
+- Before CIS 395 the code treats everyone as not opted in (UndefinedColumn caught), and the settings routes answer
   503; the readiness gate keeps the rollout behind the migration anyway.

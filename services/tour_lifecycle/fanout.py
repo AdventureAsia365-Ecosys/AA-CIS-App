@@ -11,7 +11,7 @@ TripPlanner purge) runs :func:`fan_out`:
     is about one of the tours) gets one ``tour_retired`` row in ``acp_shared.content_compliance_flag`` (CIS 360):
     ``notice_only`` by default (tech lead decision S276, ADR 0019 d20 amended: Adventure Asia never changes an
     agency's site unless the agency asked). A WordPress page gets ``draft_after_notice`` with ``draft_due_at`` = event
-    time + the notice period only when the agency opted in (``acp_shared.tour_retirement_policy.auto_draft``, CIS 397,
+    time + the notice period only when the agency opted in (``acp_shared.tour_retirement_policy.auto_draft``, CIS 395,
     Content studio Settings; notice period default 7 days). Facebook is always ``notice_only`` (nothing is deleted).
     The agency can move a listed WordPress page to draft itself with one click (:func:`move_to_draft` with the
     tenant as actor, ``POST /v1/publish-log/{publish_id}/move-to-draft``), and the bell gets one
@@ -142,9 +142,9 @@ NOTICE_DAYS_SQL = """
 """
 
 # The migration that adds the agency opt-in (tour_retirement_policy.auto_draft). Before it: everyone is notice only.
-POLICY_MIGRATION = "397"
+POLICY_MIGRATION = "395"
 # The agency's notice period (its row, else the platform row) and its own opt-in: auto_draft counts only on the agency's
-# row (the platform row can never opt everyone in; CIS 397 CHECK).
+# row (the platform row can never opt everyone in; CIS 395 CHECK).
 POLICY_SQL = """
     SELECT notice_days, (tenant_id IS NOT NULL AND auto_draft) AS auto_draft
       FROM acp_shared.tour_retirement_policy
@@ -294,7 +294,7 @@ async def notice_days(conn, tenant_id: str) -> int:
 
 async def policy(conn, tenant_id: str) -> tuple[int, bool]:
     """(notice days, auto_draft) of the agency. Not opted in when there is no row, when only the platform row exists,
-    before CIS 397 (no column: the old notice-days read) and before CIS 360 (no table)."""
+    before CIS 395 (no column: the old notice-days read) and before CIS 360 (no table)."""
     try:
         async with conn.transaction():      # a savepoint: a missing table never aborts the caller's transaction
             row = await conn.fetchrow(POLICY_SQL, tenant_id)
@@ -495,7 +495,7 @@ NOTE_SQL = """
      WHERE flag_id = $1::uuid
 """
 
-# The job's re-read of the opt-in (CIS 397): the agency turned automatic drafts off after this flag was written ($2 =
+# The job's re-read of the opt-in (CIS 395): the agency turned automatic drafts off after this flag was written ($2 =
 # the flag's created_at). A flag of an agency that never had a row, or whose row is older, keeps its draft date (open
 # draft_after_notice flags from before S276 are left as they are, tech lead decision S276).
 OPTED_OUT_SINCE_SQL = """
@@ -602,7 +602,7 @@ async def move_to_draft(pool, flag_id: str, *, read_secret, adapter_for, actor: 
 
 
 async def _opted_out_since(conn, tenant_id: str, since) -> bool:
-    """True when the agency turned automatic drafts off after ``since`` (False before CIS 397 / 360)."""
+    """True when the agency turned automatic drafts off after ``since`` (False before CIS 395 / 360)."""
     try:
         async with conn.transaction():
             return bool(await conn.fetchval(OPTED_OUT_SINCE_SQL, tenant_id, since))

@@ -1,14 +1,14 @@
 """AA-1039 follow-up (tech lead decision S276, root ADR 0019 d20 amended): a tour retirement only notifies by default;
 the agency moves a page to draft with one click, or opts in to automatic drafts.
 
-- fanout.policy: the agency's own opt-in only (the platform row never opts in), notice only before CIS 397 / 360.
+- fanout.policy: the agency's own opt-in only (the platform row never opts in), notice only before CIS 395 / 360.
 - The job path of move_to_draft: a flag of an agency that turned automatic drafts off since becomes notice only.
 - POST /v1/publish-log/{publish_id}/move-to-draft: 404 for a page with no open notice (another tenant's too), 409 for a
   Facebook post, a replay answers "already a draft" with no WordPress call, the refusals of the shared draft path map
   to 409 / 422 / 502, a draft writes one audit row with the clicking member as actor.
 - GET /v1/publish-log/retired-pages: the row shape (draft date only for an automatic draft).
 - GET / PATCH /v1/account/tour-retirement: defaults, validation (1-30 days, no extra field), the upsert, the audit row,
-  503 before CIS 397, owner-only writes (tenant role middleware).
+  503 before CIS 395, owner-only writes (tenant role middleware).
 - Wording: the e-mail and the bell say what the agency can do and never that Adventure Asia changes its site unless
   automatic drafts are on; the activity labels.
 
@@ -117,7 +117,7 @@ async def test_policy_reads_the_agency_opt_in():
 
 
 @pytest.mark.asyncio
-async def test_policy_before_397_reads_the_notice_days_and_stays_notice_only():
+async def test_policy_before_395_reads_the_notice_days_and_stays_notice_only():
     conn = _Conn({"SELECT notice_days FROM": 5}, errors={"auto_draft": asyncpg.UndefinedColumnError("auto_draft")})
     assert await fanout.policy(conn, TENANT_ID) == (5, False)
 
@@ -425,7 +425,7 @@ async def _noop():
 
 
 @pytest.mark.asyncio
-async def test_settings_answer_503_before_397():
+async def test_settings_answer_503_before_395():
     conn = _Conn(errors={"auto_draft": asyncpg.UndefinedColumnError("auto_draft")})
     with pytest.raises(HTTPException) as exc:
         await settings_mod.get_tour_retirement_settings(_request(conn), tenant=TENANT)

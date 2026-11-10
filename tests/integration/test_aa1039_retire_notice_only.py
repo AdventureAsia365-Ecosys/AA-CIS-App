@@ -1,6 +1,6 @@
 """AA-1039 follow-up (tech lead decision S276, root ADR 0019 d20 amended) on real Postgres: a tour retirement notifies
 by default and never changes the agency's site; the agency moves a page to draft with one click, or opts in to
-automatic drafts in Content studio Settings (CIS 397 ``tour_retirement_policy.auto_draft``).
+automatic drafts in Content studio Settings (CIS 395 ``tour_retirement_policy.auto_draft``).
 
 - Default: the WordPress page gets a notice-only flag (no draft date), the notice lists it (immediate mail), the bell
   gets one ``tour.pages_to_review`` row with the page (none again on a replay), the sweep schedules nothing and the

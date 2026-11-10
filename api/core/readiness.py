@@ -78,10 +78,10 @@ REQUIRED_CIS_SCHEMA = 322
 # admin_users_email_chk CHECK).
 # 393 (AA-1055 PR 2 — segment research writes acp_contract.place_keyword, search_demand.related_searches /
 # paa_retrieved_on / serp_location and segment_research_log.tier with ON CONFLICT (canonical_place, market, tier)).
-# 397 (AA-1039 follow-up, tech lead decision S276 — the retire fan-out and the draft job read
+# 395 (AA-1039 follow-up, tech lead decision S276 — the retire fan-out and the draft job read
 # tour_retirement_policy.auto_draft (each falls back to notice only without it); GET / PATCH /v1/account/tour-retirement
 # answer 503 without it).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 397)
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

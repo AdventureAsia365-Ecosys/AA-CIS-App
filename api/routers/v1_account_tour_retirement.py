@@ -11,13 +11,13 @@ fan-out writes notice-only flags and the agency moves pages to draft itself with
 (services/tour_lifecycle/fanout.py, POST /v1/publish-log/{publish_id}/move-to-draft). Turning it on makes the next
 retirements write ``draft_after_notice`` with the chosen number of days; turning it off also stops the automatic
 drafts already scheduled (the draft job re-reads the setting). Stored on ``acp_shared.tour_retirement_policy`` (the
-agency's own row: ``auto_draft`` CIS 397, ``notice_days`` CIS 360).
+agency's own row: ``auto_draft`` CIS 395, ``notice_days`` CIS 360).
 
 Tenant-JWT-gated (``get_tenant``; a staff token is 403); the tenant id comes ONLY from the verified token. The PATCH is
 a ``/v1/account`` write, so the tenant role middleware lets only the Content studio owner make it (editor, viewer and a
 "view as tenant" session get 403). Main pool (cis_app; the table has no tenant-pool grant) with the tenant condition in
 every statement. Each change writes one audit row ``tenant.tour_retirement_settings_changed`` (before / after). 503
-while CIS 397 is not applied.
+while CIS 395 is not applied.
 """
 from __future__ import annotations
 
