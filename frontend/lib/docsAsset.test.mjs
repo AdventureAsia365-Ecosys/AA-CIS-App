@@ -18,8 +18,11 @@ function answer(type, body, over = {}) {
   };
 }
 
-test("only GET of docs/asset is decoded by the BFF", () => {
+test("only GET of docs/asset and of the Guide tab's image route is decoded by the BFF", () => {
   assert.equal(isDocsAssetRead("GET", "docs/asset"), true);
+  assert.equal(isDocsAssetRead("GET", "ai-gateway/guide/asset"), true);
+  assert.equal(isDocsAssetRead("GET", "ai-gateway/guide"), false);
+  assert.equal(isDocsAssetRead("PUT", "ai-gateway/guide/asset"), false);
   assert.equal(isDocsAssetRead("POST", "docs/asset"), false);
   assert.equal(isDocsAssetRead("GET", "docs/page"), false);
   assert.equal(isDocsAssetRead("GET", "docs/asset/x"), false);

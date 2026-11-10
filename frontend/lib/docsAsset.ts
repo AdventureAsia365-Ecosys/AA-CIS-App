@@ -1,4 +1,5 @@
-// frontend/lib/docsAsset.ts — AA-1064: the BFF side of GET /api/admin/docs/asset (docs reader images).
+// frontend/lib/docsAsset.ts — AA-1064: the BFF side of GET /api/admin/docs/asset (docs reader images) and of
+// GET /api/admin/ai-gateway/guide/asset (the images the AI gateway Guide page links).
 //
 // The REST API Gateway in front of the CIS API has no binaryMediaTypes, so it corrupts a binary body on the way here
 // (the brand-file upload broke the same way, S229). The BFF therefore reads the image as JSON (backend
@@ -14,6 +15,8 @@ import { SVG_HEADERS } from "./upstreamHeaders.ts";
 
 /** The BFF path (under /api/admin/) of the docs reader's image route. */
 export const DOCS_ASSET_PATH = "docs/asset";
+/** AA-1064: the AI gateway Guide tab's image route (only the images its page links; spend.read). Same JSON form. */
+export const GUIDE_ASSET_PATH = "ai-gateway/guide/asset";
 
 /** Image types the docs reader serves, with the largest body the backend may send for each. */
 export const DOC_IMAGE_MAX_BYTES: Readonly<Record<string, number>> = {
@@ -27,7 +30,7 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /** True for the request the BFF answers with decoded image bytes instead of streaming the upstream body. */
 export function isDocsAssetRead(method: string, path: string): boolean {
-  return method === "GET" && path === DOCS_ASSET_PATH;
+  return method === "GET" && (path === DOCS_ASSET_PATH || path === GUIDE_ASSET_PATH);
 }
 
 /** The query string sent upstream: the caller's parameters with encoding=base64 (any caller value replaced). */

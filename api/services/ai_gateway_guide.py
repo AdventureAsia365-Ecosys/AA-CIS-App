@@ -10,6 +10,11 @@
   fails) ``doc`` is ``{"missing": true, "reason": ...}`` and the tab shows a note. ``links``: whether this caller may
   open /admin/docs (``reader``: the POLICY of ``GET /admin/docs/page``) and, only then, the staff pages published in
   the bundle, so the page's relative links open the reader for those viewers and stay plain text for the others.
+  ``assets`` (AA-1064): the staff-tier images of the bundle (SVG diagrams, PNG / WebP screenshots) that the page or one
+  of its translations links with ``![alt](relative path)``; the tab loads them through
+  ``GET /admin/ai-gateway/guide/asset?path=`` (``read_asset``, spend.read like this route), which serves only a path in
+  that list, so a viewer of the tab who may not open /admin/docs still sees the page's pictures and nothing else of the
+  bundle.
 - ``live``: the tables under the document, each read by the reader that already serves it elsewhere (no new SQL):
   ``routes`` (the GET /admin/ai-gateway/route-control payload without the editor options; each stage's ``first`` is
   the deployment that would SERVE it, from ``llm_route_control.serving``, the resolver of the Route control preview,
@@ -63,6 +68,10 @@ async def read_doc(*, reader: bool, client_factory: Optional[Callable[[], Any]] 
             published = sorted({p["path"] for p in m["pages"] if p["repo"] == GUIDE_REPO})
         except (docs_reader.DocsMissing, docs_reader.DocsUnavailable):
             published = []
+    try:
+        assets = await linked_assets(view, client_factory)
+    except (docs_reader.DocsMissing, docs_reader.DocsUnavailable):
+        assets = []
     page = view["page"]
     source = view.get("source") or {}
     return {
@@ -75,7 +84,33 @@ async def read_doc(*, reader: bool, client_factory: Optional[Callable[[], Any]] 
         "source": {"repo": source.get("repo"), "sha": source.get("sha")},
         "generated_at": view.get("generated_at"),
         "links": {"reader": bool(reader), "published": published},
+        "assets": assets,
     }, None
+
+
+async def linked_assets(view: dict, client_factory: Optional[Callable[[], Any]] = None) -> list[str]:
+    """The staff-tier bundle images the guide page (``load_staff_page_by_id`` view) or a translation links."""
+    linked = docs_reader.linked_images(view["markdown"], view["page"]["path"])
+    for t in view["translations"]:
+        linked |= docs_reader.linked_images(t["markdown"], t["page"]["path"])
+    if not linked:
+        return []
+    m = await docs_reader.load_manifest(False, client_factory=client_factory)   # staff tier: owner assets left out
+    staff = {a["path"] for a in m["assets"] if a["repo"] == GUIDE_REPO}
+    return sorted(linked & staff)
+
+
+async def read_asset(path: str, *, client_factory: Optional[Callable[[], Any]] = None) -> bytes:
+    """GET /admin/ai-gateway/guide/asset: one image the guide page links (``linked_assets``), read through
+    ``docs_reader.load_asset`` (staff tier, re-checked on read). Any other path, or a guide that is owner tier, is
+    DocsMissing (404): the route never serves the rest of the bundle."""
+    try:
+        view = await docs_reader.load_staff_page_by_id(GUIDE_PAGE_ID, GUIDE_REPO, client_factory)
+    except docs_reader.DocsRestricted as err:
+        raise docs_reader.DocsMissing("No such image") from err
+    if path not in await linked_assets(view, client_factory):
+        raise docs_reader.DocsMissing("No such image")
+    return await docs_reader.load_asset(GUIDE_REPO, path, False, client_factory)
 
 
 # ── live tables ──────────────────────────────────────────────────────────────────────────────────────────────────

@@ -189,6 +189,15 @@ export const DOC_IMAGE_SUFFIXES = [".svg", ".png", ".webp"] as const;
  *  https, protocol-relative), data: and other scheme URLs never load (a remote image would leak the viewer's IP), so
  *  the alt text shows instead. */
 export function resolveImage(src: string | undefined, from: string, repo: string, assets: Set<string>): string | null {
+  const target = imageTarget(src, from, assets);
+  if (!target) return null;
+  return `/api/admin/docs/asset?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(target)}`;
+}
+
+/** The repo-relative path of a published image (SVG, PNG or WebP) that `![alt](src)` on page `from` points at, or
+ *  null (see resolveImage). Shared with the AI gateway Guide tab (lib/aiGatewayGuide.ts guideImage), which loads the
+ *  same images through its own route. */
+export function imageTarget(src: string | undefined, from: string, assets: Set<string>): string | null {
   if (!src) return null;
   const h = src.trim();
   if (!h || h.startsWith("#") || h.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(h)) return null;
@@ -204,7 +213,7 @@ export function resolveImage(src: string | undefined, from: string, repo: string
   if (!target || !assets.has(target)) return null;
   const lower = target.toLowerCase();
   if (!DOC_IMAGE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) return null;
-  return `/api/admin/docs/asset?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(target)}`;
+  return target;
 }
 
 // ── headings ────────────────────────────────────────────────────────────────────────────────────

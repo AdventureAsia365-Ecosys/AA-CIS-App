@@ -32,6 +32,9 @@
                                            connection caps and the stage coverage (api/services/ai_gateway_guide.py).
                                            This exposes that ONE staff-tier docs page to finance and ai_ops, who cannot
                                            open /admin/docs (ops.read).                                       spend.read
+  GET /admin/ai-gateway/guide/asset?path=  (AA-1064) one image that guide page links (doc.assets: staff-tier SVG,
+                                           PNG or WebP of the bundle), checked on read like /admin/docs/asset;
+                                           &encoding=base64 answers JSON for the admin BFF. Other paths 404.  spend.read
   GET /admin/ai-gateway/access             (AA-1025 C1 follow-up) which of the page's writes the caller may use:
                                            each answer is staff_authz.denial_reason on that write's own route, so
                                            the page hides exactly what the API would refuse (a read-only session,
@@ -94,8 +97,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
+from api.routers.admin_docs import asset_response
 from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide, crm_console,
-                          platform_apps, tenant_ai_budget)
+                          docs_reader, platform_apps, tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
@@ -243,6 +247,26 @@ DOCS_READER_ROUTE = ("GET", "/admin/docs/page")
 async def get_guide(request: Request, principal: StaffPrincipal = Depends(staff_policy)) -> dict:
     reader = denial_reason(principal, *DOCS_READER_ROUTE) is None
     return await ai_gateway_guide.read_guide(request.app.state.pool, reader=reader)
+
+
+@router.get("/guide/asset", summary="One image the AI gateway guide page links (SVG, PNG or WebP; read-only, $0)")
+async def get_guide_asset(
+    path: str = Query(..., min_length=5, max_length=300,
+                      description="repo-relative path of an image the guide page links (GET /guide doc.assets)"),
+    encoding: Literal["raw", "base64"] = Query(
+        "raw", description="raw: the image bytes; base64: JSON {repo, path, type, bytes, sha256, data} (the admin BFF "
+                           "reads this form: the API Gateway in front is not binary safe)"),
+    principal: StaffPrincipal = Depends(staff_policy),
+):
+    # AA-1064: spend.read like the tab; only an image the guide page itself links (never the rest of the docs bundle,
+    # which stays ops.read under /admin/docs/asset).
+    try:
+        data = await ai_gateway_guide.read_asset(path)
+    except docs_reader.DocsMissing as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except docs_reader.DocsUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return asset_response(ai_gateway_guide.GUIDE_REPO, path, data, encoding)
 
 
 # ── AA-1016 UI (C4): one tenant's monthly AI budget (Tenant 360 › Cost) ────────────────────────────────────────────

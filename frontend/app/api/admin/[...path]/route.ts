@@ -26,7 +26,8 @@
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
 //
-// AA-1064: GET docs/asset (docs reader images) is read upstream as base64 JSON and answered with the decoded bytes
+// AA-1064: GET docs/asset (docs reader images) and GET ai-gateway/guide/asset (the Guide page images) are read upstream
+// as base64 JSON and answered with the decoded bytes
 // (lib/docsAsset.ts): the REST API Gateway in front of the API corrupts binary bodies.
 //
 // AA-1035 R2 slice 2 (S268 fix pass): the view-as start (backend POST /admin/tenants/{id}/view-as) answers a

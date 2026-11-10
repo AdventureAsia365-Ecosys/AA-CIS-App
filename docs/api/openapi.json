@@ -12580,6 +12580,98 @@
         ]
       }
     },
+    "/admin/ai-gateway/guide/asset": {
+      "get": {
+        "operationId": "get_guide_asset_admin_ai_gateway_guide_asset_get",
+        "parameters": [
+          {
+            "description": "repo-relative path of an image the guide page links (GET /guide doc.assets)",
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "repo-relative path of an image the guide page links (GET /guide doc.assets)",
+              "maxLength": 300,
+              "minLength": 5,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "description": "raw: the image bytes; base64: JSON {repo, path, type, bytes, sha256, data} (the admin BFF reads this form: the API Gateway in front is not binary safe)",
+            "in": "query",
+            "name": "encoding",
+            "required": false,
+            "schema": {
+              "default": "raw",
+              "description": "raw: the image bytes; base64: JSON {repo, path, type, bytes, sha256, data} (the admin BFF reads this form: the API Gateway in front is not binary safe)",
+              "enum": [
+                "raw",
+                "base64"
+              ],
+              "title": "Encoding",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One image the AI gateway guide page links (SVG, PNG or WebP; read-only, $0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
     "/admin/ai-gateway/providers": {
       "get": {
         "operationId": "get_providers_admin_ai_gateway_providers_get",

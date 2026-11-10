@@ -39,8 +39,10 @@ is at most 300 KB with a valid signature and no ID in its metadata; load_asset()
 (MAX_RASTER_BYTES) and the signature on every read and refuses the asset (503) otherwise. Their access is the tier of
 the pages that link them, owner tier served to owner readers only. ``asset_type(path)`` gives the Content-Type the route
 sends. The API Gateway REST API in front of this service has no binaryMediaTypes, so raw image bytes would be corrupted
-on the way to the admin BFF: the route also answers ``encoding=base64`` with JSON, which the BFF decodes
-(frontend/lib/docsAsset.ts).
+on the way to the admin BFF: the route also answers ``encoding=base64`` with JSON (``asset_json``), which the BFF
+decodes (frontend/lib/docsAsset.ts). ``linked_images(markdown, path)`` lists the images a page links, resolved like
+the builder and the admin reader do: the AI gateway Guide tab serves only the staff images its own page links (AA-1042
+below).
 
 AA-1042 (S270) — ``load_staff_page_by_id(page_id)``: one STAFF-tier catalog page by its catalog id (the English entry
 and its published translations), for a page that shows one fixed document outside /admin/docs (the AI gateway Guide
@@ -55,11 +57,14 @@ DocsMissing -> 404 (no manifest yet, or no such page for this caller), DocsUnava
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
+import posixpath
 import re
 import time
+import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -283,6 +288,70 @@ def raster_is_valid(data: bytes, media_type: str) -> bool:
     if media_type == "image/webp":
         return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
     return False
+
+
+def asset_json(repo: str, path: str, data: bytes) -> dict:
+    """The base64 JSON form of an image (the admin BFF decodes it: the API Gateway in front is not binary safe)."""
+    return {"repo": repo, "path": path, "type": asset_type(path), "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(), "data": base64.b64encode(data).decode("ascii")}
+
+
+# AA-1064: the images a page links, resolved the way the builder (root build_docs_reader.py image_links /
+# resolve_image) and the admin reader (frontend lib/docsReader.ts resolveImage) resolve them. Used to tell which
+# bundle images a page outside /admin/docs (the AI gateway Guide tab) may load.
+_IMAGE_LINK = re.compile(r"!\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
+_EXTERNAL = re.compile(r"^(?://|[a-z][a-z0-9+.-]*:)", re.I)
+
+
+def resolve_image(src: str, from_path: str) -> Optional[str]:
+    """The repo-relative path an image link on page ``from_path`` points at; None for a remote or other-scheme image,
+    an empty or fragment-only src, or a path that climbs above the repo root."""
+    s = src.strip()
+    if not s or s.startswith("#") or _EXTERNAL.match(s):
+        return None
+    s = s.split("#")[0].split("?")[0]
+    try:
+        s = urllib.parse.unquote(s, errors="strict")
+    except UnicodeDecodeError:
+        return None
+    joined = s[1:] if s.startswith("/") else posixpath.join(posixpath.dirname(from_path), s)
+    parts: list[str] = []
+    for seg in joined.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(seg)
+    return "/".join(parts) or None
+
+
+def linked_images(markdown: str, from_path: str) -> set[str]:
+    """Every repo-relative image path the page links with ``![alt](src)`` (fenced code and inline code skipped)."""
+    found: set[str] = set()
+    fence: Optional[str] = None
+    for line in markdown.splitlines():
+        m = _FENCE.match(line)
+        if m:
+            if fence is None:
+                fence = m.group(1)
+            elif m.group(1) == fence:
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        for img in _IMAGE_LINK.finditer(_INLINE_CODE.sub("", line)):
+            src = img.group(2)
+            if src.startswith("<") and src.endswith(">"):
+                src = src[1:-1]
+            target = resolve_image(src, from_path)
+            if target:
+                found.add(target)
+    return found
 
 
 def _clean_asset(raw: Any) -> Optional[dict]:

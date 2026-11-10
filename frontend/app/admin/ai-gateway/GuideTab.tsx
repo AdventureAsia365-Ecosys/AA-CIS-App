@@ -12,7 +12,8 @@
 // read this page". Language: the app language
 // (English by default); a page without a copy in it shows English with a note. Links in the page open /admin/docs
 // for a viewer who may read it (backend flag + the page rule of the role), anything else is plain text
-// (lib/aiGatewayGuide guideLink). Issue references in the page are left out of the text shown (stripIssueIdsMarkdown).
+// (lib/aiGatewayGuide guideLink). Images (AA-1064): a bundle image the page links (doc.assets) loads through
+// GET /api/admin/ai-gateway/guide/asset (spend.read, lib/aiGatewayGuide guideImage); any other stays alt text. Issue references in the page are left out of the text shown (stripIssueIdsMarkdown).
 // Kit only (ADR 0016). testIds: ai-gateway-guide (the tab), ai-gateway-guide-doc, ai-gateway-guide-live-ready.
 
 import { useQuery } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ import {
 import { MarkdownView, type MarkdownLink } from "../../_kit/MarkdownView";
 import { outline } from "@/lib/docsReader";
 import {
-  GUIDE_API, GUIDE_QUERY_KEY, cellTone, coverageRows, docView, guideLink, matrixRows, routeRows,
+  GUIDE_API, GUIDE_QUERY_KEY, cellTone, coverageRows, docView, guideImage, guideLink, matrixRows, routeRows,
   stripIssueIdsMarkdown, type CapRow, type CoverageRow, type GuideDoc, type GuideResp, type MatrixRow,
   type RegisterRow, type RouteRow,
 } from "@/lib/aiGatewayGuide";
@@ -107,13 +108,17 @@ function DocPart({ resp }: { resp: GuideResp }) {
     if (r.kind === "internal") return { kind: "internal", href: r.href, onNavigate: () => router.push(r.href) };
     return r;
   }, [fromPath, doc?.links, canOpenDocs, router]);
+  // AA-1064: the bundle images this page links (doc.assets), loaded through the tab's own route (spend.read).
+  const resolveImage = useCallback((src: string | undefined) => guideImage(src, fromPath, doc?.assets),
+    [fromPath, doc?.assets]);
 
   let body: ReactNode;
   if (view.kind === "page") {
     body = (
       <article lang={view.lang} style={{ minWidth: 0 }}>
         {view.fallback && <div style={{ ...small, marginBottom: 10 }}>{t("langFallback")}</div>}
-        <MarkdownView markdown={markdown} resolveHref={resolveHref} slugForLine={slugForLine} />
+        <MarkdownView markdown={markdown} resolveHref={resolveHref} slugForLine={slugForLine}
+          resolveImage={resolveImage} />
         {doc?.generated_at && (
           <div style={{ ...small, marginTop: 16 }}>{t("published", formatDateTime(doc.generated_at))}</div>
         )}

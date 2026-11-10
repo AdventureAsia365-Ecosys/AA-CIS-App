@@ -20,8 +20,6 @@ Included in main.py WITHOUT an include prefix: staff_policy reads the route temp
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 from typing import Literal
 
 import structlog
@@ -107,10 +105,12 @@ async def get_asset(
         raise HTTPException(status_code=404, detail=str(e))
     except docs_reader.DocsUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
-    media_type = docs_reader.asset_type(path)
+    return asset_response(repo, path, data, encoding)
+
+
+def asset_response(repo: str, path: str, data: bytes, encoding: str) -> Response:
+    """A checked image as the route sends it: raw bytes with the image headers, or the base64 JSON (no-store) the
+    admin BFF reads. Also used by the AI gateway Guide tab's image route (AA-1064)."""
     if encoding == "base64":
-        return JSONResponse(
-            {"repo": repo, "path": path, "type": media_type, "bytes": len(data),
-             "sha256": hashlib.sha256(data).hexdigest(), "data": base64.b64encode(data).decode("ascii")},
-            headers=_NO_STORE)
-    return Response(content=data, media_type=media_type, headers=_IMAGE_HEADERS)
+        return JSONResponse(docs_reader.asset_json(repo, path, data), headers=_NO_STORE)
+    return Response(content=data, media_type=docs_reader.asset_type(path), headers=_IMAGE_HEADERS)
