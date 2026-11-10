@@ -107,9 +107,9 @@ def test_the_guard_mode_is_classified_as_an_output_switch():
 
 
 # ------------------------------------------------------------------- S272 orchestrator decision: default = main
-# The stable-key guard is opt-in (T9_REGRESSION_GUARD_MODE=stable_keys) until W2 data; the default path is main's
-# gate-name rule. The review's cases below pin the default decision to main's, and show what the opt-in mode does on
-# them (two open review findings, docs/implementation-notes/AA-1049-l13-t9.md "Known limits").
+# The stable-key guard is opt-in (T9_REGRESSION_GUARD_MODE=stable_keys), off until the tech lead turns it on; the
+# default path is main's gate-name rule. The review's cases below pin the default decision to main's, and the opt-in
+# decision on them (the two S272 review findings, fixed S275: docs/implementation-notes/AA-1049-l3-stable-keys.md).
 
 def _f15(*sentences: str) -> dict:
     return {"gate": qr.F15_VOICE, "passed": False, "blocking": True,
@@ -127,9 +127,9 @@ UNDER = "post is 60 words, under the band 120–250 words for this brand on Link
 FAR_OVER = "post is 320 words, far over the 120–250-word band for this brand on LinkedIn — cut it"
 REVIEW_CASES = [
     # review S272 round 3, finding 2: two style findings traded for a new product-truth (F1) finding
-    ("f15x2_to_f1x1", [_f15(S1, S2)], [F1_NEW], True, False),
+    ("f15x2_to_f1x1", [_f15(S1, S2)], [F1_NEW], True, True),
     # review S272 round 3, finding 3: LinkedIn under-floor F14 + F15 s1 -> far-over F14 + F15 s2 (same gates)
-    ("f14_floor_to_far_over", [_f14(UNDER), _f15(S1)], [_f14(FAR_OVER), _f15(S2)], False, True),
+    ("f14_floor_to_far_over", [_f14(UNDER), _f15(S1)], [_f14(FAR_OVER), _f15(S2)], False, False),
     # the S271 cases of this file
     ("f9_swap", [_f9((A, "a"))], [_f9((B, "b"))], False, True),
     ("f9x3_to_f17", [_f9((A, "a"), (B, "b"), (C, "c"))],
@@ -154,7 +154,8 @@ def test_the_default_guard_decision_is_mains(monkeypatch, name, prev, cur, main_
 
 @pytest.mark.parametrize("name, prev, cur, main_reverts, keys_revert", REVIEW_CASES, ids=[c[0] for c in REVIEW_CASES])
 def test_the_opt_in_mode_still_differs_on_the_review_cases(monkeypatch, name, prev, cur, main_reverts, keys_revert):
-    """Opt-in only: the stable-key decision on the same cases (the two review findings stay open until W2)."""
+    """Opt-in only: the stable-key decision on the same cases. S275: both review findings now decide like main (the
+    truth-clean attempt ships; the far-over post is kept, held, never reverted into the waived short one)."""
     monkeypatch.setenv(service.REGRESSION_GUARD_ENV, service.GUARD_STABLE_KEYS)
     new, revert, _, _ = service.guard_decision(prev, cur)
     assert bool(new and revert) is keys_revert
@@ -168,3 +169,120 @@ def test_default_review_cases_by_name(monkeypatch):
     assert new == {qr.F1_GROUNDING} and revert and prev_g == {qr.F15_VOICE}
     new, revert, _, _ = service.guard_decision([_f14(UNDER), _f15(S1)], [_f14(FAR_OVER), _f15(S2)])
     assert new == set()
+
+
+# ------------------------------------------------------------------- S275: the two S272 review findings, fixed
+
+def _f2(*sentences: str) -> dict:
+    return {"gate": qr.F2_SUPERLATIVES, "passed": False, "blocking": True,
+            "violations": [f"second stock superlative: '{q}'" for q in sentences]}
+
+
+def _f1(sentence: str) -> dict:
+    return {"gate": qr.F1_GROUNDING, "passed": False, "blocking": True,
+            "violations": [f"not present in the content seed: '{sentence}'"]}
+
+
+HASHTAGS = "6 hashtags, more than 3: '#a #b #c #d #e #f'"
+OVER = "post is 270 words, over the 120–250-word band for this brand on LinkedIn"
+N1 = "The ride covers 42 km in four hours."
+N2 = "Each boat carries 18 guests to the Velmora reef."
+
+
+def test_f14_keys_by_violation_class_not_by_count():
+    """Finding 3: F14 was one whole-gate key, so an under-floor and a far-over block looked the same."""
+    under = sk.blocking_keys([_f14(UNDER)])
+    far = sk.blocking_keys([_f14(FAR_OVER)])
+    assert under == {(qr.F14_SOCIAL_SHAPE, sk.F14_UNDER_FLOOR)} and far == {(qr.F14_SOCIAL_SHAPE, sk.F14_FAR_OVER)}
+    shorter = UNDER.replace("60 words", "41 words")
+    assert sk.blocking_keys([_f14(shorter)]) == under
+    both = {**_f14(FAR_OVER), "violations": [FAR_OVER, HASHTAGS]}
+    assert sk.blocking_keys([both]) == {(qr.F14_SOCIAL_SHAPE, sk.F14_FAR_OVER), (qr.F14_SOCIAL_SHAPE, sk.F14_HASHTAGS)}
+    assert sk.f14_class(OVER) == sk.F14_OVER and sk.f14_class("something else") == sk.WHOLE_GATE
+
+
+def test_hold_keys_leave_out_style_and_the_floor_block():
+    ledger = [_f15(S1), _f2(S2), _f14(UNDER), _f9((A, "a"))]
+    assert sk.hold_keys(ledger) == sk.blocking_keys([_f9((A, "a"))])
+    far = {**_f14(FAR_OVER), "violations": [FAR_OVER, HASHTAGS]}
+    assert sk.hold_keys([far]) == {(qr.F14_SOCIAL_SHAPE, sk.F14_FAR_OVER)}  # the hashtag residue never holds
+    assert sk.has_floor_block([_f14(UNDER)]) and not sk.has_floor_block([far])
+
+
+def test_style_traded_for_a_truth_failure_is_reverted_even_when_main_keeps():
+    """Finding 2, the case main itself keeps: two style GATES cleared for one new F1 number (1 gate < 2 gates)."""
+    prev, cur = [_f15(S1), _f2(S2)], [_f1(N1)]
+    assert not _main_rule(prev, cur)
+    c = sk.compare(prev, cur)
+    assert c["revert"] and c["rule"] == sk.RULE_HOLD and c["new_hold"] == {(qr.F1_GROUNDING, _norm(N1))}
+
+
+def _norm(text: str) -> str:
+    return next(iter(sk.blocking_keys([_f1(text)])))[1]
+
+
+def test_a_rewrite_that_clears_more_truth_findings_than_it_adds_is_still_kept():
+    """D-guard-2 stays: three F9 claims cleared for one new F1 number (hold-capable 3 -> 1)."""
+    c = sk.compare([_f9((A, "a"), (B, "b"), (C, "c"))], [_f1(N1)])
+    assert c["new_hold"] and c["cur_hold_keys"] < c["prev_hold_keys"] and not c["revert"]
+    assert c["rule"] == sk.RULE_KEEP
+
+
+def test_a_truth_swap_inside_one_gate_is_reverted_even_with_style_cleared():
+    """F9 A + F15 s -> F9 B: the all-key rule keeps (1 key < 2); the hold rule reverts (a new claim, 1 >= 1)."""
+    c = sk.compare([_f9((A, "a")), _f15(S1)], [_f9((B, "b"))])
+    assert c["revert"] and c["rule"] == sk.RULE_HOLD
+
+
+def test_an_under_floor_attempt_is_reverted_to_only_when_main_reverts():
+    """Finding 3: from an attempt with the AA-780 under-floor block the stable-key mode takes main's decision, so it
+    never reverts into the short post (the call site would waive its block and ship it approved) where main keeps."""
+    prev = [_f14(UNDER), _f15(S1)]
+    for cur in ([_f14(FAR_OVER), _f15(S2)], [_f15(S2)], [_f14(FAR_OVER)], [_f15(S1), _f2(S2)]):
+        c = sk.compare(prev, cur)
+        assert c["rule"] == sk.RULE_MAIN_FLOOR and c["revert"] is _main_rule(prev, cur)
+    c = sk.compare(prev, [_f15(S2), _f1(N1)])  # a new F1 gate, 2 >= 2 gates: main reverts, so does the opt-in mode
+    assert c["revert"] and _main_rule(prev, [_f15(S2), _f1(N1)])
+
+
+def test_a_new_under_floor_block_is_never_masked_by_an_earlier_f14_key():
+    """Finding 3, other direction: far-over -> under-floor was the same (F14, *) key, so no new key and kept (the
+    under-floor block never holds: the short post would ship). Now a new key in the same gate: reverted to the held
+    far-over attempt."""
+    c = sk.compare([_f14(FAR_OVER)], [_f14(UNDER)])
+    assert c["new"] == {(qr.F14_SOCIAL_SHAPE, sk.F14_UNDER_FLOOR)} and c["revert"] and c["rule"] == sk.RULE_KEYS
+
+
+_POOL = {
+    "f15": _f15(S1), "f15b": _f15(S2), "f2": _f2(S2), "f1": _f1(N1), "f1b": _f1(N2), "f9": _f9((A, "a")),
+    "f9b": _f9((B, "b"), (C, "c")), "under": _f14(UNDER), "far": _f14(FAR_OVER),
+    "far_tags": {**_f14(FAR_OVER), "violations": [FAR_OVER, HASHTAGS]},
+}
+
+
+def _ledgers():
+    import itertools
+    names = sorted(_POOL)
+    for n in (1, 2):
+        for combo in itertools.combinations(names, n):
+            if sum(c.startswith(("under", "far")) for c in combo) > 1:  # one F14_social_shape result per attempt
+                continue
+            yield combo, [_POOL[c] for c in combo]
+
+
+def test_fail_closed_over_every_pool_pair():
+    """Over every pair of 1-2-result attempts from the pool: the opt-in mode never keeps a rewrite that holds over a
+    previous attempt that does not (unless it has the under-floor block: then it is main's decision), and never
+    reverts into an under-floor attempt where main keeps."""
+    from services.acp_content_writing.quality_gates import hold_failure
+    pairs = 0
+    for _pn, prev in _ledgers():
+        for _cn, cur in _ledgers():
+            pairs += 1
+            c = sk.compare(prev, cur)
+            if sk.has_floor_block(prev):
+                assert c["revert"] is _main_rule(prev, cur), (_pn, _cn)
+                continue
+            if hold_failure(prev) is None and hold_failure(cur) is not None:
+                assert c["revert"], (_pn, _cn)
+    assert pairs > 1000
