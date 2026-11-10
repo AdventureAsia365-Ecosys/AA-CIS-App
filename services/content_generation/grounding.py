@@ -348,6 +348,10 @@ distance, date, size, service, place or claim); never replace it with another in
 nothing in the sentence is supported, return an empty string. Return strict JSON only."""
 
 
+# AA-1078: quality_signal.task of the sentence repair (stage s1_flag_fix / t2_flag_fix share it with the field fix).
+REPAIR_TASK = "sentence_repair"
+
+
 def _repair_prompt(violations: list[dict], source: str, forbidden) -> str:
     listed = "\n".join(
         f'{i}. [{v["field"]}] {json.dumps(v["sentence"])}'
@@ -415,7 +419,7 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
     logged to the tenant), a brand-neutral fact-editor prompt and T3's own unsupported-number test.
     The defaults keep A1's call byte-identical."""
     from json_repair import repair_json
-    from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
+    from shared.llm_client.call_log import bind_task, billed_fields, record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient
     from shared.llm_client.models import LLMRequest
 
@@ -423,10 +427,11 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
     parts = source_number_parts(tour)
     resp, logged = None, False  # AA-927
     try:
-        resp = LLMClient().generate(LLMRequest(
-            system_prompt=system_prompt, user_prompt=_repair_prompt(violations, source, forbidden),
-            model_tier=model_tier, stage=stage, max_tokens=4096,
-        ))
+        with bind_task(REPAIR_TASK):     # AA-1078: the gateway's own rows of this call carry the task too
+            resp = LLMClient().generate(LLMRequest(
+                system_prompt=system_prompt, user_prompt=_repair_prompt(violations, source, forbidden),
+                model_tier=model_tier, stage=stage, max_tokens=4096,
+            ))
         raw = resp.content.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -442,7 +447,8 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
             stage=stage, role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd, **({"tenant_id": tenant_id} if tenant_id else {}),
-            quality_signal={"source": "grounding_repair", "sentences": len(violations), "fields_changed": fields},
+            quality_signal={"source": "grounding_repair", "sentences": len(violations), "fields_changed": fields,
+                            "task": REPAIR_TASK},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
@@ -453,6 +459,7 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
         logger.warning("grounding_repair_failed", error=str(exc)[:200])
         if not logged:  # AA-927: billed, then applying the reply raised
             record_unusable_sync(resp, stage=stage, role="writer", error=exc,
+                                 quality_signal_extra={"task": REPAIR_TASK},
                                  **({"tenant_id": tenant_id} if tenant_id else {}))
         return {"generated": generated, "fields": [], "cost_usd": 0.0, "error": str(exc)[:200]}
 
