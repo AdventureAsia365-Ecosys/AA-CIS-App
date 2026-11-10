@@ -4075,7 +4075,16 @@ RUN (`POST /admin/writing-memory/metrics/run`) stores and moves nothing. The **d
 `services/writing_memory/disagreements.py`, `shared.writing_memory_disagreement`): up to 10 new items a week where an
 R2 control verdict differs from the golden label, or a T9 piece the gates passed was labelled heavy / reject (or a held
 one as_is / light); one-click resolution judge_right / human_right / unclear, audited. Admin: the Metrics tab of
-`/admin/writing-memory`; trend: `scripts/writing_memory/wm30_kpi_trend.py`.
+`/admin/writing-memory`; trend: `scripts/writing_memory/wm30_kpi_trend.py`. The W2 claim items of the same queue
+(source `golden_claim`, AA-1048) are reviewed on the **Claim labels** tab instead (AA-1063,
+`services/ground_truth/review.py`, CIS 394): one card per sentence (context, matching source lines, full source, the
+three lenses, the newest **agent proposal** from `shared.eval_claim_proposal`, loaded by
+`POST /admin/writing-memory/claim-labels/proposals/import`); one answer (Correct / Wrong / Unsure) resolves the item
+and writes the tech-lead row of `shared.eval_claim_label` in one transaction (a split panel: the answered label,
+resolved unclear); "accept every remaining proposal" after an in-page second click. The **label set browser** lists
+every set version and every labelled claim (who decided, when, why); a tech lead can change a final label there:
+append only, a `shared.eval_claim_relabel` row that supersedes the current one (a chain per claim), and the newest
+decision is what the report and finals read (`review.effective_rows`).
 _Avoid_: fine-tune, model update, deploy (a Release is data, not code).
 
 **Golden Set**:
