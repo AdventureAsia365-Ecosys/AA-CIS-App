@@ -9,6 +9,12 @@ from services.acp_shared.slate import Candidate
 
 
 @pytest.fixture(autouse=True)
+def _cut_mode(monkeypatch):
+    """AA-1079: Debate ranks by default; this file covers the AA-631 cut, still there behind T7_DEBATE_MODE=cut."""
+    monkeypatch.setenv("T7_DEBATE_MODE", "cut")
+
+
+@pytest.fixture(autouse=True)
 def _no_llm_call_log_writes():
     """AA-685 — apply_debate() now logs each brand-fit call; keep that off the database here."""
     with patch("services.acp_shared.debate.record_call", new=AsyncMock()) as m_log:
