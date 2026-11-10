@@ -236,3 +236,29 @@ def test_propose_slate_records_the_debate_report_and_proposes_flagged_candidates
     inserted = [a for s, a in conn.executed if s.lstrip().startswith("INSERT INTO acp_shared.subject")]
     assert len(inserted) == 2
     assert all("debate" not in a[3] and "brand_fit" not in a[3] for a in inserted)   # tenant-visible reason stays
+
+
+# ── the $0 replay (scripts/quality/replay_aa1079_debate.py) ─────────────────────────────────────────────────────
+
+def test_replay_compares_the_cut_with_rank_only_on_the_same_pool():
+    from scripts.quality import replay_aa1079_debate as replay
+
+    segments = [_seg(i, place=f"Harrow Vale {i}") for i in range(1, 5)]
+    sigs = [FLAG_BF, FLAG_BF, FLAG_BF, PASS]                     # 3 of 4 flagged: the cap (2) decides the cut
+    out = replay.compare_arms(["facebook"], segments, [], sigs, [], hub_of={},
+                              stored={"facebook": {"proposed": 3}})
+    fb = out["channels"]["facebook"]
+    assert fb["proposed_cut"] == 2 and fb["proposed_rank"] == 4 and fb["rank_flagged"] == 3
+    assert fb["only_rank"] == ["seg_1", "seg_2"] and fb["only_cut"] == []
+    assert fb["rank_order"] == ["seg_4", "seg_1", "seg_2", "seg_3"]      # unflagged first, then rank-sum order
+    assert fb["stored"] == {"proposed": 3}
+    assert out["segments"]["would_cut"] == 2 and out["totals"]["dropped_by_cut"] == 2
+    assert out["totals"]["dropped_by_rank"] == 0
+
+
+def test_replay_needs_a_tenant_or_all_cached():
+    from scripts.quality import replay_aa1079_debate as replay
+
+    with pytest.raises(SystemExit):
+        replay.parse_args([])
+    assert replay.parse_args(["--all-cached"]).all_cached is True
