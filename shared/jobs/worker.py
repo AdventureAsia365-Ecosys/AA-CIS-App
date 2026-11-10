@@ -36,7 +36,7 @@ from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
 from . import queue
-from .registry import JobContext, NonRetryable, kinds, run_terminal_hook
+from .registry import RESCHEDULE_MAX_COUNT, JobContext, NonRetryable, Reschedule, kinds, run_terminal_hook
 
 logger = structlog.get_logger()
 
@@ -425,6 +425,14 @@ class Worker:
                 if status in ("failed", "cancelled"):
                     await run_terminal_hook(self.pool, job.id)
             raise
+        except Reschedule as e:
+            # AA-1076: the handler is waiting on something outside (a provider batch): the same row is due again later,
+            # the attempt not counted; its state is in progress, so a worker restart in between loses nothing.
+            status = await queue.reschedule(self.pool, job.id, self.worker_id, e.delay_seconds, e.progress,
+                                            round(ctx.cost_usd, 6), max_count=RESCHEDULE_MAX_COUNT)
+            log.info("job_rescheduled", next_status=status, delay_seconds=e.delay_seconds, reason=e.reason)
+            if status in ("failed", "cancelled"):
+                await run_terminal_hook(self.pool, job.id)
         except BudgetExceeded as e:
             await queue.stop_budget(self.pool, job.id, self.worker_id, str(e), ctx.result,
                                     round(ctx.cost_usd, 6))

@@ -315,6 +315,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/ai-gateway/app-profiles"): SPEND_READ,           # AA-1025 H1a: the app profile of every app
     ("PATCH", "/admin/ai-gateway/app-profiles/{app}"): AI_ADMIN,     # AA-1025 H1a: AI on / off per app, audited
     ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold
+    # AA-1076: the gateway batch lane (Batches tab): status + spend per batch; send a wave (paid) and cancel one
+    ("GET", "/admin/ai-gateway/batches"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/batches/{job_id}"): SPEND_READ,
+    ("POST", "/admin/ai-gateway/batches"): AI_ADMIN,               # paid: the AI & spend owner (ai.admin)
+    ("POST", "/admin/ai-gateway/batches/{job_id}/cancel"): AI_ADMIN,
     # AA-1045 — the usage explorer (AI & spend): money reads; the saved views are the caller's own (spend.read, like the
     # notification bell's own state); a re-roll of the rollup is an ops write ($0, audited)
     ("GET", "/admin/usage-explorer/query"): SPEND_READ,

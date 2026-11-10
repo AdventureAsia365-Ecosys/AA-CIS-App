@@ -43,5 +43,6 @@ from . import tenant_provision_job  # noqa: F401  AA-1028 R1 slice 2 (one-action
 from . import tenant_account_tick_job  # noqa: F401  AA-1028 R1 slice 3 (hourly trial end, expired overrides)
 from . import tenant_billing_tick_job  # noqa: F401  AA-1037 R4 (hourly: Booking billing status -> account state)
 from . import ai_usage_rollup_job  # noqa: F401  AA-1045 (hourly usage rollup of the paid-call ledgers, $0)
+from . import llm_batch_job  # noqa: F401  AA-1076 (gateway batch lane: one provider batch, prepare to hand-off)
 from . import source_fanout_job  # noqa: F401  AA-1052 W6 (source-change fan-out: mark dependent writer objects, $0)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)
