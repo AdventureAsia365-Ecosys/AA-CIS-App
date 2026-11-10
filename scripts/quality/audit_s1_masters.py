@@ -271,9 +271,14 @@ def brand_words_of(page: dict, brand_words: list[str]) -> dict:
     return {"brand_words": len(brand), "hits": hits}
 
 
+def _err(e: Exception) -> str:
+    return f"{type(e).__name__}: {str(e)[:120]}"
+
+
 def rules_of(row: Any, page: dict, tour: dict, tour_w: dict, facts: dict, brand_words: list[str],
-             writer_version: Optional[str], nm: "_NoModel") -> tuple[dict, list[str]]:
-    """The deterministic S1 writing rules over the stored text; returns (rules, extra not_run names)."""
+             writer_version: Optional[str], nm: "_NoModel") -> tuple[dict, list[str], dict]:
+    """The deterministic S1 writing rules over the stored text; returns (rules, extra not_run names, errors). Each
+    rule set runs on its own: one that fails is an ``errors["rules.<name>"]`` entry and the others still report."""
     from services.content_generation import graph
     from services.content_generation.brand_audit_node import pre_audit_checks
     from services.content_generation.grounding import check_grounding
@@ -281,30 +286,43 @@ def rules_of(row: Any, page: dict, tour: dict, tour_w: dict, facts: dict, brand_
 
     out: dict = {}
     extra: list[str] = []
-    stored = sorted({str(c) for c in _j(_get(row, "failure_codes"), [])})
-    state = {"generated": dict(page), "tour": dict(tour), "writer_version": writer_version,
-             "brand_forbidden_words": list(brand_words), "seo": {}, "retry_count": 0}
-    today = graph.validate_node(state)["failure_codes"]
-    out["validate"] = {"codes": sorted(set(today)), "stored_codes": stored,
-                       "new": sorted(set(today) - set(stored)), "cleared": sorted(set(stored) - set(today))}
-
-    jev_before = nm.jev_asked
-    codes = sorted(pre_audit_checks(dict(page), dict(tour)))
-    asked = nm.jev_asked > jev_before
-    needs = ["ITINERARY_MEAL_TIME_INVENTED"] if asked and "ITINERARY_MEAL_TIME_INVENTED" in codes else []
-    if asked:
-        extra.append("jev_meal_claims")
-    out["pre_audit"] = {"codes": [c for c in codes if c not in needs], "needs_model": needs,
-                        "stored_status": _get(row, "brand_audit_status"),
-                        "stored_codes": sorted({str(c) for c in _j(_get(row, "brand_audit_codes"), [])})}
-
-    found = Counter((f.get("code"), f.get("field")) for f in s1_checks.run_checks(tour_w, dict(page), facts))
-    out["s1_checks"] = [{"code": c, "field": f, "count": n} for (c, f), n in sorted(found.items(), key=str)]
-
-    g = check_grounding(dict(page), dict(tour), use_jev=False)
-    by_field = Counter(v.get("field") for v in g.get("violations") or [])
-    out["grounding_numeric"] = {"violations": sum(by_field.values()), "fields": dict(sorted(by_field.items()))}
-    return out, extra
+    errors: dict = {}
+    try:
+        stored = sorted({str(c) for c in _j(_get(row, "failure_codes"), [])})
+        # a stored NULL text field reads as "" (validate's own "missing field" test treats both alike; a None
+        # subtitle crashes its .lower(), the main bug the S1 train notes record)
+        gen = {k: ("" if v is None and k != "highlights" else v) for k, v in page.items()}
+        state = {"generated": gen, "tour": dict(tour), "writer_version": writer_version,
+                 "brand_forbidden_words": list(brand_words), "seo": {}, "retry_count": 0}
+        today = graph.validate_node(state)["failure_codes"]
+        out["validate"] = {"codes": sorted(set(today)), "stored_codes": stored,
+                           "new": sorted(set(today) - set(stored)), "cleared": sorted(set(stored) - set(today))}
+    except Exception as e:  # noqa: BLE001 — reported, the other rule sets still run
+        errors["rules.validate"] = _err(e)
+    try:
+        jev_before = nm.jev_asked
+        codes = sorted(pre_audit_checks(dict(page), dict(tour)))
+        asked = nm.jev_asked > jev_before
+        needs = ["ITINERARY_MEAL_TIME_INVENTED"] if asked and "ITINERARY_MEAL_TIME_INVENTED" in codes else []
+        if asked:
+            extra.append("jev_meal_claims")
+        out["pre_audit"] = {"codes": [c for c in codes if c not in needs], "needs_model": needs,
+                            "stored_status": _get(row, "brand_audit_status"),
+                            "stored_codes": sorted({str(c) for c in _j(_get(row, "brand_audit_codes"), [])})}
+    except Exception as e:  # noqa: BLE001
+        errors["rules.pre_audit"] = _err(e)
+    try:
+        found = Counter((f.get("code"), f.get("field")) for f in s1_checks.run_checks(tour_w, dict(page), facts))
+        out["s1_checks"] = [{"code": c, "field": f, "count": n} for (c, f), n in sorted(found.items(), key=str)]
+    except Exception as e:  # noqa: BLE001
+        errors["rules.s1_checks"] = _err(e)
+    try:
+        g = check_grounding(dict(page), dict(tour), use_jev=False)
+        by_field = Counter(v.get("field") for v in g.get("violations") or [])
+        out["grounding_numeric"] = {"violations": sum(by_field.values()), "fields": dict(sorted(by_field.items()))}
+    except Exception as e:  # noqa: BLE001
+        errors["rules.grounding_numeric"] = _err(e)
+    return out, extra, errors
 
 
 def compose_of(page: dict, tour_w: dict, facts: dict, brand_words: list[str]) -> dict:
@@ -360,28 +378,29 @@ def audit_one(row: Any, brand_words: list[str]) -> dict:
         try:
             out["contract"] = contract_of(row, brand_words)
         except Exception as e:  # noqa: BLE001 — a failed section is reported, the audit goes on
-            out["errors"]["contract"] = f"{type(e).__name__}: {str(e)[:120]}"
+            out["errors"]["contract"] = _err(e)
         try:
             out["brand_words"] = brand_words_of(page, brand_words)
         except Exception as e:  # noqa: BLE001
-            out["errors"]["brand_words"] = f"{type(e).__name__}: {str(e)[:120]}"
+            out["errors"]["brand_words"] = _err(e)
         tour_w = facts = None
         try:
             tour_w = v2.with_agency_fields(tour, agency_of(row))
             facts = build_fact_table(tour_w)
         except Exception as e:  # noqa: BLE001
-            out["errors"]["facts"] = f"{type(e).__name__}: {str(e)[:120]}"
+            out["errors"]["facts"] = _err(e)
         if facts is not None:
             try:
-                out["rules"], extra = rules_of(row, page, tour, tour_w, facts, brand_words,
-                                               writer if group == V2 else None, nm)
+                out["rules"], extra, rule_errors = rules_of(row, page, tour, tour_w, facts, brand_words,
+                                                            writer if group == V2 else None, nm)
                 out["not_run"] += extra
+                out["errors"].update(rule_errors)
             except Exception as e:  # noqa: BLE001
-                out["errors"]["rules"] = f"{type(e).__name__}: {str(e)[:120]}"
+                out["errors"]["rules"] = _err(e)
             try:
                 out["compose"] = {"applies": group == V2, **compose_of(page, tour_w, facts, brand_words)}
             except Exception as e:  # noqa: BLE001
-                out["errors"]["compose"] = f"{type(e).__name__}: {str(e)[:120]}"
+                out["errors"]["compose"] = _err(e)
     if nm.llm_attempts:
         out["errors"]["model_call_refused"] = f"{nm.llm_attempts} attempt(s)"
     return out

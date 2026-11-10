@@ -23,7 +23,10 @@ from the live rows, with no model call.
   job gate reads; the DFS keyword check is off because `seo` is empty), `brand_audit_node.pre_audit_checks` (the
   deterministic brand pre-audit), `s1_checks.run_checks` (the S1-first code checks: days, figures, names, meta,
   truncation, inclusions) and the numeric half of grounding (`check_grounding(use_jev=False)`). Codes and fields only,
-  never the sentence.
+  never the sentence. Each rule set runs on its own (`errors["rules.<name>"]` when one fails). A stored NULL text
+  field reaches validate as "" (its "missing field" test treats both alike): `validate_node` crashes on a None
+  subtitle (`.lower()`), the main bug the S1 train notes record; the local integration run hit it on an invented
+  older-writer row.
 - **No model call, never a silent pass.** `grounding.judge_units` is patched to a recorder that answers no verdict, and
   `LLMClient.generate` / `LLMClient.__init__` raise. Every Master lists `not_run`: `jev_grounding`,
   `llm_brand_audit`, `s1_judge` always; `jev_meal_claims` when the pre-audit wanted Jev for a meal / clock claim (its

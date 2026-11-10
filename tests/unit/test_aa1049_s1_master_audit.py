@@ -219,3 +219,17 @@ def test_the_master_query_reads_the_contract_row_of_the_published_active_masters
 def test_the_container_script_holds_no_decode_call():
     text = (QUALITY / "audit_s1_masters.py").read_text(encoding="utf-8")
     assert "b64decode" not in text and "exec(" not in text
+
+
+def test_a_stored_null_subtitle_is_a_missing_field_not_a_crash():
+    ln = audit.audit_one(row(aa_subtitle=None), [])
+    assert ln["errors"] == {}
+    assert "MISSING_FIELD" in ln["rules"]["validate"]["codes"]
+
+
+def test_one_rule_set_failing_leaves_the_others_reporting():
+    from services.quality import s1_checks
+    with patch.object(s1_checks, "run_checks", side_effect=KeyError("x")):
+        ln = audit.audit_one(row(), [])
+    assert list(ln["errors"]) == ["rules.s1_checks"]
+    assert "validate" in ln["rules"] and "pre_audit" in ln["rules"] and "grounding_numeric" in ln["rules"]
