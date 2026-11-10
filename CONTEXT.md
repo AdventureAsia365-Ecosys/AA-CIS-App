@@ -3281,7 +3281,10 @@ clicks **Put back online** in the Content studio (`GET /v1/publish-log/put-back`
 /v1/publish-log/{publish_id}/put-back`, flag `aa1039:put_back_pool`): the publish route's checks (served, latest
 piece, no other live post of the request, the AA-subject gate, connection, site), then the page's `publish_log` row
 is claimed and WordPress read: a draft is published (one call), a live page recorded, anything else left as is
-(`detail.put_back` on the flag; a repeat click replays). Before
+(`detail.put_back` on the flag; a repeat click replays). A page the click would refuse (its piece superseded, or
+another post of the request live) is never offered in the notice or the list. While a page is still to put back, its
+piece is left out of Ready to publish (tour served) and a new publish of it is refused (409), so no second copy goes
+online. Before
 CIS 360 is applied the fan-out fails retryable and the sampler re-queues those jobs once the tables exist.
 Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
 verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
