@@ -11,8 +11,9 @@ from services.ground_truth import store
 
 
 class FakeConn:
-    def __init__(self, panel_rows=0, exists=False, resolved=(), rows=(), queued=None):
+    def __init__(self, panel_rows=0, exists=False, resolved=(), rows=(), queued=None, relabelled=()):
         self.panel_rows, self.exists, self.resolved, self.rows = panel_rows, exists, list(resolved), list(rows)
+        self.relabelled = list(relabelled)      # claim hashes with an AA-1063 correction
         self.queued = dict(queued or {})        # source_ref -> status of the items already in the queue
         self.inserted = []
 
@@ -23,6 +24,8 @@ class FakeConn:
         return "new-id"
 
     async def fetch(self, sql, *args):
+        if "eval_claim_relabel" in sql:
+            return [{"claim_hash": h} for h in self.relabelled]
         if "source_ref = ANY" in sql:
             refs = args[1]
             if self.exists:
@@ -151,3 +154,7 @@ def test_pull_resolutions_builds_tech_lead_rows():
     assert got["resolved_items"] == 2 and got["tech_lead"] == 1 and got["dry_run"]   # h5 already has its lead row
     conn = FakeConn(resolved=[], rows=rows)
     assert asyncio.run(store.pull_resolutions(conn, "CL-1", "1.0.0", apply=True))["rows"] == 0
+    # AA-1063: a corrected claim keeps its correction; no queue row is written over it
+    conn = FakeConn(resolved=resolved, rows=rows, relabelled=["h1"])
+    got = asyncio.run(store.pull_resolutions(conn, "CL-1", "1.0.0", apply=False))
+    assert got["resolved_items"] == 2 and got["rows"] == 0

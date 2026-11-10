@@ -255,6 +255,62 @@ async def test_review_proposals_answers_corrections(conn):
 
 
 @pytest.mark.asyncio
+async def test_a_correction_and_the_queue_keep_one_decision(conn):
+    """A correction of an audit-drawn claim whose queue item is still open: an answer that disagrees is refused, one
+    that agrees resolves the item without a new row, pull_resolutions leaves it alone, and the page, the browser and the
+    next correction all read the same decision. A tech-lead row stored after a correction (an older tool) is the
+    decision everywhere, previous_source included."""
+    lines = await _seed(conn)
+    h0, h2 = lines[1]["claim_hash"], lines[2]["claim_hash"]     # majority dispute, audit draw (panel says ok)
+    await _as_cis_app(conn)
+    r1 = await rv.relabel(conn, SET, "1.0.0", h2, label="violation", claim_class=None, reason="Invented: re-read.",
+                          supersedes=None, actor=ACTOR)
+    assert r1["previous_source"] == "panel_agreed"
+    page = await rv.list_items(conn, set_id=SET, set_version="1.0.0", state="open", with_context=False)
+    item = next(i for i in page["items"] if i["claim_hash"] == h2)
+    assert item["decision"]["label"] == "violation" and item["decision"]["relabel"]
+    assert item["decision"]["by"] == ACTOR and item["decision"]["reason"] == "Invented: re-read."
+    with pytest.raises(rv.ReviewError) as e:
+        await rv.answer_item(conn, item["item_id"], answer="correct", actor=ACTOR)
+    assert (e.value.status, e.value.code) == (409, "relabelled")
+    assert await conn.fetchval("SELECT status FROM shared.writing_memory_disagreement WHERE item_id = $1::uuid",
+                               item["item_id"]) == "open"
+    a = await rv.answer_item(conn, item["item_id"], answer="wrong", actor=ACTOR)
+    assert (a["label"], a["inserted"], a["status"]) == ("violation", 0, "resolved")
+    rows = await store.read_rows(conn, SET, "1.0.0")
+    assert not [r for r in rows if r["claim_hash"] == h2 and r["labeller_kind"] == "tech_lead"]
+    # a resolved item of a corrected claim: pull_resolutions writes nothing over the correction
+    pull = await store.pull_resolutions(conn, SET, "1.0.0", apply=True)
+    assert pull["inserted"] == 0
+    relabels = await rv.read_relabels(conn, SET, "1.0.0")
+    [e2] = [x for x in rv.claim_entries(await store.read_rows(conn, SET, "1.0.0"), relabels) if x["claim_hash"] == h2]
+    assert (e2["label"], e2["decided_by"], e2["why"], e2["relabelled"]) == (
+        "violation", ACTOR, "Invented: re-read.", True)
+
+    # h0: a correction, then a tech-lead row stored later (written as the owner, as an older tool would)
+    c0 = await rv.relabel(conn, SET, "1.0.0", h0, label="ok", claim_class=None, reason="Invented: first fix.",
+                          supersedes=None, actor=ACTOR)
+    await conn.execute("RESET ROLE")
+    anchor = next(r for r in await store.read_rows(conn, SET, "1.0.0") if r["claim_hash"] == h0)
+    cols = [c for c in store.COLUMNS if c not in ("labeller_kind", "labeller", "lens", "label", "adjudication",
+                                                  "reason")]
+    await conn.execute(
+        f"INSERT INTO shared.eval_claim_label ({', '.join(cols)}, labeller_kind, labeller, lens, label, adjudication, "
+        f"reason, created_at) SELECT {', '.join(cols)}, 'tech_lead', 'admin:older-tool', NULL, 'unsure', 'final', "
+        "'invented later row', clock_timestamp() + interval '1 hour' FROM shared.eval_claim_label "
+        "WHERE label_id = $1::uuid", anchor["label_id"])
+    await conn.execute("SET LOCAL ROLE cis_app")
+    relabels = await rv.read_relabels(conn, SET, "1.0.0")
+    [e0] = [x for x in rv.claim_entries(await store.read_rows(conn, SET, "1.0.0"), relabels) if x["claim_hash"] == h0]
+    assert (e0["label"], e0["decided_by"], e0["why"], e0["relabelled"]) == (
+        "unsure", "admin:older-tool", "invented later row", False)
+    assert e0["head_relabel_id"] == c0["relabel_id"]
+    c1 = await rv.relabel(conn, SET, "1.0.0", h0, label="violation", claim_class=None, reason="Invented: second fix.",
+                          supersedes=c0["relabel_id"], actor=ACTOR)
+    assert (c1["previous_label"], c1["previous_source"]) == ("unsure", "tech_lead")
+
+
+@pytest.mark.asyncio
 async def test_cascades_and_no_tenant_pool_access(conn):
     lines = await _seed(conn)
     item = await conn.fetchval("SELECT d.item_id FROM shared.writing_memory_disagreement d JOIN "

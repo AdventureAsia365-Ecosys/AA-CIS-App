@@ -119,6 +119,30 @@ def test_a_later_tech_lead_row_wins_over_an_older_correction():
     assert pn.final_labels(rv.effective_rows(rows + [late], [one]))[rows[0]["claim_hash"]].label == "ok"
 
 
+def test_one_decision_row_names_the_label_and_who_when_why():
+    # a correction, then a tech-lead row written later (e.g. by an older tool): the later row is the final label, and
+    # the browser's who / when / why and the relabelled flag come from that same row, not from the correction
+    rows = _rows(state="audit", labels=["ok", "ok", "ok"])
+    one = _relabel(rows, "violation", days=1)
+    late = {**rows[0], "label_id": "00000000-0000-4000-8000-0000000000dd", "created_at": T0 + timedelta(5),
+            "labeller_kind": "tech_lead", "labeller": "admin:later", "lens": None, "label": "ok",
+            "adjudication": "final", "reason": "review: correct"}
+    top = rv.newest_lead(rows + [late], [one])
+    assert top["label_id"] == late["label_id"] and not top.get("relabel")
+    [e] = rv.claim_entries(rows + [late], [one])
+    assert (e["label"], e["decided_by"], e["why"]) == ("ok", "admin:later", "review: correct")
+    assert e["decided_at"].startswith("2026-11-15") and not e["relabelled"]
+    assert e["head_relabel_id"] == one["relabel_id"]                  # the next correction still supersedes it
+    assert [h["kind"] for h in e["history"]] == ["relabel", "tech_lead"]  # time order
+    assert all("_d" not in h for h in e["history"])
+    # the correction alone: it is the decision
+    top = rv.newest_lead(rows, [one])
+    assert top["relabel"] and top["label"] == "violation" and top["labeller"] == "admin:lead"
+    [e] = rv.claim_entries(rows, [one])
+    assert e["relabelled"] and e["decided_by"] == "admin:lead" and e["why"] == "invented correction"
+    assert rv.newest_lead(rows, []) is None
+
+
 def test_effective_rows_leave_the_stored_rows_alone_without_corrections():
     rows = _rows(lead="violation")
     assert rv.effective_rows(rows, []) == rows

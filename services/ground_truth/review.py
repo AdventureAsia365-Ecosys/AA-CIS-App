@@ -13,12 +13,21 @@ sentence, its context and evidence, the full source, the three lenses and the ne
   - a panel with no majority or an unsure majority (machine_verdict split / unsure): the tech-lead row carries the
     answered label and the item is resolved unclear (the S275 path: a split panel cannot become a label through
     `resolution_label`).
-`pull_resolutions` skips a claim that already has a tech-lead row, so running it afterwards changes nothing.
+`pull_resolutions` skips a claim that already has a tech-lead row or a correction, so running it afterwards changes
+nothing.
 
 Corrections. A final label (tech-lead row, an agreed panel label or an earlier correction) can be changed later:
 append only, a new shared.eval_claim_relabel row that supersedes the current one (a chain per claim). The newest
 correction is the claim's final label: `effective_rows` adds one synthetic tech-lead row per correction after the
 stored ones, so `panel.final_labels` (lead[-1]) and `panel.agreement_report` read it unchanged.
+
+One decision per claim. A correction is allowed on an agreed panel claim whose audit-drawn queue item is still open,
+so the queue and the browser can meet on one claim. The rule: the newest effective tech-lead row (`newest_lead`:
+stored or a correction, the row `final_labels` reads) is the decision everywhere. An answer that disagrees with it is
+refused (409 `relabelled` / `labelled`: change it from the label set browser); an answer that agrees resolves the
+item without a new row; `pull_resolutions` skips a corrected claim; the browser's who / when / why, the queue card's
+decision and a new correction's previous_source all come from that same row. `relabel` and `answer_item` lock the
+claim's queue items first, so the two paths never interleave.
 
 Context. Label rows hold the claim span only. The golden item the claim was exported from (shared.eval_golden_item,
 matched by sample_id and the content sha of its output as the panel saw it) gives the field text, the context, the
@@ -152,6 +161,13 @@ def effective_rows(rows: list[dict], relabels: Iterable[dict]) -> list[dict]:
     return rest + sorted(lead, key=when)
 
 
+def newest_lead(rows: list[dict], relabels: Iterable[dict]) -> Optional[dict]:
+    """The decision of one claim: its newest effective tech-lead row (a stored row, or a correction marked
+    relabel=True), the row panel.final_labels reads; None when nobody decided it."""
+    lead = [r for r in effective_rows(rows, relabels) if r.get("labeller_kind") == "tech_lead"]
+    return lead[-1] if lead else None
+
+
 def chain_depths(relabels: list[dict]) -> dict[str, int]:
     """relabel_id -> its position in its claim's chain (1 = the first correction, which supersedes nothing)."""
     parent = {str(x["relabel_id"]): (str(x["supersedes"]) if x.get("supersedes") else None) for x in relabels}
@@ -197,8 +213,10 @@ def set_summary(rows: list[dict], relabels: list[dict]) -> dict:
 
 
 def claim_entries(rows: list[dict], relabels: list[dict]) -> list[dict]:
-    """One entry per claim of a set version: its final label, who decided it, when and why, the panel lenses and the
-    history (tech-lead row, then each correction). Text included (a Lab text read)."""
+    """One entry per claim of a set version: its final label, who decided it, when and why (from `newest_lead`, the row
+    the final label comes from), the panel lenses and the history in time order (tech-lead row and corrections).
+    `relabelled`: the final label is a correction; `head_relabel_id`: the newest correction, which the next one must
+    supersede. Text included (a Lab text read)."""
     by_hash: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_hash[r["claim_hash"]].append(r)
@@ -215,18 +233,21 @@ def claim_entries(rows: list[dict], relabels: list[dict]) -> list[dict]:
         chain = sorted(rl.get(h, []),
                        key=lambda x: (depth.get(str(x["relabel_id"]), 0), _iso(x.get("created_at")) or ""))
         history = [{"kind": "tech_lead", "label": r["label"], "claim_class": r["claim_class"], "by": r["labeller"],
-                    "at": _iso(r.get("created_at")), "reason": r.get("reason"), "id": r.get("label_id")}
+                    "at": _iso(r.get("created_at")), "reason": r.get("reason"), "id": r.get("label_id"), "_d": 0}
                    for r in lead]
         history += [{"kind": "relabel", "label": x["label"], "claim_class": x["claim_class"], "by": x["labeller"],
                      "at": _iso(x.get("created_at")), "reason": x.get("reason"), "id": str(x["relabel_id"]),
-                     "previous_label": x.get("previous_label"), "previous_source": x.get("previous_source")}
+                     "previous_label": x.get("previous_label"), "previous_source": x.get("previous_source"),
+                     "_d": depth.get(str(x["relabel_id"]), 0)}
                     for x in chain]
+        # the order effective_rows gives the decisions: time, a correction after a stored row, chain order
+        history.sort(key=lambda e: (e["at"] is not None, e["at"] or "", e["kind"] == "relabel", e["_d"]))
+        for e in history:
+            del e["_d"]
         head = chain_head(chain)
-        if head is not None:
-            decided = {"by": head["labeller"], "at": _iso(head.get("created_at")), "why": head.get("reason")}
-        elif lead:
-            decided = {"by": lead[-1]["labeller"], "at": _iso(lead[-1].get("created_at")),
-                       "why": lead[-1].get("reason")}
+        top = newest_lead(rs, chain)
+        if top is not None:
+            decided = {"by": top.get("labeller"), "at": _iso(top.get("created_at")), "why": top.get("reason")}
         elif f.source == "panel_agreed" and panel:
             decided = {"by": "panel", "at": _iso(panel[0].get("created_at")),
                        "why": "; ".join(f"{r.get('lens')}: {r.get('reason')}" for r in panel if r.get("reason"))[:900]
@@ -237,7 +258,7 @@ def claim_entries(rows: list[dict], relabels: list[dict]) -> list[dict]:
         out.append({"claim_hash": h, "anchor_label_id": base.get("label_id"), "writer": base["writer"],
                     "field": base.get("field"), "claim_text": base.get("claim_text"), "split": f.split,
                     "stratum": f.stratum, "sample_id": base.get("sample_id"), "claim_class": f.claim_class,
-                    "label": f.label, "source": f.source, "relabelled": head is not None,
+                    "label": f.label, "source": f.source, "relabelled": bool(top is not None and top.get("relabel")),
                     "head_relabel_id": str(head["relabel_id"]) if head is not None else None,
                     "panel_state": panel[0].get("adjudication") if panel else None,
                     "decided_by": decided["by"], "decided_at": decided["at"], "why": decided["why"],
@@ -374,6 +395,27 @@ async def read_relabels(conn, set_id: str, set_version: str, claim_hash: Optiona
     return [dict(r) for r in await conn.fetch(f"{_RELABELS_SQL} WHERE {where} ORDER BY created_at, relabel_id", *args)]
 
 
+async def relabels_for(conn, keys: Iterable[tuple[str, str, str]]) -> list[dict]:
+    """The corrections of the claims named by (set_id, set_version, claim_hash)."""
+    keys = sorted(set(keys))
+    if not keys:
+        return []
+    a, b, c = (list(x) for x in zip(*keys))
+    return [dict(r) for r in await conn.fetch(
+        f"{_RELABELS_SQL} WHERE (set_id, set_version, claim_hash) IN "
+        "(SELECT * FROM unnest($1::text[], $2::text[], $3::text[])) ORDER BY created_at, relabel_id", a, b, c)]
+
+
+async def lock_claim_items(conn, set_id: str, set_version: str, claim_hash: str) -> list[dict]:
+    """Lock the golden_claim queue items of one claim (FOR UPDATE, item order) inside the caller's transaction: an
+    answer and a correction of the same claim then run one after the other, and the second one reads the first."""
+    return [dict(r) for r in await conn.fetch(
+        "SELECT d.item_id::text AS item_id, d.status FROM shared.writing_memory_disagreement d "
+        "JOIN shared.eval_claim_label l ON l.label_id = d.source_ref WHERE d.source = 'golden_claim' "
+        "AND l.set_id = $1 AND l.set_version = $2 AND l.claim_hash = $3 ORDER BY d.item_id FOR UPDATE OF d",
+        set_id, set_version, claim_hash)]
+
+
 async def read_relabels_soft(conn, set_id: str, set_version: str) -> list[dict]:
     """read_relabels, or [] before CIS 394 (the report and finals routes keep working on the label rows alone)."""
     import asyncpg
@@ -487,21 +529,26 @@ async def list_items(conn, *, set_id: Optional[str] = None, set_version: Optiona
 
 
 async def attach_claims(conn, items: list[dict], *, with_context: bool) -> None:
-    rows = await claim_rows(conn, ((i["set_id"], i["set_version"], i["claim_hash"]) for i in items))
+    keys = [(i["set_id"], i["set_version"], i["claim_hash"]) for i in items]
+    rows = await claim_rows(conn, keys)
     by: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
         by[(r["set_id"], r["set_version"], r["claim_hash"])].append(r)
+    fixes: dict[tuple, list[dict]] = defaultdict(list)
+    for x in await relabels_for(conn, keys):
+        fixes[(x["set_id"], x["set_version"], x["claim_hash"])].append(x)
     ctx = await contexts(conn, items) if with_context else {}
     for i in items:
-        rs = by.get((i["set_id"], i["set_version"], i["claim_hash"]), [])
+        key = (i["set_id"], i["set_version"], i["claim_hash"])
+        rs = by.get(key, [])
         i["panel"] = [{"lens": r.get("lens"), "label": r["label"], "claim_class": r["claim_class"],
                        "reason": r.get("reason"), "labeller": r["labeller"], "adjudication": r.get("adjudication")}
                       for r in sorted((r for r in rs if r["labeller_kind"] == "agent_panel"),
                                       key=lambda r: r.get("lens") or "")]
-        lead = [r for r in rs if r["labeller_kind"] == "tech_lead"]
-        i["decision"] = None if not lead else {"label": lead[-1]["label"], "claim_class": lead[-1]["claim_class"],
-                                               "by": lead[-1]["labeller"], "at": _iso(lead[-1].get("created_at")),
-                                               "reason": lead[-1].get("reason")}
+        top = newest_lead(rs, fixes.get(key, []))
+        i["decision"] = None if top is None else {"label": top["label"], "claim_class": top["claim_class"],
+                                                  "by": top.get("labeller"), "at": _iso(top.get("created_at")),
+                                                  "reason": top.get("reason"), "relabel": bool(top.get("relabel"))}
         if with_context:
             c = ctx.get(i["claim_hash"]) or {}
             i["context"] = {k: c.get(k) for k in ("found", "before", "after", "evidence")}
@@ -537,13 +584,17 @@ async def answer_item(conn, item_id: str, *, answer: str, actor: str, note: Opti
             raise ReviewError(404, "not_found", "Unknown claim item")
         if item["status"] != "open":
             raise ReviewError(409, "resolved", "the item is already resolved")
+        await lock_claim_items(conn, item["set_id"], item["set_version"], item["claim_hash"])
         rows = await claim_rows(conn, [(item["set_id"], item["set_version"], item["claim_hash"])])
         panel = sorted((r for r in rows if r["labeller_kind"] == "agent_panel"), key=lambda r: r.get("lens") or "")
         if not panel:
             raise ReviewError(409, "no_panel", "the claim has no panel rows")
         label, resolution = answer_plan(item["machine_verdict"], answer)
-        lead = [r for r in rows if r["labeller_kind"] == "tech_lead"]
-        if lead and lead[-1]["label"] != label:
+        top = newest_lead(rows, await read_relabels(conn, item["set_id"], item["set_version"], item["claim_hash"]))
+        if top is not None and top["label"] != label:
+            if top.get("relabel"):
+                raise ReviewError(409, "relabelled", f"the claim was corrected to {top['label']} in the label set "
+                                                     "browser: answer that here, or change it there")
             raise ReviewError(409, "labelled", "the claim already has another tech-lead label: change it from the "
                                                "label set browser")
         proposal = None
@@ -557,7 +608,7 @@ async def answer_item(conn, item_id: str, *, answer: str, actor: str, note: Opti
             + ("accepted" if proposal["label"] == ANSWERS[answer] else "overridden"))
         reason = f"review: {answer}{how}" + (f"; {note}" if _clean(note, 400) else "")
         inserted = 0
-        if not lead:
+        if top is None:     # an agreeing decision (stored row or correction) stays the decision: no new row
             row = lead_row(panel[0], label=label, claim_class=pick_class(panel, label, panel[0]), labeller=actor,
                            reason=reason, policy_sha=policy.policy_sha())
             if not policy.known_class(row["claim_class"]):
@@ -696,6 +747,7 @@ async def relabel(conn, set_id: str, set_version: str, claim_hash: str, *, label
     if not why or len(why) < 3:
         raise ReviewError(422, "invalid", "a reason of at least 3 characters is required")
     async with conn.transaction():
+        await lock_claim_items(conn, set_id, set_version, claim_hash)
         rows = [r for r in await claim_rows(conn, [(set_id, set_version, claim_hash)])]
         if not rows:
             raise ReviewError(404, "not_found", "Unknown claim")
@@ -712,7 +764,8 @@ async def relabel(conn, set_id: str, set_version: str, claim_hash: str, *, label
         if cls == final.claim_class and label == final.label:
             raise ReviewError(422, "unchanged", "the claim already has this label")
         anchor = sorted(rows, key=lambda r: (r["labeller_kind"] != "agent_panel", r.get("lens") or ""))[0]
-        previous_source = "relabel" if head else final.source
+        top = newest_lead(rows, chain)      # the row the current final label comes from
+        previous_source = "relabel" if top is not None and top.get("relabel") else final.source
         try:
             rid = await conn.fetchval(
                 "INSERT INTO shared.eval_claim_relabel (set_id, set_version, claim_hash, anchor_label_id, claim_class, "
@@ -735,5 +788,6 @@ __all__ = ["ANSWERS", "CONFIDENCE", "MAX_BULK", "NOTE_KEYS", "PROPOSAL_FILTERS",
            "accept_proposals", "answer_item", "answer_plan", "chain_depths", "chain_head", "check_proposal",
            "claim_entries",
            "context_of", "effective_rows", "filter_claims", "import_proposals", "item_context", "lead_row",
-           "list_items", "list_sets", "match_golden", "pick_class", "read_relabels", "read_relabels_soft", "relabel",
+           "list_items", "list_sets", "lock_claim_items", "match_golden", "newest_lead", "pick_class", "read_relabels",
+           "read_relabels_soft", "relabel", "relabels_for",
            "set_summary", "source_text"]

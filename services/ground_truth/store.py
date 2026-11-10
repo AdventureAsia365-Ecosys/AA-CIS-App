@@ -190,9 +190,25 @@ def resolution_label(machine_verdict: str, resolution: str) -> str:
     return "unsure"
 
 
+async def relabelled_claims(conn, set_id: str, set_version: str) -> set[str]:
+    """The claims of a label set version with a tech-lead correction (shared.eval_claim_relabel, CIS 394; an empty set
+    before it)."""
+    import asyncpg
+
+    try:
+        async with conn.transaction():
+            return {r["claim_hash"] for r in await conn.fetch(
+                "SELECT DISTINCT claim_hash FROM shared.eval_claim_relabel WHERE set_id = $1 AND set_version = $2",
+                set_id, set_version)}
+    except asyncpg.UndefinedTableError:
+        return set()
+
+
 async def pull_resolutions(conn, set_id: str, set_version: str, *, apply: bool,
                            policy_sha: Optional[str] = None) -> dict:
-    """Turn the resolved golden_claim queue items of a label set version into tech-lead rows (DRY RUN: list them)."""
+    """Turn the resolved golden_claim queue items of a label set version into tech-lead rows (DRY RUN: list them).
+    A claim that already has a tech-lead row or a correction is skipped: its decision stands (AA-1063: a stored row
+    written after a correction would silently become the final label)."""
     resolved = await conn.fetch(
         "SELECT d.source_ref::text AS label_id, d.machine_verdict, d.resolution, d.resolved_by "
         "FROM shared.writing_memory_disagreement d JOIN shared.eval_claim_label l ON l.label_id = d.source_ref "
@@ -200,6 +216,7 @@ async def pull_resolutions(conn, set_id: str, set_version: str, *, apply: bool,
         QUEUE_SOURCE, set_id, set_version)
     rows = {r["label_id"]: r for r in await read_rows(conn, set_id, set_version)}
     lead_claims = {r["claim_hash"] for r in rows.values() if r["labeller_kind"] == "tech_lead"}
+    lead_claims |= await relabelled_claims(conn, set_id, set_version)
     new_rows = []
     for d in resolved:
         panel = rows.get(d["label_id"])
@@ -217,5 +234,6 @@ async def pull_resolutions(conn, set_id: str, set_version: str, *, apply: bool,
 
 
 __all__ = ["COLUMNS", "QUEUE_SOURCE", "SPLITS", "StoreRefused", "WRITER_ORDER", "enqueue", "existing_judgements",
-           "insert_rows", "panel_rows_exist", "pull_resolutions", "queue_candidates", "read_rows", "resolution_label",
+           "insert_rows", "panel_rows_exist", "pull_resolutions", "queue_candidates", "read_rows", "relabelled_claims",
+           "resolution_label",
            "week_start"]
