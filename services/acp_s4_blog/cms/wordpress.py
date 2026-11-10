@@ -16,7 +16,7 @@ safe_http.UnsafeURLError, which callers treat like any other failure.
 import base64
 import json
 import logging
-from typing import Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 from urllib.parse import quote
 
 from shared import safe_http
@@ -150,11 +150,7 @@ class WordPressAdapter(CMSAdapter):
         period by moving it back to draft (POST /wp/v2/posts/{id} {"status": "draft"}); nothing is deleted and the
         site owner can publish it again. Returns "drafted", or "already_gone" when WordPress says the post no longer
         exists or is in the trash. Same AA-460 lesson: the answer must be a real post object now in draft."""
-        resp = await safe_http.request("POST", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
-                                       json={"status": "draft"}, headers=self._headers(), timeout=_TIMEOUT_S)
-        status_code = resp.status
-        body_text = resp.text()
-        parsed_body = _json_or_none(resp.headers.get("content-type", ""), body_text)
+        status_code, parsed_body, body_text = await self._set_status(post_id, "draft")
         if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body:
             if parsed_body.get("status") == "draft":
                 return "drafted"
@@ -167,6 +163,60 @@ class WordPressAdapter(CMSAdapter):
             raise RuntimeError("WordPress refused the change — the connected user cannot edit this post "
                                f"(HTTP {status_code}{': ' + message if message else ''})")
         raise RuntimeError(f"WP API update {status_code} returned an unexpected response: {body_text[:300]}")
+
+    async def post_status(self, post_id) -> "PostState":
+        """AA-1039 (put back online): the post's WordPress status now (``publish``, ``draft``, ``future``, ``pending``,
+        ``private``, ``trash``) and its ``modified_gmt``, or status ``missing`` when WordPress itself says it no longer
+        exists (404 rest_post_invalid_id, 410 rest_already_trashed). GET /wp/v2/posts/{id}?context=edit (an edit
+        context, so a draft is visible). Same AA-460 lesson: anything that is not a real post object or WordPress's own
+        error code raises, so the caller never acts on a host error page."""
+        resp = await safe_http.request("GET", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
+                                       params={"context": "edit"}, headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        body_text = resp.text()
+        parsed_body = _json_or_none(resp.headers.get("content-type", ""), body_text)
+        if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body \
+                and isinstance(parsed_body.get("status"), str):
+            return PostState(parsed_body["status"], _modified(parsed_body))
+        code, message = _wp_error(parsed_body)
+        if (status_code, code) in ((404, "rest_post_invalid_id"), (410, "rest_already_trashed")):
+            return PostState("missing", None)
+        if status_code == 401 or code in ("rest_cannot_edit", "rest_forbidden", "rest_forbidden_context"):
+            raise RuntimeError("WordPress refused the read — the connected user cannot edit this post "
+                               f"(HTTP {status_code}{': ' + message if message else ''})")
+        raise RuntimeError(f"WP API read {status_code} returned an unexpected response: {body_text[:300]}")
+
+    async def set_published(self, post_id) -> str:
+        """AA-1039 (put back online): publish again a page this system moved to draft when AA retired its tour
+        (POST /wp/v2/posts/{id} {"status": "publish"}), on the tenant's click. Returns "published"; the answer must be
+        a real post object now ``publish`` (AA-460), anything else raises."""
+        status_code, parsed_body, body_text = await self._set_status(post_id, "publish")
+        if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body \
+                and parsed_body.get("status") == "publish":
+            return "published"
+        code, message = _wp_error(parsed_body)
+        if status_code == 401 or code in ("rest_cannot_edit", "rest_cannot_publish", "rest_forbidden"):
+            raise RuntimeError("WordPress refused the change — the connected user cannot publish this post "
+                               f"(HTTP {status_code}{': ' + message if message else ''})")
+        raise RuntimeError(f"WP API update {status_code} returned an unexpected response: {body_text[:300]}")
+
+    async def _set_status(self, post_id, status: str):
+        """POST /wp/v2/posts/{id} {"status": <status>}: (HTTP status, parsed JSON body or None, body text)."""
+        resp = await safe_http.request("POST", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
+                                       json={"status": status}, headers=self._headers(), timeout=_TIMEOUT_S)
+        body_text = resp.text()
+        return resp.status, _json_or_none(resp.headers.get("content-type", ""), body_text), body_text
+
+
+class PostState(NamedTuple):
+    """A WordPress post as :meth:`WordPressAdapter.post_status` read it."""
+    status: str                      # a WordPress status, or "missing"
+    modified_gmt: Optional[str]
+
+
+def _modified(parsed_body: dict) -> Optional[str]:
+    value = parsed_body.get("modified_gmt")
+    return value if isinstance(value, str) and value else None
 
 
 def _json_or_none(content_type: str, body_text: str):

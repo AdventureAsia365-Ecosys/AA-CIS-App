@@ -5862,6 +5862,143 @@
         "title": "ProvisionJobOut",
         "type": "object"
       },
+      "PutBackList": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PutBackPage"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "PutBackList",
+        "type": "object"
+      },
+      "PutBackPage": {
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "drafted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drafted At"
+          },
+          "external_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Url"
+          },
+          "piece_id": {
+            "title": "Piece Id",
+            "type": "string"
+          },
+          "publish_id": {
+            "title": "Publish Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tour_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tour Name"
+          }
+        },
+        "required": [
+          "publish_id",
+          "piece_id",
+          "title",
+          "channel"
+        ],
+        "title": "PutBackPage",
+        "type": "object"
+      },
+      "PutBackResult": {
+        "properties": {
+          "external_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Url"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "publish_id": {
+            "title": "Publish Id",
+            "type": "string"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "wordpress_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wordpress Status"
+          }
+        },
+        "required": [
+          "publish_id",
+          "outcome",
+          "status",
+          "message"
+        ],
+        "title": "PutBackResult",
+        "type": "object"
+      },
       "QuestionUpdate": {
         "properties": {
           "accept_floor": {
@@ -51532,7 +51669,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "The tenant's own notifications (tour no longer served / served again)",
+        "summary": "The tenant's own notifications (tour no longer served / served again / pages to put back)",
         "tags": [
           "tenant-notifications"
         ]
@@ -52254,6 +52391,33 @@
         ]
       }
     },
+    "/v1/publish-log/put-back": {
+      "get": {
+        "description": "The pages a tenant can put back online: moved to draft by the tour retirement (still in that state, no click\nsettled them) and about a tour AA serves again. Read on MAIN (the retirement flags have no tenant-pool grant) with\nthe tenant condition in every statement.",
+        "operationId": "list_put_back_v1_publish_log_put_back_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutBackList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The tenant's WordPress pages the tour retirement moved to draft, to put back online",
+        "tags": [
+          "publish-log"
+        ]
+      }
+    },
     "/v1/publish-log/{piece_id}/publish": {
       "post": {
         "description": "AA-458 — the real publish endpoint. No AA pre-gate (ADR-2026-038 §0.2, same principle\nAA-455's force-unpublish exists to police after the fact, not before). Ownership + approval\nverified in one query; 404 covers both \"not yours\" and \"not approved yet\" identically (no\nexistence leak). A retryable prior 'failed' publish_log row for this piece is updated in\nplace rather than accumulating duplicate failure rows; a 'published' or 'unpublished' row is\nleft untouched and a fresh attempt gets its own new row (preserves that row's real\nunpublished_at/unpublished_by audit trail — AA-455's whole reason for those columns).\n\nAA-497 — same angle_gate_option_id-first join as list_pending() above, same reason.\n\nAA-469 Việc 4 — same cp.channel-first (COALESCE onto agr.channel) read as list_pending()\nabove, same reason (angle_gate_request.channel is no longer stable after a piece is\nwritten — see set_channel()).\n\nAA-726 — idempotent: a 'requested' row is written before the remote call (one per piece\nrevision + channel, services/acp_publish/idempotency.py). The same revision already published\nis replayed from publish_log (no second post); one in flight returns 409; a retry after a\nlost response looks the post up on the remote first (WordPress by revision slug, Facebook by\nmessage) before posting.\n\nAA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code\ndefault 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only\nwhen the column exists). A NEW publish over the limit gets 429 with a clear message and a\nRetry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused.",
@@ -52343,6 +52507,55 @@
           }
         ],
         "summary": "Unpublish",
+        "tags": [
+          "publish-log"
+        ]
+      }
+    },
+    "/v1/publish-log/{publish_id}/put-back": {
+      "post": {
+        "description": "One click, one WordPress publish call, only on the tenant's own page that the retirement drafted (404 for any\nother page, also another tenant's: no existence leak). Checks first, like publish(): the tour is served (409\ntour_discontinued / tour_paused), the piece is its request's latest version and no other post of the request is\nlive (409), the AA-subject gate (409 content_needs_change / 503), the WordPress connection and site (422). Then\nthe page's publish_log row is claimed (a concurrent click gets 409) and WordPress is read: a draft is published,\na live page is only recorded, anything else is left as is. Idempotent: a repeat click answers from the row or the\nflag's note (replayed). Audited as content_piece.put_back_online.",
+        "operationId": "put_back_v1_publish_log__publish_id__put_back_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "publish_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Publish Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutBackResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put back online a WordPress page the tour retirement moved to draft",
         "tags": [
           "publish-log"
         ]

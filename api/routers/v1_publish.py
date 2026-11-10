@@ -47,15 +47,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
+from typing import Optional
 from uuid import UUID
 
+import asyncpg
 import boto3
 import structlog
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from api.core.aa544_tenant_pool import (
-    PUBLISH_FLAG, PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG, acquire_scoped_conn,
+    PUBLISH_FLAG, PUBLISH_LOG_LIST_FLAG, PUT_BACK_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG,
+    acquire_scoped_conn,
 )
 from api.routers.v1_integrations import is_tombstoned_secret, reconnect_detail
 from api.routers._served import annotate_by_request, refuse_http
@@ -68,9 +73,10 @@ from services.acp_shared import subject_gate
 # AA-765: T11 channel dispatch (adapters, post building, remote lookup / delete) lives in services/acp_publish.
 from services.acp_publish.dispatch import (
     INTEGRATION_TYPE, SUPPORTED_CHANNELS, channel_display_name, delete_remote, find_remote, other_account,
-    publish_to_channel,
+    publish_to_channel, put_back_remote,
 )
 from services.acp_publish.idempotency import claim, finish, publish_key
+from services.acp_publish import put_back as _pb
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/publish-log", tags=["publish-log"])
@@ -342,6 +348,19 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
         # AA-986 L3: the served state of each piece's tour (Publish badge; publishing it is refused with a 409)
         served = await annotate_by_request(conn, tenant_id, [{"request_id": r.get("request_id")} for r in rows])
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
+    # AA-1039 (option A): a piece whose WordPress page the tour retirement moved to draft, about a tour served again,
+    # is listed under "Pages to put back online" (GET /put-back) and not here: a Publish here would put a second copy
+    # online and leave the drafted page behind (publish() refuses it too). While the tour is off sale it stays here
+    # with its served badge. Read on MAIN (the retirement flags have no tenant-pool grant).
+    try:
+        drafted = await _pages_to_put_back(request.app.state.pool, tenant_id, [r["piece_id"] for r in rows])
+    except Exception:  # noqa: BLE001 — display only: the piece stays listed and publish() still refuses it
+        logger.warning("put_back_pending_read_failed", tenant_id=str(tenant_id), exc_info=True)
+        drafted = {}
+    if drafted:
+        kept = [(r, sv) for r, sv in zip(rows, served)
+                if not (r["piece_id"] in drafted and sv.get("served_status") in (None, "served"))]
+        rows, served = [r for r, _ in kept], [sv for _, sv in kept]
     # AA-1039 R6 (d21): why a piece waits (the AA-subject gate's content-style reason), read on MAIN (no tenant grant)
     needs_change = await _pending_needs_change(request.app.state.pool, tenant_id, [r["piece_id"] for r in rows])
 
@@ -475,6 +494,19 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             raise refuse_http(exc) from exc
         integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
 
+    # AA-1039 (option A): this content still has a WordPress page the tour retirement moved to draft and the tenant can
+    # put back. A new post would put a second copy online and leave that page behind (409; on MAIN, the retirement
+    # flags have no tenant-pool grant). A page put back, left as is or no longer offered (superseded, another live post)
+    # does not block. Fails closed like the AA-subject gate: a read error is 503 "try again", never a blind post.
+    try:
+        drafted = await _pages_to_put_back(pool, tenant_id, [str(piece_id)])
+    except Exception:  # noqa: BLE001
+        logger.warning("put_back_publish_check_failed", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                       exc_info=True)
+        raise HTTPException(status_code=503, detail=SUBJECT_GATE_UNAVAILABLE)
+    if drafted.get(str(piece_id)):
+        raise HTTPException(status_code=409, detail=PUBLISH_PUT_BACK_FIRST)
+
     key = publish_key(piece_id, channel, piece["content_text"])
     # AA-1039 R6 (root ADR 0019 d21): the AA-subject gate again, right before a new publish, on MAIN (the Compliance
     # flag table and the Segment tables have no tenant-pool grant). A failing piece is held (409, content-style reason).
@@ -564,6 +596,238 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         logger.warning("publish_audit_log_failed", tenant_id=tenant_id, piece_id=str(piece_id), error=str(exc))
 
     return _publish_response(row, success=success)
+
+
+# ── AA-1039 (option A, S275): "Put back online" ─────────────────────────────────────────────────────────────────────
+# After a restore, a WordPress page the tour retirement moved to draft stays in draft until the tenant clicks "Put
+# back online" (the restore notice lists it; services/acp_publish/put_back.py has the flow). GET lists the pages, POST
+# puts one back with one WordPress publish call after the publish route's checks.
+
+class PutBackPage(BaseModel):
+    publish_id: str
+    piece_id: str
+    title: str
+    channel: str
+    external_url: Optional[str] = None
+    tour_name: Optional[str] = None
+    drafted_at: Optional[str] = None
+
+
+class PutBackList(BaseModel):
+    data: list[PutBackPage]
+    total: int
+
+
+class PutBackResult(BaseModel):
+    publish_id: str
+    outcome: str                          # published | already_online | changed_on_wordpress
+    wordpress_status: Optional[str] = None
+    status: str                           # the publish_log status after the click: published | unpublished
+    external_url: Optional[str] = None
+    replayed: bool = False
+    message: str
+
+
+_WP_STATUS_WORDS = {"private": "private", "pending": "pending review", "future": "scheduled", "trash": "in the trash",
+                    "missing": "deleted", "draft": "a draft"}
+PUT_BACK_NOT_DRAFTED = "This page was not moved to draft by Adventure Asia, so there is nothing to put back."
+PUT_BACK_IN_PROGRESS = "This page is already being put back online — refresh in a minute."
+PUT_BACK_OTHER_LIVE = ("This content is online again as another post, so this page stays in draft. You can delete "
+                       "it in WordPress.")
+PUBLISH_PUT_BACK_FIRST = ("This content has a WordPress page that was moved to draft while its tour was off sale. Put "
+                          "that page back online under Pages to put back online instead of publishing a second copy.")
+PUT_BACK_NEWER = ("A newer version of this content exists, so this page stays in draft. Publish the new version "
+                  "from Ready to publish.")
+
+
+def _put_back_message(outcome: str, wp_status: Optional[str]) -> str:
+    if outcome == _pb.PUBLISHED:
+        return "The page is online again."
+    if outcome == _pb.ALREADY_ONLINE:
+        return "The page was already online on WordPress."
+    word = _WP_STATUS_WORDS.get(wp_status or "", wp_status or "changed")
+    return f"The page was changed on WordPress (it is {word} now), so it was left as is."
+
+
+def _put_back_result(publish_id: str, outcome: str, wp_status: Optional[str], status: str,
+                     external_url: Optional[str], *, replayed: bool = False) -> dict:
+    return {"publish_id": publish_id, "outcome": outcome, "wordpress_status": wp_status, "status": status,
+            "external_url": external_url, "replayed": replayed, "message": _put_back_message(outcome, wp_status)}
+
+
+def _put_back_replay(row, page) -> Optional[dict]:
+    """The answer of a click on a page an earlier click already settled (a double click, a stale tab): online again
+    (the row is live) or left as is (the flag's note). None when the page is still to put back."""
+    note = _pb.note(page["put_back"])
+    if row["status"] == "published" and row["unpublished_by"] is None:
+        outcome = note.get("outcome") if note.get("outcome") in (_pb.PUBLISHED, _pb.ALREADY_ONLINE) \
+            else _pb.ALREADY_ONLINE
+        return _put_back_result(row["publish_id"], outcome, "publish", "published", row["external_url"],
+                                replayed=True)
+    if row["status"] == "unpublished" and note.get("outcome") == _pb.CHANGED_ON_WORDPRESS:
+        return _put_back_result(row["publish_id"], _pb.CHANGED_ON_WORDPRESS, note.get("wordpress_status"),
+                                "unpublished", row["external_url"], replayed=True)
+    return None
+
+
+@router.get("/put-back", response_model=PutBackList,
+            summary="The tenant's WordPress pages the tour retirement moved to draft, to put back online")
+async def list_put_back(request: Request, tenant=Depends(get_tenant)):
+    """The pages a tenant can put back online: moved to draft by the tour retirement (still in that state, no click
+    settled them) and about a tour AA serves again. Read on MAIN (the retirement flags have no tenant-pool grant) with
+    the tenant condition in every statement."""
+    tenant_id = tenant["sub"]
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            rows = [r for r in await conn.fetch(_pb.DRAFTED_PAGES_SQL, tenant_id, list(_pb.WORDPRESS_CHANNELS))
+                    if _pb.listed(r)]
+            states = await _tl.request_served_states(conn, tenant_id, [r["request_id"] for r in rows])
+    except asyncpg.UndefinedTableError:      # before CIS 360: no retirement, nothing to put back
+        rows, states = [], {}
+    data = [
+        {"publish_id": r["publish_id"], "piece_id": r["piece_id"], "title": r["angle_name"] or "Untitled",
+         "channel": r["channel"], "external_url": r["external_url"], "tour_name": r["tour_name"],
+         "drafted_at": r["drafted_at"].isoformat() if r["drafted_at"] else None}
+        for r in rows if states.get(r["request_id"]) is None or states[r["request_id"]].served
+    ]
+    logger.info("put_back_listed", tenant_id=tenant_id, count=len(data))
+    return {"data": data, "total": len(data)}
+
+
+@router.post("/{publish_id}/put-back", response_model=PutBackResult,
+             summary="Put back online a WordPress page the tour retirement moved to draft")
+async def put_back(publish_id: UUID, request: Request, tenant=Depends(get_tenant)):
+    """One click, one WordPress publish call, only on the tenant's own page that the retirement drafted (404 for any
+    other page, also another tenant's: no existence leak). Checks first, like publish(): the tour is served (409
+    tour_discontinued / tour_paused), the piece is its request's latest version and no other post of the request is
+    live (409), the AA-subject gate (409 content_needs_change / 503), the WordPress connection and site (422). Then
+    the page's publish_log row is claimed (a concurrent click gets 409) and WordPress is read: a draft is published,
+    a live page is only recorded, anything else is left as is. Idempotent: a repeat click answers from the row or the
+    flag's note (replayed). Audited as content_piece.put_back_online."""
+    pool = request.app.state.pool
+    tenant_id = tenant["sub"]
+    pid = str(publish_id)
+
+    # 1. the page's retirement flag (MAIN, tenant condition)
+    try:
+        async with pool.acquire() as conn:
+            page = await conn.fetchrow(_pb.DRAFTED_PAGE_SQL, tenant_id, list(_pb.WORDPRESS_CHANNELS), pid)
+    except asyncpg.UndefinedTableError:
+        page = None
+    if page is None:
+        raise HTTPException(status_code=404, detail=PUT_BACK_NOT_DRAFTED)
+
+    # 2. the row and its piece (scoped), the replay answers and the publish route's checks
+    async with acquire_scoped_conn(request, tenant_id, PUT_BACK_FLAG, fail_closed=True) as (conn, used_tenant_pool):
+        row = await conn.fetchrow(_pb.ROW_SQL.format(tenant_cond=_pb.ROW_TENANT_COND), pid, tenant_id,
+                                  _pb.STALE_AFTER_SECONDS)
+        if row is None:
+            raise HTTPException(status_code=404, detail=PUT_BACK_NOT_DRAFTED)
+        replay = _put_back_replay(row, page)
+        if replay:
+            return replay
+        if row["unpublished_by"] != _pb.RETIREMENT_ACTOR or row["status"] not in ("unpublished", "requested"):
+            raise HTTPException(status_code=409, detail=PUT_BACK_NOT_DRAFTED)
+        if row["status"] == "requested" and not row["stale"]:
+            raise HTTPException(status_code=409, detail=PUT_BACK_IN_PROGRESS)
+        if row["superseded"]:
+            raise HTTPException(status_code=409, detail=PUT_BACK_NEWER)
+        if row["other_live"]:
+            raise HTTPException(status_code=409, detail=PUT_BACK_OTHER_LIVE)
+        tour_of = ((await _tl.request_tours(conn, tenant_id, [row["request_id"]])).get(row["request_id"])
+                   if row["request_id"] else None)
+        try:
+            await _tl.ensure_served(conn, tour_of, "put this page back online")
+        except TourNotServedError as exc:
+            raise refuse_http(exc) from exc
+        integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE["blog"])
+    logger.info("put_back_requested", publish_id=pid, tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
+
+    # the AA-subject gate, like a new publish (MAIN; fails closed with 503)
+    gate_piece = {"content_text": row["content_text"] or "", "request_id": row["request_id"]}
+    await _subject_gate(pool, gate_piece, tenant_id, row["piece_id"], "blog")
+
+    if not row["external_id"]:
+        raise HTTPException(status_code=422, detail="This page has no WordPress post ID on record — publish it "
+                                                    "again in WordPress directly.")
+    if not integ or not integ["secret_key"]:
+        raise HTTPException(status_code=422, detail="Connect WordPress to put this page back online.")
+    try:
+        creds = await asyncio.to_thread(_get_secret, integ["secret_key"])
+    except ClientError as exc:
+        logger.error("put_back_secret_read_failed", tenant_id=tenant_id, error=str(exc))
+        raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
+    if is_tombstoned_secret(creds):
+        raise HTTPException(status_code=422, detail=reconnect_detail("WordPress"))
+    elsewhere = other_account("blog", creds, str(row["external_id"]), row["external_url"])
+    if elsewhere:
+        raise HTTPException(status_code=422, detail=f"This page lives on {elsewhere}, not the WordPress site "
+                                                    "connected now — publish it there directly.")
+
+    # 3. the claim: the retirement's draft row (or a stale earlier claim) becomes 'requested'
+    async with acquire_scoped_conn(request, tenant_id, PUT_BACK_FLAG, fail_closed=True) as (conn, _):
+        try:
+            async with conn.transaction():
+                claimed = await conn.fetchval(_pb.CLAIM_SQL, pid, tenant_id, _pb.RETIREMENT_ACTOR,
+                                              _pb.STALE_AFTER_SECONDS)
+        except asyncpg.UniqueViolationError:      # the same revision is live or in flight as another post
+            raise HTTPException(status_code=409, detail=PUT_BACK_OTHER_LIVE)
+        if not claimed:                            # another click took it between the read and here
+            again = await conn.fetchrow(_pb.ROW_SQL.format(tenant_cond=_pb.ROW_TENANT_COND), pid, tenant_id,
+                                        _pb.STALE_AFTER_SECONDS)
+            replay = _put_back_replay(again, page) if again else None
+            if replay:
+                return replay
+            raise HTTPException(status_code=409, detail=PUT_BACK_IN_PROGRESS)
+
+    # 4. WordPress (no connection held): read the post, publish it only when it is still a draft
+    try:
+        outcome, wp_status = await put_back_remote(creds, str(row["external_id"]))
+    except Exception as exc:  # noqa: BLE001 — the adapter raises only when nothing is confirmed
+        error = str(exc)[:300]
+        async with acquire_scoped_conn(request, tenant_id, PUT_BACK_FLAG, fail_closed=True) as (conn, _):
+            await conn.execute(_pb.REVERT_SQL, pid, tenant_id, _pb.RETIREMENT_ACTOR, error)
+        logger.warning("put_back_remote_failed", tenant_id=tenant_id, publish_id=pid, error=error)
+        raise HTTPException(status_code=502, detail=f"Could not put the page back online: {error}. It is still in "
+                                                    "draft; try again in a minute.")
+
+    # 5. record: live again, or back to the retirement's draft state when left as is
+    async with acquire_scoped_conn(request, tenant_id, PUT_BACK_FLAG, fail_closed=True) as (conn, used_for_finish):
+        if outcome == _pb.CHANGED_ON_WORDPRESS:
+            await conn.execute(_pb.REVERT_SQL, pid, tenant_id, _pb.RETIREMENT_ACTOR, None)
+            status = "unpublished"
+        else:
+            done = await conn.fetchrow(_pb.FINISH_SQL, pid, tenant_id, _pb.RETIREMENT_ACTOR)
+            status = done["status"] if done else "published"
+    note = {"outcome": outcome, "wordpress_status": wp_status, "by": f"tenant:{tenant_id}",
+            "at": datetime.now(timezone.utc).isoformat()}
+    try:  # MAIN: the flag table has no tenant-pool grant; best-effort (the row above is the record that counts)
+        async with pool.acquire() as conn:
+            await conn.execute(_pb.NOTE_SQL, page["flag_id"], tenant_id, json.dumps(note))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("put_back_note_failed", tenant_id=tenant_id, publish_id=pid, error=str(exc))
+    logger.info("put_back_done", tenant_id=tenant_id, publish_id=pid, outcome=outcome, wordpress_status=wp_status,
+                used_tenant_pool=used_for_finish)
+    try:  # AA-859 MAIN exception: audit_log has no tenant-pool grant; best-effort like publish()
+        await write_audit_log(
+            pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+            action=TenantAuditAction.CONTENT_PUT_BACK_ONLINE, resource_type="content_piece",
+            resource_id=row["piece_id"],
+            details={"channel": row["channel"], "publish_id": pid, "outcome": outcome, "wordpress_status": wp_status,
+                     "external_url": row["external_url"], "flag_id": page["flag_id"]},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("put_back_audit_log_failed", tenant_id=tenant_id, publish_id=pid, error=str(exc))
+    return _put_back_result(pid, outcome, wp_status, status, row["external_url"])
+
+
+async def _pages_to_put_back(pool, tenant_id, piece_ids) -> dict:
+    """AA-1039 (option A): {piece_id: publish_id} of the pieces with a drafted page to put back (MAIN, tenant
+    condition in the statement)."""
+    if not piece_ids:
+        return {}
+    async with pool.acquire() as main_conn:
+        return await _pb.pages_of_pieces(main_conn, tenant_id, piece_ids)
 
 
 async def _pending_needs_change(pool, tenant_id, piece_ids) -> dict:

@@ -135,8 +135,17 @@ def _retired_lines(n: dict) -> list[str]:
 
 def _restored_lines(n: dict) -> list[str]:
     s = n.get("summary") or {}
-    return [f"Good news: {n['tour_name']} is back on sale with Adventure Asia from {s.get('back_on') or 'today'}.",
-            "You can publish new articles and posts about it again from your Content studio."]
+    lines = [f"Good news: {n['tour_name']} is back on sale with Adventure Asia from {s.get('back_on') or 'today'}.",
+             "You can publish new articles and posts about it again from your Content studio."]
+    # AA-1039 (option A): the pages we moved to draft while the tour was off sale stay in draft until the tenant puts
+    # them back (one click each in the Content studio, Publish page); nothing is published for them.
+    pages = s.get("pages_drafted") or []
+    if pages:
+        lines.append("These pages of yours were moved to draft while the tour was off sale. They stay in draft until "
+                     "you put them back: open Publish in your Content studio and click \"Put back online\" next to "
+                     "each one (or publish it again from WordPress).")
+        lines += [f"  - {p.get('url')}" for p in pages]
+    return lines
 
 
 def _section(n: dict) -> list[str]:

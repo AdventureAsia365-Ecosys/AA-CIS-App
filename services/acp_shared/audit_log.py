@@ -50,6 +50,9 @@ class TenantAuditAction:
     # AA-802 — tenant downloaded a T2 tour version as DOCX (the admin "tenant has an older copy" check)
     TOUR_VERSION_EXPORTED = "tenant_tour_version.exported"
     CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
+    # AA-1039 (option A) — tenant clicked "Put back online" on a page the tour retirement moved to draft; details: the
+    # outcome (published / already_online / changed_on_wordpress) and the WordPress status read before acting
+    CONTENT_PUT_BACK_ONLINE = "content_piece.put_back_online"
     INTEGRATION_DISCONNECTED = "integration.disconnected"  # AA-815 — tenant removed a channel connection
     # AA-814 — a tenant wrote one of its own Facts Entries (Content studio /v1/facts); details: before/after per field
     FACT_CREATED = "fact.created"
