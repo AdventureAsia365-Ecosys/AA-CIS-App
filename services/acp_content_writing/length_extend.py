@@ -22,8 +22,10 @@ about 1.02 USD in second writer calls. The extend repair keeps every passing sec
   any attempt (F1 / F17 / F9 read the added text), and the AA-528 regression guard keeps attempt 1 when the added
   text broke a gate that passed (truth before length).
 
-Kill switch: `T9_LENGTH_EXTEND=off` (read through quality.trial_flags, so one trial job may set it): the old full
-rewrite. Any other value = on (default).
+Switch: `T9_LENGTH_EXTEND=on` turns it on (read through quality.trial_flags: one audit-tenant trial job may set it,
+`trial_flags.ALLOWED`). Unset or any other value = off = main's full rewrite, byte for byte (lesson S272: a change of
+the writing loop that has not had its review rounds and its measured trial ships behind a flag whose default is
+main). The tech lead flips the worker env after the paid trial (scripts/aa1077/extend_trial.py) meets the issue's bar.
 """
 from __future__ import annotations
 
@@ -52,7 +54,7 @@ _TAG_RE = re.compile(r"\[(?:R|F):")
 
 def mode() -> str:
     raw = (trial_flags.get(EXTEND_ENV) or "").strip().lower()
-    return EXTEND_OFF if raw == EXTEND_OFF else EXTEND_ON
+    return EXTEND_ON if raw == EXTEND_ON else EXTEND_OFF
 
 
 def _f4_short(gate_ledger: list) -> Optional[dict]:
@@ -98,7 +100,7 @@ def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], so
     """The extend plan of one attempt, or None (the old path): {"ledger": the ledger with the short F4 entry passed,
     "only_length": no other blocking failure, "facts": the untold seed facts, "sections": the chosen sections with
     the words to add, "deficit_chars", "target_chars"}."""
-    if channel != "blog" or mode() == EXTEND_OFF:
+    if channel != "blog" or mode() != EXTEND_ON:
         return None
     f4 = _f4_short(gate_ledger)
     if f4 is None:

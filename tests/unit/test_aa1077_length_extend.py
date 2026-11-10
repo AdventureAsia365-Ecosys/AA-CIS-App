@@ -45,6 +45,19 @@ def _short_ledger(extra=()):
     return [f4, {"gate": qr.F6_CTA_PRESENT, "passed": True, "violations": [], "blocking": True}, *extra]
 
 
+@pytest.fixture(autouse=True)
+def _extend_on(monkeypatch):
+    """The extend repair ships off (= main); these tests measure it switched on."""
+    monkeypatch.setenv(le.EXTEND_ENV, "on")
+
+
+def test_the_default_is_main(monkeypatch):
+    monkeypatch.delenv(le.EXTEND_ENV)
+    assert le.mode() == "off" and le.plan_for(TEXT, _short_ledger(), channel="blog", source=SOURCE) is None
+    monkeypatch.setenv(le.EXTEND_ENV, "yes")
+    assert le.mode() == "off"
+
+
 # ---------------------------------------------------------------- sections / plan
 
 def test_sections_are_the_body_headings_before_the_faq():

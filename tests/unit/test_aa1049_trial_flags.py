@@ -94,10 +94,10 @@ def test_parse_keeps_only_the_kinds_own_switches_with_known_values():
 @pytest.mark.parametrize("kind,name", [(k, n) for k, sw in tf.ALLOWED.items() for n in sw])
 def test_every_allowed_value_is_one_its_reader_knows(monkeypatch, kind, name):
     """A trial value the reader would treat as unknown (= main) would make a trial silently run main."""
-    from services.acp_content_writing import service
+    from services.acp_content_writing import length_extend, service
     from services.content_generation import t2_orchestrator
     reader = {"T9_REGRESSION_GUARD_MODE": service.regression_guard_mode, "T9_SEO_BUILDER": service.seo_builder_mode,
-              "T2_ORCHESTRATOR": t2_orchestrator.mode}[name]
+              "T9_LENGTH_EXTEND": length_extend.mode, "T2_ORCHESTRATOR": t2_orchestrator.mode}[name]
     for value in tf.ALLOWED[kind][name]:
         monkeypatch.setenv(name, value)
         assert reader() == value

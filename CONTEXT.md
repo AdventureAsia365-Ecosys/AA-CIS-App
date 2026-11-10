@@ -3712,6 +3712,20 @@ service, time or view (`trip_promise_kinds`, D1/D4/D15); its violations keep tho
 warns (`blocking: false`, in the flags): place background and other unsupported claims, CTA_NOT_REFLECTED,
 TEXT_INTEGRITY, title / meta claims, a fact flag with no named claim. The F9 classes (`f9_policy.entry_classes`)
 keep `judge_unavailable` and `text_integrity` apart from the fidelity classes in every count.
+AA-1077 (S277) — **blog length contract** (`services/acp_content_writing/length_contract.py`): one owner for the F4
+blog band (4,700–13,000 tag-stripped chars; `quality_gates._BLOG_MIN_CHARS/_MAX_CHARS` read it), the writer's word
+target (read from the hashed `prompts._BLOG_WORDS` / `_BLOG_WORDS_MAX`, pinned above the floor by a test) and the
+extend target. A blog F4 violation names its side (`length_short: content is only N chars (about W words), under the
+blog floor …` / `length_long: … far beyond …`) and the hold reason code is `length_short` / `length_long`
+(`gate_eval`; old labels keep `length`, group with `gate_eval.reason_family`). The normalizer ends with an F4 re-check
+of the stored blog text (`service._recheck_length`: an approved piece under the floor is held) and a `length_trace`
+repair-log entry (chars after each step); its FAQ answer fit never drops a pair that would take the blog under the
+floor. **Extend repair** (`length_extend.py`, opt-in `T9_LENGTH_EXTEND=on`, also a `trial_flags` switch; default =
+the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
+from the seed's untold fact sentences (one `t9_write` call, `generate.extend_sections`, mode `length_extend`), each
+checked in code (plain prose, size, `repair_contract.new_specifics`, seam integrity) before every gate re-runs; a gate
+needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`
+(paid, capped, never writes a piece).
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
