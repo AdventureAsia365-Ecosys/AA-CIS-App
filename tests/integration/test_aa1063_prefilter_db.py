@@ -209,6 +209,13 @@ T9_PAYLOAD = {"context": {"channel": "blog", "goal": {"name": "Zz trust"}, "chos
 
 
 async def _seed_live_t9(c) -> tuple[str, list[dict]]:
+    # the migration replay lacks columns Dev has on content_piece (added outside the numbered files; test_aa1040 too)
+    await c.execute("""
+        ALTER TABLE acp_shared.content_piece
+            ADD COLUMN IF NOT EXISTS channel text, ADD COLUMN IF NOT EXISTS seo_title text,
+            ADD COLUMN IF NOT EXISTS meta_description text, ADD COLUMN IF NOT EXISTS slug text,
+            ADD COLUMN IF NOT EXISTS route_hub_name text, ADD COLUMN IF NOT EXISTS writer_input jsonb,
+            ADD COLUMN IF NOT EXISTS job_id uuid""")
     tid = await c.fetchval(
         "INSERT INTO shared.tenants (name, slug, posts_per_week, kind) VALUES ('Zz AA-1063 demo', "
         "'zz-aa1063-demo', 3, 'demo') RETURNING tenant_id::text")
