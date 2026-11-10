@@ -3274,7 +3274,14 @@ posts, else in the daily digest (08:00 UTC). A fan-out replay re-enqueues every 
 event (mail job key `tour_notice_email:<notice_id>`), and the digest also takes an `immediate` notice left unmailed
 for an hour (a dead mail job); a mail job claims its notices before sending, so the two never both send one. A second
 `retired` event of a retired key (a reason change) adds no flag, notice or mail. `restored` resolves the open flags
-and writes the "back on sale" notice only for tenants whose latest notice is `retired` (never after a pause). Before
+and writes the "back on sale" notice only for tenants whose latest notice is `retired` (never after a pause). A page
+the retirement already moved to draft is never republished on its own (AA-1039 option A, S275): the notice lists it
+(`summary.pages_drafted`, mailed at once) and the tenant's bell gets one `tour.pages_to_put_back` row; the tenant
+clicks **Put back online** in the Content studio (`GET /v1/publish-log/put-back`, `POST
+/v1/publish-log/{publish_id}/put-back`, flag `aa1039:put_back_pool`): the publish route's checks (served, latest
+piece, no other live post of the request, the AA-subject gate, connection, site), then the page's `publish_log` row
+is claimed and WordPress read: a draft is published (one call), a live page recorded, anything else left as is
+(`detail.put_back` on the flag; a repeat click replays). Before
 CIS 360 is applied the fan-out fails retryable and the sampler re-queues those jobs once the tables exist.
 Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
 verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
