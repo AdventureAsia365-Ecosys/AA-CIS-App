@@ -469,6 +469,10 @@ class ContentState(TypedDict):
     # (services/quality/final_contract.py), set by final_contract_node, the last node before END. Declared so LangGraph
     # keeps it (AA-209 gotcha); generated_content.metadata.final_contract stores it.
     final_contract:         Optional[dict]
+    # AA-1049 W3 (S1 train): the S1 control plane's report (s1_train.REPORT_KEY: compose, local_fix routes / edits /
+    # left), set only when S1_CONTROL=contract. Declared so LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it
+    # on and generated_content.metadata.s1_train stores it. Never written with the switch off -> main's state.
+    s1_train:               Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {

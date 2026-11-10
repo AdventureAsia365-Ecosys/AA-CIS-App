@@ -59,6 +59,11 @@ store and a declared-diff replay.
   hitl exit (the shared checks tail); without one, the score decides as on main (saturated: `done`).
 - **Observability.** The train's report (`state["s1_train"]`: compose, local_fix routes / edits / left) is passed
   through `_rewrite_tour` and stored as `generated_content.metadata.s1_train` (absent when the switch is off).
+  `s1_train` is declared on `ContentState` (fix pass after review): an undeclared key is dropped by LangGraph before
+  the graph output (the AA-209 gotcha), so the first build returned `s1_train=None` on every run. The off path never
+  writes the key, so main parity is unchanged. `test_on_the_train_report_reaches_the_result_and_the_version_metadata`
+  guards it end to end (harness `run(..., extra_keys=("s1_train",))`; kept out of `RESULT_KEYS` so the main-recorded
+  golden stays as recorded).
 - **(e) dry store / replay.** `scripts/quality/replay_aa1049_s1.py` drives the production `_rewrite_tour` over stored
   S1 v2 Masters with the stored page as the writer cassette and the stored meta as the meta cassette; any other model
   call (flag_fix, the grounding repair, judge, LLM brand audit, nudge) is a counted MISS, Jev answers skipped, nothing
@@ -75,7 +80,8 @@ store and a declared-diff replay.
 - New: `services/content_generation/s1_train.py`; `scripts/quality/replay_aa1049_s1.py`, `export_aa1049_s1.py`,
   `replay_aa1049_s1_local.sh` (force-added: `scripts/` is gitignored, like the T9 / T2 replays).
 - `services/content_generation/s1_writer_v2_live.py` (the compose call, switch only), `graph.py` (`fix_node`, the
-  router hook in `should_retry`, no second grounding repair round on the train, the compose report in state),
+  router hook in `should_retry`, no second grounding repair round on the train, the compose report in state,
+  `ContentState.s1_train`),
   `judge_node.py` (`s1_judge_off_live_path`), `services/acp_content_writing/route_table.py|yaml` (`s1` section),
   `services/writing_memory/config_fp.py` (MODE_FLAGS a1 + normaliser), `api/routers/v1_pipeline.py` (pass `s1_train`
   through), `api/routers/admin_pipeline.py` (`metadata.s1_train`), `services/quality/change_control.lock.json`.

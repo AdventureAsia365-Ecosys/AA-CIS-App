@@ -286,6 +286,29 @@ def test_on_the_judge_stays_off_even_with_the_break_glass(monkeypatch):
     assert "s1_judge" not in [c[0] for c in t["llm"]] and t["unexpected"] == []
 
 
+def test_on_the_train_report_reaches_the_result_and_the_version_metadata():
+    """The report (state["s1_train"]) is a ContentState key, so LangGraph keeps it to the end of the graph,
+    _rewrite_tour returns it and the version metadata stores it (the AA-209 gotcha: an undeclared key is dropped)."""
+    from api.routers.admin_pipeline import _build_generated_metadata
+    t = h.run("meal_in_prose", env=ON, extra_keys=("s1_train",))
+    rep = t["result"]["s1_train"]
+    assert rep["compose"]["composed"] is True
+    assert rep["local_fix"]["routes"] and rep["local_fix"]["left"] == []
+    meta = _build_generated_metadata({"s1_train": rep}, brand_rule_id=None, brand_name=None, seo_mode="disabled",
+                                     model_used="m", llm_cost_usd=0.0, dataforseo_used=False)
+    assert meta["s1_train"] == rep
+
+
+@pytest.mark.parametrize("env", [None, {"S1_CONTROL": "graph"}])
+def test_off_the_train_report_is_absent(env):
+    from api.routers.admin_pipeline import _build_generated_metadata
+    t = h.run("meal_in_prose", env=env, extra_keys=("s1_train",))
+    assert t["result"]["s1_train"] is None
+    meta = _build_generated_metadata({}, brand_rule_id=None, brand_name=None, seo_mode="disabled",
+                                     model_used="m", llm_cost_usd=0.0, dataforseo_used=False)
+    assert "s1_train" not in meta
+
+
 def test_router_unit():
     base = {"writer_version": "v2", "quality_score": 10.0}
     assert s1_train.route_after_judge({**base, "failure_codes": []}) == "done"

@@ -175,9 +175,11 @@ def _jsonable(v: Any) -> Any:
     return json.loads(json.dumps(v, default=str, sort_keys=True))
 
 
-def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = None) -> dict:
+def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = None,
+        extra_keys: tuple = ()) -> dict:
     """Run one scenario through the production ``_rewrite_tour`` and return its trace. ``env``: the switches set for
-    the run (every S1 switch is cleared first; ``S1_WRITER_V2=on`` is the live A1 default, S250)."""
+    the run (every S1 switch is cleared first; ``S1_WRITER_V2=on`` is the live A1 default, S250). ``extra_keys``: result
+    keys read on top of RESULT_KEYS (kept out of RESULT_KEYS so the main-recorded parity golden stays as recorded)."""
     from api.routers import admin_pipeline
     from api.routers.v1_pipeline import _rewrite_tour
     from services.content_generation import flag_fix_node
@@ -201,7 +203,7 @@ def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = No
             extra(st)
         result = asyncio.run(_rewrite_tour(copy.deepcopy(tour), idx=0, total=1, brand_rules=copy.deepcopy(BRAND_RULES),
                                            seo={}, tour_agency=dict(TOUR_AGENCY), writing_memory=None))
-    out = {k: result.get(k) for k in RESULT_KEYS}
+    out = {k: result.get(k) for k in (*RESULT_KEYS, *extra_keys)}
     out["publishable"] = admin_pipeline._is_publishable(result)
     return {"llm": llm.calls, "unexpected": llm.unexpected, "result": _jsonable(out)}
 
