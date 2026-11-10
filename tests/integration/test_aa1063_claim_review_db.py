@@ -287,11 +287,9 @@ async def test_a_correction_and_the_queue_keep_one_decision(conn):
     assert (e2["label"], e2["decided_by"], e2["why"], e2["relabelled"]) == (
         "violation", ACTOR, "Invented: re-read.", True)
 
-    # h0: a correction, then a tech-lead row stored later (written as the owner, as an older tool would)
-    c0 = await rv.relabel(conn, SET, "1.0.0", h0, label="ok", claim_class=None, reason="Invented: first fix.",
-                          supersedes=None, actor=ACTOR)
+    # h2 again: a tech-lead row stored after the correction (written as the owner, as an older tool would)
     await conn.execute("RESET ROLE")
-    anchor = next(r for r in await store.read_rows(conn, SET, "1.0.0") if r["claim_hash"] == h0)
+    anchor = next(r for r in await store.read_rows(conn, SET, "1.0.0") if r["claim_hash"] == h2)
     cols = [c for c in store.COLUMNS if c not in ("labeller_kind", "labeller", "lens", "label", "adjudication",
                                                   "reason")]
     await conn.execute(
@@ -301,13 +299,18 @@ async def test_a_correction_and_the_queue_keep_one_decision(conn):
         "WHERE label_id = $1::uuid", anchor["label_id"])
     await conn.execute("SET LOCAL ROLE cis_app")
     relabels = await rv.read_relabels(conn, SET, "1.0.0")
-    [e0] = [x for x in rv.claim_entries(await store.read_rows(conn, SET, "1.0.0"), relabels) if x["claim_hash"] == h0]
+    [e0] = [x for x in rv.claim_entries(await store.read_rows(conn, SET, "1.0.0"), relabels) if x["claim_hash"] == h2]
     assert (e0["label"], e0["decided_by"], e0["why"], e0["relabelled"]) == (
         "unsure", "admin:older-tool", "invented later row", False)
-    assert e0["head_relabel_id"] == c0["relabel_id"]
-    c1 = await rv.relabel(conn, SET, "1.0.0", h0, label="violation", claim_class=None, reason="Invented: second fix.",
-                          supersedes=c0["relabel_id"], actor=ACTOR)
+    assert e0["head_relabel_id"] == r1["relabel_id"] and [x["kind"] for x in e0["history"]] == ["relabel", "tech_lead"]
+    c1 = await rv.relabel(conn, SET, "1.0.0", h2, label="ok", claim_class=None, reason="Invented: second fix.",
+                          supersedes=r1["relabel_id"], actor=ACTOR)
     assert (c1["previous_label"], c1["previous_source"]) == ("unsure", "tech_lead")
+    # a disputed claim nobody decided cannot be corrected: it goes through the queue
+    with pytest.raises(rv.ReviewError) as e:
+        await rv.relabel(conn, SET, "1.0.0", h0, label="ok", claim_class=None, reason="Invented.", supersedes=None,
+                         actor=ACTOR)
+    assert e.value.code == "no_final"
 
 
 @pytest.mark.asyncio
