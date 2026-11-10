@@ -22,9 +22,9 @@
       "refs": "AA-1052"
     },
     "route_table": {
-      "sha": "25cc7a28124d67b9",
-      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
-      "refs": "AA-1052"
+      "sha": "e3aa4959995290d1",
+      "evidence": "parity:tests/unit/test_aa1049_s1_train.py",
+      "refs": "AA-1049"
     },
     "writing_policy": {
       "sha": "739223d6cc24f1e5",

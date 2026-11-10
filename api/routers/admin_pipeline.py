@@ -400,6 +400,9 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
     # absent when memory is off for A1 or the v1 writer wrote it (no hook there).
     if result.get("writing_release"):
         metadata["writing_release"] = result["writing_release"]
+    # AA-1049 W3 (S1 train): what the S1 control plane composed, routed and fixed (only when S1_CONTROL=contract).
+    if result.get("s1_train"):
+        metadata["s1_train"] = result["s1_train"]
     _day_ratios = result.get("itinerary_day_ratios") or []
     if _day_ratios:
         from services.content_generation.graph import ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX

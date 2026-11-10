@@ -755,6 +755,9 @@ def _generate_node_v2(state: ContentState, client: LLMClient) -> ContentState:
         "cache_write_tokens": state.get("cache_write_tokens", 0) + out["cache_write_tokens"],
         "itinerary_day_ratios": [],
         "itinerary_nudges_used": 0,
+        # AA-1049 W3 (S1 train): what code composed on this draft (only when S1_CONTROL=contract)
+        **({"s1_train": {**(state.get("s1_train") or {}), "compose": out["s1_compose"]}} if "s1_compose" in out
+           else {}),
     }
 
 
@@ -1285,7 +1288,13 @@ def validate_node(state: ContentState) -> ContentState:
     }
 
 def should_retry(state: ContentState) -> str:
-    """Edge: decide retry / done / hitl."""
+    """Edge: decide retry / done / hitl.
+
+    AA-1049 W3 (S1 train): with S1_CONTROL=contract an A1 v2 draft is routed by its S1 codes instead
+    (s1_train.route_after_judge: a `rewrite` row redrafts once); off, main's score rule below."""
+    from . import s1_train
+    if s1_train.active(state):
+        return s1_train.route_after_judge(state)
     retry_count = state.get("retry_count", 0)
     score       = state.get("quality_score", 0)
 
@@ -1327,9 +1336,11 @@ def _grounding_recheck(state: ContentState) -> ContentState:
             state = {**state, "degraded": degraded.replace_detector(
                 state.get("degraded"), "grounding",
                 [{"name": degraded.GROUNDING_NOT_RUN, "count": 1, "detail": "regrounding_failed"}])}
-        if violations:
+        from . import s1_train
+        if violations and not s1_train.active(state):
             # flag_fix (e.g. the per-day itinerary nudge) can re-introduce a figure the grounding node
             # had removed — one more sentence repair before escalating to HITL (S204 smoke, Bhutan).
+            # AA-1049 W3 (S1 train): the local fix makes no model edit and there is no second repair round.
             rr = repair_and_recheck(state.get("generated", {}), violations, state.get("tour", {}),
                                     model_tier=state.get("model_tier"),
                                     brand_forbidden_words=state.get("brand_forbidden_words"))
@@ -1485,6 +1496,15 @@ def hitl_exit_node(state: ContentState) -> ContentState:
     return {**state, "exit_path": HITL_EXIT}
 
 
+def fix_node(state: ContentState) -> ContentState:
+    """The ``flag_fix`` node of every A1 / T2 graph: main's flag_fix, or, on an A1 v2 draft with S1_CONTROL=contract
+    (AA-1049 W3, S1 train), the deterministic local fix (s1_train.local_fix_node: no model call)."""
+    from . import s1_train
+    if s1_train.active(state):
+        return s1_train.local_fix_node(state)
+    return flag_fix_node(state)
+
+
 def after_grounding(state: ContentState) -> str:
     """S271 W0: a hitl draft skips flag_fix (a source-blind whole-field LLM rewrite of a draft that goes to a human
     anyway) and goes straight to revalidate, whose last step is the final check chain (_apply_grounding_recheck)."""
@@ -1602,7 +1622,7 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
     graph.add_node("increment_retry", increment_retry_t2 if t2_drafts else increment_retry)
     graph.add_node("brand_audit", brand_audit_node)
     graph.add_node("grounding", grounding_node)  # AA-691
-    graph.add_node("flag_fix", flag_fix_node)
+    graph.add_node("flag_fix", fix_node)
     graph.add_node("revalidate", revalidate_node)
 
     graph.set_entry_point("generate")
@@ -1659,7 +1679,7 @@ def build_graph_resumed() -> StateGraph:
     graph.add_node("increment_retry", increment_retry)
     graph.add_node("brand_audit", brand_audit_node)
     graph.add_node("grounding", grounding_node)
-    graph.add_node("flag_fix", flag_fix_node)
+    graph.add_node("flag_fix", fix_node)
     graph.add_node("revalidate", revalidate_node)
 
     graph.set_entry_point("resume_writer")
@@ -1693,7 +1713,7 @@ def build_graph_from_generated() -> StateGraph:
     graph.add_node("increment_retry", increment_retry)
     graph.add_node("brand_audit", brand_audit_node)
     graph.add_node("grounding", grounding_node)  # AA-691
-    graph.add_node("flag_fix", flag_fix_node)
+    graph.add_node("flag_fix", fix_node)
     graph.add_node("revalidate", revalidate_node)
 
     graph.set_entry_point("seed_generated")

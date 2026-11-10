@@ -77,3 +77,87 @@ t2:
     - {code: MISSING_FIELD, action: rewrite}
     - {code: T2_DAY_COUNT_VS_MASTER, action: rewrite}
     - {code: DEGRADED_DETECTOR, action: hold}
+# AA-1049 W3 (S1 train) — the S1 rows (opt-in S1_CONTROL=contract; the default A1 path of main reads none of this). One
+# row per S1 code of the taxonomy (services/quality/taxonomy.yaml a1_codes: every code A1 validate, the brand
+# pre-audit, grounding, the day oracle and the degraded marker can emit); the lint (route_table.s1_coverage_errors,
+# tests/unit/quality/test_aa1049_route_table.py) requires exactly that set. Actions, as the S1 path runs them
+# (services/content_generation/s1_train.py):
+#   repair_sentence     the grounding node's one source-aware sentence repair (grounding.repair_and_recheck, the only
+#                       model repair left on the path); no second round;
+#   cut                 a code delete of the offending sentence / item when its field keeps the rest (local_fix);
+#   regenerate_section  a deterministic section step: forbidden strip, SEO title fit, meta fit then the code meta
+#                       template (local_fix), the name normaliser (final_contract_node);
+#   rewrite             one redraft by the writer while drafts remain (route_after_judge, 2 drafts in total);
+#   hold                no step on this path clears it: left for the reviewer (when it blocks) or reported.
+# Mechanics only: the publish gate (admin_pipeline._is_publishable, hard_block_codes) does not read this table, so no
+# row can publish a tour. A code with no row routes to `default` (fail closed: hold).
+s1:
+  version: s1-route-table-v1
+  default: hold
+  rows:
+    # fact fidelity
+    - {code: UNSUPPORTED_NUMBER, action: repair_sentence}
+    - {code: UNSUPPORTED_CLAIM, action: repair_sentence}
+    - {code: ITINERARY_MEAL_TIME_INVENTED, action: cut}
+    - {code: HIGHLIGHTS_OPTIONAL_LANGUAGE, action: cut}
+    - {code: NUMBER_NOT_IN_SOURCE, action: hold}
+    - {code: NUMBER_NOUN_MISMATCH, action: hold}
+    - {code: NAME_NOT_IN_SOURCE, action: hold}
+    - {code: INCLUSION_CONTRADICTED, action: hold}
+    - {code: PRODUCT_TRUTH_RISK, action: hold}
+    - {code: FACT_CHECK_MANUAL_CHECK, action: hold}
+    # day structure (the writer redrafts; the code-composed headings never add or drop a day)
+    - {code: ITINERARY_DAY_COUNT_MISMATCH, action: rewrite}
+    - {code: ITINERARY_STILL_COMPRESSED, action: rewrite}
+    - {code: ITINERARY_STRUCTURE_WEAK, action: rewrite}
+    - {code: DAY_OUTPUT_GAP, action: rewrite}
+    - {code: DAY_OUTPUT_DUPLICATE, action: rewrite}
+    - {code: DAY_OUTPUT_EXTRA, action: rewrite}
+    - {code: DAY_OUTPUT_ORDER, action: rewrite}
+    - {code: DAY_SUBDAY_SPLIT, action: rewrite}
+    - {code: DAY_DEPARTURE_MIDTRIP, action: hold}
+    - {code: DAY_PLACE_MISMATCH, action: hold}
+    - {code: DAY_COUNT_VS_DURATION, action: hold}
+    - {code: SOURCE_DAY_CONTRADICTION, action: hold}
+    # truncation / missing output
+    - {code: MISSING_FIELD, action: rewrite}
+    - {code: TEXT_TRUNCATED, action: rewrite}
+    # SEO title and meta (code fit, then the code template)
+    - {code: SEO_META_TOO_LONG, action: regenerate_section}
+    - {code: META_TOO_SHORT, action: regenerate_section}
+    - {code: META_INCOMPLETE_SENTENCE, action: regenerate_section}
+    - {code: META_CUT, action: regenerate_section}
+    - {code: META_CUT_SIGNATURE, action: regenerate_section}
+    - {code: META_LENGTH, action: regenerate_section}
+    - {code: META_OPENER_ROBOTIC, action: regenerate_section}
+    - {code: META_PACKAGE_WORD, action: regenerate_section}
+    - {code: BRAND_SEO_META_VIOLATION, action: regenerate_section}
+    - {code: META_DFS_VERBATIM, action: regenerate_section}
+    - {code: SEO_TITLE_TOO_LONG, action: regenerate_section}
+    - {code: FORBIDDEN_WORD, action: regenerate_section}
+    - {code: NAME_ALL_CAPS, action: regenerate_section}
+    # voice and format (report on a v2 draft, or held for the reviewer: no whole-field model rewrite on this path)
+    - {code: GENERIC_AI_WORDING, action: hold}
+    - {code: STOCK_SUPERLATIVE, action: hold}
+    - {code: NAME_SUPERLATIVE, action: hold}
+    - {code: HIGHLIGHTS_NOT_LIST, action: hold}
+    - {code: HIGHLIGHTS_ORDERING_WRONG, action: hold}
+    - {code: HIGHLIGHTS_TOO_FEW, action: hold}
+    - {code: HIGHLIGHTS_TOO_GENERIC, action: hold}
+    - {code: ITINERARY_DAY_TITLE_GENERIC, action: hold}
+    - {code: SUBTITLE_CITY_LIST, action: hold}
+    - {code: SUBTITLE_GENERIC, action: hold}
+    - {code: SUBTITLE_TRIP_TYPE_MISMATCH, action: hold}
+    - {code: SUBTITLE_WAYPOINT_FORMAT, action: hold}
+    - {code: SUMMARY_HONEYMOON_LANGUAGE, action: hold}
+    - {code: SUMMARY_OFF_BRAND, action: hold}
+    - {code: SUMMARY_SELF_REFERENTIAL, action: hold}
+    - {code: SEO_TITLE_WEAK, action: hold}
+    - {code: SEO_TITLE_WRONG_ACTIVITY, action: hold}
+    - {code: DFS_INTENT_UNDERUSED, action: hold}
+    - {code: BRAND_AUDIT_FLAGGED, action: hold}
+    # detectors that did not run (an outage: no step can clear it)
+    - {code: DEGRADED_DETECTOR, action: hold}
+    - {code: DAY_CHECK_SKIPPED, action: hold}
+    - {code: BRAND_AUDIT_UNAVAILABLE, action: hold}
+    - {code: BRAND_AUDIT_UNCALIBRATED_JUDGE, action: hold}

@@ -22,6 +22,10 @@ and what is left after the repair budget: ``cut`` (a `truth` row's item may be c
 `cut_finding` row's item only when its finding says to cut) or ``hold`` (`quality_gates.hold_failure`, never for a
 `style_only` row; the F9 classes by `F9_CLASS_ACTIONS`).
 
+The same mechanics file carries the T2 rows (``t2``, the linear orchestrator) and the S1 rows (``s1``, the S1 train of
+``services/content_generation/s1_train.py``: one row per S1 code of the taxonomy, actions repair_sentence / cut /
+regenerate_section / rewrite / hold); both are opt-in paths and the default paths never read them.
+
 Pure: reads the compiled policy, `route_table.yaml` and the registry, imports nothing from the content-writing modules
 (quality_gates and sentence_repair import it). The derived sets are byte-equal to the S271 hand-written ones
 (tests/unit/test_aa926_equivalence.py replays every routing decision unchanged; tests/unit/quality/
@@ -309,3 +313,71 @@ T2_TABLE, T2_DEFAULT = _build_t2()
 def t2_route(code: Optional[str]) -> T2Route:
     """The T2 row of a finding code; a code with no row gets the `default` action (fail closed: still enforced)."""
     return T2_TABLE.get(code or "") or T2Route(code=code or "", action=T2_DEFAULT)
+
+
+# ------------------------------------------------------------------------------- S1 (AA-1049 W3, S1 train, opt-in)
+# The S1 control plane of services/content_generation/s1_train.py (S1_CONTROL=contract) routes every S1 code through
+# the `s1` section of the same mechanics file; the default A1 path (main) never reads it. Rows are keyed by the S1
+# codes of the taxonomy (`a1_codes`); the publish gate does not read them (no row can publish a tour).
+S1_MECHANICS_VERSION = "s1-route-table-v1"
+S1_ACTIONS = (REPAIR_SENTENCE, CUT, REGENERATE_SECTION, REWRITE, HOLD)
+
+
+@dataclass(frozen=True)
+class S1Route:
+    code: str
+    action: str                      # repair_sentence | cut | regenerate_section | rewrite | hold
+    classes: tuple = ()              # the code's taxonomy error classes
+
+
+def s1_schema_errors(doc: Optional[dict] = None) -> list[str]:
+    """Every problem of the mechanics file's `s1` section ([] = the S1 table builds)."""
+    sec = (mechanics() if doc is None else doc).get("s1") or {}
+    e: list[str] = []
+    _need(sec.get("version") == S1_MECHANICS_VERSION, f"route_table.yaml s1.version must be {S1_MECHANICS_VERSION!r}",
+          e)
+    _need(sec.get("default") in S1_ACTIONS, f"route_table.yaml s1.default must be one of {S1_ACTIONS}", e)
+    rows = sec.get("rows") or []
+    _need(all(isinstance(r, dict) for r in rows), "route_table.yaml s1.rows must be mappings", e)
+    codes = [r.get("code") for r in rows if isinstance(r, dict)]
+    _need(len(codes) == len(set(codes)), "route_table.yaml s1: exactly one row per code", e)
+    for r in (r for r in rows if isinstance(r, dict)):
+        where = f"route_table.yaml s1 {r.get('code')}"
+        _need(bool(r.get("code")), f"{where}: a code is required", e)
+        _need(r.get("action") in S1_ACTIONS, f"{where}: action must be one of {S1_ACTIONS}", e)
+        unknown = set(r) - {"code", "action"}
+        _need(not unknown, f"{where}: unknown keys {sorted(unknown)}", e)
+    return e
+
+
+def s1_coverage_errors(doc: Optional[dict] = None) -> list[str]:
+    """The S1 lint: exactly one row per S1 code of the taxonomy (`a1_codes`), no row for anything else, and every
+    routed code has at least one taxonomy error class."""
+    sec = (mechanics() if doc is None else doc).get("s1") or {}
+    rows = [r.get("code") for r in sec.get("rows") or [] if isinstance(r, dict)]
+    codes = qr.a1_codes()
+    out = [f"S1 code {c!r} has no route row" for c in sorted(set(codes) - set(rows))]
+    out += [f"S1 route row {c!r} is not an S1 code of the taxonomy (a1_codes)" for c in sorted(set(rows) - set(codes))]
+    out += [f"S1 code {d!r} has {rows.count(d)} route rows" for d in sorted({c for c in rows if rows.count(c) > 1})]
+    out += [f"S1 route row {c!r} has no taxonomy error class" for c in rows
+            if c in codes and not (codes[c] or {}).get("classes")]
+    return out
+
+
+def _build_s1() -> tuple[dict[str, S1Route], str]:
+    errors = s1_schema_errors()
+    if errors:
+        raise RouteTableError("; ".join(errors))
+    sec = mechanics()["s1"]
+    codes = qr.a1_codes()
+    return ({r["code"]: S1Route(code=r["code"], action=r["action"],
+                                classes=tuple((codes.get(r["code"]) or {}).get("classes") or ()))
+             for r in sec["rows"]}, sec["default"])
+
+
+S1_TABLE, S1_DEFAULT = _build_s1()
+
+
+def s1_route(code: Optional[str]) -> S1Route:
+    """The S1 row of a code; a code with no row gets the `default` action (fail closed: hold)."""
+    return S1_TABLE.get(code or "") or S1Route(code=code or "", action=S1_DEFAULT)
