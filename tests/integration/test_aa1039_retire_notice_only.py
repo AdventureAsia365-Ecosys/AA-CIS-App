@@ -130,7 +130,8 @@ async def _retire(conn, w):
 async def _flag(conn, page):
     return await conn.fetchrow("SELECT flag_id::text AS flag_id, action, draft_due_at, state, resolution, resolved_by, "
                                "tenant_message, detail, created_at FROM acp_shared.content_compliance_flag "
-                               "WHERE kind = 'tour_retired' AND publish_id = $1::uuid ORDER BY created_at DESC LIMIT 1",
+                               "WHERE kind = 'tour_retired' AND publish_id = $1::uuid "
+                               "ORDER BY created_at DESC, flag_id LIMIT 1",
                                page)
 
 
