@@ -60,6 +60,23 @@ round 3 are fixed, then the switch is asked again. This lane fixes both in `serv
   rule -> UNDECLARED approved->held) and M9 (drop the floor rule -> UNDECLARED revert into under-floor).
 - Local replay result: see the S275 section below.
 
-## S275 local replay
+## S275 local replay (free, no model call, no DB)
 
-(filled in below after the run)
+Base: `git archive` of CIS origin/main `746e95a8` (defaults), run with this branch's copy of the replay script.
+Input: root `docs/eval/aa729/fixture-1.2.0.json` (30 samples) + the S273 read-only export of 60 recent demo-tenant
+pieces (local `.tmp-session` only), 90 pieces, 88 guard pairs.
+
+| Run | Exit | Declared | Undeclared | Status flips |
+|---|---|---|---|---|
+| main defaults, repeat vs base | 0 | 0 | 0 | 0 |
+| branch defaults vs main | 0 | 0 | 0 | 0 |
+| branch `stable_keys` + `--opt-in` | 0 | D-guard-1 13, D-guard-3 5 | 0 | 0 |
+| branch `stable_keys` + `T9_SEO_BUILDER=on` + `--opt-in` | 0 | D-guard-1 13, D-guard-3 5, D-seo-4 14 | 0 | 0 |
+
+- The S273 run had D-guard-1 13 and D-guard-2 1. The one D-guard-2 pair is the finding-2 class on real data: the
+  S272 key rule kept a rewrite that went from 1 hold-capable key (F9) to 3 (new F17 + F18 truth findings) because it
+  cleared five F15 style keys. The hold rule now reverts it, like main (no diff any more).
+- The 5 D-guard-3 pairs are all one shape: F9 claim swap with F15 style cleared (F15 + F9 -> F9, hold-capable keys
+  1 -> 1 or 2 -> 2, a new F9 claim). Main keeps (no new gate), the opt-in mode reverts; both attempts are held on the
+  same gate, so no status flip.
+- 18 SEO-fit cassette misses (`MISS`, not compared) in the default and guard runs, 4 with the SEO builder on.
