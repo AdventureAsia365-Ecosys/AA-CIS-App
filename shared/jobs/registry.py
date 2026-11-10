@@ -124,7 +124,9 @@ class JobContext:
         # Shared clients the worker owns (e.g. "redis" for live-writing progress, ADR 0004).
         self.resources: dict = resources or {}
         self.payload: dict = job.payload
-        self.cost_usd: float = job.cost_usd
+        # AA-1078: the handler's own spend so far (shared.job.cost_usd also holds the stamped LLM part, which the
+        # runner adds again from the ledger at each save: starting from the column would count it twice)
+        self.cost_usd: float = queue.handler_cost(job)
         self.result: Optional[dict] = None
 
     @property
