@@ -42,6 +42,7 @@ from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode 
 from services.quality import lineage as _lineage  # AA-1052 W6 (writer-time lineage stamp)
 from services.quality import final_contract_store as _fc_store  # AA-1047 W1
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
+from services.brand_intake.save import CUSTOM_VALIDATORS_VALUE_SQL  # AA-1080
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -531,6 +532,8 @@ class BrandIdentityUpdate(BaseModel):
     good_examples:     Optional[str] = None
     target_markets:    Optional[List[str]] = None
     default_cta:       Optional[str] = None  # AA-771 (S233, migration 220)
+    # AA-1080 — AA-800 signature words, stored in custom_validators; None (not sent) keeps the previous value.
+    signature_words:   Optional[List[str]] = None
 
 
 class CountryUpdateRequest(BaseModel):
@@ -5000,6 +5003,7 @@ async def parse_brand_docx(
         raise HTTPException(status_code=400, detail=f"Invalid base64: {e}")
     out = _parse_brief_or_400(content)
     return {"parsed": out["fields"], "warnings": out["warnings"], "markets": out["markets"],
+            "drafted": out.get("drafted", []), "unmapped_fields": out.get("unmapped_fields", []),
             "filename": body.filename}
 
 
@@ -5012,8 +5016,12 @@ def _parse_brief_or_400(content: bytes) -> dict:
         raise HTTPException(status_code=501, detail="python-docx not installed on this server")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read this .docx file: {e}")
+    from services.brand_intake.markets import market_summary
     m = normalize_markets(out["fields"].get("target_markets"))
     out["markets"] = {k: m[k] for k in ("supported", "unsupported", "unknown")}
+    # AA-1080: the review screen names the market T2 keywords come from and why each unsupported one has none.
+    summary = market_summary(out["fields"].get("target_markets"))
+    out["markets"].update({k: summary[k] for k in ("seo_market", "notes")})
     too_long = brand_length_errors(out["fields"])
     if too_long:
         out["warnings"].append("Some sections are longer than the form allows — shorten them before "
@@ -5289,7 +5297,7 @@ _BRAND_COLS = (
     "COALESCE(voice_examples, '[]'::jsonb) AS voice_examples, "
     "COALESCE(good_examples, '') AS good_examples, "
     "COALESCE(target_markets, ARRAY[]::text[]) AS target_markets, "
-    "COALESCE(default_cta, '') AS default_cta"
+    "COALESCE(default_cta, '') AS default_cta, custom_validators"
 )
 _BRAND_ACTIVE_SQL = f"""
             SELECT {_BRAND_COLS}
@@ -5310,8 +5318,10 @@ _BRAND_INSERT_SQL = """
             INSERT INTO shared.tenant_brand_rules
                 (tenant_id, system_prompt, style_guide, forbidden_words, version, is_active,
                  updated_at, brand_name, brand_type, core_idea, customer_segment,
-                 customer_mindset, voice_examples, good_examples, target_markets, default_cta)
-            VALUES ($1, $2, $3, $4::jsonb, $5, true, NOW(), $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+                 customer_mindset, voice_examples, good_examples, target_markets, default_cta,
+                 custom_validators)
+            VALUES ($1, $2, $3, $4::jsonb, $5, true, NOW(), $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14,
+                    """ + CUSTOM_VALIDATORS_VALUE_SQL.format(param="$15", tenant="$1", version="$5") + """)
         """
 _BRAND_MARKETS_UPSERT_SQL = """
                 INSERT INTO shared.tenant_seo_config (tenant_id, target_market)
@@ -5350,12 +5360,22 @@ def _parse_brand_list(v):
         return []
 
 
+def _row_get(row, key):
+    """A record column that older test doubles may not carry (AA-1080 added custom_validators)."""
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
+
+
 @router.get("/brand-identity")
 async def get_brand_identity(
     request: Request, tenant_id: str = Depends(_resolve_brand_tenant_id),
     tenant_caller: bool = Depends(_brand_caller_is_tenant),
 ):
     # AA-557 J.23 — full field set (see BrandIdentityUpdate's own comment for why). Columns: _BRAND_COLS.
+    from services.acp_shared.signature_vocabulary import explicit_signature_words
+    from services.brand_intake.markets import market_summary
     if tenant_caller is True:
         # AA-859 wave 3: the tenant's own rows on the tenant pool (262 RLS) behind BRAND_IDENTITY_FLAG.
         async with acquire_scoped_conn(
@@ -5375,7 +5395,7 @@ async def get_brand_identity(
             "forbidden_words": [], "history": [], "brand_name": "", "brand_type": "",
             "core_idea": "", "customer_segment": "", "customer_mindset": "",
             "tone_of_voice": [], "good_examples": "", "target_markets": [],
-            "default_cta": "",
+            "default_cta": "", "signature_words": [], "markets": None,
         }
 
     def parse_fw(fw):
@@ -5410,6 +5430,10 @@ async def get_brand_identity(
         "good_examples":    row["good_examples"],
         "target_markets":   list(row["target_markets"]) if row["target_markets"] else [],
         "default_cta":      row["default_cta"],
+        # AA-1080 — the AA-800 signature words (custom_validators) and the market note (unsupported markets
+        # with the reason, the market T2 keywords come from), shown on load, not only after a save.
+        "signature_words":  explicit_signature_words(_row_get(row, "custom_validators")),
+        "markets":          market_summary(list(row["target_markets"]) if row["target_markets"] else []),
     }
 
 
@@ -5449,13 +5473,16 @@ async def update_brand_identity(
     # AA-741 (S229): the form's markets are THE tenant markets. T2/T7 read
     # tenant_seo_config.target_market, which no tenant could write, so every tenant silently
     # wrote for the US default. Normalise and sync it in the same transaction as the brand row.
-    from services.brand_intake.markets import target_market_json
+    from services.brand_intake.markets import market_summary, target_market_json
+    from services.brand_intake.save import record_unsupported_markets, signature_words_json
     market_json = target_market_json(target_markets)
+    custom_validators_json = signature_words_json(body.signature_words)  # AA-1080; None = keep the previous
 
     pool = request.app.state.pool
     args = (system_prompt, style_guide, _json.dumps(forbidden_words), brand_name, brand_type, core_idea,
             customer_segment, customer_mindset, _json.dumps(tone_of_voice), good_examples, target_markets,
             default_cta, _json.dumps(market_json))
+    kwargs = {"custom_validators_json": custom_validators_json}
     if tenant_caller is True:
         # AA-859 wave 3: one transaction on the tenant pool (262 RLS + grants) behind BRAND_IDENTITY_FLAG.
         async with acquire_scoped_conn(
@@ -5463,20 +5490,26 @@ async def update_brand_identity(
         ) as (conn, used_tenant_pool):
             _log_brand_identity("post", tenant_id, used_tenant_pool)
             if used_tenant_pool:   # already inside acquire_scoped_conn's transaction
-                current = await _save_brand_rows(conn, tenant_id, *args, guarded=True)
+                current = await _save_brand_rows(conn, tenant_id, *args, guarded=True, **kwargs)
             else:                  # flag off: the admin pool, one transaction as before
                 async with conn.transaction():
-                    current = await _save_brand_rows(conn, tenant_id, *args, guarded=False)
+                    current = await _save_brand_rows(conn, tenant_id, *args, guarded=False, **kwargs)
     else:
         # AA-859 MAIN exception (plan D2): the X-Admin-Secret staff branch (AA master brand).
         async with pool.acquire() as conn, conn.transaction():
-            current = await _save_brand_rows(conn, tenant_id, *args, guarded=False)
+            current = await _save_brand_rows(conn, tenant_id, *args, guarded=False, **kwargs)
             # AA-900 W0: the AA master brand is the A1 releases' config_fp brand_config: scan on this connection.
             # A tenant save stays off MAIN (AA-859): the worker's hourly reverify tick catches its tenant releases.
             from services.writing_memory.releases import reverify_scan_in_tx
             await reverify_scan_in_tx(conn, actor="brand_save:brand_identity")
     out = {"status": "updated", "version": current + 1,
-           "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
+           "markets": {**{k: market_json[k] for k in ("countries", "unsupported", "unknown")},
+                       **{k: v for k, v in market_summary(target_markets, market_json["countries"]).items()
+                          if k in ("supported", "seo_market", "defaulted", "notes")}}}
+    # AA-1080 / AA-859 MAIN exception (plan D2, like the CTA notice below): one unmapped-market request per declared
+    # country without search data, recorded on the main pool after the tenant transaction (best effort).
+    if tenant_id != _AA_INTERNAL_TENANT_ID:
+        await record_unsupported_markets(pool, tenant_id, market_json)
     # AA-819 follow-up (S237): a default CTA that claims reviews or ratings is saved as typed (F19
     # exempts the tenant's CTA line); the portal shows a warning and AA admins get one bell row.
     # aa_internal is AA's own brand (staff path), so it only gets the warning.
@@ -5491,7 +5524,8 @@ async def update_brand_identity(
 
 async def _save_brand_rows(conn, tenant_id, system_prompt, style_guide, forbidden_words_json, brand_name,
                            brand_type, core_idea, customer_segment, customer_mindset, voice_examples_json,
-                           good_examples, target_markets, default_cta, market_json, *, guarded: bool) -> int:
+                           good_examples, target_markets, default_cta, market_json, *, guarded: bool,
+                           custom_validators_json: str | None = None) -> int:
     """The POST's statements on `conn`, inside the caller's transaction; returns the previous MAX(version).
     guarded=True (tenant pool): advisory lock first, a duplicate version is a 409. guarded=False (admin pool):
     the pre-AA-859 statements, unchanged."""
@@ -5516,7 +5550,7 @@ async def _save_brand_rows(conn, tenant_id, system_prompt, style_guide, forbidde
     # rather than interleaved, so that pre-existing sanitization contract stays byte-stable.
     insert_args = (tenant_id, system_prompt, style_guide, forbidden_words_json, current + 1,
                    brand_name, brand_type, core_idea, customer_segment, customer_mindset,
-                   voice_examples_json, good_examples, target_markets, default_cta)
+                   voice_examples_json, good_examples, target_markets, default_cta, custom_validators_json)
     if guarded:
         try:
             await conn.execute(_BRAND_INSERT_SQL, *insert_args)
@@ -5624,7 +5658,8 @@ async def parse_brand_brief(
     out = _parse_brief_or_400(contents)
     logger.info("brand_brief_parsed", tenant_id=tenant_id, filename=body.filename,
                 fields=sorted(k for k, v in out["fields"].items() if v), warnings=len(out["warnings"]))
-    return {"fields": out["fields"], "warnings": out["warnings"], "markets": out["markets"]}
+    return {"fields": out["fields"], "warnings": out["warnings"], "markets": out["markets"],
+            "drafted": out.get("drafted", []), "unmapped_fields": out.get("unmapped_fields", [])}
 
 
 # ── GET /admin/billing ────────────────────────────────────────────────────────

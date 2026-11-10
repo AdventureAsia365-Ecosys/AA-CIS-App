@@ -158,7 +158,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # AA-1035 A10d (S270): 378 (the Dev-only E2E customer_success address) too.
 # AA-1055 PR 2 (S274): 393 (place_keyword, the SERP tier of search_demand, the research log tier) too.
 # AA-1039 follow-up (S276): 395 (tour_retirement_policy.auto_draft, the agency opt-in to automatic drafts) too.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 396) if k != 336]
+# AA-1080 (S277): 400 (the tenant pool INSERT on tenant_brand_rules.custom_validators, the signature words) too.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 401) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
@@ -169,7 +170,7 @@ def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
 
 @pytest.mark.asyncio
 async def test_dev_without_336_is_ready_once_the_r2_keys_are_registered():
-    status, body = await readiness.readiness(_keys_pool(395, DEV_KEYS_WITHOUT_336), now=0.0)
+    status, body = await readiness.readiness(_keys_pool(400, DEV_KEYS_WITHOUT_336), now=0.0)
     assert status == 200 and body["status"] == "ok" and "missing_schema_versions" not in body
 
 
@@ -185,6 +186,13 @@ async def test_dev_without_395_is_schema_behind():
     keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 395]
     status, body = await readiness.readiness(_keys_pool(394, keys), now=0.0)
     assert status == 503 and body["missing_schema_versions"] == ["395"]
+
+
+@pytest.mark.asyncio
+async def test_dev_without_400_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 400]
+    status, body = await readiness.readiness(_keys_pool(399, keys), now=0.0)
+    assert status == 503 and body["missing_schema_versions"] == ["400"]
 
 
 @pytest.mark.asyncio

@@ -1208,6 +1208,20 @@
             ],
             "title": "Good Examples"
           },
+          "signature_words": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Words"
+          },
           "style_guide": {
             "anyOf": [
               {
@@ -8590,6 +8604,20 @@
               }
             ],
             "title": "Good Examples"
+          },
+          "signature_words": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Words"
           },
           "style_guide": {
             "anyOf": [
