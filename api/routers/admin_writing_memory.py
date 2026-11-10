@@ -80,7 +80,8 @@ AA-922 (WM-30 / WM-31) — the weekly KPIs (services/writing_memory/kpi.py) and 
                                                       queues the weekly job (manual trigger)
   POST  /admin/writing-memory/releases/{id}/keep      {reason, codes?, days?}: keep an active release despite its soft
                                                       stops (<= 30 days)
-  GET   /admin/writing-memory/disagreements?status=open|resolved   the queue
+  GET   /admin/writing-memory/disagreements?status=open|resolved&exclude_source=   the queue (AA-1063: the
+        Metrics tab leaves golden_claim out; the Claim labels tab reviews those)
   POST  /admin/writing-memory/disagreements/{item_id}/resolve   {resolution: judge_right | human_right | unclear, note?}
 
 AA-1039 R6 slice 3 — Writing Lab (root ADR 0019 d13, TL-13 `regroup_lab`; services/writing_memory/lab.py): one read per
@@ -1174,11 +1175,12 @@ async def keep_release(release_id: str, body: KeepBody, request: Request,
 
 @router.get("/disagreements", dependencies=LAB_TEXT_LOGGED)
 async def list_disagreements(request: Request, status: Optional[Literal["open", "resolved"]] = "open",
-                             limit: int = Query(50, ge=1, le=200)):
+                             limit: int = Query(50, ge=1, le=200),
+                             exclude_source: Optional[Literal["golden", "piece_label", "golden_claim"]] = None):
     from services.writing_memory import disagreements as dis
     try:
         async with _pool(request).acquire() as conn:
-            items = await dis.list_items(conn, status=status, limit=limit)
+            items = await dis.list_items(conn, status=status, limit=limit, exclude_source=exclude_source)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     return {"items": items, "queue_max": dis.QUEUE_MAX, "queue_min": dis.QUEUE_MIN}

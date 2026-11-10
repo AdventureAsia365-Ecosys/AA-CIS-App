@@ -24,6 +24,28 @@ ECS exec (services/ground_truth/importer.py says why this path).
   GET   /admin/writing-memory/claim-labels/{set_id}/{set_version}/finals?audit_ok=   the release-evidence labels
                                                         WITH claim text (tenant text: Writing Lab text read, logged)
 
+AA-1063 (S275) — the Writing Lab review view, agent proposals, the label set browser and corrections
+(services/ground_truth/review.py, CIS 394):
+  GET   /admin/writing-memory/claim-labels/review?set_id=&set_version=&writer=&state=&proposal=&limit=&offset=
+                                                        golden_claim queue items in adjudication order with the
+                                                        sentence, context, evidence, lenses, newest proposal and
+                                                        decision; total and facets (Lab text read, logged)
+  GET   /admin/writing-memory/claim-labels/review/{item_id}/context   the full source of one item (logged)
+  POST  /admin/writing-memory/claim-labels/review/{item_id}/answer    {answer: correct | wrong | unsure, note?,
+                                                        proposal_id?}: resolve + tech-lead row in one transaction
+  POST  /admin/writing-memory/claim-labels/review/accept-proposals    {item_ids}: each open item answered with its
+                                                        newest proposal (at most 500)
+  POST  /admin/writing-memory/claim-labels/proposals/import           {run_id, dry_run (default true), set_id?,
+                                                        set_version?, proposals}: an agent panel's proposals
+  GET   /admin/writing-memory/claim-labels/sets         every label set version with its counts (no text)
+  GET   /admin/writing-memory/claim-labels/{set_id}/{set_version}/claims?source=&label=&writer=&claim_class=&split=
+                                                        &relabelled=&q=&limit=&offset=   every labelled claim with who
+                                                        decided it, when and why, and its history (logged)
+  POST  /admin/writing-memory/claim-labels/{set_id}/{set_version}/claims/{claim_hash}/relabel   {label,
+                                                        claim_class?, reason, supersedes}: an append-only correction
+The report and finals routes read the newest correction of a claim as its final label (review.effective_rows).
+Writes need a signed-in admin (x-admin-user-id) and ai.admin; 503 `unavailable` before CIS 394.
+
 Who may call (api/core/staff_authz.py POLICY): writes ai.admin; the counts reads lab.read (or tenant_content.read);
 the finals read tenant_content.read or lab.tenant_text.read (logged first, api/core/lab_read_log.py).
 Errors: 422 a bad payload (nothing written), 409 the version already holds other labels for these claims (a relabel is
@@ -44,6 +66,7 @@ from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from services.ground_truth import importer
 from services.ground_truth import panel as pn
+from services.ground_truth import review as rv
 from services.ground_truth import split_plan as sp
 from services.ground_truth import store
 
@@ -74,10 +97,34 @@ def _set(set_id: str, set_version: str) -> tuple[str, str]:
     return set_id, set_version
 
 
-def _unavailable(e: Exception):
+def _unavailable(e: Exception, mig: str = "CIS 388"):
     logger.warning("aa1048_claim_labels_unavailable", error=f"{type(e).__name__}: {str(e)[:200]}")
-    return HTTPException(status_code=503, detail={"detail": "The claim-label table is not applied yet (CIS 388)",
+    return HTTPException(status_code=503, detail={"detail": f"The claim-label tables are not applied yet ({mig})",
                                                   "code": "unavailable"})
+
+
+def _need_actor(raw: Optional[str]) -> str:
+    """AA-1063: a review write needs a signed-in admin (the id the BFF forwards from the verified JWT)."""
+    from services.writing_memory.signals import admin_actor_id
+
+    actor = admin_actor_id(raw)
+    if actor == "unknown":
+        raise HTTPException(status_code=403, detail={"detail": "This action needs a signed-in admin (no admin id "
+                                                               "on the request)", "code": "no_actor"})
+    return f"admin:{actor}"
+
+
+def _review_error(e: "rv.ReviewError"):
+    return HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
+
+
+def _uuid_or_404(value: str, what: str) -> str:
+    from uuid import UUID
+
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail=f"Unknown {what}")
 
 
 def _refused(e: Exception, status: int, code: str):
@@ -140,23 +187,152 @@ async def split_plan(request: Request,
             "candidates": [c.as_dict() for c in cands]}
 
 
+# ── AA-1063: review view, proposals, label set browser ────────────────────────────────────────────────────────────
+# Literal paths before the /{set_id}/{set_version}/... routes.
+
+WriterLit = Literal["a1", "t2", "t9_blog", "t9_social"]
+LabelLit = Literal["violation", "ok", "unsure"]
+
+
+class AnswerBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    answer: Literal["correct", "wrong", "unsure"]
+    note: Optional[str] = Field(None, max_length=400)
+    proposal_id: Optional[str] = Field(None, max_length=36)
+
+
+class AcceptBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_ids: list[str] = Field(..., min_length=1, max_length=rv.MAX_BULK)
+
+
+class ProposalsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: str = Field(..., min_length=1, max_length=64)
+    dry_run: bool = True
+    set_id: Optional[str] = Field(None, pattern=SET_ID_PATTERN)
+    set_version: Optional[str] = Field(None, pattern=SET_VERSION_PATTERN)
+    proposals: list[dict[str, Any]] = Field(..., min_length=1, max_length=rv.MAX_PROPOSALS)
+
+
+class RelabelBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: LabelLit
+    claim_class: Optional[str] = Field(None, max_length=48)
+    reason: str = Field(..., min_length=3, max_length=600)
+    supersedes: Optional[str] = Field(None, max_length=36)
+
+
+@router.get("/review", dependencies=LAB_TEXT_LOGGED)
+async def review_items(request: Request, set_id: Optional[str] = Query(None, pattern=SET_ID_PATTERN),
+                       set_version: Optional[str] = Query(None, pattern=SET_VERSION_PATTERN),
+                       writer: Optional[WriterLit] = None,
+                       state: Literal["open", "resolved", "all"] = "open",
+                       proposal: Optional[Literal["ok", "violation", "unsure", "none"]] = None,
+                       limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=100000)):
+    try:
+        async with _pool(request).acquire() as conn:
+            return await rv.list_items(conn, set_id=set_id, set_version=set_version, writer=writer, state=state,
+                                       proposal=proposal, limit=limit, offset=offset)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e, "CIS 394")
+
+
+@router.get("/review/{item_id}/context", dependencies=LAB_TEXT_LOGGED)
+async def review_context(item_id: str, request: Request):
+    iid = _uuid_or_404(item_id, "claim item")
+    try:
+        async with _pool(request).acquire() as conn:
+            return await rv.item_context(conn, iid)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rv.ReviewError as e:
+        raise _review_error(e)
+
+
+@router.post("/review/accept-proposals")
+async def review_accept(body: AcceptBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    actor = _need_actor(x_admin_user_id)
+    ids = [_uuid_or_404(i, "claim item") for i in body.item_ids]
+    try:
+        async with _pool(request).acquire() as conn:
+            result = await rv.accept_proposals(conn, ids, actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e, "CIS 394")
+    except rv.ReviewError as e:
+        raise _review_error(e)
+    logger.info("aa1063_claim_review_accept", items=len(ids), accepted=result["accepted"],
+                refused=len(result["refused"]), no_proposal=result["no_proposal"])
+    return result
+
+
+@router.post("/review/{item_id}/answer")
+async def review_answer(item_id: str, body: AnswerBody, request: Request,
+                        x_admin_user_id: Optional[str] = Header(None)):
+    actor = _need_actor(x_admin_user_id)
+    iid = _uuid_or_404(item_id, "claim item")
+    pid = _uuid_or_404(body.proposal_id, "proposal") if body.proposal_id else None
+    try:
+        async with _pool(request).acquire() as conn:
+            result = await rv.answer_item(conn, iid, answer=body.answer, actor=actor, note=body.note, proposal_id=pid)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e, "CIS 394")
+    except rv.ReviewError as e:
+        raise _review_error(e)
+    except store.StoreRefused as e:
+        raise _refused(e, 409, "set_version_holds_other_labels")
+    logger.info("aa1063_claim_review_answer", item_id=iid, answer=body.answer, resolution=result["resolution"],
+                inserted=result["inserted"])
+    return result
+
+
+@router.post("/proposals/import")
+async def proposals_import(body: ProposalsBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            result = await rv.import_proposals(conn, run_id=body.run_id, proposals=body.proposals,
+                                               apply=not body.dry_run, actor=actor, set_id=body.set_id,
+                                               set_version=body.set_version)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e, "CIS 394")
+    except rv.ReviewError as e:
+        raise _review_error(e)
+    logger.info("aa1063_claim_proposals_import", run_id=body.run_id, dry_run=result["dry_run"], new=result["new"],
+                inserted=result["inserted"], not_queued=result["not_queued"])
+    return result
+
+
+@router.get("/sets")
+async def label_sets(request: Request):
+    try:
+        async with _pool(request).acquire() as conn:
+            return {"sets": await rv.list_sets(conn)}
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+
+
 @router.get("/{set_id}/{set_version}/report")
 async def report(set_id: str, set_version: str, request: Request):
     set_id, set_version = _set(set_id, set_version)
     try:
         async with _pool(request).acquire() as conn:
             rows = await store.read_rows(conn, set_id, set_version)
+            relabels = await rv.read_relabels_soft(conn, set_id, set_version)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    finals = pn.final_labels(rows)
+    # AA-1063: counts over the stored label rows; everything that reads a final label reads the newest correction
+    eff = rv.effective_rows(rows, relabels)
+    finals = pn.final_labels(eff)
     labels_by_class: dict[str, dict[str, int]] = {}
     for f in finals.values():
         cls = labels_by_class.setdefault(f.claim_class or "-", {})
         cls[f.label] = cls.get(f.label, 0) + 1
-    return {"set": f"{set_id}@{set_version}", "rows": len(rows), **importer.counts(rows),
-            "agreement": pn.agreement_report(rows), "contradictions": pn.contradictions(finals),
+    return {"set": f"{set_id}@{set_version}", "rows": len(rows), "relabels": len(relabels), **importer.counts(rows),
+            "evidence_sources": {s: sum(1 for f in finals.values() if f.source == s) for s in rv.SOURCES},
+            "agreement": pn.agreement_report(eff), "contradictions": pn.contradictions(finals),
             "labels_by_class": labels_by_class,
-            "manifest": pn.manifest(rows, set_id=set_id, set_version=set_version)}
+            "manifest": pn.manifest(eff, set_id=set_id, set_version=set_version)}
 
 
 @router.post("/{set_id}/{set_version}/enqueue")
@@ -205,10 +381,59 @@ async def finals(set_id: str, set_version: str, request: Request, audit_ok: bool
     try:
         async with _pool(request).acquire() as conn:
             rows = await store.read_rows(conn, set_id, set_version)
+            relabels = await rv.read_relabels_soft(conn, set_id, set_version)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    kept = pn.release_evidence(pn.final_labels(rows), audit_ok=audit_ok)
+    kept = pn.release_evidence(pn.final_labels(rv.effective_rows(rows, relabels)), audit_ok=audit_ok)
     return {"set": f"{set_id}@{set_version}", "audit_ok": audit_ok, "finals": importer.finals_rows(kept)}
+
+
+@router.get("/{set_id}/{set_version}/claims", dependencies=LAB_TEXT_LOGGED)
+async def set_claims(set_id: str, set_version: str, request: Request,
+                     source: Optional[Literal["tech_lead", "panel_agreed", "none"]] = None,
+                     label: Optional[LabelLit] = None, writer: Optional[WriterLit] = None,
+                     claim_class: Optional[str] = Query(None, max_length=48),
+                     split: Optional[Literal["held_out", "train"]] = None, relabelled: Optional[bool] = None,
+                     q: Optional[str] = Query(None, max_length=200),
+                     limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0, le=100000)):
+    """AA-1063 label set browser: every labelled claim of a set version (Lab text read, logged)."""
+    set_id, set_version = _set(set_id, set_version)
+    try:
+        async with _pool(request).acquire() as conn:
+            rows = await store.read_rows(conn, set_id, set_version)
+            relabels = await rv.read_relabels_soft(conn, set_id, set_version)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    entries = rv.claim_entries(rows, relabels)
+    kept = rv.filter_claims(entries, source=source, label=label, writer=writer, claim_class=claim_class, split=split,
+                            relabelled=relabelled, q=q)
+    return {"set": f"{set_id}@{set_version}", "total": len(kept), "limit": limit, "offset": offset,
+            "classes": sorted({e["claim_class"] for e in entries if e["claim_class"]}),
+            "summary": rv.set_summary(rows, relabels), "claims": kept[offset:offset + limit]}
+
+
+@router.post("/{set_id}/{set_version}/claims/{claim_hash}/relabel")
+async def relabel_claim(set_id: str, set_version: str, claim_hash: str, body: RelabelBody, request: Request,
+                        x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1063: change a claim's final label (append only; `supersedes` = the current head correction or null)."""
+    from services.ground_truth.claims import valid_hex64
+
+    actor = _need_actor(x_admin_user_id)
+    set_id, set_version = _set(set_id, set_version)
+    if not valid_hex64(claim_hash):
+        raise HTTPException(status_code=404, detail="Unknown claim")
+    sup = _uuid_or_404(body.supersedes, "correction") if body.supersedes else None
+    try:
+        async with _pool(request).acquire() as conn:
+            result = await rv.relabel(conn, set_id, set_version, claim_hash, label=body.label,
+                                      claim_class=body.claim_class, reason=body.reason, supersedes=sup, actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e, "CIS 394")
+    except rv.ReviewError as e:
+        raise _review_error(e)
+    logger.info("aa1063_claim_relabel", set=f"{set_id}@{set_version}", relabel_id=result["relabel_id"],
+                previous_source=result["previous_source"])
+    return result
 
 
 __all__ = ["router"]

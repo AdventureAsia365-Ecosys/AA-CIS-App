@@ -21,7 +21,7 @@ _INSERT_SQL = (
     + ", ".join(f"${i + 1}" + ("::uuid" if c in _UUID_COLS else "") for i, c in enumerate(COLUMNS))
     + ") ON CONFLICT ON CONSTRAINT eval_claim_label_judgement_key DO NOTHING RETURNING label_id::text AS label_id")
 _SELECT_COLS = ", ".join(f"{c}::text AS {c}" if c in _UUID_COLS else c for c in COLUMNS)
-_READ_SQL = (f"SELECT label_id::text AS label_id, {_SELECT_COLS} "
+_READ_SQL = (f"SELECT label_id::text AS label_id, created_at, {_SELECT_COLS} "
              "FROM shared.eval_claim_label WHERE set_id = $1 AND set_version = $2 "
              "ORDER BY claim_hash, labeller_kind, lens NULLS LAST")
 QUEUE_SOURCE = "golden_claim"

@@ -749,6 +749,16 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals"): _LAB_TEXT_READ,
+    # AA-1063 (S275): the Writing Lab claim review, agent proposals, the label set browser and corrections. Reads that
+    # return claim text are Lab text reads (logged); the set counts carry no text; every write is ai.admin.
+    ("GET", "/admin/writing-memory/claim-labels/review"): _LAB_TEXT_READ,
+    ("GET", "/admin/writing-memory/claim-labels/review/{item_id}/context"): _LAB_TEXT_READ,
+    ("POST", "/admin/writing-memory/claim-labels/review/accept-proposals"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/claim-labels/review/{item_id}/answer"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/claim-labels/proposals/import"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/claim-labels/sets"): _LAB_READ,
+    ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/claims"): _LAB_TEXT_READ,
+    ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/claims/{claim_hash}/relabel"): AI_ADMIN,
     # AA-1050 W4: the claim-instrument shadow summary (api/routers/admin_claim_shadow.py): counts and ids, no text.
     ("GET", "/admin/writing-memory/claim-shadow/summary"): _LAB_READ,
 
