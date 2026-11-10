@@ -162,8 +162,9 @@ def test_all_rungs_down_tries_the_deferred_ones_last_with_the_same_rows_and_erro
     (now_rows, now_type, now_msg, now_calls), (old_rows, old_type, old_msg, old_calls) = \
         _run_both_ways(gw, monkeypatch, rows, RuntimeError("org outage"))
     assert now_rows == old_rows
-    assert now_rows == [(0, "sonnet-5-5", "refused", "access_denied", None),
-                        (1, "gpt-6-luna", "refused", "access_denied", None),
+    # S276 (lane l6): the not-called rungs name the connection whose circuit left them out (was NULL)
+    assert now_rows == [(0, "sonnet-5-5", "refused", "access_denied", "acc3"),
+                        (1, "gpt-6-luna", "refused", "access_denied", "acc3"),
                         (2, "lantern-mini", "error", "other", "bedrock-llm-org")]
     assert now_type is old_type is RuntimeError and now_msg == old_msg        # the route order in the message
     assert now_msg.index("sonnet-5-5") < now_msg.index("gpt-6-luna") < now_msg.index("lantern-mini")
@@ -212,8 +213,9 @@ def test_a_route_deadline_writes_the_deferred_rows_before_it_stops(gw, monkeypat
     call_log.wait_for_pending_writes()
     assert gw.calls == []
     refused = [r for r in rows if r["status"] == "refused"]
-    assert _rows_view(refused) == [(0, "sonnet-5-5", "refused", "access_denied", None),
-                                   (1, "gpt-6-luna", "refused", "access_denied", None)]
+    assert _rows_view(refused) == [(0, "sonnet-5-5", "refused", "access_denied", "acc3"),
+                                   (1, "gpt-6-luna", "refused", "access_denied", "acc3")]
+    assert all(r["quality_signal"]["refusal"] == "circuit_open" for r in refused)      # S276: nothing was sent
     # the deadline row names the rung not started (its position stays the scope's last one, as before S270)
     assert [(r["model"], r["status"], r["error_class"]) for r in rows if r["status"] != "refused"] == \
         [("lantern-mini", "error", "deadline")]
