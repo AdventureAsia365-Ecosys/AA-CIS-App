@@ -60,9 +60,11 @@ from services.acp_content_writing.facts import fetch_facts_for_writing, format_f
 from services.quality import trial_flags  # AA-1049: per-job opt-in of the W3 switches (audit tenants)
 from services.acp_content_writing import (ai_tells, authenticity, faq_answer_fit, faq_filter, hygiene, length_trim,
                                           sentence_repair, text_integrity, trip_facts)
+from services.acp_content_writing import length_contract, length_extend  # AA-1077 (blog length contract)
 from services.acp_shared.signature_vocabulary import signature_words
-from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
-                                                   repair_sentences, rewrite_with_feedback, write_content, write_faq)
+from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, extend_sections,
+                                                   fit_seo_fields, repair_sentences, rewrite_with_feedback,
+                                                   write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
                                                           FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq, expand_ledger,
@@ -1439,16 +1441,28 @@ def _real_pairs_first(pairs: list[tuple[str, str]], real_pool: list[dict]) -> li
 
 
 async def _apply_faq_answer_fit(content_text: str, flags: list[dict], *, context: dict, piece_id=None,
-                                request_id=None) -> tuple[str, list[dict], float]:
+                                request_id=None, floor_aware: bool = False) -> tuple[str, list[dict], float]:
     """S247 (AA-779) — the answer-fit step on the final blog text (faq_answer_fit.apply_answer_fit). Stores its
     record in context["faq_answer_fit"] (writer_input, admin-only) and adds what `on` dropped to the admin-only
-    F7_faq_autofix flag (a new entry, or the attempt's existing one). Returns (text, flags, cost)."""
+    F7_faq_autofix flag (a new entry, or the attempt's existing one). Returns (text, flags, cost).
+    AA-1077 — `floor_aware` (the normalizer): a drop that would take a blog at or over the F4 floor under it is not
+    made (the pairs stay, the record says `floor_kept`); a non-answer is a warning, a blog under the floor a hold."""
+    before = content_text
     content_text, record = await faq_answer_fit.apply_answer_fit(
         content_text, context=context, piece_id=piece_id, request_id=request_id)
     if not record:
         return content_text, flags, 0.0
+    floor = length_contract.BLOG_FLOOR_CHARS
+    kept_for_floor = (floor_aware and content_text != before and length_contract.measure(content_text) < floor
+                      <= length_contract.measure(before))
+    if kept_for_floor:
+        record = {**record, "floor_kept": True}
+        content_text = before
     context["faq_answer_fit"] = record
     lines = faq_answer_fit.fit_log_lines(record)
+    if kept_for_floor:
+        lines = [f"kept the FAQ answer(s) the fit would drop: the drop would leave the blog under its "
+                 f"{floor:,}-char length floor"]
     if lines:
         entry = next((f for f in flags if f.get("gate") == qr.F7_FAQ_AUTOFIX), None)
         if entry is None:
@@ -2014,6 +2028,38 @@ def _add_date_spans(context: dict) -> None:
         context["route_segments"] = [(a, trip_facts.with_date_spans(t)) for a, t in context["route_segments"]]
 
 
+LENGTH_TRACE_STEP = "length_trace"
+
+
+def _recheck_length(content_text: str, gate_ledger: list, status: str, held_reason: Optional[str], *,
+                    trace: dict) -> tuple[list, str, Optional[str], dict]:
+    """AA-1077 — F4 again on the text a blog stores (the last step of _normalize_final_text). S276: 3 of 7 approved
+    phase 2 blogs were stored under the 4,700-char floor while their ledger said F4 passed, and 10 of 13 F4 holds
+    were stored 192–557 chars shorter than the F4 reading. A fresh F4 failure replaces the ledger's F4 entry and
+    holds an approved piece (its label then reads `length_short`); a fresh pass leaves a failed entry as it is
+    (status never moves from held to approved here: the hold was decided on the gated text). Returns (ledger,
+    status, held_reason, the `length_trace` repair-log entry: chars after each normalizer step, the verdict)."""
+    from services.acp_content_writing.quality_gates import gate_extreme_length  # lazy, as the other F4 re-runs
+    fresh = gate_extreme_length(strip_citation_tags(content_text), "blog")
+    side = length_contract.entry_side(fresh)
+    entry = {"step": LENGTH_TRACE_STEP, "chars": dict(trace), "floor": length_contract.BLOG_FLOOR_CHARS,
+             "words": length_contract.words(content_text), "verdict": length_contract.code_for(fresh) or "in",
+             "held": False}
+    if side is None:
+        return gate_ledger, status, held_reason, entry
+    ledger = list(gate_ledger)
+    k = next((i for i, g in enumerate(ledger) if isinstance(g, dict) and g.get("gate") == qr.F4_EXTREME_LENGTH), None)
+    if k is None:
+        ledger.append(fresh)
+    else:
+        ledger[k] = {**ledger[k], **fresh}
+    if status == "approved":
+        status, held_reason = "held", _held_reason_from(fresh)
+        entry["held"] = True
+        logger.info("t9_length_recheck_held", verdict=entry["verdict"], chars=entry["chars"])
+    return ledger, status, held_reason, entry
+
+
 async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: list, status: str,
                                 held_reason: Optional[str], repair_log: list, summary, embedding, attempt: int,
                                 channel: str, spec, cta, brand_ignore, hyg: hygiene.HygieneContext, context: dict,
@@ -2023,13 +2069,18 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
 
     1. AA-780 stock-line cut (whatever the status), 2. AA-819 authenticity cut (may hold),
     3. AA-452 citation-tag strip (text, ledger, repair log, flags, held reason), 4. S247 FAQ answer fit (blog),
-    5. S234 r4 final integrity pass (fail closed: may hold).
+    5. S234 r4 final integrity pass (fail closed: may hold),
+    6. AA-1077 (blog) the F4 length re-check of the text it stores (`_recheck_length`): an approved blog the steps
+       above took under the floor is held `length_short`, and the ledger's F4 entry is the stored text's measure.
+       The FAQ answer fit (4) is floor-aware: a drop that would take the blog under the floor is not made.
+       Each step's length is kept in a `length_trace` repair-log entry (blog).
 
     It returns the text the final contract checks and ``_finalize_piece`` stores (no step after it edits the text)
     with the ledger, flags, status, held reason, repair log, summary / embedding (re-made after a cut) and the
     cost of its model calls. Moved from ``run_write_background`` unchanged; one function so the order is one place.
     """
     cost_usd = 0.0
+    trace: dict = {"loop": length_contract.measure(content_text)}  # AA-1077 — chars F4 reads, after each step
     # AA-780 (S246 panel) — a STOCK_PATTERNS line left in the final attempt's text (F15 blocks on
     # attempt 1 only) is cut in code here, whatever the status; never the hook or the CTA.
     content_text, gate_ledger, flags, stock_entry = _cut_stock_lines(
@@ -2039,6 +2090,7 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
         repair_log.append({"attempt": attempt, **stock_entry})
         if stock_entry["sentences_cut"]:
             summary, embedding = await _after_cut(content_text, tenant_id, embedding)
+    trace["stock_cut"] = length_contract.measure(content_text)
 
     # AA-819 (AUP 2026-11) — a review / customer voice / independence claim the repair could not
     # remove is cut here, never shipped (a held piece still reaches the tenant, AA-770).
@@ -2047,6 +2099,7 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
     if aup_entry:
         repair_log.append({"attempt": attempt, **aup_entry})
         summary, embedding = await _after_cut(content_text, tenant_id, embedding)
+    trace["authenticity_cut"] = length_contract.measure(content_text)
 
     # AA-452 — mandatory, tenant-facing-leak-prevention step: strip every [R:atom_id]/[F:id]
     # citation tag (channel='blog' only ever produces one, prompts.py's _BLOG_FORMAT_INSTRUCTIONS)
@@ -2069,13 +2122,19 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
     # final integrity pass (it reads the result).
     if channel == "blog":
         content_text, flags, fit_cost = await _apply_faq_answer_fit(
-            content_text, flags, context=context, piece_id=piece_id, request_id=request_id)
+            content_text, flags, context=context, piece_id=piece_id, request_id=request_id, floor_aware=True)
         cost_usd += fit_cost
+        trace["faq_answer_fit"] = length_contract.measure(content_text)
     # S234 round 4 (r3 panel §4 fix 1) — the very last step before the piece is stored, after every
     # repair, revert and the tag strip: fail closed — a duplicate, a second CTA or a fragment the
     # pass cannot remove holds the piece (r3 #19 was approved with three visible duplicates).
     content_text, gate_ledger, flags, status, held_reason = _final_integrity(
         content_text, hyg, gate_ledger, flags, status, held_reason)
+    if channel == "blog":
+        trace["final_integrity"] = length_contract.measure(content_text)
+        gate_ledger, status, held_reason, entry = _recheck_length(content_text, gate_ledger, status, held_reason,
+                                                                  trace=trace)
+        repair_log.append({"attempt": attempt, **entry})
     return {"content_text": content_text, "gate_ledger": gate_ledger, "flags": flags, "status": status,
             "held_reason": held_reason, "repair_log": repair_log, "summary": summary, "embedding": embedding,
             "cost_usd": cost_usd}
@@ -2247,6 +2306,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()
+            extend_plan: Optional[dict] = None  # AA-1077 — set on attempt 2 of a short blog (length_extend)
             if attempt == 1:
                 content_text, cost, seo_meta, summary = await asyncio.to_thread(
                     write_content, content_seed=atom_text, goal=goal, channel_style=channel_style,
@@ -2273,7 +2333,19 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # AA-768 — when attempt 1 failed only on quoted invented facts, fix just those
                 # sentences (sentence_repair.py) so the rewrite cannot invent new ones; anything
                 # else, or a failed repair call, takes the full rewrite as before.
-                repair_items = sentence_repair.plan(content_text, gate_ledger)
+                # AA-1077 — a blog short of the F4 floor gets the extend repair (length_extend: new paragraphs from its
+                # untold seed facts in its thinnest sections) instead of the full rewrite; its other failures route
+                # as before (a sentence repair for quoted findings; one that needs the full rewrite takes it, and
+                # then no extend runs). Attempt 2 only (attempt 3 never rewrites, AA-770).
+                extend_plan = (length_extend.plan_for(content_text, gate_ledger, channel=channel,
+                                                      source=grounding_text) if attempt == 2 else None)
+                if extend_plan is not None:
+                    repair_items = ([] if extend_plan["only_length"]
+                                    else sentence_repair.plan(content_text, extend_plan["ledger"]))
+                    if repair_items is None:
+                        extend_plan = None
+                if extend_plan is None:
+                    repair_items = sentence_repair.plan(content_text, gate_ledger)
                 # AA-777 — blog, attempt 3: an F1/F9 truth item still failing after one sentence repair
                 # is cut in code (never under the blog minimum) instead of a second repair call.
                 truth_cut, truth_cut_done = None, False
@@ -2403,6 +2475,25 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         facts_text=facts_text, **openers_kw, **search_kw, **lead_kw, **memory_kw,
                     )
                     fresh_text = True
+            if attempt > 1 and not fresh_text and extend_plan is not None:
+                # AA-1077 — the extend repair, after this attempt's sentence repair (if any) and before the SEO fit,
+                # the deterministic fixes and every gate, which then read the added paragraphs like any text.
+                progress_step("revise")
+                content_text, ext_cost, ext_entry = await asyncio.to_thread(
+                    length_extend.extend, content_text, extend_plan, call=extend_sections, source=grounding_text,
+                    cta=cta, ignore=brand_ignore, moments=hyg.moments, trip_ctx=trip_ctx,
+                    voice=", ".join((brand_audience or {}).get("voice") or []) or None, channel=channel,
+                    tenant_id=tenant_id, angle_gate_request_id=str(request_id), content_piece_id=str(piece_id),
+                    attempt=attempt)
+                cost += ext_cost
+                prior = repair_log[-1].get("repair_mode")
+                repair_log[-1]["repair_mode"] = (f"{prior}+{length_extend.EXTEND_MODE}"
+                                                 if prior and prior != "seo_fields" else length_extend.EXTEND_MODE)
+                repair_log[-1][length_extend.EXTEND_MODE] = {**ext_entry, "cost_usd": round(ext_cost, 6)}
+                _show_live_text(content_text, seo_meta, channel)
+                logger.info("t9_length_extend", request_id=str(request_id), attempt=attempt,
+                            added=ext_entry.get("added"), chars_before=ext_entry.get("chars_before"),
+                            chars_after=ext_entry.get("chars_after"), error=ext_entry.get("error"))
             content_from = attempt  # AA-916 WM-08 — this attempt wrote (or repaired) the current text
             total_cost += cost
             if channel == "blog":
