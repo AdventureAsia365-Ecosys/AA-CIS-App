@@ -328,6 +328,10 @@ async def _gate_write_noop(pool, piece_id):
     return None
 
 
+async def _put_back_pages_none(pool, tenant_id, piece_ids):
+    return {}
+
+
 @pytest.fixture(autouse=True)
 def _subject_gate_off(request, monkeypatch):
     """AA-1039 R6: the AA-subject gate (services/acp_shared/subject_gate.py) reads the main pool at the write and the
@@ -340,6 +344,18 @@ def _subject_gate_off(request, monkeypatch):
     monkeypatch.setattr(v1_publish, "_subject_gate", _gate_publish_noop)
     monkeypatch.setattr(v1_publish, "_pending_needs_change", _gate_pending_noop)
     monkeypatch.setattr(writing_service, "_subject_gate_after_write", _gate_write_noop)
+
+
+@pytest.fixture(autouse=True)
+def _put_back_guard_off(request, monkeypatch):
+    """AA-1039 (option A): Ready to publish and publish() read on the main pool whether a piece still has a WordPress
+    page the tour retirement drafted (services/acp_publish/put_back.py::pages_of_pieces). Publish unit tests script
+    their pool calls in order, so the read answers "none" unless a test opts in with the marker `real_put_back_guard`
+    (tests/unit/test_aa1039_put_back_online.py)."""
+    if "real_put_back_guard" in request.keywords:
+        return
+    from api.routers import v1_publish
+    monkeypatch.setattr(v1_publish, "_pages_to_put_back", _put_back_pages_none)
 
 
 # AA-1028 R1 slice 3: the tier RPM / assignable tiers / per-tier RPM readers that replaced PLAN_LIMITS read

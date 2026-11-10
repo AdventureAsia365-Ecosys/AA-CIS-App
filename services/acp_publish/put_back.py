@@ -33,7 +33,11 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from services.tour_lifecycle.fanout import ACTOR as RETIREMENT_ACTOR, FLAG_KIND, WORDPRESS_CHANNELS
+import asyncpg
+
+from services.tour_lifecycle.fanout import (
+    ACTOR as RETIREMENT_ACTOR, FLAG_KIND, OTHER_LIVE_SQL, SUPERSEDED_SQL, WORDPRESS_CHANNELS,
+)
 
 PUBLISHED = "published"
 ALREADY_ONLINE = "already_online"
@@ -46,7 +50,8 @@ STALE_AFTER_SECONDS = 120
 
 # The tenant's pages the retirement moved to draft (main pool): per publish_id its latest tour_retired flag resolved
 # 'drafted' where WordPress did draft it (not 'already_gone'). $1 tenant, $2 WordPress channels; {one} narrows to one
-# publish_id ($3). The caller filters on the row state (listed: still unpublished by the retirement, no put_back note).
+# publish_id ($3) or to pieces ($3). The caller filters on the row state (listed: still unpublished by the retirement,
+# no put_back note, and not a page the click always refuses: superseded / other_live, the reviewers' S275 finding).
 _DRAFTED_PAGES_SQL = f"""
     WITH latest AS (
         SELECT DISTINCT ON (f.publish_id) f.flag_id, f.publish_id, f.tour_id, f.drafted_at, f.detail
@@ -59,7 +64,7 @@ _DRAFTED_PAGES_SQL = f"""
            pl.status AS publish_status, pl.unpublished_by, latest.flag_id::text AS flag_id,
            latest.tour_id::text AS tour_id, latest.drafted_at, latest.detail -> 'put_back' AS put_back,
            latest.detail ->> 'tour_name' AS tour_name, cp.angle_gate_request_id::text AS request_id,
-           ago.name AS angle_name
+           ago.name AS angle_name, {SUPERSEDED_SQL} AS superseded, {OTHER_LIVE_SQL} AS other_live
       FROM latest
       JOIN acp_shared.publish_log pl ON pl.publish_id = latest.publish_id AND pl.tenant_id = $1::uuid
       JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id AND cp.tenant_id = pl.tenant_id
@@ -72,6 +77,9 @@ _DRAFTED_PAGES_SQL = f"""
 """
 DRAFTED_PAGES_SQL = _DRAFTED_PAGES_SQL.format(one="")
 DRAFTED_PAGE_SQL = _DRAFTED_PAGES_SQL.format(one="AND f.publish_id = $3::uuid")
+DRAFTED_PIECES_SQL = _DRAFTED_PAGES_SQL.format(
+    one="AND f.publish_id IN (SELECT p.publish_id FROM acp_shared.publish_log p "
+        "WHERE p.tenant_id = $1::uuid AND p.piece_id = ANY($3::uuid[]))")
 
 # The page's publish_log row with its piece (scoped connection): the publish route's checks read the same fields.
 # `other_live`: another post of the same request (any piece) is live or in flight, i.e. the tenant published it again
@@ -83,14 +91,7 @@ ROW_SQL = """
            pl.requested_at < now() - make_interval(secs => $3) AS stale,
            cp.content_text, cp.status AS piece_status, cp.angle_gate_request_id::text AS request_id,
            COALESCE(cp.channel, agr.channel) AS piece_channel,
-           EXISTS (SELECT 1 FROM acp_shared.content_piece newer
-                    WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
-                      AND newer.tenant_id = cp.tenant_id AND newer.created_at > cp.created_at) AS superseded,
-           EXISTS (SELECT 1 FROM acp_shared.publish_log other
-                     JOIN acp_shared.content_piece op ON op.piece_id = other.piece_id
-                    WHERE op.angle_gate_request_id = cp.angle_gate_request_id AND other.tenant_id = pl.tenant_id
-                      AND other.publish_id <> pl.publish_id
-                      AND other.status IN ('published', 'requested')) AS other_live
+           """ + SUPERSEDED_SQL + """ AS superseded, """ + OTHER_LIVE_SQL + """ AS other_live
       FROM acp_shared.publish_log pl
       JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id AND cp.tenant_id = pl.tenant_id
       JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
@@ -134,7 +135,22 @@ NOTE_SQL = f"""
 def listed(row) -> bool:
     """A drafted page the tenant can still put back: its row is the retirement's draft and no click settled it."""
     return (row["publish_status"] == "unpublished" and row["unpublished_by"] == RETIREMENT_ACTOR
-            and not row["put_back"])
+            and not row["put_back"] and not row["superseded"] and not row["other_live"])
+
+
+async def pages_of_pieces(conn, tenant_id, piece_ids) -> dict:
+    """{piece_id: publish_id} of the pieces with a drafted page the tenant can still put back (``listed``), on MAIN
+    (the retirement flags have no tenant-pool grant). Ready to publish leaves such a piece out (its page is listed
+    under "Pages to put back online") and the publish route refuses it (409): a new post would put a second copy
+    online and leave the drafted page behind. {} with no pieces, or before CIS 360."""
+    ids = [str(p) for p in piece_ids if p]
+    if not ids:
+        return {}
+    try:
+        rows = await conn.fetch(DRAFTED_PIECES_SQL, tenant_id, list(WORDPRESS_CHANNELS), ids)
+    except asyncpg.UndefinedTableError:
+        return {}
+    return {r["piece_id"]: r["publish_id"] for r in rows if listed(r)}
 
 
 def note(raw) -> dict:
@@ -171,5 +187,6 @@ async def remote_put_back(adapter, post_id) -> tuple[str, Optional[str]]:
 
 
 __all__ = ["ALREADY_ONLINE", "CHANGED_ON_WORDPRESS", "CLAIM_SQL", "DRAFTED_PAGES_SQL", "DRAFTED_PAGE_SQL",
-           "FINISH_SQL", "NOTE_SQL", "OUTCOMES", "PUBLISHED", "RETIREMENT_ACTOR", "REVERT_SQL", "ROW_SQL",
-           "ROW_TENANT_COND", "STALE_AFTER_SECONDS", "WORDPRESS_CHANNELS", "listed", "note", "remote_put_back"]
+           "DRAFTED_PIECES_SQL", "FINISH_SQL", "NOTE_SQL", "OUTCOMES", "PUBLISHED", "RETIREMENT_ACTOR", "REVERT_SQL",
+           "ROW_SQL", "ROW_TENANT_COND", "STALE_AFTER_SECONDS", "WORDPRESS_CHANNELS", "listed", "note",
+           "pages_of_pieces", "remote_put_back"]

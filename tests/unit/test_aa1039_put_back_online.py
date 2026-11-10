@@ -162,7 +162,8 @@ def _page(**over):
     p = {"publish_id": str(PUBLISH_ID), "piece_id": PIECE_ID, "channel": "blog", "external_url": URL,
          "publish_status": "unpublished", "unpublished_by": pb.RETIREMENT_ACTOR, "flag_id": FLAG_ID,
          "tour_id": str(uuid.uuid4()), "drafted_at": NOW, "put_back": None, "tour_name": "Misty Ridge Walk",
-         "request_id": REQUEST_ID, "angle_name": "Walking the misty ridge"}
+         "request_id": REQUEST_ID, "angle_name": "Walking the misty ridge", "superseded": False,
+         "other_live": False}
     p.update(over)
     return p
 
@@ -407,6 +408,9 @@ async def test_list_shows_only_unsettled_drafts_of_served_tours(monkeypatch):
         _page(publish_id="p-retired", request_id=retired_req),
         _page(publish_id="p-settled", put_back={"outcome": "changed_on_wordpress"}),
         _page(publish_id="p-back", publish_status="published", unpublished_by=None),
+        # S275 review: pages the click always refuses (409) are never offered
+        _page(publish_id="p-superseded", request_id=served_req, superseded=True),
+        _page(publish_id="p-other-live", request_id=served_req, other_live=True),
     ]
 
     class _Conn:
@@ -438,7 +442,8 @@ def test_put_back_uses_its_own_flag_only():
 
 
 def test_every_put_back_statement_names_the_tenant():
-    for sql in (pb.DRAFTED_PAGES_SQL, pb.DRAFTED_PAGE_SQL, pb.CLAIM_SQL, pb.REVERT_SQL, pb.FINISH_SQL, pb.NOTE_SQL):
+    for sql in (pb.DRAFTED_PAGES_SQL, pb.DRAFTED_PAGE_SQL, pb.DRAFTED_PIECES_SQL, pb.CLAIM_SQL, pb.REVERT_SQL,
+                pb.FINISH_SQL, pb.NOTE_SQL):
         assert "tenant_id = $" in sql
     assert pb.ROW_TENANT_COND in ROW_SQL
 
@@ -471,3 +476,143 @@ def test_the_activity_feed_names_the_click():
     assert tenant_account.TENANT_VISIBLE_ACTIONS["content_piece.put_back_online"][1] == "Put a page back online"
     assert tenant_account.detail_text("content_piece.put_back_online",
                                       {"channel": "blog", "outcome": "changed_on_wordpress"}) == "WordPress · left as is"
+
+
+# ── S275 review: a page the click always refuses is never offered; a piece with a page to put back is not published
+#    again as a second post ──────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_list_the_notice_and_the_click_share_one_refusal_rule():
+    from services.tour_lifecycle import fanout
+    for sql in (pb.DRAFTED_PAGES_SQL, pb.DRAFTED_PIECES_SQL, ROW_SQL, fanout.DRAFTED_PAGES_OF_TOURS_SQL):
+        assert fanout.SUPERSEDED_SQL in sql and fanout.OTHER_LIVE_SQL in sql
+    assert "NOT " + fanout.SUPERSEDED_SQL in fanout.DRAFTED_PAGES_OF_TOURS_SQL
+    assert "NOT " + fanout.OTHER_LIVE_SQL in fanout.DRAFTED_PAGES_OF_TOURS_SQL
+
+
+@pytest.mark.asyncio
+async def test_pages_of_pieces_keeps_only_pages_to_put_back():
+    rows = [_page(piece_id="a", publish_id="pa"), _page(piece_id="b", publish_id="pb", superseded=True),
+            _page(piece_id="c", publish_id="pc", other_live=True),
+            _page(piece_id="d", publish_id="pd", put_back={"outcome": "changed_on_wordpress"}),
+            _page(piece_id="e", publish_id="pe", publish_status="published", unpublished_by=None)]
+    seen = []
+
+    class _Conn:
+        async def fetch(self, sql, *args):
+            seen.append((sql, args))
+            return rows
+
+    assert await pb.pages_of_pieces(_Conn(), TENANT_ID, ["a", "b", None]) == {"a": "pa"}
+    sql, args = seen[0]
+    assert sql == pb.DRAFTED_PIECES_SQL and args[0] == TENANT_ID and args[2] == ["a", "b"]
+    assert await pb.pages_of_pieces(_Conn(), TENANT_ID, []) == {} and len(seen) == 1
+
+    class _Before360:
+        async def fetch(self, sql, *args):
+            raise asyncpg.UndefinedTableError("no flag table")
+
+    assert await pb.pages_of_pieces(_Before360(), TENANT_ID, ["a"]) == {}
+
+
+def _pending_row(piece_id, request_id):
+    return {"piece_id": piece_id, "content_text": "A quiet lane by the lantern bay.", "created_at": NOW,
+            "channel": "blog", "angle_name": "Lantern lanes", "route_hub_name": None, "route_segment_count": None,
+            "request_id": request_id}
+
+
+@pytest.mark.asyncio
+async def test_ready_to_publish_leaves_out_a_piece_whose_page_is_to_put_back(monkeypatch):
+    rows = [_pending_row("drafted-served", "r1"), _pending_row("drafted-off-sale", "r2"), _pending_row("fresh", "r3")]
+
+    class _Conn:
+        async def fetch(self, sql, *args):
+            assert sql == pub_mod._PENDING_SQL
+            return rows
+
+    @asynccontextmanager
+    async def scoped(request, tenant_id, flag, fail_closed=True):
+        yield _Conn(), True
+
+    async def annotate(conn, tenant_id, items, request_key="request_id"):
+        states = {"r1": ServedState("served"), "r2": ServedState("retired"), "r3": None}
+        return [dict((states[i["request_id"]] or ServedState()).fields()) for i in items]
+
+    monkeypatch.setattr(pub_mod, "acquire_scoped_conn", scoped)
+    monkeypatch.setattr(pub_mod, "annotate_by_request", annotate)
+    guard = AsyncMock(return_value={"drafted-served": "p1", "drafted-off-sale": "p2"})
+    monkeypatch.setattr(pub_mod, "_pages_to_put_back", guard)
+    out = await pub_mod.list_pending(MagicMock(), TENANT)
+    # served again: listed under "Pages to put back online" instead; still off sale: stays with its badge
+    assert [d["piece_id"] for d in out["data"]] == ["drafted-off-sale", "fresh"] and out["total"] == 2
+    assert out["data"][0]["served_status"] == "retired"
+    assert guard.await_args.args[1:] == (TENANT_ID, ["drafted-served", "drafted-off-sale", "fresh"])
+
+    guard.side_effect = RuntimeError("main pool down")       # display only: nothing hidden on a read error
+    out = await pub_mod.list_pending(MagicMock(), TENANT)
+    assert out["total"] == 3
+
+
+def _publish_setup(monkeypatch, guard):
+    piece = {"piece_id": PIECE_ID, "content_text": "A quiet lane by the lantern bay.", "status": "approved",
+             "slug": None, "seo_title": None, "meta_description": None, "created_at": NOW, "ai_provenance": None,
+             "channel": "blog", "angle_name": "Lantern lanes", "request_id": None, "superseded": False}
+
+    class _Conn:
+        async def fetchrow(self, sql, *args):
+            if sql == pub_mod._PUBLISH_INTEGRATION_SQL:
+                return {"secret_key": "tenant/wp"}
+            assert "FROM acp_shared.content_piece cp" in sql and args[1] == TENANT_ID
+            return piece
+
+        async def fetch(self, sql, *args):
+            return []
+
+    @asynccontextmanager
+    async def scoped(request, tenant_id, flag, fail_closed=True):
+        yield _Conn(), True
+
+    claim = AsyncMock()
+    monkeypatch.setattr(pub_mod, "acquire_scoped_conn", scoped)
+    monkeypatch.setattr(pub_mod, "_pages_to_put_back", guard)
+    monkeypatch.setattr(pub_mod, "claim", claim)
+    monkeypatch.setattr(pub_mod, "_get_secret", lambda key: dict(WP_CREDS))
+    return claim
+
+
+@pytest.mark.asyncio
+async def test_publish_refuses_a_piece_whose_drafted_page_is_to_put_back(monkeypatch):
+    guard = AsyncMock(return_value={PIECE_ID: str(PUBLISH_ID)})
+    claim = _publish_setup(monkeypatch, guard)
+    with pytest.raises(HTTPException) as exc:
+        await pub_mod.publish(uuid.UUID(PIECE_ID), MagicMock(), tenant=TENANT)
+    assert exc.value.status_code == 409 and exc.value.detail == pub_mod.PUBLISH_PUT_BACK_FIRST
+    assert guard.await_args.args[1:] == (TENANT_ID, [PIECE_ID]) and not claim.called
+
+
+@pytest.mark.asyncio
+async def test_publish_fails_closed_when_the_put_back_read_fails(monkeypatch):
+    claim = _publish_setup(monkeypatch, AsyncMock(side_effect=RuntimeError("main pool down")))
+    with pytest.raises(HTTPException) as exc:
+        await pub_mod.publish(uuid.UUID(PIECE_ID), MagicMock(), tenant=TENANT)
+    assert exc.value.status_code == 503 and not claim.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.real_put_back_guard
+async def test_the_guard_reads_main_with_the_tenant_condition():
+    seen = []
+
+    class _Conn:
+        async def fetch(self, sql, *args):
+            seen.append((sql, args))
+            return [_page(piece_id=PIECE_ID)]
+
+    @asynccontextmanager
+    async def acquire():
+        yield _Conn()
+
+    pool = MagicMock()
+    pool.acquire = acquire
+    assert await pub_mod._pages_to_put_back(pool, TENANT_ID, [PIECE_ID]) == {PIECE_ID: str(PUBLISH_ID)}
+    assert seen[0][0] == pb.DRAFTED_PIECES_SQL and seen[0][1][0] == TENANT_ID
+    assert await pub_mod._pages_to_put_back(pool, TENANT_ID, []) == {} and len(seen) == 1

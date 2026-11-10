@@ -180,8 +180,25 @@ OUTSTANDING_RETIRED_SQL = """
      WHERE latest.event = 'retired'
 """
 
+# AA-1039 (option A): two states in which "Put back online" always refuses a drafted page (409), over its publish_log
+# row `pl`. Shared by the restore notice below, the Content studio list and the click (services/acp_publish/put_back.py)
+# so a page the tenant cannot put back is never offered. SUPERSEDED: its piece is not its request's latest version (a
+# rewrite, a reopen). OTHER_LIVE: another post of the same request is live or in flight (published again since).
+SUPERSEDED_SQL = """EXISTS (SELECT 1 FROM acp_shared.content_piece own
+                     JOIN acp_shared.content_piece newer ON newer.angle_gate_request_id = own.angle_gate_request_id
+                          AND newer.tenant_id = own.tenant_id AND newer.created_at > own.created_at
+                    WHERE own.piece_id = pl.piece_id AND own.tenant_id = pl.tenant_id)"""
+OTHER_LIVE_SQL = """EXISTS (SELECT 1 FROM acp_shared.content_piece own
+                     JOIN acp_shared.content_piece op ON op.angle_gate_request_id = own.angle_gate_request_id
+                          AND op.tenant_id = own.tenant_id
+                     JOIN acp_shared.publish_log other ON other.piece_id = op.piece_id
+                          AND other.tenant_id = pl.tenant_id
+                    WHERE own.piece_id = pl.piece_id AND own.tenant_id = pl.tenant_id
+                      AND other.publish_id <> pl.publish_id AND other.status IN ('published', 'requested'))"""
+
 # AA-1039 (option A): the tours' ($1) WordPress pages the retirement moved to draft and nobody put back since: per page
-# its latest drafted flag (WordPress did draft it), the publish_log row still the retirement's draft, no click noted.
+# its latest drafted flag (WordPress did draft it), the publish_log row still the retirement's draft, no click noted,
+# and one the tenant can put back (not superseded, no other live post of the request).
 DRAFTED_PAGES_OF_TOURS_SQL = f"""
     WITH latest AS (
         SELECT DISTINCT ON (f.publish_id) f.publish_id, f.tenant_id, f.detail
@@ -193,6 +210,7 @@ DRAFTED_PAGES_OF_TOURS_SQL = f"""
       JOIN acp_shared.publish_log pl ON pl.publish_id = latest.publish_id AND pl.tenant_id = latest.tenant_id
      WHERE COALESCE(latest.detail ->> 'wordpress', 'drafted') = 'drafted' AND NOT (latest.detail ? 'put_back')
        AND pl.status = 'unpublished' AND pl.unpublished_by = '{ACTOR}'
+       AND NOT {SUPERSEDED_SQL} AND NOT {OTHER_LIVE_SQL}
      ORDER BY pl.tenant_id, pl.published_at, pl.publish_id
 """
 

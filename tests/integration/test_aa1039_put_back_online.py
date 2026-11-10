@@ -11,7 +11,10 @@ puts each drafted WordPress page back online with one click.
   no WordPress call;
 - a page the tenant set to private on WordPress is left as is (row back to the retirement's draft, gone from the
   list, a repeat click replays);
-- a request already published again as another post: 409, the page stays in draft.
+- a request already published again as another post: 409, the page stays in draft and is not listed;
+- S275 review: after a restore, Ready to publish leaves the piece out and publish() refuses it (409, no second post)
+  while its page is to put back; a rewrite (newer piece) before the restore keeps the page out of the notice and the
+  list.
 
 One rolled-back transaction per test; the "tenant pool" is the test connection with SET LOCAL ROLE aa_app_user (the
 test_aa817_tenant_pool_routes harness). WordPress, Secrets Manager and SES are fakes. Invented names only.
@@ -119,7 +122,7 @@ async def _event_key(conn, t, event):
                                "WHERE source_id = $1 AND event = $2 ORDER BY id DESC LIMIT 1", t.group, event)
 
 
-async def _retire_draft_restore(conn, w):
+async def _retire_draft_restore(conn, w, before_restore=None):
     """The S274 rehearsal path: retire, the notice period ends, the page goes to draft, the tour comes back."""
     pool = l2._OneConnPool(conn)
     await tl.trash_master(conn, w.t.tour)
@@ -134,6 +137,8 @@ async def _retire_draft_restore(conn, w):
 
     out = await fanout.move_to_draft(pool, flag_id, read_secret=read_secret, adapter_for=lambda creds: w.site)
     assert out["status"] == "drafted" and w.site.status == "draft"
+    if before_restore:
+        await before_restore()
     await tl.restore_master(conn, w.t.tour)
     await tl.activate_master(conn, w.t.tour)
     key = await _event_key(conn, w.t, "restored")
@@ -244,3 +249,53 @@ async def test_content_published_again_as_another_post_keeps_the_page_in_draft(c
             await _click(conn, w.tenant, w.page)
     assert exc.value.status_code == 409 and exc.value.detail == pub_mod.PUT_BACK_OTHER_LIVE
     assert (await _row(conn, w.page))["status"] == "unpublished" and w.site.status == "draft"
+    # a page the click always refuses is not offered (S275 review)
+    assert (await pub_mod.list_put_back(_request(conn, True), tenant={"sub": w.tenant}))["data"] == []
+
+
+async def _pending_ids(conn, tenant):
+    return [d["piece_id"] for d in (await pub_mod.list_pending(_request(conn, True), tenant={"sub": tenant}))["data"]]
+
+
+async def _publish_log_count(conn, piece):
+    return await conn.fetchval("SELECT count(*) FROM acp_shared.publish_log WHERE piece_id = $1::uuid", piece)
+
+
+@pytest.mark.asyncio
+async def test_after_a_restore_ready_to_publish_points_to_put_back_not_a_second_post(conn):
+    w = await _seed(conn, "pb-pending")
+    await _retire_draft_restore(conn, w)
+    assert w.piece not in await _pending_ids(conn, w.tenant)          # listed under "Pages to put back online"
+    async with _wordpress(w.site):
+        with pytest.raises(HTTPException) as exc:                      # a stale tab: no second post
+            await pub_mod.publish(uuid.UUID(w.piece), _request(conn, True), tenant={"sub": w.tenant})
+    assert exc.value.status_code == 409 and exc.value.detail == pub_mod.PUBLISH_PUT_BACK_FIRST
+    assert await _publish_log_count(conn, w.piece) == 1 and w.site.status == "draft"
+
+    w.site.status = "trash"                                            # the tenant trashed it on WordPress
+    async with _wordpress(w.site):
+        out = await _click(conn, w.tenant, w.page)
+    assert out["outcome"] == "changed_on_wordpress"
+    # left as is: the piece is back in Ready to publish and a new post is not blocked by the drafted page
+    assert w.piece in await _pending_ids(conn, w.tenant)
+    assert await pub_mod._pages_to_put_back(_request(conn, True).app.state.pool, w.tenant, [w.piece]) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_rewrite_before_the_restore_keeps_the_old_page_out_of_the_notice_and_the_list(conn):
+    w = await _seed(conn, "pb-rewrite")
+
+    async def rewrite():
+        w.newer = str(await conn.fetchval(
+            "INSERT INTO acp_shared.content_piece (tenant_id, angle_gate_request_id, attempt_number, content_text, "
+            "status, channel, created_at) VALUES ($1, $2, 2, 'A brighter morning on the amber ridge.', 'approved', "
+            "'blog', now() + interval '1 second') RETURNING piece_id", w.tenant, uuid.UUID(w.req)))
+
+    r = await _retire_draft_restore(conn, w, before_restore=rewrite)
+    assert r.result["pages_drafted"] == 0 and r.result["tenants_told_put_back"] == 0
+    notice = await conn.fetchval("SELECT summary FROM acp_shared.tenant_tour_notice "
+                                 "WHERE event_key = $1 AND tenant_id = $2::uuid", r.key, w.tenant)
+    assert json.loads(notice)["pages_drafted"] == []
+    assert (await pub_mod.list_put_back(_request(conn, True), tenant={"sub": w.tenant}))["data"] == []
+    assert await _pending_ids(conn, w.tenant) == [w.newer]             # the new version publishes as usual
+    assert await pub_mod._pages_to_put_back(_request(conn, True).app.state.pool, w.tenant, [w.newer]) == {}
