@@ -297,7 +297,8 @@ async def _seed_learned_writing(pools, tid: str) -> str:
     only in deletable tables): a preference summary (writing_rule kind preference_summary, AA-921), a masked voice
     example pinned in a rules draft (writing_exemplar + writing_memory_release + writing_memory_release_exemplar), a
     shadow output of a release run, a keep decision, a disagreement-queue item, a human label on a T2 version
-    (acp_shared.content_label, CIS 315) and a claim label of a T9 piece (shared.eval_claim_label, CIS 388; AA-1048),
+    (acp_shared.content_label, CIS 315) and a claim label of a T9 piece (shared.eval_claim_label, CIS 388; AA-1048)
+    with its correction and an agent proposal on the queue item (CIS 394; AA-1063),
     plus one platform (A1) claim label that must stay (reason "<marker>-a1"). Returns a marker shared by the tenant
     rows for the after-check."""
     from services.writing_memory import exemplars as ex
@@ -339,10 +340,14 @@ async def _seed_learned_writing(pools, tid: str) -> str:
             "INSERT INTO shared.writing_memory_keep (release_id, writer, scope, tenant_id, codes, reason, kept_by, "
             "kept_until) VALUES ($1, 't9_blog', 'tenant', $2::uuid, ARRAY['cost_up'], $3, 'admin:pytest', "
             "current_date + 7)", release, tid, mark)
-        await c.execute(
+        item = await c.fetchval(
             "INSERT INTO shared.writing_memory_disagreement (source, source_ref, writer, scope, tenant_id, "
             "machine_verdict, human_label, week_start, note) VALUES ('piece_label', gen_random_uuid(), 't9_blog', "
-            "'tenant', $1::uuid, 'approved', 'heavy', DATE '2026-10-26', $2)", tid, mark)
+            "'tenant', $1::uuid, 'approved', 'heavy', DATE '2026-10-26', $2) RETURNING item_id", tid, mark)
+        # AA-1063 (394): an agent proposal on the queue item (no tenant column: reached through its FK)
+        await c.execute(
+            "INSERT INTO shared.eval_claim_proposal (item_id, run_id, label, reason_en, imported_by) "
+            "VALUES ($1, $2, 'ok', 'Fictional reason.', 'admin:pytest')", item, mark)
         version = await c.fetchval("SELECT id FROM gold_aa_internal.tenant_tour_versions WHERE tenant_id = $1::uuid "
                                    "ORDER BY version_number LIMIT 1", tid)
         await c.execute(
@@ -350,14 +355,21 @@ async def _seed_learned_writing(pools, tid: str) -> str:
             "VALUES ('t2_version', $1, $2::uuid, 'admin:pytest', 'light', $3)", version, tid, mark)
         claim = "Fictional Valeport walks stay slow and small."
         for scope, tenant, writer, reason in (("tenant", tid, "t9_blog", mark), ("platform", None, "a1", f"{mark}-a1")):
-            await c.execute(
+            label_id = await c.fetchval(
                 "INSERT INTO shared.eval_claim_label (set_id, set_version, writer, scope, tenant_id, sample_id, "
                 "piece_id, content_sha256, field, span_start, span_end, claim_text, claim_hash, claim_class, label, "
                 "labeller_kind, labeller, lens, reason, split, adjudication) VALUES ('ZZ-839', '1.0.0', $1, $2, "
                 "$3::uuid, $4, CASE WHEN $2 = 'tenant' THEN gen_random_uuid() END, $5, 'content_text', 0, $6, $7, "
                 "encode(sha256(convert_to($4 || $8, 'UTF8')), 'hex'), 'fact.number', 'ok', 'agent_panel', "
-                "'pytest', 'source', $8, 'train', 'agreed')",
+                "'pytest', 'source', $8, 'train', 'agreed') RETURNING label_id",
                 writer, scope, tenant, f"zz839-{writer.replace('_', '-')}", sha, len(claim), claim, reason)
+            if scope == "tenant":   # AA-1063 (394): a correction of the tenant's claim label (reached through its FK)
+                await c.execute(
+                    "INSERT INTO shared.eval_claim_relabel (set_id, set_version, claim_hash, anchor_label_id, "
+                    "claim_class, label, reason, labeller, previous_label, previous_class, previous_source) "
+                    "SELECT set_id, set_version, claim_hash, label_id, claim_class, 'violation', $2, 'admin:pytest', "
+                    "label, claim_class, 'panel_agreed' FROM shared.eval_claim_label WHERE label_id = $1",
+                    label_id, mark)
     return mark
 
 
@@ -376,6 +388,9 @@ LEARNED_WRITING = {
     "shared.writing_memory_disagreement": "SELECT count(*) FROM shared.writing_memory_disagreement WHERE note = $1",
     "acp_shared.content_label": "SELECT count(*) FROM acp_shared.content_label WHERE reason = $1",
     "shared.eval_claim_label": "SELECT count(*) FROM shared.eval_claim_label WHERE reason = $1",
+    # AA-1063 (394): the proposal of the queue item and the correction of the claim label
+    "shared.eval_claim_proposal": "SELECT count(*) FROM shared.eval_claim_proposal WHERE run_id = $1",
+    "shared.eval_claim_relabel": "SELECT count(*) FROM shared.eval_claim_relabel WHERE reason = $1",
 }
 # AA-1048: the platform (A1) claim label seeded next to the tenant's; an offboarding never deletes it.
 PLATFORM_CLAIM = "SELECT count(*) FROM shared.eval_claim_label WHERE reason = $1 || '-a1' AND scope = 'platform'"

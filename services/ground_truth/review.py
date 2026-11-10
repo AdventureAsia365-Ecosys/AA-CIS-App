@@ -125,6 +125,8 @@ def effective_rows(rows: list[dict], relabels: Iterable[dict]) -> list[dict]:
     panel rows in time order (created_at; stored rows without one first), so panel.final_labels' lead[-1] is the
     newest decision. Corrections of a claim with no stored row are ignored (the anchor FK keeps that from happening)."""
     by_hash = {r["claim_hash"]: r for r in rows}
+    relabels = list(relabels)
+    depth = chain_depths(relabels)
     synth = []
     for x in relabels:
         base = by_hash.get(x["claim_hash"])
@@ -133,7 +135,8 @@ def effective_rows(rows: list[dict], relabels: Iterable[dict]) -> list[dict]:
         r = {c: base.get(c) for c in store.COLUMNS}
         r.update(label_id=x.get("relabel_id"), created_at=x.get("created_at"), labeller_kind="tech_lead",
                  labeller=x.get("labeller"), lens=None, claim_class=x["claim_class"], label=x["label"],
-                 reason=x.get("reason"), adjudication="final", relabel=True)
+                 reason=x.get("reason"), adjudication="final", relabel=True,
+                 chain_depth=depth.get(str(x.get("relabel_id")), 1))
         synth.append(r)
     if not synth:
         return list(rows)
@@ -141,10 +144,26 @@ def effective_rows(rows: list[dict], relabels: Iterable[dict]) -> list[dict]:
     lead = [r for r in rows if r.get("labeller_kind") == "tech_lead"] + synth
 
     def when(r: dict) -> tuple:
+        # time first; at the same instant a correction comes after a stored row, and a later link of the chain after
+        # the one it supersedes (two corrections in one transaction share now())
         t = r.get("created_at")
-        return (t is not None, _iso(t) or "", bool(r.get("relabel")))
+        return (t is not None, _iso(t) or "", bool(r.get("relabel")), r.get("chain_depth") or 0)
 
     return rest + sorted(lead, key=when)
+
+
+def chain_depths(relabels: list[dict]) -> dict[str, int]:
+    """relabel_id -> its position in its claim's chain (1 = the first correction, which supersedes nothing)."""
+    parent = {str(x["relabel_id"]): (str(x["supersedes"]) if x.get("supersedes") else None) for x in relabels}
+    out: dict[str, int] = {}
+    for rid in parent:
+        n, cur, seen = 0, rid, set()
+        while cur is not None and cur not in seen and n < len(parent) + 1:
+            seen.add(cur)
+            n += 1
+            cur = parent.get(cur)
+        out[rid] = n
+    return out
 
 
 def chain_head(relabels: list[dict]) -> Optional[dict]:
@@ -153,7 +172,8 @@ def chain_head(relabels: list[dict]) -> Optional[dict]:
         return None
     superseded = {str(x["supersedes"]) for x in relabels if x.get("supersedes")}
     heads = [x for x in relabels if str(x["relabel_id"]) not in superseded]
-    return max(heads or relabels, key=lambda x: _iso(x.get("created_at")) or "")
+    depth = chain_depths(relabels)
+    return max(heads or relabels, key=lambda x: (depth.get(str(x["relabel_id"]), 0), _iso(x.get("created_at")) or ""))
 
 
 def set_summary(rows: list[dict], relabels: list[dict]) -> dict:
@@ -191,7 +211,9 @@ def claim_entries(rows: list[dict], relabels: list[dict]) -> list[dict]:
         f = finals[h]
         panel = sorted((r for r in rs if r["labeller_kind"] == "agent_panel"), key=lambda r: r.get("lens") or "")
         lead = [r for r in rs if r["labeller_kind"] == "tech_lead"]
-        chain = sorted(rl.get(h, []), key=lambda x: _iso(x.get("created_at")) or "")
+        depth = chain_depths(rl.get(h, []))
+        chain = sorted(rl.get(h, []),
+                       key=lambda x: (depth.get(str(x["relabel_id"]), 0), _iso(x.get("created_at")) or ""))
         history = [{"kind": "tech_lead", "label": r["label"], "claim_class": r["claim_class"], "by": r["labeller"],
                     "at": _iso(r.get("created_at")), "reason": r.get("reason"), "id": r.get("label_id")}
                    for r in lead]
@@ -710,7 +732,8 @@ async def relabel(conn, set_id: str, set_version: str, claim_hash: str, *, label
 
 
 __all__ = ["ANSWERS", "CONFIDENCE", "MAX_BULK", "NOTE_KEYS", "PROPOSAL_FILTERS", "ReviewError", "SOURCES", "STATES",
-           "accept_proposals", "answer_item", "answer_plan", "chain_head", "check_proposal", "claim_entries",
+           "accept_proposals", "answer_item", "answer_plan", "chain_depths", "chain_head", "check_proposal",
+           "claim_entries",
            "context_of", "effective_rows", "filter_claims", "import_proposals", "item_context", "lead_row",
            "list_items", "list_sets", "match_golden", "pick_class", "read_relabels", "read_relabels_soft", "relabel",
            "set_summary", "source_text"]

@@ -113,7 +113,7 @@ COMMENT ON COLUMN shared.eval_claim_proposal.notes IS
 
 CREATE TABLE IF NOT EXISTS shared.eval_claim_relabel (
     relabel_id        uuid         NOT NULL DEFAULT gen_random_uuid(),
-    created_at        timestamptz  NOT NULL DEFAULT now(),
+    created_at        timestamptz  NOT NULL DEFAULT clock_timestamp(),
     set_id            text         NOT NULL,
     set_version       text         NOT NULL,
     claim_hash        text         NOT NULL,
