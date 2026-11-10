@@ -26,7 +26,7 @@ ECS exec (services/ground_truth/importer.py says why this path).
 
 AA-1063 (S275) — the Writing Lab review view, agent proposals, the label set browser and corrections
 (services/ground_truth/review.py, CIS 394):
-  GET   /admin/writing-memory/claim-labels/review?set_id=&set_version=&writer=&state=&proposal=&limit=&offset=
+  GET   /admin/writing-memory/claim-labels/review?set_id=&set_version=&writer=&state=&proposal=&limit=&offset=&context=
                                                         golden_claim queue items in adjudication order with the
                                                         sentence, context, evidence, lenses, newest proposal and
                                                         decision; total and facets (Lab text read, logged)
@@ -229,11 +229,13 @@ async def review_items(request: Request, set_id: Optional[str] = Query(None, pat
                        writer: Optional[WriterLit] = None,
                        state: Literal["open", "resolved", "all"] = "open",
                        proposal: Optional[Literal["ok", "violation", "unsure", "none"]] = None,
-                       limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=100000)):
+                       limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0, le=100000),
+                       context: bool = True):
+    """`context=false` leaves out the golden-item context (the page's bulk accept reads ids and proposals only)."""
     try:
         async with _pool(request).acquire() as conn:
             return await rv.list_items(conn, set_id=set_id, set_version=set_version, writer=writer, state=state,
-                                       proposal=proposal, limit=limit, offset=offset)
+                                       proposal=proposal, limit=limit, offset=offset, with_context=context)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e, "CIS 394")
 

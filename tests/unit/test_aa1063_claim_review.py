@@ -321,6 +321,9 @@ def test_review_list_and_context_routes(client):
     kw = client.calls[-1][2]
     assert (kw["set_id"], kw["set_version"], kw["state"], kw["proposal"], kw["writer"]) == (
         SET, "1.1.0", "all", "none", "t9_blog")
+    assert kw["with_context"] is True
+    client.get(f"{BASE}/review?context=false&limit=100", headers=_h())
+    assert client.calls[-1][2]["with_context"] is False and client.calls[-1][2]["limit"] == 100
     assert client.get(f"{BASE}/review?state=closed", headers=_h()).status_code == 422
     assert client.get(f"{BASE}/review?set_version=one", headers=_h()).status_code == 422
     client.fake("item_context", {"item_id": ITEM, "found": False})

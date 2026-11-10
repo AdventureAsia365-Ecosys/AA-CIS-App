@@ -45771,6 +45771,7 @@
     },
     "/admin/writing-memory/claim-labels/review": {
       "get": {
+        "description": "`context=false` leaves out the golden-item context (the page's bulk accept reads ids and proposals only).",
         "operationId": "review_items_admin_writing_memory_claim_labels_review_get",
         "parameters": [
           {
@@ -45888,6 +45889,16 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "context",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Context",
+              "type": "boolean"
             }
           },
           {

@@ -1,7 +1,7 @@
 "use client";
 // app/admin/writing-memory/WritingMemory.tsx — AA-917 WM-14: Tenant output › Writing memory (app ADR 0010).
 //
-// Six tabs:
+// Seven tabs:
 //   Signals     the writing signals (edits, reason codes, gate failures) as the miner sees them: totals, the month's
 //               learning-loop spend against its $25 cap, the mining trigger, the clusters over threshold (basis,
 //               support, open rule, masked samples), and the signal list with its fact status. A grey signal waits
@@ -15,6 +15,8 @@
 //               the next-draft preview and the pin / unpin / never-use drawer.
 //   Metrics     AA-922 WM-31 (MetricsTab.tsx): the weekly KPI report per writer, the soft stops and what the job did
 //               (Keep), the expired rules, the project stop rule and the weekly disagreement queue.
+//   Claim labels AA-1063 (ClaimLabelsTab.tsx): the W2 claim review queue (sentence, source, lenses, agent proposal,
+//               Correct / Wrong / Unsure, accept every remaining proposal) and the label set browser with corrections.
 //   Guide       how to use the page, in plain words (AA-919): guide.ts rendered by the kit GuidePanel, like every
 //               admin page's Guide tab. The description's "New here? Read the Guide" link opens it.
 // Header actions queue a job: backfill (or its dry run), fact filter, or a manual mining run (the paid one: a confirm
@@ -47,6 +49,8 @@ import {
   type RulesPage, type RuleStatus, type Signal, type SignalsPage, type Summary,
 } from "@/lib/writingMemory";
 import { LINT_LABEL_MESSAGES } from "@/lib/writingMemory.messages";
+import { CL } from "./claimLabels.messages";
+import ClaimLabelsTab from "./ClaimLabelsTab";
 import { WRITING_MEMORY_GUIDE } from "./guide";
 import { WRITING_MEMORY_GUIDE_VI } from "./guide.vi";
 import { FACT_STATUS, M, RULE_STATUS } from "./messages";
@@ -462,13 +466,15 @@ export default function WritingMemory() {
   const t = useT(M);
   const tx = useT(X);
   const tm = useT(MX);
+  const tc = useT(CL);
   const wm = useWmText();
   const { formatDateTime } = useFormat();
   const guide = useLocalized({ en: WRITING_MEMORY_GUIDE, vi: WRITING_MEMORY_GUIDE_VI });
   // Daily-use tabs first; the Guide tab last (the kit pattern for a page's Guide tab, app/_kit/guideContent.ts).
   const tabs = [{ key: "signals", label: t("tabSignals") }, { key: "candidates", label: t("tabCandidates") },
     { key: "releases", label: t("tabReleases") }, { key: "exemplars", label: tx("tabExemplars") },
-    { key: "metrics", label: tm("tabMetrics") }, { key: "guide", label: t("tabGuide") }];
+    { key: "metrics", label: tm("tabMetrics") }, { key: "claims", label: tc("tabClaims") },
+    { key: "guide", label: t("tabGuide") }];
   // S268: `?tab=` opens a tab (the Writing Lab's Releases / Metrics tabs link here); the page keeps no URL state else.
   const params = useSearchParams();
   const [tab, setTab] = useState(() => {
@@ -541,6 +547,7 @@ export default function WritingMemory() {
         : tab === "releases" ? <ReleasesTab />
         : tab === "exemplars" ? <ExemplarsTab />
         : tab === "metrics" ? <MetricsTab />
+        : tab === "claims" ? <ClaimLabelsTab />
         : <GuidePanel content={guide} testId="wm-guide" />}
     </PageFrame>
   );
