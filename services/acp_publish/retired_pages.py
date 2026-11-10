@@ -1,5 +1,5 @@
-"""AA-1039 follow-up (tech lead decision S276, root ADR 0019 d20 amended): the agency's live posts about a tour Adventure
-Asia no longer offers, and its one-click "Move to draft".
+"""AA-1039 follow-up (tech lead decision S276, root ADR 0019 d20 amended): the agency's live posts about a tour
+Adventure Asia no longer offers, and its one-click "Move to draft".
 
 By default a retirement changes nothing on the agency's site: the fan-out writes a ``notice_only`` flag per live post
 (services/tour_lifecycle/fanout.py), the bell lists the WordPress pages (``tour.pages_to_review``) and the e-mail says

@@ -53,8 +53,8 @@ class TenantAuditAction:
     # AA-1039 (option A) — tenant clicked "Put back online" on a page the tour retirement moved to draft; details: the
     # outcome (published / already_online / changed_on_wordpress) and the WordPress status read before acting
     CONTENT_PUT_BACK_ONLINE = "content_piece.put_back_online"
-    # AA-1039 (tech lead decision S276) — tenant clicked "Move to draft" on a live WordPress page about a tour AA no longer
-    # offers; details: publish_id, the WordPress outcome, the retirement flag
+    # AA-1039 (tech lead decision S276) — tenant clicked "Move to draft" on a live WordPress page about a tour AA no
+    # longer offers; details: publish_id, the WordPress outcome, the retirement flag
     CONTENT_MOVED_TO_DRAFT = "content_piece.moved_to_draft"
     # AA-1039 (S276) — the Content studio owner changed the automatic draft setting; details: before / after
     TOUR_RETIREMENT_SETTINGS_CHANGED = "tenant.tour_retirement_settings_changed"
