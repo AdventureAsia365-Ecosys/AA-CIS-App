@@ -92,24 +92,27 @@ def _queue_order(item: dict) -> tuple:
 
 
 def queue_candidates(rows: list[dict], *, split: Optional[str] = None,
-                     writers: Optional[Iterable[str]] = None) -> list[dict]:
+                     writers: Optional[Iterable[str]] = None,
+                     skip_claims: Optional[Iterable[str]] = None) -> list[dict]:
     """One queue item per disputed or audit-drawn claim: source_ref = its first panel row (lens order), machine_verdict
     = the panel's common label ('split' when the lenses have no majority), human_label = the panel state
     ('disputed' | 'audit'), the tech lead's work. Claims that already have a tech-lead row are left out.
 
     `split` / `writers` keep the claims of that split / those writers only (S273: held-out T9 claims first). The list
-    is in adjudication order (WRITER_ORDER above): held-out first, T9 first, then by object and position."""
+    is in adjudication order (WRITER_ORDER above): held-out first, T9 first, then by object and position.
+    `skip_claims` leaves these claim hashes out too (AA-1063: the claims with a correction, `relabelled_claims`)."""
     from collections import Counter, defaultdict
 
     if split is not None and split not in SPLITS:
         raise ValueError(f"split must be one of {SPLITS}, not {split!r}")
     keep = None if writers is None else set(writers)
+    skip = set(skip_claims or ())
     by_hash: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_hash[r["claim_hash"]].append(r)
     out = []
     for h, rs in sorted(by_hash.items()):
-        if any(r["labeller_kind"] == "tech_lead" for r in rs):
+        if h in skip or any(r["labeller_kind"] == "tech_lead" for r in rs):
             continue
         panel = sorted((r for r in rs if r["labeller_kind"] == "agent_panel"), key=lambda r: r["lens"] or "")
         if not panel or panel[0]["adjudication"] not in ("disputed", "audit"):
@@ -145,10 +148,18 @@ async def enqueue(conn, rows: list[dict], *, today: date, apply: bool, split: Op
     Batches (S273, decision "t9-heldout-first"): `split` / `writers` narrow the candidates and `max_open` caps the
     open items of this set version in the queue after the call (the batch the tech lead works through in one sitting).
     Items are added in adjudication order (queue_candidates); a later call tops the queue up to `max_open` again
-    with the next items once the tech lead has resolved some. `remaining` = candidates still outside the queue."""
+    with the next items once the tech lead has resolved some. `remaining` = candidates still outside the queue.
+
+    Idempotent (AA-1063): a claim already labelled (a tech-lead row, a machine-rule row of the pre-filter, or a
+    correction in shared.eval_claim_relabel) or already queued (open or resolved) is never added; `corrected` counts
+    the candidates left out for a correction (only when there is one)."""
     if max_open is not None and max_open < 1:
         raise ValueError("max_open must be >= 1")
-    items = queue_candidates(rows, split=split, writers=writers)
+    corrected: set[str] = set()
+    for set_id, set_version in sorted({(r["set_id"], r["set_version"]) for r in rows}):
+        corrected |= await relabelled_claims(conn, set_id, set_version)
+    base = queue_candidates(rows, split=split, writers=writers)
+    items = [it for it in base if it["claim_hash"] not in corrected]
     refs = sorted({r["label_id"] for r in rows if r["labeller_kind"] == "agent_panel" and r.get("label_id")})
     queued = {r["source_ref"]: r["status"] for r in await conn.fetch(_QUEUED_SQL, QUEUE_SOURCE, refs)} if refs else {}
     open_before = sum(1 for s in queued.values() if s == "open")
@@ -172,6 +183,8 @@ async def enqueue(conn, rows: list[dict], *, today: date, apply: bool, split: Op
             already += 1
     remaining = len(items) - already - added
     out = {"candidates": len(items), "added": added, "week_start": week.isoformat(), "dry_run": not apply}
+    if len(base) != len(items):
+        out["corrected"] = len(base) - len(items)
     if split is not None or writers is not None or max_open is not None:
         out.update(already_queued=already, open_before=open_before, open_after=open_before + added,
                    remaining=remaining, batches_left=(math.ceil(remaining / max_open) if max_open else None),

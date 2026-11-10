@@ -4098,7 +4098,12 @@ and writes the tech-lead row of `shared.eval_claim_label` in one transaction (a 
 resolved unclear); "accept every remaining proposal" after an in-page second click. The **label set browser** lists
 every set version and every labelled claim (who decided, when, why); a tech lead can change a final label there:
 append only, a `shared.eval_claim_relabel` row that supersedes the current one (a chain per claim), and the newest
-decision is what the report and finals read (`review.effective_rows`).
+decision is what the report and finals read (`review.effective_rows`). The **Jev pre-filter** (AA-1063,
+`services/ground_truth/prefilter.py`, `POST .../claim-labels/{set}/{version}/prefilter`) settles a disputed claim as
+supported when Jev `a1_claim_supported` p >= 0.90, the panel majority is ok and no non-ok lens says `fact.misbinding`
+(S275 back-test 341/341 held-out): a tech-lead row with labeller `prefilter:jev090+panel`, final-label source
+`prefilter`, never release evidence nor an audit adjudication; shadow (report only) unless the api's
+`CLAIM_PREFILTER_MODE=enforce`, and enforced only for the measured T9 writers.
 _Avoid_: fine-tune, model update, deploy (a Release is data, not code).
 
 **Golden Set**:

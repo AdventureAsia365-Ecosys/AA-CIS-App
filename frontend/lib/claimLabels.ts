@@ -14,7 +14,7 @@ export type ClaimLabel = "ok" | "violation" | "unsure";
 export type Answer = "correct" | "wrong" | "unsure";
 export type ReviewState = "open" | "resolved" | "all";
 export type ProposalFilter = "" | ClaimLabel | "none";
-export type FinalSource = "tech_lead" | "panel_agreed" | "none";
+export type FinalSource = "tech_lead" | "prefilter" | "panel_agreed" | "none";
 export type ClaimWriter = "a1" | "t2" | "t9_blog" | "t9_social";
 
 export const ANSWERS: readonly Answer[] = ["correct", "wrong", "unsure"];

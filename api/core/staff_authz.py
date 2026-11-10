@@ -750,6 +750,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report"): _LAB_READ,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/prefilter"): AI_ADMIN,   # AA-1063
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals"): _LAB_TEXT_READ,
     # AA-1063 (S275): the Writing Lab claim review, agent proposals, the label set browser and corrections. Reads that
     # return claim text are Lab text reads (logged); the set counts carry no text; every write is ai.admin.

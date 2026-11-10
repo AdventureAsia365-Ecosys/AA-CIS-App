@@ -52,7 +52,7 @@ LABEL_ANSWER = {v: k for k, v in ANSWERS.items()}
 CONFIDENCE = ("high", "medium", "low")
 STATES = ("open", "resolved", "all")
 PROPOSAL_FILTERS = ("ok", "violation", "unsure", "none")
-SOURCES = ("tech_lead", "panel_agreed", "none")
+SOURCES = ("tech_lead", "prefilter", "panel_agreed", "none")
 NOTE_KEYS = ("claim_vi", "claim_en", "source_says_en", "source_says_vi", "doubt_en", "doubt_vi")
 NOTE_MAX = 1200
 REASON_MAX = pn.REASON_MAX
@@ -440,12 +440,179 @@ async def golden_candidates(conn, sample_ids: Iterable[str]) -> dict[str, list[d
     if not ids:
         return {}
     rows = await conn.fetch(
-        "SELECT sample_id, writer, channel, input, control_output FROM shared.eval_golden_item "
+        "SELECT sample_id, writer, channel, input, control_output, tenant_id::text AS tenant_id, trap "
+        "FROM shared.eval_golden_item "
         "WHERE sample_id = ANY($1::text[]) AND control_output IS NOT NULL ORDER BY created_at DESC", ids)
     out: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         out[r["sample_id"]].append(dict(r))
     return out
+
+
+# ── the source of a claim: the golden item, else the live T9 piece (the S275 pre-filter's order) ──────────────────
+
+LIVE_OUTPUT_KEYS = ("content_text", "seo_title", "meta_description", "slug")    # a T9 piece's object (content sha)
+SOURCE_KINDS = ("golden_sha", "live_sha", "golden_id", "live_id", "live_wi")
+_LIVE_PIECES_SQL = """
+    SELECT cp.piece_id::text AS piece_id, cp.tenant_id::text AS tenant_id, cp.channel, cp.writer_input,
+           cp.content_text, cp.seo_title, cp.meta_description, cp.slug, cp.job_id::text AS job_id,
+           cp.angle_gate_request_id::text AS request_id, cp.route_hub_name
+      FROM acp_shared.content_piece cp
+     WHERE cp.piece_id = ANY($1::uuid[]) AND cp.tenant_id = ANY($2::uuid[])
+"""
+
+
+async def live_pieces(conn, piece_ids: Iterable[str], tenant_ids: Iterable[str]) -> dict[str, dict]:
+    """piece_id -> the stored T9 piece (writer_input parsed, `out_sha` = the content sha of its object), only pieces
+    of the named tenants."""
+    pids, tids = sorted({p for p in piece_ids if p}), sorted({t for t in tenant_ids if t})
+    if not pids or not tids:
+        return {}
+    out = {}
+    for r in await conn.fetch(_LIVE_PIECES_SQL, pids, tids):
+        r = dict(r)
+        r["writer_input"] = _json(r.get("writer_input")) or {}
+        if not isinstance(r["writer_input"], dict):
+            r["writer_input"] = {}
+        r["out_sha"] = cl.content_sha({k: r.get(k) for k in LIVE_OUTPUT_KEYS})
+        out[r["piece_id"]] = r
+    return out
+
+
+async def live_t9_context(pool, piece: dict, wi: dict) -> tuple[dict, str]:
+    """The T9 writer context of a stored piece, as the AA-729 freeze built it (scripts/aa729/select_samples.t9_context
+    calls this): the t9_write job payload's context when the job row is still kept, else rebuilt from the angle
+    request (goal, chosen angle); then the stored `writer_input` (what the writer really got) laid over it, with
+    `facts_pending = False` so nothing is re-read. Returns (context, 'job_payload' | 'angle_request'); raises
+    ValueError when neither can be rebuilt."""
+    import copy
+    from uuid import UUID
+
+    from services.acp_angle_gate import service as angle_gate_service
+    from services.acp_angle_gate.channel_style import get_channel_style
+    from services.acp_angle_gate.goals import get_goal
+
+    ctx: Optional[dict] = None
+    source = "job_payload"
+    if piece.get("job_id"):
+        async with pool.acquire() as conn:
+            payload = await conn.fetchval("SELECT payload FROM shared.job WHERE id = $1::uuid", piece["job_id"])
+        payload = _json(payload) or {}
+        if isinstance(payload, dict) and isinstance(payload.get("context"), dict):
+            ctx = copy.deepcopy(payload["context"])
+    if ctx is None:
+        source = "angle_request"
+        req = await angle_gate_service.fetch_request(UUID(piece["tenant_id"]), UUID(piece["request_id"]), pool)
+        chosen = next((a for a in req.get("angles") or [] if a.get("chosen")), None)
+        goal = get_goal(req.get("goal") or wi.get("goal") or "")
+        style = get_channel_style(piece["channel"])
+        if chosen is None or goal is None or style is None:
+            raise ValueError("cannot rebuild the writer context (no chosen angle / goal / channel style)")
+        ctx = {"goal": dict(goal), "channel_style": dict(style), "chosen": dict(chosen),
+               "atom_id": req.get("atom_id"), "real_questions": [], "sibling_openers": [],
+               "route_hub_name": piece.get("route_hub_name"), "route_segment_count": None, "route_atoms": []}
+    moments = wi.get("route_moments") or []
+    ctx.update({
+        "atom_text": wi.get("seed") or ctx.get("atom_text") or "",
+        "route_segments": ([[m.get("atom_id"), m.get("seed")] for m in moments] if moments
+                           else ctx.get("route_segments")),
+        "facts_text": wi.get("facts") or "", "facts_pending": False,
+        "brand_audience": wi.get("brand_pack") or ctx.get("brand_audience") or {},
+        "brand_rubric_text": wi.get("brand_rubric") if wi.get("brand_rubric") is not None
+        else ctx.get("brand_rubric_text"),
+        "channel": piece["channel"], "keyword": wi.get("keyword", ctx.get("keyword")),
+        "cta": wi.get("cta") or ctx.get("cta"), "trip_name": wi.get("trip", ctx.get("trip_name")),
+        "destination": wi.get("destination", ctx.get("destination")), "scope": wi.get("scope", ctx.get("scope")),
+        "trip_places": wi.get("trip_places") or ctx.get("trip_places") or [],
+        "tenant_id": piece["tenant_id"],
+    })
+    if piece["channel"] == "blog" and wi.get("search_questions") is not None:
+        ctx["people_also_ask"] = [q.get("q") if isinstance(q, dict) else q for q in wi.get("search_questions") or []]
+    ctx.setdefault("people_also_ask", [])
+    for k in ("writer_trip_name", "paa_questions", "search_questions", "faq_questions"):
+        ctx.pop(k, None)  # derived by run_write_background itself
+    return ctx, source
+
+
+def _t9_panel_source(writer: str, inp: dict) -> str:
+    from services.writing_memory.eval_judge import panel_source_text
+
+    return panel_source_text(writer, inp)
+
+
+async def claim_sources(pool, anchors: list[dict]) -> tuple[dict[str, tuple[str, str]], Counter]:
+    """claim_hash -> (the full source the panel read, kind), and the count of each kind (plus `unmatched` and
+    `source_error:<type>`), in the S275 pre-filter's order for each claim object:
+      golden_sha  the claim's golden item (by sample id) whose panel-visible output has the claim's content sha;
+      live_sha    the live T9 piece (acp_shared.content_piece by piece_id) whose object still has that content sha,
+                  its writer context rebuilt (live_t9_context) and the panel's source sections read from it;
+      golden_id / live_id   the same, matched by sample id / piece id only (the text changed since);
+      live_wi     the piece's writer_input snapshot only (a live_* candidate whose context rebuild failed).
+    Never across tenants: a golden item or a piece of another tenant than the claim's is not a candidate."""
+    async with pool.acquire() as conn:
+        golden = await golden_candidates(conn, (a.get("sample_id") for a in anchors))
+        pieces = await live_pieces(conn, (a.get("piece_id") for a in anchors),
+                                   (a.get("tenant_id") for a in anchors))
+    kinds: Counter = Counter()
+    by_object: dict[tuple, Optional[tuple[str, str]]] = {}
+    live_ctx: dict[str, Any] = {}
+    out: dict[str, tuple[str, str]] = {}
+
+    async def live_text(writer: str, p: dict) -> tuple[str, str]:
+        if p["piece_id"] not in live_ctx:
+            try:
+                live_ctx[p["piece_id"]] = (await live_t9_context(pool, p, p["writer_input"]))[0]
+            except Exception as exc:  # noqa: BLE001 -- no job payload / angle request: the writer_input snapshot
+                live_ctx[p["piece_id"]] = exc
+        ctx = live_ctx[p["piece_id"]]
+        if isinstance(ctx, Exception):
+            return _t9_panel_source(writer, {"writer_input": p["writer_input"], "tenant_id": p["tenant_id"]}), "live_wi"
+        return source_text(writer, p.get("channel"), {"context": ctx}), ""
+
+    for a in anchors:
+        tenant, writer = a.get("tenant_id"), a.get("writer")
+        key = (a.get("content_sha256"), tenant, a.get("sample_id"), a.get("piece_id"), writer)
+        if key not in by_object:
+            items = [g for g in golden.get(a.get("sample_id") or "", []) if not g.get("trap")]
+            p = pieces.get(a.get("piece_id") or "")
+            if p is not None and p["tenant_id"] != tenant:
+                p = None                                                      # never cross tenants
+            cand: list[tuple[str, dict]] = []
+            g = match_golden(a, [x for x in items if x.get("tenant_id") in (None, tenant)])
+            if g is not None:
+                cand.append(("golden_sha", g))
+            if p is not None and p["out_sha"] == a.get("content_sha256"):
+                cand.append(("live_sha", p))
+            gs = next((x for x in items if x.get("tenant_id") == tenant and isinstance(_json(x.get("input")), dict)),
+                      None)
+            gs_piece = str((_json(gs.get("input")) or {}).get("piece_id") or "") if gs is not None else ""
+            if gs is not None and gs is not g and (not a.get("piece_id") or not gs_piece
+                                                   or gs_piece == a.get("piece_id")):
+                cand.append(("golden_id", gs))
+            if p is not None and p["out_sha"] != a.get("content_sha256"):
+                cand.append(("live_id", p))
+            found = None
+            for kind, src in cand:
+                try:
+                    if kind.startswith("golden"):
+                        text = source_text(src.get("writer") or writer, src.get("channel"),
+                                           _json(src.get("input")) or {})
+                    else:
+                        if writer not in ("t9_blog", "t9_social"):
+                            continue
+                        text, fallback = await live_text(writer, src)
+                        kind = fallback or kind
+                except Exception as exc:  # noqa: BLE001 -- a broken stored input: try the next candidate
+                    kinds[f"source_error:{type(exc).__name__}"] += 1
+                    continue
+                if text and text.strip():
+                    found = (text, kind)
+                    break
+            by_object[key] = found
+            kinds[found[1] if found else "unmatched"] += 1
+        if by_object[key] is not None:
+            out[a["claim_hash"]] = by_object[key]
+    return out, kinds
 
 
 async def contexts(conn, claims: list[dict]) -> dict[str, dict]:
@@ -765,7 +932,9 @@ async def relabel(conn, set_id: str, set_version: str, claim_hash: str, *, label
             raise ReviewError(422, "unchanged", "the claim already has this label")
         anchor = sorted(rows, key=lambda r: (r["labeller_kind"] != "agent_panel", r.get("lens") or ""))[0]
         top = newest_lead(rows, chain)      # the row the current final label comes from
-        previous_source = "relabel" if top is not None and top.get("relabel") else final.source
+        # a machine-rule label (source prefilter) is a stored tech-lead row: the column's CHECK names the row kind
+        previous_source = ("relabel" if top is not None and top.get("relabel")
+                           else "tech_lead" if final.source == "prefilter" else final.source)
         try:
             rid = await conn.fetchval(
                 "INSERT INTO shared.eval_claim_relabel (set_id, set_version, claim_hash, anchor_label_id, claim_class, "
