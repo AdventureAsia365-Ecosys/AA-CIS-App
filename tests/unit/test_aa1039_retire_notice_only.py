@@ -36,7 +36,9 @@ from services.tour_lifecycle import fanout, notice_mail
 TENANT_ID = str(uuid.uuid4())
 MEMBER = str(uuid.uuid4())
 TENANT = {"sub": TENANT_ID, "role": "tenant", "mid": MEMBER}
-PUBLISH_ID = uuid.uuid4()
+# Fixed, not uuid4(): it is part of the test_studio_roles parameter ids, and pytest-xdist workers must collect the
+# same ids (a random one per import made every worker collect a different test list).
+PUBLISH_ID = uuid.UUID("5b0c1a2e-7d43-4f6a-9e21-3c8b5d6f7a10")
 PIECE_ID = str(uuid.uuid4())
 FLAG_ID = str(uuid.uuid4())
 URL = "https://lantern-bay.example/misty-ridge-walk/"
