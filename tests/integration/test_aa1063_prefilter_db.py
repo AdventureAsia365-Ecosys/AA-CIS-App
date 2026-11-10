@@ -252,6 +252,8 @@ async def test_prefilter_rebuilds_a_live_piece_source_and_reads_back_an_earlier_
     tid, lines = await _seed_live_t9(conn)
     await conn.execute("GRANT SELECT ON acp_shared.content_piece, shared.job, acp_shared.angle_gate_request "
                        "TO cis_app")
+    await conn.execute("GRANT INSERT ON shared.decision_log TO cis_app")         # Dev: decide() writes it as cis_app
+    await conn.execute("GRANT USAGE ON ALL SEQUENCES IN SCHEMA shared TO cis_app")
     # Dev has CIS 244's cis_app policy on content_piece; the replay takes it off (conftest x1_244_ci_shape)
     await conn.execute("DROP POLICY IF EXISTS content_piece_cis_app_all ON acp_shared.content_piece")
     await conn.execute("CREATE POLICY content_piece_cis_app_all ON acp_shared.content_piece AS PERMISSIVE FOR ALL "
