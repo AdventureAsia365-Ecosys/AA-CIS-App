@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 import structlog
 
@@ -130,10 +130,16 @@ def _writer_days(items) -> list[tuple[int, int, dict]]:
     return out
 
 
-def compose_itineraries(writer_items, tour: dict, facts: dict, plan: dict) -> tuple[Optional[str], dict]:
+def compose_itineraries(writer_items, tour: dict, facts: dict, plan: dict,
+                        strip_facts: Optional[Callable[[str, list[str]], tuple[str, int]]] = None
+                        ) -> tuple[Optional[str], dict]:
     """The canonical itinerary string composed by code from the writer's day objects and the day plan, or None when
     the writer gave no usable list (the page keeps what main assembled). Report: {days, missing, extra, duplicate,
-    writer_fact_lines_removed, source_fact_lines, fact_lines}."""
+    writer_fact_lines_removed, source_fact_lines, fact_lines}.
+
+    ``strip_facts(body, source lines appended to this day)`` replaces ``strip_writer_fact_lines`` on the writer's day
+    body (default: every writer fact line goes). The Master recompose (AA-1049, ``s1_recompose``) passes one that only
+    removes a writer fact clause the day's appended source lines state again, so no fact is lost."""
     from .s1_writer_v2 import drop_do_not_use, serialize_days, source_fact_lines
     days = _writer_days(writer_items)
     if not days:
@@ -169,10 +175,10 @@ def compose_itineraries(writer_items, tour: dict, facts: dict, plan: dict) -> tu
         title = " ".join(str(it.get("title") or "").split())
         body = str(it.get("body") or "").strip()
         if fact_mode == "source":
-            body, k = strip_writer_fact_lines(body)
-            removed += k
             src = plan_by_day[n]["source"] if plan["mode"] == "source_days" else plan["days"][0]["source"]
             lines = drop_do_not_use(source_fact_lines(src), facts)
+            body, k = strip_facts(body, lines) if strip_facts else strip_writer_fact_lines(body)
+            removed += k
             appended += len(lines)
             body = "\n".join(x for x in [body, *lines] if x)
         blocks.append({"day": label, "title": title, "body": body})
@@ -226,13 +232,15 @@ def _lower_first(item: str, lower_words: set) -> str:
 
 
 def compose_page(page: dict, writer_json: dict, tour: dict, facts: dict, plan: dict, forbidden: list[str],
-                 meta_problems: list[str]) -> tuple[dict, dict]:
-    """(a) The page with its contract fields composed by code (see the module docstring) and the report."""
+                 meta_problems: list[str],
+                 strip_facts: Optional[Callable[[str, list[str]], tuple[str, int]]] = None) -> tuple[dict, dict]:
+    """(a) The page with its contract fields composed by code (see the module docstring) and the report.
+    ``strip_facts``: see ``compose_itineraries`` (default None = the train's rule)."""
     from .s1_writer_v2 import meta_problems as check_meta
     from .seo_meta_utils import SEO_TITLE_MAX, fit_seo_title
 
     page = dict(page)
-    itin, report = compose_itineraries((writer_json or {}).get("itineraries"), tour, facts, plan)
+    itin, report = compose_itineraries((writer_json or {}).get("itineraries"), tour, facts, plan, strip_facts)
     if itin is not None:
         page["itineraries"] = itin
     title = str(page.get("seo_title") or "")

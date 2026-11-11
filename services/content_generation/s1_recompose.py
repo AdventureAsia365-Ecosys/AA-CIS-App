@@ -17,6 +17,13 @@ What it guarantees (``recompose``), or the Master is skipped with a typed reason
 * the stored and the composed itinerary parse as canonical day blocks (A3, catalog ``_tour_day_text``) with the same
   number of blocks; a legacy-format itinerary is never written (A3 would re-read it whole, new atom ids)
   (``heading_parse``);
+* no fact is lost (S277 pilot fix): a writer fact clause ("Overnight: X." at the end of a prose line, a "Label:
+  value" line) is removed only when the same day gets the source's verbatim fact line with the same label and value
+  (normalised compare, ``fact_keys``); any other clause stays where it was (``keep_unstated_facts``, the
+  ``strip_facts`` hook of ``compose_page``). A stored fact the recomposed page no longer states is counted
+  (``facts_lost``) and the Master is skipped (``facts_would_be_lost``);
+* an itinerary whose lines are the same after compose (nothing cut, nothing added, only spacing or order) is kept
+  byte for byte, so such a Master is a no-op unless its SEO fields change;
 * a re-run on a recomposed page is a no-op: the stored lines that ARE the source day's verbatim fact lines are taken
   out before compose and composed back in the same place (``no_op``).
 
@@ -29,11 +36,15 @@ Pure: no DB, no model. The DB side (selection, new version, publish) is ``s1_rec
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Iterator, Optional
 
-WRITER = "recompose-v1"
+# v2 (S277 pilot fix): a writer fact clause is removed only when the day's source fact line states it again
+WRITER = "recompose-v2"
 EXIT = "recompose"
 FIELDS = ("day_headings", "fact_lines", "day_count", "seo_title", "seo_meta")
 NARRATIVE_FIELDS = ("name", "subtitle", "summary", "description", "highlights")
@@ -45,7 +56,9 @@ POLICY = "policy"
 NO_OP = "no_op"
 NARRATIVE_CHANGED = "narrative_changed"
 HEADING_PARSE = "heading_parse"
+FACTS_WOULD_BE_LOST = "facts_would_be_lost"
 CONTRACT_WORSE = "contract_worse"
+SAMPLE_DAYS = 2           # day blocks per Master in the DRY RUN sample
 
 # how far a verdict is from a clean publish (a recompose may never move a Master up this scale)
 VERDICT_RANK = {"publish": 0, "review": 1, "policy_hold": 2, "source_hold": 2, "degraded": 3}
@@ -58,7 +71,8 @@ class Recomposed:
     changed: list                            # the FIELDS that changed
     narrative_ok: bool
     heading_ok: bool
-    report: dict = field(default_factory=dict)
+    report: dict = field(default_factory=dict)   # counts only (stored in the version metadata)
+    sample: list = field(default_factory=list)   # [(before lines, after lines)] of the first SAMPLE_DAYS day blocks
 
     @property
     def no_op(self) -> bool:
@@ -92,10 +106,18 @@ def _block_source_lines(first: int, last: int, by_day: dict[int, list[str]]) -> 
     return out
 
 
+def _compose_day_lines(first: int, last: int, by_day: dict[int, list[str]]) -> list[str]:
+    """The source lines compose appends to a block covering first..last: those of its first planned day
+    (``compose_itineraries`` reads the source of the first day it emits for a writer object)."""
+    days = sorted(n for n in by_day if first <= n <= last)
+    return list(by_day.get(days[0]) or []) if days else []
+
+
 def stored_items(itineraries: Any, plan: dict) -> tuple[list[dict], str]:
     """(the stored itinerary as the writer's day objects, the text before the first heading). One object per canonical
-    block (``day_parse.canonical_blocks``, the A3 / catalog reader), its body without the lines that are the source
-    day's verbatim fact lines (compose appends them again: a re-run is a no-op)."""
+    block (``day_parse.canonical_blocks``, the A3 / catalog reader), its body without the lines that are the verbatim
+    fact lines compose appends to that block again (a re-run is a no-op); a stored source line of another day of a
+    ranged block stays in the body (compose does not append it, so taking it out would lose it)."""
     from .day_parse import canonical_blocks
     from .day_parse import CANONICAL_DAY_RE
 
@@ -105,10 +127,114 @@ def stored_items(itineraries: Any, plan: dict) -> tuple[list[dict], str]:
     by_day = _source_lines_by_day(plan)
     items = []
     for b in canonical_blocks(text):
-        src = _block_source_lines(b.first, b.last, by_day)
+        src = set(_compose_day_lines(b.first, b.last, by_day))
         body = "\n".join(ln for ln in str(b.body).splitlines() if ln.strip() not in src).strip()
         items.append({"day": f"{b.first}-{b.last}" if b.ranged else str(b.first), "title": b.title, "body": body})
     return items, preamble
+
+
+# ── what a fact line states: (label, value) keys ───────────────────────────────────────────────────────────────
+
+_MEAL_CODES = {"b": "breakfast", "l": "lunch", "d": "dinner"}
+
+
+@lru_cache(maxsize=1)
+def _clause_re() -> "re.Pattern":
+    from .s1_train import _FACT_CLAUSE
+    return re.compile(_FACT_CLAUSE, re.I)
+
+
+def _clauses(text: str) -> list[str]:
+    """The "Label: value." clauses of a fact-only line or of a trailing fact run, in order."""
+    return [m.group(0).strip() for m in _clause_re().finditer(str(text or "")) if m.group(0).strip()]
+
+
+def clause_key(clause: str) -> tuple[str, str]:
+    """(label, value) of one "Label: value" clause, normalised: case, spacing, the end stop, "Meal" = "Meals" and the
+    meal codes B / L / D = breakfast / lunch / dinner (order and repeats ignored), so "Meals: B, L" states what
+    "Meals: breakfast and lunch." states. Any other wording difference is a different value."""
+    label, _sep, value = str(clause).partition(":")
+    lab = re.sub(r"^meal\b", "meals", " ".join(label.strip(" -•*\t").lower().split()))
+    val = " ".join(value.lower().split()).strip(" .;,")
+    val = re.sub(r"\s*([,;/&])\s*", r"\1 ", val).strip()
+    if lab.startswith("meals"):
+        toks = [t.strip(" .") for t in re.split(r"\s*(?:[,;/&+]|\band\b)\s*", val) if t.strip(" .")]
+        if toks:
+            val = ", ".join(sorted({_MEAL_CODES.get(t, t) for t in toks}))
+    return lab, val
+
+
+def fact_keys(line: str) -> list[tuple[str, str]]:
+    """The facts a fact line states: one (label, value) per clause when the line is only "Label: value" clauses (the
+    train's fact-only line), else the whole line as one key (a source line such as "Ride: 2 hours" or
+    "Accommodation: Canal guesthouse. Breakfast included at 8.")."""
+    from .s1_train import _FACT_ONLY_LINE_RE
+    s = re.sub(r"^\s*[-•*]\s*", "", str(line or "")).strip()
+    if _FACT_ONLY_LINE_RE.match(s):
+        keys = [clause_key(c) for c in _clauses(s)]
+        if keys:
+            return keys
+    return [("line", " ".join(s.lower().split()).strip(" ."))]
+
+
+def keep_unstated_facts(body: str, source_lines: list[str]) -> tuple[str, int]:
+    """``compose_page``'s ``strip_facts`` for the recompose: a writer fact clause (on a fact-only line, or in the run
+    at the end of a prose line) is removed only when one of ``source_lines`` (the verbatim lines compose appends to
+    this day) states the same label and value (``clause_key``); every other clause stays where it was, word for word.
+    Returns (body, lines changed). Prose is never touched."""
+    from .s1_train import _FACT_ONLY_LINE_RE, _TRAILING_FACTS_RE
+    stated = {k for ln in source_lines or [] for k in fact_keys(ln)}
+    kept, changed = [], 0
+    for line in str(body or "").splitlines():
+        if _FACT_ONLY_LINE_RE.match(line):
+            clauses = _clauses(line)
+            rest = [c for c in clauses if clause_key(c) not in stated]
+            if clauses and len(rest) < len(clauses):
+                changed += 1
+                if rest:
+                    kept.append(" ".join(rest))
+                continue
+            kept.append(line)
+            continue
+        m = _TRAILING_FACTS_RE.search(line)
+        if m and line[:m.start()].strip():
+            clauses = _clauses(line[m.start():])
+            rest = [c for c in clauses if clause_key(c) not in stated]
+            if clauses and len(rest) < len(clauses):
+                changed += 1
+                line = " ".join([line[:m.start()].rstrip(), *rest])
+        kept.append(line)
+    return "\n".join(kept).strip(), changed
+
+
+def _dnu_keys(plan: dict, facts: dict) -> set:
+    """The keys of the source fact lines compose leaves out on purpose (a DO NOT USE item: supplier name, phone...):
+    a stored copy of one that goes is not a lost fact."""
+    from .s1_writer_v2 import drop_do_not_use
+    out: set = set()
+    for lines in _source_lines_by_day(plan).values():
+        kept = set(drop_do_not_use(lines, facts))
+        out |= {k for ln in lines if ln not in kept for k in fact_keys(ln)}
+    return out
+
+
+def facts_lost(before: list[dict], after: list[dict], dnu: set) -> int:
+    """How many facts a stored day block states (``blocks_of`` facts, per ``fact_keys``) that the recomposed block at
+    the same place no longer states, a DO NOT USE source line aside. Must be 0 for a write."""
+    lost = 0
+    for i, x in enumerate(before):
+        have = {k for ln in (after[i]["facts"] if i < len(after) else []) for k in fact_keys(ln)}
+        lost += sum(1 for ln in x["facts"] for k in fact_keys(ln) if k not in have and k not in dnu)
+    return lost
+
+
+def _day_lines(text: Any) -> list[list[str]]:
+    """The non-blank lines of each canonical day block (its heading first), in order."""
+    from .day_parse import CANONICAL_DAY_RE
+    text = str(text or "")
+    heads = list(CANONICAL_DAY_RE.finditer(text))
+    return [_lines(text[m.start():(heads[i + 1].start() if i + 1 < len(heads) else len(text))])
+            for i, m in enumerate(heads)]
 
 
 # ── what a page says, per day block ─────────────────────────────────────────────────────────────────────────────
@@ -170,9 +296,16 @@ def recompose(page: dict, tour: dict, facts: dict, brand_words: list[str]) -> Re
     problems = v2.meta_problems({"seo_title": page.get("seo_title"), "seo_meta": page.get("seo_meta")},
                                 tour, facts, forbidden)
     items, _pre = stored_items(page.get("itineraries"), plan)
-    composed, rep = s1_train.compose_page(dict(page), {"itineraries": items}, tour, facts, plan, forbidden, problems)
+    composed, rep = s1_train.compose_page(dict(page), {"itineraries": items}, tour, facts, plan, forbidden, problems,
+                                          strip_facts=keep_unstated_facts)
     new = {**page, "itineraries": composed.get("itineraries"), "seo_title": composed.get("seo_title"),
            "seo_meta": composed.get("seo_meta")}
+    old_lines = Counter(_lines(page.get("itineraries")))
+    new_lines = Counter(_lines(new.get("itineraries")))
+    if old_lines == new_lines:
+        # nothing cut, nothing added (spacing or line order only): the stored itinerary is kept byte for byte
+        new["itineraries"] = page.get("itineraries")
+        new_lines = old_lines
 
     _pre_a, a = blocks_of(page.get("itineraries"), plan)
     _pre_b, b = blocks_of(new.get("itineraries"), plan)
@@ -198,10 +331,17 @@ def recompose(page: dict, tour: dict, facts: dict, brand_words: list[str]) -> Re
     keep = ("composed", "missing", "extra", "duplicate", "fact_lines", "writer_fact_lines_removed",
             "source_fact_lines", "seo_title", "meta")
     report = {k: rep[k] for k in keep if k in rep}
+    lost = facts_lost(a, b, _dnu_keys(plan, facts))
     report.update(plan_mode=plan["mode"], meta_problems=len(problems), days=len(b),
-                  fact_clauses_cut=sum(blk["clauses_cut"] for blk in a))
+                  # prose lines whose trailing fact run the recompose cut (the source line states it now)
+                  fact_clauses_cut=sum(max(0, x["clauses_cut"] - y["clauses_cut"]) for x, y in zip(a, b)),
+                  lines_removed=sum((old_lines - new_lines).values()),
+                  lines_added=sum((new_lines - old_lines).values()), facts_lost=lost)
+    before, after = _day_lines(page.get("itineraries")), _day_lines(new.get("itineraries"))
+    sample = [(before[i] if i < len(before) else [], after[i] if i < len(after) else [])
+              for i in range(min(SAMPLE_DAYS, max(len(before), len(after))))]
     return Recomposed(page=new, fields=fields, changed=[k for k in FIELDS if fields[k]],
-                      narrative_ok=narrative_ok, heading_ok=heading_ok, report=report)
+                      narrative_ok=narrative_ok, heading_ok=heading_ok, report=report, sample=sample)
 
 
 # ── the contract, before and after ──────────────────────────────────────────────────────────────────────────────
@@ -310,5 +450,6 @@ def contract_pair(row: Any, page: dict, new_page: dict, tour: dict, brand_words:
             "old_blocks": blocks(old), "new_blocks": blocks(new), "new_failure_codes": new_codes}
 
 
-__all__ = ["WRITER", "EXIT", "FIELDS", "VERDICT_RANK", "Recomposed", "recompose", "stored_items", "blocks_of",
-           "narrative_of", "contract_pair", "validate_codes", "today_codes", "no_model"]
+__all__ = ["WRITER", "EXIT", "FIELDS", "VERDICT_RANK", "FACTS_WOULD_BE_LOST", "Recomposed", "recompose", "stored_items",
+           "blocks_of", "narrative_of", "fact_keys", "clause_key", "keep_unstated_facts", "facts_lost", "contract_pair",
+           "validate_codes", "today_codes", "no_model"]

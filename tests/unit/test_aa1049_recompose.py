@@ -281,7 +281,7 @@ def test_new_metadata_keeps_the_writer_keys_and_stamps_the_recompose():
     md = st.new_metadata(row()["metadata"], d, "2026-11-11T00:00:00+00:00")
     assert md["writer_version"] == "v2" and md["grounding"] == {"violations": []}
     assert "final_contract" not in md and "s1_job_id" not in md
-    assert md["recompose_of"] == d["version_id"] and md["writer"] == rc.WRITER == "recompose-v1"
+    assert md["recompose_of"] == d["version_id"] and md["writer"] == rc.WRITER == "recompose-v2"
     assert md["llm_cost_usd"] == 0.0 and md["recompose"]["fields"] == ["fact_lines"]
 
 
@@ -321,3 +321,204 @@ def test_resolve_set(env, wave, want_ids, refused):
 def test_a_short_id_is_refused():
     with pytest.raises(ValueError):
         _script().parse_ids("0a1b2c3d")
+
+
+# ── 7. no fact is lost (S277 pilot fix) ─────────────────────────────────────────────────────────────────────────
+# The pilot page shape: every day's prose line ends with "Overnight: X." and "Distance: approximately N km.", the
+# source itinerary has day markers but no fact line in the form compose appends. v1 cut both clauses and appended
+# nothing; the served page lost the overnight and distance facts.
+
+PILOT_SOURCE = ("Day 1: Arrive in Velmora, transfer to the canal guesthouse and walk the old quay.\n"
+                "Day 2: Drive to Corran and visit the ridge chapel in the afternoon.\n"
+                "Day 3: Morning walk on Corran Ridge, then drive back to Velmora for departure.")
+PILOT_P1 = "Arrive in Velmora, transfer to the canal guesthouse and walk the old quay."
+PILOT_P2 = "Drive to Corran and visit the ridge chapel in the afternoon."
+PILOT_P3 = "Walk on Corran Ridge in the morning, then drive back to Velmora for your departure."
+PILOT_ITIN = (f"Day 1 — Arrive in Velmora\n{PILOT_P1} Overnight: Velmora.\n\n"
+              f"Day 2 — Velmora to Corran\n{PILOT_P2} Overnight: Corran. Distance: approximately 210 km.\n\n"
+              f"Day 3 — Corran Ridge and departure\n{PILOT_P3} Distance: approximately 210 km.")
+
+
+def pilot_row(**over) -> dict:
+    return row(**{"src_itineraries": PILOT_SOURCE, "aa_itineraries": PILOT_ITIN, "duration": "3 days", **over})
+
+
+def test_pilot_shape_source_without_fact_lines_keeps_every_clause_and_is_a_no_op():
+    res = _recompose(pilot_row())
+    assert res.page["itineraries"] == PILOT_ITIN                     # byte for byte: nothing cut, nothing added
+    assert res.no_op and res.narrative_ok and res.heading_ok
+    assert res.report["facts_lost"] == 0
+    assert res.report["lines_removed"] == res.report["lines_added"] == 0
+    assert res.report["fact_clauses_cut"] == 0
+    assert st.decide(pilot_row(), [])["state"] == rc.NO_OP
+
+
+def test_pilot_shape_source_with_fact_lines_replaces_the_clause_by_the_source_line():
+    src = PILOT_SOURCE.replace("walk the old quay.", "walk the old quay.\nOvernight: Velmora").replace(
+        "in the afternoon.", "in the afternoon.\nOvernight: Corran\nDistance: approximately 210 km")
+    r = pilot_row(src_itineraries=src)
+    res = _recompose(r)
+    itin = res.page["itineraries"]
+    # what compose_page really emits: prose first (the stated clauses cut), then the source lines verbatim
+    assert f"Day 1 — Arrive in Velmora\n{PILOT_P1}\nOvernight: Velmora\n\n" in itin
+    assert f"{PILOT_P2}\nOvernight: Corran\nDistance: approximately 210 km\n\n" in itin
+    # day 3: the source states no distance for that day, so the clause stays on the prose line
+    assert itin.endswith(f"{PILOT_P3} Distance: approximately 210 km.")
+    assert res.narrative_ok and res.heading_ok and res.report["facts_lost"] == 0
+    assert res.report["fact_clauses_cut"] == 2
+    assert res.report["lines_removed"] == 2 and res.report["lines_added"] == 5
+    assert res.changed == ["fact_lines"]
+    d = st.decide(r, [])
+    assert d["state"] == st.RECOMPOSE and d["report"]["facts_lost"] == 0
+    # and a re-run on the result is a no-op
+    assert _recompose(pilot_row(src_itineraries=src, aa_itineraries=itin)).no_op
+
+
+def test_a_clause_the_source_states_differently_is_kept():
+    src = PILOT_SOURCE.replace("walk the old quay.", "walk the old quay.\nOvernight: Velmora old town")
+    res = _recompose(pilot_row(src_itineraries=src))
+    itin = res.page["itineraries"]
+    assert f"{PILOT_P1} Overnight: Velmora.\nOvernight: Velmora old town" in itin
+    assert res.report["facts_lost"] == 0 and res.narrative_ok
+
+
+def test_the_v1_rule_on_the_pilot_shape_is_caught_as_facts_would_be_lost():
+    from services.content_generation import s1_train
+    with patch.object(rc, "keep_unstated_facts", lambda body, _lines: s1_train.strip_writer_fact_lines(body)):
+        res = _recompose(pilot_row())
+        d = st.decide(pilot_row(), [])
+    assert res.report["facts_lost"] == 4 and res.narrative_ok        # the v1 narrative guard alone let it through
+    assert d["state"] == rc.FACTS_WOULD_BE_LOST and st.pin_of([d]).startswith("0:")
+    s = st.summary([d])
+    assert s["facts_lost"] == 0 and s["facts_lost_skipped"] == 4 and s["states"] == {rc.FACTS_WOULD_BE_LOST: 1}
+
+
+@pytest.mark.parametrize("a, b, same", [
+    ("Overnight: Velmora.", "Overnight:  velmora", True),
+    ("Meals: dinner.", "Meals: D", True),
+    ("Meals: breakfast and lunch.", "Meal: L, B", True),
+    ("Distance: approximately 210 km.", "Distance: approximately 210 km", True),
+    ("Distance: approximately 210 km.", "Distance: 210 km", False),
+    ("Overnight: Velmora.", "Accommodation: Velmora", False),
+])
+def test_clause_key_compares_label_and_value(a, b, same):
+    assert (rc.clause_key(a) == rc.clause_key(b)) is same
+
+
+def test_keep_unstated_facts_cuts_only_the_stated_clauses():
+    body = f"{PILOT_P2} Overnight: Corran. Distance: approximately 210 km.\nMeals: dinner. Walking time: 2 hours."
+    out, n = rc.keep_unstated_facts(body, ["Overnight: Corran", "Meals: D"])
+    assert out == f"{PILOT_P2} Distance: approximately 210 km.\nWalking time: 2 hours."
+    assert n == 2
+    assert rc.keep_unstated_facts(body, []) == (body, 0)
+
+
+def test_facts_lost_counts_a_stored_fact_the_new_block_lacks_and_spares_a_do_not_use_line():
+    before = [{"facts": ["Overnight: Velmora.", "Hotel: Canal House Ltd"]}]
+    after = [{"facts": ["Overnight: Velmora"]}]
+    assert rc.facts_lost(before, after, set()) == 1
+    assert rc.facts_lost(before, after, set(rc.fact_keys("Hotel: Canal House Ltd"))) == 0
+    assert rc.facts_lost(before, [], set()) == 2
+
+
+def test_a_do_not_use_source_line_dropped_by_compose_is_not_a_lost_fact():
+    src = SOURCE_ITIN.replace("Overnight: Velmora", "Overnight: Velmora\nHotel: Lanterra Holidays guesthouse")
+    itin = PAGE_ITIN.replace("Overnight: Velmora. Meals: dinner.",
+                             "Overnight: Velmora. Meals: dinner.\nHotel: Lanterra Holidays guesthouse")
+    r = row(src_itineraries=src, aa_itineraries=itin)
+    tour = st.tour_of(r)
+    facts = build_fact_table(tour)
+    facts["do_not_use"] = [*facts.get("do_not_use", []), {"value": "Lanterra Holidays", "reason": "operator"}]
+    with rc.no_model():
+        res = rc.recompose(st.page_of(r), tour, facts, [])
+    assert "Lanterra" not in res.page["itineraries"]
+    assert res.report["facts_lost"] == 0
+
+
+def test_spacing_only_differences_keep_the_stored_itinerary():
+    first = _recompose(row()).page["itineraries"]
+    spaced = first.replace("\n\n", "\n\n\n").replace("Meals: D", "Meals: D  ")
+    res = _recompose(row(aa_itineraries=spaced))
+    assert res.page["itineraries"] == spaced and res.no_op
+
+
+# ── 8. the DRY RUN line counts, the sample and the APPLY refusal ────────────────────────────────────────────────
+
+
+def test_the_report_prints_the_line_counts():
+    ds = [st.decide(row(), []), st.decide(pilot_row(tour_id=B), [])]
+    lines = st.report_lines(ds)
+    assert "fact_clauses_cut=0 lines_removed=2 lines_added=3 facts_lost=0 (due)" in lines[2]
+    assert any(" -2/+3 lost=0" in ln for ln in lines)
+    assert "Velmora" not in "\n".join(lines)
+
+
+def test_the_sample_shows_the_first_two_days_of_the_first_masters_due():
+    ds = [st.decide(row(tour_id=t), []) for t in (A, B, "0a1b2c3d-0000-4000-8000-000000000003",
+                                                  "0a1b2c3d-0000-4000-8000-000000000004")]
+    out = st.sample_lines(ds)
+    heads = [ln for ln in out if ln.startswith("SAMPLE ")]
+    assert len(heads) == st.SAMPLE_TOURS == 3
+    assert heads[0].startswith("SAMPLE 0a1b2c3d recompose lines_removed=2 lines_added=3 facts_lost=0")
+    starts = [i for i, ln in enumerate(out) if ln.startswith("SAMPLE ")]
+    first = out[starts[0]:starts[1]]
+    assert first.count("  before:") == first.count("  after:") == 2
+    assert "   - Overnight: Velmora. Meals: dinner." in first and "   + Overnight: Velmora" in first
+    assert f"     {DAY1_PROSE}" in first                              # an unchanged line carries no mark
+    assert len([ln for ln in st.sample_lines(ds, 1) if ln.startswith("SAMPLE ")]) == 1
+    assert st.sample_lines(ds, 0) == []
+
+
+def test_apply_is_refused_when_a_master_due_would_lose_a_fact():
+    d = st.decide(row(), [])
+    assert st.apply_refusal([d]) == ""
+    bad = {**d, "report": {**d["report"], "facts_lost": 2}}
+    assert "facts_lost=2 on 1 Master(s) due" in st.apply_refusal([bad])
+    skipped = {**bad, "state": rc.FACTS_WOULD_BE_LOST}
+    assert st.apply_refusal([skipped]) == ""                       # a skipped Master is never written anyway
+
+
+def test_the_runner_refuses_apply_on_facts_lost(monkeypatch):
+    import asyncio
+    mod = _script()
+    d = st.decide(row(), [])
+    bad = {**d, "report": {**d["report"], "facts_lost": 1}}
+
+    class _Conn:
+        pass
+
+    class _Acq:
+        async def __aenter__(self):
+            return _Conn()
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Pool:
+        def acquire(self):
+            return _Acq()
+
+    async def _wave(conn, wid):
+        return [A], ""
+
+    async def _load(conn, ids):
+        return [row()]
+
+    async def _words(conn, rows):
+        return {}
+
+    from services.quality import final_contract_store as fcs
+    monkeypatch.setattr(st, "wave_set", _wave)
+    monkeypatch.setattr(st, "load", _load)
+    monkeypatch.setattr(st, "decide", lambda *a, **k: bad)
+    monkeypatch.setattr(fcs, "brand_words_by_key", _words)
+    printed: list = []
+    published: list = []
+
+    async def _publish(vid, **kw):
+        published.append(vid)
+        return {}
+
+    env = {"WAVE_ID": "11111111-0000-4000-8000-000000000001", "APPLY": "1", "PIN": st.pin_of([bad])}
+    code = asyncio.run(mod.run(_Pool(), env, publish=_publish, out=printed.append))
+    assert code == 2 and any("refused: facts_lost=1" in p for p in printed) and not published

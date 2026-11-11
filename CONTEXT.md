@@ -4439,16 +4439,20 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     `s1_recompose_store.py` DB, runner `scripts/quality/recompose_masters.py`): a served v2 Master whose fixed fields
     differ from what the S1 train composes today gets them recomposed by the same `s1_train.compose_page` (day
     headings, the source day's verbatim fact lines, the title fit, the code meta template) while the narrative stays
-    byte-identical (name, subtitle, summary, description, highlights, day titles, prose lines), and the result is a NEW
+    byte-identical (name, subtitle, summary, description, highlights, day titles, prose lines) and no fact is lost (a
+    writer fact clause such as "Overnight: X." is cut only when the same day gets the source's verbatim fact line with
+    the same label and value; else it stays, and a recompose that would drop a stored fact is skipped as
+    `facts_would_be_lost`), and the result is a NEW
     approved `generated_content` version (a copy of the served one, `metadata.recompose_of` = its id,
-    `metadata.writer` = `recompose-v1`, `writer_version` kept, the score row copied with today's failure codes)
+    `metadata.writer` = `recompose-v2`, `writer_version` kept, the score row copied with today's failure codes)
     published through `process_export` (exit `recompose`): A3, source fan-out, `updated_at` and the other apps follow.
     Skipped and counted: source not live, a pending review, a newer version in flight, an active pipeline job, not v2,
     human-edited (opt-in), the elephant-riding policy, a legacy-format itinerary, a narrative change, a no-op, a
     contract verdict worse than the stored or today's one, a published recompose a person rolled back (never
-    republished; only a never-published one is resumed). DRY RUN prints counts, 8-char ids and the pin; APPLY needs
-    an open rerun wave holding the set and the pin, and stops before the next Master once the wave is paused or
-    closed.
+    republished; only a never-published one is resumed). DRY RUN prints counts (incl. lines_removed, lines_added,
+    facts_lost), 8-char ids, the pin and a capped before / after sample (SAMPLE=n); APPLY needs an open rerun wave
+    holding the set and the pin, refuses when a Master due has facts_lost > 0, and stops before the next Master once
+    the wave is paused or closed.
 - **A3 — Master Content Pool**: `gold_aa_internal.published_tours` — a tour is "in Master
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
