@@ -49,6 +49,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         ("services/acp_content_writing/generate.py", "_record_t9_write_call"),),
     ("services/acp_content_writing/generate.py", "repair_sentences_detailed"): _self(
         "services/acp_content_writing/generate.py", "repair_sentences_detailed"),
+    # AA-1077: the extend repair of a short blog logs its own row (**billed_fields)
+    ("services/acp_content_writing/generate.py", "extend_sections"): _self(
+        "services/acp_content_writing/generate.py", "extend_sections"),
     ("services/acp_content_writing/generate.py", "fit_seo_fields"): _self(
         "services/acp_content_writing/generate.py", "fit_seo_fields"),
     ("services/acp_content_writing/generate.py", "write_faq"): _self(
