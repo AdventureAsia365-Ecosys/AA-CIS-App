@@ -43,9 +43,20 @@ PR that requires 398 in readiness.
   a live tour keeps AA-653 (`dismissed`). The AA-653 supersede runs only when the new row entered `pending`, so a
   dismissed attempt never closes a pending policy review. The publish dismissal (process_export step 3c) spares a
   pending policy review of a NEWER version (a re-export of the old Master does not close it).
-- **The one-time script** reads active Masters plus the ones already held for the policy, so the pin
-  (`count:md5` of the sorted full tour ids) is the same before, during and after APPLY (resumable). It prints 8-char
-  ids and field codes, never text.
+- **The one-time script** reads active Masters plus the ones already held for the policy, so the pin is the same
+  before, during and after APPLY (resumable). The pin is `count:md5` of the sorted `tour_id:served version id` of the
+  tours to hold (id + change marker, destructive-ops step 1). It prints 8-char ids and field codes, never text.
+- **A person's approval is final for the hold** (review fix pass): a Master whose served version has an approved
+  policy review (`policy.policy_approved`: an `approved` row with the policy marker) is `approved` in the script
+  (never held, out of the pin) and `policy_hold` refuses it (409 `policy_approved`). So a DRY RUN / APPLY re-run after
+  reviewers approved some tours never re-holds them, and the pin moves (an APPLY with an old pin stops). An approval
+  with no policy marker (a score review, or an S271-S276 `policy_keep` approve, before the marker existed) does not
+  count: the tour is still held and the DRY RUN prints it as `approved_other` so the tech lead sees how many before
+  APPLY.
+- **The policy supersede touches S1 rows of the master tenant only** (review fix pass): `ensure_policy_review`
+  replaces older pending rows with `generated_content_id IS NOT NULL AND tenant_id = <master>`; an agency's T2 row of
+  the same tour (its tenant, `tenant_tour_version_id`, e.g. the T2 elephant-riding policy hold) stays pending. The
+  pending-row lookup is scoped the same way.
 
 ## Changed
 
@@ -81,8 +92,13 @@ PR that requires 398 in readiness.
 ## Should know
 
 - Live order: CIS 398 applied (Migration Apply, class contract) → code PR deploy (readiness requires 398) → script
-  DRY RUN (count + pin to the tech lead) → `APPLY=1 PIN=<pin>` → read-only counts: active Masters with a detector hit
-  = 0, pending policy reviews = the held count.
+  DRY RUN (count + pin to the tech lead) → `APPLY=1 PIN=<pin>` → read-only check: a second DRY RUN prints
+  `to_hold=0` (active Masters with a detector hit and no approved policy review of the served version = 0), and
+  pending S1 policy reviews = already_held. Tenants' pending T2 review rows are unchanged by the APPLY (count them
+  before and after).
+- The publish dismissal of process_export (step 3c, on main before this change) dismisses every pending row of the
+  tour, tenants' T2 rows included; this lane only spares a newer S1 policy review there. Left as is (not part of
+  this slice); see the lane follow-up.
 - The script runs in the api container (`tools/ecs/ecsx.sh`, `cis_app`); each hold enqueues a recompute / TripPlanner
   purge job after commit, so run it when the job table is quiet.
 - Detector changes (`elephant_policy.py`) change which Masters the guard refuses; the integration tests pin the
