@@ -1,0 +1,106 @@
+name: Test Durations
+# AA-1084: keeps .github/test-durations/{unit,integration}.json (the weights the CI shards split on) fresh without a
+# person. Nightly: read the per-file seconds the last successful merge-queue CI runs uploaded (artifacts
+# test-durations-unit / test-durations-integration), take the median per test file, and when the split would move
+# enough (the longest shard drops >= 5 s, or >= 10 test files have no record) open or update the one PR on branch
+# bot/test-durations that changes only those two files. Script: .github/scripts/test_durations_bot.py.
+#
+# The PR is opened with the aa-ecosys-ci-bot App token (Contents + Pull requests write, this repo only, minted only
+# when there is something to publish): a PR opened by GITHUB_TOKEN would start no CI. The bot then turns on
+# auto-merge, so the PR joins the merge queue once its checks pass; the queue runs the FULL CI with the new split on
+# the exact tree that lands. A red queue run leaves the PR open for a person (an integration module that leans on its
+# old neighbour shows up there: fix the test). The files feed no deploy path (deploy-dev.yml watches api/, shared/,
+# services/, worker/ only). Repo variable TEST_DURATIONS_AUTO_MERGE=false turns auto-merge off; the orchestrating
+# agent then merges the PR like any other.
+#
+# Manual run: Actions -> Test Durations -> Run workflow on main; dry_run (default true) computes and prints the PR it
+# would open and never mints a token or writes to GitHub.
+on:
+  schedule:
+    - cron: "20 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute and print only: no token, no branch, no PR"
+        type: boolean
+        default: true
+      force:
+        description: "Write the fresh files even when the split barely moves"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-durations
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh test durations
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Environment "release": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY (as release-please.yml).
+    environment: release
+    permissions:
+      contents: read
+      actions: read          # download the artifacts of other CI runs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the durations of the last successful merge-queue runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/test_durations_bot.py fetch --repo "$GITHUB_REPOSITORY" --dest "$RUNNER_TEMP/runs"
+
+      - name: Refresh the durations files
+        id: refresh
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          set -euo pipefail
+          force=()
+          if [ "$FORCE" = "true" ]; then force=(--force); fi
+          python3 .github/scripts/test_durations_bot.py refresh --runs-dir "$RUNNER_TEMP/runs" "${force[@]}" \
+            | tee "$RUNNER_TEMP/refresh.md"
+          git diff --stat -- .github/test-durations
+
+      - name: Show the PR it would open (dry run)
+        if: steps.refresh.outputs.changed == 'true' && github.event_name == 'workflow_dispatch' && inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/test_durations_bot.py publish --repo "$GITHUB_REPOSITORY" --dry-run \
+            --summary "$(cat "$RUNNER_TEMP/refresh.md")"
+
+      - name: Mint the CI bot App token (this repo, Contents + Pull requests only)
+        id: app-token
+        if: steps.refresh.outputs.changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.AA_CI_BOT_APP_ID }}
+          private-key: ${{ secrets.AA_CI_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open or update the durations PR
+        if: steps.app-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          AUTO_MERGE: ${{ vars.TEST_DURATIONS_AUTO_MERGE != 'false' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          auto=()
+          if [ "$AUTO_MERGE" = "true" ]; then auto=(--auto-merge); fi
+          python3 .github/scripts/test_durations_bot.py publish --repo "$GITHUB_REPOSITORY" --run-url "$RUN_URL" \
+            --summary "$(cat "$RUNNER_TEMP/refresh.md")" "${auto[@]}"
