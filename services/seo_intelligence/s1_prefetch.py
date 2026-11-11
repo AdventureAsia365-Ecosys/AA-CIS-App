@@ -435,11 +435,19 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
         logger.warning("t2_market_resolve_failed", tenant_id=tenant_id, error=str(e)[:200])
         return "US", None
     market = LOCATION_CODE_TO_MARKET.get(location_code, "US")
+    return market, await market_keyword_seo(conn, market, tour_id)
+
+
+async def market_keyword_seo(conn, market: str, tour_id: str) -> dict | None:
+    """AA-1080 — T2's keyword pick for one tour in one market, from the research cache only (no DataForSEO, $0):
+    the seo_data T2 hands the writer, or None when the cache has nothing for this tour there. Split out of
+    `tenant_market_seo` so the replay tool (scripts/aa1080/t2_keyword_market_replay.py) runs the same pick for
+    another market."""
     row = await conn.fetchrow(
         "SELECT tour_id, src_name, country, activities FROM silver_aa_internal.raw_tours "
         "WHERE tour_id = $1::uuid", tour_id)
     if not row:
-        return market, None
+        return None
     spec = tour_spec(dict(row))
     spec["foreign"] = await foreign_places(conn, spec["country"])
     # AA-741 (S231 pilot): title words alone ("CULINARY GEMS OF BHUTAN" → ["culinary"]) matched
@@ -448,7 +456,7 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
     spec["places"] = list(dict.fromkeys(spec["places"] + await atom_places(conn, tour_id)))
     terms = strong_terms(spec["places"]) + spec["activity"]
     if not terms:
-        return market, None
+        return None
     demand = [dict(r) for r in await conn.fetch(
         """SELECT keyword, search_volume, people_also_ask FROM acp_contract.search_demand
             WHERE market = $1 AND search_volume > 0 AND keyword ILIKE ANY($2::text[])""",
@@ -465,6 +473,6 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
                                    country=spec["country"], foreign_places=spec.get("foreign"))
     top = [i["keyword"] for i in ideas if _vol(i) > 0][:10]
     if not top:
-        return market, None
-    return market, {"keywords": {"top_keywords": top}, "top_keywords": top,
-                    "people_also_ask": paa, "seo_market": market}
+        return None
+    return {"keywords": {"top_keywords": top}, "top_keywords": top,
+            "people_also_ask": paa, "seo_market": market}

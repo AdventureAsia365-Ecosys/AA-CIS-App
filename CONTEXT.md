@@ -1003,7 +1003,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   stream that broke before its usage event (cost unknown), and embeddings (`embed()`: the caller logs a success,
   a failed embed writes no row yet). S1 Bedrock Batch: `ingest_s1_batch` writes one row per record of the batch
   (AA-642 S7, priced at the batch rate, `pricing_mode` '<basis>+batch'; a record with no usage or no output line is a
-  0 USD error row). `tests/unit/test_aa927_llm_call_site_registry.py` fails on a
+  0 USD error row); the gateway batch lane does the same per request (AA-1076, `batch_lane.ledger_rows`), and the
+  caller writes no row for a reply it took from a batch (`batch_lane.already_ledgered`). `tests/unit/test_aa927_llm_call_site_registry.py` fails on a
   new LLM call site that is not registered with the function writing its row. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
   `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:
@@ -1146,7 +1147,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     autovacuum `scale_factor 0.02`, `threshold 50` (C5.1b as amended by AA-751). Changing the template =
     copy it to AA-Booking in the same session + one migration per owner.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
-    `s1_seo_prefetch`, `photo_sync`, `photo_medium_backfill` — AA-995, `photo_destination_match` — AA-671, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
+    `s1_seo_prefetch`, `photo_sync`, `photo_medium_backfill` — AA-995, `photo_destination_match` — AA-671, `s1_rewrite`, `s1_batch_ingest`, `llm_batch` — AA-1076, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
@@ -1551,6 +1552,23 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet
   enabled Batch Inference on acc3 (support case 178979743800653, blocker AA-624). Batch atomize
   (AA-621) waits on the same blocker.
+- **Gateway batch lane (AA-1076)**: `shared/llm_client/batch_lane.py` + `adapters/anthropic_batches.py` (Message
+  Batches) / `adapters/openai_batches.py` (Batch API): bulk work nobody waits on runs as ONE provider batch at 50% of
+  every token. Target = the stage route, model first, on its first `anthropic` / `openai` deployment of
+  `vendor_route.deployment_plan` (scopes, roles, pii, circuits, budgets as on demand). Guards before submit: the
+  switch `LLM_BATCH_LANE` (default on), tenant stages `t<n>_*` refused (stay synchronous), the stage kill switch, the
+  app AI switch, a cost cap per batch (required, <= 100 USD) against the gateway's worst-case estimate at the batch
+  rate, and the central budgets. Request bodies come from the on-demand builders (`anthropic_messages.build_params`,
+  `client.openai_chat_body`). Driver: the `llm_batch` job (`services/jobs/llm_batch_job.py`), ONE row per batch that
+  reschedules itself (`registry.Reschedule`: back to queued, due later, attempt not counted, state in `progress`;
+  submit fenced by phase `submitting`); at the end one `llm_call_log` row per request (`pricing_mode` '+batch',
+  `quality_signal.batch_id`, `unit_kind` `batch_request`), then the consumer hands the usable replies to the normal
+  jobs (`services/llm_batch/consumers.py`: `s1_attempt1` -> `s1_rewrite` jobs, the S1 writer v2's write call only;
+  `a3_atomize` -> `a3_atomize` jobs, the changed days; `adhoc` for scripts). The replies are bound with
+  `batch_lane.bind_replies` and used by `prefetched(stage, system, user)` only for byte-identical prompts on attempt 1;
+  failed / expired / cancelled items, stale prompts and every retry run on demand. Admin: `GET/POST
+  /admin/ai-gateway/batches`, `POST /admin/ai-gateway/batches/{job_id}/cancel` (Batches tab of AI providers). The wave
+  report counts an `llm_batch` job (payload `tour_ids`) as each tour's job.
 - **Plans and quota (AA-640, AA-1028 R1 slice 3)**: the tour-rewrite quota is the tenant's resolved entitlement
   `content.rewrite` (starter 50 / growth 200 / business 500, edited on Tenants › Plans & add-ons), with the old
   `shared.membership_plans` read only as the fallback for a tenant with no numeric key. Over-quota rewrites are
@@ -3463,7 +3481,10 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
 1. Fetch candidates (Segments/Routes) for the tenant's markets. A declared market outside the
    6 supported ones is no longer silently replaced by US: it is returned as
    `unmatched_markets`, shown as a banner to the tenant, and recorded in
-   `shared.unmapped_market_requests` for admin (AA-629).
+   `shared.unmapped_market_requests` for admin (AA-629). Since AA-1080 every unsupported declared market
+   counts, also when another declared one is supported (one row per country, also written at the Brand
+   Identity save), and the T2 keyword market is the agency's FIRST supported declared market
+   (`seed_builder.first_supported_market`; before, the lowest MARKET_RANK, so US won for every list holding it).
 2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory signals before choosing. Since AA-1079
    (S277) Debate RANKS ONLY by default (`T7_DEBATE_MODE` unset or `rank`): no candidate is dropped; a flagged one
    carries `debate_flags` and is ordered after every unflagged candidate of its Channel queue, and the `t7_slate`

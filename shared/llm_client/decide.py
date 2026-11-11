@@ -1251,6 +1251,13 @@ _PLATFORM_VERDICTS_SQL = """
 """
 
 
+async def active_questions(conn, question_keys: list[str]) -> list[str]:
+    """AA-1083 — the keys among `question_keys` decide() would ask today (known, mode not `off`), in order. A caller
+    that reads stored verdicts with platform_verdicts() needs this to tell "no stored verdict" from "never asked"."""
+    await _load_config(conn)
+    return [k for k in question_keys if k in _questions and _questions[k].mode != "off"]
+
+
 async def platform_verdicts(conn, question_keys: list[str], subject_keys: list[str]) -> dict[tuple[str, str], Verdict]:
     """AA-982 — the stored verdicts an A-series stage already got on PLATFORM content, read the way
     the decide() cache reads them (current wording hash, `NOT cached`, ≤ CACHE_MAX_AGE_DAYS), with the

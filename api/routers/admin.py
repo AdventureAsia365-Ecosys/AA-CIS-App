@@ -1243,6 +1243,7 @@ class TenantBrandIdentityUpdate(BaseModel):
     good_examples:      Optional[str] = None
     target_markets:     Optional[List[str]] = None
     default_cta:        Optional[str] = None  # AA-771 (S233, migration 220)
+    signature_words:    Optional[List[str]] = None  # AA-1080 (custom_validators); None keeps the previous value
 
 
 @router.put("/tenants/{tenant_id}/brand-identity", dependencies=TENANT_SCOPED)
@@ -1282,8 +1283,12 @@ async def update_tenant_brand_identity(
     good_examples = sanitize_text(body.good_examples, MAX_BRAND_LONG_LEN)
     target_markets = sanitize_list(body.target_markets or [], MAX_SHORT_FIELD_LEN, max_items=20)
     default_cta = sanitize_text(body.default_cta, MAX_BRAND_MEDIUM_LEN)
-    from services.brand_intake.markets import target_market_json
+    from services.brand_intake.markets import market_summary, target_market_json
+    from services.brand_intake.save import (
+        CUSTOM_VALIDATORS_VALUE_SQL, record_unsupported_markets, signature_words_json,
+    )
     market_json = target_market_json(target_markets)
+    custom_validators_json = signature_words_json(body.signature_words)
 
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
@@ -1303,11 +1308,13 @@ async def update_tenant_brand_identity(
             INSERT INTO shared.tenant_brand_rules
                 (tenant_id, brand_name, brand_type, core_idea, customer_segment,
                  customer_mindset, voice_examples, style_guide, good_examples, system_prompt,
-                 forbidden_words, target_markets, version, is_active, updated_at, default_cta)
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb, $12, $13, true, NOW(), $14)
+                 forbidden_words, target_markets, version, is_active, updated_at, default_cta,
+                 custom_validators)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb, $12, $13, true, NOW(), $14,
+                    """ + CUSTOM_VALIDATORS_VALUE_SQL.format(param="$15", tenant="$1", version="$13") + """)
         """, tenant_id_s, brand_name, brand_type, core_idea, customer_segment, customer_mindset,
             json.dumps(tone_of_voice), style_guide, good_examples, system_prompt,
-            json.dumps(forbidden_words), target_markets, current + 1, default_cta)
+            json.dumps(forbidden_words), target_markets, current + 1, default_cta, custom_validators_json)
         if tenant_id_s != "00000000-0000-0000-0000-000000000001":
             # AA-741 (S229): the brand's markets drive T2/T7 (tenant_seo_config.target_market).
             await conn.execute("""
@@ -1328,8 +1335,13 @@ async def update_tenant_brand_identity(
     # AA-900 W0: a tenant's house style is part of its writing-memory tenant releases' config_fp (brand_config)
     from services.writing_memory.releases import reverify_scan_safe
     await reverify_scan_safe(pool, actor=f"brand_save:{_admin_actor(x_admin_user_id)}"[:128])
+    # AA-1080: one unmapped-market request per declared country without search data (best effort).
+    if tenant_id_s != "00000000-0000-0000-0000-000000000001":
+        await record_unsupported_markets(pool, tenant_id_s, market_json)
     return {"status": "updated", "version": current + 1,
-            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
+            "markets": {**{k: market_json[k] for k in ("countries", "unsupported", "unknown")},
+                        **{k: v for k, v in market_summary(target_markets, market_json["countries"]).items()
+                           if k in ("supported", "seo_market", "defaulted", "notes")}}}
 
 
 # ── GET /admin/tenants/{id}/rewrite-activity ─────────────────────────────────

@@ -103,6 +103,14 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/batches": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/batches/{job_id}": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/budgets": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
@@ -1131,6 +1139,14 @@
     "capability": "master.admin",
     "module": "api.routers.admin_aa_content"
   },
+  "POST /admin/ai-gateway/batches": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "POST /admin/ai-gateway/batches/{job_id}/cancel": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "POST /admin/ai-gateway/credit/check": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
@@ -1280,6 +1296,10 @@
     "module": "api.routers.admin_job_runner"
   },
   "POST /admin/job-runner/jobs/{job_id}/cancel": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/jobs/{job_id}/release-jev-cap": {
     "capability": "ops.write",
     "module": "api.routers.admin_job_runner"
   },

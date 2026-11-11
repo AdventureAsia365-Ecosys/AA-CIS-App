@@ -45,6 +45,7 @@ from services.acp_shared.atom_extraction import (
     atoms_from_reply as _atoms_from_reply,
 )
 from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
+from shared.llm_client import batch_lane
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import get_stage_config
@@ -130,7 +131,8 @@ class AtomizeStopped(Exception):
     re-claims the job. Atoms and fingerprints of the days already read stay committed; the next run skips them."""
 
 
-async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, signal_extra: dict | None = None):
+async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, signal_extra: dict | None = None,
+                     prefetch: bool = False):
     """Up to `_READ_ATTEMPTS` gateway calls for one atomize read. Returns (atoms, llm_result, attempt, error):
     atoms is None when every attempt failed. Every billed reply that did not parse gets its own billed_unusable
     llm_call_log row here (AA-927); the caller writes the row of the reply it uses. `event` keeps the log names
@@ -138,6 +140,15 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
     the gateway's truncation retry, or a cut that raised) ends the loop: only the gateway retries a cut."""
     max_tokens = _MAX_TOKENS
     error = None
+    if prefetch:
+        # AA-1076: a re-atomize wave sent this day through the gateway batch lane; its reply (already ledgered by the
+        # batch) answers attempt 1 when it is for exactly this prompt and parses. Anything else reads live below.
+        seeded = batch_lane.prefetched("a3_atomize", _SYSTEM_PROMPT, prompt)
+        if seeded is not None:
+            try:
+                return _atoms_from_reply(seeded.content), seeded, 1, None
+            except (ValueError, KeyError, TypeError) as e:
+                logger.warning(f"{event}_batch_reply_unparsed", **log_fields, error=str(e)[:200])
     for attempt in range(1, _READ_ATTEMPTS + 1):
         try:
             # AA-757 — through the gateway: stage "a3_atomize" (admin route/fallback/shadow), no model_tier so
@@ -173,6 +184,18 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
                 # AA-1053: still cut after the gateway's one truncation retry: the read failed, no ask of our own.
                 return None, None, attempt, error
     return None, None, _READ_ATTEMPTS, error
+
+
+def atomize_row(tour_id: str, rewritten: dict) -> dict:
+    """The tour row the atomize prompts are built from (run_a3_atomize; AA-1076: the batch lane's A3 consumer builds
+    the same row, so a batch day prompt is byte-identical to the live one)."""
+    return {
+        "id": tour_id,
+        "name": rewritten.get("name") or "",
+        "aa_summary": rewritten.get("summary") or "",
+        "aa_highlights": rewritten.get("highlights") or [],
+        "itinerary_source": rewritten.get("itineraries") or "",
+    }
 
 
 # AA-1058: every a3_atomize ledger row (and the Jev atom check below it) names the tour.
@@ -217,13 +240,7 @@ async def run_a3_atomize(
     day. The legacy whole-tour path is one read, asked once before it. `force_since` (per-day path only): see
     `_atomize_per_day`.
     """
-    row = {
-        "id": tour_id,
-        "name": rewritten.get("name") or "",
-        "aa_summary": rewritten.get("summary") or "",
-        "aa_highlights": rewritten.get("highlights") or [],
-        "itinerary_source": rewritten.get("itineraries") or "",
-    }
+    row = atomize_row(tour_id, rewritten)
     # Whole-tour hash — AA-508 keeps this (STEP0 build-task instruction: "giữ lại source_hash
     # cấp-tour hiện có làm fallback/audit"). Still written onto every atom row either path
     # produces; no longer what decides skip-or-not in the per-day path (the fingerprint table
@@ -483,6 +500,7 @@ async def _atomize_per_day(
 
     inserted = 0
     days_read = 0
+    days_from_batch = 0
     days_failed = []
     day_errors: dict[str, str] = {}
     for day_num, day, fp in to_ask:
@@ -491,7 +509,7 @@ async def _atomize_per_day(
         atoms, llm_result, attempt, error = await _ask_atoms(
             prompt, _a3_cfg.role, event="a3_atomize_day",
             log_fields={"tour_id": tour_id, "version_id": version_id, "day_number": day_num},
-            signal_extra={"day_number": day_num})
+            signal_extra={"day_number": day_num}, prefetch=True)
         if atoms is None:
             days_failed.append(day_num)
             day_errors[str(day_num)] = (error or "")[:300]
@@ -576,6 +594,12 @@ async def _atomize_per_day(
                     fingerprint_hash = excluded.fingerprint_hash, atomized_at = now()
             """, version_id, day_num, fp)
         days_read += 1
+        if batch_lane.already_ledgered(llm_result):
+            # AA-1076: a gateway batch reply: the batch wrote its llm_call_log row (one per request) at ingest.
+            days_from_batch += 1
+            logger.info("a3_atomize_day_from_batch", tour_id=tour_id, day_number=day_num,
+                        atoms_extracted=len(new_atom_ids))
+            continue
         # AA-505 — per-day atom count, real and immediate (same reasoning as the legacy path).
         # AA-757 — cost/model/account/fallback/provider from the gateway response.
         await record_call_with_pool(
@@ -597,6 +621,8 @@ async def _atomize_per_day(
         "days_read": days_read, "days_skipped": len(days) - len(to_ask),
         "orphan_atoms_deleted": orphans,
     }
+    if days_from_batch:
+        result["days_from_batch"] = days_from_batch      # AA-1076
     if days_failed:
         result["error"] = (
             f"day(s) {days_failed} failed to atomize "

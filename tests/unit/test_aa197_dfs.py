@@ -108,10 +108,11 @@ def test_build_seed_empty():
 
 # ── resolve_buyer_market ──────────────────────────────────────────────────────
 
-def test_resolve_market_prefers_us_by_rank():
+def test_resolve_market_takes_the_first_declared_supported_market():
+    # AA-1080: the agency's own order wins, not MARKET_RANK (before: US for every list that held it).
     code, name, lang = resolve_buyer_market(
         {"language": "en", "countries": ["AU", "UK", "US"]})
-    assert code == 2840 and name == "United States" and lang == "en"
+    assert code == 2036 and name == "Australia" and lang == "en"
 
 
 def test_resolve_market_single_au():

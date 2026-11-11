@@ -33,6 +33,13 @@ AA-1056 (root S273 system picture §5 item 8) — drain-safe like a3_atomize (AA
 * a cancel event: set when the handler is cancelled; the thread stops at the next stage boundary (RecomputeStopped)
   and drops its late progress writes;
 * fixed error codes (services/recompute/errors.py) at the start of every failure message.
+
+AA-1083 — Jev only for what changed, an estimate and a per-run cap (services/recompute/jev_scope.py): before its stages
+the run estimates the Jev calls it would make that no stored verdict answers, priced at the measured unit cost per
+stage. Above the cap (spend_budget jev / job:recompute, default 0.50 USD) the job ends `stopped_budget` with the
+estimate in its result and one admin bell, and runs only once staff release it (`payload.jev_release`, never coalesced
+with later enqueues). Every run's result carries `jev`: scope, estimate, cap and the real spend (calls / USD by stage
+from llm_call_log).
 """
 from __future__ import annotations
 
@@ -45,9 +52,11 @@ from typing import Callable, Optional
 
 import structlog
 
+from services.recompute import jev_scope
 from services.recompute.errors import (
     BAD_PAYLOAD, RecomputeError, RecomputeLockTimeout, RecomputeStageFailed, RecomputeStopped,
 )
+from shared.cost_guard import BudgetExceeded
 from shared.jobs import queue
 from shared.jobs.registry import WORKER_STOP_TIMEOUT_SECONDS, JobContext, NonRetryable, enqueue, job_kind
 
@@ -95,6 +104,8 @@ MAX_WAIT_S = 1200
 # Fold this enqueue into the oldest QUEUED platform job: union the Segment scope (absent key =
 # every Segment, which absorbs any list), slide run_after, count the folded enqueues.
 # FOR UPDATE SKIP LOCKED + the status re-check: a job being claimed right now is not touched.
+# AA-1083: a job staff released past the Jev cap (`jev_release`) is never folded into: the release covers the scope the
+# staff member saw.
 _COALESCE_SQL = """
     UPDATE shared.job j SET
         payload = CASE
@@ -107,6 +118,7 @@ _COALESCE_SQL = """
                              LEAST(j.created_at + make_interval(secs => $3), now() + make_interval(secs => $2)))
     WHERE j.id = (SELECT id FROM shared.job
                   WHERE kind = 'recompute' AND status = 'queued' AND payload->>'scope' = 'platform'
+                    AND NOT (payload ? 'jev_release')
                   ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
       AND j.status = 'queued'
     RETURNING j.id
@@ -146,6 +158,8 @@ async def enqueue_recompute(pool, *, scope: str, reason: str, tour_id: Optional[
                                     tour_id=tour_id if scope == "tour" else None)
     for j in pending:
         p = j.get("payload") or {}
+        if p.get("jev_release"):     # AA-1083: a released job keeps the scope staff approved
+            continue
         if p.get("scope") == scope and (scope == "platform" or p.get("tour_id") == tour_id):
             logger.info("recompute_debounced", reused_job=j["id"], scope=scope, tour_id=tour_id,
                         reason=reason)
@@ -197,6 +211,7 @@ async def run(ctx: JobContext) -> dict:
         stage["name"] = name
 
     result: dict = {}
+    jev: dict = {}           # AA-1083: scope, estimate, cap, held, then the real spend
 
     def _in_own_loop() -> None:
         from services.export.handler import open_job_pool
@@ -207,13 +222,21 @@ async def run(ctx: JobContext) -> dict:
                 # S219: a real pool, not one shared connection — concurrent decide() calls collided.
                 own_pool = await open_job_pool()
                 try:
+                    stage["name"] = "jev_estimate"
+                    jev.update(await jev_scope.plan_run(own_pool, scope=scope, tour_id=tour_id,
+                                                        segment_ids=segment_ids, released=p.get("jev_release")))
+                    if jev.get("held"):
+                        return None
                     if scope == "tour":
-                        return await recompute_segment_score_route(
+                        out = await recompute_segment_score_route(
                             tour_id, own_pool, log_tour_id=tour_id, progress=_report,
                             should_stop=stop.is_set, on_stage=_on_stage)
-                    return await recompute_rankings_and_routes(own_pool, log_reason=reason,
-                                                                segment_ids=segment_ids,
-                                                                should_stop=stop.is_set, on_stage=_on_stage)
+                    else:
+                        out = await recompute_rankings_and_routes(own_pool, log_reason=reason,
+                                                                   segment_ids=segment_ids,
+                                                                   should_stop=stop.is_set, on_stage=_on_stage)
+                    jev["spend"] = await jev_scope.job_jev_spend(own_pool, ctx.job_id)
+                    return out
                 finally:
                     await own_pool.close()
 
@@ -232,7 +255,17 @@ async def run(ctx: JobContext) -> dict:
         logger.warning("recompute_stage_failed", job_id=ctx.job_id, scope=scope, stage=stage["name"],
                        error=f"{type(e).__name__}: {str(e)[:300]}")
         raise RecomputeStageFailed.for_stage(stage["name"], f"{type(e).__name__}: {str(e)[:700]}") from e
+    base = {"scope": scope, "tour_id": tour_id, "reason": reason, "coalesced": p.get("coalesced", 0),
+            "segments_relanded": None if segment_ids is None else len(segment_ids)}
+    if jev.get("held"):
+        # AA-1083: above the Jev cap — the runner ends the job stopped_budget with this result; staff release it.
+        ctx.set_result({**base, "held": True, "jev": jev})
+        await ctx.progress(phase="held")
+        await jev_scope.ring_held_bell(ctx.pool, ctx.job_id, jev["held"], jev)
+        logger.warning("recompute_jev_held", job_id=ctx.job_id, scope=scope, reason=reason,
+                       estimate_usd=(jev.get("estimate") or {}).get("usd"), cap_usd=jev.get("cap_usd"))
+        raise BudgetExceeded(jev["held"], jev_scope.CAP_PROVIDER, "per_run")
     await ctx.progress(phase="done")
-    logger.info("recompute_job_done", job_id=ctx.job_id, scope=scope, tour_id=tour_id, reason=reason)
-    return {"scope": scope, "tour_id": tour_id, "reason": reason, "coalesced": p.get("coalesced", 0),
-            "segments_relanded": None if segment_ids is None else len(segment_ids), **result}
+    logger.info("recompute_job_done", job_id=ctx.job_id, scope=scope, tour_id=tour_id, reason=reason,
+                jev_calls=(jev.get("spend") or {}).get("calls"), jev_usd=(jev.get("spend") or {}).get("usd"))
+    return {**base, **result, "jev": jev}

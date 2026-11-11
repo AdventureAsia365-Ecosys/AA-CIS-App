@@ -189,3 +189,32 @@ async def test_tenant_market_codes_record_failure_does_not_raise():
 
     assert unmatched == ["VN"]
     assert codes == ["US"]
+
+
+# ── AA-1080: a partly unsupported tenant is recorded too (one row per unsupported country) ──────────
+
+def test_unsupported_countries_lists_every_unsupported_declared_country():
+    from services.seo_intelligence.seed_builder import unsupported_countries
+    assert unsupported_countries({"countries": ["US", "UK", "AE", "SA", "SG", "HK"]}) == ["AE", "SA", "SG", "HK"]
+    assert unsupported_countries({"countries": ["DE", "ZZ", "ZZ"]}) == ["ZZ"]
+    assert unsupported_countries({"countries": ["UK", "DE"]}) == []
+    assert unsupported_countries({}) == [] and unsupported_countries(None) == []
+
+
+@pytest.mark.asyncio
+async def test_tenant_market_codes_records_each_unsupported_country_when_some_are_supported():
+    from services.acp_shared import slate
+
+    tenant_id = uuid4()
+    fake_conn = AsyncMock()
+    fake_cfg = MagicMock(target_market={"countries": ["US", "UK", "AE", "SG"]})
+    fake_service = MagicMock()
+    fake_service.get_seo_config = AsyncMock(return_value=fake_cfg)
+
+    with patch("shared.services.tenant_config_service.TenantConfigService", return_value=fake_service), \
+         patch("shared.dfs_client.unmapped_market.record_unmapped_market_request", new=AsyncMock()) as rec:
+        codes, unmatched = await slate._tenant_market_codes(tenant_id, fake_conn)
+
+    assert unmatched == ["AE", "SG"]                   # the portal banner shows them
+    assert codes == ["US", "UK"]
+    assert [c.args[2] for c in rec.await_args_list] == ["AE", "SG"]

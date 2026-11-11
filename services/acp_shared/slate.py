@@ -293,19 +293,20 @@ async def _tenant_market_codes(tenant_id: UUID, conn) -> tuple[list[str], list[s
     `resolve_buyer_markets()`'s own fallback (unknown/empty -> `["US"]`) so a tenant with no
     usable `target_market` still gets a real, non-empty market list to read against.
 
-    AA-629: returns `(market_codes, unmatched)` — `unmatched` is non-empty ONLY when the tenant
-    declared real `target_market.countries` that DFS_LOCATION_MAP doesn't know (never for a
-    tenant who declared nothing at all — that case's `["US"]` default is a legitimate product
-    choice, not a bug). Best-effort records a Tier-1 `unmapped_market_requests` row when this
-    happens — a write failure here must NEVER break the tenant's own Slate read, so it is caught
-    and logged, not raised."""
+    AA-629: returns `(market_codes, unmatched)` — `unmatched` lists the declared
+    `target_market.countries` that DFS_LOCATION_MAP doesn't know (never for a tenant who declared
+    nothing at all — that case's `["US"]` default is a legitimate product choice, not a bug).
+    AA-1080: EVERY unsupported declared country, also when another declared one is supported (Atlas:
+    US, UK supported, AE SA SG HK listed here), so the portal banner shows and one Tier-1
+    `unmapped_market_requests` row per country is recorded (best effort — a write failure here must NEVER
+    break the tenant's own Slate read, so it is caught and logged, not raised)."""
     from services.seo_intelligence.seed_builder import (
-        LOCATION_CODE_TO_MARKET, resolve_buyer_markets, unmatched_countries,
+        LOCATION_CODE_TO_MARKET, resolve_buyer_markets, unsupported_countries,
     )
     from shared.services.tenant_config_service import TenantConfigService
 
     cfg = await TenantConfigService(conn).get_seo_config(tenant_id)
-    unmatched = unmatched_countries(cfg.target_market)
+    unmatched = unsupported_countries(cfg.target_market)
     if unmatched:
         from shared.dfs_client.unmapped_market import record_unmapped_market_request
         for country_code in unmatched:
@@ -775,7 +776,7 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
                       AND NOT (route_id = ANY($3::text[]))
                 """, tenant_id, channel, list(live_route_ids[channel]))
 
-    # AA-629 — non-empty only when the tenant declared real countries DFS_LOCATION_MAP doesn't know.
+    # AA-629 / AA-1080 — every declared country DFS_LOCATION_MAP doesn't know (empty when none or nothing declared).
     # AA-840 — `channels` / `proposed_per_channel` make the job result show what was planned for.
     return {
         "segments_seen": len(segments), "routes_seen": len(routes),

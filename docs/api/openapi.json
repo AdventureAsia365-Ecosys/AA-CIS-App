@@ -955,6 +955,87 @@
         "title": "BackfillRequest",
         "type": "object"
       },
+      "BatchSendBody": {
+        "additionalProperties": false,
+        "description": "One wave through the gateway batch lane (services/jobs/llm_batch_job.py). The cap is checked before anything is\nsent: the batch's worst-case estimate at the batch rate must stay at or under it (and under the central budgets).",
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "cache_system": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache System"
+          },
+          "cap_usd": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100.0,
+            "title": "Cap Usd",
+            "type": "number"
+          },
+          "consumer": {
+            "enum": [
+              "s1_attempt1",
+              "a3_atomize"
+            ],
+            "title": "Consumer",
+            "type": "string"
+          },
+          "drill_withhold": {
+            "default": 0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Drill Withhold",
+            "type": "integer"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "seo_mode": {
+            "default": "standard",
+            "enum": [
+              "standard",
+              "aggressive",
+              "minimal"
+            ],
+            "title": "Seo Mode",
+            "type": "string"
+          },
+          "tour_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Tour Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consumer",
+          "tour_ids",
+          "cap_usd"
+        ],
+        "title": "BatchSendBody",
+        "type": "object"
+      },
       "BrandCreateRequest": {
         "properties": {
           "brand_name": {
@@ -1207,6 +1288,20 @@
               }
             ],
             "title": "Good Examples"
+          },
+          "signature_words": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Words"
           },
           "style_guide": {
             "anyOf": [
@@ -8591,6 +8686,20 @@
             ],
             "title": "Good Examples"
           },
+          "signature_words": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Words"
+          },
           "style_guide": {
             "anyOf": [
               {
@@ -11846,6 +11955,346 @@
           }
         },
         "summary": "Edit one app's profile: AI on / off, bulk paused, default budget, degrade mode (audited)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/batches": {
+      "get": {
+        "operationId": "get_batches_admin_ai_gateway_batches_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Batches Admin Ai Gateway Batches Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every gateway batch: status, outcomes and spend per batch (read-only, $0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      },
+      "post": {
+        "operationId": "post_batch_admin_ai_gateway_batches_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSendBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Batch Admin Ai Gateway Batches Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send one wave through the gateway batch lane (paid; audited)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/batches/{job_id}": {
+      "get": {
+        "operationId": "get_batch_admin_ai_gateway_batches__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Batch Admin Ai Gateway Batches  Job Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One gateway batch (read-only, $0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/batches/{job_id}/cancel": {
+      "post": {
+        "operationId": "post_batch_cancel_admin_ai_gateway_batches__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Batch Cancel Admin Ai Gateway Batches  Job Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel a gateway batch (the unfinished requests run on demand)",
         "tags": [
           "admin-ai-gateway"
         ]
@@ -24430,6 +24879,95 @@
           }
         },
         "summary": "LLM calls made by one job",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/jobs/{job_id}/release-jev-cap": {
+      "post": {
+        "description": "AA-1083 — a `recompute` whose Jev spend estimate was above the per-run cap ended `stopped_budget` (error\n`recompute_jev_cap: ...`, the estimate in its result). Releasing it re-queues it with `payload.jev_release`\n(who, when, the estimate they saw): the released run is not held again and no later enqueue is folded into it.\n409 when the job is not a held recompute. One audit row per release (`recompute_jev_release`).",
+        "operationId": "release_jev_cap_admin_job_runner_jobs__job_id__release_jev_cap_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run a recompute held above its Jev spend cap",
         "tags": [
           "admin-job-runner"
         ]

@@ -84,7 +84,7 @@ from services.acp_contract.ranking_reference import (
     keyword_words,
     names_somewhere,
 )
-from shared.llm_client.decide import decide
+from shared.llm_client.decide import Decision, decide
 
 
 @dataclass(frozen=True)
@@ -248,27 +248,90 @@ DEMAND_MAX_TRIES = 3
 DEMAND_CONCURRENCY = 8
 
 
-async def resolve_demand(pool, segments: list[tuple[str, str, str]], demand_rows, market: str) -> dict[str, dict]:
+def demand_subject_key(moment: str, keyword: str) -> str:
+    """`decision_log.subject_key` of a demand-ownership verdict (market-independent)."""
+    return f"demand:{moment[:200]}:{keyword[:200]}"
+
+
+# AA-1083 — the demand a Segment already has in the current Score of one market (the ranked rows; an excluded row has
+# no demand). One row per Segment: demand does not vary by tour.
+PREVIOUS_DEMAND_SQL = """
+    SELECT DISTINCT ON (segment_id) segment_id, demand_volume
+    FROM acp_contract.atom_ranking
+    WHERE market = $1 AND superseded_at IS NULL AND excluded_reason IS NULL
+    ORDER BY segment_id, version DESC
+"""
+
+
+async def previous_demand(pool, market: str) -> dict[str, int | None]:
+    """AA-1083 — segment_id -> the volume it claimed in the current Score of `market` (None = nothing claimed)."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(PREVIOUS_DEMAND_SQL, market)
+    return {r["segment_id"]: r["demand_volume"] for r in rows}
+
+
+async def resolve_demand(pool, segments: list[tuple[str, str, str]], demand_rows, market: str, *,
+                         ask_ids=None, previous: dict | None = None) -> dict[str, dict]:
     """segment_id -> {market: volume} (empty when nothing is claimed or every tried keyword is
-    rejected). `segments` = (segment_id, place, action)."""
+    rejected). `segments` = (segment_id, place, action).
+
+    AA-1083 — `ask_ids` (None = ask about every Segment, the old pass): a Segment outside it never asks Jev. Its walk
+    runs on stored verdicts only (stored_decisions: the reads decide() would serve from its cache), so a Segment whose
+    candidates all have a stored verdict gets exactly what the old pass gave, at today's volume. When the walk reaches
+    a candidate with no stored verdict (a newly bought keyword, an expired verdict), the Segment keeps the demand it
+    has in the current Score of this market (`previous`, from previous_demand()); one with no current ranked row
+    there is new to the Score and is asked like a Segment in scope."""
+    previous = previous or {}
     sem = asyncio.Semaphore(DEMAND_CONCURRENCY)
     rejected_count = 0
+    out: dict[str, dict] = {}
+    to_ask = []
+    walks: dict[str, list[tuple[str, int]]] = {}
+    for segment in segments:
+        segment_id, place, action = segment
+        if ask_ids is None or segment_id in ask_ids:
+            to_ask.append(segment)
+            continue
+        moment = landing_moment(place, action)
+        walks[segment_id] = [(demand_subject_key(moment, kw), volume) for kw, volume in
+                             demand_candidates(place, action, demand_rows, market)[:DEMAND_MAX_TRIES]]
+    stored = await stored_decisions(pool, [DEMAND_Q], {k for w in walks.values() for k, _v in w}) if walks else {}
+    kept = 0
+    by_id = {s[0]: s for s in segments}
+    for segment_id, walk in walks.items():
+        claimed: dict | None = {}
+        for key, volume in walk:
+            dec = stored.get(key)
+            if dec is None:            # unverified: the walk cannot go on without Jev
+                claimed = None
+                break
+            if not dec.rejected(DEMAND_Q):
+                claimed = {market: volume}
+                break
+        if claimed is not None:
+            out[segment_id] = claimed
+        elif segment_id in previous:
+            volume = previous[segment_id]
+            out[segment_id] = {market: volume} if volume is not None else {}
+            kept += 1
+        else:
+            to_ask.append(by_id[segment_id])
 
     async def _one(segment_id: str, place: str, action: str):
         nonlocal rejected_count
         moment = landing_moment(place, action)
         for keyword, volume in demand_candidates(place, action, demand_rows, market)[:DEMAND_MAX_TRIES]:
             async with sem:
-                dec = await decide(DEMAND_STAGE, f"demand:{moment[:200]}:{keyword[:200]}",
+                dec = await decide(DEMAND_STAGE, demand_subject_key(moment, keyword),
                                    {"keyword": keyword, "moment": moment}, [DEMAND_Q], pool=pool)
             if not dec.rejected(DEMAND_Q):
                 return segment_id, {market: volume}
             rejected_count += 1
         return segment_id, {}
 
-    out = dict(await asyncio.gather(*[_one(*s) for s in segments]))
-    logger.info("demand_ownership", market=market, segments=len(segments), rejected=rejected_count,
-                claimed=sum(1 for v in out.values() if v))
+    out.update(dict(await asyncio.gather(*[_one(*s) for s in to_ask])))
+    logger.info("demand_ownership", market=market, segments=len(segments), asked=len(to_ask), kept_previous=kept,
+                rejected=rejected_count, claimed=sum(1 for v in out.values() if v))
     return out
 
 
@@ -579,20 +642,60 @@ def scope_subject_key(scope: str, question: str) -> str:
 
 logger = structlog.get_logger()
 
+# AA-1083 — subject keys per platform_verdicts() query (a large stored-only read is split).
+STORED_LOOKUP_CHUNK = 5000
 
-async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dict[str, set[str]]) -> dict:
+
+async def stored_decisions(pool, question_keys: list[str], subject_keys) -> dict[str, Decision | None]:
+    """AA-1083 — subject_key -> the Decision decide() would serve from its cache today, built from stored platform
+    verdicts only (decide.platform_verdicts: current wording, <= 180 days, today's Floors), without a Jev call. None
+    when an active question has no stored verdict for that subject (unverified). No active question (all `off`) =
+    an empty Decision, which acts on nothing, exactly like decide() skipping them."""
+    from shared.llm_client.decide import active_questions, platform_verdicts
+
+    keys = sorted(set(subject_keys))
+    if not keys:
+        return {}
+    got: dict = {}
+    async with pool.acquire() as conn:
+        active = await active_questions(conn, question_keys)
+        if active:
+            for i in range(0, len(keys), STORED_LOOKUP_CHUNK):
+                got.update(await platform_verdicts(conn, active, keys[i:i + STORED_LOOKUP_CHUNK]))
+    out: dict[str, Decision | None] = {}
+    for key in keys:
+        verdicts = {q: got.get((q, key)) for q in active}
+        out[key] = None if any(v is None for v in verdicts.values()) else Decision(verdicts=verdicts)
+    return out
+
+
+def _pair_ask_flags(rows, segment_candidates, key_of, stored_only, *, skip_empty: bool) -> tuple[dict, dict]:
+    """(pair -> asked, segment_id -> its key): a pair is asked when at least one Segment it comes from is outside
+    `stored_only`; a pair only stored-only Segments hold is read from stored verdicts. `skip_empty`: a Segment whose
+    key is empty is left alone (the country scope of a Segment with no known country)."""
+    pairs: dict[tuple[str, str], bool] = {}
+    seg_key: dict[str, str] = {}
+    for row in rows:
+        key = key_of(row)
+        if skip_empty and not key:
+            continue
+        seg_key[row["segment_id"]] = key
+        ask = row["segment_id"] not in stored_only
+        for q in segment_candidates.get(row["segment_id"], ()):
+            pairs[(key, q)] = pairs.get((key, q), False) or ask
+    return pairs, seg_key
+
+
+async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dict[str, set[str]], *,
+                                             stored_only=frozenset()) -> dict:
     """Removes out-of-scope questions from `segment_candidates` in place. One Verdict per distinct
     (country set, question) — the decide() cache makes a repeat pair free. Segments with no known
-    country are left alone. Returns counts for the log."""
-    pairs: dict[tuple[str, str], None] = {}
-    seg_scope: dict[str, str] = {}
-    for row in rows:
-        scope = country_scope(row.get("countries"))
-        if not scope:
-            continue
-        seg_scope[row["segment_id"]] = scope
-        for q in segment_candidates.get(row["segment_id"], ()):
-            pairs[(scope, q)] = None
+    country are left alone. Returns counts for the log.
+
+    AA-1083 — `stored_only`: Segments outside the run's Jev scope. A pair only they hold is never asked: its stored
+    verdicts decide, and a pair with no stored verdict is dropped (an unverified question does not count)."""
+    pairs, seg_scope = _pair_ask_flags(rows, segment_candidates, lambda r: country_scope(r.get("countries")),
+                                       stored_only, skip_empty=True)
     if not pairs:
         return {"scope_pairs": 0, "scope_dropped": 0}
     sem = asyncio.Semaphore(SCOPE_CONCURRENCY)
@@ -603,15 +706,25 @@ async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dic
                                [SCOPE_FOREIGN_Q, SCOPE_HERE_Q], pool=pool)
         return scope, q, scope_dropped(dec)
 
-    dropped = {(scope, q) for scope, q, drop in await asyncio.gather(*[_one(*p) for p in pairs]) if drop}
+    asked = [p for p, ask in pairs.items() if ask]
+    dropped = {(scope, q) for scope, q, drop in await asyncio.gather(*[_one(*p) for p in asked]) if drop}
+    stored_pairs = [p for p, ask in pairs.items() if not ask]
+    if stored_pairs:
+        stored = await stored_decisions(pool, [SCOPE_FOREIGN_Q, SCOPE_HERE_Q],
+                                        [scope_subject_key(*p) for p in stored_pairs])
+        for p in stored_pairs:
+            dec = stored.get(scope_subject_key(*p))
+            if dec is None or scope_dropped(dec):
+                dropped.add(p)
     removed = 0
     for segment_id, scope in seg_scope.items():
         before = segment_candidates.get(segment_id, set())
         after = {q for q in before if (scope, q) not in dropped}
         removed += len(before) - len(after)
         segment_candidates[segment_id] = after
-    logger.info("question_country_scope", pairs=len(pairs), dropped_pairs=len(dropped), removed=removed)
-    return {"scope_pairs": len(pairs), "scope_dropped": len(dropped)}
+    logger.info("question_country_scope", pairs=len(pairs), asked_pairs=len(asked), dropped_pairs=len(dropped),
+                removed=removed)
+    return {"scope_pairs": len(pairs), "scope_dropped": len(dropped), "scope_asked": len(asked)}
 
 
 # AA-694 (A3-5) — the landing Jev Question (migration 187). Every atom of a Segment shares its
@@ -632,17 +745,17 @@ def landing_subject_key(moment: str, question: str) -> str:
     return f"land:{moment[:200]}:{question[:300]}"
 
 
-async def filter_candidates_by_landing(pool, rows, segment_candidates: dict[str, set[str]]) -> dict:
+async def filter_candidates_by_landing(pool, rows, segment_candidates: dict[str, set[str]], *,
+                                       stored_only=frozenset()) -> dict:
     """Removes questions Jev confidently says do not belong to the Segment's moment, in place. One
     Verdict per distinct (moment, question) — Segments sharing a moment share it, and the decide()
-    cache makes a repeat pair free. Returns counts for the log."""
-    pairs: dict[tuple[str, str], None] = {}
-    seg_moment: dict[str, str] = {}
-    for row in rows:
-        moment = landing_moment(row["canonical_place"] or "", row["canonical_action"] or "")
-        seg_moment[row["segment_id"]] = moment
-        for q in segment_candidates.get(row["segment_id"], ()):
-            pairs[(moment, q)] = None
+    cache makes a repeat pair free. Returns counts for the log.
+
+    AA-1083 — `stored_only` as in filter_candidates_by_country_scope: stored verdicts only, unverified = dropped."""
+    pairs, seg_moment = _pair_ask_flags(
+        rows, segment_candidates,
+        lambda r: landing_moment(r["canonical_place"] or "", r["canonical_action"] or ""), stored_only,
+        skip_empty=False)
     if not pairs:
         return {"landing_pairs": 0, "landing_rejected": 0}
     sem = asyncio.Semaphore(LANDING_CONCURRENCY)
@@ -653,20 +766,64 @@ async def filter_candidates_by_landing(pool, rows, segment_candidates: dict[str,
                                [LANDING_Q], pool=pool)
         return moment, q, dec.rejected(LANDING_Q)
 
-    rejected = {(m, q) for m, q, rej in await asyncio.gather(*[_one(*p) for p in pairs]) if rej}
+    asked = [p for p, ask in pairs.items() if ask]
+    rejected = {(m, q) for m, q, rej in await asyncio.gather(*[_one(*p) for p in asked]) if rej}
+    stored_pairs = [p for p, ask in pairs.items() if not ask]
+    if stored_pairs:
+        stored = await stored_decisions(pool, [LANDING_Q], [landing_subject_key(*p) for p in stored_pairs])
+        for p in stored_pairs:
+            dec = stored.get(landing_subject_key(*p))
+            if dec is None or dec.rejected(LANDING_Q):
+                rejected.add(p)
     removed = 0
     for segment_id, moment in seg_moment.items():
         before = segment_candidates.get(segment_id, set())
         after = {q for q in before if (moment, q) not in rejected}
         removed += len(before) - len(after)
         segment_candidates[segment_id] = after
-    logger.info("question_landing_belongs", pairs=len(pairs), rejected_pairs=len(rejected), removed=removed)
-    return {"landing_pairs": len(pairs), "landing_rejected": len(rejected)}
+    logger.info("question_landing_belongs", pairs=len(pairs), asked_pairs=len(asked), rejected_pairs=len(rejected),
+                removed=removed)
+    return {"landing_pairs": len(pairs), "landing_rejected": len(rejected), "landing_asked": len(asked)}
+
+
+# The Segments a landing pass reads (every Segment with a live atom), and the bought PAA it lands. Shared with the
+# AA-1083 spend estimate (services/recompute/jev_scope.py), so the estimate counts the pairs this pass would ask.
+LANDING_SEGMENTS_SQL = """
+    SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
+           asg.questions_count, array_agg(DISTINCT ta.atom_id) AS atom_ids,
+           array_remove(array_agg(DISTINCT rt.country), NULL) AS countries,
+           array_agg(ta.activity_type) AS activity_types
+    FROM acp_contract.atom_segment asg
+    JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
+    JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = asm.atom_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action,
+             asg.questions_count
+"""
+# AA-1055: a row that holds a bought SERP lands its PAA even before its own market's volume is measured (one
+# SERP per place, stored on the SERP-market row, which may have no volume yet: CIS 393 paa_retrieved_on).
+PAA_ROWS_SQL = """
+    SELECT keyword, market, people_also_ask
+    FROM acp_contract.search_demand
+    WHERE search_volume IS NOT NULL OR paa_retrieved_on IS NOT NULL
+"""
+
+
+def paa_tuples_of(demand_rows) -> list[tuple[str, str, list[str]]]:
+    """(keyword, market, PAA questions) per PAA_ROWS_SQL row (the JSON column may come back as text)."""
+    out: list[tuple[str, str, list[str]]] = []
+    for r in demand_rows:
+        paa = r["people_also_ask"]
+        if isinstance(paa, str):
+            paa = json.loads(paa) if paa else []
+        out.append((r["keyword"], r["market"], paa or []))
+    return out
 
 
 async def precompute_question_landings(
     pool, segment_ids: set[str] | None = None,
-    progress: Callable[[dict], None] | None = None,
+    progress: Callable[[dict], None] | None = None, *,
+    jev_segment_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """AA-610 (Sub 2 redesign, then Sub 2 scope fix) — lands PAA questions on every
     currently-ranked Segment's atoms, independent of market (`questions` does not vary by
@@ -704,38 +861,19 @@ async def precompute_question_landings(
     a3_atomize after the data reset had ~16,000 atom views + ~1,500 questions to embed (every
     NULL-count Segment is in scope), about 16 hours. `progress`, when given, receives
     `{"step", "done", "total"}` dicts (a sync callback — the A3 job forwards them to the Jobs
-    page)."""
-    async with pool.acquire() as conn:
-        segment_rows = await conn.fetch("""
-            SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
-                   asg.questions_count, array_agg(DISTINCT ta.atom_id) AS atom_ids,
-                   array_remove(array_agg(DISTINCT rt.country), NULL) AS countries,
-                   array_agg(ta.activity_type) AS activity_types
-            FROM acp_contract.atom_segment asg
-            JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
-            JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = asm.atom_id
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
-            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action,
-                     asg.questions_count
-        """)
+    page).
 
-        # AA-1055: a row that holds a bought SERP lands its PAA even before its own market's volume is measured (one
-        # SERP per place, stored on the SERP-market row, which may have no volume yet: CIS 393 paa_retrieved_on).
-        demand_rows = await conn.fetch("""
-            SELECT keyword, market, people_also_ask
-            FROM acp_contract.search_demand
-            WHERE search_volume IS NOT NULL OR paa_retrieved_on IS NOT NULL
-        """)
-        paa_tuples: list[tuple[str, str, list[str]]] = []
-        for r in demand_rows:
-            paa = r["people_also_ask"]
-            if isinstance(paa, str):
-                paa = json.loads(paa) if paa else []
-            paa_tuples.append((r["keyword"], r["market"], paa or []))
+    AA-1083 — `jev_segment_ids` (None = every Segment may be asked, the old pass): Jev is asked only about these
+    Segments. An in-scope Segment outside it (its cache was reset: `questions_count IS NULL`) is landed with stored
+    verdicts only (unverified questions do not count), and its count is used by this run but NOT written back, so the
+    landing sweep / the research run's recompute still lands it with Jev."""
+    async with pool.acquire() as conn:
+        segment_rows = await conn.fetch(LANDING_SEGMENTS_SQL)
+        paa_tuples = paa_tuples_of(await conn.fetch(PAA_ROWS_SQL))
 
         counts: dict[str, int] = {}
         in_scope_rows = []
-        exclusions = await resolve_exclusions(pool, segment_rows)   # AA-694 A3-2
+        exclusions = await resolve_exclusions(pool, segment_rows, ask_ids=jev_segment_ids)   # AA-694 A3-2
         for row in segment_rows:
             if exclusions[row["segment_id"]]:
                 continue
@@ -752,11 +890,14 @@ async def precompute_question_landings(
                                                   paa_tuples)
             for row in in_scope_rows
         }
+        # AA-1083 — in-scope Segments outside the Jev scope: stored verdicts only, count not written back.
+        stored_only = frozenset() if jev_segment_ids is None else frozenset(
+            r["segment_id"] for r in in_scope_rows if r["segment_id"] not in jev_segment_ids)
         # AA-694 — drop questions about another country, or about no country in particular, before
         # they can land and count (Ms. Thư's ticket 04; decisions Q3/Q4 of 30/09/2026).
-        await filter_candidates_by_country_scope(pool, in_scope_rows, segment_candidates)
+        await filter_candidates_by_country_scope(pool, in_scope_rows, segment_candidates, stored_only=stored_only)
         # AA-694 A3-5 — then drop questions that do not belong to the Segment's moment (ticket 05).
-        await filter_candidates_by_landing(pool, in_scope_rows, segment_candidates)
+        await filter_candidates_by_landing(pool, in_scope_rows, segment_candidates, stored_only=stored_only)
         landing_rows = [r for r in in_scope_rows if segment_candidates[r["segment_id"]]]
         atom_ids_needed = sorted({str(a) for r in landing_rows for a in r["atom_ids"]})
         question_vectors: dict[str, list[float]] = {}
@@ -782,7 +923,8 @@ async def precompute_question_landings(
                 question_vectors=question_vectors, atoms_embedded=True,
                 candidates=segment_candidates[segment_id],
             )
-            recomputed_ids.append(segment_id)
+            if segment_id not in stored_only:
+                recomputed_ids.append(segment_id)
             if progress and (done % 100 == 0 or done == len(in_scope_rows)):
                 progress({"step": "landing_questions", "done": done, "total": len(in_scope_rows)})
 
@@ -836,7 +978,7 @@ async def _cached_type_picks(pool, moments: list[str]) -> list[tuple[str, str | 
     """(moment, stored enforced pick or None) for each moment, without a Jev call (AA-1055)."""
     from shared.llm_client.decide import platform_verdicts
 
-    keys = {f"type:{m[:300]}": m for m in moments}
+    keys = {type_subject_key(m): m for m in moments}
     try:
         async with pool.acquire() as conn:
             got = await platform_verdicts(conn, [TYPE_Q], list(keys))
@@ -850,15 +992,9 @@ async def _cached_type_picks(pool, moments: list[str]) -> list[tuple[str, str | 
     return out
 
 
-async def resolve_exclusions(pool, rows, *, cached_only: bool = False) -> dict[str, str | None]:
-    """segment_id -> exclusion reason, for rows with segment_id/canonical_place/canonical_action and
-    `activity_types` (the member atoms' types). Jev is asked only where the rule and the atoms
-    disagree (a Segment with no typed atom has no second opinion); one Verdict per distinct moment,
-    cached by decide().
-
-    AA-1055 — `cached_only=True` never asks Jev: the stored pick of each disputed moment is read the way the decide()
-    cache reads it (decide.platform_verdicts); a moment with no stored pick keeps the rule's answer, exactly as a
-    failed decide() does. For a free preview (segment research dry run) and the landing sweep."""
+def disputed_moments(rows) -> tuple[dict[str, str | None], dict[str, list[str]]]:
+    """(segment_id -> the rule's exclusion, moment -> the Segments where the rule and the atoms' types disagree):
+    the moments resolve_exclusions() asks Jev about. Pure."""
     out: dict[str, str | None] = {}
     disputed: dict[str, list[str]] = {}
     for row in rows:
@@ -868,19 +1004,47 @@ async def resolve_exclusions(pool, rows, *, cached_only: bool = False) -> dict[s
         types = [t for t in (row.get("activity_types") or []) if t]
         if types and reason != "unnamed_place" and (reason == "transit") != atoms_say_transit(types):
             disputed.setdefault(landing_moment(place, action), []).append(row["segment_id"])
+    return out, disputed
+
+
+def type_subject_key(moment: str) -> str:
+    """`decision_log.subject_key` of a transit / experience pick."""
+    return f"type:{moment[:300]}"
+
+
+async def resolve_exclusions(pool, rows, *, cached_only: bool = False, ask_ids=None) -> dict[str, str | None]:
+    """segment_id -> exclusion reason, for rows with segment_id/canonical_place/canonical_action and
+    `activity_types` (the member atoms' types). Jev is asked only where the rule and the atoms
+    disagree (a Segment with no typed atom has no second opinion); one Verdict per distinct moment,
+    cached by decide().
+
+    AA-1055 — `cached_only=True` never asks Jev: the stored pick of each disputed moment is read the way the decide()
+    cache reads it (decide.platform_verdicts); a moment with no stored pick keeps the rule's answer, exactly as a
+    failed decide() does. For a free preview (segment research dry run) and the landing sweep.
+
+    AA-1083 — `ask_ids` (None = every disputed moment may be asked): Jev is asked only about a moment one of these
+    Segments has; every other disputed moment keeps its stored pick (the cached_only read)."""
+    out, disputed = disputed_moments(rows)
     if not disputed:
         return out
     if cached_only:
-        picks = await _cached_type_picks(pool, list(disputed))
+        ask, cached = [], list(disputed)
+    elif ask_ids is None:
+        ask, cached = list(disputed), []
     else:
+        ask = [m for m, ids in disputed.items() if any(i in ask_ids for i in ids)]
+        asked = set(ask)
+        cached = [m for m in disputed if m not in asked]
+    picks = await _cached_type_picks(pool, cached) if cached else []
+    if ask:
         sem = asyncio.Semaphore(TYPE_CONCURRENCY)
 
         async def _one(moment: str):
             async with sem:
-                dec = await decide(TYPE_STAGE, f"type:{moment[:300]}", {"moment": moment}, [TYPE_Q], pool=pool)
+                dec = await decide(TYPE_STAGE, type_subject_key(moment), {"moment": moment}, [TYPE_Q], pool=pool)
             return moment, dec.choice(TYPE_Q)
 
-        picks = await asyncio.gather(*[_one(m) for m in disputed])
+        picks = [*picks, *await asyncio.gather(*[_one(m) for m in ask])]
 
     changed = 0
     by_id = {r["segment_id"]: r for r in rows}
@@ -889,13 +1053,14 @@ async def resolve_exclusions(pool, rows, *, cached_only: bool = False) -> dict[s
             new = exclusion_after_pick(by_id[segment_id]["canonical_place"] or "", out[segment_id], pick)
             changed += new != out[segment_id]
             out[segment_id] = new
-    logger.info("segment_activity_type", disputed_moments=len(disputed), changed=changed)
+    logger.info("segment_activity_type", disputed_moments=len(disputed), asked_moments=len(ask), changed=changed)
     return out
 
 
 # ── DB-facing wrapper (impure) ──────────────────────────────────────────────────────────────
 
-async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -> dict:
+async def run_atom_ranking(market: str, pool, question_counts: dict[str, int], *,
+                           jev_segment_ids: set[str] | None = None) -> dict:
     """Rebuild atom_ranking WHOLE for one market, platform-wide, via versioned-swap (AA-734) —
     write the new rows at the next version (superseded_at NULL), supersede the market's previous
     current rows in the same transaction, then delete the superseded rows after it commits. A
@@ -921,7 +1086,10 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
     calling the landing logic from inside this per-market function at all anymore. A
     segment_id absent from `question_counts` (should not happen for anything currently in
     `atom_segment` — `precompute_question_landings()` reads the identical Segment set — but
-    defended anyway) counts as 0 questions, not a crash."""
+    defended anyway) counts as 0 questions, not a crash.
+
+    AA-1083 — `jev_segment_ids` (None = ask about every Segment): Jev is asked only about these Segments; every other
+    Segment keeps its stored transit pick and the demand it has in the current Score of this market."""
     async with pool.acquire() as conn:
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
@@ -944,10 +1112,12 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
 
     # AA-694 A3-6 — demand per Segment for this market, through the ownership gate (no connection held
     # across the Jev calls).
-    exclusions = await resolve_exclusions(pool, segment_rows)   # AA-694 A3-2
+    exclusions = await resolve_exclusions(pool, segment_rows, ask_ids=jev_segment_ids)   # AA-694 A3-2
     rankable = [(r["segment_id"], r["canonical_place"], r["canonical_action"]) for r in segment_rows
                 if not exclusions[r["segment_id"]]]
-    demand_by_segment = await resolve_demand(pool, rankable, demand_tuples, market)
+    previous = await previous_demand(pool, market) if jev_segment_ids is not None else None
+    demand_by_segment = await resolve_demand(pool, rankable, demand_tuples, market, ask_ids=jev_segment_ids,
+                                             previous=previous)
 
     included: list[Candidate] = []
     excluded: list[ExcludedSegment] = []
@@ -1057,6 +1227,6 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
 __all__ = [
     "Candidate", "RankedSegment", "ExcludedSegment",
     "rank_segments", "compute_demand", "demand_candidates", "resolve_demand", "land_questions_for_segment",
-    "classify_exclusion", "resolve_exclusions",
+    "classify_exclusion", "resolve_exclusions", "previous_demand", "stored_decisions",
     "run_atom_ranking",
 ]
