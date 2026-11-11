@@ -347,6 +347,9 @@ EXEMPT_SITES = {
                                                                  "reasoning)",
     "services/acp_contract/segment_research_batch.py:_propose": "model_tier haiku (Claude 4.5, no stage, no "
                                                                 "reasoning)",
+    # AA-1076: the batch lane shapes the request of a stage's batch item (the caller's stage and ceiling: S1 writer v2
+    # WRITER_MAX_TOKENS, A3 _MAX_TOKENS, ad hoc), then applies the same token floor the gateway does (token_floor)
+    "shared/llm_client/batch_lane.py:build_request": "batch item of the caller's stage; the gateway's floor applied",
 }
 
 # Routed stages with no call site in this repo.

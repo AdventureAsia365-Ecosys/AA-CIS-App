@@ -100,7 +100,9 @@ def test_other_call_path_modules_do_not_import_the_registry(name):
 
 def test_every_gateway_module_is_classified():
     on_disk = {p.name for p in LLM_CLIENT.glob("*.py")} - {"__init__.py"}
-    assert on_disk == set(CALL_PATH) | {"connections.py", "deployments.py", "vendor_route.py"}, \
+    # AA-1076: batch_lane.py plans a provider batch on the stage's deployment plan (vendor_route) and its
+    # connection (registry), like the routing modules below; it never sends a synchronous call itself.
+    assert on_disk == set(CALL_PATH) | {"connections.py", "deployments.py", "vendor_route.py", "batch_lane.py"}, \
         "new gateway module: add it to CALL_PATH (or move the registry check)"
 
 

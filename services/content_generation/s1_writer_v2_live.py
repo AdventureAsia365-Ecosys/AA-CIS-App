@@ -60,7 +60,7 @@ def is_v2(state: dict) -> bool:
 
 
 def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, max_tokens: int,
-          raise_access_denied: bool = True) -> dict:
+          raise_access_denied: bool = True, prefetch: bool = False) -> dict:
     """One gateway call on the A1 write stage. Returns {ok, parsed, cost_usd, model_used, ...}.
     Never raises, with one exception (AA-900): a call refused at account level before anything was billed
     (``LLMAccessDenied``) is re-raised when ``raise_access_denied``, so the writer call fails the job at once. The meta
@@ -73,6 +73,15 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
     out = {"call": call, "ok": False, "parsed": None, "cost_usd": 0.0}
     resp = None
     logged = False
+    if prefetch:
+        # AA-1076: attempt 1 of a gateway batch wave: the batch already wrote (and ledgered) this exact prompt's reply.
+        seeded = _batch_reply(stage, system, user)
+        if seeded is not None:
+            out.update(ok=True, parsed=seeded[1], cost_usd=seeded[0].cost_usd or 0.0, model_used=seeded[0].model_used,
+                       fallback_used=False, satellite_account=None, batch_seeded=True,
+                       cache_read_tokens=seeded[0].cache_read_tokens or 0,
+                       cache_write_tokens=seeded[0].cache_write_tokens or 0)
+            return out
     try:
         resp = client.generate(LLMRequest(system_prompt=system, user_prompt=user, model_tier=state.get("model_tier"),
                                           stage=stage, max_tokens=max_tokens))
@@ -110,16 +119,13 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
     return out
 
 
-def write(state: dict, client: Optional[LLMClient] = None) -> dict:
-    """One v2 draft for the A1 graph state. Returns {"generated", "cost_usd", "error", "model_used",
-    "prompt_version", "calls", "meta_problems", ...}: `generated` is the page dict the rest of the graph reads (name,
-    subtitle, summary, description, highlights, itineraries as the canonical "Day N — Title\\nBody" string,
-    seo_title, seo_meta, seo_keywords_used), {} when the writer call failed."""
+def writer_prompts(state: dict) -> dict:
+    """The writer call's attempt-1 prompts of an A1 graph state: {"system", "user", "tour", "facts", "plan",
+    "forbidden", "view"}. One builder for the live write and the gateway batch lane (AA-1076,
+    services/llm_batch/consumers.py), so a batch reply is used only for the bytes the live call would send."""
     from services.quality.s1_facts import build_fact_table
-    from .batch_prompt import prompt_version_of
     from .forbidden_words import all_forbidden
 
-    client = client or LLMClient()
     tour = v2.with_agency_fields(state.get("tour") or {}, state.get("tour_agency"))
     facts = build_fact_table(tour)
     plan = v2.day_plan(tour, facts)
@@ -130,6 +136,36 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
     view = state.get("writing_memory")
     system = v2.w_system_prompt(forbidden, house_rules=insertion.a1_house_rules(view))
     user = v2.w_user_prompt(tour, facts, plan)
+    return {"system": system, "user": user, "tour": tour, "facts": facts, "plan": plan, "forbidden": forbidden,
+            "view": view}
+
+
+def _batch_reply(stage: str, system: str, user: str):
+    """AA-1076: (response, parsed JSON) of the gateway batch reply for exactly this prompt, else None. A reply that is
+    not a JSON object is not used (the live call runs instead). Never raises."""
+    from shared.llm_client import batch_lane
+    resp = batch_lane.prefetched(stage, system, user)
+    if resp is None:
+        return None
+    parsed = v2.parse_json(resp.content)
+    if parsed is None:
+        logger.warning("s1_writer_v2_batch_reply_unparsed", stage=stage)
+        return None
+    return resp, parsed
+
+
+def write(state: dict, client: Optional[LLMClient] = None) -> dict:
+    """One v2 draft for the A1 graph state. Returns {"generated", "cost_usd", "error", "model_used",
+    "prompt_version", "calls", "meta_problems", ...}: `generated` is the page dict the rest of the graph reads (name,
+    subtitle, summary, description, highlights, itineraries as the canonical "Day N — Title\\nBody" string,
+    seo_title, seo_meta, seo_keywords_used), {} when the writer call failed."""
+    from .batch_prompt import prompt_version_of
+
+    client = client or LLMClient()
+    wp = writer_prompts(state)
+    tour, facts, plan, forbidden, view = wp["tour"], wp["facts"], wp["plan"], wp["forbidden"], wp["view"]
+    system, user = wp["system"], wp["user"]
+    from services.writing_memory import insertion
     if state.get("feedback"):
         user += f"\n\nPREVIOUS ATTEMPT FEEDBACK:\n{state['feedback']}\nFix these issues; every rule above still holds."
     result = {"generated": {}, "cost_usd": 0.0, "error": "", "prompt_version": prompt_version_of(system),
@@ -143,7 +179,11 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
         result["cache_read_tokens"] += rec.get("cache_read_tokens") or 0
         result["cache_write_tokens"] += rec.get("cache_write_tokens") or 0
 
-    w = _call(client, state, call="write", system=system, user=user, max_tokens=v2.WRITER_MAX_TOKENS)
+    # AA-1076: only attempt 1 (no validate feedback) may take a gateway batch reply; every retry writes live.
+    w = _call(client, state, call="write", system=system, user=user, max_tokens=v2.WRITER_MAX_TOKENS,
+              prefetch=not state.get("feedback"))
+    if w.get("batch_seeded"):
+        result["batch_seeded"] = True
     _add(w)
     if not w["ok"]:
         result["error"] = w.get("error") or "writer reply is not JSON"
@@ -181,5 +221,6 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
     result["generated"] = page
     result["meta_problems"] = problems
     logger.info("s1_writer_v2_done", plan_mode=plan["mode"], days=len(plan["days"]), calls=result["calls"],
-                cost=round(result["cost_usd"], 6), meta_problems=len(problems))
+                cost=round(result["cost_usd"], 6), meta_problems=len(problems),
+                batch_seeded=bool(result.get("batch_seeded")))
     return result

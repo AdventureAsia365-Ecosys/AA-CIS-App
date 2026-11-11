@@ -1288,6 +1288,51 @@ def route_attempts(request: LLMRequest, chain: list) -> list[tuple[str, Optional
     return attempts
 
 
+def openai_chat_body(request: LLMRequest, model: str,
+                     catalog_model: Optional[CatalogModel] = None) -> tuple[dict, Optional[str]]:
+    """AA-1076: the Chat Completions keyword arguments of one request (model, messages, max_tokens /
+    max_completion_tokens, sampling only when set and supported, reasoning_effort, response_format) and the effort
+    sent. Moved out of ``LLMClient._call_openai`` unchanged, so the OpenAI batch lane sends the same body per line."""
+    # AA-209: forward sampling controls only when the caller explicitly set them. This makes the
+    # GPT-4.1 judge reproducible (it passes temperature + seed) without changing behavior of
+    # content/T3-fallback calls that rely on provider defaults (they never set these fields).
+    # AA-659: catalog models (e.g. gpt-6-luna-openai) are reasoning models — they take
+    # max_completion_tokens, and temperature/seed only when the catalog says they are supported.
+    kwargs = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": request.system_prompt},
+            {"role": "user",   "content": request.user_prompt},
+        ],
+    }
+    if catalog_model is None:
+        kwargs["max_tokens"] = request.max_tokens
+    else:
+        kwargs["max_completion_tokens"] = request.max_tokens
+    sampling_ok = catalog_model is None or catalog_model.supports_temperature
+    fields_set = request.model_fields_set
+    if sampling_ok and "temperature" in fields_set:
+        kwargs["temperature"] = request.temperature
+    if sampling_ok and "seed" in fields_set and request.seed is not None:
+        kwargs["seed"] = request.seed
+    reasoning_effort = None
+    if catalog_model is not None:
+        # AA-741 S271 / AA-1053: the stage's effort as reasoning_effort (effort_rule.plan_openai: a reasoning model
+        # only; xhigh / max ask high); reasoning_mode is not sent on this path (said once).
+        effort_plan = effort_rule.plan_openai(request.stage, catalog_model)
+        reasoning_effort = effort_plan.sent
+        kwargs.update(effort_plan.wire)
+        stage_params.warn_not_applied(request.stage, catalog_model.model_key, "openai_chat",
+                                      applied=("effort",) if reasoning_effort else ())
+    if request.json_schema:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": request.json_schema["name"], "strict": True,
+                            "schema": request.json_schema["schema"]},
+        }
+    return kwargs, reasoning_effort
+
+
 class LLMClient:
     """
     Legacy haiku/sonnet chain (acc3 is the only satellite account — AA-998 removed the
@@ -2806,43 +2851,9 @@ class LLMClient:
         openai-direct, the 304 row or its built-in mirror) gives the SDK client (adapters/openai_chat.py: key from its
         secret at call time, else its credential env; endpoint; timeout / retries); a 401 drops the cached key and
         client. A reply from an Azure OpenAI connection is labelled ``azure-openai-<key>`` (provider azure_openai)."""
-        # AA-209: forward sampling controls only when the caller explicitly set them. This makes the
-        # GPT-4.1 judge reproducible (it passes temperature + seed) without changing behavior of
-        # content/T3-fallback calls that rely on provider defaults (they never set these fields).
-        # AA-659: catalog models (e.g. gpt-6-luna-openai) are reasoning models — they take
-        # max_completion_tokens, and temperature/seed only when the catalog says they are supported.
-        kwargs = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": request.system_prompt},
-                {"role": "user",   "content": request.user_prompt},
-            ],
-        }
-        if catalog_model is None:
-            kwargs["max_tokens"] = request.max_tokens
-        else:
-            kwargs["max_completion_tokens"] = request.max_tokens
-        sampling_ok = catalog_model is None or catalog_model.supports_temperature
-        fields_set = request.model_fields_set
-        if sampling_ok and "temperature" in fields_set:
-            kwargs["temperature"] = request.temperature
-        if sampling_ok and "seed" in fields_set and request.seed is not None:
-            kwargs["seed"] = request.seed
-        reasoning_effort = None
-        if catalog_model is not None:
-            # AA-741 S271 / AA-1053: the stage's effort as reasoning_effort (effort_rule.plan_openai: a reasoning model
-            # only; xhigh / max ask high); reasoning_mode is not sent on this path (said once).
-            effort_plan = effort_rule.plan_openai(request.stage, catalog_model)
-            reasoning_effort = effort_plan.sent
-            kwargs.update(effort_plan.wire)
-            stage_params.warn_not_applied(request.stage, catalog_model.model_key, "openai_chat",
-                                          applied=("effort",) if reasoning_effort else ())
-        if request.json_schema:
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": request.json_schema["name"], "strict": True,
-                                "schema": request.json_schema["schema"]},
-            }
+        # AA-1076: the request body is built by openai_chat_body (module level), which the batch lane
+        # (adapters/openai_batches.py) uses too, so a batch line and an on-demand call send the same body.
+        kwargs, reasoning_effort = openai_chat_body(request, model, catalog_model)
         model_label = catalog_model.model_key if catalog_model else model
         conn = connection or connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
         conn_key = conn.connection_key if conn is not None else OPENAI_CONNECTION_KEY

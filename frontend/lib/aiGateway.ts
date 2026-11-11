@@ -362,7 +362,10 @@ export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R
 /** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
 // AA-1042 (S268): "controls" = Route control (order mode, presets, chain editor, provider order, versions);
 // "trace" = Trace (route trace, route alerts, fallback quality guard).
-export const TAB_KEYS = ["providers", "routing", "controls", "models", "budgets", "calls", "trace", "guide"] as const;
+// AA-1076: "batches" = Batches (the gateway batch lane: status and spend per batch, send a wave, cancel).
+export const TAB_KEYS = [
+  "providers", "routing", "controls", "models", "budgets", "calls", "batches", "trace", "guide",
+] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
 /** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger and
  *  (AA-1025 B5) the credit ledger of the vendor API connections. */
@@ -1316,7 +1319,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
-  "credit", "app_profiles", "route_control", "route_policy", "route_test",
+  "credit", "app_profiles", "route_control", "route_policy", "route_test", "batches",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1341,6 +1344,7 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   route_control: "ai.admin",
   route_policy: "ai.admin",   // AA-1042 Trace tab: the route alert settings and the fallback hold switch
   route_test: "ai.admin",     // AA-1042 Trace tab: the route test (a few tiny paid calls) and Run check now
+  batches: "ai.admin",        // AA-1076 Batches tab: send a wave through the batch lane (paid), cancel a batch
 };
 
 /**
@@ -1530,4 +1534,118 @@ export function stagesByDataClass(
     else out.unclassified.push(r.stage);
   }
   return out;
+}
+
+
+// ── AA-1076: the Batches tab (the gateway batch lane) ──────────────────────────────────────────────────────────────
+// GET /api/admin/ai-gateway/batches (backend api/services/ai_gateway_batches.py): one row per gateway batch (an
+// `llm_batch` job): where it runs, its phase, the outcome of its requests, the cap and estimate, the spend the ledger
+// holds for it (one llm_call_log row per request at the batch rate), the same requests at the standard price and the
+// difference. POST /batches sends a wave (S1 attempt 1 or A3 re-atomize), POST /batches/{job_id}/cancel cancels one.
+
+export const BATCHES_API = "/api/admin/ai-gateway/batches";
+export const BATCHES_KEY = ["ai-gateway", "batches"] as const;
+export const BATCH_CONSUMERS = ["s1_attempt1", "a3_atomize"] as const;
+export type BatchConsumer = (typeof BATCH_CONSUMERS)[number];
+export const BATCH_MAX_TOURS = 200;
+export const BATCH_MAX_CAP_USD = 100;
+
+export interface BatchRow {
+  job_id: string;
+  batch_id: string | null;
+  consumer: string | null;
+  dry_run: boolean;
+  job_status: string;
+  phase: string | null;
+  stage: string | null;
+  model_key: string | null;
+  provider: string | null;
+  connection_key: string | null;
+  provider_batch_id: string | null;
+  provider_status: string | null;
+  counts: Record<string, number>;
+  requests: number | null;
+  tours: number;
+  outcomes: Record<string, number>;
+  cap_usd: number | null;
+  estimate_usd: number | null;
+  /** ledger_p95: the measured 95th percentile of one on-demand call of the stage x model; worst_case: max_tokens */
+  estimate_basis: "ledger_p95" | "worst_case" | null;
+  worst_case_usd: number | null;
+  spend_usd: number;
+  standard_usd: number;
+  saved_usd: number;
+  ledger_rows: number;
+  handoff: { kind?: string; enqueued?: number; seeded?: number; on_demand?: number; seeded_days?: number;
+    drill_withheld?: string[] };
+  polls: number | null;
+  reason: string | null;
+  error: string | null;
+  created_at: string | null;
+  submitted_at: string | null;
+  finished_at: string | null;
+  next_check_at: string | null;
+  created_by: string | null;
+}
+
+export interface BatchesResp {
+  batches: BatchRow[];
+  totals: { batches: number; spend_usd: number; standard_usd: number; saved_usd: number; open: number };
+  lane_closed_reason: string | null;
+}
+
+export function batchCancelPath(jobId: string): string {
+  return `${BATCHES_API}/${encodeURIComponent(jobId)}/cancel`;
+}
+
+/** The colour of a batch phase. */
+export function batchPhaseTone(row: Pick<BatchRow, "phase" | "job_status">): Tone {
+  if (row.job_status === "failed" || row.phase === "refused") return "danger";
+  if (row.job_status === "cancelled") return "warning";
+  if (row.phase === "done") return "success";
+  if (row.phase === "estimated") return "info";
+  return "accent";
+}
+
+export interface BatchDraft {
+  consumer: BatchConsumer;
+  tours: string;
+  cap: string;
+  runBatchId: string;
+  dryRun: boolean;
+  drill: boolean;
+}
+
+export const BATCH_DRAFT: BatchDraft = {
+  consumer: "s1_attempt1", tours: "", cap: "0.20", runBatchId: "", dryRun: true, drill: false,
+};
+
+/** The tour ids typed into the send form: one per line, comma or space; duplicates dropped, order kept. */
+export function parseTourIds(text: string): { ids: string[]; bad: string[] } {
+  const ids: string[] = [];
+  const bad: string[] = [];
+  for (const raw of text.split(/[\s,;]+/)) {
+    const v = raw.trim().toLowerCase();
+    if (!v) continue;
+    if (!UUID_RE.test(v)) bad.push(raw.trim());
+    else if (!ids.includes(v)) ids.push(v);
+  }
+  return { ids, bad };
+}
+
+/** The POST body, or the reason it cannot be sent (tours | tour_ids_bad | too_many | cap | run_batch). Pure. */
+export function batchSendBody(d: BatchDraft): Record<string, unknown> | "tours" | "tour_ids_bad" | "too_many" | "cap"
+  | "run_batch" {
+  const { ids, bad } = parseTourIds(d.tours);
+  if (bad.length) return "tour_ids_bad";
+  if (!ids.length) return "tours";
+  if (ids.length > BATCH_MAX_TOURS) return "too_many";
+  const cap = Number(d.cap);
+  if (!Number.isFinite(cap) || cap <= 0 || cap > BATCH_MAX_CAP_USD) return "cap";
+  const run = d.runBatchId.trim().toLowerCase();
+  if (run && !UUID_RE.test(run)) return "run_batch";
+  const body: Record<string, unknown> = { consumer: d.consumer, tour_ids: ids, cap_usd: cap, dry_run: d.dryRun };
+  if (run) body.batch_id = run;
+  if (d.drill) body.drill_withhold = 1;
+  return body;
 }

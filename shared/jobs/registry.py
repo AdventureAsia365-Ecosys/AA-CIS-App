@@ -25,6 +25,27 @@ class NonRetryable(Exception):
     """The job fails at once, without using its remaining attempts."""
 
 
+# AA-1076: the longest a handler may push its own job back (the deploy gate assumes every scheduled run_after in the
+# runner is <= 20 min, queue.DEPLOY_GATE_HORIZON_S) and how many times one job may do it (a polling job that never ends
+# is failed instead of looping forever: 600 reschedules at the 10-minute ceiling is ~4 days).
+RESCHEDULE_MAX_DELAY_SECONDS = 600
+RESCHEDULE_MAX_COUNT = 600
+
+
+class Reschedule(Exception):
+    """AA-1076: "not done yet, look again later". The handler's job goes back to ``queued`` with ``run_after = now() +
+    delay_seconds`` (1..RESCHEDULE_MAX_DELAY_SECONDS), the attempt is not counted, and ``progress`` is merged into the
+    row first (the state a polling handler needs on its next run, e.g. a provider batch id). The row keeps its id, so a
+    long-running remote operation (a provider batch) is ONE job on the Jobs page and survives every worker restart:
+    nothing waits in process. After RESCHEDULE_MAX_COUNT reschedules the job fails."""
+
+    def __init__(self, delay_seconds: int, progress: Optional[dict] = None, reason: str = "waiting"):
+        super().__init__(delay_seconds, progress, reason)
+        self.delay_seconds = max(1, min(int(delay_seconds), RESCHEDULE_MAX_DELAY_SECONDS))
+        self.progress = dict(progress or {})
+        self.reason = reason
+
+
 class OutputFailed(NonRetryable):
     """AA-1078: the handler ran to its end but its output failed (a T9 piece the writer stored as 'failed'). The job
     fails at once and its error starts with ``code`` (a typed reason the Jobs page filter and the failed counts read),

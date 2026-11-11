@@ -137,7 +137,9 @@ MODE_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {"t9_blog": ("T10_SA_MODE_", "T
 # test only.
 NOT_OUTPUT_FLAGS = ("LLM_CIRCUIT_BREAKER", "LLM_CENTRAL_BUDGETS", "LLM_TENANT_BUDGETS", "LLM_APP_PROFILE",
                     "LLM_CAPACITY", "LLM_CONNECTION_BUDGETS", "BATCH_SUBMIT_SWITCH", "WRITING_MEMORY_AUTO_MINE",
-                    "WRITING_MEMORY_PREF_SUMMARY", "WRITING_MEMORY_R1_GATE", "LLM_CASSETTE")
+                    "WRITING_MEMORY_PREF_SUMMARY", "WRITING_MEMORY_R1_GATE", "LLM_CASSETTE",
+                    # AA-1076: the gateway batch lane's submit switch (where a call is sent, never what it says)
+                    "LLM_BATCH_LANE")
 
 # Which reverify reason (CIS 287 CHECK: golden_set, model_route, gate_taxonomy, prompt_version_mismatch) a changed
 # component raises.
