@@ -507,7 +507,7 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           {m("signOutAll")}
         </Button>
         {staff.email && staff.is_active && (
-          <Button size="sm" variant="ghost" disabled={!!busy} data-testid="staff-resend-invite"
+          <Button size="sm" variant="ghost" disabled={!!busy} testId="staff-resend-invite"
             title={m("inviteTitle")}
             onClick={() => void run("invite", "POST", `${base}/invite`, m("inviteQueued", staff.email ?? ""))}>
             <Mail size={12} /> {busy === "invite" ? m("sending") : staff.invite_status ? m("resendInvite") : m("sendInviteBtn")}
@@ -541,7 +541,7 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
               {presetInPlace ? m("presetHas") : m("presetNote")}
             </span>
           </span>
-          <Button size="sm" variant="secondary" data-testid="staff-preset-apply" onClick={() => setConfirm("preset")}
+          <Button size="sm" variant="secondary" testId="staff-preset-apply" onClick={() => setConfirm("preset")}
             disabled={presetInPlace || !crmAvailable || !!busy} title={!crmAvailable ? m("crmUnavailable") : undefined}>
             {m("presetApply")}
           </Button>

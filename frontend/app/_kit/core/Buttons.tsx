@@ -22,7 +22,9 @@
 // - ARIA and native passthrough: `aria-*`, `data-*`, `role`, `id`, `name`, `value`, `form`, `tabIndex`, `autoFocus`
 //   and focus / key / mouse-down handlers reach the DOM <button>, so a menu trigger keeps `aria-haspopup` /
 //   `aria-expanded` and a toggle keeps `aria-pressed`. `testId` sets `data-testid` (lesson S252: a kit component used
-//   to drop it). `ariaLabel` stays for the existing call sites; `aria-label` works too.
+//   to drop it); a plain `data-testid` attribute also reaches the DOM when `testId` is unset (AA-1069), but call
+//   sites use `testId` (guard `lib/kitButtonTestIds.test.mjs`). `ariaLabel` stays for the existing call sites;
+//   `aria-label` works too.
 // - `onClick` receives the mouse event (`e.stopPropagation()` inside a clickable row).
 // - `ref` reaches the <button> (React 19 ref prop): a popup returns focus to its trigger.
 // - `style` merges last; `className` is passed on for Tailwind apps (layout utilities such as `mt-3`, `w-full`; colours
@@ -164,7 +166,9 @@ function domProps(p: BaseButtonProps) {
     disabled,
     title,
     "aria-label": native["aria-label"] ?? ariaLabel,
-    "data-testid": testId,
+    // `testId` wins; a plain `data-testid` attribute is kept when `testId` is unset (AA-1069: setting it to `testId`
+    // alone overwrote the native one with undefined, and nine CRM call sites lost their test ids silently).
+    "data-testid": testId ?? native["data-testid"],
   };
 }
 

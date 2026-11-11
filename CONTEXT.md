@@ -157,6 +157,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     focus-visible / disabled states from one hoisted stylesheet. `Tabs` gains `variant="underline"` (role tablist /
     tab, aria-selected, counts, disabled tabs with a reason, arrow keys); the default track variant's markup is
     unchanged. Render-tested in `lib/kitButtons.test.mjs` (transpiles the core, react-dom/server).
+    **AA-1069:** a kit button's test id is the `testId` prop; a plain `data-testid` attribute still reaches the DOM
+    when `testId` is unset (it used to be overwritten with undefined), and `lib/kitButtonTestIds.test.mjs` (CI) refuses
+    a `data-testid` attribute on any kit button call site (AST scan, same guard as the CRM web).
     **AA-1033:** `AiNotice.tsx` — the one notice under AI-written text in every app (`<p role="note">`, muted 12px
     line with an info icon), variants `staff` (default: CIS reviewer screens — Review Queue editor, S1 rewrite tab,
     the content-quality sentence rewrite panel when a model suggestion is loaded — and CRM AI drafts), `publisher` (Content studio review / publish / export) and `traveller` (TripPlanner). Its

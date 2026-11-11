@@ -209,7 +209,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
         <Button size="sm" disabled={busy} onClick={() => onAct(job, "retry")}>{t("retry")}</Button>
       )}
       {isJevHeld(job) && (
-        <Button size="sm" variant="primary" disabled={busy} title={t("releaseTitle")} data-testid="job-drawer-release-jev"
+        <Button size="sm" variant="primary" disabled={busy} title={t("releaseTitle")} testId="job-drawer-release-jev"
           onClick={() => onAct(job, "release-jev-cap")}>{t("release")}</Button>
       )}
     </>
