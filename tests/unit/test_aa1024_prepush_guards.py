@@ -7,6 +7,8 @@ integration tests have not passed locally on the pushed code.
   tree, writes a stamp keyed on the code; the hook's ``integration`` check refuses without that stamp
   (``AA_PREPUSH_SKIP_INTEGRATION=1`` skips once, as a warning).
 - ``scripts/pre-push.sh --self-test`` (the decision logic, no tool run) passes.
+- S276 lesson guard: before Python tests run, the Python's fastapi / pydantic must match the requirements.txt pins
+  (``test_aa899_openapi_export`` was red on main with an old ``.venv``); a mismatch stops with the install line.
 
 The stamp tests run the real script in a throwaway git repo with a fake Python (no Postgres, no pytest run).
 """
@@ -28,7 +30,11 @@ FAKE_PY = """#!/usr/bin/env bash
 # Stands in for the Python pre-push.sh picks: answers the -c probes, records -m pytest calls.
 if [[ $1 == -m && $2 == pytest ]]; then echo "pytest ${*:3}" >>"$FAKE_LOG"; exit "${FAKE_PYTEST_RC:-0}"; fi
 if [[ $1 == -c ]]; then
-  case $2 in *socket*) echo 55999 ;; *version*) echo 3.12.0 ;; esac
+  case $2 in
+    *AA_PINS*) printf 'fastapi %s\npydantic %s\n' "${FAKE_FASTAPI:-0.161.1}" "${FAKE_PYDANTIC:-2.14.1}" ;;
+    *socket*) echo 55999 ;;
+    *version*) echo 3.12.0 ;;
+  esac
   exit 0
 fi
 exit 0
@@ -247,3 +253,48 @@ def test_gitleaks_is_not_in_ci_mode(repo: Path):
     assert "gitleaks" not in p.stdout.split("checks:", 1)[1].splitlines()[0]
     p = _run(repo, "--dry-run")
     assert "gitleaks" in p.stdout.split("checks:", 1)[1].splitlines()[0]
+
+
+PINS = "pydantic==2.14.1\nrequests==2.32.0\nfastapi==0.161.1  # api framework\n"
+
+
+def test_pins_mismatch_stops_before_the_tests_with_the_install_line(repo: Path):
+    """S274 + S276: an old .venv (fastapi 0.110 / pydantic 2.13) made the openapi snapshot test red locally, on main
+    too, and blocked every push. The pins check names both versions and prints the exact install command."""
+    (repo / "requirements.txt").write_text(PINS)
+    p = _run(repo, "--only", "unit", FAKE_FASTAPI="0.110.0", FAKE_PYDANTIC="2.13.0")
+    assert p.returncode == 1, p.stdout
+    assert "!! [pins]" in p.stdout
+    assert "fastapi 0.110.0 (requirements.txt pins 0.161.1)" in p.stdout
+    assert "pydantic 2.13.0 (requirements.txt pins 2.14.1)" in p.stdout
+    assert "-m pip install $(grep -E '^(fastapi|pydantic)==' requirements.txt)" in p.stdout
+    assert "AA_PREPUSH_SKIP_PINS=1" in p.stdout
+    log = repo.parent / "fake.log"
+    assert not log.exists() or "pytest" not in log.read_text()  # stopped before any test ran
+
+    p = _run(repo, "--integration", CIS_TEST_DB_PORT="55998", FAKE_PYDANTIC="2.13.0")
+    assert p.returncode == 1 and "!! [pins]" in p.stdout
+    assert "fastapi" not in p.stdout.split("!! [pins]", 1)[1].split("\n")[0]  # only the package that drifted
+
+
+def test_pins_match_or_skip_lets_the_run_go_on(repo: Path):
+    (repo / "requirements.txt").write_text(PINS)
+    p = _run(repo, "--only", "unit")
+    assert "!! [pins]" not in p.stdout, p.stdout
+    p = _run(repo, "--integration", CIS_TEST_DB_PORT="55998")
+    assert p.returncode == 0 and "!! [pins]" not in p.stdout, p.stdout
+    p = _run(repo, "--only", "unit", FAKE_FASTAPI="0.110.0", AA_PREPUSH_SKIP_PINS="1")
+    assert "!! [pins]" not in p.stdout
+    assert "WARN" in p.stdout and "pins (" in p.stdout and "AA_PREPUSH_SKIP_PINS=1" in p.stdout
+
+
+def test_pins_only_when_python_tests_run(repo: Path):
+    """No unit / integration check in the plan (a docs-only push, gitleaks only, --dry-run): no pins check."""
+    (repo / "requirements.txt").write_text(PINS)
+    p = _run(repo, "--only", "resource_ids", FAKE_FASTAPI="0.110.0")
+    assert "!! [pins]" not in p.stdout, p.stdout
+    p = _run(repo, "--dry-run", FAKE_FASTAPI="0.110.0")
+    assert p.returncode == 0 and "!! [pins]" not in p.stdout
+    (repo / "requirements.txt").unlink()  # no requirements.txt: nothing to compare
+    p = _run(repo, "--integration", CIS_TEST_DB_PORT="55998", FAKE_FASTAPI="0.110.0")
+    assert "!! [pins]" not in p.stdout
