@@ -81,7 +81,9 @@ REQUIRED_CIS_SCHEMA = 322
 # 395 (AA-1039 follow-up, tech lead decision S276 — the retire fan-out and the draft job read
 # tour_retirement_policy.auto_draft (each falls back to notice only without it); GET / PATCH /v1/account/tour-retirement
 # answer 503 without it).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395)
+# 397 (AA-1080 — the brand-identity save writes tenant_brand_rules.custom_validators, the signature words, on the
+# tenant pool; without 397 aa_app_user has no INSERT on the column and the save fails).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

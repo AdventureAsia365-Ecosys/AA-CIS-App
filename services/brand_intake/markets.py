@@ -70,3 +70,29 @@ def target_market_json(declared: list[str] | None, language: str = "en") -> dict
     m = normalize_markets(declared)
     return {"countries": m["countries"], "language": language, "declared": m["declared"],
             "unsupported": m["unsupported"], "unknown": m["unknown"]}
+
+
+# AA-1080 — why a declared market gets no research of its own, as a code the portal turns into copy.
+REASON_NO_SEARCH_DATA = "no_search_data"
+
+
+def market_summary(declared: list[str] | None, countries: list[str] | None = None) -> dict:
+    """The market note the Brand Identity form shows on load and after a save (AA-1080):
+
+    {"countries", "supported", "unsupported", "unknown", "seo_market", "defaulted",
+     "notes": [{"country", "reason", "uses"}]}
+
+    `seo_market` is the market T2 picks keywords from (seed_builder.first_supported_market: the first
+    supported market the agency declared, US when none). Each unsupported country carries the reason it
+    has no research of its own and the market its content uses instead. `countries` (the stored
+    target_market.countries) wins over re-normalising `declared` when given. Pure."""
+    m = normalize_markets(declared)
+    codes = list(countries) if countries is not None else m["countries"]
+    supported = [c for c in codes if c in SUPPORTED]
+    unsupported = [c for c in codes if c not in SUPPORTED]
+    seo_market = supported[0] if supported else "US"
+    return {
+        "countries": codes, "supported": supported, "unsupported": unsupported, "unknown": m["unknown"],
+        "seo_market": seo_market, "defaulted": not supported,
+        "notes": [{"country": c, "reason": REASON_NO_SEARCH_DATA, "uses": seo_market} for c in unsupported],
+    }

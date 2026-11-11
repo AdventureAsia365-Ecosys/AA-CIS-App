@@ -43,10 +43,10 @@ def test_resolve_buyer_markets_dedupes_repeated_country():
 
 def test_resolve_buyer_market_singular_unchanged():
     # 3 real call sites (handler.py:58, admin_pipeline.py:2296/2507) still unpack exactly one
-    # 3-tuple — resolve_buyer_market() itself must not have moved. Picks by MARKET_RANK
-    # priority (US=1), not by list order — "UK" listed first does not win over "US".
+    # 3-tuple — resolve_buyer_market() still returns one. AA-1080: it picks the first supported market the
+    # agency declared — "UK" listed first wins over "US" (before: MARKET_RANK, US first).
     code, name, lang = resolve_buyer_market({"countries": ["UK", "US"]})
-    assert (code, name, lang) == (2840, "United States", "en")
+    assert (code, name, lang) == (2826, "United Kingdom", "en")
 
 
 def test_location_code_to_market_reverse_lookup_complete():

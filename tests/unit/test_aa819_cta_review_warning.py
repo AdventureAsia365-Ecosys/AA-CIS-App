@@ -165,7 +165,7 @@ async def test_brand_save_with_review_cta_saves_warns_and_notifies_once():
 
     assert out["status"] == "updated"
     assert out["cta_warning"] == {"code": "cta_review_claim", "phrases": ["five-star reviews"]}
-    assert _brand_rows(conn)[0][-1] == REVIEW_CTA  # saved word for word
+    assert _brand_rows(conn)[0][13] == REVIEW_CTA  # saved word for word
     assert len(store) == 1
     n = store[0]
     assert n["event_type"] == "tenant.cta.review_claim"
@@ -204,7 +204,7 @@ async def test_brand_save_survives_a_notification_failure():
     out = await _save_brand(conn, REVIEW_CTA)
     assert out["status"] == "updated"
     assert out["cta_warning"]["code"] == "cta_review_claim"
-    assert _brand_rows(conn)[0][-1] == REVIEW_CTA
+    assert _brand_rows(conn)[0][13] == REVIEW_CTA
 
 
 @pytest.mark.asyncio

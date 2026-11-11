@@ -3480,7 +3480,10 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
 1. Fetch candidates (Segments/Routes) for the tenant's markets. A declared market outside the
    6 supported ones is no longer silently replaced by US: it is returned as
    `unmatched_markets`, shown as a banner to the tenant, and recorded in
-   `shared.unmapped_market_requests` for admin (AA-629).
+   `shared.unmapped_market_requests` for admin (AA-629). Since AA-1080 every unsupported declared market
+   counts, also when another declared one is supported (one row per country, also written at the Brand
+   Identity save), and the T2 keyword market is the agency's FIRST supported declared market
+   (`seed_builder.first_supported_market`; before, the lowest MARKET_RANK, so US won for every list holding it).
 2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory signals before choosing. Since AA-1079
    (S277) Debate RANKS ONLY by default (`T7_DEBATE_MODE` unset or `rank`): no candidate is dropped; a flagged one
    carries `debate_flags` and is ordered after every unflagged candidate of its Channel queue, and the `t7_slate`

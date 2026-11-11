@@ -57,7 +57,8 @@ DFS_LOCATION_MAP = {
 }
 
 # Buyer-market preference when a tenant targets several countries (lower = preferred).
-# Used by resolve_buyer_market() (singular, unchanged) to pick ONE market. resolve_buyer_
+# AA-1080: no longer used by resolve_buyer_market() (it takes the agency's first supported declared market).
+# resolve_buyer_
 # markets() (plural, AA-515) does not consult this for exclusion — it returns EVERY market in
 # DFS_LOCATION_MAP a tenant declares, ranked by this only for a stable, arguable ordering.
 MARKET_RANK = {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}
@@ -387,11 +388,34 @@ def unmatched_countries(target_market: dict) -> list[str]:
     return list(dict.fromkeys(countries))
 
 
+def unsupported_countries(target_market: dict) -> list[str]:
+    """AA-1080 — EVERY declared country DFS_LOCATION_MAP does not know (deduped, declared order), whether or not
+    another declared country is supported. One unmapped-market record per entry (Atlas declared 6 markets, 4 of
+    them unsupported: before AA-1080 `unmatched_countries` returned [] because US and UK were supported, so the
+    4 were dropped without a word). Empty when nothing was declared."""
+    tm = target_market or {}
+    countries = [c for c in (tm.get("countries") or []) if isinstance(c, str) and c]
+    return list(dict.fromkeys(c for c in countries if c not in DFS_LOCATION_MAP))
+
+
+def first_supported_market(target_market: dict) -> str | None:
+    """AA-1080 — the first country the agency declared that DFS_LOCATION_MAP supports (declared order), or None.
+    `countries` keeps the agency's order (brand_intake.markets.normalize_markets; a region expands in place:
+    "Europe" = UK, DE, FR, NL)."""
+    tm = target_market or {}
+    for c in tm.get("countries") or []:
+        if c in DFS_LOCATION_MAP:
+            return c
+    return None
+
+
 def resolve_buyer_market(target_market: dict) -> tuple[int, str, str]:
     """(location_code, location_name, language_code) from tenant target_market.
 
-    Picks the highest-priority (lowest MARKET_RANK) country present in target_market.countries.
-    Empty/unknown -> US default. language passthrough (defaults 'en').
+    AA-1080: picks the FIRST supported country the agency declared (`first_supported_market`), not the lowest
+    MARKET_RANK: a Europe-first brand ("Europe, Australia, North America") gets UK keywords, not US ones (AA-741
+    phase 3: 2 of 4 audit brands were optimised for the US on 8 of 8 versions). Empty/unknown -> US default.
+    language passthrough (defaults 'en').
 
     AA-629: this US fallback is intentionally left UNCHANGED here (5+ call sites rely on always
     getting a usable 3-tuple back, some fire-and-forget/best-effort). A caller that needs to
@@ -400,11 +424,8 @@ def resolve_buyer_market(target_market: dict) -> tuple[int, str, str]:
     unmatched_countries() alongside this, not rely on this function's return value alone.
     """
     tm = target_market or {}
-    countries = tm.get("countries") or []
     lang = tm.get("language", "en") or "en"
-
-    present = [c for c in countries if c in MARKET_RANK]
-    chosen = min(present, key=lambda c: MARKET_RANK[c]) if present else _DEFAULT_MARKET
+    chosen = first_supported_market(tm) or _DEFAULT_MARKET
     location_code, location_name = DFS_LOCATION_MAP.get(chosen, DFS_LOCATION_MAP[_DEFAULT_MARKET])
     return location_code, location_name, lang
 
