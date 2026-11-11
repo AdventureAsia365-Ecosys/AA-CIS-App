@@ -4435,6 +4435,18 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     `S1_JUDGE_LIVE=on`. Report in `generated_content.metadata.s1_train`. The publish gate is unchanged (its enforce
     switch is AA-1048). Free replay `scripts/quality/replay_aa1049_s1.py` over stored v2 Masters (export
     `export_aa1049_s1.py`, runner `replay_aa1049_s1_local.sh`).
+  - **Master recompose (AA-1049 path A-new, no model call)** (`services/content_generation/s1_recompose.py` pure,
+    `s1_recompose_store.py` DB, runner `scripts/quality/recompose_masters.py`): a served v2 Master whose fixed fields
+    differ from what the S1 train composes today gets them recomposed by the same `s1_train.compose_page` (day
+    headings, the source day's verbatim fact lines, the title fit, the code meta template) while the narrative stays
+    byte-identical (name, subtitle, summary, description, highlights, day titles, prose lines), and the result is a NEW
+    approved `generated_content` version (a copy of the served one, `metadata.recompose_of` = its id,
+    `metadata.writer` = `recompose-v1`, `writer_version` kept, the score row copied with today's failure codes)
+    published through `process_export` (exit `recompose`): A3, source fan-out, `updated_at` and the other apps follow.
+    Skipped and counted: source not live, a pending review, a newer version in flight, an active pipeline job, not v2,
+    human-edited (opt-in), the elephant-riding policy, a legacy-format itinerary, a narrative change, a no-op, a
+    contract verdict worse than the stored or today's one. DRY RUN prints counts, 8-char ids and the pin; APPLY needs
+    an open rerun wave holding the set and the pin.
 - **A3 — Master Content Pool**: `gold_aa_internal.published_tours` — a tour is "in Master
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
