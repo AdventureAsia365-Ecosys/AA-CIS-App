@@ -169,7 +169,7 @@ def test_breakglass_client_is_accepted(client, directory, issuer):
 @pytest.mark.parametrize("claims", [
     {"client_id": BOOKING_STAFF},                   # not a CIS staff client
     {"token_use": "id"},                            # ID token
-    {"exp": int(time.time()) - 3600},               # expired
+    {"exp": 1_700_000_000},                         # expired (Nov 2023; fixed: same in every xdist worker)
     {"iss": "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_OTHERPOOL"},
 ])
 def test_unacceptable_tokens_are_refused_401_before_the_directory(client, directory, issuer, claims):

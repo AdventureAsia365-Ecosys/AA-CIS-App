@@ -158,7 +158,7 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
 async def summary(request: Request):
     rows = await request.app.state.pool.fetch(
         "SELECT kind, status, count(*)::int AS n, "
-        f"coalesce(sum(j.cost_usd + {queue.LLM_COST_SQL}), 0)::float AS cost_usd "
+        f"coalesce(sum({queue.JOB_COST_SQL}), 0)::float AS cost_usd "
         "FROM shared.job j WHERE created_at >= now() - interval '30 days' GROUP BY kind, status")
     return {
         "counts": [dict(r) for r in rows],

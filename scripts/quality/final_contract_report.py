@@ -6,9 +6,9 @@ Read-only, $0, no LLM. Root ADR 0020 W1 proof: "the REPORT-mode final_contract o
 Set: the live Masters (``gold_aa_internal.published_tours``, ``deleted_at IS NULL``, ``master_status = 'active'``)
 with their published version (``generated_content``, its latest ``quality_scores`` row, ``raw_tours``) — the S1
 writer v2 ones (``metadata.writer_version = 'v2'``) unless ``--all-writers``. Each row runs
-``services.quality.final_contract_store.s1_record_from_row`` (the exact contract every exit runs) with the
-current status ``published``. A flip = the contract's verdict is not ``publish`` (the page would move to review /
-policy_hold / source_hold / degraded once that code is enforced).
+``services.quality.final_contract_store.s1_record_from_row`` (the exact contract every exit runs, with the tenant's
+active brand forbidden words, AA-1049 S277) with the current status ``published``. A flip = the contract's verdict
+is not ``publish`` (the page would move to review / policy_hold / source_hold / degraded once that code is enforced).
 
 Output: JSON on stdout — aggregates and ids only, never page or source text: counts per verdict, per blocking code
 among the flips, per country; the flip list (published tour id, tour id, version id, country, verdict, block codes,
@@ -63,10 +63,11 @@ def _day_counts(record: dict) -> dict:
     return {}
 
 
-def summarize(rows: list[Any], *, sample: int = 0) -> dict:
+def summarize(rows: list[Any], *, sample: int = 0, brand_words: dict | None = None) -> dict:
     """Aggregates + the flip list of the contract over ``rows`` (``masters_sql`` rows). Pure apart from the
-    contract's own imports."""
-    from services.quality.final_contract_store import s1_record_from_row
+    contract's own imports. ``brand_words`` = ``final_contract_store.brand_words_by_key`` over the same rows (the
+    tenant's active brand forbidden words per ``brand_key``); none = the AA core list alone."""
+    from services.quality.final_contract_store import brand_key, s1_record_from_row
 
     verdicts: Counter = Counter()
     flip_codes: Counter = Counter()
@@ -79,7 +80,8 @@ def summarize(rows: list[Any], *, sample: int = 0) -> dict:
     for row in rows:
         country = row["country"] or "unknown"
         try:
-            rec = s1_record_from_row(row, "report", actual="published")
+            rec = s1_record_from_row(row, "report", actual="published",
+                                     brand_forbidden_words=(brand_words or {}).get(brand_key(row)))
         except Exception as exc:  # noqa: BLE001 — one bad row is counted, the report goes on
             errors += 1
             print(f"row {row['generated_content_id']}: {type(exc).__name__}", file=sys.stderr)
@@ -123,12 +125,15 @@ def _contract_version() -> str:
     return CONTRACT_VERSION
 
 
-async def _fetch(all_writers: bool) -> list:
+async def _fetch(all_writers: bool) -> tuple[list, dict]:
     import asyncpg
+
+    from services.quality.final_contract_store import brand_words_by_key
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], ssl="require")
     try:
         async with conn.transaction(readonly=True):
-            return await conn.fetch(masters_sql(all_writers))
+            rows = await conn.fetch(masters_sql(all_writers))
+            return rows, await brand_words_by_key(conn, rows)
     finally:
         await conn.close()
 
@@ -138,8 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--all-writers", action="store_true", help="every live Master, not only the S1 v2 ones")
     ap.add_argument("--sample", type=int, default=0, help="keep at most N flips per blocking code in the list")
     args = ap.parse_args(argv)
-    rows = asyncio.run(_fetch(args.all_writers))
-    print(json.dumps(summarize(rows, sample=args.sample), indent=1, default=str))
+    rows, brand_words = asyncio.run(_fetch(args.all_writers))
+    print(json.dumps(summarize(rows, sample=args.sample, brand_words=brand_words), indent=1, default=str))
     return 0
 
 

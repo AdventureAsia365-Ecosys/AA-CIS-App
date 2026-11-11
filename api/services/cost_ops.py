@@ -92,7 +92,9 @@ DFS_RUNS_SQL = """
          GROUP BY job_id
     )
     SELECT d.*, (j.id IS NOT NULL) AS job_found, j.kind, j.status, j.created_by, j.payload,
-           j.cost_usd::float AS job_reported_cost_usd, j.error, j.parent_job_id, j.attempt,
+           (j.cost_usd - coalesce((j.progress->'cost_stamp'->>'llm_usd')::numeric, 0))::float
+               AS job_reported_cost_usd,   -- AA-1078: the handler's part (cost_usd also holds the stamped LLM part)
+           j.error, j.parent_job_id, j.attempt,
            j.created_at AS job_created_at, j.started_at, j.finished_at,
            CASE WHEN d.job_id IS NULL THEN 0::float
                 ELSE (SELECT coalesce(sum(l.cost_usd), 0)::float FROM shared.llm_call_log l WHERE l.job_id = d.job_id)

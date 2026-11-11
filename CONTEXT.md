@@ -852,8 +852,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared/llm_client/route_settings.py`, 20 s cache; `LLM_ROUTE_AWS_FIRST` is only the bootstrap default while the
     row cannot be read), and the admin's **Route control** tab (`/admin/ai-gateway?tab=controls`, router
     `admin_llm_route_control.py`, service `api/services/llm_route_control.py`) edits the order mode, every stage's
-    chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with two presets
-    ("Prefer Anthropic API for Claude", "Prefer AWS"), a $0 server preview (`llm_route_chains.resolve_stage` under
+    chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with three presets
+    ("Prefer Anthropic API for Claude", "Prefer AWS", and AA-1079's "Serving model first on the judge routes": for
+    `t2_judge` / `t7_debate_judge` / `t10_judge`, the model that serves now moves to the front while every rung ahead
+    of it is refused or circuit-open; the only route change allowed to put a vendor-only model first, shown as a
+    warning; revert it when the closed rungs answer), a $0 server preview (`llm_route_chains.resolve_stage` under
     context-variable overrides; "serves first" is the deployment that would SERVE: one the account refuses on record,
     by the Stage coverage card's own rule `stage_coverage.refusal`, is skipped and listed with its reason) and the
     rules on every save (the PATCH rules, judge family, check pairs, attempt cap,
@@ -3478,13 +3481,18 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    6 supported ones is no longer silently replaced by US: it is returned as
    `unmatched_markets`, shown as a banner to the tenant, and recorded in
    `shared.unmapped_market_requests` for admin (AA-629).
-2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory cuts before choosing:
+2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory signals before choosing. Since AA-1079
+   (S277) Debate RANKS ONLY by default (`T7_DEBATE_MODE` unset or `rank`): no candidate is dropped; a flagged one
+   carries `debate_flags` and is ordered after every unflagged candidate of its Channel queue, and the `t7_slate`
+   job result records the flags (`debate`, admin only). `T7_DEBATE_MODE=cut` brings back the cut below, for when the
+   brand-fit judge is calibrated against the golden-set brand labels (`services/quality/brand_labels.py`,
+   `scripts/quality/measure_aa1079_brand_fit.py`). The two signals:
    - _contested_: share of a keyword's SERP taken by "everywhere" domains (wikipedia,
      tripadvisor…). Deterministic and cached; cut threshold 0.5, measured on real SERP data.
    - _brand-fit_: the same brand-fit scorer (judge route) the T2 judge uses
      (`services/content_generation/brand_fit.py`), cached per
      `(tenant, candidate, brand_version)` in `acp_shared.debate_brand_fit_cache`.
-   - Safety rules: never cuts more than 50% of a list; an error on a candidate lets it pass; if
+   - Safety rules (cut mode): never cuts more than 50% of a list; an error on a candidate lets it pass; if
      Debate fails entirely the Slate behaves as before.
 3. Bar check per Channel, only for the tenant's enabled Channels (`acp_shared.tenant_config.channels`,
    set in admin Tenant 360 > Planning config; no row = every Channel), then the place rule
@@ -3730,6 +3738,20 @@ service, time or view (`trip_promise_kinds`, D1/D4/D15); its violations keep tho
 warns (`blocking: false`, in the flags): place background and other unsupported claims, CTA_NOT_REFLECTED,
 TEXT_INTEGRITY, title / meta claims, a fact flag with no named claim. The F9 classes (`f9_policy.entry_classes`)
 keep `judge_unavailable` and `text_integrity` apart from the fidelity classes in every count.
+AA-1077 (S277) — **blog length contract** (`services/acp_content_writing/length_contract.py`): one owner for the F4
+blog band (4,700–13,000 tag-stripped chars; `quality_gates._BLOG_MIN_CHARS/_MAX_CHARS` read it), the writer's word
+target (read from the hashed `prompts._BLOG_WORDS` / `_BLOG_WORDS_MAX`, pinned above the floor by a test) and the
+extend target. A blog F4 violation names its side (`length_short: content is only N chars (about W words), under the
+blog floor …` / `length_long: … far beyond …`) and the hold reason code is `length_short` / `length_long`
+(`gate_eval`; old labels keep `length`, group with `gate_eval.reason_family`). The normalizer ends with an F4 re-check
+of the stored blog text (`service._recheck_length`: an approved piece under the floor is held) and
+`writer_input.length_trace` (chars after each step); its FAQ answer fit never drops a pair that would take the blog under the
+floor. **Extend repair** (`length_extend.py`, opt-in `T9_LENGTH_EXTEND=on`, also a `trial_flags` switch; default =
+the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
+from the seed's untold fact sentences (one `t9_write` call, `generate.extend_sections`, mode `length_extend`), each
+checked in code (plain prose, size, `repair_contract.new_specifics`, seam integrity) before every gate re-runs; a gate
+needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`
+(paid, capped, never writes a piece).
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
@@ -4367,10 +4389,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     code composes the contract fields after the writer (day headings numbered and ordered by the day plan, the
     source day's verbatim fact lines in place of the writer's, the SEO title fit, a code meta template when the meta
     is still out of band; the writer prompt is unchanged); the `s1` rows of
-    `services/acp_content_writing/route_table.yaml` (one per taxonomy `a1_codes` code: repair_sentence / cut /
+    `services/acp_content_writing/route_table.yaml` (one per taxonomy `a1_codes` code: cut /
     regenerate_section / rewrite / hold) drive a class router (a `rewrite` code redrafts once, 2 drafts in total) and
     a deterministic local fix that replaces flag_fix and its meta re-repair (no model call; repair contract, then the
-    detectors re-run; what is left is `manual_check`, no second grounding repair round); the judge stays off even with
+    detectors re-run; what is left is `manual_check`, no second grounding repair round); the grounding node's sentence
+    repair is a code cut too (`grounding.cut_and_recheck`, S277), so the train's path makes no `s1_flag_fix` call; the judge stays off even with
     `S1_JUDGE_LIVE=on`. Report in `generated_content.metadata.s1_train`. The publish gate is unchanged (its enforce
     switch is AA-1048). Free replay `scripts/quality/replay_aa1049_s1.py` over stored v2 Masters (export
     `export_aa1049_s1.py`, runner `replay_aa1049_s1_local.sh`).
@@ -4586,8 +4609,8 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   the first time, which is why this glossary exists).
 - **T7 — Slate** (`/portal/create/social` "Social Posts" + `/portal/create/article` "Articles", was `t7-planning` "Social Content"): the tenant's ranked,
   per-Channel list of Subjects to pick from, read from the platform-wide Score/Route data (see
-  Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit cut
-  asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
+  Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit check (rank only
+  since AA-1079) asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
 - **T8 — Angle Gate**: Goal + Angle selection (`/portal/create/write`, was `t8-angle-gate`; one continuous wizard
   covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
   with `t8_angle_answers` before the ranking (AA-700, shadow). S234 (AA-771): an Angle's

@@ -19,6 +19,14 @@ signal is measurable or a judgement call:
   `acp_shared.debate_brand_fit_cache` (migration 166) so a repeat `GET /v1/slate` for the same
   tenant/candidate/brand_version never re-calls the LLM.
 
+**Rank only until calibrated (AA-1079, S277).** The AA-741 phase 3 audit (root
+`docs/audits/2026-11-10-S276-aa741-phase3/` §4.3) found Debate flagging 499 of 502 free candidates: the
+`MAX_CUT_FRACTION` cap, not the judgement, decided what was dropped. `debate_mode()` (env `T7_DEBATE_MODE`,
+`rank` when unset) now keeps every candidate: the flags ride on the Candidate (`debate_flags`,
+`debate_severity`), `_choose_slate()` orders unflagged candidates before flagged ones (rank-sum order inside each
+group) and the `t7_slate` job result records them (`debate_report()`). `cut` is the pre-AA-1079 behaviour, kept
+for the day the brand-fit judge is calibrated (AA-1079 part 2).
+
 **Advisory, never able to empty a Channel's list** — mirrors the origin's own safety rule
 ("any failure/malformed ruling and the rules-based list stands unchanged... Debate must never
 be able to make the Slate empty by erroring") and its own numeric safety rail ("never cut more
@@ -27,7 +35,9 @@ than half a Channel's list in one run"). Both are implemented in `apply_debate()
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+import os
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from services.content_generation.stages import T7_DEBATE_JUDGE
@@ -50,9 +60,39 @@ logger = structlog.get_logger()
 # LLM judgement with its own restraint, so a single bad threshold/data point could otherwise
 # cut an unbounded fraction of a Channel's candidates in one `propose_slate()` call.
 MAX_CUT_FRACTION = 0.5
+
+# AA-1079 — what Debate does with its flags. `rank` (the default, also when the env var is unset or unknown): no
+# candidate is dropped, flagged ones are ordered after unflagged ones. `cut`: the AA-631 cut under the cap above.
+DEBATE_MODE_ENV = "T7_DEBATE_MODE"
+DEBATE_MODE_RANK = "rank"
+DEBATE_MODE_CUT = "cut"
+DEBATE_MODES = (DEBATE_MODE_RANK, DEBATE_MODE_CUT)
+FLAG_CONTESTED = "contested"
+FLAG_BRAND_FIT = "brand_fit"
+# Flagged candidates listed one by one in the job result (the counts always cover all of them).
+REPORT_SIGNALS_MAX = 300
 # Evidence shown to the brand-fit judge per candidate (distinct atom texts, each trimmed).
 EVIDENCE_ITEMS = 12
 EVIDENCE_CHARS = 240
+
+
+def debate_mode() -> str:
+    """`rank` unless `T7_DEBATE_MODE` says `cut` (any other value, or none, is rank: the safe side)."""
+    raw = (os.environ.get(DEBATE_MODE_ENV) or "").strip().lower()
+    return raw if raw in DEBATE_MODES else DEBATE_MODE_RANK
+
+
+@dataclass(frozen=True)
+class DebateSignal:
+    """What Debate found about one candidate. `flags` empty = passes; `severity` = "how bad" (higher cuts / sinks
+    first: contested as stored, brand fit as 10 - judge_score); `brand_fit_source` = where the brand-fit score came
+    from (cache, jev_accept, jev_reject, llm, cache_miss in a cache-only replay, error, skipped)."""
+
+    flags: tuple[str, ...] = ()
+    severity: Optional[float] = None
+    judge_score: Optional[float] = None
+    contested: Optional[float] = None
+    brand_fit_source: Optional[str] = None
 
 
 async def _fetch_brand_profile(conn, tenant_id: UUID) -> dict | None:
@@ -118,7 +158,27 @@ async def _fetch_candidate_text(conn, candidate: "Candidate") -> dict:
     }
 
 
-async def _cached_brand_fit(conn, tenant_id: UUID, candidate: "Candidate", brand_version: int) -> dict | None:
+_LATEST_CACHE_SEGMENT_SQL = """
+    SELECT judge_score, feedback FROM acp_shared.debate_brand_fit_cache
+    WHERE tenant_id = $1::uuid AND segment_id = $2
+    ORDER BY brand_version DESC, computed_at DESC LIMIT 1
+"""
+_LATEST_CACHE_ROUTE_SQL = """
+    SELECT judge_score, feedback FROM acp_shared.debate_brand_fit_cache
+    WHERE tenant_id = $1::uuid AND route_id = $2
+    ORDER BY brand_version DESC, computed_at DESC LIMIT 1
+"""
+
+
+async def _cached_brand_fit(conn, tenant_id: UUID, candidate: "Candidate", brand_version: int,
+                            *, any_brand_version: bool = False) -> dict | None:
+    if any_brand_version:
+        # AA-1079 replay: the newest stored score of this candidate, whatever brand version it was judged under (the
+        # phase 2 slates were judged under the brand version of that day).
+        row = await conn.fetchrow(
+            _LATEST_CACHE_SEGMENT_SQL if candidate.segment_id else _LATEST_CACHE_ROUTE_SQL,
+            tenant_id, candidate.segment_id or candidate.route_id)
+        return dict(row) if row else None
     if candidate.segment_id:
         row = await conn.fetchrow("""
             SELECT judge_score, feedback FROM acp_shared.debate_brand_fit_cache
@@ -192,23 +252,19 @@ async def t7_prefilter(tenant_id: UUID, candidate: "Candidate", brand_profile: d
                         t7_state(brand_profile, topic), [T7_Q], tenant_id=str(tenant_id))
 
 
-async def apply_debate(
-    tenant_id: UUID, candidates: list["Candidate"], conn,
-) -> list["Candidate"]:
-    """AA-631 — the Debate cut itself, applied per Channel's candidate list (same grain
-    `_choose()` already operates at) between candidate-fetch and `_choose()` in
-    `propose_slate()`. Returns the SURVIVING candidates, in the same relative order.
+async def assess_candidates(
+    tenant_id: UUID, candidates: list["Candidate"], conn, *, cache_only: bool = False,
+    any_brand_version: bool = False,
+) -> list[DebateSignal]:
+    """AA-1079 — Debate's judgement of each candidate, one `DebateSignal` per candidate in input order; nothing is
+    cut here (`apply_signals()` decides that). Any per-candidate failure counts that candidate as PASSING (never
+    flagged on a failure). Brand fit is only asked when `contested` did not flag the candidate (same cost as before).
 
-    Advisory + safety-railed, exactly like the origin: any per-candidate failure (contested
-    read error, brand-fit LLM/cache error) counts that candidate as PASSING (never cut on a
-    failure), and the total cut across this call is capped at `MAX_CUT_FRACTION` of the input
-    — if more candidates would fail than the cap allows, the WEAKEST-failing (lowest judge_score
-    among brand-fit failures, highest contested among contested failures — whichever standard
-    flagged them) are the ones actually cut, up to the cap, and the rest are let through
-    uncut. Never raises — a bug in Debate must never make `propose_slate()` itself fail.
-    """
+    `cache_only=True` (the $0 replay, `scripts/quality/replay_aa1079_debate.py`): a brand-fit cache miss is reported
+    as `cache_miss` and passes; no Jev decision, no LLM call, no cache write. `any_brand_version=True` reads the
+    newest stored score of the candidate whatever brand version it was judged under."""
     if not candidates:
-        return candidates
+        return []
 
     brand_profile = None
     try:
@@ -217,16 +273,12 @@ async def apply_debate(
         logger.warning("debate_brand_profile_fetch_failed", tenant_id=str(tenant_id), error=str(exc))
 
     run_brand_fit = bool(brand_profile and has_brand_signals(brand_profile))
-
-    flagged: list[tuple["Candidate", float]] = []  # (candidate, "how bad" — higher cuts first)
-    surviving: list["Candidate"] = []
+    signals: list[DebateSignal] = []
 
     for candidate in candidates:
-        cut_score = None  # None = passes; else the "how bad" value used for cap ordering
-
+        contested = None
         # Standard #1 — contested (deterministic, always attempted regardless of brand profile).
         try:
-            contested = None
             if candidate.segment_id:
                 row = await conn.fetchrow(
                     "SELECT contested FROM acp_contract.atom_segment WHERE segment_id = $1",
@@ -234,81 +286,150 @@ async def apply_debate(
                 )
                 contested = row["contested"] if row else None
             if contested is not None and contested >= CONTESTED_CUT_THRESHOLD:
-                cut_score = contested
+                signals.append(DebateSignal(flags=(FLAG_CONTESTED,), severity=float(contested),
+                                            contested=float(contested)))
+                continue
         except Exception as exc:
             logger.warning("debate_contested_check_failed", segment_id=candidate.segment_id,
                             route_id=candidate.route_id, error=str(exc))
 
+        contested_value = float(contested) if contested is not None else None
+        if not run_brand_fit:
+            signals.append(DebateSignal(contested=contested_value, brand_fit_source="skipped"))
+            continue
+
         # Standard #4 — brand-fit (LLM, cached, only when the tenant has a real brand profile).
-        if cut_score is None and run_brand_fit:
-            try:
-                cached = await _cached_brand_fit(conn, tenant_id, candidate, brand_profile["_version"])
-                topic = jev = None
-                if cached is None:
-                    topic = await _fetch_candidate_text(conn, candidate)
-                    jev = await t7_prefilter(tenant_id, candidate, brand_profile, topic)   # AA-700 T7-1
-                if cached is not None:
-                    judge_score = cached["judge_score"]
-                elif jev.accepted(T7_Q):
-                    judge_score = 10.0
-                elif jev.rejected(T7_Q):
-                    judge_score = _T7_JEV_REJECT_SCORE
-                else:
-                    # NOTE: score_candidate_fit() is synchronous (same as judge_node.py's own call
-                    # site in the T2 LangGraph) — a real LLM call here blocks this task's event
-                    # loop for its duration. Same pre-existing characteristic every judge_node.py
-                    # call already has platform-wide, not a new regression introduced by Debate;
-                    # a cache HIT (the expected steady state after brand_version stabilizes) never
-                    # reaches this line at all.
-                    # AA-763 (G4): own stage key, same route as s1_judge.
-                    result = score_candidate_fit(brand_profile, topic, stage=T7_DEBATE_JUDGE)
-                    # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its
-                    # own use of the same helper).
-                    await record_call(
-                        stage=T7_DEBATE_JUDGE, role="judge", model=result.model_used,
-                        tokens_in=result.input_tokens, tokens_out=result.output_tokens,
-                        cost_usd=result.cost_usd, tenant_id=str(tenant_id),
-                        quality_signal={
-                            "source": "debate", "judge_score": result.judge_score,
-                            "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
-                        },
-                        stop_reason=result.stop_reason, account=result.account,
-                        fallback_used=result.fallback_used, **billed_fields(result),
-                    )
-                    await _store_brand_fit_cache(conn, tenant_id, candidate, brand_profile["_version"], result)
-                    judge_score = result.judge_score
-                if judge_score < BRAND_FIT_CUT_THRESHOLD:
-                    # Lower judge_score = worse fit = "how bad" — invert so a bigger number
-                    # means "cut this first", consistent with contested's own convention above.
-                    cut_score = 10.0 - judge_score
-            except Exception as exc:
-                logger.warning("debate_brand_fit_check_failed", segment_id=candidate.segment_id,
-                                route_id=candidate.route_id, error=str(exc))
-                # AA-927: a judge reply billed but unusable (malformed JSON) still gets its cost row.
-                # Only score_candidate_fit attaches billed calls, and only when it raised (its own
-                # success row is written right after it returns, above).
+        try:
+            cached = await _cached_brand_fit(conn, tenant_id, candidate, brand_profile["_version"],
+                                             any_brand_version=any_brand_version)
+            if cached is None and cache_only:
+                signals.append(DebateSignal(contested=contested_value, brand_fit_source="cache_miss"))
+                continue
+            topic = jev = None
+            if cached is None:
+                topic = await _fetch_candidate_text(conn, candidate)
+                jev = await t7_prefilter(tenant_id, candidate, brand_profile, topic)   # AA-700 T7-1
+            if cached is not None:
+                judge_score, source = cached["judge_score"], "cache"
+            elif jev.accepted(T7_Q):
+                judge_score, source = 10.0, "jev_accept"
+            elif jev.rejected(T7_Q):
+                judge_score, source = _T7_JEV_REJECT_SCORE, "jev_reject"
+            else:
+                # NOTE: score_candidate_fit() is synchronous (same as judge_node.py's own call
+                # site in the T2 LangGraph) — a real LLM call here blocks this task's event
+                # loop for its duration. Same pre-existing characteristic every judge_node.py
+                # call already has platform-wide, not a new regression introduced by Debate;
+                # a cache HIT (the expected steady state after brand_version stabilizes) never
+                # reaches this line at all.
+                # AA-763 (G4): own stage key, same route as s1_judge.
+                result = score_candidate_fit(brand_profile, topic, stage=T7_DEBATE_JUDGE)
+                # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its
+                # own use of the same helper).
+                await record_call(
+                    stage=T7_DEBATE_JUDGE, role="judge", model=result.model_used,
+                    tokens_in=result.input_tokens, tokens_out=result.output_tokens,
+                    cost_usd=result.cost_usd, tenant_id=str(tenant_id),
+                    quality_signal={
+                        "source": "debate", "judge_score": result.judge_score,
+                        "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
+                    },
+                    stop_reason=result.stop_reason, account=result.account,
+                    fallback_used=result.fallback_used, **billed_fields(result),
+                )
+                await _store_brand_fit_cache(conn, tenant_id, candidate, brand_profile["_version"], result)
+                judge_score, source = result.judge_score, "llm"
+            judge_score = float(judge_score)
+            if judge_score < BRAND_FIT_CUT_THRESHOLD:
+                # Lower judge_score = worse fit = "how bad" — invert so a bigger number
+                # means "cut this first", consistent with contested's own convention above.
+                signals.append(DebateSignal(flags=(FLAG_BRAND_FIT,), severity=10.0 - judge_score,
+                                            judge_score=judge_score, contested=contested_value,
+                                            brand_fit_source=source))
+            else:
+                signals.append(DebateSignal(judge_score=judge_score, contested=contested_value,
+                                            brand_fit_source=source))
+        except Exception as exc:
+            logger.warning("debate_brand_fit_check_failed", segment_id=candidate.segment_id,
+                            route_id=candidate.route_id, error=str(exc))
+            # AA-927: a judge reply billed but unusable (malformed JSON) still gets its cost row.
+            # Only score_candidate_fit attaches billed calls, and only when it raised (its own
+            # success row is written right after it returns, above).
+            if not cache_only:
                 await record_billed_failure(stage=T7_DEBATE_JUDGE, role="judge", billed=billed_calls(exc),
                                             error=str(exc), tenant_id=str(tenant_id))
+            signals.append(DebateSignal(contested=contested_value, brand_fit_source="error"))
+    return signals
 
-        if cut_score is None:
-            surviving.append(candidate)
-        else:
-            flagged.append((candidate, cut_score))
 
+def apply_signals(
+    candidates: list["Candidate"], signals: list[DebateSignal], mode: str,
+) -> list["Candidate"]:
+    """Pure. `rank` (AA-1079): every candidate is kept, in input order; a flagged one carries its flags and severity
+    (`Candidate.debate_flags` / `debate_severity`), which `_choose_slate()` orders after the unflagged ones. `cut`
+    (AA-631): the flagged candidates are cut, worst first, up to `MAX_CUT_FRACTION` of the list; the rest are let
+    through uncut, original relative order kept."""
+    if len(signals) != len(candidates):
+        raise ValueError("one DebateSignal per candidate")
+    if mode != DEBATE_MODE_CUT:
+        return [replace(c, debate_flags=sig.flags, debate_severity=sig.severity) if sig.flags else c
+                for c, sig in zip(candidates, signals)]
+
+    flagged = [(c, sig.severity) for c, sig in zip(candidates, signals) if sig.flags]
     if not flagged:
-        return surviving
-
+        return list(candidates)
     max_cuts = int(len(candidates) * MAX_CUT_FRACTION)
     flagged.sort(key=lambda pair: -pair[1])  # worst-first
     actually_cut = {id(c) for c, _ in flagged[:max_cuts]}
-    reprieved = [c for c, _ in flagged[max_cuts:]]
-
     if len(flagged) > max_cuts:
-        logger.info("debate_safety_rail_engaged", tenant_id=str(tenant_id),
-                    flagged=len(flagged), max_cuts=max_cuts, total=len(candidates))
-
-    result_list = [c for c in candidates if id(c) not in actually_cut]
+        logger.info("debate_safety_rail_engaged", flagged=len(flagged), max_cuts=max_cuts, total=len(candidates))
     # Preserve original relative order — surviving ∪ reprieved, filtered back through the
     # original candidates list rather than concatenated (which would reorder reprieved ones
     # to the end, unlike everything else in this pipeline's "strongest-first, stable" ordering).
-    return result_list
+    return [c for c in candidates if id(c) not in actually_cut]
+
+
+def would_cut(signals: list[DebateSignal]) -> int:
+    """How many candidates the AA-631 cut would drop from this list (the cap applied). Pure."""
+    flagged = sum(1 for s in signals if s.flags)
+    return min(flagged, int(len(signals) * MAX_CUT_FRACTION))
+
+
+async def apply_debate(
+    tenant_id: UUID, candidates: list["Candidate"], conn,
+) -> list["Candidate"]:
+    """AA-631 — Debate, applied per candidate pool (Segments, Routes) between candidate-fetch and `_choose_slate()`
+    in `propose_slate()`. AA-1079: in `rank` mode (the default, `debate_mode()`) nothing is cut and the flags ride on
+    the candidates; in `cut` mode the AA-631 cut applies (see `apply_signals()`). Never raises — a bug in Debate must
+    never make `propose_slate()` itself fail."""
+    if not candidates:
+        return candidates
+    signals = await assess_candidates(tenant_id, candidates, conn)
+    return apply_signals(candidates, signals, debate_mode())
+
+
+def _candidate_key(c: "Candidate") -> str:
+    return c.segment_id or c.route_id or f"{c.place}|{c.action}"
+
+
+def debate_report(mode: str, before: list["Candidate"], after: list["Candidate"]) -> dict:
+    """AA-1079 — what Debate did to one candidate pool, for the `t7_slate` job result (admin only; the tenant Slate
+    read never sees it). Pure. `flagged` counts the flags riding on the kept candidates (rank mode); in cut mode the
+    flags of the dropped ones are gone, so it is the number dropped (`dropped`) that tells."""
+    kept_flagged = [c for c in after if getattr(c, "debate_flags", ())]
+    by_flag: dict[str, int] = {}
+    for c in kept_flagged:
+        for f in c.debate_flags:
+            by_flag[f] = by_flag.get(f, 0) + 1
+    worst = sorted(kept_flagged, key=lambda c: (-(c.debate_severity or 0.0), _candidate_key(c)))
+    return {
+        "mode": mode,
+        "candidates": len(before),
+        "kept": len(after),
+        "dropped": len(before) - len(after),
+        "flagged": len(kept_flagged),
+        "flagged_by": dict(sorted(by_flag.items())),
+        "signals": [{"id": _candidate_key(c), "flags": list(c.debate_flags),
+                     "severity": round(c.debate_severity, 3) if c.debate_severity is not None else None}
+                    for c in worst[:REPORT_SIGNALS_MAX]],
+    }

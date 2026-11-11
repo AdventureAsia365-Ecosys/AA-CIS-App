@@ -29,7 +29,7 @@ LOGGERS = {"record_call", "record_call_sync", "record_call_with_pool", "record_c
            "_log_t10_judge_call", "_record_t9_write_call"}
 
 _JN = ("services/content_generation/judge_node.py", "judge_node")
-_DEBATE = ("services/acp_shared/debate.py", "apply_debate")
+_DEBATE = ("services/acp_shared/debate.py", "assess_candidates")  # AA-1079: the judge call moved out of apply_debate
 _F9_LOG = ("services/acp_content_writing/quality_gates.py", "_log_t10_judge_call")
 _F9_FAIL = ("services/acp_content_writing/quality_gates.py", "_log_t10_billed_unusable")
 
@@ -49,6 +49,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         ("services/acp_content_writing/generate.py", "_record_t9_write_call"),),
     ("services/acp_content_writing/generate.py", "repair_sentences_detailed"): _self(
         "services/acp_content_writing/generate.py", "repair_sentences_detailed"),
+    # AA-1077: the extend repair of a short blog logs its own row (**billed_fields)
+    ("services/acp_content_writing/generate.py", "extend_sections"): _self(
+        "services/acp_content_writing/generate.py", "extend_sections"),
     ("services/acp_content_writing/generate.py", "fit_seo_fields"): _self(
         "services/acp_content_writing/generate.py", "fit_seo_fields"),
     ("services/acp_content_writing/generate.py", "write_faq"): _self(
@@ -74,7 +77,7 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/acp_contract/segment_research_batch.py", "_propose"),
     ("services/acp_shared/content_embedding.py", "compute_embeddings"): _self(
         "services/acp_shared/content_embedding.py", "compute_embeddings"),
-    ("services/acp_shared/debate.py", "apply_debate"): (_DEBATE,),
+    ("services/acp_shared/debate.py", "assess_candidates"): (_DEBATE,),
     ("services/acp_shared/place_cards.py", "draft_card"): (("services/acp_shared/place_cards.py", "_log"),),
     ("services/acp_shared/place_cards.py", "check_card"): (("services/acp_shared/place_cards.py", "_log"),),
     ("services/content_generation/brand_audit_node.py", "brand_audit_node"): _self(
@@ -153,6 +156,9 @@ EXCLUDED: dict[tuple[str, str], str] = {
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "
                                                    "overlay; no call",
+    ("scripts/quality/audit_s1_masters.py", "_no_model_patches"): (
+        "AA-1049 read-only S1 Master audit: patches LLMClient.generate with a stub that REFUSES every call and "
+        "counts it as not_run; no model call is ever made, so there is no row to write"),
     ("services/jobs/llm_contract_smoke_job.py", "_brand_fit.score"): (
         "AA-1026 contract smoke: the brand fit call runs on the smoke's pinned client (LLMClient.probe, stage "
         "adhoc_aa1026) and run_smoke writes one llm_call_log row per reply (_log_replies); the plan's capture client "

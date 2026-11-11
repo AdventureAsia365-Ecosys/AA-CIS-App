@@ -22,8 +22,9 @@ enforce switch of the final contract; this switch changes no publish rule):
     rows), the repair contract after the edits (a breach reverts the field), then the detectors that fired are run again
     on the changed text (the brand pre-audit here, validate and grounding in revalidate). What is left is held for
     review (``manual_check``): there is no second repair round (``graph._grounding_recheck`` skips its sentence
-    re-repair when the switch is on). The source-aware sentence repair of the grounding node (repair_sentence rows) is
-    the only model repair left on the path.
+    re-repair when the switch is on). S277: the grounding node's sentence repair is a code cut too
+    (``grounding.cut_and_recheck``, the ``cut`` rows of UNSUPPORTED_NUMBER / UNSUPPORTED_CLAIM): the train's path
+    makes no ``s1_flag_fix`` call at all (the S276 smoke still made one, from that repair).
 (d) the S1 brand judge stays off the live path whatever ``S1_JUDGE_LIVE`` says (D9:
     ``judge_node.s1_judge_off_live_path``).
 (e) the class router (``route_after_judge``) replaces the score-only ``should_retry``: a ``rewrite`` row left on the

@@ -20,7 +20,7 @@ export const RC = defineMessages(
     orderAwsFirst: "AWS first: every AWS model of the chain, then the vendor APIs",
     orderEnvNote: (mode: string) => `The server setting wins; the start-up default is ${mode}.`,
     presetsTitle: "Presets",
-    presetsHelp: "One click sets the provider order of many models at once. The chains do not change.",
+    presetsHelp: "One click applies a set of route changes at once. The preview shows every change before you save.",
     presetApply: "Apply",
     presetTitle: (label: string) => `Apply "${label}"?`,
     presetNothing: "This preset is already in force: nothing would change.",
@@ -30,6 +30,10 @@ export const RC = defineMessages(
     presetHelp_prefer_anthropic_api: "Every Claude model is tried on the Anthropic API first, then on AWS. Sets the "
       + "order mode to same model first.",
     presetHelp_prefer_aws: "Every model is tried on AWS first, then on its vendor API. The order mode stays.",
+    presetLabel_serving_first: "Serving model first on the judge routes",
+    presetHelp_serving_first: "For the T2, T7 Debate and T10 judges: when the first models of the chain are refused "
+      + "or their circuit is open, the model that answers now moves to the front. Revert this version when they "
+      + "answer again.",
     chainsTitle: "Chains per stage",
     chainsHelp: "The first model serves the stage; the next ones take over in order when it fails. Drag a model, or "
       + "use the arrows, to change the order.",
@@ -121,7 +125,7 @@ export const RC = defineMessages(
     orderAwsFirst: "AWS trước: mọi model AWS của chuỗi, rồi tới API của hãng",
     orderEnvNote: (mode: string) => `Thiết lập trên máy chủ được ưu tiên; mặc định lúc khởi động là ${mode}.`,
     presetsTitle: "Preset",
-    presetsHelp: "Một cú nhấp đặt thứ tự nhà cung cấp cho nhiều model cùng lúc. Chuỗi model không đổi.",
+    presetsHelp: "Một cú nhấp áp dụng nhiều thay đổi route cùng lúc. Bản xem trước liệt kê mọi thay đổi trước khi lưu.",
     presetApply: "Áp dụng",
     presetTitle: (label: string) => `Áp dụng "${label}"?`,
     presetNothing: "Preset này đang có hiệu lực: không có gì thay đổi.",
@@ -131,6 +135,9 @@ export const RC = defineMessages(
     presetHelp_prefer_anthropic_api: "Mọi model Claude được thử qua API Anthropic trước, rồi tới AWS. Đặt kiểu thứ "
       + "tự thành cùng model trước.",
     presetHelp_prefer_aws: "Mọi model được thử trên AWS trước, rồi tới API của hãng. Kiểu thứ tự giữ nguyên.",
+    presetLabel_serving_first: "Model đang phục vụ lên đầu ở route judge",
+    presetHelp_serving_first: "Với judge T2, Debate T7 và T10: khi các model đầu chuỗi bị từ chối hoặc circuit đang "
+      + "mở, model đang trả lời được đưa lên đầu. Hoàn tác phiên bản này khi các model đó trả lời lại.",
     chainsTitle: "Chuỗi model của từng stage",
     chainsHelp: "Model đầu tiên phục vụ stage; các model sau lần lượt thay khi nó lỗi. Kéo một model, hoặc dùng mũi "
       + "tên, để đổi thứ tự.",

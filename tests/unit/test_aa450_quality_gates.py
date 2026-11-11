@@ -87,7 +87,8 @@ class TestGateExtremeLength:
         # generic 20-char floor — the issue's own "secondary note" (no real blog floor before).
         result = qg.gate_extreme_length("A" * 3000, "blog")
         assert result["passed"] is False
-        assert "effectively empty" in result["violations"][0]
+        # AA-1077: a blog violation names its side and the floor (a 3,000-char article is not "effectively empty")
+        assert result["violations"][0].startswith("length_short: content is only 3000 chars")
 
     def test_blog_channel_above_blog_ceiling_fails(self):
         assert qg.gate_extreme_length("A" * 13500, "blog")["passed"] is False

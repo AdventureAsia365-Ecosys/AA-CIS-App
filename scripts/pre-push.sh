@@ -27,6 +27,10 @@
 #                   secret-scan.yml pin) and the BASE's .gitleaks.toml / .gitleaksignore, as CI reads them. Binary:
 #                   $AA_GITLEAKS, `gitleaks` on PATH, or <workspace>/.tmp-session/gitleaks-8301/gitleaks. A missing or
 #                   other-version binary blocks; skip once, visibly: AA_SKIP_GITLEAKS=1 git push.
+#   pins            AA-1024 (S274, S276): before a run that starts Python tests (unit, integration, --integration) the
+#                   Python it uses must have the fastapi / pydantic versions requirements.txt pins (CI installs them);
+#                   another version makes test_aa899_openapi_export red on main too. A mismatch stops at once with the
+#                   install line; skip once, visibly: AA_PREPUSH_SKIP_PINS=1 git push.
 #   --base REF      diff base (default origin/main, or AA_PREPUSH_BASE).
 #   --head REF      commit being pushed (default HEAD; the hook passes the pushed SHA).
 #
@@ -483,6 +487,43 @@ check_versions() {
   return 0
 }
 
+# check_pins: the Python that runs the tests has the versions requirements.txt pins for PINNED_PKGS (CI installs those
+# pins; S274 + S276: the main checkout's .venv kept fastapi 0.110 / pydantic 2.13 against pins 0.161.1 / 2.14.1, so
+# test_aa899_openapi_export failed locally on main and blocked every push). Returns 1 with the install line on a
+# mismatch; AA_PREPUSH_SKIP_PINS=1 turns that into a warning in the summary.
+PINNED_PKGS=(fastapi pydantic)
+check_pins() {
+  [[ -f requirements.txt ]] || return 0
+  local probe pkg pin have bad=() pattern msg
+  probe=$("$PY" -c 'import sys
+from importlib import metadata  # AA_PINS probe: one interpreter start for every package
+for n in sys.argv[1:]:
+    try:
+        print(n, metadata.version(n))
+    except metadata.PackageNotFoundError:
+        print(n, "not-installed")' "${PINNED_PKGS[@]}" 2>/dev/null)
+  for pkg in "${PINNED_PKGS[@]}"; do
+    pin=$(sed -n "s/^$pkg==\([^ #;]*\).*/\1/p" requirements.txt | head -n 1)
+    [[ -n $pin ]] || continue
+    have=$(awk -v n="$pkg" '$1 == n { print $2 }' <<<"$probe")
+    [[ $have == "$pin" ]] || bad+=("$pkg ${have:-unknown} (requirements.txt pins $pin)")
+  done
+  (( ${#bad[@]} == 0 )) && return 0
+  pattern=$(IFS='|'; echo "${PINNED_PKGS[*]}")
+  msg="$PY has $(printf '%s, ' "${bad[@]}" | sed 's/, $//')"
+  if [[ ${AA_PREPUSH_SKIP_PINS:-0} == 1 ]]; then
+    warn_result pins "$msg; skipped by AA_PREPUSH_SKIP_PINS=1 (say so in the PR body)"
+    return 0
+  fi
+  echo "!! [pins] $msg."
+  echo "   CI installs the requirements.txt pins: with other versions tests such as test_aa899_openapi_export (the"
+  echo "   openapi.json snapshot) fail here and pass in CI, or the other way round. Install the pins, then retry:"
+  echo "   \"$PY\" -m pip install \$(grep -E '^($pattern)==' requirements.txt)"
+  echo "   (a uv venv without pip: uv pip install --python \"$PY\" \$(grep -E '^($pattern)==' requirements.txt))"
+  echo "   Skip once, visibly: AA_PREPUSH_SKIP_PINS=1 git push"
+  return 1
+}
+
 pick_python() {
   if [[ -n ${AA_PREPUSH_PYTHON:-} ]]; then echo "$AA_PREPUSH_PYTHON"; return; fi
   if [[ -n ${VIRTUAL_ENV:-} && -x $VIRTUAL_ENV/bin/python ]]; then echo "$VIRTUAL_ENV/bin/python"; return; fi
@@ -764,6 +805,7 @@ main() {
   if [[ $RUN_INTEGRATION == 1 ]]; then
     if [[ $CI_MODE == 1 ]]; then echo "pre-push: --integration reads the diff; it does not combine with --ci" >&2; exit 2; fi
     RESULTS=()
+    check_pins || exit 1
     run_integration; exit $?
   fi
   local plan=() id
@@ -782,6 +824,10 @@ main() {
     echo "note: the working tree has uncommitted changes; the checks read the working tree, the push sends commits."
   fi
   [[ $DRY == 1 ]] && exit 0
+  # Stop before minutes of tests that fail (or pass) only because of a local version drift; CI installs the pins.
+  if [[ $CI_MODE == 0 && " ${plan[*]} " =~ \ (unit|integration)\  ]]; then
+    check_pins || { echo; echo "Blocked before the checks ran (pins). Bypass the hook once: git push --no-verify"; exit 1; }
+  fi
   LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX") || exit 2
 
   local existing=() f

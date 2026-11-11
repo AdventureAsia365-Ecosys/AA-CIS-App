@@ -11,7 +11,7 @@
 import threading
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from botocore.exceptions import ClientError
@@ -24,8 +24,8 @@ from api.routers import v1_publish as pub_mod
 from tests.unit import test_aa817_fail_closed_routes as matrix
 
 TENANT_ID = str(uuid4())
-PUBLISH_ID = uuid4()
-PIECE_ID = str(uuid4())
+PUBLISH_ID = UUID(int=0x85900001)   # fixed: parametrize inputs are identical in every xdist worker (S276 lint)
+PIECE_ID = str(UUID(int=0x85900002))
 NOW = datetime(2026, 10, 16, 9, 0, tzinfo=timezone.utc)
 WP_CREDS = {"wp_url": "https://b.com", "username": "u", "app_password": "p"}
 

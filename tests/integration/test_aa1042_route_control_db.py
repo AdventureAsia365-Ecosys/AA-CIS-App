@@ -118,7 +118,7 @@ def test_state_lists_stages_options_and_provider_order(world):
     assert stage["chain"][0] and any(o["available"] for o in stage["options"])
     sonnet = next(p for p in state["provider_order"] if p["model_key"] == "sonnet-5-5")
     assert [d["connection_key"] for d in sonnet["deployments"]][0] == "acc3"
-    assert {p["key"] for p in state["presets"]} == {"prefer_anthropic_api", "prefer_aws"}
+    assert {p["key"] for p in state["presets"]} == {"prefer_anthropic_api", "prefer_aws", "serving_first"}
 
 
 def test_save_order_mode_is_a_version_with_a_diff_and_an_audit_row(world):
