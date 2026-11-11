@@ -12,8 +12,8 @@ row of one cause:
 - ``recompute_stage_failed`` — a stage raised; the message names the stage and the exception class. Retryable.
 
 Not a failure (AA-1083): ``recompute_jev_cap`` starts the error of a run HELD because its Jev spend estimate is above
-the per-run cap. The job ends ``stopped_budget`` (the runner's budget stop, cost_guard.BudgetExceeded), waiting for staff
-to release it (services/recompute/jev_scope.py); it is not in ERROR_CODES.
+the per-run cap. The job ends ``stopped_budget`` (the runner's budget stop, cost_guard.BudgetExceeded), waiting for
+staff to release it (services/recompute/jev_scope.py); it is not in ERROR_CODES.
 """
 from __future__ import annotations
 
