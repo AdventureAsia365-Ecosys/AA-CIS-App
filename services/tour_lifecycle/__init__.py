@@ -15,6 +15,7 @@ from .service import (
     key_of,
     key_was_published,
     pause_master,
+    policy_hold,
     preview,
     publish,
     restore_master,
@@ -28,7 +29,8 @@ from .service import (
 
 __all__ = [
     "LifecycleError", "Outcome", "PREVIEW_ACTIONS", "activate_master", "deleted_key_info", "insert_new_sources",
-    "key_of", "key_was_published", "pause_master", "preview", "publish", "recompute_after_status_change",
+    "key_of", "key_was_published", "pause_master", "policy_hold", "preview", "publish",
+    "recompute_after_status_change",
     "restore_master", "restore_source", "retire_source", "run_after_commit", "served_state", "set_active",
     "supersede", "trash_master",
 ]

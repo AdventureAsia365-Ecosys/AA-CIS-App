@@ -44,7 +44,8 @@ async def test_publish_dismisses_the_tours_pending_reviews(monkeypatch):
     assert len(calls) == 1
     sql, *args = calls[0].args
     assert "review_status = 'pending'" in sql and "tour_id = $1" in sql
-    assert args == ["t-1"]
+    # AA-1049: $2 = the published version's number (a pending policy review of a newer version is kept)
+    assert args == ["t-1", 0] and "policy:elephant_riding" in sql and "version_num > $2" in sql
 
 
 @pytest.mark.asyncio

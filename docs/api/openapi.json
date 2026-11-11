@@ -35324,7 +35324,7 @@
     },
     "/admin/review-queue": {
       "get": {
-        "description": "AA-739: server-side paging + filters (country, score band, tour) and full facets, so the\npage no longer paginates/filters client-side over a 20-row slice (it showed 20 of 54 and only\nthe countries on that slice).",
+        "description": "AA-739: server-side paging + filters (country, score band, tour) and full facets, so the\npage no longer paginates/filters client-side over a 20-row slice (it showed 20 of 54 and only\nthe countries on that slice).\n\nAA-1049: ``policy=elephant_riding`` keeps only the elephant-riding policy reviews\n(services/quality/policy_review.py); every row carries ``policy_review`` (null, or {kind, held, approvable,\nevidence}) and the facets count them (``facets.policy_reviews``).",
         "operationId": "admin_review_queue_admin_review_queue_get",
         "parameters": [
           {
@@ -35397,6 +35397,22 @@
                 }
               ],
               "title": "Tour Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Policy"
             }
           },
           {

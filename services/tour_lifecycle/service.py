@@ -11,6 +11,12 @@ build otherwise). The actions:
   set_active       make an older version the live one (POST /admin/raw-tours/{id}/set-active)
   pause_master / activate_master / trash_master / restore_master   the Master Content lifecycle buttons
   publish          the Master insert of process_export
+  policy_hold      AA-1049: hold a Master for the elephant-riding policy review (inactive, reason policy_hold, CIS 398)
+                   and file its pending Review Queue row; only the Review Queue approve (its publish) lifts it
+
+The elephant-riding guard (AA-1049, policy.py): `publish` refuses a version with a detector hit and no human approval
+(409 policy_review_required), `activate_master` refuses a held Master or one whose text / source hits without an
+approval, and a Master that `restore_source` / `set_active` would switch back on is held instead when it hits.
 
 In ONE transaction each action: changes the status columns and records why (published_tours.master_status_reason,
 CIS 272); switches off every active Master of the key whose source is not live (never two active Masters per key);
@@ -38,6 +44,7 @@ from services.notifications import EventType, NotificationService
 from shared.tour_liveness import SourceState, source_not_live_message
 
 from . import derivatives as _d
+from . import policy as _policy
 
 logger = structlog.get_logger()
 
@@ -46,9 +53,11 @@ AA_TENANT = _d.AA_TENANT
 # service does not depend on the stored column.
 KEY_EXPR = "(COALESCE(rt.source_group_id, rt.tour_id))::text"
 
-# Reason a Master is not active (CIS 272 CHECK).
+# Reason a Master is not active (CIS 272 CHECK; policy_hold CIS 398).
 STAFF_DEACTIVATED, STAFF_TRASHED, SOURCE_DELETED, SUPERSEDED = (
     "staff_deactivated", "staff_trashed", "source_deleted", "superseded")
+POLICY_HOLD = _policy.POLICY_HOLD
+POLICY_REVIEW_REQUIRED = _policy.POLICY_REVIEW_REQUIRED
 
 # The `restored` event's reason per action (CIS 272 CHECK).
 _RESTORED_REASON = {"restore_source": "restore", "publish": "publish", "activate_master": "activate",
@@ -124,7 +133,7 @@ _VERSION_SQL = f"""
 
 _MASTER_SQL = """
     SELECT pt.tour_id::text AS tour_id, pt.aa_name, pt.master_status::text AS master_status,
-           pt.master_status_reason, pt.deleted_at
+           pt.master_status_reason, pt.deleted_at, pt.generated_content_id::text AS generated_content_id
       FROM gold_aa_internal.published_tours pt
      WHERE pt.tour_id = $1::uuid
        FOR UPDATE OF pt
@@ -405,6 +414,7 @@ async def restore_source(conn, tour_id, *, actor: str = "admin") -> Outcome:
             RETURNING tour_id::text AS tour_id
         """, out.tour_id)
         out.masters_on = [r["tour_id"] for r in rows]
+        await _hold_reenabled_for_policy(conn, out)
         await _cascade(conn, out, actor)
         await _staff_event(conn, EventType.SOURCE_RESTORED, out.tour_id, v["tenant_id"],
                            {"tour_name": out.tour_name, "changed_by": actor})
@@ -554,8 +564,9 @@ async def set_active(conn, tour_id, *, actor: str = "admin") -> Outcome:
             RETURNING tour_id::text AS tour_id
         """, out.tour_id)
         out.masters_on = [r["tour_id"] for r in on]
+        await _hold_reenabled_for_policy(conn, out)
         await _cascade(conn, out, actor, superseded=old_live or None, replaced_by=out.tour_id)
-        out.add_recompute(out.tour_id, "active")
+        out.add_recompute(out.tour_id, "inactive" if out.tour_id in out.extra.get("policy_held", []) else "active")
     return out
 
 
@@ -576,10 +587,12 @@ async def pause_master(conn, tour_id, *, actor: str = "admin") -> Outcome:
         out, m = await _master_outcome(conn, "pause_master", tour_id)
         if m["master_status"] == "trashed":
             raise LifecycleError(409, "master_trashed", "this Master is in the trash. Restore it first.")
+        # AA-1049: a Master held for the elephant-riding policy keeps that reason (only the Review Queue lifts it).
         await conn.execute(f"""
             UPDATE gold_aa_internal.published_tours
                SET master_status = 'inactive'::gold_aa_internal.master_status_enum,
-                   master_status_reason = '{STAFF_DEACTIVATED}'
+                   master_status_reason = CASE WHEN master_status_reason = '{POLICY_HOLD}' THEN '{POLICY_HOLD}'
+                                               ELSE '{STAFF_DEACTIVATED}' END
              WHERE tour_id = $1::uuid
         """, out.tour_id)
         await _cascade(conn, out, actor)
@@ -604,6 +617,13 @@ async def activate_master(conn, tour_id, *, actor: str = "admin") -> Outcome:
             if state.reason in ("trashed", "deleted"):
                 msg += " Restoring the source tour brings its Master back too."
             raise LifecycleError(409, "source_not_live", msg)
+        # AA-1049: a Master held for the elephant-riding policy, or one that offers elephant riding with no human
+        # approval of its version, goes back on sale only through the Review Queue approve.
+        if m["master_status"] != "active" and (
+                m["master_status_reason"] == POLICY_HOLD
+                or (await _policy.master_hits(conn, out.tour_id)
+                    and not await _policy.human_approved(conn, m["generated_content_id"]))):
+            raise LifecycleError(409, POLICY_REVIEW_REQUIRED, _policy.refusal_message("setting it active"))
         await conn.execute("""
             UPDATE gold_aa_internal.published_tours
                SET master_status = 'active'::gold_aa_internal.master_status_enum, master_status_reason = NULL
@@ -677,10 +697,97 @@ async def publish(conn, data: dict, *, tenant_slug: str = "aa_internal", actor: 
         if not state.live:
             raise LifecycleError(409, "source_not_live",
                                  source_not_live_message(state, "publish to Master Content").split(": ", 1)[1])
+        # AA-1049 guard: a version that offers elephant riding becomes the Master only with a human approval of
+        # that version (the Review Queue approve claims its row 'approved' before it publishes).
+        version_id = str(data.get("generated_content_id") or "")
+        hits = await _policy.version_hits(conn, version_id)
+        approved = bool(hits) and await _policy.human_approved(conn, version_id)
+        if hits and not approved:
+            raise LifecycleError(409, POLICY_REVIEW_REQUIRED, _policy.refusal_message("publishing it"))
         out = Outcome("publish", tour_id, await key_of(conn, tour_id), str(data.get("aa_name") or ""))
         out.before = await served_state(conn, out.source_id)
         out.extra["catalog_id"] = await PublishedCatalogRepository(conn, tenant_slug).insert(data)
+        out.extra["policy_hits"] = len(hits)
+        # A Master held for the policy comes back on sale with this publish: the version is approved by a person,
+        # or no longer offers elephant riding (neither its text nor the source).
+        lifted = await conn.fetch(f"""
+            UPDATE gold_aa_internal.published_tours
+               SET master_status = 'active'::gold_aa_internal.master_status_enum, master_status_reason = NULL
+             WHERE tour_id = $1::uuid AND master_status = 'inactive' AND master_status_reason = '{POLICY_HOLD}'
+            RETURNING tour_id::text AS tour_id
+        """, tour_id)
+        out.masters_on = [r["tour_id"] for r in lifted]
+        out.extra["policy_hold_lifted"] = bool(lifted)
+        for r in lifted:
+            out.add_recompute(r["tour_id"], "active")
         await _cascade(conn, out, actor)
+    return out
+
+
+async def _hold_reenabled_for_policy(conn, out: Outcome) -> None:
+    """AA-1049: a Master `restore_source` / `set_active` just switched back on that offers elephant riding with no
+    human approval of its version is held instead (inactive, policy_hold) with a pending policy review."""
+    for tid in list(out.masters_on):
+        hits = await _policy.master_hits(conn, tid)
+        if not hits:
+            continue
+        version = await conn.fetchval("SELECT generated_content_id::text FROM gold_aa_internal.published_tours "
+                                      "WHERE tour_id = $1::uuid", tid)
+        if await _policy.human_approved(conn, version):
+            continue
+        await conn.execute(f"""
+            UPDATE gold_aa_internal.published_tours
+               SET master_status = 'inactive'::gold_aa_internal.master_status_enum,
+                   master_status_reason = '{POLICY_HOLD}'
+             WHERE tour_id = $1::uuid
+        """, tid)
+        out.masters_on.remove(tid)
+        out.extra.setdefault("policy_held", []).append(tid)
+        await _policy.ensure_policy_review(conn, tid, version, hits)
+
+
+async def policy_hold(conn, tour_id, *, actor: str = "pipeline", version_id: Optional[str] = None) -> Outcome:
+    """AA-1049 (tech lead decision S277, root ADR 0020 D8): hold a Master for the elephant-riding policy review.
+
+    The Master goes inactive with reason policy_hold (CIS 398) when it is active, or inactive for no recorded reason
+    / a staff deactivation; a Master switched off by the service for a dead source (source_deleted / superseded)
+    keeps its reason. The tour gets one pending policy review row (services/quality/policy_review.py marker, the
+    detector's evidence as codes): `version_id`'s, else the served version's. The cascade is a pause: the key is
+    paused (master_inactive), queued T2 / T8 / T9 jobs are cancelled, the lifecycle event goes to TripPlanner (purge)
+    after commit, no tenant mail (ADR 0019 d20: a paused tour gets no mail); Booking reads the served state.
+    Refused: no such Master (404), a trashed one (409 master_trashed), no detector hit on the text it would hold
+    (409 no_policy_hit). Idempotent: a held Master with its pending review changes nothing.
+    Only the Review Queue approve of the review lifts the hold (publish)."""
+    async with conn.transaction():
+        await _locked_source_state(conn, tour_id)
+        out, m = await _master_outcome(conn, "policy_hold", tour_id)
+        if m["master_status"] == "trashed":
+            raise LifecycleError(409, "master_trashed", "this Master is in the trash.")
+        review_version = version_id or m["generated_content_id"]
+        hits = (await _policy.version_hits(conn, version_id) if version_id
+                else await _policy.master_hits(conn, out.tour_id))
+        if not hits:
+            raise LifecycleError(409, "no_policy_hit",
+                                 "no elephant riding found in this tour's text or source; nothing to hold.")
+        held = False
+        reason = m["master_status_reason"]
+        if m["master_status"] == "active" or reason in (None, STAFF_DEACTIVATED):
+            await conn.execute(f"""
+                UPDATE gold_aa_internal.published_tours
+                   SET master_status = 'inactive'::gold_aa_internal.master_status_enum,
+                       master_status_reason = '{POLICY_HOLD}'
+                 WHERE tour_id = $1::uuid
+            """, out.tour_id)
+            held = m["master_status"] == "active"
+        out.extra["held"] = held
+        out.extra["policy_fields"] = sorted({f"{h['where']}.{h['field']}" for h in hits})
+        out.extra["review_id"] = await _policy.ensure_policy_review(conn, out.tour_id, review_version, hits)
+        await _cascade(conn, out, actor)
+        if held:
+            await _staff_event(conn, EventType.MASTER_DEACTIVATED, out.tour_id, AA_TENANT,
+                               {"tour_name": out.tour_name, "new_status": "inactive", "changed_by": actor,
+                                "reason": POLICY_HOLD})
+            out.add_recompute(out.tour_id, "inactive")
     return out
 
 

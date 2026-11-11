@@ -37,6 +37,10 @@ class _SingleConnAsPool:
     async def __aexit__(self, *exc):
         return False
 
+    def __getattr__(self, name):
+        # AA-1049: the pool-level helpers (fetchval / execute) the recompute enqueue calls run on the same connection.
+        return getattr(self._conn, name)
+
 
 _TOUR_SEGMENTS_SQL = """
     SELECT DISTINCT asm.segment_id
@@ -525,6 +529,26 @@ async def _source_fanout_master(conn, tour_id: str, catalog_id: str) -> Optional
         return None
 
 
+async def _refuse_policy_review(conn, silver: str, version_id: str, tour_id: str) -> None:
+    """AA-1049 guard: the lifecycle publish refused a version that offers elephant riding with no human approval.
+    The version leaves 'approved' ('hitl', like the source_not_live refusal) and the tour gets its pending policy
+    review row (the version's, unless one is already pending); raises PolicyReviewRequiredError."""
+    from services.tour_lifecycle import policy as _lc_policy
+    logger.warning("export_refused_policy_review", version_id=version_id, tour_id=tour_id)
+    await conn.execute(f"""
+        UPDATE {silver}.generated_content
+        SET status = 'hitl'
+        WHERE id = $1::uuid AND status = 'approved'
+    """, version_id)
+    review_id = None
+    try:
+        hits = await _lc_policy.version_hits(conn, version_id)
+        review_id = await _lc_policy.ensure_policy_review(conn, tour_id, version_id, hits)
+    except Exception as exc:  # noqa: BLE001 — the refusal stands either way
+        logger.error("policy_review_enqueue_failed", version_id=version_id, error=str(exc)[:200])
+    raise _lc_policy.PolicyReviewRequiredError(version_id, review_id)
+
+
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
                          atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish") -> dict:
     """Publish one approved version as the tour's Master Content and enqueue its A3 atomize.
@@ -600,6 +624,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         # The service re-checks the source under a row lock (a retire / supersede that committed after the read
         # above): its 409 source_not_live is the same refusal as the check above.
         from services.tour_lifecycle import LifecycleError
+        from services.tour_lifecycle import policy as _lc_policy
         from services.tour_lifecycle import publish as _lifecycle_publish
         try:
             published = await _lifecycle_publish(conn, {
@@ -631,6 +656,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
                 "approved_by":          "pipeline",
             }, tenant_slug=tenant_slug)
         except LifecycleError as e:
+            if e.code == _lc_policy.POLICY_REVIEW_REQUIRED:
+                await _refuse_policy_review(conn, silver, version_id, str(tour_id))
             if e.code != SOURCE_NOT_LIVE:
                 raise
             await _refuse_not_live(await source_state(conn, tour_id))
@@ -644,6 +671,15 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
             await notify_tripplanner(conn, published.events, trigger="publish")
             # AA-1039 R6: a `restored` event also clears the tenants' retirement flags and mails "back on sale"
             await fan_out_to_tenants(conn, published.events, trigger="publish")
+        # AA-1049: a publish that lifted an elephant-riding policy hold puts the tour back in the ranking / route
+        # caches, the place graph and the trip pages (the same post-commit work as Set Active). Best-effort.
+        lifted = list(getattr(published, "recompute", None) or [])
+        if lifted:
+            from services.tour_lifecycle.effects import recheck_trip_pages, recompute_after_status_change
+            pool = _SingleConnAsPool(conn)
+            for _tid, _status in lifted:
+                await recompute_after_status_change(pool, _tid, _status)
+            await recheck_trip_pages(pool, [t for t, _ in lifted])
 
         # 3. Mark tour as exported
         await conn.execute(f"""
@@ -686,12 +722,22 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         # version of it still waiting in the review queue is noise: dismiss (soft, row kept).
         # Reviewers then only see tours with nothing published; improving a published tour is a
         # Regenerate, not a manual fix. Best-effort like 3b — the publish is already done.
+        # AA-1049: a pending elephant-riding policy review of a NEWER version is kept (that version still needs its
+        # person); one of this version or an older one is closed with the rest.
         try:
+            from services.quality.policy_review import row_is_policy_sql
+        except ImportError:   # the legacy export Lambda package ships without services/quality
+            row_is_policy_sql = None
+        try:
+            spare = ("" if row_is_policy_sql is None else f"""
+                  AND NOT ({row_is_policy_sql("rq")} AND EXISTS (
+                      SELECT 1 FROM {silver}.generated_content g
+                       WHERE g.id = rq.generated_content_id AND g.version_num > $2))""")
             await conn.execute(f"""
-                UPDATE {silver}.review_queue
+                UPDATE {silver}.review_queue rq
                 SET review_status = 'dismissed'::review_status_enum, reviewed_at = NOW()
-                WHERE tour_id = $1::uuid AND review_status = 'pending'
-            """, tour_id)
+                WHERE rq.tour_id = $1::uuid AND rq.review_status = 'pending'{spare}
+            """, tour_id, *([int(row.get("version_num") or 0)] if spare else []))
         except Exception as exc:
             logger.error("review_dismiss_on_publish_failed", tour_id=str(tour_id), error=str(exc))
 

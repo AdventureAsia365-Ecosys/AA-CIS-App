@@ -566,7 +566,14 @@ async def approve_review(
     async with pool.acquire() as conn:
         gate_row = await conn.fetchrow(_APPROVE_GATE_SQL.format(live=live_source_exists_sql("rq.tour_id")),
                                        review_id, tenant_id)
-        if gate_row is not None and not gate_row["human_edited"]:
+        # AA-1049: the elephant-riding policy review of the very version a held Master served before its hold. The
+        # approve puts back exactly what was on sale (its publish lifts the hold), so the publish checks of a new
+        # version do not apply: this approve IS the policy's human review.
+        from services.tour_lifecycle import policy as lifecycle_policy
+        held_restore = gate_row is not None and await lifecycle_policy.held_master_version(conn, review_id)
+        if held_restore:
+            policy_keep = True
+        elif gate_row is not None and not gate_row["human_edited"]:
             blockers = approve_gate.blockers(gate_row)
             policy_keep = approve_gate.is_policy_keep(approve_gate.stored_result(gate_row))
             if blockers and override is None:
@@ -708,6 +715,8 @@ async def approve_review(
         # S271 W0: approved as the human review of the elephant-riding policy; or over the checks with a reason
         "policy_keep": policy_keep,
         "override_blockers": [b["code"] for b in blockers],
+        # AA-1049: the approve of a held Master's own version (its publish lifts the elephant-riding policy hold)
+        "policy_hold_review": bool(held_restore),
     }
 
 

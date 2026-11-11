@@ -360,7 +360,8 @@ def test_enqueue_review_dismisses_a_dead_source():
     conn = AsyncMock()
     asyncio.run(admin_pipeline._enqueue_review(conn, TOUR, GCID, {"quality_score": 4.0}))
     insert = conn.execute.await_args_list[0].args[0]
-    assert "WHEN pub.live OR NOT pub.source_live THEN 'dismissed'" in insert
+    # AA-1049: a dead source is dismissed first; a live Master dismisses every row but an elephant-riding policy review
+    assert "WHEN NOT pub.source_live THEN 'dismissed'" in insert and "WHEN pub.live THEN 'dismissed'" in insert
     assert tl.live_source_exists_sql("$1::uuid") + " AS source_live" in insert
 
 

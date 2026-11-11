@@ -37,6 +37,8 @@ NOT_EXITS = {
         "the empty 'pending' T2 version a rewrite starts with (no text yet)",
     "services/export/handler.py::_refuse_not_live":
         "a publish refusal: moves an approved version back to 'hitl' (no text, no publish)",
+    "services/export/handler.py::_refuse_policy_review":
+        "the elephant-riding policy refusal (AA-1049): moves an approved version back to 'hitl' (no text, no publish)",
     "services/validation/handler.py::process_validation":
         "the legacy Step Functions validation handler (no live caller; ADR 0020 W0 lists legacy paths for removal)",
 }

@@ -55,15 +55,19 @@ class FakeReviewQueueConn:
     generated_content_id) behaviourally without a live Postgres.
 
     Positional args mirror _enqueue_review's call:
-        (tour_id, generated_content_id, tenant_id, failure_summary, score_overall)
+        (tour_id, generated_content_id, tenant_id, failure_summary, score_overall, escalate_detail)
+    (AA-1049: escalate_detail is the elephant-riding policy review marker, NULL otherwise.)
     """
 
     def __init__(self):
         self.rows = []
 
+    async def fetchrow(self, sql, *args):
+        return None   # AA-1049: the tour's raw source (no source → no policy review)
+
     async def execute(self, sql, *args):
         if "INSERT INTO silver_aa_internal.review_queue" in sql:
-            tour_id, gcid, tenant_id, failure_summary, score_overall = args
+            tour_id, gcid, tenant_id, failure_summary, score_overall, _escalate_detail = args
             already_pending = any(
                 r["generated_content_id"] == gcid and r["review_status"] == "pending"
                 for r in self.rows

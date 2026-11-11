@@ -68,9 +68,29 @@ async def _run_lifecycle(request: Request, action, tour_id: str, **kwargs):
         async with pool.acquire() as conn:
             out = await action(conn, tour_id, **kwargs)
     except LifecycleError as e:
-        raise HTTPException(e.status, detail=e.detail, headers={"X-Error-Code": e.code})
+        detail = e.detail
+        if e.code == "policy_review_required":
+            detail += await _file_policy_review(pool, tour_id, kwargs.get("actor") or "admin")
+        raise HTTPException(e.status, detail=detail, headers={"X-Error-Code": e.code})
     await run_after_commit(pool, out, recompute=_recompute_after_status_change)
     return out
+
+
+async def _file_policy_review(pool, tour_id: str, actor: str) -> str:
+    """AA-1049: Set Active refused a Master that offers elephant riding: hold it for the policy review (reason
+    policy_hold, a pending Review Queue row) so the approve there is one click away. Returns the sentence the 409
+    adds; best-effort (the refusal stands either way)."""
+    from services.tour_lifecycle import LifecycleError, policy_hold, run_after_commit
+    try:
+        async with pool.acquire() as conn:
+            out = await policy_hold(conn, tour_id, actor=actor)
+    except LifecycleError:
+        return ""
+    except Exception:   # noqa: BLE001
+        _log.warning("aa1049_policy_review_file_failed", tour_id=tour_id, exc_info=True)
+        return ""
+    await run_after_commit(pool, out, recompute=_recompute_after_status_change)
+    return " Its review is in the Review Queue."
 
 
 async def _require_master_admin_if_published(request: Request, tour_id: str, x_admin_role: Optional[str]) -> None:
