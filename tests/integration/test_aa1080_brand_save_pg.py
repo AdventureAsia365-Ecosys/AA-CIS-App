@@ -1,5 +1,5 @@
 """AA-1080 — the Brand Identity POST's INSERT (admin_pipeline._BRAND_INSERT_SQL) writes the signature words on the
-tenant role (CIS 400 grant):
+tenant role (CIS 397 grant):
 
   * as the tenant role with its own app.tenant_id: a sent list lands under signature_words and keeps the previous
     version's other keys (voice_rubric); NULL (not sent) carries the previous value over; a first version or a
