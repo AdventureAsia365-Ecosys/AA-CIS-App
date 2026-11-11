@@ -21,7 +21,8 @@ Tour state, first match wins (TERMINAL ones end a wave):
     approved/dismissed but not published, or Master set inactive) → not_started.
 
 Known limit: tours sent through the Bedrock Batch path (`s1_batch_ingest`, one job for many tours,
-no payload tour_id) have no per-tour job here — their state still resolves from Master/review.
+no payload tour_id) have no per-tour job here — their state still resolves from Master/review. The gateway batch lane
+(`llm_batch`, AA-1076) names its tours in a `tour_ids` list and counts as each tour's job.
 """
 from __future__ import annotations
 
@@ -32,7 +33,9 @@ import structlog
 
 logger = structlog.get_logger()
 
-WAVE_JOB_KINDS = ("s1_rewrite", "a3_atomize", "revalidate")
+# AA-1076: llm_batch (one gateway batch for many tours, payload `tour_ids`) is a wave job of each of its tours: a tour
+# whose batch is still out is `running`, and the batch's ledger rows (bound to that job) count in the wave's cost.
+WAVE_JOB_KINDS = ("s1_rewrite", "a3_atomize", "revalidate", "llm_batch")
 TERMINAL_STATES = ("master", "review_pending", "trashed", "failed", "interrupted")
 STATES = TERMINAL_STATES + ("running", "unclassified", "not_started")
 MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
@@ -41,12 +44,20 @@ INCOMPLETE_EVENT = "platform.rerun_wave.incomplete"
 _JOBS_CTE = """
     w AS (SELECT * FROM shared.rerun_wave WHERE id = $1::uuid),
     jobs AS (
-        SELECT j.id, j.kind, j.status, j.created_at, j.error, j.payload->>'tour_id' AS tour_id
-          FROM shared.job j, w
+        SELECT j.id, j.kind, j.status, j.created_at, j.error, t.tour_id
+          FROM shared.job j
+         CROSS JOIN w
+         CROSS JOIN LATERAL (
+               SELECT j.payload->>'tour_id' AS tour_id WHERE j.payload ? 'tour_id'
+               UNION ALL
+               SELECT x FROM jsonb_array_elements_text(
+                   CASE WHEN jsonb_typeof(j.payload->'tour_ids') = 'array' THEN j.payload->'tour_ids'
+                        ELSE '[]'::jsonb END) AS x
+               WHERE NOT (j.payload ? 'tour_id')) t
          WHERE j.kind = ANY($2::text[])
            AND j.created_at >= w.created_at
            AND (w.closed_at IS NULL OR j.created_at <= w.closed_at)
-           AND j.payload->>'tour_id' = ANY(w.expected_tour_ids::text[])
+           AND t.tour_id = ANY(w.expected_tour_ids::text[])
     )
 """
 
@@ -94,7 +105,7 @@ TOURS_SQL = f"""
 
 JOB_TOTALS_SQL = f"""
     WITH {_JOBS_CTE}
-    SELECT kind, status, count(*)::int AS n FROM jobs GROUP BY kind, status ORDER BY kind, status
+    SELECT kind, status, count(DISTINCT id)::int AS n FROM jobs GROUP BY kind, status ORDER BY kind, status
 """
 
 LLM_COST_SQL = f"""

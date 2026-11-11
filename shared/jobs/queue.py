@@ -209,6 +209,47 @@ async def complete(pool, job_id: str, worker_id: str, result: Optional[dict],
                          cost_usd=cost_usd)
 
 
+async def reschedule(pool, job_id: str, worker_id: str, delay_seconds: int, progress: Optional[dict],
+                     cost_usd: Optional[float], *, max_count: int) -> str:
+    """AA-1076 (registry.Reschedule): a running job of ours back to ``queued``, due ``delay_seconds`` later, the attempt
+    not counted (``attempt - 1``, like a release), ``progress`` merged plus ``reschedules`` + ``last_rescheduled_at``.
+    An admin cancel asked meanwhile wins ('cancelled'); the ``max_count``-th reschedule fails the job instead.
+    Returns the new status, or '' when the job was no longer ours."""
+    led = _ledger_sum_sql("$1::uuid")   # AA-1078 cost stamp: handler cost + the job's ledger sum, like _stamp_sql
+    row = await pool.fetchrow(
+        f"""
+        WITH cur AS (
+            SELECT coalesce((progress->>'reschedules')::int, 0) + 1 AS n, cancel_requested
+            FROM shared.job WHERE id = $1::uuid
+        )
+        UPDATE shared.job j SET
+            status = CASE WHEN cur.cancel_requested THEN 'cancelled'
+                          WHEN cur.n > $5 THEN 'failed' ELSE 'queued' END,
+            attempt = CASE WHEN cur.cancel_requested OR cur.n > $5 THEN j.attempt
+                           ELSE greatest(j.attempt - 1, 0) END,
+            error = CASE WHEN cur.cancel_requested THEN 'cancelled by admin'
+                         WHEN cur.n > $5 THEN 'rescheduled ' || (cur.n - 1) || ' times without finishing'
+                         ELSE j.error END,
+            finished_at = CASE WHEN cur.cancel_requested OR cur.n > $5 THEN now() ELSE j.finished_at END,
+            run_after = now() + make_interval(secs => $3),
+            cost_usd = CASE WHEN ($6)::numeric IS NULL THEN j.cost_usd ELSE ($6)::numeric + {led} END,
+            locked_by = NULL, locked_until = NULL, updated_at = now(),
+            progress = j.progress || $4::jsonb
+                       || jsonb_build_object('reschedules', cur.n, 'last_rescheduled_at', now())
+                       || CASE WHEN ($6)::numeric IS NULL THEN '{{}}'::jsonb
+                               ELSE jsonb_build_object('{COST_STAMP_KEY}',
+                                                       jsonb_build_object('llm_usd', {led}, 'at', now()))
+                          END
+        FROM cur
+        WHERE j.id = $1::uuid AND j.status = 'running' AND j.locked_by = $2
+        RETURNING j.status
+        """,
+        job_id, worker_id, max(int(delay_seconds), 0), json.dumps(progress or {}, default=str), int(max_count),
+        cost_usd,
+    )
+    return row["status"] if row else ""
+
+
 async def stop_budget(pool, job_id: str, worker_id: str, error: str, result: Optional[dict],
                       cost_usd: Optional[float]) -> bool:
     return await _finish(pool, job_id, worker_id, "stopped_budget", result=result, error=error,

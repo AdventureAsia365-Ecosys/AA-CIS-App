@@ -85,6 +85,9 @@ def test_routes_are_served_and_run_the_policy():
                           ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}"),
                           # AA-1025 H2: TPM limits, line shares and prod guards
                           ("GET", "/admin/ai-gateway/capacity"),
+                          # AA-1076: the gateway batch lane (Batches tab)
+                          ("GET", "/admin/ai-gateway/batches"), ("GET", "/admin/ai-gateway/batches/{job_id}"),
+                          ("POST", "/admin/ai-gateway/batches"), ("POST", "/admin/ai-gateway/batches/{job_id}/cancel"),
                           # AA-1042 (S270): the Guide tab (the gateway page from the docs catalog + live tables)
                           ("GET", "/admin/ai-gateway/guide"),
                           # AA-1064: an image the Guide page links

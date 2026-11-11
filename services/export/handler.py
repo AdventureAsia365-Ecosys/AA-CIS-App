@@ -130,12 +130,14 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
     AA-1057 — `retarget` after `route` (Subjects / requests onto live ids), result key `retarget`.
     AA-1056 — `should_stop` / `on_stage` go to run_stages (the `recompute` job's cancel event and stage name)."""
     from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
+    from services.recompute.jev_scope import scope_enabled
     scope = RecomputeScope(
         segment_ids=set(segment_ids) if segment_ids is not None else None,
-        log_reason=log_reason)
+        log_reason=log_reason, jev_changed_only=scope_enabled())   # AA-1083
     results = await run_stages(PLATFORM_STAGES, scope, pool=pool, should_stop=should_stop, on_stage=on_stage)
     out = {"ranking": results["score"], "route": results["route"], "retarget": results.get("retarget"),
-           "segment_gc": results.get("segment_gc"), "segment_catchup": results.get("segment_catchup")}
+           "segment_gc": results.get("segment_gc"), "segment_catchup": results.get("segment_catchup"),
+           "jev_segments": (results.get("landing") or {}).get("jev_segments")}
     logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=out["route"])
     return out
 
@@ -160,7 +162,8 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
     AA-1057 — then `retarget` (Subjects / requests onto the new Route / atom ids), result key `retarget`.
     AA-1056 — `should_stop` / `on_stage` go to run_stages (the `recompute` job's cancel event and stage name)."""
     from services.recompute import TOUR_STAGES, RecomputeScope, run_stages
-    scope = RecomputeScope(tour_id=tour_id, log_tour_id=log_tour_id)
+    from services.recompute.jev_scope import scope_enabled
+    scope = RecomputeScope(tour_id=tour_id, log_tour_id=log_tour_id, jev_changed_only=scope_enabled())   # AA-1083
     results = await run_stages(TOUR_STAGES, scope, pool=pool, progress=progress, should_stop=should_stop,
                                on_stage=on_stage)
     return {"segment": results["segment"], "ranking": results["score"], "route": results["route"],

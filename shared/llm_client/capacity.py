@@ -86,6 +86,7 @@ _PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 KIND_LINES: dict[str, Optional[str]] = {
     # bulk: rerun waves and catalogue backfills
     "s1_rewrite": BULK, "a3_atomize": BULK, "revalidate": BULK, "s1_batch_ingest": BULK,
+    "llm_batch": BULK,           # AA-1076: the gateway batch lane (one provider batch per wave; no TPM of its own)
     "segment_research": BULK, "place_extract": BULK, "place_dedupe": BULK, "place_cards_build": BULK,
     "embedding_reembed": BULK, "writing_memory_mine": BULK, "writing_memory_r0": BULK, "writing_memory_r2": BULK,
     "writing_memory_shadow": BULK, "writing_signal_backfill": BULK, "writing_signal_fact_filter": BULK,

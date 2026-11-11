@@ -126,7 +126,8 @@ def test_policy_shape(cur, table):
 
 
 def test_tenant_role_privileges(cur):
-    assert _privileges(cur, BRAND) == BRAND_PRIVS
+    # AA-1080: CIS 397 (applied after 262 by conftest) adds INSERT (custom_validators), the signature words.
+    assert _privileges(cur, BRAND) == BRAND_PRIVS | {"INSERT(custom_validators)"}
     assert _privileges(cur, SEO) == SEO_PRIVS
     for t in TABLES:
         cur.execute("SELECT has_table_privilege(%s, %s, 'DELETE, TRUNCATE')", (TENANT_ROLE, t))

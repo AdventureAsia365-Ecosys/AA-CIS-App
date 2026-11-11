@@ -52,6 +52,7 @@ from typing import Optional
 import structlog
 
 from shared.jobs.registry import WORKER_STOP_TIMEOUT_SECONDS, JobContext, NonRetryable, enqueue, job_kind
+from shared.llm_client import batch_lane
 
 logger = structlog.get_logger()
 
@@ -59,20 +60,27 @@ KIND = "a3_atomize"
 
 
 async def enqueue_a3_atomize(db, *, tour_id: str, version_id: str, country: str, rewritten: dict,
-                             created_by: str, dedupe: bool = True, force: bool = False) -> str:
+                             created_by: str, dedupe: bool = True, force: bool = False,
+                             batch_replies: Optional[list] = None, batch_id: Optional[str] = None) -> str:
     """`db` is a pool or a single connection. `dedupe=True` (publish path) keys the job on the
     content version, so publishing the same version twice does not atomize twice; the admin
     trigger passes False because it exists to re-run tours that are still un-atomized.
     `force=True` (AA-645 step 0, the promote path) re-reads every day even when the version's day
-    fingerprints match: a version made current again must serve its own atoms, not the replaced one's."""
+    fingerprints match: a version made current again must serve its own atoms, not the replaced one's.
+    AA-1076: ``batch_replies`` (a re-atomize wave of the gateway batch lane, services/llm_batch/consumers.py): the
+    usable day replies of that batch (batch_lane.reply_record), bound while the job runs so each day's attempt 1 takes
+    its reply when the prompt matches; keyed on the batch (``batch_id``) so a publish-path job of the same version is
+    not taken for it."""
     payload = {"tour_id": str(tour_id), "version_id": str(version_id), "country": country or "",
                "rewritten": rewritten}
     if force:
         payload["force"] = True
-    job_id, _ = await enqueue(
-        db, KIND, payload,
-        idempotency_key=f"{KIND}:{version_id}" if dedupe else None, created_by=created_by,
-    )
+    key = f"{KIND}:{version_id}" if dedupe else None
+    if batch_replies is not None:
+        payload["batch_replies"] = batch_replies
+        payload["llm_batch_id"] = str(batch_id or "")
+        key = f"{KIND}_batch:{version_id}:{batch_id}" if batch_id else None
+    job_id, _ = await enqueue(db, KIND, payload, idempotency_key=key, created_by=created_by)
     return job_id
 
 
@@ -135,7 +143,9 @@ async def run(ctx: JobContext) -> Optional[dict]:
         ))
 
     try:
-        outcome = await asyncio.to_thread(_in_own_loop) or {}
+        # AA-1076: a batch wave's day replies answer the matching reads (asyncio.to_thread copies this context).
+        with batch_lane.bind_replies(p.get("batch_replies")):
+            outcome = await asyncio.to_thread(_in_own_loop) or {}
     except asyncio.CancelledError:
         # The thread cannot be cancelled; tell it to stop at its next day boundary / step.
         stop.set()

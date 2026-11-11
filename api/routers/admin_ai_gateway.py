@@ -98,8 +98,8 @@ from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
-from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide, crm_console,
-                          docs_reader, platform_apps, tenant_ai_budget)
+from api.services import (ai_gateway, ai_gateway_batches, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide,
+                          crm_console, docs_reader, platform_apps, tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
@@ -224,6 +224,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     # AA-1042 Trace tab: the route alert policy / hold switch, the route test and the manual watch run (ai.admin)
     "route_policy": ("PUT", "/admin/ai-gateway/route-policy/{stage}"),
     "route_test": ("POST", "/admin/ai-gateway/route-trace/test"),
+    # AA-1076 Batches tab: send a wave through the gateway batch lane, cancel a batch (ai.admin)
+    "batches": ("POST", "/admin/ai-gateway/batches"),
 }
 
 
@@ -626,3 +628,93 @@ async def delete_capacity(request: Request, connection_key: str = _CONNECTION_KE
     if not gone:
         raise HTTPException(status_code=404, detail="no such limit")
     return {"deleted": True, "connection_key": connection_key, "model_key": model_key}
+
+
+# ── AA-1076: the gateway batch lane (Batches tab) ─────────────────────────────────────────────────────────────────
+
+class BatchSendBody(BaseModel):
+    """One wave through the gateway batch lane (services/jobs/llm_batch_job.py). The cap is checked before anything is
+    sent: the batch's worst-case estimate at the batch rate must stay at or under it (and under the central budgets)."""
+    model_config = ConfigDict(extra="forbid")
+    consumer: Literal["s1_attempt1", "a3_atomize"]
+    tour_ids: list[str] = Field(..., min_length=1, max_length=200)
+    cap_usd: float = Field(..., gt=0, le=100)
+    dry_run: bool = False           # prepare + estimate only ($0, nothing sent)
+    batch_id: Optional[str] = Field(None, max_length=64)   # the run's batch (S1: TourRunRequest.batch_id, the job key)
+    seo_mode: Literal["standard", "aggressive", "minimal"] = "standard"
+    cache_system: Optional[bool] = None   # None = the deployment's own prompt-caching setting
+    drill_withhold: int = Field(0, ge=0, le=1)   # live fallback drill: one tour's reply withheld (runs on demand)
+
+    @model_validator(mode="after")
+    def _uuids(self):
+        try:
+            self.tour_ids = [ai_gateway.parse_job_id(t) for t in self.tour_ids]
+            if self.batch_id:
+                self.batch_id = ai_gateway.parse_job_id(self.batch_id)
+        except ValueError:
+            raise ValueError("tour_ids and batch_id must be UUIDs")
+        return self
+
+
+@router.get("/batches", summary="Every gateway batch: status, outcomes and spend per batch (read-only, $0)")
+async def get_batches(request: Request, limit: int = Query(30, ge=1, le=ai_gateway_batches.LIST_LIMIT_MAX)) -> dict:
+    return await ai_gateway_batches.list_batches(request.app.state.pool, limit)
+
+
+@router.get("/batches/{job_id}", summary="One gateway batch (read-only, $0)")
+async def get_batch(request: Request, job_id: str = Path(..., max_length=64)) -> dict:
+    try:
+        jid = ai_gateway.parse_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="job_id must be a job UUID")
+    out = await ai_gateway_batches.get_batch(request.app.state.pool, jid)
+    if out is None:
+        raise HTTPException(status_code=404, detail="no such batch")
+    return out
+
+
+@router.post("/batches", status_code=202, summary="Send one wave through the gateway batch lane (paid; audited)")
+async def post_batch(body: BatchSendBody, request: Request, x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    from shared.jobs.registry import enqueue
+    from shared.llm_client import batch_lane
+
+    if not body.dry_run and (closed := batch_lane.closed_reason()):
+        raise HTTPException(status_code=503, detail=closed)
+    payload = ai_gateway_batches.payload_for(
+        consumer=body.consumer, tour_ids=body.tour_ids, cap_usd=body.cap_usd, dry_run=body.dry_run,
+        run_batch_id=body.batch_id, seo_mode=body.seo_mode, cache_system=body.cache_system,
+        drill_withhold=body.drill_withhold)
+    actor = _actor(x_admin_user_id)
+    pool = request.app.state.pool
+    job_id, _created = await enqueue(pool, ai_gateway_batches.KIND, payload,
+                                     idempotency_key=f"{ai_gateway_batches.KIND}:{payload['batch_id']}",
+                                     created_by=actor)
+    async with pool.acquire() as conn:
+        await write_audit_log(
+            conn, tenant_id=provider_credit.PLATFORM_TENANT_ID, actor=actor, action="llm_batch.sent",
+            resource_type="llm_batch", resource_id=job_id,
+            details={"batch_id": payload["batch_id"], "consumer": body.consumer, "tours": len(body.tour_ids),
+                     "cap_usd": body.cap_usd, "dry_run": body.dry_run, "drill_withhold": body.drill_withhold})
+    return {"job_id": job_id, "batch_id": payload["batch_id"], "dry_run": body.dry_run,
+            "poll_url": f"/admin/ai-gateway/batches/{job_id}"}
+
+
+@router.post("/batches/{job_id}/cancel", summary="Cancel a gateway batch (the unfinished requests run on demand)")
+async def post_batch_cancel(request: Request, job_id: str = Path(..., max_length=64),
+                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    try:
+        jid = ai_gateway.parse_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="job_id must be a job UUID")
+    pool = request.app.state.pool
+    try:
+        out = await ai_gateway_batches.cancel_batch(pool, jid)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    actor = _actor(x_admin_user_id)
+    async with pool.acquire() as conn:
+        await write_audit_log(conn, tenant_id=provider_credit.PLATFORM_TENANT_ID, actor=actor,
+                              action="llm_batch.cancelled", resource_type="llm_batch", resource_id=jid, details=out)
+    return out
