@@ -4,8 +4,8 @@
 - guards before submit: lane switch, tenant stages, a switched-off stage, the cost cap (the gateway's estimate at the
   batch rate), custom ids;
 - request bodies: the on-demand adapters' own builders (Anthropic build_params, client.openai_chat_body);
-- pricing + ledger: one row per request, pricing_mode '+batch' at half the on-demand cost, **billed_fields, 0 USD rows for
-  errored / expired / canceled / missing items;
+- pricing + ledger: one row per request, pricing_mode '+batch' at half the on-demand cost, **billed_fields, 0 USD
+  rows for errored / expired / canceled / missing items;
 - the hand-off: a reply is used only for the exact prompt; a prefetched reply is never ledgered twice;
 - the Anthropic adapter end to end on the real SDK over a fake transport, the OpenAI adapter on a fake client.
 No AWS, no vendor, no DB, $0.

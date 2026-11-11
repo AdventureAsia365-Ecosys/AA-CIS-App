@@ -8,10 +8,11 @@ worker restart) -> ingest -> hand the replies to the consumer (``services/llm_ba
 
 What this module owns (provider-neutral):
 
-- **Target** (``resolve_target``): the stage's route, model first (``[model_id, *fallback_model_ids]``), and per model its
-  deployment plan (``vendor_route.deployment_plan``: data scopes, served roles, the pii rule, circuits and connection
-  budgets, exactly as an on-demand call); the first deployment on an ``anthropic`` or ``openai`` connection is the
-  batch target. A route with no direct-API deployment cannot batch (BatchUnavailable: run it on demand).
+- **Target** (``resolve_target``): the stage's route, model first (``[model_id, *fallback_model_ids]``), and per
+  model its deployment plan (``vendor_route.deployment_plan``: data scopes, served roles, the pii rule, circuits and
+  connection budgets, exactly as an on-demand call); the first deployment on an ``anthropic`` or ``openai``
+  connection is the batch target. A route with no direct-API deployment cannot batch (BatchUnavailable: run it on
+  demand).
 - **Guards before submit** (``guard``): the lane switch (``LLM_BATCH_LANE``, default on), the tenant-stage rule, the
   stage kill switch, the app profile's AI switch, then the cost cap of the batch (``estimate_usd``: the gateway's own
   worst-case estimate per call, ``client.estimate_call_usd`` = prompt chars / 4 in + the whole max_tokens out, at the
@@ -222,7 +223,8 @@ def estimate_usd(target: BatchTarget, items: list[BatchItem]) -> float:
 
 
 def guard(target: BatchTarget, items: list[BatchItem], cap_usd: float) -> float:
-    """Every check before submit (module docstring); returns the estimate. Raises BatchUnavailable / BatchCapExceeded."""
+    """Every check before submit (module docstring); returns the estimate. Raises BatchUnavailable or
+    BatchCapExceeded."""
     closed = closed_reason()
     if closed:
         raise BatchUnavailable(closed)

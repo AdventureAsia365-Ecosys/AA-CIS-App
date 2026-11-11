@@ -101,7 +101,7 @@ async def _prepare_and_submit(ctx: JobContext, p: dict) -> dict:
                 stage=stage, model=target.model_key, connection=target.connection_key, requests=len(items),
                 estimate_usd=estimate)
     raise Reschedule(poll_delay(0), {"phase": "submitted", "provider_batch_id": provider_batch_id,
-                                     "submitted_at": _now().isoformat(), "polls": 0}, reason="submitted")
+                                     "submitted_at": _now().isoformat(), "polls": 0}, "submitted")
 
 
 async def _poll(ctx: JobContext, prog: dict, target: BatchTarget) -> Optional[object]:
@@ -117,7 +117,7 @@ async def _poll(ctx: JobContext, prog: dict, target: BatchTarget) -> Optional[ob
         await asyncio.to_thread(batch_lane.cancel, target, pbid)
         fields["cancel_sent_at"] = _now().isoformat()
         logger.warning("llm_batch_deadline_cancel", batch_id=prog.get("batch_id"), provider_batch_id=pbid)
-    raise Reschedule(poll_delay(polls), fields, reason=f"provider {st.processing_status}")
+    raise Reschedule(poll_delay(polls), fields, f"provider {st.processing_status}")
 
 
 async def _ingest(ctx: JobContext, p: dict, prog: dict, target: BatchTarget, state) -> dict:

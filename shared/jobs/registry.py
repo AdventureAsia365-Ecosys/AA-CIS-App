@@ -40,7 +40,7 @@ class Reschedule(Exception):
     nothing waits in process. After RESCHEDULE_MAX_COUNT reschedules the job fails."""
 
     def __init__(self, delay_seconds: int, progress: Optional[dict] = None, reason: str = "waiting"):
-        super().__init__(reason)
+        super().__init__(delay_seconds, progress, reason)
         self.delay_seconds = max(1, min(int(delay_seconds), RESCHEDULE_MAX_DELAY_SECONDS))
         self.progress = dict(progress or {})
         self.reason = reason

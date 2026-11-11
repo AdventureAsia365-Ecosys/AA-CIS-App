@@ -3,8 +3,9 @@
 - the runner: a handler's `Reschedule` puts its own row back (queue.reschedule, the attempt not counted);
 - the job: prepare -> guard -> submit (fenced by phase 'submitting') -> poll (rescheduled, growing delay) -> ingest
   (ledger once, then the consumer's hand-off); a cap refusal sends nothing; a dry run stops at the estimate;
-- the fallback (Done-when): a failed / expired / cancelled item reaches its normal job WITHOUT a reply, and the S1 writer
-  and the A3 day read then run ON DEMAND; a usable reply answers attempt 1 only, never a retry, never a stale prompt;
+- the fallback (Done-when): a failed / expired / cancelled item reaches its normal job WITHOUT a reply, and the S1
+  writer and the A3 day read then run ON DEMAND; a usable reply answers attempt 1 only, never a retry, never a
+  stale prompt;
 - the admin view's shape (spend, standard price, saved).
 No AWS, no vendor, no DB, $0.
 """
