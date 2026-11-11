@@ -72,8 +72,8 @@ def decision(n: int, label_fail: int, label_pass: int, best: Optional[dict], cur
     k, t = best["kappa"], best["threshold"]
     if k >= GATE_KAPPA:
         return {"status": "calibrated", "proposed_threshold": t, "keep": "cut_allowed",
-                "why": (f"kappa {k} at threshold {t} (current {current}) reaches {GATE_KAPPA} on {n} pairs: the cut may "
-                        f"come back at {t} (T7_DEBATE_MODE=cut, t7.brand_fit_cut = {t}).")}
+                "why": (f"kappa {k} at threshold {t} (current {current}) reaches {GATE_KAPPA} on {n} pairs: the cut "
+                        f"may come back at {t} (T7_DEBATE_MODE=cut, t7.brand_fit_cut = {t}).")}
     level = "moderate" if k >= MODERATE_KAPPA else "weak"
     return {"status": f"not_calibrated_{level}", "proposed_threshold": t, "keep": "rank_only",
             "why": (f"best kappa {k} at threshold {t} (current {current}) is below {GATE_KAPPA}: keep Debate rank "

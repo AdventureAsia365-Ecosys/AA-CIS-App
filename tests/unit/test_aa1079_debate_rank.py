@@ -89,7 +89,7 @@ def test_choose_slate_order_is_unchanged_when_nothing_is_flagged():
 
 
 def test_a_flagged_candidate_still_wins_a_place_no_unflagged_one_has():
-    """Rank only: a flagged Segment is the place's only candidate, so it still gets the seat (it would be cut before)."""
+    """Rank only: a flagged Segment is its place's only candidate, so it still gets the seat (cut before AA-1079)."""
     cands = debate.apply_signals([_seg(1, place="Orrin Lake"), _seg(2, place="Tamsel Ridge")], [FLAG_BF, PASS],
                                  "rank")
     chosen = _choose_slate(["blog"], cands, [], hub_of={})

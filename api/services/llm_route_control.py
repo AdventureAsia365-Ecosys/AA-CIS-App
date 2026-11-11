@@ -49,7 +49,8 @@ BLOCKING_CHAIN_RULES = frozenset({"judge_writer_family", "check_pair_family", "a
 ANTHROPIC_KIND = "anthropic"
 PRIORITY_STEP = 10
 
-# The presets (tech lead S267; serving_first AA-1079). Labels and descriptions: the page's English copy (the frontend translates by key).
+# The presets (tech lead S267; serving_first AA-1079). Labels and descriptions: the page's English copy (the frontend
+# translates by key).
 PRESETS: dict[str, dict] = {
     "prefer_anthropic_api": {
         "label": "Prefer Anthropic API for Claude (sponsored)",
@@ -364,7 +365,8 @@ def serving_first_changes(live: dict, resolved: dict, stages: list) -> dict:
     that serves the stage now, refused deployments skipped; ``skipped`` = what comes before it and why). A stage
     moves only when its serving model is not its primary, and only when every rung before it is skipped as CLOSED
     (``CLOSED_REASONS``: the account refuses it or its circuit is open: the closed primary of AA-1079), never when a
-    rung is switched off or out of scope (an admin decision this preset must not undo). The new chain is the serving model, then the rest in their order."""
+    rung is switched off or out of scope (an admin decision this preset must not undo). The new chain is the serving
+    model, then the rest in their order."""
     live = route_versions.normalize(live)
     routes: dict = {}
     exempt: dict = {}
@@ -725,6 +727,7 @@ def _drop_caches() -> None:
     route_settings.invalidate()
 
 
-__all__ = ["PRESETS", "SERVING_FIRST", "RouteControlConflict", "RouteControlRefused", "RouteControlUnavailable", "apply",
+__all__ = ["PRESETS", "SERVING_FIRST", "RouteControlConflict", "RouteControlRefused", "RouteControlUnavailable",
+           "apply",
            "build_target", "chain_problems", "list_versions", "preset_changes", "preview", "preview_world",
            "read_state", "read_version", "revert_changes", "serving_first_changes"]
