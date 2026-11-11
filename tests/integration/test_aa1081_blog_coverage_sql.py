@@ -8,6 +8,9 @@
    Channel and another tenant are no topic.
 4. `blog_seed._WALK_ATOMS_SQL`: one live member atom per walk Segment on the tour, with A3's exclusion flag; a
    deleted atom and another tour's atom are not read.
+5. `propose_slate()` end to end (Debate and the market lookup patched): every adopted tour gets its topic count or a
+   reason (seed_too_thin / low_search_interest / not_ready), and `T7_BLOG_MIN_SEED_WORDS` moves a short seed off Blog
+   onto the shorter Channels.
 
 Invented tours, places and ids; everything is rolled back.
 """
@@ -154,3 +157,87 @@ async def test_walk_atoms_read_one_live_member_per_segment_on_the_tour(conn):
     assert by_seg["zz1081_w_s2"]["atom_id"] == "zz1081-w2"        # first by atom_id
     assert by_seg["zz1081_w_s2"]["excluded"] is True and by_seg["zz1081_w_s1"]["excluded"] is None
     assert blog_seed.walk_atoms(rows, ["zz1081_w_s1", "zz1081_w_s2"]) == [("zz1081-w1", "Moment zz1081-w1")]
+
+
+# ── propose_slate end to end on the schema (Debate and the market lookup patched: no LLM, no DFS) ──────────────────
+
+RICH = "{p} sits high above the valley. Its water is clear and cold. Boats cross it at dawn. A path rings the shore."
+
+
+async def _world(conn):
+    """A tenant with four adopted tours: A has two rich, Bar-clearing moments; B one thin moment that clears; C one
+    rich moment under the Bar; D nothing ranked."""
+    from types import SimpleNamespace
+    w = SimpleNamespace(tenant=await l2._tenant(conn, "zz1081e"))
+    for key in "abcd":
+        tour = await l2._tour(conn, f"zz1081-e{key}")
+        await _adopt(conn, w.tenant, tour.pt)
+        setattr(w, key, tour.tour)
+
+    async def moment(seg, tour, place, evidence):
+        atom = f"zz1081e-{seg}"
+        await conn.execute("INSERT INTO acp_contract.tour_atoms (atom_id, tour_id, owner_scope, text, place, evidence, "
+                           "itinerary_day) VALUES ($1, $2::uuid, 'platform', $3, $4, $5, 1)",
+                           atom, uuid.UUID(tour), f"{place} — visit", place, evidence)
+        await _segments(conn, (seg, place))
+        await conn.execute("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id, is_alias) "
+                           "VALUES ($1, $2, false)", seg, atom)
+
+    await moment("zz1081_e_a1", w.a, "Lake Aurel", RICH.format(p="Lake Aurel"))
+    await moment("zz1081_e_a2", w.a, "Mirsa Gorge", RICH.format(p="Mirsa Gorge"))
+    await moment("zz1081_e_b1", w.b, "Corvin Pass", "Short stop.")
+    await moment("zz1081_e_c1", w.c, "Selva Bay", RICH.format(p="Selva Bay"))
+    await conn.executemany("""
+        INSERT INTO acp_contract.atom_ranking (market, tour_id, segment_id, total_rank, demand_volume, questions,
+                                               said, recurrence, computed_at, version)
+        VALUES ('US', $1::uuid, $2, $3, $4, 5, 10, 1, now(), 1)""", [
+        (w.a, "zz1081_e_a1", 1, 2400), (w.a, "zz1081_e_a2", 2, 1800), (w.b, "zz1081_e_b1", 3, 5000),
+        (w.c, "zz1081_e_c1", 4, 300)])
+    return w
+
+
+async def _propose_on(conn, tenant):
+    from unittest.mock import AsyncMock, patch
+    with patch.object(slate, "_tenant_market_codes", AsyncMock(return_value=(["US"], []))), \
+         patch("services.acp_shared.debate.apply_debate",
+               AsyncMock(side_effect=lambda _tid, candidates, _conn: candidates)):
+        return await slate.propose_slate(uuid.UUID(tenant), l2._OneConnPool(conn))
+
+
+async def _proposed(conn, tenant, channel):
+    return sorted(r["segment_id"] for r in await conn.fetch(
+        "SELECT segment_id FROM acp_shared.subject WHERE tenant_id = $1::uuid AND channel = $2 AND state = 'proposed'",
+        uuid.UUID(tenant), channel))
+
+
+@pytest.mark.asyncio
+async def test_propose_slate_reports_every_adopted_tour(conn, monkeypatch):
+    monkeypatch.delenv(blog_seed.MIN_SEED_ENV, raising=False)
+    w = await _world(conn)
+    result = await _propose_on(conn, w.tenant)
+    cov = result["blog_coverage"]
+    assert cov["status"] == "ok" and cov["min_seed_words"] == 0
+    by_tour = {t["tour_id"]: (t["topics"], t["reason"]) for t in cov["tours"]}
+    assert by_tour == {w.a: (2, None), w.b: (0, "seed_too_thin"), w.c: (0, "low_search_interest"),
+                       w.d: (0, "not_ready")}
+    assert await _proposed(conn, w.tenant, "blog") == ["zz1081_e_a1", "zz1081_e_a2"]
+    view = slate.tenant_blog_topics(result)
+    assert view["total"] == 4 and view["with_topic"] == 1
+    assert {t["tour_name"] for t in view["tours"]} == {"aa986 zz1081-ea", "aa986 zz1081-eb", "aa986 zz1081-ec",
+                                                       "aa986 zz1081-ed"}
+
+
+@pytest.mark.asyncio
+async def test_propose_slate_min_seed_moves_a_short_seed_off_blog(conn, monkeypatch):
+    w = await _world(conn)
+    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5000")           # every seed here is far shorter
+    result = await _propose_on(conn, w.tenant)
+    tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
+    assert (tour_a["topics"], tour_a["reason"]) == (0, "seed_too_thin")
+    assert result["blog_coverage"]["short_seed"] == 2
+    assert await _proposed(conn, w.tenant, "blog") == []
+    assert "zz1081_e_a1" in await _proposed(conn, w.tenant, "email")   # still offered on a shorter Channel
+    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5")
+    result = await _propose_on(conn, w.tenant)
+    tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
+    assert tour_a["topics"] == 2 and result["blog_coverage"]["short_seed"] == 0
