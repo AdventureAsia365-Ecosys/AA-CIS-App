@@ -229,6 +229,26 @@ def _result_to_gc(result: dict) -> dict:
     }
 
 
+async def _policy_review_detail(conn, tour_id, result) -> Optional[list]:
+    """AA-1049: the policy review ``escalate_detail`` when this S1 result is held only by the elephant-riding policy
+    (``elephant_policy.is_policy_only_hold`` over the result's page and the tour's raw source: the approve gate's
+    own rule), else None."""
+    from services.quality import elephant_policy, policy_review
+    from services.tour_lifecycle import policy as lifecycle_policy
+
+    if result.get("brand_audit_status") != "manual_check":
+        return None
+    src = await lifecycle_policy.source_row(conn, tour_id)
+    source = elephant_policy.raw_source_from_row(src) if src else None
+    generated = result.get("generated") or {}
+    if not elephant_policy.is_policy_only_hold(result.get("brand_audit_status"), result.get("brand_audit_codes"),
+                                               generated, source):
+        return None
+    hits = [{**h, "where": "version" if h["where"] == "generated" else h["where"]}
+            for h in elephant_policy.scan(generated, source)]
+    return policy_review.detail(hits)
+
+
 async def _enqueue_review(conn, tour_id, generated_content_id, result, failure_summary=None) -> None:
     """AA-212: enqueue a blocked / low-quality tour into review_queue for HITL review.
 
@@ -241,19 +261,34 @@ async def _enqueue_review(conn, tour_id, generated_content_id, result, failure_s
     version of a published tour comes from Regenerate, not from hand-editing a failed one. The
     row is still written (soft) so the failed attempt stays traceable.
 
+    AA-1049 (tech lead decision S277, root ADR 0020 D8): except a version held ONLY by the elephant-riding policy
+    (``_policy_review_detail``): it enters 'pending' even when the tour has a live or policy-held Master, marked as a
+    policy review (``services/quality/policy_review.py``: ``escalate_detail`` evidence, summary prefix), because a
+    person must review the tour before it is on sale. A row entered 'dismissed' never supersedes a pending policy
+    review of the tour; a row entered 'pending' replaces every older pending row (one per tour).
+
     AA-986 L1: the same for a tour whose source is no longer live (trashed / superseded / deleted at S0/A0,
     for example an S1 run that finished after the trash): its row enters 'dismissed', never 'pending', so
     nobody can approve a deleted tour back into Master Content. `failure_summary` overrides the summary built
     from `result` (the S1 auto-export passes the source_not_live message: that version passed every gate).
     """
+    from services.quality import policy_review
+
+    policy_detail = await _policy_review_detail(conn, tour_id, result)
+    summary = failure_summary if failure_summary is not None else _build_failure_summary(result)
+    if policy_detail is not None:
+        summary = policy_review.summary(summary)
     await conn.execute(f"""
         INSERT INTO silver_aa_internal.review_queue (
             tour_id, generated_content_id, tenant_id,
-            failure_summary, score_overall, review_status, reviewed_at
+            failure_summary, score_overall, review_status, reviewed_at, escalate_detail
         )
         SELECT $1::uuid, $2::uuid, $3::uuid, $4, $5,
-               (CASE WHEN pub.live OR NOT pub.source_live THEN 'dismissed' ELSE 'pending' END)::review_status_enum,
-               CASE WHEN pub.live OR NOT pub.source_live THEN NOW() END
+               (CASE WHEN NOT pub.source_live THEN 'dismissed'
+                     WHEN $6::jsonb IS NOT NULL THEN 'pending'
+                     WHEN pub.live THEN 'dismissed' ELSE 'pending' END)::review_status_enum,
+               CASE WHEN NOT pub.source_live OR ($6::jsonb IS NULL AND pub.live) THEN NOW() END,
+               $6::jsonb
         FROM (SELECT EXISTS (
                 SELECT 1 FROM gold_aa_internal.published_tours pt
                 WHERE pt.tour_id = $1::uuid AND pt.master_status <> 'trashed'
@@ -268,16 +303,21 @@ async def _enqueue_review(conn, tour_id, generated_content_id, result, failure_s
         tour_id,
         generated_content_id,
         _MASTER_TENANT_ID,
-        failure_summary if failure_summary is not None else _build_failure_summary(result),
+        summary,
         float(result.get("quality_score") or 0.0),
+        json.dumps(policy_detail) if policy_detail is not None else None,
     )
     # AA-653 (S207): one failed version per tour is enough — the reviewer's move is Regenerate,
     # not comparing attempts. A newer version replaces older pending rows of the same tour.
-    await conn.execute("""
-        UPDATE silver_aa_internal.review_queue
+    # AA-1049: only a row that entered pending replaces a pending policy review.
+    await conn.execute(f"""
+        UPDATE silver_aa_internal.review_queue rq
         SET review_status = 'superseded'::review_status_enum, reviewed_at = NOW()
-        WHERE tour_id = $1::uuid AND review_status = 'pending'
-          AND generated_content_id <> $2::uuid
+        WHERE rq.tour_id = $1::uuid AND rq.review_status = 'pending'
+          AND rq.generated_content_id <> $2::uuid
+          AND (NOT {policy_review.row_is_policy_sql("rq")}
+               OR EXISTS (SELECT 1 FROM silver_aa_internal.review_queue n
+                           WHERE n.generated_content_id = $2::uuid AND n.review_status = 'pending'))
     """, tour_id, generated_content_id)
 
 
@@ -1069,8 +1109,14 @@ async def _execute_run_tour(
         _route = bool(version_id) and not _ckpt.done(checkpoint, "routed")   # AA-993 G2: not routed before a release
         if _route and status == "approved":
             from services.export.handler import process_export
+            from services.tour_lifecycle.policy import PolicyReviewRequiredError
             try:
                 await process_export(str(version_id), contract_exit="auto_publish")
+            except PolicyReviewRequiredError as _held:
+                # AA-1049 guard: the version offers elephant riding (text or source) and no person approved it. An
+                # expected refusal: process_export moved it approved → hitl and filed its pending policy review.
+                logger.warning("s1_export_refused_policy_review", tour_id=req.tour_id, version_id=str(version_id),
+                               review_id=_held.review_id)
             except SourceNotLiveError as _dead:
                 # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
                 # (no Sentry event): process_export already moved the version approved → hitl; file the
@@ -2817,10 +2863,16 @@ async def admin_review_queue(
     country: Optional[str] = None,
     score: str = "all",
     tour_id: Optional[str] = None,
+    policy: Optional[str] = None,
 ):
     """AA-739: server-side paging + filters (country, score band, tour) and full facets, so the
     page no longer paginates/filters client-side over a 20-row slice (it showed 20 of 54 and only
-    the countries on that slice)."""
+    the countries on that slice).
+
+    AA-1049: ``policy=elephant_riding`` keeps only the elephant-riding policy reviews
+    (services/quality/policy_review.py); every row carries ``policy_review`` (null, or {kind, held, approvable,
+    evidence}) and the facets count them (``facets.policy_reviews``)."""
+    from services.quality import approve_gate, policy_review
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     tenant_id = "00000000-0000-0000-0000-000000000001"
@@ -2851,6 +2903,8 @@ async def admin_review_queue(
     if tour_id and _is_uuid(tour_id):
         params.append(tour_id)
         where.append(f"rq.tour_id = ${len(params)}::uuid")
+    if policy == policy_review.FILTER_VALUE:
+        where.append(policy_review.row_is_policy_sql("rq"))
     where_sql = " AND ".join(where)
 
     async with pool.acquire() as conn:
@@ -2865,7 +2919,11 @@ async def admin_review_queue(
                    qs.failure_codes, qs.brand_audit_codes, qs.brand_audit_status,
                    rt.src_name, rt.country, rt.duration, rt.batch_id AS raw_tours_batch_id,
                    length(rt.src_itineraries) AS src_itinerary_chars,
-                   ({live_source_sql('rt')}) AS source_live
+                   ({live_source_sql('rt')}) AS source_live,
+                   rq.escalate_detail::text AS escalate_detail,
+                   ({policy_review.row_is_policy_sql('rq')}) AS is_policy_review,
+                   (pt.master_status::text = 'inactive' AND pt.master_status_reason = 'policy_hold') AS policy_held,
+                   (pt.generated_content_id = rq.generated_content_id) AS is_master_version
             FROM silver_aa_internal.review_queue rq
             JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
             -- AA-739: latest evaluation only; a plain LEFT JOIN repeated a row per evaluation.
@@ -2876,6 +2934,7 @@ async def admin_review_queue(
                 ORDER BY q.evaluated_at DESC LIMIT 1
             ) qs ON TRUE
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
+            LEFT JOIN gold_aa_internal.published_tours pt ON pt.tour_id = rq.tour_id
             WHERE {where_sql}
             ORDER BY rq.created_at DESC
             LIMIT {page_size} OFFSET {offset}
@@ -2886,11 +2945,24 @@ async def admin_review_queue(
             WHERE {where_sql}
         """, *params)
         facet_rows = await conn.fetch(f"""
-            SELECT rt.country, COUNT(*) AS n FROM silver_aa_internal.review_queue rq
+            SELECT rt.country, COUNT(*) AS n,
+                   COUNT(*) FILTER (WHERE {policy_review.row_is_policy_sql("rq")}) AS policy_n
+            FROM silver_aa_internal.review_queue rq
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
             WHERE {" AND ".join(facet_where)}
             GROUP BY rt.country ORDER BY rt.country
         """, *facet_params)
+        # AA-1049: can a policy row be approved as it is? The held Master's own version: yes (the approve puts back
+        # what was on sale); another version: the approve gate's own answer (v1_pipeline._APPROVE_GATE_SQL).
+        policy_gate: dict = {}
+        from api.routers.v1_pipeline import _APPROVE_GATE_SQL
+        gate_sql = _APPROVE_GATE_SQL.format(live=live_source_exists_sql("rq.tour_id"))
+        for r in rows:
+            if r.get("is_policy_review") and r["review_status"] == "pending" and not (
+                    r.get("policy_held") and r.get("is_master_version")):
+                g = await conn.fetchrow(gate_sql, r["id"], tenant_id)
+                policy_gate[str(r["id"])] = bool(g) and (
+                    r["revalidate_passed"] is True if g["human_edited"] else not approve_gate.blockers(g))
         # AA-739 (from AA-738): mark the brand's own forbidden words too, not only the AA core list.
         brand_words = await conn.fetchval("""
             SELECT forbidden_words FROM shared.tenant_brand_rules
@@ -2958,6 +3030,8 @@ async def admin_review_queue(
             "src_name":           r["src_name"],
             "country":            r["country"],
             "duration":           r["duration"],
+            # AA-1049: the elephant-riding policy review (null for any other row)
+            "policy_review":      _policy_review_view(r, policy_gate) if r.get("is_policy_review") else None,
         })
 
     return {
@@ -2965,7 +3039,21 @@ async def admin_review_queue(
         "pagination": {"page": page, "page_size": page_size, "total": total},
         # AA-739: every country present for this status, regardless of page/filters.
         "facets": {"countries": [{"country": f["country"], "n": f["n"]} for f in facet_rows
-                                 if f["country"]]},
+                                 if f["country"]],
+                   "policy_reviews": sum(int(f.get("policy_n") or 0) for f in facet_rows)},
+    }
+
+
+def _policy_review_view(r, policy_gate: dict) -> dict:
+    """AA-1049: the Review Queue's view of an elephant-riding policy review row."""
+    from services.quality import policy_review
+    held_version = bool(r.get("policy_held")) and bool(r.get("is_master_version"))
+    return {
+        "kind": policy_review.FILTER_VALUE,
+        # the tour's Master is held (off sale) until this review is approved
+        "held": bool(r.get("policy_held")),
+        "approvable": r["review_status"] == "pending" and (held_version or policy_gate.get(str(r["id"]), False)),
+        "evidence": policy_review.evidence(r.get("escalate_detail")),
     }
 
 
@@ -3268,6 +3356,7 @@ async def promote_tour_version(
 
     from services.export.handler import process_export
     from services.tour_lifecycle import LifecycleError
+    from services.tour_lifecycle.policy import POLICY_REVIEW_REQUIRED, PolicyReviewRequiredError
     try:
         exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
                                         atomize_created_by="admin:promote_version", contract_exit="promote")
@@ -3276,6 +3365,9 @@ async def promote_tour_version(
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})
     except ValueError:                # the version left 'approved' between the check and the publish
         raise HTTPException(status_code=409, detail=f"v{version_num} is no longer approved")
+    except PolicyReviewRequiredError as e:   # AA-1049: elephant riding, no person approved this version
+        raise HTTPException(status_code=409, detail=f"{e} (v{version_num} is now in the Review Queue)",
+                            headers={"X-Error-Code": POLICY_REVIEW_REQUIRED})
     except LifecycleError as e:       # any other refusal of the lifecycle service's publish
         raise _lifecycle_http(e)
     logger.info("tour_version_promoted", tour_id=tour_id, version_num=version_num, version_id=gc["id"],

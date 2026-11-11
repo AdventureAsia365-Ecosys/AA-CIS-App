@@ -89,6 +89,14 @@ export const M = defineMessages(
     critical: (low: string) => `Critical (<${low})`,
     low: (low: string, high: string) => `Low (${low}–${high})`,
     ok: (pass: string) => `${pass}+ (held for another reason)`,
+    // AA-1049 — the elephant-riding policy review (a person reviews the tour before it is on sale)
+    allReviews: "All reviews",
+    policyFilter: (n: number) => `Elephant riding policy (${n})`,
+    policyBadge: "Elephant riding policy",
+    policyHeld: "Off sale until approved",
+    policyEvidence: (fields: string) => `Elephant riding found in: ${fields}`,
+    policyHint: "Approve puts the tour on sale as it is (policy: the ride is kept, never rewritten away). "
+      + "Reject keeps it off sale.",
     refresh: "Refresh",
     noneRetryable: "None of the selected rows can be regenerated (raw too thin, needs a person, or a stronger model "
       + "already failed)",
@@ -214,6 +222,13 @@ export const M = defineMessages(
     critical: (low: string) => `Nghiêm trọng (<${low})`,
     low: (low: string, high: string) => `Thấp (${low}–${high})`,
     ok: (pass: string) => `${pass}+ (bị giữ vì lý do khác)`,
+    allReviews: "Mọi loại duyệt",
+    policyFilter: (n: number) => `Chính sách cưỡi voi (${n})`,
+    policyBadge: "Chính sách cưỡi voi",
+    policyHeld: "Ngừng bán đến khi được duyệt",
+    policyEvidence: (fields: string) => `Có cưỡi voi trong: ${fields}`,
+    policyHint: "Duyệt sẽ mở bán tour như hiện có (chính sách: giữ nguyên hoạt động cưỡi voi, không viết lại để che). "
+      + "Từ chối thì tour vẫn ngừng bán.",
     refresh: "Làm mới",
     noneRetryable: "Không dòng nào đã chọn có thể viết lại (bản gốc quá mỏng, cần người xử lý, hoặc model mạnh hơn đã "
       + "thất bại)",

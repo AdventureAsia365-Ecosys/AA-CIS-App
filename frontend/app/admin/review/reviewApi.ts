@@ -16,7 +16,8 @@ export type ReviewQueueResponse = {
   data: ReviewRaw[];
   pagination?: { page?: number; page_size?: number; total?: number };
   // AA-739: every country present for this status, independent of the current page/filters.
-  facets?: { countries?: { country: string; n: number }[] };
+  // AA-1049: policy_reviews = the elephant-riding policy reviews in this status (any country).
+  facets?: { countries?: { country: string; n: number }[]; policy_reviews?: number };
 };
 
 export type ReviewQueueQuery = {
@@ -26,6 +27,7 @@ export type ReviewQueueQuery = {
   country?: string; // "all" = no filter
   score?: string; // all | critical | low | ok
   tourId?: string | null;
+  policy?: string; // "all" = no filter; "elephant_riding" = only the elephant-riding policy reviews (AA-1049)
 };
 
 // AA-739: paging and filters run on the server (the page used to filter a 20-row slice).
@@ -38,6 +40,7 @@ export function fetchReviewQueue(q: ReviewQueueQuery): Promise<ReviewQueueRespon
   if (q.country && q.country !== "all") qs.set("country", q.country);
   if (q.score && q.score !== "all") qs.set("score", q.score);
   if (q.tourId) qs.set("tour_id", q.tourId);
+  if (q.policy && q.policy !== "all") qs.set("policy", q.policy);
   return apiGet<ReviewQueueResponse>(`/api/admin/review-queue?${qs.toString()}`, { admin: true });
 }
 

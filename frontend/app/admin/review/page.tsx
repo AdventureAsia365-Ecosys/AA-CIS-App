@@ -8,6 +8,8 @@
 // revalidate (202 + job) → poll → Approve gated on revalidate_passed===true. The editor and its
 // re-validate flow live in ReviewEditor.tsx; the data layer in reviewApi.ts; the field/severity
 // model in reviewModel.ts.
+// AA-1049: a filter and a badge for the elephant-riding policy reviews (a person reviews the tour before it is on sale);
+// their Approve follows the server's `policy_review.approvable`.
 // AA-916 WM-07: Reject and Dismiss open a small confirm (ReasonActionModal.tsx) with the reason chip preselected
 // from the row's failure codes; Regenerate carries the chip too (RegenerateModal.tsx).
 
@@ -48,6 +50,8 @@ import {
   codeSeverity,
   mapRow,
   BLOCK_STYLE,
+  POLICY_FILTER,
+  policyEvidenceText,
   type ReviewItem,
 } from "./reviewModel";
 import { PASS_LINE, SCORE_BANDS } from "@/lib/quality-registry.generated";
@@ -126,12 +130,14 @@ function ReviewQueueInner() {
   const [filterStatus, setFilterStatusRaw] = useState("pending");
   const [filterCountry, setCountryRaw] = useState("all");
   const [filterScore, setScoreRaw] = useState("all");
+  const [filterPolicy, setPolicyRaw] = useState("all");
   // AA-739: server-side paging. Any filter change goes back to the first page.
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const setFilterStatus = (v: string) => { setFilterStatusRaw(v); setPageIndex(0); };
   const setCountry = (v: string) => { setCountryRaw(v); setPageIndex(0); };
   const setScore = (v: string) => { setScoreRaw(v); setPageIndex(0); };
+  const setPolicy = (v: string) => { setPolicyRaw(v); setPageIndex(0); };
   // Deep-link ?tour_id= from Master Content ("N failed" badge). Read once from the URL as a lazy
   // initial value (client-only; null on the server) rather than setting state in an effect, which
   // the React Compiler forbids (AGENTS.md). Null-safe for SSR/prerender.
@@ -156,7 +162,7 @@ function ReviewQueueInner() {
 
   // ── Query: the review queue for the selected status ──
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["review-queue", filterStatus, filterCountry, filterScore, tourFilter, pageIndex, pageSize],
+    queryKey: ["review-queue", filterStatus, filterCountry, filterScore, filterPolicy, tourFilter, pageIndex, pageSize],
     queryFn: () =>
       fetchReviewQueue({
         status: filterStatus,
@@ -165,6 +171,7 @@ function ReviewQueueInner() {
         country: filterCountry,
         score: filterScore,
         tourId: tourFilter,
+        policy: filterPolicy,
       }),
     placeholderData: (prev) => prev, // keep the current page visible while the next one loads
     // Poll while any row we kicked off is still present in the queue (AA-719). Reading the live
@@ -241,10 +248,14 @@ function ReviewQueueInner() {
   // ── Filters run on the server (AA-739); the country list comes from the server facets, so it
   // lists every country in this status, not only the ones on the loaded page. ──
   const countries = data?.facets?.countries ?? [];
+  const policyCount = data?.facets?.policy_reviews ?? 0;
   const filtered = items;
 
   // ── Columns ──
   const canApprove = (item: ReviewItem) => {
+    // AA-1049: an elephant-riding policy review is approvable when the server says so (the held Master's own version,
+    // or a version that passes the approve gate with the policy as its only hold).
+    if (item.policyReview && !item.human_edited) return item.policyReview.approvable;
     const failCount = (item.raw.failures || []).length;
     return item.human_edited ? item.revalidate_passed === true : item.score >= PASS_LINE && failCount === 0;
   };
@@ -318,8 +329,16 @@ function ReviewQueueInner() {
         cell: (c) => {
           if (c.row.original.regenerating) return <StatusBadge status="regenerating" />;
           const b = c.row.original.block;
+          const pr = c.row.original.policyReview;
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+              {pr && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}
+                  title={`${t("policyEvidence", policyEvidenceText(pr))}. ${t("policyHint")}`}>
+                  <Badge tone="warning">{t("policyBadge")}</Badge>
+                  {pr.held && <Badge tone="danger" dot={false}>{t("policyHeld")}</Badge>}
+                </div>
+              )}
               {b && (
                 <span
                   style={{
@@ -543,6 +562,11 @@ function ReviewQueueInner() {
               <option value="critical">{t("critical", SCORE_BANDS.low.toFixed(1))}</option>
               <option value="low">{t("low", SCORE_BANDS.low.toFixed(1), (PASS_LINE - 0.1).toFixed(1))}</option>
               <option value="ok">{t("ok", PASS_LINE.toFixed(1))}</option>
+            </Select>
+            <Select value={filterPolicy} onChange={(e) => setPolicy(e.target.value)} style={selectStyle}
+              aria-label={t("policyBadge")}>
+              <option value="all">{t("allReviews")}</option>
+              <option value={POLICY_FILTER}>{t("policyFilter", policyCount)}</option>
             </Select>
             <Button variant="ghost" size="sm" onClick={() => refetch()}>
               <RotateCcw size={12} style={{ animation: isFetching ? "spin .8s linear infinite" : undefined }} /> {t("refresh")}

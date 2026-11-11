@@ -149,9 +149,30 @@ export type ReviewItem = {
   failure_class: FailureClass | null;
   retryable: boolean;
   hint: string;
+  // AA-1049: the elephant-riding policy review (server-computed; null for any other row).
+  policyReview: PolicyReview | null;
   // Client-only: set while a non-blocking regenerate job is in flight for this row (AA-719).
   regenerating?: boolean;
 };
+
+// AA-1049 — `held`: the tour's Master is off sale until this review is approved; `approvable`: the server's answer
+// to "can Approve publish this version as it is"; `evidence`: where the detector found the ride (codes only).
+export type PolicyReview = {
+  kind: string;
+  held: boolean;
+  approvable: boolean;
+  evidence: { where: string | null; field: string | null }[];
+};
+
+export const POLICY_FILTER = "elephant_riding";
+
+/** "master highlights, source itinerary" — the evidence as plain words (codes only, never page text). */
+export function policyEvidenceText(p: PolicyReview): string {
+  return p.evidence
+    .filter((e) => e.field)
+    .map((e) => `${e.where ?? ""} ${e.field}`.trim())
+    .join(", ");
+}
 
 export type ReviewBlock = { kind: "needs_human" | "hard" | "low_quality" | "other"; label: string };
 
@@ -205,5 +226,6 @@ export function mapRow(r: any, text: RowText = ROW_TEXT_EN): ReviewItem {
     failure_class: (r.failure_class as FailureClass) || null,
     retryable: r.retryable !== false,
     hint: typeof r.hint === "string" ? r.hint : "",
+    policyReview: r.policy_review && typeof r.policy_review === "object" ? (r.policy_review as PolicyReview) : null,
   };
 }

@@ -3285,8 +3285,9 @@ Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(so
 version's Master), `retired` (source deleted at S0/A0, Master trashed, or every version superseded). Derived, never
 stored: read it from `gold_aa_internal.v_tour_liveness` (CIS 272). Every change goes through ONE write service,
 `services/tour_lifecycle` (retire / restore source, supersede, set-active, Master pause / activate / trash /
-restore, the publish insert): in one transaction it changes the status columns with the reason
-(`published_tours.master_status_reason`), switches off any Master over a dead source (never two active Masters per
+restore, the publish insert, the elephant-riding `policy_hold` of AA-1049): in one transaction it changes the status
+columns with the reason (`published_tours.master_status_reason`: staff_deactivated / staff_trashed / source_deleted /
+superseded, `policy_hold` since CIS 398), switches off any Master over a dead source (never two active Masters per
 key), dismisses pending reviews, cancels queued T2 / T8 / T9 jobs, writes `gold_aa_internal.tour_lifecycle_event`
 (append-only) and notifies every tenant with a derivative (`tour.discontinued` / `tour.reinstated`). A unit guard
 (`tests/unit/test_aa986_l2_lifecycle_guard.py`) fails any other code that writes `source_status` / `master_status` /
@@ -4396,6 +4397,28 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     and those stay blocked). The **S1 judge is off the live path** for a writer-v2 draft
     (D9, `S1_JUDGE_LIVE` off by default; the brand audit then uses its deterministic pre-audit codes), and
     `POST /admin/s1-batch/submit` answers 409 while writer v2 is on (the batch seeds a v1 draft).
+  - **Elephant-riding policy hold** (AA-1049, tech lead decision S277, root ADR 0020 D8; CIS 398; notes
+    `docs/implementation-notes/AA-1049-l13-elephant-hold.md`): a Master whose product offers elephant riding (detector
+    hit on its published text or its raw source) is **not on sale until a person reviews it**. The tour lifecycle
+    service's `policy_hold` (`services/tour_lifecycle`, rules in `services/tour_lifecycle/policy.py`) switches it off
+    (`master_status` inactive, `master_status_reason` `policy_hold`, the pause cascade: served state `paused`, queued
+    T2 / T8 / T9 jobs cancelled, TripPlanner purge, no tenant mail) and files one pending **policy review** row: an
+    ordinary `review_queue` row marked by `escalate_detail` items with `check_id` `policy:elephant_riding` (evidence =
+    where + field codes only, never the matched words) and a `POLICY_REVIEW` summary prefix
+    (`services/quality/policy_review.py`). Only the Review Queue **approve** lifts it: the approve claims the row
+    `approved`, `process_export` publishes, and the service's `publish` sets the Master active (reason NULL); the approve
+    of the held Master's own version skips the new-version approve gate (it puts back what was on sale). Reject keeps it
+    held. **Guard**: `publish` refuses (409 `policy_review_required`) a version with a detector hit and no `approved`
+    review row of that version: `process_export` moves it to `hitl`, files the policy review and raises
+    `PolicyReviewRequiredError` (the S1 auto-publish logs it, promote answers 409); Set Active refuses a held Master or
+    one that hits with no approval (and files the review); restore / set-active hold a Master they would switch back
+    on. `_enqueue_review` files a version held only by the policy (`is_policy_only_hold`) **pending** even when the tour
+    has a live or held Master (AA-653 keeps every other hold of a live tour dismissed); a dismissed row never
+    supersedes a pending policy review, and the publish dismissal (step 3c) spares one of a newer version. Review
+    Queue: filter `policy=elephant_riding`, row field `policy_review` {kind, held, approvable, evidence}, facet
+    `policy_reviews`; the page shows an "Elephant riding policy" badge and an "Off sale until approved" badge. The
+    one-time catch-up of the Masters published before the detector: `scripts/quality/hold_elephant_masters.py` (DRY
+    RUN prints the count, 8-char ids, field codes and the pin `count:md5`; `APPLY=1 PIN=...` holds them one by one).
   - **AA-1049 W3 S1 train (opt-in, default off)** (`services/content_generation/s1_train.py`, worker switch
     `S1_CONTROL=contract`; unset / any other value = the A1 path above, byte-equal to it; A1 writer-v2 drafts only):
     code composes the contract fields after the writer (day headings numbered and ordered by the day plan, the

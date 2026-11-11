@@ -715,6 +715,11 @@ def _apply_schema(conn):
             ADD COLUMN IF NOT EXISTS hitl_flag BOOLEAN DEFAULT FALSE;
     """)
 
+    # AA-1049: silver_aa_internal.review_queue.escalate_detail (jsonb, live on Dev since CIS 107) is missing here: 107
+    # fails in this replay (its tenant_tour_versions FK; 001 is skipped). The S1 review writer, the publish dismissal
+    # and the Review Queue read name it (the elephant-riding policy review marker): the Dev-shape column.
+    cur.execute("ALTER TABLE silver_aa_internal.review_queue ADD COLUMN IF NOT EXISTS escalate_detail jsonb")
+
     # Fix 005 seed: UPDATE brand_rules with correct system_prompt (ON CONFLICT DO NOTHING skips if row exists)
     cur.execute("""
         UPDATE shared.tenant_brand_rules
