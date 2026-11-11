@@ -120,6 +120,28 @@ test("Button: same look as before, type=button by default, ARIA / data / testId 
   assert.doesNotMatch(dashed, /text-transform:uppercase/, "dashed is never uppercase");
 });
 
+test("domProps family: a plain data-testid survives when testId is unset; testId wins over it (AA-1069)", () => {
+  const cases = [
+    [B.Button, {}],
+    [B.LinkButton, {}],
+    [B.IconButton, { label: "Close" }],
+    [B.ChipButton, { selected: true }],
+    [B.Switch, { checked: false, onChange: () => {}, label: "Dark mode" }],
+    [B.ListButton, {}],
+    [B.Pressable, {}],
+  ];
+  for (const [C, base] of cases) {
+    const name = C.name;
+    const plain = html(h(C, { ...base, "data-testid": "plain-id" }, "X"));
+    assert.match(plain, /data-testid="plain-id"/, `${name} keeps a plain data-testid`);
+    const both = html(h(C, { ...base, "data-testid": "plain-id", testId: "prop-id" }, "X"));
+    assert.match(both, /data-testid="prop-id"/, `${name}: testId wins`);
+    assert.doesNotMatch(both, /plain-id/, `${name}: one data-testid only`);
+    const none = html(h(C, base, "X"));
+    assert.doesNotMatch(none, /data-testid/, `${name}: no attribute when neither is set`);
+  }
+});
+
 test("LinkButton: a borderless text button in four tones, three sizes, truncation", () => {
   const out = html(h(B.LinkButton, { "aria-expanded": true }, "Hide changes"));
   assert.match(out, /^<button [^>]*type="button"/);

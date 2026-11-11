@@ -891,7 +891,7 @@ jobs:
           node app/_kit/core/check-kit-copy.mjs --self
           node app/_kit/core/check-kit-copy.mjs --css .
           node --test --experimental-strip-types --no-warnings lib/kitCore.test.mjs lib/tokensContrast.test.mjs
-          node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
+          node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitButtonTestIds.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
 
       - name: Type-check (tsc --noEmit, pull request)
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
@@ -948,8 +948,9 @@ jobs:
       # Buttons export (the consumer barrels `export *` from primitives). Needs typescript + react, so after npm ci.
       # AA-1008: the ShellFrame (markup, drawer CSS, CIS AdminShell is a configuration of it) and the visual run's
       # page list (every app route listed or excluded, changed-pages mapping, run selection).
+      # AA-1069: no kit button call site passes a plain data-testid (use the testId prop; AST scan of the admin).
       - name: Kit button render tests
-        run: node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
+        run: node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitButtonTestIds.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
 
       - name: Type-check (tsc --noEmit)
         run: npx tsc --noEmit -p .
