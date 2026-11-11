@@ -14,10 +14,12 @@ What this module owns (provider-neutral):
   connection is the batch target. A route with no direct-API deployment cannot batch (BatchUnavailable: run it on
   demand).
 - **Guards before submit** (``guard``): the lane switch (``LLM_BATCH_LANE``, default on), the tenant-stage rule, the
-  stage kill switch, the app profile's AI switch, then the cost cap of the batch (``estimate_usd``: the gateway's own
-  worst-case estimate per call, ``client.estimate_call_usd`` = prompt chars / 4 in + the whole max_tokens out, at the
-  batch rate) checked against the caller's cap AND the central LLM budgets (``central_budget.check``). Nothing is sent
-  when any of them refuses.
+  stage kill switch, the app profile's AI switch, then the cost cap of the batch (``estimate``: the measured 95th
+  percentile of one on-demand call of the stage x model over 14 days in the ledger, the tools/llm/cost_estimate.py
+  pattern, at the batch rate, when there are >= 10 such calls; else the gateway's own worst case per call,
+  ``client.estimate_call_usd`` = prompt chars / 4 in + the whole max_tokens out, at the batch rate) checked against
+  the caller's cap, the worst case against 2 x the cap, and the estimate against the central LLM budgets
+  (``central_budget.check``). Nothing is sent when any of them refuses.
 - **Requests** (``build_request``): the same LLMRequest shaping the gateway does before a provider call (stage x model
   parameters, the reasoning-model token floor, the model's output ceiling), then the provider body the on-demand
   adapter builds (``anthropic_messages.build_params`` / ``client.openai_chat_body``). Prompt caching inside a batch
@@ -222,9 +224,57 @@ def estimate_usd(target: BatchTarget, items: list[BatchItem]) -> float:
     return round(total * pricing.BATCH_DISCOUNT, 6)
 
 
-def guard(target: BatchTarget, items: list[BatchItem], cap_usd: float) -> float:
+# The measured basis of the estimate (the tools/llm/cost_estimate.py pattern: from the ledger, never from feel): the
+# 95th percentile of the cost of one priced, answered, on-demand call of the same stage and model over HISTORY_DAYS, at
+# the batch rate, per request. Used when it holds at least MIN_BASIS_CALLS calls; else the worst case (the whole
+# max_tokens billed). The worst case still bounds a batch: above WORST_CASE_FACTOR x the cap it is refused too.
+HISTORY_DAYS = 14
+MIN_BASIS_CALLS = 10
+WORST_CASE_FACTOR = 2.0
+
+HISTORY_SQL = """
+SELECT count(*)::int AS n,
+       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY cost_usd), 0)::float AS p95
+  FROM shared.llm_call_log
+ WHERE stage = $1 AND model = $2 AND created_at > now() - make_interval(days => $3)
+   AND cost_usd > 0 AND coalesce(status, 'ok') = 'ok'
+   AND coalesce(quality_signal->>'batch', 'false') <> 'true'
+"""
+
+
+async def history_basis(db, target: BatchTarget) -> Optional[dict]:
+    """{n, p95} of the stage x model's on-demand calls (HISTORY_SQL), or None when it cannot be read. Never raises."""
+    try:
+        row = await db.fetchrow(HISTORY_SQL, target.stage, target.model_key, HISTORY_DAYS)
+        return {"n": int(row["n"] or 0), "p95": float(row["p95"] or 0.0)}
+    except Exception as e:  # noqa: BLE001 — no basis = the worst case
+        logger.warning("llm_batch_history_unreadable", stage=target.stage, error=str(e)[:200])
+        return None
+
+
+@dataclass
+class Estimate:
+    usd: float              # what the cap is checked against
+    worst_case_usd: float   # every request billing its whole max_tokens, at the batch rate
+    basis: str              # "ledger_p95" (measured) | "worst_case"
+    basis_calls: int = 0
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def estimate(target: BatchTarget, items: list[BatchItem], basis: Optional[dict] = None) -> Estimate:
+    worst = estimate_usd(target, items)
+    if basis and basis.get("n", 0) >= MIN_BASIS_CALLS and basis.get("p95", 0) > 0:
+        measured = round(len(items) * basis["p95"] * pricing.BATCH_DISCOUNT, 6)
+        return Estimate(usd=min(measured, worst) if worst > 0 else measured, worst_case_usd=worst,
+                        basis="ledger_p95", basis_calls=int(basis["n"]))
+    return Estimate(usd=worst, worst_case_usd=worst, basis="worst_case")
+
+
+def guard(target: BatchTarget, items: list[BatchItem], cap_usd: float, basis: Optional[dict] = None) -> Estimate:
     """Every check before submit (module docstring); returns the estimate. Raises BatchUnavailable or
-    BatchCapExceeded."""
+    BatchCapExceeded. ``basis``: ``history_basis`` (read by the async caller), None = the worst case."""
     closed = closed_reason()
     if closed:
         raise BatchUnavailable(closed)
@@ -244,16 +294,20 @@ def guard(target: BatchTarget, items: list[BatchItem], cap_usd: float) -> float:
         raise BatchCapExceeded("a batch needs a cost cap in USD") from None
     if not (0 < cap <= MAX_CAP_USD):
         raise BatchCapExceeded(f"the cost cap must be above 0 and at most {MAX_CAP_USD} USD (got {cap_usd})")
-    estimate = estimate_usd(target, items)
-    if estimate > cap:
-        raise BatchCapExceeded(f"the batch estimate {estimate:.4f} USD (worst case, batch rate, {len(items)} "
-                               f"requests on {target.model_key}) is above its cap {cap:.4f} USD: nothing was sent")
+    est = estimate(target, items, basis)
+    what = (f"{est.basis} over {est.basis_calls} calls" if est.basis == "ledger_p95" else "worst case")
+    if est.usd > cap:
+        raise BatchCapExceeded(f"the batch estimate {est.usd:.4f} USD ({what}, batch rate, {len(items)} requests on "
+                               f"{target.model_key}) is above its cap {cap:.4f} USD: nothing was sent")
+    if est.worst_case_usd > WORST_CASE_FACTOR * cap:
+        raise BatchCapExceeded(f"the batch's worst case {est.worst_case_usd:.4f} USD (every request at its whole "
+                               f"max_tokens) is above {WORST_CASE_FACTOR:g} x its cap {cap:.4f} USD: nothing was sent")
     if central_budget.active():
         try:
-            central_budget.check(target.stage, estimate)
+            central_budget.check(target.stage, est.usd)
         except central_budget.CentralBudgetExceeded as e:
             raise BatchCapExceeded(f"a central LLM budget refuses the batch: {e}") from e
-    return estimate
+    return est
 
 
 # ── provider calls ───────────────────────────────────────────────────────────────────────────────────────────────

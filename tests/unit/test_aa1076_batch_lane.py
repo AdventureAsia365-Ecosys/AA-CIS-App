@@ -135,9 +135,43 @@ def test_the_cap_is_the_gateway_estimate_at_the_batch_rate(monkeypatch):
     assert each > 0
     est = batch_lane.estimate_usd(ANTH, items)
     assert est == pytest.approx(3 * each * 0.5, rel=1e-6)
-    assert batch_lane.guard(ANTH, items, est + 0.0001) == est
+    got = batch_lane.guard(ANTH, items, est + 0.0001)
+    assert got.usd == est and got.worst_case_usd == est and got.basis == "worst_case"
     with pytest.raises(BatchCapExceeded, match="above its cap"):
         batch_lane.guard(ANTH, items, est / 2)
+
+
+def test_a_measured_basis_from_the_ledger_beats_the_worst_case():
+    items = [_item(f"s1-{i}") for i in range(3)]
+    worst = batch_lane.estimate_usd(ANTH, items)
+    basis = {"n": 40, "p95": worst / 10}          # one on-demand call at p95 costs a tenth of the 3-item worst case
+    got = batch_lane.guard(ANTH, items, worst / 2 + 0.0001, basis)
+    assert got.basis == "ledger_p95" and got.basis_calls == 40
+    assert got.usd == pytest.approx(3 * (worst / 10) * 0.5, abs=1e-6) and got.worst_case_usd == worst
+    # too few calls in the ledger: the worst case decides
+    with pytest.raises(BatchCapExceeded, match="worst case"):
+        batch_lane.guard(ANTH, items, worst / 2, {"n": 3, "p95": worst / 10})
+    # the worst case still bounds a batch: never above twice its cap
+    with pytest.raises(BatchCapExceeded, match="2 x its cap"):
+        batch_lane.guard(ANTH, items, worst / 3, basis)
+
+
+@pytest.mark.asyncio
+async def test_history_basis_reads_the_stage_and_model():
+    db = SimpleNamespace(fetchrow=None)
+    seen = {}
+
+    async def fetchrow(sql, *args):
+        seen["args"] = args
+        return {"n": 12, "p95": 0.05}
+    db.fetchrow = fetchrow
+    assert await batch_lane.history_basis(db, ANTH) == {"n": 12, "p95": 0.05}
+    assert seen["args"] == ("s1_generate", "sonnet-5-5", batch_lane.HISTORY_DAYS)
+
+    async def broken(sql, *args):
+        raise RuntimeError("db down")
+    db.fetchrow = broken
+    assert await batch_lane.history_basis(db, ANTH) is None
 
 
 @pytest.mark.parametrize("cap", [0, -1, 101, None, "x"])

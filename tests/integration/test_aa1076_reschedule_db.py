@@ -170,3 +170,23 @@ async def test_the_wave_report_counts_a_batch_as_each_tours_job(pool):
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM shared.llm_call_log WHERE job_id = $1::uuid", job)
         await conn.execute("DELETE FROM shared.rerun_wave WHERE id = $1::uuid", wave_id)
+
+
+@pytest.mark.asyncio
+async def test_the_measured_basis_reads_on_demand_calls_only(pool, ledger):
+    stage = "adhoc_aa1076_basis"
+    target = batch_lane.BatchTarget(stage=stage, role="writer", model_key="sonnet-5-5",
+                                    connection_key="anthropic-direct", provider="anthropic", wire_id="w")
+    async with pool.acquire() as conn:
+        for usd in [0.01] * 9 + [0.10]:
+            await conn.execute(
+                "INSERT INTO shared.llm_call_log (stage, role, model, cost_usd, quality_signal, status) "
+                "VALUES ($1, 'writer', 'sonnet-5-5', $2, '{}', 'ok')", stage, usd)
+        # a batch row and a failed row never count
+        await conn.execute("INSERT INTO shared.llm_call_log (stage, role, model, cost_usd, quality_signal, status) "
+                           "VALUES ($1, 'writer', 'sonnet-5-5', 5.0, '{\"batch\": true}', 'ok')", stage)
+        await conn.execute("INSERT INTO shared.llm_call_log (stage, role, model, cost_usd, quality_signal, status) "
+                           "VALUES ($1, 'writer', 'sonnet-5-5', 5.0, '{}', 'billed_unusable')", stage)
+        basis = await batch_lane.history_basis(conn, target)
+        await conn.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", stage)
+    assert basis["n"] == 10 and 0.01 < basis["p95"] <= 0.10

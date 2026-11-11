@@ -108,7 +108,9 @@ def lane(monkeypatch):
     ingest = AsyncMock(return_value={"kind": "s1_rewrite", "enqueued": 3})
     monkeypatch.setattr("services.llm_batch.consumers.CONSUMERS", {"s1_attempt1": (prepare, ingest)})
     monkeypatch.setattr(batch_lane, "resolve_target", lambda stage: BatchTarget(**TARGET.as_dict()))
-    monkeypatch.setattr(batch_lane, "guard", lambda t, items, cap: 0.12)
+    monkeypatch.setattr(batch_lane, "history_basis", AsyncMock(return_value={"n": 20, "p95": 0.08}))
+    monkeypatch.setattr(batch_lane, "guard", lambda t, items, cap, basis=None: batch_lane.Estimate(
+        usd=0.12, worst_case_usd=0.25, basis="ledger_p95", basis_calls=basis["n"]))
     submit = MagicMock(return_value="msgbatch_1")
     monkeypatch.setattr(batch_lane, "submit", submit)
     return SimpleNamespace(prepare=prepare, ingest=ingest, submit=submit)
@@ -129,6 +131,7 @@ async def test_prepare_guard_submit_then_reschedule(lane):
     assert [i["custom_id"] for i in submitting["items"]] == ["s1-0", "s1-1", "s1-2"]
     assert all(len(i["prompt_sha"]) == 32 and "system" not in i for i in submitting["items"])
     assert submitting["estimate_usd"] == 0.12 and submitting["target"]["connection_key"] == "anthropic-direct"
+    assert submitting["estimate"] == {"usd": 0.12, "worst_case_usd": 0.25, "basis": "ledger_p95", "basis_calls": 20}
 
 
 @pytest.mark.asyncio
@@ -140,7 +143,7 @@ async def test_a_run_found_in_submitting_never_sends_again(lane):
 
 @pytest.mark.asyncio
 async def test_a_cap_refusal_sends_nothing(lane, monkeypatch):
-    def refuse(t, items, cap):
+    def refuse(t, items, cap, basis=None):
         raise BatchCapExceeded("estimate 0.30 USD is above its cap 0.20 USD")
     monkeypatch.setattr(batch_lane, "guard", refuse)
     ctx = _ctx(_payload())

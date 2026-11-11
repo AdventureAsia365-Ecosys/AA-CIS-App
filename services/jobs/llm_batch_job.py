@@ -88,10 +88,11 @@ async def _prepare_and_submit(ctx: JobContext, p: dict) -> dict:
     target = await asyncio.to_thread(batch_lane.resolve_target, stage)
     if extra.get("ledger_stage"):
         target.ledger_stage = extra["ledger_stage"]
-    estimate = await asyncio.to_thread(batch_lane.guard, target, items, p.get("cap_usd"))
+    basis = await batch_lane.history_basis(ctx.pool, target)
+    est = await asyncio.to_thread(batch_lane.guard, target, items, p.get("cap_usd"), basis)
     meta = item_meta(stage, items)
     summary = {"batch_id": p["batch_id"], "consumer": p["consumer"], "target": target.as_dict(), "requests": len(items),
-               "estimate_usd": estimate, "cap_usd": float(p["cap_usd"]), "prepare": extra}
+               "estimate_usd": est.usd, "estimate": est.as_dict(), "cap_usd": float(p["cap_usd"]), "prepare": extra}
     if p.get("dry_run"):
         await ctx.progress(phase="estimated", **summary)
         return {"phase": "estimated", **summary}
@@ -101,7 +102,7 @@ async def _prepare_and_submit(ctx: JobContext, p: dict) -> dict:
                                                 cache_system=p.get("cache_system"))
     logger.info("llm_batch_submitted", batch_id=p["batch_id"], provider_batch_id=provider_batch_id,
                 stage=stage, model=target.model_key, connection=target.connection_key, requests=len(items),
-                estimate_usd=estimate)
+                estimate_usd=est.usd, estimate_basis=est.basis)
     raise Reschedule(poll_delay(0), {"phase": "submitted", "provider_batch_id": provider_batch_id,
                                      "submitted_at": _now().isoformat(), "polls": 0}, "submitted")
 

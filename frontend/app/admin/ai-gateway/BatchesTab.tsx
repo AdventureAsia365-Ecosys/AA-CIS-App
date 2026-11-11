@@ -8,7 +8,7 @@
 // Send a batch (POST /batches; "estimate only" is on by default and costs nothing) and Cancel (POST
 // /batches/{job_id}/cancel). Kit components only; the copy is in batches.messages.ts.
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send, XCircle } from "lucide-react";
 import {
@@ -131,6 +131,12 @@ export default function BatchesTab() {
     },
   });
 
+  const basisText = useCallback((r: BatchRow) => {
+    if (r.estimate_basis !== "ledger_p95") return t("basisWorst");
+    return r.worst_case_usd == null ? t("basisMeasured")
+      : `${t("basisMeasured")} · ${t("worstCase", usd(r.worst_case_usd))}`;
+  }, [t]);
+
   const columns = useMemo<ColumnDef<BatchRow, unknown>[]>(() => {
     const cols: ColumnDef<BatchRow, unknown>[] = [
       { id: "batch", header: t("colBatch"), accessorFn: (r) => r.consumer ?? "",
@@ -165,7 +171,10 @@ export default function BatchesTab() {
         cell: (c) => <span style={small}>{outcomeText(c.row.original.outcomes)}</span> },
       { id: "cap", header: t("colCap"), accessorFn: (r) => r.estimate_usd ?? -1, meta: { align: "right" },
         cell: ({ row: { original: r } }) => (
-          <span style={{ fontFamily: mono, whiteSpace: "nowrap" }}>{usd(r.estimate_usd)} / {usd(r.cap_usd)}</span>
+          <div style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+            <span style={{ fontFamily: mono, whiteSpace: "nowrap" }}>{usd(r.estimate_usd)} / {usd(r.cap_usd)}</span>
+            {r.estimate_basis && <span style={small}>{basisText(r)}</span>}
+          </div>
         ) },
       { id: "spend", header: t("colSpend"), accessorFn: (r) => r.spend_usd, meta: { align: "right" },
         cell: ({ row: { original: r } }) => (
@@ -199,7 +208,7 @@ export default function BatchesTab() {
         ) : null) });
     }
     return cols;
-  }, [t, canSend]);
+  }, [t, canSend, basisText]);
 
   const totals = q.data?.totals;
   const loading = q.isLoading;

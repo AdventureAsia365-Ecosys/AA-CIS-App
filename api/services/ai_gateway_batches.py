@@ -74,6 +74,9 @@ def shape(row: dict, spend: Optional[dict]) -> dict:
         "counts": prog.get("counts") or {}, "requests": prog.get("requests") or result.get("requests"),
         "tours": len(payload.get("tour_ids") or []), "outcomes": result.get("outcomes") or prog.get("outcomes") or {},
         "cap_usd": prog.get("cap_usd", payload.get("cap_usd")), "estimate_usd": prog.get("estimate_usd"),
+        # how the estimate was made: ledger_p95 (measured) or worst_case, and the worst case itself
+        "estimate_basis": (prog.get("estimate") or {}).get("basis"),
+        "worst_case_usd": (prog.get("estimate") or {}).get("worst_case_usd"),
         "spend_usd": round(usd, 6), "standard_usd": round(usd / batch_lane.pricing.BATCH_DISCOUNT, 6),
         "saved_usd": round(usd / batch_lane.pricing.BATCH_DISCOUNT - usd, 6),
         "ledger_rows": int((spend or {}).get("rows") or 0),

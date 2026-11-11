@@ -1569,6 +1569,9 @@ export interface BatchRow {
   outcomes: Record<string, number>;
   cap_usd: number | null;
   estimate_usd: number | null;
+  /** ledger_p95: the measured 95th percentile of one on-demand call of the stage x model; worst_case: max_tokens */
+  estimate_basis: "ledger_p95" | "worst_case" | null;
+  worst_case_usd: number | null;
   spend_usd: number;
   standard_usd: number;
   saved_usd: number;
