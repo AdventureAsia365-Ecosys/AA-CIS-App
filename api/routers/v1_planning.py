@@ -59,7 +59,8 @@ from services.acp_planning.trip_reallocation import (PlanBusyError, VersionConfl
                                                      suggest_trip_reallocation_scoped)
 from services.acp_shared.slate import (SubjectNotEligibleError, SubjectNotFoundError,
                                         cut_subject_on, enabled_channels, fetch_slate_on, last_proposal,
-                                        pick_subject_on, request_slate_proposal, write_pick_audit)
+                                        pick_subject_on, request_slate_proposal, tenant_blog_topics,
+                                        write_pick_audit)
 
 logger = structlog.get_logger()
 
@@ -116,6 +117,9 @@ async def get_slate(request: Request, tenant=Depends(get_tenant)):
         # rendering ranking data computed for a market the tenant never asked for.
         # AA-764 — taken from the latest successful proposal job.
         "unmatched_markets": (last["result"].get("unmatched_markets") if last else None) or [],
+        # AA-1081 — per adopted tour: its Blog topic count and, when it has none, a typed reason code
+        # (slate.NO_TOPIC_REASONS); null before a proposal that computed it. Codes only: the portal words them.
+        "blog_topics": tenant_blog_topics(last["result"] if last else None),
         "refresh": _refresh_state(job),
     }
 

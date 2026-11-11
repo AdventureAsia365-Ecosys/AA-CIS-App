@@ -82,7 +82,7 @@ from uuid import UUID
 import structlog
 
 from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
-from services.acp_shared import walk_focus
+from services.acp_shared import blog_seed, walk_focus
 from services.acp_shared.route_guard import current_route, trip_route_segment_ids
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from shared import tour_liveness as _tl
@@ -112,31 +112,34 @@ logger = structlog.get_logger()
 # journey, so its pick carries the walk (`route_segment_ids`); every other Channel takes one moment.
 # one_piece_per_place (AA-741 S271): a place the tenant already picked / used / cut on this Channel
 # is not proposed there again, under any Segment id (one Blog article per place).
+# cover_each_tour (AA-1081): every tour the tenant adopted gets at least one Subject on this Channel when it has a free
+# candidate (`_choose_slate(cover=...)` seats those first); a tour that gets none is given a typed reason
+# (`blog_tour_coverage`, NO_TOPIC_REASONS) the tenant sees.
 CHANNEL_BARS: dict[str, dict] = {
     "blog":          {"needs_demand": 1000, "needs_questions": 3, "needs_said": 0,
                        "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": True, "one_piece_per_place": True},
+                       "takes_route": True, "one_piece_per_place": True, "cover_each_tour": True},
     "linkedin":      {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
                        "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
     "facebook":      {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
                        "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
     "instagram":     {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
                        "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
     "tiktok":        {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
                        "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
     "email":         {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
                        "grain": "segment", "on_demand": True, "most_per_hub": None,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
     "landing_page":  {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
                        "grain": "segment", "on_demand": True, "most_per_hub": None,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
     "ads":           {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
                        "grain": "segment", "on_demand": True, "most_per_hub": None,
-                       "takes_route": False, "one_piece_per_place": False},
+                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
 }
 
 WEEKLY_RHYTHM_CHANNELS = tuple(c for c, s in CHANNEL_BARS.items() if not s["on_demand"])
@@ -172,6 +175,9 @@ class Candidate:
     # candidate is ordered after every unflagged one of its Channel queue (`_choose_slate()`), never dropped.
     debate_flags: tuple[str, ...] = ()
     debate_severity: float | None = None
+    # AA-1081 — the tenant's tours this Segment is on (a current, non-excluded ranking row in the tenant's markets):
+    # a Blog topic on it counts for each of them (`blog_tour_coverage`, the `cover` pass of `_choose_slate`).
+    tour_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -327,7 +333,7 @@ async def _tenant_market_codes(tenant_id: UUID, conn) -> tuple[list[str], list[s
 # every (market, tour) row as before. AA-1055 PR 1 (S273 design section 3): `demand_volume` is the MAX over the
 # tenant's markets (NULL only when no market has a number), `demand_market` the market that gives it (ties: the
 # tenant's market order), `questions` the MAX over its markets. Until AA-1055 both were the numbers of the best-RANKED
-# market, so a market with no data (median rank) could win and hide the real US / UK demand.
+# market, so a market with no data (median rank) could win and hide the real US / UK demand. AA-1081: `tour_ids`.
 _SEGMENT_CANDIDATES_SQL = """
     WITH per_market AS (
         SELECT ar.segment_id, ar.market,
@@ -350,14 +356,30 @@ _SEGMENT_CANDIDATES_SQL = """
            MAX(pm.questions)    AS questions,
            MIN(pm.said)         AS said,
            MAX(asg.canonical_place)  AS canonical_place,
-           MAX(asg.canonical_action) AS canonical_action
+           MAX(asg.canonical_action) AS canonical_action,
+           -- AA-1081: the tenant's tours the Segment is on (the per_market filter, per tour)
+           (SELECT array_agg(DISTINCT ar.tour_id::text ORDER BY ar.tour_id::text)
+              FROM acp_contract.atom_ranking ar
+             WHERE ar.segment_id = pm.segment_id AND ar.tour_id = ANY($1::uuid[]) AND ar.market = ANY($2::text[])
+               AND ar.excluded_reason IS NULL AND ar.superseded_at IS NULL) AS tour_ids
     FROM per_market pm
     JOIN acp_contract.atom_segment asg ON asg.segment_id = pm.segment_id
     GROUP BY pm.segment_id
 """
 
 
-async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -> list[Candidate]:
+def _candidate_of(r) -> Candidate:
+    """One `_SEGMENT_CANDIDATES_SQL` row as a Candidate."""
+    return Candidate(
+        segment_id=r["segment_id"], route_id=None, score=r["total_rank"],
+        demand=r["demand_volume"], questions=r["questions"] or 0, said=r["said"] or 0,
+        place=r["canonical_place"], action=r["canonical_action"], demand_market=r["demand_market"],
+        tour_ids=tuple(r["tour_ids"] or ()),
+    )
+
+
+async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str],
+                                    unseeded_out: Optional[list] = None) -> list[Candidate]:
     """One Candidate per ranked, non-excluded Segment, scoped to tours this tenant picked.
 
     AA-545 — `atom_ranking` is now platform-wide per (market, tour, segment), not per tenant.
@@ -373,21 +395,20 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
     numbers. Before S271 they were each the MIN across the tenant's markets (a US + UK tenant needed 1,000 searches
     in its weakest market). `said` stays the MIN across markets and tours (the social Bar reads it, unchanged). The
     order (`score`) is unchanged.
+
+    AA-1081 — each Candidate carries `tour_ids` (the tenant's tours the Segment is on); `unseeded_out`, when given,
+    receives the Candidates dropped for having no seed atom (the no-topic reason `no_place_match`).
     """
     async with pool.acquire() as conn:
         tour_ids = await _tenant_tour_ids(tenant_id, conn)
         if not tour_ids:
             return []
         rows = await conn.fetch(_SEGMENT_CANDIDATES_SQL, tour_ids, markets)
-        rows = await _segments_with_seed(tenant_id, conn, rows, {str(t) for t in tour_ids})
-    return [
-        Candidate(
-            segment_id=r["segment_id"], route_id=None, score=r["total_rank"],
-            demand=r["demand_volume"], questions=r["questions"] or 0, said=r["said"] or 0,
-            place=r["canonical_place"], action=r["canonical_action"], demand_market=r["demand_market"],
-        )
-        for r in rows
-    ]
+        kept = await _segments_with_seed(tenant_id, conn, rows, {str(t) for t in tour_ids})
+    if unseeded_out is not None:
+        kept_ids = {r["segment_id"] for r in kept}
+        unseeded_out.extend(_candidate_of(r) for r in rows if r["segment_id"] not in kept_ids)
+    return [_candidate_of(r) for r in kept]
 
 
 async def _segments_with_seed(tenant_id: UUID, conn, rows: list, tour_ids: set[str]) -> list:
@@ -562,6 +583,7 @@ def _choose_slate(
     max_channels_per_place: int | None = MAX_CHANNELS_PER_PLACE,
     held: Optional[dict[str, "HeldSubjects"]] = None,
     thin: Optional[dict[str, frozenset[str]]] = None,
+    cover: Optional[dict[str, frozenset[str]]] = None,
 ) -> dict[str, list[tuple[Candidate, dict]]]:
     """Port of the origin's `choose()` (aa-social-media `stages/slate.py`, Gap B 2026-09-02),
     run over every enabled Channel of one tenant's Slate at once (AA-840).
@@ -598,6 +620,12 @@ def _choose_slate(
     the next place gets the seat. A Blog piece is about its Subject's own moment (walk_focus), and a thin one could only
     be padded or written about the other moments of its Route.
 
+    **Every adopted tour first** (AA-1081, `cover_each_tour` Channels — Blog): `cover[channel]` holds the tenant's tours
+    with no Subject on that Channel yet. Before the round robin, the Channel's queue (Bar-cleared, Debate-flagged last,
+    rank order) is walked once and the first candidate that is on a tour still uncovered takes a seat, under every rule
+    above; it covers each tour it is on. A tour with a free candidate thus gets at least one Subject, and its seat
+    counts against `max_channels_per_place` before the later Channels take the place. `cover` None = no such pass.
+
     Deterministic: same inputs, same output. Returns `{channel: [(candidate, cleared_bar_reason)]}`
     for every Channel in `channels` — exactly what should be `INSERT`ed as `proposed` rows.
     """
@@ -617,43 +645,62 @@ def _choose_slate(
     cursor = {channel: 0 for channel in channels}
     places_in_channel: dict[str, set[str]] = {channel: set() for channel in channels}
     hubs_in_channel: dict[str, dict[str, int]] = {channel: {} for channel in channels}
+    seated: dict[str, set[str]] = {channel: set() for channel in channels}
     channels_per_place: dict[str, int] = {}
+
+    def admit(channel: str, candidate: Candidate, reason: dict) -> bool:
+        """Seat the candidate on the Channel when every rule allows it, and record the seat. Every refusal is final
+        for this Channel (place / hub counts only ever grow), so the round robin's cursor never looks back."""
+        key = candidate.segment_id or candidate.route_id or ""
+        if key in seated[channel]:
+            return False
+        held_here = (held or {}).get(channel)
+        if held_here is not None and held_here.holds(candidate):
+            return False
+        if candidate.segment_id and candidate.segment_id in ((thin or {}).get(channel) or frozenset()):
+            return False
+        place = candidate.place
+        if place is not None:
+            if place in places_in_channel[channel]:
+                return False
+            if max_channels_per_place is not None and channels_per_place.get(place, 0) >= max_channels_per_place:
+                return False
+        most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
+        hub_key = _hub_key(candidate, hub_of)
+        taken = hubs_in_channel[channel]
+        if most_per_hub is not None and hub_key is not None:
+            if taken.get(hub_key, 0) >= most_per_hub:
+                return False
+            taken[hub_key] = taken.get(hub_key, 0) + 1
+        if place is not None:
+            places_in_channel[channel].add(place)
+            channels_per_place[place] = channels_per_place.get(place, 0) + 1
+        seated[channel].add(key)
+        chosen[channel].append((candidate, reason))
+        return True
+
+    # AA-1081 — every adopted tour first, on the `cover_each_tour` Channels.
+    for channel in channels:
+        need = set((cover or {}).get(channel) or ())
+        if not need or not CHANNEL_BARS[channel].get("cover_each_tour"):
+            continue
+        for candidate, reason in queues[channel]:
+            if not need:
+                break
+            if need.intersection(candidate.tour_ids) and admit(channel, candidate, reason):
+                need.difference_update(candidate.tour_ids)
 
     progressed = True
     while progressed:
         progressed = False
         for channel in channels:
-            most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
-            queue, taken = queues[channel], hubs_in_channel[channel]
-            held_here = (held or {}).get(channel)
-            thin_here = (thin or {}).get(channel) or frozenset()
-            # Every skip below is final for this Channel (place/hub counts only ever grow), so the
-            # cursor never needs to look back.
+            queue = queues[channel]
             while cursor[channel] < len(queue):
                 candidate, reason = queue[cursor[channel]]
                 cursor[channel] += 1
-                place = candidate.place
-                if held_here is not None and held_here.holds(candidate):
-                    continue
-                if candidate.segment_id and candidate.segment_id in thin_here:
-                    continue
-                if place is not None:
-                    if place in places_in_channel[channel]:
-                        continue
-                    if (max_channels_per_place is not None
-                            and channels_per_place.get(place, 0) >= max_channels_per_place):
-                        continue
-                hub_key = _hub_key(candidate, hub_of)
-                if most_per_hub is not None and hub_key is not None:
-                    if taken.get(hub_key, 0) >= most_per_hub:
-                        continue
-                    taken[hub_key] = taken.get(hub_key, 0) + 1
-                if place is not None:
-                    places_in_channel[channel].add(place)
-                    channels_per_place[place] = channels_per_place.get(place, 0) + 1
-                chosen[channel].append((candidate, reason))
-                progressed = True
-                break
+                if admit(channel, candidate, reason):
+                    progressed = True
+                    break
     return chosen
 
 
@@ -665,6 +712,135 @@ def _choose(
     if CHANNEL_BARS[channel]["grain"] == "route":
         return _choose_slate([channel], [], candidates, hub_of)[channel]
     return _choose_slate([channel], candidates, [], hub_of)[channel]
+
+
+# AA-1081 — why an adopted tour has no topic on a `cover_each_tour` Channel (Blog), in the order they are tested. Typed
+# codes only: the tenant Slate read returns the code (`tenant_blog_topics`), the Partner web says what it means for the
+# agency (never "bar", "Debate", a score or a gate). The per-tour counts behind it stay in the job result (admin).
+NO_TOPIC_NOT_READY = "not_ready"                    # no ranked moment of the tour in the tenant's markets yet
+NO_TOPIC_LOW_INTEREST = "low_search_interest"       # no moment clears the Channel's demand / question Bar
+NO_TOPIC_NO_PLACE_MATCH = "no_place_match"          # moments clear it, none has a seed atom on the tenant's tours
+NO_TOPIC_SEED_TOO_THIN = "seed_too_thin"            # every free moment's seed is too thin for a blog article
+NO_TOPIC_NOT_A_FIT = "no_fitting_topic"             # every free moment was dropped by Debate (cut mode only)
+NO_TOPIC_PLACES_COVERED = "places_covered"          # its places already have a topic or an article on the Channel
+NO_TOPIC_REASONS = (NO_TOPIC_NOT_READY, NO_TOPIC_LOW_INTEREST, NO_TOPIC_NO_PLACE_MATCH, NO_TOPIC_SEED_TOO_THIN,
+                    NO_TOPIC_NOT_A_FIT, NO_TOPIC_PLACES_COVERED)
+
+
+def _no_topic_reason(channel: str, seeded: list[Candidate], unseeded: list[Candidate], dropped: list[Candidate],
+                     held: Optional[HeldSubjects], short_or_thin: frozenset[str]) -> tuple[str, dict]:
+    """The reason one tour has no topic on `channel`, from its candidates (each list already narrowed to the tour):
+    `seeded` = with a seed atom and kept by Debate, `unseeded` = no seed atom, `dropped` = removed by Debate (cut
+    mode). Returns (code, admin counts). Pure."""
+    def clears(c: Candidate) -> bool:
+        return _clears_bar(channel, c)[0]
+
+    cleared = [c for c in seeded + dropped if clears(c)]
+    non_held = [c for c in cleared if not (held is not None and held.holds(c))]
+    thin = [c for c in non_held if c.segment_id in short_or_thin]
+    cut_ids = {c.segment_id for c in dropped}
+    cut = [c for c in non_held if c.segment_id in cut_ids and c not in thin]
+    free = [c for c in non_held if c not in thin and c not in cut]
+    detail = {"segments": len(seeded) + len(unseeded) + len(dropped), "cleared": len(cleared),
+              "unseeded_cleared": sum(1 for c in unseeded if clears(c)), "held": len(cleared) - len(non_held),
+              "thin": len(thin), "debate_dropped": len(cut), "free": len(free)}
+    if not detail["segments"]:
+        return NO_TOPIC_NOT_READY, detail
+    if not cleared and not detail["unseeded_cleared"]:
+        return NO_TOPIC_LOW_INTEREST, detail
+    if not cleared:
+        return NO_TOPIC_NO_PLACE_MATCH, detail
+    if free:
+        return NO_TOPIC_PLACES_COVERED, detail       # a free moment lost its seat: its place has a topic already
+    if thin:
+        return NO_TOPIC_SEED_TOO_THIN, detail
+    if cut:
+        return NO_TOPIC_NOT_A_FIT, detail
+    return NO_TOPIC_PLACES_COVERED, detail           # every cleared place is picked / used / dismissed already
+
+
+def blog_tour_coverage(channel: str, tours: dict[str, Optional[str]], segments: list[Candidate],
+                       unseeded: list[Candidate], dropped: list[Candidate], chosen: list[tuple[Candidate, dict]],
+                       held: Optional[HeldSubjects], short_or_thin: frozenset[str],
+                       held_topics: dict[str, int]) -> list[dict]:
+    """AA-1081 — per adopted tour ({tour_id: catalog name}): how many topics it has on `channel` after this proposal
+    (proposed now + picked / used before, `held_topics`) and, when none, the typed reason (`NO_TOPIC_REASONS`) with the
+    admin counts. A topic counts for every tour its Segment is on. Tours without a topic first, then by name. Pure."""
+    out = []
+    for tour_id, name in tours.items():
+        on = [c for c, _r in chosen if tour_id in c.tour_ids]
+        topics = len(on) + int(held_topics.get(tour_id, 0))
+        row = {"tour_id": tour_id, "tour_name": name, "topics": topics, "reason": None}
+        if not topics:
+            reason, detail = _no_topic_reason(
+                channel, [c for c in segments if tour_id in c.tour_ids], [c for c in unseeded if tour_id in c.tour_ids],
+                [c for c in dropped if tour_id in c.tour_ids], held, short_or_thin)
+            row.update(reason=reason, detail=detail)
+        out.append(row)
+    return sorted(out, key=lambda r: (r["topics"] > 0, (r["tour_name"] or "").casefold(), r["tour_id"]))
+
+
+def tenant_blog_topics(result: Optional[dict]) -> Optional[dict]:
+    """AA-1081 — the tenant's view of a proposal's `blog_coverage` (for `GET /v1/slate`): per adopted tour its id, its
+    catalog name, its Blog topic count and the typed no-topic reason; never the admin counts. None when the proposal
+    has no coverage (before AA-1081, Blog switched off, or the coverage reads failed). Pure."""
+    cov = (result or {}).get("blog_coverage")
+    if not isinstance(cov, dict) or cov.get("status") != "ok":
+        return None
+    tours = []
+    for t in cov.get("tours") or []:
+        if not isinstance(t, dict) or not t.get("tour_id"):
+            continue
+        topics = int(t.get("topics") or 0)
+        reason = t.get("reason") if not topics and t.get("reason") in NO_TOPIC_REASONS else None
+        tours.append({"tour_id": str(t["tour_id"]), "tour_name": t.get("tour_name"), "topics": topics,
+                      "reason": reason})
+    return {"tours": tours, "total": len(tours), "with_topic": sum(1 for t in tours if t["topics"])}
+
+
+# AA-1081 — the tenant's adopted tours with their catalog name (the coverage list).
+_TENANT_TOURS_SQL = """
+    SELECT DISTINCT pt.tour_id::text AS tour_id, pt.aa_name
+    FROM gold_aa_internal.tenant_tour_versions ttv
+    JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+    WHERE ttv.tenant_id = $1::uuid
+"""
+
+# AA-1081 — per tour, the tenant's picked / used Subjects on one Channel (they count as a topic for that tour): a
+# Segment Subject on every tour with a current ranking row of its Segment (or of the id it merged into, one hop), a
+# Route Subject (Blog before S271) on its Route's tour. A dismissed (cut) Subject is no topic.
+_HELD_TOPIC_TOURS_SQL = """
+    SELECT x.tour_id, count(DISTINCT x.subject_id)::int AS n FROM (
+        SELECT s.subject_id, ar.tour_id::text AS tour_id
+        FROM acp_shared.subject s
+        LEFT JOIN acp_contract.atom_segment_alias a ON a.segment_id_old = s.segment_id
+        JOIN acp_contract.atom_ranking ar
+          ON ar.segment_id IN (s.segment_id, a.segment_id_canonical) AND ar.superseded_at IS NULL
+        WHERE s.tenant_id = $1::uuid AND s.channel = $2 AND s.state IN ('picked', 'used')
+          AND ar.tour_id = ANY($3::uuid[])
+        UNION ALL
+        SELECT s.subject_id, r.tour_id::text
+        FROM acp_shared.subject s
+        JOIN acp_contract.route r ON r.route_id = s.route_id
+        WHERE s.tenant_id = $1::uuid AND s.channel = $2 AND s.state IN ('picked', 'used')
+          AND r.tour_id = ANY($3::uuid[])
+    ) x
+    GROUP BY x.tour_id
+"""
+
+
+async def _coverage_inputs(tenant_id: UUID, conn, channels: list[str]) -> Optional[tuple[dict, dict]]:
+    """AA-1081 — ({tour_id: name} of the tenant's tours, {channel: {tour_id: picked/used topics}}) for the
+    `cover_each_tour` Channels among `channels`; None when no such Channel is enabled."""
+    cover_channels = [c for c in channels if CHANNEL_BARS[c].get("cover_each_tour")]
+    if not cover_channels:
+        return None
+    tours = {r["tour_id"]: r["aa_name"] for r in await conn.fetch(_TENANT_TOURS_SQL, tenant_id)}
+    held: dict[str, dict[str, int]] = {}
+    for channel in cover_channels:
+        rows = await conn.fetch(_HELD_TOPIC_TOURS_SQL, tenant_id, channel, list(tours)) if tours else []
+        held[channel] = {r["tour_id"]: r["n"] for r in rows}
+    return tours, held
 
 
 async def propose_slate(tenant_id: UUID, pool) -> dict:
@@ -688,7 +864,9 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         # sent through Debate (Debate's brand-fit cut is a paid call on a cache miss).
         enabled_channels = await _tenant_enabled_channels(tenant_id, _mkt_conn)
     grains = {CHANNEL_BARS[channel]["grain"] for channel in enabled_channels}
-    segments = await _fetch_segment_candidates(tenant_id, pool, markets) if "segment" in grains else []
+    unseeded: list[Candidate] = []
+    segments = await _fetch_segment_candidates(tenant_id, pool, markets, unseeded_out=unseeded) \
+        if "segment" in grains else []
     routes = await _fetch_route_candidates(tenant_id, pool, markets) if "route" in grains else []
     hub_of = await _fetch_segment_hub_map(tenant_id, pool) if "segment" in grains else {}
 
@@ -720,7 +898,23 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         held = await _fetch_held_subjects(
             tenant_id, conn, [c for c in enabled_channels if CHANNEL_BARS[c]["one_piece_per_place"]])
         thin = await _fetch_thin_walk_segments(tenant_id, conn, segments, enabled_channels)
-        chosen = _choose_slate(enabled_channels, segments, routes, hub_of, held=held, thin=thin)
+        # AA-1081 — the Blog minimum seed (off unless T7_BLOG_MIN_SEED_WORDS is set): a short seed is skipped like a
+        # thin one on that Channel and stays on the other Channels' queues.
+        short = await _fetch_short_blog_seeds(tenant_id, conn, segments, enabled_channels, held, thin)
+        skip = {c: frozenset((thin or {}).get(c, frozenset()) | short.get(c, frozenset()))
+                for c in set(thin or {}) | set(short)}
+        # AA-1081 — every adopted tour gets a Blog topic when it has a free candidate (cover pass), and a typed reason
+        # when it has none. The coverage reads are advisory: if they fail the Slate is proposed as before.
+        coverage_in = None
+        try:
+            coverage_in = await _coverage_inputs(tenant_id, conn, enabled_channels)
+        except Exception as exc:
+            logger.warning("slate_blog_coverage_failed", tenant_id=str(tenant_id), error=str(exc))
+        cover = None
+        if coverage_in is not None:
+            tours, held_topics = coverage_in
+            cover = {c: frozenset(t for t in tours if not held_topics[c].get(t)) for c in held_topics}
+        chosen = _choose_slate(enabled_channels, segments, routes, hub_of, held=held, thin=skip, cover=cover)
         async with conn.transaction():
             held_via_alias = await _segments_held_via_alias(tenant_id, conn)
             live_segment_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
@@ -776,6 +970,21 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
                       AND NOT (route_id = ANY($3::text[]))
                 """, tenant_id, channel, list(live_route_ids[channel]))
 
+    blog_coverage: dict = {"status": "off"}
+    if "blog" in enabled_channels:
+        if coverage_in is None:
+            blog_coverage = {"status": "unavailable"}
+        else:
+            kept_ids = {c.segment_id for c in segments}   # Debate cut mode drops; rank mode keeps every one
+            blog_coverage = {
+                "status": "ok", "min_seed_words": blog_seed.min_seed_words(),
+                "short_seed": len(short.get("blog", ())),
+                "tours": blog_tour_coverage(
+                    "blog", coverage_in[0], segments, unseeded,
+                    [c for c in segments_in if c.segment_id not in kept_ids], chosen["blog"],
+                    held.get("blog"), skip.get("blog", frozenset()), coverage_in[1]["blog"]),
+            }
+
     # AA-629 / AA-1080 — every declared country DFS_LOCATION_MAP doesn't know (empty when none or nothing declared).
     # AA-840 — `channels` / `proposed_per_channel` make the job result show what was planned for.
     return {
@@ -788,6 +997,9 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         # AA-1079: Debate's flags per pool (rank mode: kept and ordered last; cut mode: dropped). Admin-only job result.
         "debate": {"mode": mode, "segments": debate_report(mode, segments_in, segments),
                    "routes": debate_report(mode, routes_in, routes)},
+        # AA-1081: per adopted tour, its Blog topics and the typed no-topic reason (the tenant read shows a subset,
+        # tenant_blog_topics); `detail` counts are admin only.
+        "blog_coverage": blog_coverage,
     }
 
 
@@ -869,6 +1081,49 @@ async def _fetch_thin_walk_segments(tenant_id: UUID, conn, segments: list[Candid
         logger.info("slate_walk_thin_skipped", tenant_id=str(tenant_id), skipped=len(thin),
                     segment_ids=sorted(thin)[:50])
     return {channel: frozenset(thin) for channel in walk_channels}
+
+
+async def _fetch_short_blog_seeds(tenant_id: UUID, conn, segments: list[Candidate], channels: list[str],
+                                  held: dict[str, HeldSubjects], thin: dict[str, frozenset[str]],
+                                  ) -> dict[str, frozenset[str]]:
+    """AA-1081 (AA-1077 memo, option C) — {channel: Segment ids} for the `takes_route` Channels (Blog) among
+    `channels`: the Bar-clearing, not held, not thin candidates whose Blog seed (`blog_seed.blog_seed_words`: the seed
+    atom's seed + the walk the pick would resolve) is under `T7_BLOG_MIN_SEED_WORDS`. Off (the default, the setting
+    unset or 0) -> {} and no read. A candidate whose seed cannot be measured is kept (logged), like Debate's errors."""
+    minimum = blog_seed.min_seed_words()
+    walk_channels = [c for c in channels if CHANNEL_BARS[c]["takes_route"]]
+    if minimum <= 0 or not walk_channels:
+        return {}
+    out: dict[str, frozenset[str]] = {}
+    tour_ids = {str(t) for t in await _tenant_tour_ids(tenant_id, conn)}
+    words_of: dict[str, int] = {}
+    for channel in walk_channels:
+        held_here, thin_here = held.get(channel), thin.get(channel) or frozenset()
+        todo = [c for c in segments if c.segment_id and _clears_bar(channel, c)[0]
+                and c.segment_id not in thin_here and not (held_here is not None and held_here.holds(c))
+                and c.segment_id not in words_of]
+        if todo:
+            members = await load_segment_members(conn, [c.segment_id for c in todo], str(tenant_id))
+            alias_cards = await load_alias_cards(
+                conn, [c.place for c in todo] + [m.place for ms in members.values() for m in ms])
+            for c in todo:
+                seg_members = members.get(c.segment_id, [])
+                member, _skip = choose_representative(c.place, seg_members, tenant_tour_ids=tour_ids,
+                                                      alias_cards=alias_cards)
+                if member is None:
+                    continue
+                try:
+                    atom_id, tour_id, walk = await _segment_walk(conn, tenant_id, c.segment_id, c.place, member,
+                                                                 seg_members, tour_ids, alias_cards)
+                    words_of[c.segment_id] = await blog_seed.blog_seed_words(conn, tenant_id, atom_id, tour_id, walk)
+                except Exception as exc:
+                    logger.warning("slate_blog_seed_measure_failed", tenant_id=str(tenant_id),
+                                   segment_id=c.segment_id, error=str(exc))
+        out[channel] = frozenset(s for s, w in words_of.items() if w < minimum)
+    short_all = set().union(*out.values()) if out else set()
+    logger.info("slate_blog_short_seed_skipped", tenant_id=str(tenant_id), minimum=minimum,
+                measured=len(words_of), skipped=len(short_all), segment_ids=sorted(short_all)[:50])
+    return out
 
 
 T7_SLATE_KIND = "t7_slate"
@@ -1367,4 +1622,5 @@ __all__ = [
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",
     "BAR_CLEARED", "BAR_MISS_REASONS", "bar_misses", "bar_status", "bar_status_counts",
+    "NO_TOPIC_REASONS", "blog_tour_coverage", "tenant_blog_topics",
 ]
