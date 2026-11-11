@@ -14,6 +14,8 @@ the job itself ends without success (on_terminal), so the portal's Retry shows.
 """
 from __future__ import annotations
 
+import re
+from typing import Optional
 from uuid import UUID
 
 import structlog
@@ -21,7 +23,7 @@ import structlog
 from services.acp_content_writing import service
 from services.acp_shared.writing_progress import WritingProgress
 from services.quality import route_guard
-from shared.jobs.registry import JobContext, NonRetryable, job_kind
+from shared.jobs.registry import JobContext, NonRetryable, OutputFailed, job_kind
 from shared.llm_client import stream_sink
 from shared.llm_client.errors import is_stage_switch_hold, stage_disabled_in
 from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
@@ -29,6 +31,10 @@ from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, i
 logger = structlog.get_logger()
 
 KIND = "t9_write"
+# AA-1078: the typed error / result code of a t9_write job whose piece the writer stored as 'failed' (the job used to
+# end succeeded with no error over a failed piece: piece e16fbbfb, S275 / S276 audit §4.5.8).
+PIECE_FAILED = "t9_piece_failed"
+_EXC_CLASS_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]{0,79}):")
 
 
 # AA-637 — tenant-facing steps for a T9 write (plain language: no gate names, no model names).
@@ -99,6 +105,33 @@ async def mark_piece_failed(pool, job_row: dict) -> None:
                    job_status=job_row.get("status"), error=(job_row.get("error") or "")[:300])
 
 
+def failure_class(held_reason: Optional[str]) -> str:
+    """The exception class a failed piece's held_reason starts with (``run_write_background`` writes
+    ``f"{type(exc).__name__}: {exc}"``), else ``unknown``."""
+    m = _EXC_CLASS_RE.match(str(held_reason or "").strip())
+    return m.group(1) if m else "unknown"
+
+
+async def _fail_on_failed_piece(ctx: JobContext, piece_id, conn_or_pool, extra: dict) -> None:
+    """AA-1078: a piece stored as 'failed' ends the job failed, at once (no retry: the piece is no longer 'processing',
+    so another attempt would only skip it; the tenant's Retry writes it again), with the typed error
+    ``t9_piece_failed: <exception class>: <reason>`` and the piece's status and class in job.result."""
+    held = None
+    try:
+        async with conn_or_pool.acquire() as conn:
+            held = await conn.fetchval(
+                "SELECT held_reason FROM acp_shared.content_piece WHERE piece_id = $1::uuid", piece_id)
+    except Exception as e:  # noqa: BLE001 — the typed failure is raised even without its reason
+        logger.warning("t9_write_failed_reason_read_failed", piece_id=str(piece_id), error=str(e)[:200])
+    cls = failure_class(held)
+    reason = str(held or "").strip()
+    if reason.startswith(f"{cls}:"):
+        reason = reason[len(cls) + 1:].strip()
+    ctx.set_result({"piece_id": str(piece_id), "piece_status": "failed", "failure_code": PIECE_FAILED,
+                    "error_class": cls, **extra})
+    raise OutputFailed(PIECE_FAILED, f"{cls}: {reason[:300]}" if reason else cls)
+
+
 # Live T9 write ≈ 190 s (S201).
 @job_kind(KIND, concurrency=4, max_attempts=2, on_terminal=mark_piece_failed, expected_seconds=600)
 async def run(ctx: JobContext) -> dict:
@@ -113,6 +146,8 @@ async def run(ctx: JobContext) -> dict:
             "SELECT status FROM acp_shared.content_piece WHERE piece_id = $1::uuid", piece_id)
     if status is None:
         raise NonRetryable(f"piece {piece_id} not found")
+    if status == "failed":      # failed by an earlier attempt (or its on_terminal): never a green job over it
+        await _fail_on_failed_piece(ctx, piece_id, pool, {"skipped": True})
     if status != "processing":  # finished by an earlier attempt before the process died
         return {"skipped": True, "piece_status": status}
 
@@ -131,5 +166,7 @@ async def run(ctx: JobContext) -> dict:
     async with pool.acquire() as conn:
         final = await conn.fetchval(
             "SELECT status FROM acp_shared.content_piece WHERE piece_id = $1::uuid", piece_id)
-    await ctx.progress(phase="done")
+    await ctx.progress(phase="done", piece_status=final)
+    if final == "failed":
+        await _fail_on_failed_piece(ctx, piece_id, pool, {"trial_flags": trial} if trial else {})
     return {"piece_id": piece_id, "piece_status": final, **({"trial_flags": trial} if trial else {})}

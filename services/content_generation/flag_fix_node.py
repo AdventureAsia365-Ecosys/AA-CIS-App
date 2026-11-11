@@ -11,7 +11,8 @@ from json_repair import repair_json
 
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
+from shared.llm_client import token_floor
+from shared.llm_client.call_log import billed_fields, bind_task, record_call_sync, record_unusable_sync
 from .seo_meta_utils import (best_meta_candidate, meta_in_band, meta_complete_sentence,
                              meta_has_forbidden, fit_seo_meta_final, fit_seo_title,
                              SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX)
@@ -238,6 +239,21 @@ def fix_user_prompt_head(state: dict) -> str:
 _META_REREPAIR_MAX_ATTEMPTS = 3
 
 
+# AA-1078: the task of each call on the flag_fix stages (quality_signal.task, call_log.bind_task): the field rewrite
+# below, the meta re-repair loop, and the grounding sentence repair (grounding.repair) share one stage name.
+TASK_FIELD_FIX = "field_fix"
+TASK_META_REREPAIR = "meta_rerepair"
+
+
+def _fix_lost(state: dict, reason: str, fields, resp=None) -> dict:
+    """AA-1078: the ``fix_not_applied`` record of a lost model fix (a reply cut at its token ceiling, or an error)."""
+    out = {"reason": reason, "stage": stage_for(state, "s1_flag_fix"), "fields": sorted(fields or [])}
+    stop = getattr(resp, "stop_reason", None) if resp is not None else None
+    if stop:
+        out["stop_reason"] = str(stop)[:32]
+    return out
+
+
 def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent_clue: str = "", forbidden=None,
                    stage: str = "s1_flag_fix", system_prompt: str = FIX_SYSTEM) -> str:
     """AA-205 / AA-608: bounded RETRY loop that rewrites seo_meta until it lands in
@@ -276,9 +292,10 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                    + json.dumps(intent_clue) + "\n") if intent_clue else "")
                 + "- Return JSON: {\"seo_meta\": \"...\"}"
             )
-            resp = LLMClient().generate(LLMRequest(
-                system_prompt=system_prompt, user_prompt=prompt, model_tier=model_tier, stage=stage,
-            ))
+            with bind_task(TASK_META_REREPAIR):     # AA-1078: the gateway's own rows of this call carry it too
+                resp = LLMClient().generate(LLMRequest(
+                    system_prompt=system_prompt, user_prompt=prompt, model_tier=model_tier, stage=stage,
+                ))
             raw = resp.content.strip()
             fence = chr(96) * 3
             if raw[:3] == fence:
@@ -295,7 +312,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                 tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
                 cost_usd=resp.cost_usd,
                 quality_signal={"meta_landed_in_band": landed, "candidate_len": len(guarded),
-                                "attempt": attempt},
+                                "attempt": attempt, "task": TASK_META_REREPAIR},
                 stop_reason=getattr(resp, "stop_reason", None),
                 account=getattr(resp, "satellite_account", None),
                 fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
@@ -313,7 +330,8 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
             logger.warning("meta_rerepair_attempt_failed_graceful", attempt=attempt, error=str(e))
             if not logged:
                 record_unusable_sync(resp, stage=stage, role="writer", error=e,
-                                     quality_signal_extra={"attempt": attempt, "mode": "meta_rerepair"})
+                                     quality_signal_extra={"attempt": attempt, "mode": "meta_rerepair",
+                                                           "task": TASK_META_REREPAIR})
             break
     logger.info("meta_rerepair_exhausted", attempts=_META_REREPAIR_MAX_ATTEMPTS,
                 final_len=len(best))
@@ -490,6 +508,7 @@ def flag_fix_node(state: dict) -> dict:
         }
 
     resp, logged = None, False  # AA-927: the fix call's row is written even when parsing it fails
+    fix_keys: set = set()
     try:
         fix_keys = _build_fix_keys(state)
 
@@ -627,7 +646,33 @@ Keep all other fields unchanged."""
             model_tier=state.get("model_tier"),
             stage=stage_for(state, "s1_flag_fix"),  # AA-763: t2_flag_fix on a tenant rewrite
         )
-        resp = llm_client.generate(request)
+        with bind_task(TASK_FIELD_FIX):     # AA-1078: the gateway's own rows of this call (cut, retry) carry it too
+            resp = llm_client.generate(request)
+
+        if token_floor.is_cut_reply(resp):
+            # AA-1078: a reply cut at its token ceiling (stop_reason max_tokens / length) after the gateway's one
+            # retry: its JSON is partial, so a salvage would apply a field cut short (or a half fix). Nothing of it is
+            # applied (like a failed call); the run records the lost fix instead of passing it as fixed.
+            record_call_sync(
+                stage=stage_for(state, "s1_flag_fix"), role="writer", model=resp.model_used,
+                tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+                cost_usd=resp.cost_usd, tenant_id=state.get("tenant_id"),
+                quality_signal={"fields_fixed": 0, "fields_requested": sorted(fix_keys), "task": TASK_FIELD_FIX,
+                                "fix_not_applied": True},
+                stop_reason=getattr(resp, "stop_reason", None),
+                account=getattr(resp, "satellite_account", None),
+                fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
+            )
+            logger.warning("flag_fix_reply_cut_not_applied", fields=sorted(fix_keys),
+                           stop_reason=getattr(resp, "stop_reason", None),
+                           tokens_out=getattr(resp, "output_tokens", None))
+            return {
+                **state,
+                "cost_usd":         state.get("cost_usd", 0) + resp.cost_usd + extra_cost,
+                "fix_pass_applied": False,
+                "fix_pass_fields":  [],
+                "fix_not_applied":  _fix_lost(state, "reply_cut", fix_keys, resp),
+            }
 
         raw = resp.content.strip()
         if raw.startswith("```"):
@@ -656,7 +701,8 @@ Keep all other fields unchanged."""
             stage=stage_for(state, "s1_flag_fix"), role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd, tenant_id=state.get("tenant_id"),  # AA-620
-            quality_signal={"fields_fixed": len(fix_keys), "fields_requested": sorted(fix_keys)},
+            quality_signal={"fields_fixed": len(fix_keys), "fields_requested": sorted(fix_keys),
+                            "task": TASK_FIELD_FIX},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
@@ -742,11 +788,14 @@ Keep all other fields unchanged."""
         logger.warning("flag_fix_failed_graceful", error=str(e))
         if not logged:
             record_unusable_sync(resp, stage=stage_for(state, "s1_flag_fix"), role="writer", error=e,
-                                 tenant_id=state.get("tenant_id"))
+                                 tenant_id=state.get("tenant_id"), quality_signal_extra={"task": TASK_FIELD_FIX})
+        # AA-1078: the fix is lost; a route that ended on cut replies (every rung at its ceiling) says so
+        cut = token_floor.is_cut_failure(e) or token_floor.route_ended_on_cut(e)
         return {
             **state,
             "fix_pass_applied": False,
             "fix_pass_fields":  [],
+            "fix_not_applied":  _fix_lost(state, "reply_cut" if cut else "error", fix_keys, resp),
         }
 
 

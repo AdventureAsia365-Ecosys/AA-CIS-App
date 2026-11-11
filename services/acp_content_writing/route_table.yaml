@@ -83,9 +83,9 @@ t2:
 # pre-audit, grounding, the day oracle and the degraded marker can emit); the lint (route_table.s1_coverage_errors,
 # tests/unit/quality/test_aa1049_route_table.py) requires exactly that set. Actions, as the S1 path runs them
 # (services/content_generation/s1_train.py):
-#   repair_sentence     the grounding node's one source-aware sentence repair (grounding.repair_and_recheck, the only
-#                       model repair left on the path); no second round;
-#   cut                 a code delete of the offending sentence / item when its field keeps the rest (local_fix);
+#   cut                 a code delete of the offending sentence / item when its field keeps the rest (local_fix; for the
+#                       grounding codes, grounding.cut_and_recheck in the grounding node, then a re-check). S277: no
+#                       S1 action makes a model call (no repair_sentence: the path makes no s1_flag_fix call);
 #   regenerate_section  a deterministic section step: forbidden strip, SEO title fit, meta fit then the code meta
 #                       template (local_fix), the name normaliser (final_contract_node);
 #   rewrite             one redraft by the writer while drafts remain (route_after_judge, 2 drafts in total);
@@ -97,8 +97,8 @@ s1:
   default: hold
   rows:
     # fact fidelity
-    - {code: UNSUPPORTED_NUMBER, action: repair_sentence}
-    - {code: UNSUPPORTED_CLAIM, action: repair_sentence}
+    - {code: UNSUPPORTED_NUMBER, action: cut}
+    - {code: UNSUPPORTED_CLAIM, action: cut}
     - {code: ITINERARY_MEAL_TIME_INVENTED, action: cut}
     - {code: HIGHLIGHTS_OPTIONAL_LANGUAGE, action: cut}
     - {code: NUMBER_NOT_IN_SOURCE, action: hold}

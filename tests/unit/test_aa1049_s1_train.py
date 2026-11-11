@@ -196,6 +196,8 @@ def test_s1_lint_catches_a_missing_an_extra_and_a_doubled_row():
 
 @pytest.mark.parametrize("row, needle", [
     ({"code": "META_CUT", "action": "delete"}, "action must be one of"),
+    # S277: no model sentence repair on the S1 path (the grounding codes are cut rows)
+    ({"code": "UNSUPPORTED_NUMBER", "action": "repair_sentence"}, "action must be one of"),
     ({"code": "META_CUT", "action": "cut", "parse": "x"}, "unknown keys"),
     ({"action": "cut"}, "a code is required"),
 ])
@@ -268,10 +270,48 @@ def test_on_dropped_day_twice_goes_to_the_hitl_exit_after_two_drafts(monkeypatch
     assert "ITINERARY_DAY_COUNT_MISMATCH" in r["failure_codes"]
 
 
-def test_on_grounding_keeps_one_source_aware_repair_and_no_second_round():
-    t = h.run("number", env=ON)
-    assert [c[0] for c in t["llm"]].count("s1_flag_fix") == 1          # the grounding sentence repair only
-    assert "412" not in t["result"]["generated"]["summary"]
+def test_on_grounding_cuts_the_unsupported_sentence_by_code_without_a_model_call():
+    """S277 (the S276 smoke's one s1_flag_fix call on the train): the grounding node's sentence repair is a code cut
+    on the train's path, so no s1_flag_fix call is left. Fails on 9539e953 (one grounding repair call)."""
+    t = h.run("number", env=ON, extra_keys=("s1_train",))
+    assert "s1_flag_fix" not in [c[0] for c in t["llm"]] and t["unexpected"] == []
+    r = t["result"]
+    assert "412" not in r["generated"]["summary"]
+    assert "Corran Ridge to the ridge chapel" in r["generated"]["summary"]      # the rest of the field stays
+    assert r["grounding_violations"] == [] and r["grounding_repaired_fields"] == ["summary"] and r["publishable"]
+    assert r["s1_train"]["grounding"]["cut"] == [{"field": "summary", "code": "UNSUPPORTED_NUMBER", "day": None}]
+    assert GOLDEN["number"]["llm"] and "s1_flag_fix" in [c[0] for c in GOLDEN["number"]["llm"]]   # main repairs
+
+
+@pytest.mark.parametrize("name", sorted(h.SCENARIOS))
+def test_on_no_scenario_makes_an_s1_flag_fix_call(name):
+    """The S1 train's contract: with S1_CONTROL=contract no path of the A1 v2 graph reaches stage s1_flag_fix (the
+    flag_fix field rewrite, its _rerepair_meta loop or the grounding sentence repair)."""
+    t = h.run(name, env=ON)
+    assert "s1_flag_fix" not in [c[0] for c in t["llm"]]
+
+
+def test_grounding_cut_keeps_what_its_field_needs():
+    from services.content_generation import grounding as g
+    itin = ("Day 1 — Arrive\nArrive in Velmora at 412 metres. Walk along the canal.\nOvernight: Velmora 412.\n\n"
+            "Day 2 — Ridge\nWalk up to the 900 m ridge.")
+    gen = {"subtitle": "A walk of 412 steps.", "summary": "Three days. A town of 412 years.",
+           "highlights": ["One 412", "Two", "Three"], "itineraries": itin}
+    vio = [{"field": "subtitle", "sentence": "A walk of 412 steps.", "day": None, "code": "UNSUPPORTED_NUMBER"},
+           {"field": "summary", "sentence": "A town of 412 years.", "day": None, "code": "UNSUPPORTED_NUMBER"},
+           {"field": "highlights", "sentence": "One 412", "day": None, "code": "UNSUPPORTED_NUMBER"},
+           {"field": "itineraries", "sentence": "Arrive in Velmora at 412 metres.", "day": 1,
+            "code": "UNSUPPORTED_NUMBER"},
+           {"field": "itineraries", "sentence": "Overnight: Velmora 412.", "day": 1, "code": "UNSUPPORTED_NUMBER"},
+           {"field": "itineraries", "sentence": "Walk up to the 900 m ridge.", "day": 2, "code": "UNSUPPORTED_NUMBER"}]
+    out, fields, cut = g.cut_violations(gen, vio)
+    assert fields == ["itineraries", "summary"]
+    assert out["subtitle"] == gen["subtitle"]                       # its only sentence: kept for review
+    assert out["summary"] == "Three days."
+    assert out["highlights"] == gen["highlights"]                   # 3 items: none is cut
+    assert out["itineraries"] == ("Day 1 — Arrive\nWalk along the canal.\nOvernight: Velmora 412.\n\n"
+                                  "Day 2 — Ridge\nWalk up to the 900 m ridge.")   # fact line and day 2's only line stay
+    assert [c["field"] for c in cut] == ["summary", "itineraries"]
 
 
 def test_on_elephant_is_kept_for_a_human_with_no_edit():

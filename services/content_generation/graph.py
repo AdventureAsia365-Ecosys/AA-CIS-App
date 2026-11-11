@@ -473,6 +473,9 @@ class ContentState(TypedDict):
     # left), set only when S1_CONTROL=contract. Declared so LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it
     # on and generated_content.metadata.s1_train stores it. Never written with the switch off -> main's state.
     s1_train:               Optional[dict]
+    # AA-1078: flag_fix's model fix was lost ({reason: reply_cut | error, stage, fields}); set only then. Declared so
+    # LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it on and the T2 job does not report QA passed over it.
+    fix_not_applied:        Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {

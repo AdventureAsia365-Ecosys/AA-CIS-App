@@ -538,9 +538,37 @@ def _meter(stage, cost_usd) -> None:
         sink.append((str(stage), 0.0))
 
 
+# AA-1078 — which task of a multi-task stage the calls below run (flag_fix's stages run a field rewrite, the meta
+# re-repair loop and the grounding sentence repair under one stage name). Bound by the task's caller (``bind_task``),
+# same propagation as `_current_job_id`; every row written while bound (the caller's and the gateway's own attempt /
+# cut / billed-unusable rows) gets ``quality_signal.task`` unless it already names one. Unbound = the row unchanged.
+_current_task: ContextVar[Optional[str]] = ContextVar("llm_call_log_task", default=None)
+
+
+def current_task() -> Optional[str]:
+    return _current_task.get()
+
+
+@contextmanager
+def bind_task(task: Optional[str]) -> Iterator[None]:
+    token = _current_task.set(str(task)[:64] if task else None)
+    try:
+        yield
+    finally:
+        _current_task.reset(token)
+
+
+def _with_task(quality_signal: Optional[dict]) -> Optional[dict]:
+    task = _current_task.get()
+    if not task or (isinstance(quality_signal, dict) and "task" in quality_signal):
+        return quality_signal
+    return {**(quality_signal if isinstance(quality_signal, dict) else {}), "task": task}
+
+
 def _relabel(stage: str, tenant_id, quality_signal: Optional[dict], content_piece_id, angle_gate_request_id):
     """(stage, row tenant, quality_signal, piece, request) as the INSERT sends them: unchanged without an eval
-    label; relabelled to the eval stage (tenant / piece / request NULL) with one."""
+    label; relabelled to the eval stage (tenant / piece / request NULL) with one. AA-1078: plus the bound task."""
+    quality_signal = _with_task(quality_signal)
     label = _eval_label.get()
     if label is None:
         return stage, _row_tenant(tenant_id, stage), quality_signal, content_piece_id, angle_gate_request_id
