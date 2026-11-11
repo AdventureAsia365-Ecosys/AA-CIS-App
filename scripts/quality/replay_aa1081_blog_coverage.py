@@ -19,6 +19,10 @@ tenant: the candidates read and the seconds the reads took (the slate's read cos
     python -m scripts.quality.replay_aa1081_blog_coverage --tenant <uuid> [--tenant <uuid> ...]
     python -m scripts.quality.replay_aa1081_blog_coverage --all
 
+``scripts/`` is not in the api image (the Dockerfile copies api/ shared/ services/ worker/ only). On Dev, run it with
+the S3-mediated ECS exec: fetch the presigned file to /tmp, then ``cd /app && PYTHONPATH=/app python3 /tmp/replay.py
+--slug-prefix audit-`` (it imports ``services.*`` only).
+
 The DB login is ``DATABASE_URL`` (cis_app in the api container), ssl required unless ``REPLAY_DB_SSL=disable``; every
 session is ``default_transaction_read_only``. Output: one JSON document (ids, catalog tour names, counts; no text) on
 stdout between REPLAY-BEGIN / REPLAY-END, and at ``--out`` when given.
