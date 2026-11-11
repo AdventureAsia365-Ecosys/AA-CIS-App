@@ -9,10 +9,12 @@ The one intended difference: a word on the tenant's own forbidden list that is a
 is judged once now, by the lexicon gate (case f2b-2) — "no word judged twice" (AA-924 scope 3).
 """
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from services.acp_content_writing import length_contract as lc
 from services.acp_content_writing import quality_gates as qg
 from services.acp_content_writing import sentence_repair
 from services.acp_content_writing import service
@@ -24,6 +26,25 @@ FOLDED = {qr.F2_BANNED_PATTERNS, qr.F2_BRAND_FORBIDDEN, qr.F15_VOICE_WARN}
 # case → the legacy gate whose result changed on purpose (the word it judged is now the lexicon's only)
 INTENDED = {"f2b-2": qr.F2_PLATFORM_TRUTH}
 CASES = {c.case_id: c for c in fs.FAULT_CASES + fs.CLEAN_CASES}
+# AA-1077 — the blog F4 violation now names its side, words and target ('length_short: content is only N chars (about
+# W words), under the blog floor …' for 'content is only N chars — effectively empty'): what must stay is the side
+# and the number, so both sides compare F4 violations in that form (a declared wording change, not a routing one).
+_F4_NUM = re.compile(r"(\d+) chars")
+
+
+def _f4_form(v: str) -> str:
+    side, m = lc.violation_side(v), _F4_NUM.search(v)
+    return f"<F4 {side} {m.group(1)}>" if side and m else v
+
+
+def _f4_ledger(ledger: list) -> list:
+    return [{**g, "violations": [_f4_form(v) for v in g["violations"]]} if g.get("gate") == qr.F4_EXTREME_LENGTH
+            else g for g in ledger]
+
+
+def _f4_feedback(lines: list) -> list:
+    head = qr.F4_EXTREME_LENGTH + ": "
+    return [head + _f4_form(f[len(head):]) if f.startswith(head) else f for f in lines]
 
 
 def _route(plan):
@@ -51,7 +72,7 @@ def test_legacy_view_equals_the_pre_fold_ledger(case_id):
         assert not before["passed"] and after["passed"]
         assert [g for g in legacy if g["gate"] != gate] == [g for g in old["ledger"] if g["gate"] != gate]
     else:
-        assert legacy == old["ledger"]
+        assert _f4_ledger(legacy) == _f4_ledger(old["ledger"])
     assert not any(g["gate"] in FOLDED for g in out["gate_ledger"])
     assert out["passed"] == old["passed"]
     assert (out["first_failure"] or {}).get("gate") == old["first_failure"]
@@ -68,7 +89,7 @@ def test_legacy_view_equals_the_pre_fold_ledger(case_id):
         expected = FROZEN["repair_feedback"][f"{case_id}|{ch}"]
         if case_id in INTENDED:
             expected = [f for f in expected if not f.startswith(INTENDED[case_id] + ":")]
-        assert feedback == expected
+        assert _f4_feedback(feedback) == _f4_feedback(expected)
 
 
 @pytest.mark.parametrize("case_id", sorted(CASES))
