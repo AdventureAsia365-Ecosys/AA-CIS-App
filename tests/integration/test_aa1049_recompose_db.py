@@ -204,11 +204,11 @@ async def test_apply_is_refused_without_an_open_wave_or_with_a_moved_pin(conn):
 
 @pytest.mark.asyncio
 async def test_a_pending_review_and_a_newer_pending_version_are_skipped(conn):
-    reviewed, _ = await _master(conn)
+    reviewed, served = await _master(conn)
     drafted, _ = await _master(conn)
     await conn.execute(
-        "INSERT INTO silver_aa_internal.review_queue (tour_id, tenant_id, review_status) VALUES ($1, $2, 'pending')",
-        uuid.UUID(reviewed), MASTER)
+        "INSERT INTO silver_aa_internal.review_queue (tour_id, generated_content_id, tenant_id, review_status) "
+        "VALUES ($1, $2, $3, 'pending')", uuid.UUID(reviewed), uuid.UUID(served), MASTER)
     await conn.execute(
         "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, status) "
         "VALUES ($1, $2, 2, 'A newer draft', 'pending')", uuid.UUID(drafted), MASTER)
