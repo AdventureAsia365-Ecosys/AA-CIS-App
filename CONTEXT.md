@@ -852,8 +852,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared/llm_client/route_settings.py`, 20 s cache; `LLM_ROUTE_AWS_FIRST` is only the bootstrap default while the
     row cannot be read), and the admin's **Route control** tab (`/admin/ai-gateway?tab=controls`, router
     `admin_llm_route_control.py`, service `api/services/llm_route_control.py`) edits the order mode, every stage's
-    chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with two presets
-    ("Prefer Anthropic API for Claude", "Prefer AWS"), a $0 server preview (`llm_route_chains.resolve_stage` under
+    chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with three presets
+    ("Prefer Anthropic API for Claude", "Prefer AWS", and AA-1079's "Serving model first on the judge routes": for
+    `t2_judge` / `t7_debate_judge` / `t10_judge`, the model that serves now moves to the front while every rung ahead
+    of it is refused or circuit-open; the only route change allowed to put a vendor-only model first, shown as a
+    warning; revert it when the closed rungs answer), a $0 server preview (`llm_route_chains.resolve_stage` under
     context-variable overrides; "serves first" is the deployment that would SERVE: one the account refuses on record,
     by the Stage coverage card's own rule `stage_coverage.refusal`, is skipped and listed with its reason) and the
     rules on every save (the PATCH rules, judge family, check pairs, attempt cap,
@@ -3460,13 +3463,18 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    6 supported ones is no longer silently replaced by US: it is returned as
    `unmatched_markets`, shown as a banner to the tenant, and recorded in
    `shared.unmapped_market_requests` for admin (AA-629).
-2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory cuts before choosing:
+2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory signals before choosing. Since AA-1079
+   (S277) Debate RANKS ONLY by default (`T7_DEBATE_MODE` unset or `rank`): no candidate is dropped; a flagged one
+   carries `debate_flags` and is ordered after every unflagged candidate of its Channel queue, and the `t7_slate`
+   job result records the flags (`debate`, admin only). `T7_DEBATE_MODE=cut` brings back the cut below, for when the
+   brand-fit judge is calibrated against the golden-set brand labels (`services/quality/brand_labels.py`,
+   `scripts/quality/measure_aa1079_brand_fit.py`). The two signals:
    - _contested_: share of a keyword's SERP taken by "everywhere" domains (wikipedia,
      tripadvisor…). Deterministic and cached; cut threshold 0.5, measured on real SERP data.
    - _brand-fit_: the same brand-fit scorer (judge route) the T2 judge uses
      (`services/content_generation/brand_fit.py`), cached per
      `(tenant, candidate, brand_version)` in `acp_shared.debate_brand_fit_cache`.
-   - Safety rules: never cuts more than 50% of a list; an error on a candidate lets it pass; if
+   - Safety rules (cut mode): never cuts more than 50% of a list; an error on a candidate lets it pass; if
      Debate fails entirely the Slate behaves as before.
 3. Bar check per Channel, only for the tenant's enabled Channels (`acp_shared.tenant_config.channels`,
    set in admin Tenant 360 > Planning config; no row = every Channel), then the place rule
@@ -4568,8 +4576,8 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   the first time, which is why this glossary exists).
 - **T7 — Slate** (`/portal/create/social` "Social Posts" + `/portal/create/article` "Articles", was `t7-planning` "Social Content"): the tenant's ranked,
   per-Channel list of Subjects to pick from, read from the platform-wide Score/Route data (see
-  Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit cut
-  asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
+  Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit check (rank only
+  since AA-1079) asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
 - **T8 — Angle Gate**: Goal + Angle selection (`/portal/create/write`, was `t8-angle-gate`; one continuous wizard
   covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
   with `t8_angle_answers` before the ranking (AA-700, shadow). S234 (AA-771): an Angle's
