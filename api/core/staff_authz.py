@@ -352,6 +352,7 @@ POLICY: dict[tuple[str, str], Any] = {
     # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
+    ("POST", "/admin/job-runner/jobs/{job_id}/release-jev-cap"): OPS_WRITE,   # AA-1083 (audited)
     ("POST", "/admin/job-runner/jobs/retry-llm-denied"): OPS_WRITE,      # AA-1018 (DRY RUN by default, audited)
     ("POST", "/admin/job-runner/llm-probe/run"): AI_ADMIN,               # AA-1018 (DRY RUN by default)
     ("POST", "/admin/job-runner/embedding-reembed/run"): AI_ADMIN,       # AA-1026 D5 (DRY RUN by default)

@@ -81,12 +81,16 @@ class RecomputeScope:
     `segment_ids` — for a platform-scoped run, the Segments whose PAA landing to recompute (None =
     every Segment, the backfill case). Carried straight into `precompute_question_landings`.
     `log_reason` / `log_tour_id` — threaded into the same log lines the old chains emitted.
+    `jev_changed_only` (AA-1083) — Jev is asked only about the Segments whose inputs changed: the tour's Segments on a
+    tour run, `segment_ids` plus the catch-up's Segments on a platform run (None `segment_ids` = every Segment).
+    Every other Segment keeps its stored verdicts (`landing` / `score` read `ctx.data["jev_segment_ids"]`).
     """
 
     tour_id: Optional[str] = None
     segment_ids: Optional[set[str]] = None
     log_reason: str = ""
     log_tour_id: Optional[str] = None
+    jev_changed_only: bool = False
 
 
 @dataclass
@@ -95,8 +99,9 @@ class RecomputeContext:
 
     `pool` — the asyncpg pool the stages run on (opened by the caller, e.g. `open_job_pool`).
     `progress` — optional sync callback for the Jobs page (same shape the old chains emitted).
-    `data` — scratch dict where an earlier stage leaves outputs a later one needs; today only
-    `question_counts` (landing -> score, AA-610: landing is market-independent, computed once).
+    `data` — scratch dict where an earlier stage leaves outputs a later one needs: `question_counts` (landing ->
+    score, AA-610: landing is market-independent, computed once) and `jev_segment_ids` (landing -> score, AA-1083:
+    the Segments Jev may be asked about; None = every Segment).
     """
 
     pool: object
@@ -162,22 +167,29 @@ async def _run_landing(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
         extra = ctx.data.get("catchup_segment_ids")
         if segment_ids is not None and extra:
             segment_ids = set(segment_ids) | set(extra)
+    # AA-1083 — the Segments Jev may be asked about this run (None = every Segment); `score` reads it too.
+    jev_ids = set(segment_ids) if scope.jev_changed_only and segment_ids is not None else None
+    ctx.data["jev_segment_ids"] = jev_ids
     # AA-688: `progress` reports the embedding pre-pass to the Jobs page. The platform chain never
     # passed one (ctx.progress is None there), so landing stays progress-silent on that path.
-    question_counts = await precompute_question_landings(ctx.pool, segment_ids, ctx.progress)
+    question_counts = await precompute_question_landings(ctx.pool, segment_ids, ctx.progress,
+                                                         jev_segment_ids=jev_ids)
     # Hand the landing counts to `score` — AA-610: computed once, market-independent.
     ctx.data["question_counts"] = question_counts
-    return {"segments_landed": None if segment_ids is None else len(segment_ids)}
+    return {"segments_landed": None if segment_ids is None else len(segment_ids),
+            "jev_segments": None if jev_ids is None else len(jev_ids)}
 
 
 async def _run_score(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
     from services.acp_contract.atom_ranking import run_atom_ranking
     from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
     question_counts = ctx.data.get("question_counts", {})
+    jev_ids = ctx.data.get("jev_segment_ids")     # AA-1083 (None = every Segment)
     ranking_results = {}
     markets = list(DFS_LOCATION_MAP)
     for i, market_code in enumerate(markets, start=1):
-        ranking_results[market_code] = await run_atom_ranking(market_code, ctx.pool, question_counts)
+        ranking_results[market_code] = await run_atom_ranking(market_code, ctx.pool, question_counts,
+                                                              jev_segment_ids=jev_ids)
         # AA-687: emit ranking_markets steps so the Jobs page does not sit on the landing step
         # for the ~80 s ranking + route detection take.
         if ctx.progress:
