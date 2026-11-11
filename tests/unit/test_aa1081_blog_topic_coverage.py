@@ -8,6 +8,7 @@
 5. The Blog minimum seed (`T7_BLOG_MIN_SEED_WORDS`): off by default (no read), on = a short seed is not proposed on
    Blog but stays on the social Channels, and the tour's reason is `seed_too_thin`.
 6. `GET /v1/slate` returns `blog_topics`.
+7. The $0 replay script's pure parts (summary, arguments, demand check).
 
 Invented tours and places only. No DB (fake connections).
 """
@@ -416,3 +417,44 @@ async def test_get_slate_returns_the_tenant_view_of_the_last_proposal():
             patch.object(v1_planning, "last_proposal", new=AsyncMock(return_value=None)):
         out = await v1_planning.get_slate(_request(tp.SLATE_READS_FLAG)[0], tenant={"sub": TENANT_ID})
     assert out["blog_topics"] is None
+
+
+# ── 7. the $0 replay script (pure parts) ─────────────────────────────────────────────────────────────────────────
+
+def _replay_script():
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[2] / "scripts" / "quality" / "replay_aa1081_blog_coverage.py"
+    spec = importlib.util.spec_from_file_location("replay_aa1081", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_replay_summary_counts_pairs_reasons_and_free_without_topic():
+    script = _replay_script()
+    rows = [{"arms": {"before_rank": [{"topics": 0, "reason": "places_covered", "detail": {"free": 1}},
+                                      {"topics": 2, "reason": None}],
+                      "after": [{"topics": 1, "reason": None}, {"topics": 2, "reason": None}]}},
+            {"error": "x"}]
+    s = script.summarize(rows, ["before_rank", "after"])
+    assert s["pairs"] == 2
+    assert s["before_rank"] == {"with_topic": 1, "no_topic": 1, "reasons": {"places_covered": 1},
+                                "free_no_topic": 1, "topics": 2}
+    assert s["after"]["free_no_topic"] == 0 and s["after"]["with_topic"] == 2
+
+
+def test_replay_args_need_a_tenant_choice():
+    script = _replay_script()
+    with pytest.raises(SystemExit):
+        script.parse_args([])
+    args = script.parse_args(["--slug-prefix", "audit-", "--min-seed", "600"])
+    assert (args.slug_prefix, args.min_seed, args.all) == ("audit-", 600, False)
+
+
+def test_replay_demand_check():
+    script = _replay_script()
+    segs = [_seg("l1", "Brenn Moor", 1, [TOUR_A], demand=1300, questions=2),
+            _seg("l2", "Old Velk", 2, [TOUR_A], demand=None, questions=4), _seg("o", "X", 3, [TOUR_B], demand=9000)]
+    assert script.demand_check(TOUR_A, segs, [], []) == {"moments": 2, "best_demand": 1300, "best_questions": 4,
+                                                         "no_demand_data": 1}

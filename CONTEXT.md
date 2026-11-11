@@ -3514,6 +3514,15 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    WALK FOCUS rule (t9_write v3), so sibling Subjects of one Route get different articles. When that moment is off
    the walk or thin, T8 and T9 both write a single-place piece; the Slate does not propose a Blog Subject whose own
    seed is thin. A Route-grain Subject (picked before S271) keeps the whole-walk digest with no focus.
+   **Every adopted tour** (AA-1081, S277, Channels with `cover_each_tour` = Blog): before the round robin the Blog
+   queue seats, in rank order, the first candidate on each tour that has no picked / used Blog Subject yet (same
+   rules as every seat), so a tour with a free candidate always gets a Blog topic. A tour that still has none gets a
+   typed reason (`slate.NO_TOPIC_REASONS`: `not_ready`, `low_search_interest`, `no_place_match`, `seed_too_thin`,
+   `no_fitting_topic`, `places_covered`) in the `t7_slate` job result (`blog_coverage`, with admin counts);
+   `GET /v1/slate` returns the tenant view (`blog_topics`: tour id, catalog name, topic count, code) and the portal
+   words it. **Blog minimum seed** (AA-1077 memo option C): env `T7_BLOG_MIN_SEED_WORDS` (unset/0 = off, the
+   default); when set, a Blog candidate whose seed (`blog_seed.blog_seed_words`: the seed atom's seed + its walk's
+   moment seeds) is shorter is not proposed on Blog and stays on the shorter Channels.
 
 A Segment Subject is offered and written only from its **seed atom** (AA-857,
 `services/acp_shared/subject_seed.py`): a live member on the tenant's own tours whose place IS the

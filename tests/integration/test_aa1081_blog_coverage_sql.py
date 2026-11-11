@@ -241,3 +241,27 @@ async def test_propose_slate_min_seed_moves_a_short_seed_off_blog(conn, monkeypa
     result = await _propose_on(conn, w.tenant)
     tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
     assert tour_a["topics"] == 2 and result["blog_coverage"]["short_seed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_replay_script_reads_every_arm_on_the_schema(conn):
+    """scripts/quality/replay_aa1081_blog_coverage.py on the same world: the arms agree with propose_slate, the min
+    seed arm moves tour A to seed_too_thin, and the low-demand tour gets its demand check."""
+    import importlib.util
+    from unittest.mock import AsyncMock, patch
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "quality", "replay_aa1081_blog_coverage.py")
+    spec = importlib.util.spec_from_file_location("replay_aa1081", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    w = await _world(conn)
+    with patch.object(slate, "_tenant_market_codes", AsyncMock(return_value=(["US"], []))):
+        row = await script.replay_tenant(l2._OneConnPool(conn), uuid.UUID(w.tenant), min_seed=5000)
+    assert set(row["arms"]) == {"before_cut", "before_rank", "after", "after_min_seed"}
+    after = {t["tour_id"]: (t["topics"], t["reason"]) for t in row["arms"]["after"]}
+    assert after == {w.a: (2, None), w.b: (0, "seed_too_thin"), w.c: (0, "low_search_interest"), w.d: (0, "not_ready")}
+    assert {t["tour_id"]: t["reason"] for t in row["arms"]["after_min_seed"]}[w.a] == "seed_too_thin"
+    assert row["demand_check"] == {w.c: {"moments": 1, "best_demand": 300, "best_questions": 5, "no_demand_data": 0}}
+    assert row["candidates_read"] == 4 and row["tours"] == 4 and row["short_seed"] == 2
+    summary = script.summarize([row], ["before_rank", "after", "after_min_seed"])
+    assert summary["pairs"] == 4 and summary["after"]["with_topic"] == 1
+    assert summary["after_min_seed"]["reasons"] == {"low_search_interest": 1, "not_ready": 1, "seed_too_thin": 2}
