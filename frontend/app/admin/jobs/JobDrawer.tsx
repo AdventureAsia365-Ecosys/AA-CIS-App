@@ -18,7 +18,9 @@ import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { tenant360Href } from "@/lib/adminIa";
 import { traceHref } from "@/lib/aiGateway";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
-import { canCancel, fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
+import {
+  canCancel, fmtSeconds, isJevHeld, jevBlock, releases, runSeconds, stepProgress, usd, type Job, type JobAction, type JevBlock,
+} from "./jobsShared";
 import { JOBS } from "./messages";
 
 interface LlmCall {
@@ -28,6 +30,7 @@ interface LlmCall {
 }
 type StageRow = LlmCalls["by_stage"][number];
 type CallRow = LlmCall & { _i: number };
+interface JevStageRow { stage: string; estCalls: number | null; estUsd: number | null; calls: number | null; usd: number | null }
 interface LlmCalls {
   calls: LlmCall[];
   totals: { calls: number; cost_usd: number; tokens_in: number; tokens_out: number; first_at: string | null; last_at: string | null };
@@ -59,6 +62,63 @@ function Json({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+// AA-1083 — a recompute's Jev side: who it asked about, the estimate before the run, the cap, the real spend, and a
+// release record. Read from `result.jev` (services/recompute/jev_scope.py).
+function JevSection({ jev }: { jev: JevBlock }) {
+  const t = useT(JOBS);
+  const { formatDateTime: fmtTime } = useFormat();
+  const est = jev.estimate;
+  const spend = jev.spend;
+  const rows = useMemo<JevStageRow[]>(() => {
+    const stages = new Set([...Object.keys(est?.by_stage ?? {}), ...Object.keys(spend?.by_stage ?? {})]);
+    return [...stages].sort().map(stage => ({
+      stage,
+      estCalls: est?.by_stage?.[stage]?.calls ?? null, estUsd: est?.by_stage?.[stage]?.usd ?? null,
+      calls: spend?.by_stage?.[stage]?.calls ?? null, usd: spend?.by_stage?.[stage]?.usd ?? null,
+    }));
+  }, [est, spend]);
+  const columns = useMemo<ColumnDef<JevStageRow, unknown>[]>(() => [
+    { id: "stage", header: t("stage"), accessorKey: "stage", cell: ({ row }) => <span style={{ fontFamily: mono }}>{row.original.stage}</span> },
+    {
+      id: "est", header: t("jevEstCol"), accessorKey: "estCalls", meta: { align: "right" },
+      cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono }}>{r.estCalls == null ? "—" : `${r.estCalls} · ${usd(r.estUsd, 4)}`}</span>,
+    },
+    {
+      id: "spent", header: t("jevSpentCol"), accessorKey: "calls", meta: { align: "right" },
+      cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono }}>{r.calls == null ? "—" : `${r.calls} · ${usd(r.usd, 4)}`}</span>,
+    },
+  ], [t]);
+  const capText = jev.cap_usd == null ? t("jevCapNone") : `${usd(jev.cap_usd, 2)}${jev.hard_stop === false ? t("jevCapAlert") : ""}`;
+  return (
+    <div style={{ marginTop: 16 }} data-testid="job-drawer-jev">
+      <Eyebrow>{t("jevTitle")}</Eyebrow>
+      <Row label={t("jevScope")}>{jev.scope === "all" ? t("jevScopeAll") : t("jevScopeChanged", est?.segments ?? null)}</Row>
+      <Row label={t("jevEstimate")}>
+        {jev.estimate_error ? t("jevEstimateFailed", jev.estimate_error)
+          : est ? <span style={{ fontFamily: mono }}>{t("jevEstimateLine", est.new_calls, usd(est.usd, 4))}</span> : "—"}
+      </Row>
+      <Row label={t("jevCap")}><span style={{ fontFamily: mono }}>{capText}</span></Row>
+      {jev.released && (
+        <Row label={t("jevReleased")}>{t("jevReleasedLine", jev.released.by ?? "—", fmtTime(jev.released.at ?? null))}</Row>
+      )}
+      {spend && !spend.error && (
+        <Row label={t("jevSpent")}>
+          <span style={{ fontFamily: mono }}>{t("jevSpentLine", spend.calls, usd(spend.usd, 4), spend.refused)}</span>
+        </Row>
+      )}
+      {rows.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <Eyebrow>{t("jevByStage")}</Eyebrow>
+          <DataTable<JevStageRow>
+            data={rows} columns={columns} tableId="job-drawer-jev-stages"
+            getRowId={r => r.stage} searchable={false} paginate={false} stickyHeader={false}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleases, eta, onClose, onAct, busy }: {
   jobId: string;
   refetchMs: number;
@@ -66,7 +126,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   maxReleases: number;
   eta: string | null;
   onClose: () => void;
-  onAct: (job: Job, action: "cancel" | "retry") => void;
+  onAct: (job: Job, action: JobAction) => void;
   busy: boolean;
 }) {
   const t = useT(JOBS);
@@ -100,6 +160,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   const llmCost = llm?.totals.cost_usd ?? job?.llm_cost_usd ?? 0;
   const total = job?.cost_usd ?? 0;
   const links = job?.links;
+  const jev = job ? jevBlock(job) : null;   // AA-1083: recompute only
 
   // AA-994 S6b: the two LLM tables are kit DataTables (were raw tables with the legacy TH / TD styles).
   const stageColumns = useMemo<ColumnDef<StageRow, unknown>[]>(() => [
@@ -147,6 +208,10 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
       {(job.status === "failed" || job.status === "stopped_budget" || job.status === "cancelled") && (
         <Button size="sm" disabled={busy} onClick={() => onAct(job, "retry")}>{t("retry")}</Button>
       )}
+      {isJevHeld(job) && (
+        <Button size="sm" variant="primary" disabled={busy} title={t("releaseTitle")} data-testid="job-drawer-release-jev"
+          onClick={() => onAct(job, "release-jev-cap")}>{t("release")}</Button>
+      )}
     </>
   );
 
@@ -157,6 +222,9 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
         <>
           {job.error && job.status !== "succeeded" && (
             <div style={{ fontSize: 12.5, color: K.danger, background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, padding: "8px 10px", marginBottom: 12, whiteSpace: "pre-wrap" }}>{job.error}</div>
+          )}
+          {isJevHeld(job) && (
+            <div style={{ fontSize: 12.5, color: K.body, marginBottom: 12 }}>{t("jevHeld")}</div>
           )}
 
           {prog && (
@@ -201,6 +269,8 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
                 style={{ color: K.accent }}>{t("openTrace")}</a>
             </div>
           </div>
+
+          {jev && <JevSection jev={jev} />}
 
           {llm && llm.totals.calls > 0 && (
             <div style={{ marginTop: 16 }}>

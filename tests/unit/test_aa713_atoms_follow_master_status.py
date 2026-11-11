@@ -50,7 +50,7 @@ async def test_recompute_rankings_and_routes_runs_every_market_then_routes():
     with patch("services.acp_contract.atom_ranking.precompute_question_landings",
                new=AsyncMock(return_value={})) as pql, \
          patch("services.acp_contract.atom_ranking.run_atom_ranking",
-               new=AsyncMock(side_effect=lambda m, *_: calls.append(m) or {})) as rar, \
+               new=AsyncMock(side_effect=lambda m, *_, **__: calls.append(m) or {})) as rar, \
          patch("services.acp_contract.route_detection.run_route_detection",
                new=AsyncMock(return_value={"routes": 0})) as rrd, \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1, "UK": 2}), \

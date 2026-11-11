@@ -67,6 +67,35 @@ export function canCancel(job: Job): boolean {
   return job.status === "queued" || job.status === "stopped_budget" || (job.status === "running" && !job.cancel_requested);
 }
 
+// AA-1083 — a `recompute` whose Jev spend estimate was above the per-run cap ends `stopped_budget` with an error that
+// starts with this code (services/recompute/errors.JEV_CAP_HELD). Staff release it (it then runs, not held again);
+// the generic Retry estimates again and may hold again.
+export const JEV_CAP_HELD = "recompute_jev_cap";
+export type JobAction = "cancel" | "retry" | "release-jev-cap";
+
+export function isJevHeld(job: Pick<Job, "kind" | "status" | "error">): boolean {
+  return job.kind === "recompute" && job.status === "stopped_budget" && (job.error ?? "").startsWith(JEV_CAP_HELD);
+}
+
+/** The `jev` block of a recompute's result (services/recompute/jev_scope.py plan_run + job_jev_spend). */
+export interface JevStageEstimate { calls: number; unit_usd: number; usd: number }
+export interface JevBlock {
+  scope?: "changed" | "all";
+  cap_usd?: number | null;
+  hard_stop?: boolean;
+  held?: string;
+  released?: { by?: string; at?: string; estimate_usd?: number | null } | null;
+  estimate?: { new_calls: number; usd: number; segments: number | null; by_stage: Record<string, JevStageEstimate> };
+  estimate_error?: string;
+  spend?: { calls: number; refused: number; usd: number; by_stage: Record<string, { calls: number; refused: number; usd: number }>; error?: string };
+}
+
+export function jevBlock(job: Pick<Job, "kind" | "result">): JevBlock | null {
+  if (job.kind !== "recompute") return null;
+  const j = job.result?.jev;
+  return j && typeof j === "object" && Object.keys(j).length > 0 ? (j as JevBlock) : null;
+}
+
 export function fmtTime(iso: string | null | undefined): string {
   return formatDateTime(iso);
 }

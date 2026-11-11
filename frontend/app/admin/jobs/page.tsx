@@ -49,8 +49,8 @@ import JobsTable from "./JobsTable";
 import QueuePanel from "./QueuePanel";
 import JobKinds from "./JobKinds";
 import {
-  STATUSES, fmtSeconds, stepProgress,
-  type Count, type Job, type Kind, type WorkerHealthResp,
+  STATUSES, fmtSeconds, jevBlock, stepProgress, usd,
+  type Count, type Job, type JobAction, type Kind, type WorkerHealthResp,
 } from "./jobsShared";
 
 const REFRESH_MS = 30_000;
@@ -258,19 +258,25 @@ function JobsPageInner() {
 
   // ── cancel / retry via useMutation ──
   const actM = useMutation({
-    mutationFn: ({ job, action }: { job: Job; action: "cancel" | "retry" }) =>
+    mutationFn: ({ job, action }: { job: Job; action: JobAction }) =>
       apiSend(`/api/admin/job-runner/jobs/${job.id}/${action}`, { method: "POST", admin: true }),
     onSuccess: (_r, { action }) => {
-      toast.success(action === "cancel" ? t("cancelRequested") : t("requeued"));
+      toast.success(action === "cancel" ? t("cancelRequested") : action === "release-jev-cap" ? t("releasedToast") : t("requeued"));
       qc.invalidateQueries({ queryKey: ["jobs"] });
       qc.invalidateQueries({ queryKey: ["job", open] });
     },
     onError: (e, { action }) =>
-      toast.error(t(action === "cancel" ? "cancelFailed" : "retryFailed", e instanceof Error ? e.message : String(e))),
+      toast.error(t(action === "cancel" ? "cancelFailed" : action === "release-jev-cap" ? "releaseFailed" : "retryFailed",
+        e instanceof Error ? e.message : String(e))),
   });
 
-  const act = (jb: Job, action: "cancel" | "retry") => {
-    if (!window.confirm(t(action === "cancel" ? "confirmCancel" : "confirmRetry", jb.kind, jb.id.slice(0, 8)))) return;
+  const act = (jb: Job, action: JobAction) => {
+    // AA-1083: releasing a recompute held above its Jev cap names the estimate the staff member approves.
+    const estimate = jevBlock(jb)?.estimate?.usd;
+    const question = action === "release-jev-cap"
+      ? t("confirmRelease", jb.id.slice(0, 8), estimate == null ? "—" : usd(estimate, 2))
+      : t(action === "cancel" ? "confirmCancel" : "confirmRetry", jb.kind, jb.id.slice(0, 8));
+    if (!window.confirm(question)) return;
     actM.mutate({ job: jb, action });
   };
   const busyId = actM.isPending ? (actM.variables?.job.id ?? null) : null;

@@ -275,22 +275,47 @@ async def resolve_demand(pool, segments: list[tuple[str, str, str]], demand_rows
     """segment_id -> {market: volume} (empty when nothing is claimed or every tried keyword is
     rejected). `segments` = (segment_id, place, action).
 
-    AA-1083 — `ask_ids` (None = ask about every Segment, the old pass): a Segment outside it keeps the demand it has in
-    the current Score of this market (`previous`, from previous_demand()) without a Jev call; one with no current
-    ranked row there is new to the Score and is asked like a Segment in scope."""
+    AA-1083 — `ask_ids` (None = ask about every Segment, the old pass): a Segment outside it never asks Jev. Its walk
+    runs on stored verdicts only (stored_decisions: the reads decide() would serve from its cache), so a Segment whose
+    candidates all have a stored verdict gets exactly what the old pass gave, at today's volume. When the walk reaches
+    a candidate with no stored verdict (a newly bought keyword, an expired verdict), the Segment keeps the demand it
+    has in the current Score of this market (`previous`, from previous_demand()); one with no current ranked row
+    there is new to the Score and is asked like a Segment in scope."""
     previous = previous or {}
     sem = asyncio.Semaphore(DEMAND_CONCURRENCY)
     rejected_count = 0
     out: dict[str, dict] = {}
     to_ask = []
+    walks: dict[str, list[tuple[str, int]]] = {}
     for segment in segments:
-        segment_id = segment[0]
-        if ask_ids is not None and segment_id not in ask_ids and segment_id in previous:
+        segment_id, place, action = segment
+        if ask_ids is None or segment_id in ask_ids:
+            to_ask.append(segment)
+            continue
+        moment = landing_moment(place, action)
+        walks[segment_id] = [(demand_subject_key(moment, kw), volume) for kw, volume in
+                             demand_candidates(place, action, demand_rows, market)[:DEMAND_MAX_TRIES]]
+    stored = await stored_decisions(pool, [DEMAND_Q], {k for w in walks.values() for k, _v in w}) if walks else {}
+    kept = 0
+    by_id = {s[0]: s for s in segments}
+    for segment_id, walk in walks.items():
+        claimed: dict | None = {}
+        for key, volume in walk:
+            dec = stored.get(key)
+            if dec is None:            # unverified: the walk cannot go on without Jev
+                claimed = None
+                break
+            if not dec.rejected(DEMAND_Q):
+                claimed = {market: volume}
+                break
+        if claimed is not None:
+            out[segment_id] = claimed
+        elif segment_id in previous:
             volume = previous[segment_id]
             out[segment_id] = {market: volume} if volume is not None else {}
+            kept += 1
         else:
-            to_ask.append(segment)
-    kept = len(out)
+            to_ask.append(by_id[segment_id])
 
     async def _one(segment_id: str, place: str, action: str):
         nonlocal rejected_count
@@ -305,7 +330,7 @@ async def resolve_demand(pool, segments: list[tuple[str, str, str]], demand_rows
         return segment_id, {}
 
     out.update(dict(await asyncio.gather(*[_one(*s) for s in to_ask])))
-    logger.info("demand_ownership", market=market, segments=len(segments), asked=len(to_ask), kept=kept,
+    logger.info("demand_ownership", market=market, segments=len(segments), asked=len(to_ask), kept_previous=kept,
                 rejected=rejected_count, claimed=sum(1 for v in out.values() if v))
     return out
 

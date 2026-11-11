@@ -135,7 +135,7 @@ class Estimate:
 
 def hold_reason(estimate: Estimate, cap_usd: Optional[float], hard_stop: bool, released: bool) -> Optional[str]:
     """The error a held run ends with, or None when it runs. Pure."""
-    if released or cap_usd is None or not hard_stop or estimate.usd <= cap_usd:
+    if released or cap_usd is None or not hard_stop or round(estimate.usd, 6) <= cap_usd:
         return None
     return (f"{JEV_CAP_HELD}: Jev estimate ${estimate.usd:.2f} ({estimate.calls} new questions) is above the "
             f"${cap_usd:.2f} cap per recompute run. Release the job on the Jobs page to run it.")
@@ -211,7 +211,7 @@ async def estimate(pool, *, segment_ids: Optional[set[str]], jev_changed_only: b
                                        [ar.scope_subject_key(*p) for p in scope_pairs])
     new[ar.SCOPE_STAGE] = sum(1 for p in scope_pairs if stored.get(ar.scope_subject_key(*p)) is None)
     dropped = {p for p in scope_pairs
-               if stored.get(ar.scope_subject_key(*p)) is not None and ar.scope_dropped(stored[ar.scope_subject_key(*p)])}
+               if (dec := stored.get(ar.scope_subject_key(*p))) is not None and ar.scope_dropped(dec)}
     landing_pairs = set()
     for r in landing_rows:
         scope = ar.country_scope(r.get("countries"))
