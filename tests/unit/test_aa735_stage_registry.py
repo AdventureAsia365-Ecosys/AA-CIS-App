@@ -148,10 +148,10 @@ async def test_run_stages_runs_in_order_and_returns_a_result_per_stage():
 async def test_landing_threads_question_counts_into_score():
     seen = {}
 
-    async def fake_landing(pool, segment_ids, progress):
+    async def fake_landing(pool, segment_ids, progress, *, jev_segment_ids=None):
         return {"s1": 7, "s2": 3}
 
-    async def fake_ranking(market, pool, question_counts):
+    async def fake_ranking(market, pool, question_counts, *, jev_segment_ids=None):
         seen["question_counts"] = question_counts
         return {}
 
@@ -206,7 +206,7 @@ async def test_tour_stages_call_the_four_functions_with_the_old_arguments():
     # segment matching: scoped to the tour
     seg.assert_awaited_once_with(TOUR, pool)
     # landing: this tour's own current Segments + the progress callback (AA-688 pre-pass)
-    landing.assert_awaited_once_with(pool, {"s1", "s2"}, progress)
+    landing.assert_awaited_once_with(pool, {"s1", "s2"}, progress, jev_segment_ids=None)
     # ranking: one call per market, every call fed the same landing dict (AA-610)
     assert ranking.await_count == 6
     for c in ranking.await_args_list:
@@ -362,7 +362,7 @@ async def test_recompute_rankings_and_routes_result_keys_unchanged():
                                       "route": {"r": 1}, "retarget": {"mode": "apply"},
                                       "segment_gc": {"mode": "report"}})):
         out = await handler.recompute_rankings_and_routes(object(), segment_ids=["s1"])
-    assert set(out) == {"ranking", "route", "retarget", "segment_gc", "segment_catchup"}
+    assert set(out) == {"ranking", "route", "retarget", "segment_gc", "segment_catchup", "jev_segments"}   # AA-1083
     assert out["segment_catchup"] == {"status": "ok"}
     assert out["retarget"] == {"mode": "apply"}
     assert out["segment_gc"] == {"mode": "report"}

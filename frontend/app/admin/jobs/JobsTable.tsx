@@ -14,7 +14,7 @@ import {
 import { JOBS } from "./messages";
 import {
   STATUSES, canCancel, fmtSeconds, releases, runSeconds, stepProgress, usd,
-  type Job, type Kind,
+  type Job, type JobAction, type Kind,
 } from "./jobsShared";
 
 // The columns that map to a server sort key (AA-755: queue.JOB_SORTS). Clicking any other header is
@@ -55,7 +55,7 @@ export interface JobsTableProps {
   onUntilChange: (v: string) => void;
   onQChange: (v: string) => void;
   onRowClick: (id: string) => void;
-  onAct: (job: Job, action: "cancel" | "retry") => void;
+  onAct: (job: Job, action: JobAction) => void;
   loading: boolean;
   error: string | null;
   onRetry: () => void;

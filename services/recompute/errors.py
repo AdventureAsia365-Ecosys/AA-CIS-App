@@ -10,6 +10,10 @@ row of one cause:
 - ``recompute_stopped``      — the job was cancelled (deploy release, admin cancel, lost lease) and its thread stopped
   at the next stage boundary. The handler is released, not failed, so this code shows in the logs only.
 - ``recompute_stage_failed`` — a stage raised; the message names the stage and the exception class. Retryable.
+
+Not a failure (AA-1083): ``recompute_jev_cap`` starts the error of a run HELD because its Jev spend estimate is above
+the per-run cap. The job ends ``stopped_budget`` (the runner's budget stop, cost_guard.BudgetExceeded), waiting for
+staff to release it (services/recompute/jev_scope.py); it is not in ERROR_CODES.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ LOCK_TIMEOUT = "recompute_lock_timeout"
 STOPPED = "recompute_stopped"
 STAGE_FAILED = "recompute_stage_failed"
 ERROR_CODES = (BAD_PAYLOAD, LOCK_TIMEOUT, STOPPED, STAGE_FAILED)
+JEV_CAP_HELD = "recompute_jev_cap"   # AA-1083: a held run (stopped_budget), not a failure
 
 
 class RecomputeError(RuntimeError):

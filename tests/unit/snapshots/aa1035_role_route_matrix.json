@@ -320,6 +320,7 @@
     "POST /admin/job-runner/erasure/run",
     "POST /admin/job-runner/jobs/retry-llm-denied",
     "POST /admin/job-runner/jobs/{job_id}/cancel",
+    "POST /admin/job-runner/jobs/{job_id}/release-jev-cap",
     "POST /admin/job-runner/jobs/{job_id}/retry",
     "POST /admin/job-runner/llm-contract-smoke/run",
     "POST /admin/job-runner/llm-model-lifecycle/run",

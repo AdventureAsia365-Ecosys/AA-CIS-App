@@ -39,7 +39,7 @@ async def test_filter_removes_dropped_pairs_per_country_set_and_asks_once():
     # one call per distinct (country set, question); s4 has no country → not asked
     assert sorted(asked) == sorted([("Bhutan", "Is Paro worth it?"), ("Bhutan", "What is Yosemite?"),
                                     ("Bhutan, Nepal", "What is Yosemite?")])
-    assert stats == {"scope_pairs": 3, "scope_dropped": 2}
+    assert stats == {"scope_pairs": 3, "scope_dropped": 2, "scope_asked": 3}   # AA-1083: every pair asked
 
 
 
@@ -64,7 +64,7 @@ async def test_landing_filter_drops_rejected_per_moment_and_asks_once():
         stats = await ar.filter_candidates_by_landing(None, rows, cands)
     assert cands == {"s1": {"How long is the Tiger's Nest hike?"}, "s2": set(), "s3": {"What is the oldest dzong?"}}
     assert len(asked) == 3                      # (Paro, hike) pairs shared by s1/s2
-    assert stats == {"landing_pairs": 3, "landing_rejected": 1}
+    assert stats == {"landing_pairs": 3, "landing_rejected": 1, "landing_asked": 3}
 
 
 @pytest.mark.asyncio
