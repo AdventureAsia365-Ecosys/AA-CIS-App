@@ -143,6 +143,65 @@ async def test_a_negated_ride_is_no_hit(conn):
     assert await lp.master_hits(conn, t.tour) == []
 
 
+AGENCY = "7e1a0000-0000-4000-8000-0000000a9e01"
+
+
+async def _t2_pending_row(conn, tour_id):
+    """A tenant's T2 policy-hold review row of the tour (the shape t2_rewrite_job._save_policy_hold writes: the agency
+    tenant, a tenant_tour_version_id, no generated_content_id). The column / tenant are added inside the test's
+    rolled-back transaction when the replay lacks them."""
+    await conn.execute("ALTER TABLE silver_aa_internal.review_queue "
+                       "ADD COLUMN IF NOT EXISTS tenant_tour_version_id uuid")
+    await conn.execute("ALTER TABLE silver_aa_internal.review_queue ALTER COLUMN generated_content_id DROP NOT NULL")
+    await conn.execute("""
+        INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, is_active)
+        VALUES ($1::uuid, 'Vellmoor Travel', 'vellmoor-travel', 'internal', 7, 60, true) ON CONFLICT DO NOTHING
+    """, AGENCY)
+    detail = json.dumps([{"check_id": policy_review.CHECK_ID, "field": "highlights", "description": "x",
+                          "source_span": None, "suggested_fix": None}])
+    return await conn.fetchval("""
+        INSERT INTO silver_aa_internal.review_queue (tour_id, tenant_id, tenant_tour_version_id, failure_summary,
+                                                     escalate_detail)
+        VALUES ($1::uuid, $2::uuid, $3::uuid, 'POLICY_HOLD elephant_riding: review the tour', $4::jsonb)
+        RETURNING id::text
+    """, tour_id, AGENCY, str(uuid.uuid4()), detail)
+
+
+@pytest.mark.asyncio
+async def test_policy_hold_never_closes_a_tenants_t2_review_of_the_tour(conn):
+    t = await _tour(conn)
+    t2 = await _t2_pending_row(conn, t.tour)
+    out = await tl.policy_hold(conn, t.tour, actor="test")
+    rows = {r["id"]: r["st"] for r in await _reviews(conn, t.tour)}
+    # the agency's T2 review stays pending; the S1 policy review is a new row (the T2 one is never reused)
+    assert rows[t2] == "pending" and out.extra["review_id"] != t2 and rows[out.extra["review_id"]] == "pending"
+    # an older pending S1 row of the tour is still replaced (AA-653), the T2 row is not
+    v2 = await _version(conn, t.tour, 2, status="hitl")
+    old = await conn.fetchval("INSERT INTO silver_aa_internal.review_queue (tour_id, generated_content_id, tenant_id, "
+                              "failure_summary) VALUES ($1::uuid, $2::uuid, $3::uuid, 'LOW_SCORE') RETURNING id::text",
+                              t.tour, v2, MASTER)
+    await conn.execute("UPDATE silver_aa_internal.review_queue SET review_status = 'rejected' WHERE id = $1::uuid",
+                       out.extra["review_id"])
+    again = await lp.ensure_policy_review(conn, t.tour, t.v1, [{"where": "master", "field": "highlights"}])
+    rows = {r["id"]: r["st"] for r in await _reviews(conn, t.tour)}
+    assert rows[old] == "superseded" and rows[t2] == "pending" and rows[again] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_policy_hold_refuses_a_version_a_person_approved_in_its_policy_review(conn):
+    t = await _tour(conn)
+    held = await tl.policy_hold(conn, t.tour, actor="test")
+    await conn.execute("UPDATE silver_aa_internal.review_queue SET review_status = 'approved' WHERE id = $1::uuid",
+                       held.extra["review_id"])
+    await tl.publish(conn, _publish_data(t, t.v1))
+    assert (await _master(conn, t.tour))["s"] == "active" and await lp.policy_approved(conn, t.v1) is True
+    with pytest.raises(tl.LifecycleError) as e:
+        await tl.policy_hold(conn, t.tour, actor="test")
+    assert e.value.code == lp.POLICY_APPROVED
+    assert (await _master(conn, t.tour))["s"] == "active"
+    assert [r["st"] for r in await _reviews(conn, t.tour)] == ["approved"]
+
+
 # ── the guard: Set Active, pause, publish ──────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -269,7 +328,7 @@ async def test_the_script_pins_the_same_set_before_and_after_the_hold(conn):
     rows = await conn.fetch(h.candidates_sql(), MASTER)
     found = [f for f in h.scan_rows(rows) if f["tour_id"] in (ride.tour, clean.tour)]
     assert [(f["tour_id"], f["state"]) for f in found] == [(ride.tour, "active")]
-    pin = h.pin_of(f["tour_id"] for f in found)
+    pin = h.pin_of(found)
     after = AsyncMock()
     done = await h.hold_all(_OneConnPool(conn), found, after_commit=after)
     assert done == {"held": 1} and after.await_count == 1
@@ -277,10 +336,39 @@ async def test_the_script_pins_the_same_set_before_and_after_the_hold(conn):
     rows = await conn.fetch(h.candidates_sql(), MASTER)
     again = [f for f in h.scan_rows(rows) if f["tour_id"] in (ride.tour, clean.tour)]
     assert [(f["tour_id"], f["state"]) for f in again] == [(ride.tour, "held")]
-    assert h.pin_of(f["tour_id"] for f in again) == pin
+    assert h.pin_of(again) == pin
     # resumable: a second pass changes nothing
     assert await h.hold_all(_OneConnPool(conn), again, after_commit=after) == {"kept": 1}
     assert len(await _reviews(conn, ride.tour)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_after_a_reviewer_approved_never_holds_the_tour_again(conn):
+    from scripts.quality import hold_elephant_masters as h
+    ride = await _tour(conn)
+    other = await _tour(conn)
+    mine = (ride.tour, other.tour)
+    rows = await conn.fetch(h.candidates_sql(), MASTER)
+    found = [f for f in h.scan_rows(rows) if f["tour_id"] in mine]
+    pin = h.pin_of(found)
+    after = AsyncMock()
+    assert await h.hold_all(_OneConnPool(conn), found, after_commit=after) == {"held": 2}
+    # a reviewer approves the first tour: its publish lifts the hold, the ride stays in its text by design
+    rid = await conn.fetchval("SELECT id::text FROM silver_aa_internal.review_queue WHERE tour_id = $1::uuid",
+                              ride.tour)
+    await conn.execute("UPDATE silver_aa_internal.review_queue SET review_status = 'approved' WHERE id = $1::uuid",
+                       rid)
+    await tl.publish(conn, _publish_data(ride, ride.v1))
+    rows = await conn.fetch(h.candidates_sql(), MASTER)
+    again = [f for f in h.scan_rows(rows) if f["tour_id"] in mine]
+    assert sorted((f["tour_id"], f["state"]) for f in again) == sorted([(ride.tour, "approved"), (other.tour, "held")])
+    # the set to hold moved, so an APPLY with the old pin stops; the approved tour is never held again
+    assert h.pin_of(again) != pin and h.pin_of(again).startswith("1:")
+    assert await h.hold_all(_OneConnPool(conn), again, after_commit=after) == {"kept": 1}
+    assert (await _master(conn, ride.tour))["s"] == "active"
+    assert [r["st"] for r in await _reviews(conn, ride.tour)] == ["approved"]
+    # the post-APPLY check: no active Master with a hit and no approved policy review
+    assert [f for f in again if f["state"] == "active"] == []
 
 
 # ── the Review Queue read: filter, badge fields, facet ───────────────────────────────────────────────────────────

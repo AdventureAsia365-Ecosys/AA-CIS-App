@@ -755,8 +755,10 @@ async def policy_hold(conn, tour_id, *, actor: str = "pipeline", version_id: Opt
     detector's evidence as codes): `version_id`'s, else the served version's. The cascade is a pause: the key is
     paused (master_inactive), queued T2 / T8 / T9 jobs are cancelled, the lifecycle event goes to TripPlanner (purge)
     after commit, no tenant mail (ADR 0019 d20: a paused tour gets no mail); Booking reads the served state.
-    Refused: no such Master (404), a trashed one (409 master_trashed), no detector hit on the text it would hold
-    (409 no_policy_hit). Idempotent: a held Master with its pending review changes nothing.
+    Refused: no such Master (404), a trashed one (409 master_trashed), a version a person already approved in its
+    policy review (409 policy_approved: a hold never undoes that approval, so a re-run of the one-time script leaves
+    an approved tour on sale), no detector hit on the text it would hold (409 no_policy_hit). Idempotent: a held
+    Master with its pending review changes nothing.
     Only the Review Queue approve of the review lifts the hold (publish)."""
     async with conn.transaction():
         await _locked_source_state(conn, tour_id)
@@ -764,6 +766,10 @@ async def policy_hold(conn, tour_id, *, actor: str = "pipeline", version_id: Opt
         if m["master_status"] == "trashed":
             raise LifecycleError(409, "master_trashed", "this Master is in the trash.")
         review_version = version_id or m["generated_content_id"]
+        if await _policy.policy_approved(conn, review_version):
+            raise LifecycleError(409, _policy.POLICY_APPROVED,
+                                 "a person already approved this version in its elephant-riding policy review; "
+                                 "nothing to hold.")
         hits = (await _policy.version_hits(conn, version_id) if version_id
                 else await _policy.master_hits(conn, out.tour_id))
         if not hits:

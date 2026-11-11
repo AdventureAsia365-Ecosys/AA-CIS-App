@@ -234,18 +234,56 @@ def test_set_active_refusal_without_a_hit_adds_nothing(monkeypatch):
 
 def test_the_script_pin_and_report_never_print_text():
     from scripts.quality import hold_elephant_masters as h
-    ids = ["b2a4c6e8-0000-4000-8000-000000000002", "a1b2c3d4-0000-4000-8000-000000000001"]
-    assert h.pin_of(ids) == h.pin_of(reversed(ids)) and h.pin_of(ids).startswith("2:")
-    rows = [{"tour_id": ids[0], "master_status": "active", "aa_highlights": '["An elephant ride at dawn"]'},
-            {"tour_id": ids[1], "master_status": "inactive", "src_itineraries": "Day 2: ride an elephant"},
+    ids = ["b2a4c6e8-0000-4000-8000-000000000002", "a1b2c3d4-0000-4000-8000-000000000001",
+           "d4000000-0000-4000-8000-000000000004"]
+    rows = [{"tour_id": ids[0], "generated_content_id": "v0", "master_status": "active", "any_approved": True,
+             "aa_highlights": '["An elephant ride at dawn"]'},
+            {"tour_id": ids[1], "generated_content_id": "v1", "master_status": "inactive",
+             "src_itineraries": "Day 2: ride an elephant"},
             {"tour_id": "c0000000-0000-4000-8000-000000000003", "master_status": "active",
-             "aa_highlights": '["A quiet walk"]'}]
+             "aa_highlights": '["A quiet walk"]'},
+            {"tour_id": ids[2], "generated_content_id": "v2", "master_status": "active", "policy_approved": True,
+             "any_approved": True, "aa_highlights": '["Elephant riding by the lake"]'}]
     found = h.scan_rows(rows)
     assert [(f["tour_id"], f["state"], f["fields"]) for f in found] == [
-        (ids[0], "active", ["master.highlights"]), (ids[1], "held", ["source.itineraries"])]
+        (ids[0], "active", ["master.highlights"]), (ids[1], "held", ["source.itineraries"]),
+        (ids[2], "approved", ["master.highlights"])]
+    assert [f["approved_other"] for f in found] == [True, False, False]
+    # the pin covers the tours to hold only (id + served version), in any order
+    assert h.pin_of(found) == h.pin_of(list(reversed(found))) and h.pin_of(found).startswith("2:")
+    assert h.pin_of(found) != h.pin_of([{**found[0], "version_id": "v9"}, found[1]])
     out = "\n".join(h.report(found))
-    assert "to_hold=1 already_held=1 total=2" in out and f"PIN={h.pin_of(ids)}" in out
+    assert "to_hold=1 already_held=1 approved=1 approved_other=1 total=3" in out and f"PIN={h.pin_of(found)}" in out
     assert "elephant ride" not in out and ids[0][:8] in out and ids[0] not in out
+
+
+def test_the_script_never_holds_an_approved_tour():
+    from scripts.quality import hold_elephant_masters as h
+    found = [{"tour_id": "e1000000-0000-4000-8000-000000000001", "state": "approved", "fields": []},
+             {"tour_id": "e2000000-0000-4000-8000-000000000002", "state": "held", "fields": []}]
+    ok = MagicMock()
+    ok.extra = {"held": False, "review_id": "r"}
+    hold = AsyncMock(return_value=ok)
+    done = asyncio.run(h.hold_all(_pool(AsyncMock()), found, hold=hold, after_commit=AsyncMock()))
+    assert done == {"kept": 1} and [c.args[1] for c in hold.await_args_list] == [found[1]["tour_id"]]
+
+
+def test_the_policy_supersede_closes_only_the_master_tenants_s1_rows():
+    sql = " ".join(lp._SUPERSEDE_OTHERS_SQL.split())
+    assert "generated_content_id IS NOT NULL" in sql and "tenant_id = $3::uuid" in sql
+    pending = " ".join(lp._PENDING_POLICY_SQL.split())
+    assert "rq.tenant_id = $2::uuid" in pending and policy_review.row_is_policy_sql("rq") in pending
+    approved = lp.policy_approved_sql("pt.generated_content_id")
+    assert "review_status = 'approved'" in approved and policy_review.row_is_policy_sql("a") in approved
+
+
+def test_ensure_policy_review_passes_the_master_tenant_to_the_supersede():
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(side_effect=[None, "new-review"])
+    conn.execute = AsyncMock()
+    assert asyncio.run(lp.ensure_policy_review(conn, "t-1", "v-1", HITS)) == "new-review"
+    assert conn.fetchval.await_args_list[0].args[1:] == ("t-1", lp.AA_TENANT)
+    assert conn.execute.await_args.args[1:] == ("t-1", "new-review", lp.AA_TENANT)
 
 
 def test_the_script_apply_needs_the_pin(monkeypatch, capsys):

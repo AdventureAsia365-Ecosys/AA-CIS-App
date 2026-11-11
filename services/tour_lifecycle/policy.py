@@ -8,6 +8,9 @@ Review Queue use for that rule; the writes of the status columns stay in service
   published text, or a version's stored text, plus the tour's raw source (the same fields and country rule as S1);
 - ``human_approved``: a person approved this version in the Review Queue (a ``review_queue`` row of the version with
   ``review_status = 'approved'``; the approve claims that row before it publishes);
+- ``policy_approved``: a person approved this version's own policy review (an approved row that carries the policy
+  marker): the hold refuses such a version (409 ``policy_approved``) and the one-time script leaves it out, so a
+  re-run never undoes a person's approval;
 - ``ensure_policy_review``: the pending policy review row (``services/quality/policy_review.py`` marker) of a tour;
 - ``held_master_version``: the review row is the policy review of the very version a held Master serves, so its
   approve puts back exactly what was on sale before the hold.
@@ -26,6 +29,7 @@ from services.quality import elephant_policy, policy_review
 POLICY_HOLD = "policy_hold"
 POLICY_HOLD_MIGRATION = "398"
 POLICY_REVIEW_REQUIRED = "policy_review_required"
+POLICY_APPROVED = "policy_approved"
 AA_TENANT = "00000000-0000-0000-0000-000000000001"
 
 _SOURCE_COLUMNS = ("rt.country, rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description, "
@@ -58,9 +62,20 @@ _APPROVED_SQL = """
                     WHERE generated_content_id = $1::uuid AND review_status = 'approved') AS ok
 """
 
+
+
+def policy_approved_sql(version_expr: str) -> str:
+    """SQL boolean: the version ``version_expr`` has an approved S1 policy review (never NULL)."""
+    return (f"EXISTS (SELECT 1 FROM silver_aa_internal.review_queue a WHERE a.generated_content_id = {version_expr}"
+            f" AND a.review_status = 'approved' AND {policy_review.row_is_policy_sql('a')})")
+
+
+_POLICY_APPROVED_SQL = f"SELECT {policy_approved_sql('$1::uuid')} AS ok"
+
 _PENDING_POLICY_SQL = f"""
     SELECT rq.id::text AS id FROM silver_aa_internal.review_queue rq
-     WHERE rq.tour_id = $1::uuid AND rq.review_status = 'pending' AND {policy_review.row_is_policy_sql('rq')}
+     WHERE rq.tour_id = $1::uuid AND rq.tenant_id = $2::uuid AND rq.review_status = 'pending'
+       AND {policy_review.row_is_policy_sql('rq')}
      ORDER BY rq.created_at DESC, rq.id LIMIT 1
 """
 
@@ -74,11 +89,14 @@ _INSERT_POLICY_REVIEW_SQL = """
     RETURNING id::text
 """
 
-# AA-653: one pending review per tour; the policy review replaces older pending rows of the tour.
+# AA-653: one pending review per tour; the policy review replaces older pending S1 rows of the tour. Only the master
+# tenant's S1 rows (a version id): a tenant's T2 row of the same tour (tenant_tour_version_id, its agency tenant_id,
+# e.g. the T2 elephant-riding policy hold) is the agency's own review and is never closed here.
 _SUPERSEDE_OTHERS_SQL = """
     UPDATE silver_aa_internal.review_queue
        SET review_status = 'superseded'::review_status_enum, reviewed_at = NOW()
      WHERE tour_id = $1::uuid AND review_status = 'pending' AND id <> $2::uuid
+       AND generated_content_id IS NOT NULL AND tenant_id = $3::uuid
 """
 
 HELD_MASTER_VERSION_SQL = f"""
@@ -141,6 +159,12 @@ async def human_approved(conn, version_id) -> bool:
     return (await conn.fetchval(_APPROVED_SQL, str(version_id))) is True
 
 
+async def policy_approved(conn, version_id) -> bool:
+    if not version_id:
+        return False
+    return (await conn.fetchval(_POLICY_APPROVED_SQL, str(version_id))) is True
+
+
 async def held_master_version(conn, review_id) -> bool:
     return (await conn.fetchval(HELD_MASTER_VERSION_SQL, str(review_id))) is True
 
@@ -148,18 +172,18 @@ async def held_master_version(conn, review_id) -> bool:
 async def ensure_policy_review(conn, tour_id, version_id, hits: list[dict], *,
                                base_summary: str | None = None) -> str:
     """The tour's pending policy review row: the existing one, else a new row for ``version_id`` (which then
-    replaces the tour's other pending rows, AA-653). Returns its id."""
-    existing = await conn.fetchval(_PENDING_POLICY_SQL, str(tour_id))
+    replaces the tour's other pending S1 rows, AA-653; tenants' T2 rows are left alone). Returns its id."""
+    existing = await conn.fetchval(_PENDING_POLICY_SQL, str(tour_id), AA_TENANT)
     if existing:
         return existing
     review_id = await conn.fetchval(
         _INSERT_POLICY_REVIEW_SQL, str(tour_id), str(version_id), AA_TENANT, policy_review.summary(base_summary),
         json.dumps(policy_review.detail(hits)))
-    await conn.execute(_SUPERSEDE_OTHERS_SQL, str(tour_id), review_id)
+    await conn.execute(_SUPERSEDE_OTHERS_SQL, str(tour_id), review_id, AA_TENANT)
     return review_id
 
 
-__all__ = ["HELD_MASTER_VERSION_SQL", "MASTER_SCAN_COLUMNS", "MASTER_SCAN_FROM", "POLICY_HOLD",
+__all__ = ["HELD_MASTER_VERSION_SQL", "MASTER_SCAN_COLUMNS", "MASTER_SCAN_FROM", "POLICY_APPROVED", "POLICY_HOLD",
            "POLICY_HOLD_MIGRATION", "POLICY_REVIEW_REQUIRED", "PolicyReviewRequiredError", "SOURCE_SQL",
            "ensure_policy_review", "held_master_version", "hits_from_row", "human_approved", "master_hits",
-           "refusal_message", "source_row", "version_hits"]
+           "policy_approved", "policy_approved_sql", "refusal_message", "source_row", "version_hits"]
