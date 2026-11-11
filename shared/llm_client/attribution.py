@@ -107,6 +107,8 @@ STAGE_PASSTHROUGH: dict[str, str] = {
     "shared/llm_client/embed.py": "the embedding gateway's failure row: the key comes from the bound context",
     "shared/llm_client/shadow.py": "the shadow row of the caller's stage: the shadow thread carries the binding",
     "api/services/llm_route_trace.py": "the admin route test of any chat stage: a test names no tour or piece",
+    "shared/llm_client/batch_lane.py": "the gateway batch lane's rows, one per request of a batch, of the batch's "
+                                       "stage (s1_generate, a3_atomize, adhoc_*): each row names its item's tour",
 }
 
 

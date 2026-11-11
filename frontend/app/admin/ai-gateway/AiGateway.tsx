@@ -9,6 +9,8 @@
 //   Models & trials  the model catalog (on / off; prices view-only) and the shadow comparisons (ModelsTab.tsx).
 //   Budgets          every spending cap by tier (BudgetsTab.tsx).
 //   Calls            every logged paid call, newest first, across the CIS ledgers and the CRM's (CallsTab.tsx).
+//   Batches          AA-1076: the gateway batch lane: status, outcomes and spend per batch; send a wave, cancel one
+//                    (BatchesTab.tsx).
 //   Trace            AA-1042: how each stage's route behaved, every attempt of a request, the route alerts and the
 //                    content a fallback model wrote (TraceTab.tsx); `?rt=<trace id>&rt_at=<time>` opens one request.
 //   Guide            AA-1042: the gateway's reference page from the docs catalog (root docs/architecture/ai-gateway.md
@@ -34,6 +36,7 @@ import {
 import {
   parseTab, parseTraceTarget, parseView, traceParam, type ProviderView, type TabKey, type TraceTarget,
 } from "@/lib/aiGateway";
+import BatchesTab from "./BatchesTab";
 import BudgetsTab from "./BudgetsTab";
 import CallsTab from "./CallsTab";
 import { AI_GATEWAY_GUIDE } from "./guide";
@@ -63,7 +66,7 @@ function setParam(name: string, value: string | null): void {
 /** Every query key the page's tabs read, refreshed together by the header button. */
 const PAGE_QUERIES = [
   ["ai-gateway"], ["llm-config"], ["llm-catalog"], ["llm-shadow-report"], ["llm-availability"], ["llm-connections"],
-  ["llm-connection-costs"], ["jev-credit"], ["decisions-summary"], ["ai-gateway", "guide"],
+  ["llm-connection-costs"], ["jev-credit"], ["decisions-summary"], ["ai-gateway", "guide"], ["ai-gateway", "batches"],
 ] as const;
 
 export default function AiGateway() {
@@ -83,6 +86,7 @@ export default function AiGateway() {
     { key: "models", label: t("tabModels") },
     { key: "budgets", label: t("tabBudgets") },
     { key: "calls", label: t("tabCalls") },
+    { key: "batches", label: t("tabBatches") },
     { key: "trace", label: t("tabTrace") },
     { key: "guide", label: t("tabGuide") },
   ];
@@ -138,6 +142,7 @@ export default function AiGateway() {
         {tab === "models" && <ModelsTab />}
         {tab === "budgets" && <BudgetsTab onOpenConnections={() => { setTab("providers"); setView("connections"); }} />}
         {tab === "calls" && <CallsTab onTrace={openTrace} onRoute={openRouteTab} />}
+        {tab === "batches" && <BatchesTab />}
         {tab === "trace" && <TraceTab target={route} onOpen={openRoute} />}
         {tab === "guide" && (
           <GuideTab howToRead={<GuidePanel content={guide} testId="ai-gateway-guide-panel" />} />

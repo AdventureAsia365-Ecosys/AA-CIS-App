@@ -4,6 +4,8 @@
   GET  /admin/job-runner/jobs/{id}         one job (status, progress, result, cost, error)
   POST /admin/job-runner/jobs/{id}/cancel  queued / stopped_budget -> cancelled; running -> flagged, worker stops it
   POST /admin/job-runner/jobs/{id}/retry   failed / stopped_budget / cancelled -> queued
+  POST /admin/job-runner/jobs/{id}/release-jev-cap  a recompute held above its Jev cap -> queued, released (AA-1083,
+                                           audited)
   POST /admin/job-runner/jobs/retry-llm-denied  re-queue the jobs an LLM account block failed (DRY RUN by default,
                                            audited; AA-1018)
   POST /admin/job-runner/llm-probe/run     enqueue the LLM connection probe (DRY RUN by default; live only with
@@ -273,6 +275,30 @@ async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(
         raise HTTPException(status_code=409, detail="only failed, stopped_budget or cancelled jobs can be retried")
     logger.info("admin_job_retry", job_id=job_id, admin_user=x_admin_user_id)
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/jobs/{job_id}/release-jev-cap", summary="Run a recompute held above its Jev spend cap")
+async def release_jev_cap(job_id: str, request: Request, x_admin_secret: str = Header(None),
+                          x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1083 — a `recompute` whose Jev spend estimate was above the per-run cap ended `stopped_budget` (error
+    `recompute_jev_cap: ...`, the estimate in its result). Releasing it re-queues it with `payload.jev_release`
+    (who, when, the estimate they saw): the released run is not held again and no later enqueue is folded into it.
+    409 when the job is not a held recompute. One audit row per release (`recompute_jev_release`)."""
+    verify_admin_secret(x_admin_secret)
+    from services.recompute import jev_scope
+
+    pool = request.app.state.pool
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    out = await jev_scope.release_held(pool, job_id, actor)
+    if out is None:
+        raise HTTPException(status_code=409, detail="only a recompute held above its Jev cap can be released")
+    async with pool.acquire() as db:
+        await db.execute(
+            "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
+            "VALUES ($1, $2, $3, $4, $5::jsonb)",
+            actor[:64], "recompute_jev_release", "shared.job", job_id, json.dumps(out["jev_release"], default=str))
+    logger.info("admin_recompute_jev_release", job_id=job_id, admin_user=x_admin_user_id)
+    return out
 
 
 # ── AA-1018 — re-queue the jobs an LLM account block failed ──────────────────────────────────────────────────────

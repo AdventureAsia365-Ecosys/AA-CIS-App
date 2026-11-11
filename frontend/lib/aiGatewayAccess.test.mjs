@@ -57,6 +57,7 @@ test("every write control of the page reads usePageAccess", () => {
     "BudgetsTab.tsx": ['can("budgets")'],
     "RoutingTab.tsx": ['can("routing")'],
     "CatalogTable.tsx": ['can("catalog")'],
+    "BatchesTab.tsx": ['can("batches")'],
   };
   for (const [file, needles] of Object.entries(files)) {
     const src = read(`../app/admin/ai-gateway/${file}`);

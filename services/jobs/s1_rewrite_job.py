@@ -36,6 +36,7 @@ import structlog
 
 from services.content_generation.s1_checkpoint import BULKY_KEYS, S1Checkpoint, clear_fields
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
+from shared.llm_client import batch_lane
 from shared.llm_client.errors import is_llm_access_denied
 
 logger = structlog.get_logger()
@@ -89,22 +90,25 @@ async def run(ctx: JobContext) -> dict:
 
     result = None
     denied: Optional[BaseException] = None
-    try:
-        if progress is not None:
-            progress.start()
-            try:
-                with stream_sink.bind(progress):
-                    result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
-            finally:
-                await progress.finish(ok=result is not None)
-        else:
-            result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
-    except Exception as e:
-        # AA-900: _run_tour_safe raises only an account-level LLM refusal; it still takes the failed-job path below
-        # (checkpoint cleared), then reaches the worker typed, so the job fails at once with llm_access_denied.
-        if not is_llm_access_denied(e):
-            raise
-        denied = e
+    # AA-1076: a gateway batch wave's writer reply for this tour (services/llm_batch/consumers.py), answering the
+    # writer's attempt 1 when its prompt matches (s1_writer_v2_live); no reply / a stale one = the live writer.
+    with batch_lane.bind_replies(payload.get("batch_replies")):
+        try:
+            if progress is not None:
+                progress.start()
+                try:
+                    with stream_sink.bind(progress):
+                        result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
+                finally:
+                    await progress.finish(ok=result is not None)
+            else:
+                result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
+        except Exception as e:
+            # AA-900: _run_tour_safe raises only an account-level LLM refusal; it still takes the failed-job path below
+            # (checkpoint cleared), then reaches the worker typed, so the job fails at once with llm_access_denied.
+            if not is_llm_access_denied(e):
+                raise
+            denied = e
 
     # _run_tour_safe swallows any other final failure and returns None after 3 internal attempts.
     if result is None:
