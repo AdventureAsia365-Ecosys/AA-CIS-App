@@ -9,7 +9,9 @@ One run (``scripts/quality/recompose_masters.py``, CIS api container through ``t
    version was written but never published: publish it), or one skip reason — ``source_not_live``,
    ``rolled_back`` (the recompose version of the served version WAS published and a person promoted the older
    version back: never republish it), ``pending_review``, ``newer_version``, ``job_active``, ``not_v2``,
-   ``human_edited``, ``policy``, ``heading_parse``, ``narrative_changed``, ``no_op``, ``contract_worse``, ``error``;
+   ``human_edited``, ``policy``, ``heading_parse``, ``narrative_changed``, ``facts_would_be_lost`` (the recomposed
+   page would no longer state a fact the served one states: never written), ``no_op``, ``contract_worse``,
+   ``error``;
 3. ``apply_one`` (APPLY only): in one transaction, re-check that the Master still serves the decided version, insert
    the recomposed text as a NEW approved ``generated_content`` version (``insert_recomposed_version``: a copy of the
    served version with only ``aa_itineraries`` / ``seo_title`` / ``seo_meta`` replaced, ``metadata.recompose_of`` =
@@ -178,11 +180,13 @@ def decide(row: Any, brand_words: list[str], *, include_human_edited: bool = Fal
             facts = build_fact_table(tour)
             page = page_of(row)
             res = rc.recompose(page, tour, facts, brand_words)
-            out.update(fields=res.fields, changed=res.changed, report=res.report)
+            out.update(fields=res.fields, changed=res.changed, report=res.report, sample=res.sample)
             if not res.heading_ok:
                 return _skip(rc.HEADING_PARSE)
             if not res.narrative_ok:
                 return _skip(rc.NARRATIVE_CHANGED)
+            if res.report.get("facts_lost"):
+                return _skip(rc.FACTS_WOULD_BE_LOST)
             if res.no_op:
                 return _skip(rc.NO_OP)
             con = rc.contract_pair(row, page, res.page, tour, brand_words)
@@ -207,31 +211,95 @@ def pin_of(decisions: list[dict]) -> str:
     return f"{len(keys)}:{hashlib.md5(','.join(keys).encode()).hexdigest()}"
 
 
+# the line counts of the Masters due (report keys of s1_recompose.recompose); facts_lost must sum to 0 for an APPLY
+LINE_COUNTS = ("fact_clauses_cut", "lines_removed", "lines_added", "facts_lost")
+SAMPLE_TOURS = 3          # DRY RUN sample: Masters (SAMPLE=n), each its first s1_recompose.SAMPLE_DAYS day blocks
+SAMPLE_LINE_MAX = 160
+
+
+def _count(d: dict, key: str) -> int:
+    return int((d.get("report") or {}).get(key) or 0)
+
+
 def summary(decisions: list[dict]) -> dict:
-    """Counts only: per state, per changed field (Masters due), per verdict move (old -> new, Masters due)."""
+    """Counts only: per state, per changed field (Masters due), per verdict move (old -> new, Masters due), the line
+    counts of the Masters due (``LINE_COUNTS``) and the facts the skipped ``facts_would_be_lost`` Masters would lose."""
     states = Counter(d["state"] for d in decisions)
     due = [d for d in decisions if d["state"] in DUE]
     fields = Counter(f for d in due for f in d.get("changed") or [])
     verdicts = Counter(f"{d['verdict']['old']}->{d['verdict']['new']}" for d in due if d.get("verdict"))
-    cut = sum(int((d.get("report") or {}).get("fact_clauses_cut") or 0) for d in due)
-    return {"masters": len(decisions), "states": dict(sorted(states.items())), "fields": dict(sorted(fields.items())),
-            "verdicts": dict(sorted(verdicts.items())), "fact_clauses_cut": cut, "pin": pin_of(decisions)}
+    out = {"masters": len(decisions), "states": dict(sorted(states.items())), "fields": dict(sorted(fields.items())),
+           "verdicts": dict(sorted(verdicts.items())), "pin": pin_of(decisions)}
+    out.update({k: sum(_count(d, k) for d in due) for k in LINE_COUNTS})
+    out["facts_lost_skipped"] = sum(_count(d, "facts_lost") for d in decisions if d["state"] == rc.FACTS_WOULD_BE_LOST)
+    return out
+
+
+def apply_refusal(decisions: list[dict]) -> str:
+    """Why an APPLY of these decisions is refused ("" = allowed): a Master due whose recompose would lose a fact
+    (never expected: ``decide`` skips it as ``facts_would_be_lost``; this is the run's own second check)."""
+    lost = [d for d in decisions if d["state"] in DUE and _count(d, "facts_lost")]
+    if lost:
+        return (f"facts_lost={sum(_count(d, 'facts_lost') for d in lost)} on {len(lost)} Master(s) due "
+                f"(first {lost[0]['tour_id'][:8]}); nothing written")
+    return ""
 
 
 def report_lines(decisions: list[dict]) -> list[str]:
-    """The public-safe report: counts, then one line per Master (8-char ids, state, field names, verdicts)."""
+    """The public-safe report: counts, then one line per Master (8-char ids, state, field names, line counts,
+    verdicts). Never page or source text (that is ``sample_lines``, DRY RUN only)."""
     s = summary(decisions)
     lines = [f"masters={s['masters']} " + " ".join(f"{k}={v}" for k, v in s["states"].items()),
              "fields: " + ", ".join(f"{k}={v}" for k, v in s["fields"].items()),
-             f"fact_clauses_cut={s['fact_clauses_cut']}",
+             " ".join(f"{k}={s[k]}" for k in LINE_COUNTS) + f" (due); facts_lost_skipped={s['facts_lost_skipped']}",
              "verdicts: " + ", ".join(f"{k}={v}" for k, v in s["verdicts"].items())]
     for d in decisions:
         v = d.get("verdict") or {}
         verdict = f" verdict={v.get('old')}->{v.get('new')}" if v else ""
+        counts = (f" -{_count(d, 'lines_removed')}/+{_count(d, 'lines_added')} lost={_count(d, 'facts_lost')}"
+                  if (d.get("report") or {}).get("lines_removed") is not None else "")
         err = f" error={d['report']['error'][:60]}" if (d.get("report") or {}).get("error") else ""
-        lines.append(f"  {d['tour_id'][:8]} {d['state']:<17} {','.join(d.get('changed') or []) or '-'}{verdict}{err}")
+        lines.append(f"  {d['tour_id'][:8]} {d['state']:<19} {','.join(d.get('changed') or []) or '-'}"
+                     f"{counts}{verdict}{err}")
     lines.append(f"PIN={s['pin']}")
     return lines
+
+
+def _cap(line: str) -> str:
+    return line if len(line) <= SAMPLE_LINE_MAX else line[:SAMPLE_LINE_MAX - 1] + "…"
+
+
+def _marked(lines: list[str], other: list[str], mark: str) -> list[str]:
+    """``lines`` with ``mark`` on each line the ``other`` side does not have (counted, so a repeated line is matched
+    once per copy)."""
+    left = Counter(lines) - Counter(other)
+    out = []
+    for ln in lines:
+        hit = left[ln] > 0
+        if hit:
+            left[ln] -= 1
+        out.append(f"   {mark if hit else ' '} {_cap(ln)}")
+    return out
+
+
+def sample_lines(decisions: list[dict], n: int = SAMPLE_TOURS) -> list[str]:
+    """The DRY RUN sample: for the first ``n`` Masters due (then, if fewer, the ``facts_would_be_lost`` ones), the
+    first day blocks before and after, each line capped at SAMPLE_LINE_MAX characters; "-" marks a line the recompose
+    removes, "+" one it adds. Page text: printed to the operator's terminal only, never stored or committed."""
+    if n <= 0:
+        return []
+    picked = [d for d in decisions if d["state"] in DUE and d.get("sample")]
+    picked += [d for d in decisions if d["state"] == rc.FACTS_WOULD_BE_LOST and d.get("sample")]
+    out = []
+    for d in picked[:n]:
+        out.append(f"SAMPLE {d['tour_id'][:8]} {d['state']} lines_removed={_count(d, 'lines_removed')} "
+                   f"lines_added={_count(d, 'lines_added')} facts_lost={_count(d, 'facts_lost')}")
+        for before, after in d["sample"]:
+            out.append("  before:")
+            out.extend(_marked(before, after, "-"))
+            out.append("  after:")
+            out.extend(_marked(after, before, "+"))
+    return out
 
 
 # ── the write ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -373,5 +441,6 @@ async def apply_one(pool, decision: dict, *, publish: Optional[Publish] = None) 
 
 
 __all__ = ["MASTER_TENANT", "ACTOR", "RECOMPOSE", "RESUME", "ROLLED_BACK", "candidates_sql", "wave_set", "load",
-           "decide", "pin_of", "summary", "report_lines", "new_metadata", "insert_recomposed_version",
+           "decide", "pin_of", "summary", "apply_refusal", "report_lines", "sample_lines", "new_metadata",
+           "insert_recomposed_version",
            "mark_published", "apply_one"]

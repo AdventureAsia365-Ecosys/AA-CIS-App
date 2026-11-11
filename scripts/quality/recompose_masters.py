@@ -13,16 +13,21 @@ contract before / after) and ``s1_recompose_store.py`` (the selection, the new v
 ``process_export``: A3 re-atomize, the master source fan-out, catalog ``text_updated_at`` and TripPlanner follow).
 Skipped and counted: a source not live, a pending review, a newer pending / approved version, an active pipeline job,
 a writer other than v2, a human-edited Master (``INCLUDE_HUMAN_EDITED=1`` takes them), the elephant-riding policy, a
-heading the canonical parser would read differently, a narrative change, a no-op, a contract verdict worse than the
-stored or today's one (or a new blocking code), a recompose version that was published and then rolled back by a
-person (``rolled_back``: never republished).
+heading the canonical parser would read differently, a narrative change, a recompose that would lose a fact the
+served page states (``facts_would_be_lost``: a writer fact clause is cut only when the day gets the source's fact
+line with the same label and value), a no-op, a contract verdict worse than the stored or today's one (or a new
+blocking code), a recompose version that was published and then rolled back by a person (``rolled_back``: never
+republished).
 
-DRY RUN (default): no write. Prints the counts per state, per changed field and per verdict move, one line per
-Master (8-char tour id, state, changed field names, verdict old -> new; never page or source text) and the pin of
-the Masters due (``count:md5`` of the sorted ``tour_id:served version id``).
+DRY RUN (default): no write. Prints the counts per state, per changed field and per verdict move, the line counts of
+the Masters due (``fact_clauses_cut lines_removed lines_added facts_lost``), one line per Master (8-char tour id,
+state, changed field names, -removed/+added lines, facts lost, verdict old -> new) and the pin of the Masters due
+(``count:md5`` of the sorted ``tour_id:served version id``); then a capped SAMPLE of before / after lines (the first
+SAMPLE Masters due, their first two day blocks, "-" removed / "+" added; page text on the terminal only).
 
 APPLY=1: needs WAVE_ID of an OPEN, not paused rerun wave (``/admin/waves``; every tour of the set must be in its
-expected set) and PIN from the DRY RUN of the same set; recomputes the set, refuses when the pin moved, then writes
+expected set) and PIN from the DRY RUN of the same set; recomputes the set, refuses when the pin moved or when a
+Master due would lose a fact (facts_lost > 0, exit code 2; ``decide`` already skips such a Master), then writes
 and publishes each due Master (one transaction for the version, then the publish). Re-runnable: a recomposed Master
 is a no-op on the next run (the pin then changes: run the DRY RUN again); a version written whose publish did not
 happen is published on the next run (``resume``). The wave is read again before each Master: a pause (staff in
@@ -37,6 +42,7 @@ Env:
   APPLY=1, PIN          write (see above)
   INCLUDE_HUMAN_EDITED=1  also recompose a Master a person edited (its edited fact lines become the source's)
   EMIT_IDS=1            DRY RUN: also print the full tour ids of the Masters due (``DUE <tour_id>``), to make a wave
+  SAMPLE                DRY RUN: Masters in the before / after sample (default 3, 0 = none)
 """
 from __future__ import annotations
 
@@ -119,6 +125,8 @@ async def run(pool, env: dict, *, publish=None, out=print) -> int:
     for line in st.report_lines(decisions):
         out(line)
     if not apply:
+        for line in st.sample_lines(decisions, int(env["SAMPLE"]) if env.get("SAMPLE") else st.SAMPLE_TOURS):
+            out(line)
         if env.get("EMIT_IDS") == "1":
             for d in decisions:
                 if d["state"] in st.DUE:
@@ -128,6 +136,10 @@ async def run(pool, env: dict, *, publish=None, out=print) -> int:
     if now_pin != pin:
         out(f"PIN mismatch: given {pin}, now {now_pin}. Nothing written; run the DRY RUN again.")
         return 3
+    lost = st.apply_refusal(decisions)
+    if lost:
+        out(f"refused: {lost}")
+        return 2
     done: Counter = Counter()
     for d in decisions:
         if d["state"] not in st.DUE:

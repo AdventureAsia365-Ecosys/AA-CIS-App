@@ -158,7 +158,7 @@ async def test_dry_run_then_apply_publishes_a_recomposed_version_and_a_re_run_is
                                      f"Day 2 — Corran Ridge walk\n{DAY2}\nMeals: B")
     assert new["aa_name"] == "Velmora Canal and Corran Ridge Walk" and new["seo_meta"] == META
     md = json.loads(new["metadata"])
-    assert md["recompose_of"] == old and md["writer"] == "recompose-v1" and md["writer_version"] == "v2"
+    assert md["recompose_of"] == old and md["writer"] == "recompose-v2" and md["writer_version"] == "v2"
     assert "s1_job_id" not in md and md["recompose"]["fields"] == ["fact_lines"]
     assert [e["exit"] for e in md["final_contract_log"]] == ["recompose", "recompose"]
     assert md["final_contract"]["verdict"] == "publish"
@@ -167,7 +167,7 @@ async def test_dry_run_then_apply_publishes_a_recomposed_version_and_a_re_run_is
     assert served_text == new["aa_itineraries"]
     qs = await conn.fetchrow("SELECT validator_fn_version, score_overall::float AS score FROM "
                              "silver_aa_internal.quality_scores WHERE generated_content_id = $1", new["id"])
-    assert qs["validator_fn_version"] == "recompose-v1" and qs["score"] == 9.5
+    assert qs["validator_fn_version"] == "recompose-v2" and qs["score"] == 9.5
     job = await conn.fetchrow("SELECT id, created_by, payload->>'version_id' AS version_id FROM shared.job "
                               "WHERE kind = 'a3_atomize' AND payload->>'tour_id' = $1", tour)
     assert job["created_by"] == "system:recompose" and job["version_id"] == str(new["id"])
