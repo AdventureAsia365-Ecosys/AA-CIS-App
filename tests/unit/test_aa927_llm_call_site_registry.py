@@ -29,7 +29,7 @@ LOGGERS = {"record_call", "record_call_sync", "record_call_with_pool", "record_c
            "_log_t10_judge_call", "_record_t9_write_call"}
 
 _JN = ("services/content_generation/judge_node.py", "judge_node")
-_DEBATE = ("services/acp_shared/debate.py", "apply_debate")
+_DEBATE = ("services/acp_shared/debate.py", "assess_candidates")  # AA-1079: the judge call moved out of apply_debate
 _F9_LOG = ("services/acp_content_writing/quality_gates.py", "_log_t10_judge_call")
 _F9_FAIL = ("services/acp_content_writing/quality_gates.py", "_log_t10_billed_unusable")
 
@@ -74,7 +74,7 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/acp_contract/segment_research_batch.py", "_propose"),
     ("services/acp_shared/content_embedding.py", "compute_embeddings"): _self(
         "services/acp_shared/content_embedding.py", "compute_embeddings"),
-    ("services/acp_shared/debate.py", "apply_debate"): (_DEBATE,),
+    ("services/acp_shared/debate.py", "assess_candidates"): (_DEBATE,),
     ("services/acp_shared/place_cards.py", "draft_card"): (("services/acp_shared/place_cards.py", "_log"),),
     ("services/acp_shared/place_cards.py", "check_card"): (("services/acp_shared/place_cards.py", "_log"),),
     ("services/content_generation/brand_audit_node.py", "brand_audit_node"): _self(

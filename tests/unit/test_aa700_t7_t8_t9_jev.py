@@ -86,7 +86,8 @@ def test_t7_enforced_accept_skips_luna():
     assert jev.call_args.kwargs["tenant_id"] == "t-1"
 
 
-def test_t7_enforced_reject_cuts_without_luna():
+def test_t7_enforced_reject_cuts_without_luna(monkeypatch):
+    monkeypatch.setenv("T7_DEBATE_MODE", "cut")       # AA-1079: rank is the default; the cut stays behind the flag
     out, luna_calls, _ = _debate("reject")
     assert luna_calls == 0 and len(out) < 2           # cut, within the MAX_CUT_FRACTION rail
 

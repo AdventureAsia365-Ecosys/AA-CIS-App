@@ -10,7 +10,7 @@ export const ROUTE_VERSIONS_KEY = ["ai-gateway", "route-control", "versions"] as
 
 export const ORDER_MODES = ["model_first", "aws_first"] as const;
 export type OrderMode = (typeof ORDER_MODES)[number];
-export const PRESET_KEYS = ["prefer_anthropic_api", "prefer_aws"] as const;
+export const PRESET_KEYS = ["prefer_anthropic_api", "prefer_aws", "serving_first"] as const;
 export type PresetKey = (typeof PRESET_KEYS)[number];
 /** The gateway's attempt cap per request (shared/llm_client/errors.MAX_CHAIN_ATTEMPTS); the API sends its own. */
 export const DEFAULT_MAX_ATTEMPTS = 6;
