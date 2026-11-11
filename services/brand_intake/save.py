@@ -3,7 +3,7 @@
 - Signature words (AA-800) live in `tenant_brand_rules.custom_validators` as `{"signature_words": [...]}`, the
   shape `signature_vocabulary.explicit_signature_words` reads. Before AA-1080 no save path wrote the column (a new
   version even dropped it), so every brand had 0 explicit signature words. Each save now carries the previous
-  version's object over (other keys, such as an admin `voice_rubric`, included) and replaces only
+  version's object over (other keys, such as the admin voice rubric override of AA-790, included) and replaces only
   `signature_words` when the client sends the list (`CUSTOM_VALIDATORS_VALUE_SQL`).
 - Every declared country without search data gets one `shared.unmapped_market_requests` row at save time
   (AA-629 Tier 1), not only when the Slate later runs and not only when no declared country is supported.
@@ -22,7 +22,7 @@ _PREVIOUS_SQL = ("(SELECT p.custom_validators FROM shared.tenant_brand_rules p "
                  "WHERE p.tenant_id = {tenant} AND p.version = {version} - 1 ORDER BY p.updated_at DESC LIMIT 1)")
 # The VALUES expression for custom_validators in a brand INSERT ({tenant} = the tenant_id parameter, {version} the
 # new version's, {param} the signature-word list as JSON text or NULL). The previous version's object (the tenant's
-# latest row, whatever its brand_name) is kept, other keys included (`voice_rubric`, AA-790): a sent list replaces
+# latest row, whatever its brand_name) is kept, other keys included (the admin voice rubric override, AA-790): a sent list replaces
 # only its `signature_words` key; NULL (the client did not send the field) carries the previous value over as is.
 CUSTOM_VALIDATORS_VALUE_SQL = (
     "CASE WHEN {param}::jsonb IS NULL THEN " + _PREVIOUS_SQL + " ELSE "
