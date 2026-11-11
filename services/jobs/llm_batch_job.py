@@ -19,8 +19,10 @@ Steps (``progress.phase``):
    job keys). The result: counts per outcome, spend, the standard-price equivalent and the hand-off summary.
 
 Payload: {"batch_id": <uuid, ours>, "consumer": "s1_attempt1" | "a3_atomize" | "adhoc", "cap_usd": <float>,
-"dry_run": bool, "cache_system": bool | null, "args": {consumer arguments: tour_ids, batch_id of the run, seo_mode;
-ad hoc: stage, route_stage, items}}. Enqueued by POST /admin/ai-gateway/batches (api/routers/admin_ai_gateway.py).
+"dry_run": bool, "cache_system": bool | null, "tour_ids": [...] (S1 / A3; top level, so the wave report and the wave
+quality check find the batch's tours), "args": {batch_id of the run, seo_mode, drill_withhold; ad hoc: stage,
+route_stage, items}}. Enqueued by POST /admin/ai-gateway/batches (api/routers/admin_ai_gateway.py); an ad-hoc script
+enqueues it with shared.jobs.registry.enqueue.
 """
 from __future__ import annotations
 
