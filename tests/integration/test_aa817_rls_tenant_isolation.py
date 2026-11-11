@@ -526,6 +526,7 @@ def test_brand_writes_stay_in_the_own_tenant(cur, two_tenants):
 @pytest.mark.parametrize("sql,params", [
     ("UPDATE shared.tenant_brand_rules SET tenant_id = %s", "b"),
     ("UPDATE shared.tenant_brand_rules SET system_prompt = 'x'", None),
+    ("UPDATE shared.tenant_brand_rules SET custom_validators = '{}'::jsonb", None),
     ("INSERT INTO shared.tenant_brand_rules (id, tenant_id, brand_name) VALUES (gen_random_uuid(), %s, 'x')", "a"),
     ("DELETE FROM shared.tenant_brand_rules", None),
     ("TRUNCATE shared.tenant_brand_rules", None),
@@ -537,8 +538,8 @@ def test_brand_writes_stay_in_the_own_tenant(cur, two_tenants):
 ])
 def test_brand_columns_outside_the_grant_are_refused(cur, two_tenants, sql, params):
     """tenant_id is never updatable (a row cannot be handed to another tenant), the admin-only columns
-    (custom_validators, seo_provider, custom_keywords, overrides, ...) are not writable, no DELETE, no TRUNCATE
-    (which RLS does not filter)."""
+    (seo_provider, custom_keywords, overrides, ...) are not writable, custom_validators only on a new version's
+    INSERT (CIS 397, AA-1080), no DELETE, no TRUNCATE (which RLS does not filter)."""
     a, b = two_tenants
     args = () if params is None else ({"a": a, "b": b}[params],)
     with _as_tenant(cur, a) as c:
