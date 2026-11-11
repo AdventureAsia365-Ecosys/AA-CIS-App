@@ -79,3 +79,37 @@ def forbidden_in(value, words) -> set[str]:
     matches: whole words in the field's plain text (copy_text)."""
     text = copy_text(value)
     return {w for w in words if has_word(text, w)}
+
+
+def parse_forbidden_words(value) -> list[str]:
+    """A ``shared.tenant_brand_rules.forbidden_words`` value (a jsonb list, or its JSON text when the connection has
+    no jsonb codec) as a list of words; anything else is an empty list."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(w) for w in value if w is not None and str(w).strip()]
+
+
+async def tenant_brand_forbidden_words(conn, tenant_id, brand_name=None) -> list[str]:
+    """AA-1049 (S277): the forbidden words of the tenant's active brand rule — the one brand resolver
+    (``admin_pipeline._resolve_brand_rule``: the named active brand, else the tenant's 'default' / newest active row),
+    so a stored-row check reads the same list the writer run did. A ``brand_name`` with no active row any more falls
+    back to the tenant's default resolution. No tenant, or no active rule: an empty list (the AA core list alone).
+
+    Imported lazily (module attribute, so a test patch of the resolver applies): ``api.routers`` is a higher layer,
+    the same lazy import ``s1_batch`` uses."""
+    if not tenant_id:
+        return []
+    from api.routers import admin_pipeline
+    row = None
+    if brand_name:
+        row = await admin_pipeline._resolve_brand_rule(conn, str(tenant_id), None, brand_name)
+    if row is None:
+        row = await admin_pipeline._resolve_brand_rule(conn, str(tenant_id), None, None)
+    if row is None:
+        return []
+    return parse_forbidden_words(row["forbidden_words"])

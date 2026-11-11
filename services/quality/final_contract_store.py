@@ -10,9 +10,11 @@ Where a record lives (admin-only, never a tenant read):
 * T9  ``acp_shared.content_piece.writer_input.final_contract`` (written with the piece by ``_finalize_piece``; an
   admin sentence apply replaces it).
 
-``record_s1_exit`` reads the stored version through ``S1_ROW_SQL`` (the same read the report script uses), runs the
-contract and appends the record. Every function here is best-effort: report mode never fails the exit it records,
-so an error is logged (``final_contract_record_failed``) and swallowed.
+``record_s1_exit`` reads the stored version through ``S1_ROW_SQL`` (the same read the report script uses), resolves the
+tenant's active brand forbidden words (``brand_words_of_row``, AA-1049 S277: without them a word only on the tenant's
+brand list passed the stored-row contract), runs the contract and appends the record. Every function here is
+best-effort: report mode never fails the exit it records, so an error is logged (``final_contract_record_failed``)
+and swallowed.
 """
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ LOG_MAX = 20   # compact exit entries kept per version
 # audit), the metadata (grounding, degraded, writer_version) and the raw source. Table / column names from
 # docs/architecture/db-schema-reference.md.
 S1_ROW_COLUMNS = """
-    gc.id::text AS generated_content_id, gc.tour_id::text AS tour_id, gc.status::text AS status, gc.version_num,
+    gc.id::text AS generated_content_id, gc.tour_id::text AS tour_id, gc.tenant_id::text AS tenant_id,
+    gc.status::text AS status, gc.version_num,
     gc.metadata, gc.fix_pass_applied, COALESCE(gc.human_edited, false) AS human_edited,
     gc.aa_name, gc.aa_subtitle, gc.aa_summary, gc.aa_description, gc.aa_highlights::text AS aa_highlights,
     gc.aa_itineraries, gc.seo_title, gc.seo_meta,
@@ -83,10 +86,47 @@ def _log_of(metadata: Any) -> list:
     return list(log) if isinstance(log, list) else []
 
 
-def s1_record_from_row(row: Any, exit: str, *, actual: Optional[str] = None) -> dict:
-    """The contract record of one ``S1_ROW_SQL`` row (pure; the report script runs this too)."""
+def brand_key(row: Any) -> tuple[Optional[str], Optional[str]]:
+    """The brand rule a stored version was written under: (tenant_id, metadata.brand_name). Re-validation resolves the
+    brand the same way (``admin_pipeline._revalidate_tour``)."""
+    tenant = fc._get(row, "tenant_id")
+    name = _json(fc._get(row, "metadata"), {}).get("brand_name")
+    return (str(tenant) if tenant else None, str(name) if name else None)
+
+
+async def brand_words_of_row(conn, row: Any) -> list[str]:
+    """The tenant's active brand forbidden words for one ``S1_ROW_SQL`` row (the one brand resolver,
+    ``forbidden_words.tenant_brand_forbidden_words``). Never raises: a failed lookup is logged and checks the AA core
+    list alone, as before AA-1049 (report mode never fails the exit it records)."""
+    from services.content_generation.forbidden_words import tenant_brand_forbidden_words
+    tenant, name = brand_key(row)
+    if not tenant:
+        return []
+    try:
+        return await tenant_brand_forbidden_words(conn, tenant, name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("final_contract_brand_words_failed", workflow=fc.S1, tenant_id=tenant,
+                       error_type=type(exc).__name__, error=str(exc)[:300])
+        return []
+
+
+async def brand_words_by_key(conn, rows: list[Any]) -> dict:
+    """``brand_words_of_row`` for many rows, one lookup per distinct ``brand_key`` (the report scripts)."""
+    out: dict = {}
+    for row in rows:
+        key = brand_key(row)
+        if key not in out:
+            out[key] = await brand_words_of_row(conn, row)
+    return out
+
+
+def s1_record_from_row(row: Any, exit: str, *, actual: Optional[str] = None,
+                       brand_forbidden_words: Optional[list] = None) -> dict:
+    """The contract record of one ``S1_ROW_SQL`` row (pure; the report script runs this too). ``brand_forbidden_words``
+    = the tenant's active brand list (``brand_words_of_row``)."""
     status = actual if actual is not None else fc._get(row, "status")
-    return fc.check_s1(fc.s1_input_from_row(row), exit=exit, actual=status).record()
+    inp = fc.s1_input_from_row(row, brand_forbidden_words=brand_forbidden_words)
+    return fc.check_s1(inp, exit=exit, actual=status).record()
 
 
 async def append_s1(conn, version_id: str, record: dict, metadata: Any = None) -> None:
@@ -104,7 +144,8 @@ async def record_s1_exit(conn, version_id: str, exit: str, *, actual: Optional[s
         row = await conn.fetchrow(S1_ROW_SQL, str(version_id))
         if row is None:
             return None
-        record = fc.stamp_stored(s1_record_from_row(row, exit, actual=actual),
+        words = await brand_words_of_row(conn, row)
+        record = fc.stamp_stored(s1_record_from_row(row, exit, actual=actual, brand_forbidden_words=words),
                                  fc.tour_text_sha(fc.s1_input_from_row(row).content))
         await append_s1(conn, str(version_id), record, row["metadata"])
         fc.log_record(record, version_id=str(version_id))
@@ -127,5 +168,5 @@ async def attach_s1(conn, version_id: str, record: Optional[dict]) -> None:
                        version_id=str(version_id), error_type=type(exc).__name__, error=str(exc)[:300])
 
 
-__all__ = ["S1_ROW_COLUMNS", "S1_ROW_FROM", "S1_ROW_SQL", "LOG_MAX", "s1_record_from_row", "append_s1",
-           "record_s1_exit", "attach_s1"]
+__all__ = ["S1_ROW_COLUMNS", "S1_ROW_FROM", "S1_ROW_SQL", "LOG_MAX", "brand_key", "brand_words_of_row",
+           "brand_words_by_key", "s1_record_from_row", "append_s1", "record_s1_exit", "attach_s1"]

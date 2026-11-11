@@ -419,9 +419,13 @@ def _get(row: Any, key: str) -> Any:
         return None
 
 
-def s1_input_from_row(row: Any) -> S1Input:
+def s1_input_from_row(row: Any, *, brand_forbidden_words: Optional[list] = None) -> S1Input:
     """A stored version as ``final_contract_store.S1_ROW_SQL`` reads it (generated_content + its latest score row +
-    raw_tours src_*)."""
+    raw_tours src_*).
+
+    AA-1049 (S277): the row holds no brand list, so the caller passes the tenant's active brand forbidden words
+    (``final_contract_store.brand_words_of_row``, the one brand resolver); without them only the AA core list is
+    checked."""
     from services.quality import elephant_policy
 
     metadata = _json(_get(row, "metadata"), {})
@@ -441,6 +445,7 @@ def s1_input_from_row(row: Any) -> S1Input:
         grounding_stale=bool(_get(row, "human_edited")) and grounding is not None,
         degraded=list(metadata.get("degraded") or []),
         quality_score=float(score) if score is not None else None,
+        brand_forbidden_words=list(brand_forbidden_words or []),
     )
 
 
