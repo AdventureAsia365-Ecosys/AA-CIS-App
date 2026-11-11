@@ -4445,8 +4445,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     published through `process_export` (exit `recompose`): A3, source fan-out, `updated_at` and the other apps follow.
     Skipped and counted: source not live, a pending review, a newer version in flight, an active pipeline job, not v2,
     human-edited (opt-in), the elephant-riding policy, a legacy-format itinerary, a narrative change, a no-op, a
-    contract verdict worse than the stored or today's one. DRY RUN prints counts, 8-char ids and the pin; APPLY needs
-    an open rerun wave holding the set and the pin.
+    contract verdict worse than the stored or today's one, a published recompose a person rolled back (never
+    republished; only a never-published one is resumed). DRY RUN prints counts, 8-char ids and the pin; APPLY needs
+    an open rerun wave holding the set and the pin, and stops before the next Master once the wave is paused or
+    closed.
 - **A3 — Master Content Pool**: `gold_aa_internal.published_tours` — a tour is "in Master
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a

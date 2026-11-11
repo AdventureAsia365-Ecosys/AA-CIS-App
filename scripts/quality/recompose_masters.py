@@ -14,7 +14,8 @@ contract before / after) and ``s1_recompose_store.py`` (the selection, the new v
 Skipped and counted: a source not live, a pending review, a newer pending / approved version, an active pipeline job,
 a writer other than v2, a human-edited Master (``INCLUDE_HUMAN_EDITED=1`` takes them), the elephant-riding policy, a
 heading the canonical parser would read differently, a narrative change, a no-op, a contract verdict worse than the
-stored or today's one (or a new blocking code).
+stored or today's one (or a new blocking code), a recompose version that was published and then rolled back by a
+person (``rolled_back``: never republished).
 
 DRY RUN (default): no write. Prints the counts per state, per changed field and per verdict move, one line per
 Master (8-char tour id, state, changed field names, verdict old -> new; never page or source text) and the pin of
@@ -24,7 +25,9 @@ APPLY=1: needs WAVE_ID of an OPEN, not paused rerun wave (``/admin/waves``; ever
 expected set) and PIN from the DRY RUN of the same set; recomputes the set, refuses when the pin moved, then writes
 and publishes each due Master (one transaction for the version, then the publish). Re-runnable: a recomposed Master
 is a no-op on the next run (the pin then changes: run the DRY RUN again); a version written whose publish did not
-happen is published on the next run (``resume``).
+happen is published on the next run (``resume``). The wave is read again before each Master: a pause (staff in
+``/admin/waves`` or the capacity guard) or a close stops the run (``stopped: ...``, exit code 4); the DRY RUN after
+the resume picks up the rest.
 
 Env:
   WAVE_ID               the wave whose expected set is the run's set (required with APPLY=1)
@@ -83,7 +86,8 @@ def resolve_set(env: dict, wave: list[str] | None) -> tuple[list[str] | None, st
 
 
 async def run(pool, env: dict, *, publish=None, out=print) -> int:
-    """The whole run on ``pool`` (exit code: 0 ok, 1 a Master failed on APPLY, 2 refused, 3 pin moved)."""
+    """The whole run on ``pool`` (exit code: 0 ok, 1 a Master failed on APPLY, 2 refused, 3 pin moved, 4 stopped:
+    the wave was paused or closed during APPLY)."""
     from services.content_generation import s1_recompose_store as st
     from services.quality.final_contract_store import brand_key, brand_words_by_key
 
@@ -128,6 +132,14 @@ async def run(pool, env: dict, *, publish=None, out=print) -> int:
     for d in decisions:
         if d["state"] not in st.DUE:
             continue
+        # the wave stop rule holds during the run: a pause or a close since the start stops it before the next write
+        async with pool.acquire() as conn:
+            still, why = await st.wave_set(conn, env["WAVE_ID"].strip())
+        if still is None:
+            out(f"stopped: {why}")
+            out("applied: " + (", ".join(f"{k}={v}" for k, v in sorted(done.items())) or "nothing")
+                + " (stopped; the rest stays due, resume the wave and run the DRY RUN again)")
+            return 4
         res = await st.apply_one(pool, d, publish=publish)
         done[res["state"]] += 1
         vid = str(res.get("version_id") or "")[:8]

@@ -6,9 +6,10 @@ One run (``scripts/quality/recompose_masters.py``, CIS api container through ``t
    final contract reads it, ``final_contract_store.S1_ROW_COLUMNS``, plus the source state, a pending review, a newer
    version, an active pipeline job);
 2. ``decide`` per Master (pure): ``recompose`` (a new version is due), ``resume`` (a recompose version of the served
-   version was written but not published: publish it), or one skip reason — ``source_not_live``, ``pending_review``,
-   ``newer_version``, ``job_active``, ``not_v2``, ``human_edited``, ``policy``, ``heading_parse``,
-   ``narrative_changed``, ``no_op``, ``contract_worse``, ``error``;
+   version was written but never published: publish it), or one skip reason — ``source_not_live``,
+   ``rolled_back`` (the recompose version of the served version WAS published and a person promoted the older
+   version back: never republish it), ``pending_review``, ``newer_version``, ``job_active``, ``not_v2``,
+   ``human_edited``, ``policy``, ``heading_parse``, ``narrative_changed``, ``no_op``, ``contract_worse``, ``error``;
 3. ``apply_one`` (APPLY only): in one transaction, re-check that the Master still serves the decided version, insert
    the recomposed text as a NEW approved ``generated_content`` version (``insert_recomposed_version``: a copy of the
    served version with only ``aa_itineraries`` / ``seo_title`` / ``seo_meta`` replaced, ``metadata.recompose_of`` =
@@ -39,6 +40,7 @@ SOURCE_NOT_LIVE = "source_not_live"
 PENDING_REVIEW = "pending_review"
 NEWER_VERSION = "newer_version"
 JOB_ACTIVE = "job_active"
+ROLLED_BACK = "rolled_back"
 ERROR = "error"
 # a newer version in one of these states is settled (a person or the gate turned it down): it does not hold the
 # recompose of the served version; any other (draft, passed, approved, published) is work in flight
@@ -56,6 +58,7 @@ def candidates_sql() -> str:
                EXISTS (SELECT 1 FROM silver_aa_internal.review_queue rq
                         WHERE rq.tour_id = gc.tour_id AND rq.review_status = 'pending') AS pending_review,
                nv.id::text AS newer_id, nv.status::text AS newer_status, nv.recompose_of AS newer_recompose_of,
+               COALESCE(nv.was_published, false) AS newer_was_published,
                EXISTS (SELECT 1 FROM shared.job j
                         WHERE j.kind = ANY($3::text[]) AND j.status IN ('queued', 'running')
                           AND (j.payload->>'tour_id' = gc.tour_id::text
@@ -65,7 +68,17 @@ def candidates_sql() -> str:
           {S1_ROW_FROM}
           JOIN gold_aa_internal.published_tours pt ON pt.generated_content_id = gc.id
           LEFT JOIN LATERAL (
-              SELECT n.id, n.status, n.metadata->>'recompose_of' AS recompose_of
+              SELECT n.id, n.status, n.metadata->>'recompose_of' AS recompose_of,
+                     -- a recompose version that was published once (then rolled back by a promote of the older
+                     -- version): the stamp apply_one writes, the final contract of process_export step 5, or the
+                     -- A3 job its step 3b enqueues (any of the three; the last two are best-effort writes)
+                     CASE WHEN n.metadata ? 'recompose_of' THEN (
+                         n.metadata->'recompose' ? 'published_at'
+                         OR COALESCE(n.metadata->'final_contract_log', '[]'::jsonb)
+                            @> '[{{"exit": "recompose", "actual": "published"}}]'::jsonb
+                         OR EXISTS (SELECT 1 FROM shared.job aj
+                                     WHERE aj.kind = 'a3_atomize' AND aj.payload->>'tour_id' = n.tour_id::text
+                                       AND aj.payload->>'version_id' = n.id::text)) END AS was_published
                 FROM silver_aa_internal.generated_content n
                WHERE n.tour_id = gc.tour_id AND n.version_num > gc.version_num
                ORDER BY n.version_num DESC
@@ -142,8 +155,11 @@ def decide(row: Any, brand_words: list[str], *, include_human_edited: bool = Fal
     if not _get(row, "source_live"):
         return _skip(SOURCE_NOT_LIVE)
     if _get(row, "newer_id"):
-        # a recompose of THIS version written but not published (a run stopped between insert and publish)
         if _get(row, "newer_recompose_of") == vid and _get(row, "newer_status") == "approved":
+            # published once, and the served version is this older one again: a person rolled the recompose back
+            if _get(row, "newer_was_published"):
+                return _skip(ROLLED_BACK)
+            # a recompose of THIS version written but never published (a run stopped between insert and publish)
             return {**out, "state": RESUME, "new_version_id": str(_get(row, "newer_id"))}
         if _get(row, "newer_status") not in SETTLED_NEWER:
             return _skip(NEWER_VERSION)
@@ -317,6 +333,25 @@ async def _default_publish(version_id: str, **kw) -> dict:
     return await process_export(version_id, contract_exit=rc.EXIT, atomize_created_by=ACTOR, **kw)
 
 
+MARK_PUBLISHED_SQL = """
+    UPDATE silver_aa_internal.generated_content
+       SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{recompose,published_at}', to_jsonb($2::text))
+     WHERE id = $1::uuid AND metadata ? 'recompose'
+"""
+
+
+async def mark_published(pool, version_id: str) -> None:
+    """Stamp ``metadata.recompose.published_at`` on a published recompose version, so a later run never resumes it
+    after a rollback. Best-effort: the contract log and the A3 job of the publish say the same."""
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(MARK_PUBLISHED_SQL, version_id, at)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("s1_recompose_mark_published_failed", version_id=version_id, error_type=type(e).__name__)
+
+
 async def apply_one(pool, decision: dict, *, publish: Optional[Publish] = None) -> dict:
     """Write and publish one due Master. {state: published | refused_moved | publish_failed, version_id?, ...}."""
     publish = publish or _default_publish
@@ -333,8 +368,10 @@ async def apply_one(pool, decision: dict, *, publish: Optional[Publish] = None) 
         logger.warning("s1_recompose_publish_failed", tour_id=decision["tour_id"], version_id=new_id,
                        error_type=type(e).__name__, error=str(e)[:200])
         return {"state": "publish_failed", "version_id": new_id, "error": type(e).__name__}
+    await mark_published(pool, new_id)
     return {"state": "published", "version_id": new_id, "atomize_job_id": (res or {}).get("atomize_job_id")}
 
 
-__all__ = ["MASTER_TENANT", "ACTOR", "RECOMPOSE", "RESUME", "candidates_sql", "wave_set", "load", "decide",
-           "pin_of", "summary", "report_lines", "new_metadata", "insert_recomposed_version", "apply_one"]
+__all__ = ["MASTER_TENANT", "ACTOR", "RECOMPOSE", "RESUME", "ROLLED_BACK", "candidates_sql", "wave_set", "load",
+           "decide", "pin_of", "summary", "report_lines", "new_metadata", "insert_recomposed_version",
+           "mark_published", "apply_one"]

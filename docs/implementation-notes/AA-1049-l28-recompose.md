@@ -47,6 +47,16 @@ path, no model call.
 - **Resume.** A newer `approved` version whose `metadata.recompose_of` is the served version is a recompose that was
   written but not published (run stopped between the two steps): the next run publishes it (`resume`), never writes a
   second one.
+- **Rolled back is not resume (review fix).** A recompose version R that was published and then rolled back by staff
+  (`promote_tour_version` republishes the older version, which is still `approved`) is still the newest approved
+  version with `recompose_of` = the served version. Resume therefore requires that R was never published: no
+  `metadata.recompose.published_at` (stamped by `apply_one` after a successful publish), no `final_contract_log` entry
+  `{exit: recompose, actual: published}` (process_export step 5), and no `a3_atomize` job of R (process_export step
+  3b, enqueued only after the publish committed). Any one of the three makes the Master `rolled_back`: skipped,
+  counted, never republished. Three signals because the last two are best-effort writes inside process_export.
+- **The wave is re-read before every Master in APPLY (review fix).** A staff pause in `/admin/waves`, a capacity
+  pause (`paused_at`) or a close stops the run before the next write: `stopped: <why>`, the applied counts so far,
+  exit code 4. The run is resumable, so stopping is safe; the next DRY RUN gives a new pin for the rest.
 - **Wave and pin.** APPLY needs `WAVE_ID` of an open, not paused `shared.rerun_wave` whose expected set holds every
   tour of the run, and `PIN` (`count:md5` of the sorted `tour_id:served version id` of the Masters due) from the DRY
   RUN. A run never opens or closes a wave (the orchestrator does, lesson S275).
@@ -80,5 +90,7 @@ path, no model call.
   rebuilds geo. A3 runs at concurrency 1, ~20-30 tours/h: keep a wave ≤ ~480 tours so its tail drains inside the
   AA-991 24 h window (`atoms_older_than_master`).
 - `process_export` dismisses pending reviews of the tour; that is why a pending review skips the Master.
+- Exit codes of the runner: 0 ok, 1 a Master failed on APPLY, 2 refused, 3 pin moved, 4 stopped (wave paused or
+  closed during APPLY).
 - Each APPLY that writes changes the pin of the next DRY RUN (recomposed Masters become `no_op`): re-run the DRY RUN
   before another APPLY.

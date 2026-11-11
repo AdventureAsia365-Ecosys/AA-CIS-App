@@ -54,7 +54,7 @@ def row(**over) -> dict:
          "inclusions": "Guesthouse night\nMeals as listed", "activities": None, "price_raw": None,
          "exclusions": "Flights", "group_size": "2-8", "best_time_to_go": None,
          "source_live": True, "pending_review": False, "newer_id": None, "newer_status": None,
-         "newer_recompose_of": None, "job_active": False}
+         "newer_recompose_of": None, "newer_was_published": False, "job_active": False}
     r.update(over)
     return r
 
@@ -200,6 +200,19 @@ def test_a_newer_hitl_version_does_not_block_and_a_written_recompose_is_resumed(
     d = st.decide(row(newer_id="n2", newer_status="approved",
                       newer_recompose_of="9f8e7d6c-0000-4000-8000-00000000000a"), [])
     assert d["state"] == st.RESUME and d["new_version_id"] == "n2"
+
+
+def test_the_candidates_sql_renders_and_reads_the_publish_trace():
+    sql = st.candidates_sql()
+    assert '@> \'[{"exit": "recompose", "actual": "published"}]\'::jsonb' in sql
+    assert "newer_was_published" in sql
+
+
+def test_a_published_recompose_that_a_person_rolled_back_is_never_resumed():
+    d = st.decide(row(newer_id="n2", newer_status="approved", newer_was_published=True,
+                      newer_recompose_of="9f8e7d6c-0000-4000-8000-00000000000a"), [])
+    assert d["state"] == st.ROLLED_BACK and "new_version_id" not in d
+    assert st.pin_of([d]).startswith("0:")
 
 
 def test_a_human_edited_master_is_taken_when_asked():

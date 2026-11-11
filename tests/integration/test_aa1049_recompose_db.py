@@ -125,11 +125,11 @@ async def _wave(conn, ids: list[str], *, paused: bool = False) -> str:
         "CASE WHEN $2 THEN now() END, CASE WHEN $2 THEN 'test' END) RETURNING id", ids, paused))
 
 
-async def _run(conn, env: dict) -> tuple[int, list[str]]:
+async def _run(conn, env: dict, publish=None) -> tuple[int, list[str]]:
     from services.export import handler
     out: list[str] = []
     with patch.object(handler.asyncpg, "connect", AsyncMock(return_value=_NoClose(conn))):
-        code = await _script().run(_OneConnPool(conn), env, out=out.append)
+        code = await _script().run(_OneConnPool(conn), env, publish=publish, out=out.append)
     return code, out
 
 
@@ -244,6 +244,77 @@ async def test_a_version_written_whose_publish_failed_is_resumed_not_written_twi
 
 
 @pytest.mark.asyncio
+async def test_a_published_recompose_rolled_back_by_a_promote_is_never_republished(conn):
+    from services.export.handler import process_export
+    tour, old = await _master(conn)
+    wave = await _wave(conn, [tour])
+    _, out = await _run(conn, {"WAVE_ID": wave})
+    code, out = await _run(conn, {"WAVE_ID": wave, "APPLY": "1", "PIN": _pin(out)})
+    assert code == 0 and out[-1] == "applied: published=1", out
+    new = await conn.fetchrow("SELECT id, metadata FROM silver_aa_internal.generated_content "
+                              "WHERE tour_id = $1 AND version_num = 2", uuid.UUID(tour))
+    assert "published_at" in json.loads(new["metadata"])["recompose"]
+    await conn.execute("UPDATE shared.job SET status = 'succeeded' WHERE kind = 'a3_atomize' "
+                       "AND payload->>'tour_id' = $1", tour)
+    # staff roll back: the older version is published again (promote_tour_version -> process_export)
+    from services.export import handler
+    with patch.object(handler.asyncpg, "connect", AsyncMock(return_value=_NoClose(conn))):
+        await process_export(old, contract_exit="promote")
+    await conn.execute("UPDATE shared.job SET status = 'succeeded' WHERE kind = 'a3_atomize' "
+                       "AND payload->>'tour_id' = $1", tour)
+    assert str(await conn.fetchval("SELECT generated_content_id FROM gold_aa_internal.published_tours "
+                                   "WHERE tour_id = $1", uuid.UUID(tour))) == old
+
+    code, out = await _run(conn, {"WAVE_ID": wave})
+    assert code == 0 and "rolled_back=1" in out[1] and _pin(out).startswith("0:"), out
+
+    # each signal alone says "published once": the stamp gone, the contract log and the A3 job still tell
+    await conn.execute("UPDATE silver_aa_internal.generated_content "
+                       "SET metadata = metadata #- '{recompose,published_at}' WHERE id = $1", new["id"])
+    _, out = await _run(conn, {"WAVE_ID": wave})
+    assert "rolled_back=1" in out[1], out
+    await conn.execute("UPDATE silver_aa_internal.generated_content "
+                       "SET metadata = metadata - 'final_contract_log' WHERE id = $1", new["id"])
+    _, out = await _run(conn, {"WAVE_ID": wave})
+    assert "rolled_back=1" in out[1], out
+    await conn.execute("DELETE FROM shared.job WHERE kind = 'a3_atomize' AND payload->>'version_id' = $1",
+                       str(new["id"]))
+    _, out = await _run(conn, {"WAVE_ID": wave})
+    assert "resume=1" in out[1], out      # no trace of a publish left: the never-published rule applies
+
+
+@pytest.mark.asyncio
+async def test_a_wave_paused_during_apply_stops_the_run_before_the_next_master(conn):
+    from services.content_generation import s1_recompose_store as st
+    first, _ = await _master(conn)
+    second, _ = await _master(conn)
+    wave = await _wave(conn, [first, second])
+    _, out = await _run(conn, {"WAVE_ID": wave})
+    assert "recompose=2" in out[1], out
+
+    async def publish_then_pause(version_id: str, **kw) -> dict:
+        res = await st._default_publish(version_id, **kw)
+        await conn.execute("UPDATE shared.rerun_wave SET paused_at = now(), paused_by = 'capacity' WHERE id = $1",
+                           uuid.UUID(wave))
+        return res
+
+    code, out = await _run(conn, {"WAVE_ID": wave, "APPLY": "1", "PIN": _pin(out)}, publish=publish_then_pause)
+    assert code == 4 and any(ln.startswith("stopped: ") and "paused" in ln for ln in out), out
+    assert "published=1" in out[-1], out
+    assert await conn.fetchval("SELECT count(*) FROM silver_aa_internal.generated_content "
+                               "WHERE tour_id = ANY($1) AND version_num = 2",
+                               [uuid.UUID(first), uuid.UUID(second)]) == 1
+
+    # resumed wave: the DRY RUN finds the one left
+    await conn.execute("UPDATE shared.rerun_wave SET paused_at = NULL, paused_by = NULL WHERE id = $1",
+                       uuid.UUID(wave))
+    await conn.execute("UPDATE shared.job SET status = 'succeeded' WHERE kind = 'a3_atomize' "
+                       "AND payload->>'tour_id' = ANY($1)", [first, second])
+    _, out = await _run(conn, {"WAVE_ID": wave})
+    assert "recompose=1" in out[1] and "no_op=1" in out[1], out
+
+
+@pytest.mark.asyncio
 async def test_every_query_prepares_on_the_live_schema(conn):
     from services.content_generation import s1_recompose_store as st
     await conn.prepare(st.candidates_sql())
@@ -251,3 +322,4 @@ async def test_every_query_prepares_on_the_live_schema(conn):
     await conn.prepare(st.SERVED_SQL)
     await conn.prepare(st.INSERT_VERSION_SQL)
     await conn.prepare(st.COPY_SCORE_SQL)
+    await conn.prepare(st.MARK_PUBLISHED_SQL)
