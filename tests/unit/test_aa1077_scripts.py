@@ -33,9 +33,9 @@ F17 = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable"
 
 def test_readings_of_the_ledger_and_the_trace():
     assert rm.f4_reading([F4_IN]) == "in" and rm.f4_reading([F4_OLD]) == "4586" and rm.f4_reading([]) == "-"
-    trace = [{"step": "length_trace", "chars": {"loop": 5012, "final_integrity": 4890}}]
-    assert rm.before_normalizer(trace, [F4_IN]) == "5012"
-    assert rm.before_normalizer([], [F4_OLD]) == "4586" and rm.before_normalizer([], [F4_IN]) == "-"
+    wi = {"length_trace": {"step": "length_trace", "chars": {"loop": 5012, "final_integrity": 4890}}}
+    assert rm.before_normalizer(wi, [F4_IN]) == "5012"
+    assert rm.before_normalizer({}, [F4_OLD]) == "4586" and rm.before_normalizer({}, [F4_IN]) == "-"
     assert rm.stored_label([{"step": "x"}, {"reason_codes": ["length"]}]) == ["length"]
 
 

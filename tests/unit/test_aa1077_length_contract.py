@@ -172,3 +172,13 @@ def test_a_drop_that_stays_over_the_floor_or_a_call_without_the_flag_is_made():
     with _fit(_blog(4600)):
         text, _, _ = asyncio.run(svc._apply_faq_answer_fit(_blog(4800), [], context={}))
     assert text == _blog(4600)
+
+
+def test_writer_input_carries_the_length_trace_only_when_present():
+    base = {"channel": "blog", "real_questions": [], "search_questions": []}
+    assert "length_trace" not in svc.writer_input_snapshot(base)
+    rec = {"step": svc.LENGTH_TRACE_STEP, "chars": {"loop": 5100}, "verdict": "in"}
+    assert svc.writer_input_snapshot(dict(base, length_trace=rec))["length_trace"] == rec
+    import inspect
+    src = inspect.getsource(svc._normalize_final_text)
+    assert 'context["length_trace"]' in src and "repair_log.append({\"attempt\": attempt, **entry})" not in src

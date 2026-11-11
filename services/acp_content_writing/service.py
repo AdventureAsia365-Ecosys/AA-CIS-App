@@ -2038,7 +2038,7 @@ def _recheck_length(content_text: str, gate_ledger: list, status: str, held_reas
     were stored 192–557 chars shorter than the F4 reading. A fresh F4 failure replaces the ledger's F4 entry and
     holds an approved piece (its label then reads `length_short`); a fresh pass leaves a failed entry as it is
     (status never moves from held to approved here: the hold was decided on the gated text). Returns (ledger,
-    status, held_reason, the `length_trace` repair-log entry: chars after each normalizer step, the verdict)."""
+    status, held_reason, the `length_trace` record for writer_input: chars after each normalizer step, the verdict)."""
     from services.acp_content_writing.quality_gates import gate_extreme_length  # lazy, as the other F4 re-runs
     fresh = gate_extreme_length(strip_citation_tags(content_text), "blog")
     side = length_contract.entry_side(fresh)
@@ -2073,7 +2073,7 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
     6. AA-1077 (blog) the F4 length re-check of the text it stores (`_recheck_length`): an approved blog the steps
        above took under the floor is held `length_short`, and the ledger's F4 entry is the stored text's measure.
        The FAQ answer fit (4) is floor-aware: a drop that would take the blog under the floor is not made.
-       Each step's length is kept in a `length_trace` repair-log entry (blog).
+       Each step's length is kept in `writer_input.length_trace` (blog, admin-only).
 
     It returns the text the final contract checks and ``_finalize_piece`` stores (no step after it edits the text)
     with the ledger, flags, status, held reason, repair log, summary / embedding (re-made after a cut) and the
@@ -2134,7 +2134,7 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
         trace["final_integrity"] = length_contract.measure(content_text)
         gate_ledger, status, held_reason, entry = _recheck_length(content_text, gate_ledger, status, held_reason,
                                                                   trace=trace)
-        repair_log.append({"attempt": attempt, **entry})
+        context["length_trace"] = {"attempt": attempt, **entry}   # writer_input (admin-only), not the repair log
     return {"content_text": content_text, "gate_ledger": gate_ledger, "flags": flags, "status": status,
             "held_reason": held_reason, "repair_log": repair_log, "summary": summary, "embedding": embedding,
             "cost_usd": cost_usd}
@@ -3017,6 +3017,8 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
         # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.
         **({"faq_answer_fit": context["faq_answer_fit"]} if context.get("faq_answer_fit") else {}),
+        # AA-1077 — chars after each normalizer step, the floor and the re-check's verdict (blog)
+        **({"length_trace": context["length_trace"]} if context.get("length_trace") else {}),
         # AA-1049 W3 — the pre-spend angle tripwire report (admin-only, report mode)
         **({"prespend": context["prespend"]} if context.get("prespend") else {}),
         # AA-789 tier 1 — seed alignment per attempt (modes, candidates, nlp version); absent when every class is off.

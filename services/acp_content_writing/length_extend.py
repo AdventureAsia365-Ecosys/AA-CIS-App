@@ -36,6 +36,7 @@ from typing import Callable, Optional
 from services.acp_content_writing import length_contract as lc
 from services.acp_content_writing.hygiene import _is_cta
 from services.acp_content_writing.quality_gates import expand_ledger, unused_source_facts
+from services.acp_shared.citation_tags import TAG_RE
 from services.quality import registry as qr
 from services.quality import trial_flags
 
@@ -49,7 +50,6 @@ WORDS_SLACK = 2.0           # a paragraph over this many times the words asked i
 _HEADING_LINE_RE = re.compile(r"^#{1,6}\s", re.M)
 _FAQ_TITLE_RE = re.compile(r"^#{1,6}\s*(?:faq\b|frequently asked)", re.I)
 _LIST_LINE_RE = re.compile(r"^\s*(?:[-*•]\s|\d+[.)]\s)", re.M)
-_TAG_RE = re.compile(r"\[(?:R|F):")
 
 
 def mode() -> str:
@@ -130,7 +130,7 @@ def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx)
     from services.quality.repair_contract import new_specifics  # lazy: repair_contract imports hygiene
     if not add.strip():
         return "empty (no fitting fact)"
-    if _HEADING_LINE_RE.search(add) or _LIST_LINE_RE.search(add) or "?" in add or _TAG_RE.search(add):
+    if _HEADING_LINE_RE.search(add) or _LIST_LINE_RE.search(add) or "?" in add or TAG_RE.search(add):
         return "not plain prose (heading, list, question or tag)"
     if cta and (cta.strip() and cta.strip() in add or _is_cta(add, cta)):
         return "repeats the call to action"
