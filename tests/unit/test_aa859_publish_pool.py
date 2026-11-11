@@ -24,7 +24,7 @@ from api.routers import v1_publish as pub_mod
 from services.acp_publish.idempotency import Claim
 
 TENANT_ID = str(uuid.uuid4())
-PIECE_ID = uuid.uuid4()
+PIECE_ID = uuid.UUID(int=0x85910001)   # fixed: parametrize inputs are identical in every xdist worker (S276 lint)
 PUBLISH_ID = str(uuid.uuid4())
 WP_CREDS = {"wp_url": "https://b.com", "username": "u", "app_password": "p"}
 PIECE = {"piece_id": PIECE_ID, "content_text": "## Hello\nReal content.", "status": "approved", "slug": None,

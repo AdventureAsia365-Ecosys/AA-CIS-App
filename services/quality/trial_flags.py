@@ -40,7 +40,8 @@ AUDIT_TENANT_KIND = "demo"
 # job kind -> {switch: values the switch itself accepts}. Kept in step with the readers (test_aa1049_trial_flags).
 ALLOWED: Mapping[str, Mapping[str, tuple[str, ...]]] = MappingProxyType({
     "t9_write": MappingProxyType({"T9_REGRESSION_GUARD_MODE": ("stable_keys", "gate_names"),
-                                  "T9_SEO_BUILDER": ("on", "off")}),
+                                  "T9_SEO_BUILDER": ("on", "off"),
+                                  "T9_LENGTH_EXTEND": ("on", "off")}),   # AA-1077: the extend repair
     "t2_rewrite": MappingProxyType({"T2_ORCHESTRATOR": ("linear", "graph")}),
 })
 

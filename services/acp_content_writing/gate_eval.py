@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from services.acp_content_writing import f9_policy
+from services.acp_content_writing import f9_policy, length_contract
 from services.acp_content_writing.quality_gates import expand_ledger, ledger_gate, ledger_is_merged, never_holds
 from services.quality import registry as qr
 
@@ -117,14 +117,39 @@ def f9_class_counts(rows: list[dict]) -> dict[str, int]:
     return out
 
 
+# AA-1077 — F4_extreme_length is typed by its side: `length_short` / `length_long` (length_contract.code_for, read from
+# the violation, so an old ledger re-read gets the split code too). `length` stays the code of an F4 failure whose
+# side does not read, and the code every label stored before AA-1077 carries: readers compare through
+# `reason_family` / LENGTH_CODES, never against one literal.
+LENGTH_CODE = HOLD_REASON_CODES[qr.F4_EXTREME_LENGTH]
+LENGTH_CODES = frozenset({LENGTH_CODE, length_contract.CODE_SHORT, length_contract.CODE_LONG})
+
+
+def reason_family(code: str) -> str:
+    """The code a report groups by: every length code (old `length`, new `length_short` / `length_long`) is `length`;
+    any other code is itself."""
+    return LENGTH_CODE if code in LENGTH_CODES else code
+
+
+def _f4_entry(gate_ledger: list[dict] | None) -> Optional[dict]:
+    entries = [g for g in gate_ledger or [] if isinstance(g, dict) and "gate" in g]
+    return next((g for g in expand_ledger(entries) if g["gate"] == qr.F4_EXTREME_LENGTH and not g.get("passed")),
+                None)
+
+
 def hold_reason_codes(gate_ledger: list[dict] | None, held_reason: Optional[str] = None) -> list[str]:
     """The typed reasons a piece is held for, one per hold-capable failing gate (in ledger order, deduplicated),
-    plus `detector_degraded` when the hold came from a hard degraded detector (held_reason 'degraded: …')."""
-    codes = [HOLD_REASON_CODES.get(r["source"], GATE_FAILURE) for r in failing_gates(gate_ledger) if r["may_hold"]]
+    plus `detector_degraded` when the hold came from a hard degraded detector (held_reason 'degraded: …').
+    AA-1077: an F4_extreme_length failure is `length_short` / `length_long` by its violation (`length` when the side
+    does not read)."""
+    f4_code = length_contract.code_for(_f4_entry(gate_ledger)) or LENGTH_CODE
+    codes = [f4_code if r["source"] == qr.F4_EXTREME_LENGTH else HOLD_REASON_CODES.get(r["source"], GATE_FAILURE)
+             for r in failing_gates(gate_ledger) if r["may_hold"]]
     if (held_reason or "").startswith("degraded:"):
         codes.append(DETECTOR_DEGRADED)
     return list(dict.fromkeys(codes))
 
 
 __all__ = ["ledger_snapshot", "MAX_VIOLATIONS_PER_GATE", "MAX_VIOLATION_CHARS", "FAILING_SCHEMA", "HOLD_REASON_CODES",
-           "DETECTOR_DEGRADED", "GATE_FAILURE", "failing_gates", "f9_class_counts", "hold_reason_codes"]
+           "DETECTOR_DEGRADED", "GATE_FAILURE", "LENGTH_CODE", "LENGTH_CODES", "failing_gates", "f9_class_counts",
+           "hold_reason_codes", "reason_family"]

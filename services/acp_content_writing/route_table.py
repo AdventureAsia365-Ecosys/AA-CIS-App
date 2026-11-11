@@ -23,8 +23,8 @@ and what is left after the repair budget: ``cut`` (a `truth` row's item may be c
 `style_only` row; the F9 classes by `F9_CLASS_ACTIONS`).
 
 The same mechanics file carries the T2 rows (``t2``, the linear orchestrator) and the S1 rows (``s1``, the S1 train of
-``services/content_generation/s1_train.py``: one row per S1 code of the taxonomy, actions repair_sentence / cut /
-regenerate_section / rewrite / hold); both are opt-in paths and the default paths never read them.
+``services/content_generation/s1_train.py``: one row per S1 code of the taxonomy, actions cut / regenerate_section /
+rewrite / hold; no model sentence repair since S277); both are opt-in paths and the default paths never read them.
 
 Pure: reads the compiled policy, `route_table.yaml` and the registry, imports nothing from the content-writing modules
 (quality_gates and sentence_repair import it). The derived sets are byte-equal to the S271 hand-written ones
@@ -320,13 +320,15 @@ def t2_route(code: Optional[str]) -> T2Route:
 # the `s1` section of the same mechanics file; the default A1 path (main) never reads it. Rows are keyed by the S1
 # codes of the taxonomy (`a1_codes`); the publish gate does not read them (no row can publish a tour).
 S1_MECHANICS_VERSION = "s1-route-table-v1"
-S1_ACTIONS = (REPAIR_SENTENCE, CUT, REGENERATE_SECTION, REWRITE, HOLD)
+# S277 (AA-1049): no repair_sentence on S1: the train's path makes no s1_flag_fix call, so the schema refuses a row that
+# would bring a model sentence repair back (the grounding codes are `cut` rows, grounding.cut_and_recheck).
+S1_ACTIONS = (CUT, REGENERATE_SECTION, REWRITE, HOLD)
 
 
 @dataclass(frozen=True)
 class S1Route:
     code: str
-    action: str                      # repair_sentence | cut | regenerate_section | rewrite | hold
+    action: str                      # cut | regenerate_section | rewrite | hold
     classes: tuple = ()              # the code's taxonomy error classes
 
 

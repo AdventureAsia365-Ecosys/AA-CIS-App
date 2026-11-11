@@ -168,6 +168,10 @@ class Candidate:
     hub_id: str | None = None
     # AA-1055 PR 1 — the tenant market `demand` was read from (Segment candidates; None = no market has a number).
     demand_market: str | None = None
+    # AA-1079 — Debate's flags in rank mode (services/acp_shared/debate.py): empty = not flagged. A flagged
+    # candidate is ordered after every unflagged one of its Channel queue (`_choose_slate()`), never dropped.
+    debate_flags: tuple[str, ...] = ()
+    debate_severity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -599,7 +603,8 @@ def _choose_slate(
     queues: dict[str, list[tuple[Candidate, dict]]] = {}
     for channel in channels:
         pool = routes if CHANNEL_BARS[channel]["grain"] == "route" else segments
-        ordered = sorted(pool, key=lambda c: (c.score, c.segment_id or c.route_id or ""))
+        # AA-1079: Debate-flagged candidates (rank mode) after the unflagged ones, rank-sum order inside each group.
+        ordered = sorted(pool, key=lambda c: (bool(c.debate_flags), c.score, c.segment_id or c.route_id or ""))
         queue = []
         for candidate in ordered:
             cleared, reason = _clears_bar(channel, candidate)
@@ -690,8 +695,12 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
     # own Bar/place rule/hub-cap, the earliest point data is per-tenant (tenant_id, brand profile
     # known) but not yet narrowed by Bar. Segments and Routes are cut independently (each is
     # its own candidate pool at this point, same as _choose_slate() below treats them).
+    # AA-1079: in rank mode (the default) Debate drops nothing; its flags ride on the candidates and the job result
+    # records them (`debate` below, admin only).
     async with pool.acquire() as _debate_conn:
-        from services.acp_shared.debate import apply_debate
+        from services.acp_shared.debate import apply_debate, debate_mode, debate_report
+        mode = debate_mode()
+        segments_in, routes_in = segments, routes
         try:
             segments = await apply_debate(tenant_id, segments, _debate_conn)
             routes = await apply_debate(tenant_id, routes, _debate_conn)
@@ -775,6 +784,9 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         "proposed_per_channel": {channel: len(chosen[channel]) for channel in enabled_channels},
         # AA-1055 PR 1: per Channel with a Bar, candidates that clear it / miss it per reason (admin-only job result)
         "bar_status": bar_status_counts(enabled_channels, segments, routes),
+        # AA-1079: Debate's flags per pool (rank mode: kept and ordered last; cut mode: dropped). Admin-only job result.
+        "debate": {"mode": mode, "segments": debate_report(mode, segments_in, segments),
+                   "routes": debate_report(mode, routes_in, routes)},
     }
 
 

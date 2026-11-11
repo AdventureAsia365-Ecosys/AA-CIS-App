@@ -361,6 +361,8 @@ async def _rewrite_tour(
             "final_contract":      result.get("final_contract"),
             # AA-1049 W3 (S1 train): the S1 control plane's report (None unless S1_CONTROL=contract ran this draft)
             "s1_train":            result.get("s1_train"),
+            # AA-1078: flag_fix's model fix was lost (a reply cut at its token ceiling, or an error); None otherwise
+            "fix_not_applied":     result.get("fix_not_applied"),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 

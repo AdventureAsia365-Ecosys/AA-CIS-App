@@ -130,7 +130,9 @@ export default function JobsTable(props: JobsTableProps) {
         if (j.error && j.status !== "succeeded") return <span style={{ color: K.danger }}>{j.error}</span>;
         const p = stepProgress(j);
         const phase = typeof j.progress?.phase === "string" ? j.progress.phase : "";
-        if (!p) return <span style={{ color: K.muted }}>{phase || "—"}</span>;
+        // AA-1078: the content piece's own end state (t9_write), so a green job over a held piece reads as such
+        const piece = typeof j.progress?.piece_status === "string" ? j.progress.piece_status : "";
+        if (!p) return <span style={{ color: K.muted }}>{phase || "—"}{piece ? t("pieceStatus", piece) : ""}</span>;
         const pct = Math.min(100, (p.done / p.total) * 100);
         const eta = etas[j.id] ?? null;
         return (

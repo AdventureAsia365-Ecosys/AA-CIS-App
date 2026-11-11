@@ -525,8 +525,14 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # 'escalated' still means the gate did NOT actually clear) — qa_auto_passed
             # (migration 109) is the new, separate tenant-facing badge flag: true means
             # this version reached the pool despite qa_status='escalated'.
-            qa_status = "passed" if qa["passed"] else "escalated"
-            qa_auto_passed = not qa["passed"]
+            # AA-1078: a kept draft whose flag_fix model fix was lost (its reply cut at the token ceiling, or an error)
+            # is not reported as QA passed: its flagged fields were never fixed (S276 audit §4.7, 1 of 3 jobs).
+            fix_lost = result.get("fix_not_applied")
+            if fix_lost:
+                diag["fix_not_applied"] = fix_lost
+            qa_passed = bool(qa["passed"]) and not fix_lost
+            qa_status = "passed" if qa_passed else "escalated"
+            qa_auto_passed = not qa_passed
             # AA-668: the live view's final text is the saved version (T3 may keep an earlier draft or
             # repair sentences, and the em-dash fix runs after the last streamed draft).
             progress_show(rewritten)

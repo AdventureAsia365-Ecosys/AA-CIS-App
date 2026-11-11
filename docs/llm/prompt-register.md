@@ -91,6 +91,7 @@ longer matches its source. To change a prompt:
 | `t9_repair` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_REPAIR_SYSTEM` | git | Q0, R0, Q3 (T9 repair replay) |
 | `t9_repair.seo_fit` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_SEO_FIT_SYSTEM` | git | Q0 |
 | `t9_repair.faq` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_FAQ_SYSTEM` | git | Q0 |
+| `t9_write.extend` | `t9_write` | writer | `services/acp_content_writing/generate.py` · `_EXTEND_SYSTEM` (AA-1077: one new paragraph per thin section of a blog under the F4 floor, from its untold seed facts; quality_signal mode "length_extend") | git | Q3 (T9 repair replay); `scripts/aa1077/extend_trial.py` |
 | `t9_faq_filter` | `t9_faq_filter` | validate | `services/acp_content_writing/faq_filter.py` · `SYSTEM_PROMPT`, `build_user_prompt` | git | Q0 (selector keep/drop set) |
 | `t9_faq_answer_fit` | `t9_faq_answer_fit` | validate | `services/acp_content_writing/faq_answer_fit.py` · `SYSTEM_PROMPT`, `ISOLATED_SYSTEM_PROMPT`, `build_user_prompt` | git | Q0 |
 | `t10_judge.f9` | `t10_judge` | judge | `services/acp_content_writing/quality_gates.py` · `_JUDGE_SYSTEM_PROMPT`, `F9_PROMPT_VERSION` | `F9_PROMPT_VERSION` constant, in `quality_signal.prompt_version` | Q2 (when F9 changes), R0 |

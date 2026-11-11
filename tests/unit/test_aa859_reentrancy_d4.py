@@ -5,7 +5,7 @@ nested acquire, every connection released, and no tenant connection held while S
 channel's HTTP delete runs.
 """
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 
@@ -14,8 +14,8 @@ from tests.unit.test_aa859_tenant_pool_reentrancy import (
     TENANT_ID, _conn, _ReentrancyGuardPool, _request, test_handler_never_nests_tenant_pool_acquires as _check,
 )
 
-PUBLISH_ID = uuid4()
-_ROW = {"publish_id": str(PUBLISH_ID), "piece_id": str(uuid4()), "channel": "blog", "external_id": "42",
+PUBLISH_ID = UUID(int=0x859D4001)   # fixed: parametrize inputs are identical in every xdist worker (S276 lint)
+_ROW = {"publish_id": str(PUBLISH_ID), "piece_id": str(UUID(int=0x859D4002)), "channel": "blog", "external_id": "42",
         "external_url": "https://b.com/p/42/", "secret_key": "acp/cms/x", "status": "unpublished",
         "unpublished_at": None}
 _CREDS = {"wp_url": "https://b.com", "username": "u", "app_password": "p"}

@@ -49,7 +49,8 @@ BLOCKING_CHAIN_RULES = frozenset({"judge_writer_family", "check_pair_family", "a
 ANTHROPIC_KIND = "anthropic"
 PRIORITY_STEP = 10
 
-# The two presets (tech lead S267). Labels and descriptions: the page's English copy (the frontend translates by key).
+# The presets (tech lead S267; serving_first AA-1079). Labels and descriptions: the page's English copy (the frontend
+# translates by key).
 PRESETS: dict[str, dict] = {
     "prefer_anthropic_api": {
         "label": "Prefer Anthropic API for Claude (sponsored)",
@@ -61,7 +62,24 @@ PRESETS: dict[str, dict] = {
         "description": "Every model is tried on its AWS deployments first, then on its vendor API. The order mode and "
                        "the chains are not changed.",
     },
+    # AA-1079 (S277, tech lead's issue from the AA-741 phase 3 audit): every judge row was served by a fallback rung
+    # (t2_judge 32/34, Debate 1,220/1,220, t10_judge 52/52) because the primary rungs on acc3 refuse.
+    "serving_first": {
+        "label": "Serving model first on the judge routes (while the primary is closed)",
+        "description": "For the T2 judge, the T7 Debate judge and the T10 judge: when the account refuses the "
+                       "first rungs of the chain, the model that serves the stage now moves to the front; the "
+                       "closed rungs stay behind it in their order. Provider order and order mode do not change. "
+                       "Revert this version when the closed rungs answer again.",
+        "stages": ["t2_judge", "t7_debate_judge", "t10_judge"],
+    },
 }
+SERVING_FIRST = "serving_first"
+# The chain rules a serving-first move breaks on purpose: a model reached only outside AWS leads the chain while every
+# AWS rung ahead of it is refused (the tech lead's AA-1079 call). They stay errors for every other change.
+SERVING_FIRST_EXEMPT_RULES = frozenset({"vendor_last_resort", "vendor_not_last"})
+# A rung is "closed" when resolve_stage skips it for one of these (stage_coverage.refusal: "refused (...)",
+# "connection access_denied" ...; llm_route_chains._skip_reason: "circuit open: ...").
+CLOSED_REASONS = ("refused", "connection ", "circuit open")
 
 _AUDIT_ACTIONS = {"save": "llm_route_config_saved", "preset": "llm_route_config_preset_applied",
                   "revert": "llm_route_config_reverted"}
@@ -121,6 +139,8 @@ class _World:
     connections: dict                       # connection_key -> dict row
     reach: dict = field(default_factory=dict)
     evidence: Optional[object] = None       # stage_coverage.RefusalEvidence (AA-1042: refused deployments skipped)
+    # AA-1079: stage -> why the serving_first preset may break SERVING_FIRST_EXEMPT_RULES on it (set by _proposal).
+    rule_exempt: dict = field(default_factory=dict)
 
     @property
     def by_stage(self) -> dict:
@@ -308,9 +328,10 @@ def build_target(world_live: dict, *, order_mode: Optional[str] = None, routes: 
 
 
 def preset_changes(preset: str, live: dict, models: list, connections: dict) -> dict:
-    """The proposal of a preset (pure): ``{"provider_order": {model: [conn, ...]}, "order_mode": ...}`` with only the
-    models whose order changes. Unknown preset: KeyError."""
-    if preset not in PRESETS:
+    """The proposal of a provider-order preset (pure): ``{"provider_order": {model: [conn, ...]}, "order_mode": ...}``
+    with only the models whose order changes. Unknown preset (or serving_first, which needs the resolver:
+    ``serving_first_changes``): KeyError."""
+    if preset not in PRESETS or preset == SERVING_FIRST:
         raise KeyError(preset)
     live = route_versions.normalize(live)
     families = {m.model_key: m.family_key for m in models}
@@ -331,6 +352,40 @@ def preset_changes(preset: str, live: dict, models: list, connections: dict) -> 
     if preset == "prefer_anthropic_api":
         out["order_mode"] = route_settings.MODEL_FIRST
     return out
+
+
+def _model_of(first: Optional[str]) -> Optional[str]:
+    return first.rsplit("@", 1)[0] if first else None
+
+
+def serving_first_changes(live: dict, resolved: dict, stages: list) -> dict:
+    """The proposal of the serving_first preset (pure): ``{"routes": {stage: chain}, "exempt": {stage: why}}``.
+
+    ``resolved``: stage -> ``llm_route_chains.resolve_stage`` of the LIVE config (``first`` = the model@connection
+    that serves the stage now, refused deployments skipped; ``skipped`` = what comes before it and why). A stage
+    moves only when its serving model is not its primary, and only when every rung before it is skipped as CLOSED
+    (``CLOSED_REASONS``: the account refuses it or its circuit is open: the closed primary of AA-1079), never when a
+    rung is switched off or out of scope (an admin decision this preset must not undo). The new chain is the serving
+    model, then the rest in their order."""
+    live = route_versions.normalize(live)
+    routes: dict = {}
+    exempt: dict = {}
+    for stage in stages:
+        chain = route_versions.chain_of(live["routes"].get(stage)) or []
+        r = resolved.get(stage) or {}
+        serving = _model_of(r.get("first"))
+        if not chain or serving is None or serving == chain[0] or serving not in chain:
+            continue
+        ahead = chain[:chain.index(serving)]
+        skipped = [x for x in r.get("skipped") or [] if x.get("model") in ahead]
+        refused_models = {x["model"] for x in skipped if str(x.get("reason") or "").startswith(CLOSED_REASONS)}
+        other = [x for x in skipped if x["model"] not in refused_models]
+        if other or set(ahead) - refused_models:
+            continue
+        routes[stage] = [serving] + [k for k in chain if k != serving]
+        exempt[stage] = (f"serving_first: {', '.join(ahead)} refused by the account "
+                         f"({'; '.join(sorted({str(x.get('reason')) for x in skipped}))})")
+    return {"routes": routes, "exempt": exempt}
 
 
 def revert_changes(snapshot: dict) -> dict:
@@ -473,7 +528,13 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
         row = by_stage.get(stage)
         chain = route_versions.chain_of(target["routes"].get(stage)) or []
         if row is not None:
-            errors.extend(chain_problems(row, chain, world.models, world.reach, pii_usable))
+            for p in chain_problems(row, chain, world.models, world.reach, pii_usable):
+                why = world.rule_exempt.get(stage)
+                if why and p.get("rule") in SERVING_FIRST_EXEMPT_RULES:
+                    # AA-1079: the serving model leads while the AWS rungs ahead of it refuse (a warning, on record).
+                    warnings.append({**p, "message": f"{p['message']} (allowed: {why})", "exempt": True})
+                else:
+                    errors.append(p)
 
     acc2_only, per_row = _deployment_maps(world)
     rows_now = _rows_with(world.stages, live["routes"])
@@ -545,7 +606,12 @@ async def _proposal(pool, *, order_mode=None, routes=None, provider_order=None, 
                     revert_to=None) -> tuple[_World, dict, list]:
     world = await _world(pool)
     priorities = None
-    if preset is not None:
+    if preset == SERVING_FIRST:
+        resolved = await serving(world)
+        changes = serving_first_changes(world.live, resolved, [s for s in PRESETS[SERVING_FIRST]["stages"]
+                                                               if s in world.by_stage])
+        routes, world.rule_exempt = changes["routes"], changes["exempt"]
+    elif preset is not None:
         try:
             changes = preset_changes(preset, world.live, world.models, world.connections)
         except KeyError:
@@ -661,6 +727,7 @@ def _drop_caches() -> None:
     route_settings.invalidate()
 
 
-__all__ = ["PRESETS", "RouteControlConflict", "RouteControlRefused", "RouteControlUnavailable", "apply",
+__all__ = ["PRESETS", "SERVING_FIRST", "RouteControlConflict", "RouteControlRefused", "RouteControlUnavailable",
+           "apply",
            "build_target", "chain_problems", "list_versions", "preset_changes", "preview", "preview_world",
-           "read_state", "read_version", "revert_changes"]
+           "read_state", "read_version", "revert_changes", "serving_first_changes"]

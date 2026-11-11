@@ -55,6 +55,44 @@ def _to_job(row) -> Job:
     )
 
 
+# AA-1078 (S277): `shared.job.cost_usd` is the job's whole cost, the handler's own spend (ctx.add_cost: DataForSEO, ...)
+# PLUS its LLM spend summed from shared.llm_call_log (rows tagged with the job id), stamped by every write that saves a
+# handler cost. Before, the column held the handler part only and was 0 on every LLM-only job (T-series audit, S276).
+# The LLM part of the stamp is kept in progress.cost_stamp.llm_usd (progress, not result: a retry nulls result), so
+#   handler cost = cost_usd - progress.cost_stamp.llm_usd     (HANDLER_COST_SQL; JobContext starts from it)
+# and the read side (the Jobs page, the summary) stays live: handler cost + the ledger sum now, exact across a late
+# fire-and-forget log write. A row written before this change has no stamp: its cost_usd is the handler part, as before.
+COST_STAMP_KEY = "cost_stamp"
+
+
+def _ledger_sum_sql(job_id_expr: str) -> str:
+    return f"(SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l WHERE l.job_id = {job_id_expr})"
+
+
+def _stamp_sql(job_id_expr: str, handler_expr: str, *, row: str = "") -> str:
+    """SET clauses that store ``handler_expr`` (the handler's cost, NULL = keep the row's cost) plus the job's ledger
+    sum in cost_usd, and that sum in progress.cost_stamp. ``row`` qualifies the columns read on the right ("j.")."""
+    led = _ledger_sum_sql(job_id_expr)
+    h = f"({handler_expr})::numeric"
+    return (f"cost_usd = CASE WHEN {h} IS NULL THEN {row}cost_usd ELSE {h} + {led} END, "
+            f"progress = CASE WHEN {h} IS NULL THEN {row}progress ELSE {row}progress || jsonb_build_object("
+            f"'{COST_STAMP_KEY}', jsonb_build_object('llm_usd', {led}, 'at', now())) END")
+
+
+def stamped_llm_usd(progress: Optional[dict]) -> float:
+    """The LLM part stamped into cost_usd (0 when the row has no stamp)."""
+    stamp = (progress or {}).get(COST_STAMP_KEY) if isinstance(progress, dict) else None
+    try:
+        return float((stamp or {}).get("llm_usd") or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
+def handler_cost(job: "Job") -> float:
+    """What the job's handler itself reported so far (cost_usd minus the stamped LLM part)."""
+    return round(float(job.cost_usd or 0.0) - stamped_llm_usd(job.progress), 6)
+
+
 def backoff_seconds(attempt: int, *, rand: Optional[Callable[[], float]] = None) -> int:
     """Delay before retry number `attempt` (1-based): 30 s, 60 s, 120 s, ... capped at 15 min, plus a random jitter of
     up to BACKOFF_JITTER_RATIO of that delay (AA-1018; `rand` returns 0..1, pass `lambda: 0.0` for the bare delay).
@@ -140,7 +178,9 @@ async def set_progress(pool, job_id: str, progress: dict, cost_usd: Optional[flo
     await pool.execute(
         """
         UPDATE shared.job SET progress = progress || $2::jsonb,
-               cost_usd = coalesce($3, cost_usd), updated_at = now()
+               cost_usd = coalesce($3::numeric + coalesce((progress->'cost_stamp'->>'llm_usd')::numeric, 0),
+                                   cost_usd),
+               updated_at = now()
         WHERE id = $1::uuid
         """,
         job_id, json.dumps(progress, default=str), cost_usd,
@@ -150,9 +190,9 @@ async def set_progress(pool, job_id: str, progress: dict, cost_usd: Optional[flo
 async def _finish(pool, job_id: str, worker_id: str, status: str, *, result: Optional[dict],
                   error: Optional[str], cost_usd: Optional[float]) -> bool:
     row = await pool.fetchrow(
-        """
+        f"""
         UPDATE shared.job SET status = $3, result = $4::jsonb, error = $5,
-               cost_usd = coalesce($6, cost_usd), locked_by = NULL, locked_until = NULL,
+               {_stamp_sql("$1::uuid", "$6")}, locked_by = NULL, locked_until = NULL,
                finished_at = now(), updated_at = now()
         WHERE id = $1::uuid AND status = 'running' AND locked_by = $2
         RETURNING id
@@ -186,8 +226,8 @@ async def fail(pool, job: Job, worker_id: str, error: str, *, retryable: bool,
     Returns the new status, or '' when the job was no longer ours."""
     if retryable and job.attempt < job.max_attempts:
         row = await pool.fetchrow(
-            """
-            UPDATE shared.job SET status = 'queued', error = $3, cost_usd = coalesce($5, cost_usd),
+            f"""
+            UPDATE shared.job SET status = 'queued', error = $3, {_stamp_sql("$1::uuid", "$5")},
                    run_after = now() + make_interval(secs => $4),
                    locked_by = NULL, locked_until = NULL, updated_at = now()
             WHERE id = $1::uuid AND status = 'running' AND locked_by = $2
@@ -236,6 +276,8 @@ async def release(pool, job_id: str, worker_id: str, cost_usd: Optional[float], 
             SELECT coalesce(jsonb_agg(e ORDER BY o), '[]'::jsonb) AS log
             FROM cur, jsonb_array_elements(cur.log) WITH ORDINALITY AS t(e, o)
             WHERE o > jsonb_array_length(cur.log) - $7
+        ), led AS (   -- AA-1078: the job's ledger sum, stamped into cost_usd with the handler's cost
+            SELECT coalesce(sum(l.cost_usd), 0) AS usd FROM shared.llm_call_log l WHERE l.job_id = $1::uuid
         )
         UPDATE shared.job j SET
             status = CASE WHEN cur.cancel_requested THEN 'cancelled'
@@ -247,13 +289,16 @@ async def release(pool, job_id: str, worker_id: str, cost_usd: Optional[float], 
                          ELSE j.error END,
             finished_at = CASE WHEN cur.cancel_requested OR ($5 AND cur.releases >= $4) THEN now()
                                ELSE j.finished_at END,
-            cost_usd = coalesce($3, j.cost_usd), run_after = now() + make_interval(secs => $6),
+            cost_usd = CASE WHEN $3::numeric IS NULL THEN j.cost_usd ELSE $3::numeric + led.usd END,
+            run_after = now() + make_interval(secs => $6),
             locked_by = NULL, locked_until = NULL, updated_at = now(),
             progress = j.progress || jsonb_build_object(
                 'released', true, 'releases', cur.releases, 'last_released_at', now(),
                 'shutdown_releases', coalesce((j.progress->>'shutdown_releases')::int, 0) + 1,
                 'release_log', kept.log)
-        FROM cur, kept
+                || CASE WHEN $3::numeric IS NULL THEN '{}'::jsonb
+                        ELSE jsonb_build_object('cost_stamp', jsonb_build_object('llm_usd', led.usd, 'at', now())) END
+        FROM cur, kept, led
         WHERE j.id = $1::uuid AND j.status = 'running' AND j.locked_by = $2
         RETURNING j.status
         """,
@@ -300,10 +345,11 @@ async def reap(pool) -> dict:
         """
     )
     failed = await pool.fetch(
-        """
+        f"""
         UPDATE shared.job SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,
                error = CASE WHEN cancel_requested THEN 'cancelled by admin'
                             ELSE 'lease expired (worker stopped); no attempts left' END,
+               {_stamp_sql("shared.job.id", HANDLER_COST_SQL.replace("j.", "shared.job."))},
                locked_by = NULL, locked_until = NULL, finished_at = now(), updated_at = now()
         WHERE status = 'running' AND locked_until < now()
         RETURNING id
@@ -567,10 +613,14 @@ def tenant_hold(error: str, waiting: dict) -> Optional[str]:
 LLM_COST_SQL = (
     "(SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l WHERE l.job_id = j.id)"
 )
+# AA-1078: the handler's part of j.cost_usd (the column also holds the stamped LLM part, see COST_STAMP_KEY), and the
+# job's live cost = that part + the ledger sum now. One expression for the list, the sort and the summary.
+HANDLER_COST_SQL = "(j.cost_usd - coalesce((j.progress->'cost_stamp'->>'llm_usd')::numeric, 0))"
+JOB_COST_SQL = f"({HANDLER_COST_SQL} + {LLM_COST_SQL})"
 
 _LIST_COLUMNS = (
     "j.id::text AS id, kind, status, attempt, max_attempts, payload, progress, result, "
-    f"(j.cost_usd + {LLM_COST_SQL})::float AS cost_usd, {LLM_COST_SQL}::float AS llm_cost_usd, "
+    f"{JOB_COST_SQL}::float AS cost_usd, {LLM_COST_SQL}::float AS llm_cost_usd, "
     "error, cancel_requested, created_by, parent_job_id::text AS "
     "parent_job_id, locked_by, locked_until, run_after, created_at, started_at, finished_at"
 )
@@ -604,7 +654,7 @@ async def get(pool, job_id: str) -> Optional[dict]:
 # a trusted SQL expression (never built from user input), so the column name can never be injected.
 # `id` is appended as a final tie-break on every sort so OFFSET pages are stable across equal keys.
 # Duration = finished_at - started_at (a running/queued job has no end, so it sorts NULLs last).
-# Cost reuses the same read-side expression the list already shows (j.cost_usd + summed LLM log).
+# Cost reuses the same read-side expression the list already shows (JOB_COST_SQL: handler part + summed LLM log).
 JOB_SORTS: dict[str, str] = {
     "created_at": "j.created_at",
     "started_at": "j.started_at",
@@ -613,7 +663,7 @@ JOB_SORTS: dict[str, str] = {
     "status": "j.status",
     "attempt": "j.attempt",
     "created_by": "j.created_by",
-    "cost_usd": f"(j.cost_usd + {LLM_COST_SQL})",
+    "cost_usd": JOB_COST_SQL,
     "duration": "(j.finished_at - j.started_at)",
 }
 

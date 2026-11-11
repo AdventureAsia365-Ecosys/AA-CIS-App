@@ -82,13 +82,16 @@ def test_the_jev_provider_query_runs():
 
 
 def test_the_stage_params_read_runs_on_the_replayed_table():
-    # Empty at 320; CIS 381 (AA-741 S271) seeds effort-only rows (updated_by migration-381-aa741). Every row the read
-    # returns is one of those: effort set, every other parameter NULL.
+    # Empty at 320; CIS 381 (AA-741 S271) seeds effort-only rows (updated_by migration-381-aa741); CIS 396 (AA-1078)
+    # adds the flag_fix rows with an output ceiling (max_tokens 16000, effort low). Every row the read returns is one
+    # of those: effort set, max_tokens only on the 396 flag_fix rows, every other parameter NULL.
     # (Another module may have re-created the catalog rows, whose FK cascade drops the params: no presence check.)
     rows = _adb(stage_params.fetch_params)
-    for p in rows.values():
+    for key, p in rows.items():
         assert p.effort in ("low", "medium")
-        assert (p.max_tokens, p.min_output_tokens, p.temperature, p.reasoning_mode) == (None, None, None, None)
+        flag_fix = key[0].endswith("_flag_fix")
+        assert p.max_tokens == (16000 if flag_fix else None), key
+        assert (p.min_output_tokens, p.temperature, p.reasoning_mode) == (None, None, None)
 
 
 def test_the_geoapify_limit_comes_from_its_row(monkeypatch):

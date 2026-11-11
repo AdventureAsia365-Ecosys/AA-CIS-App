@@ -363,7 +363,7 @@ ADMIN_ID = uuid.UUID(int=9)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ttv,writer,header,actor", [
     (None, "a1", str(ADMIN_ID).upper(), str(ADMIN_ID)),       # the BFF's JWT sub, stored canonical
-    (uuid.uuid4(), "t2", "x" * 300, "unknown"),                # not an id: never stored as given (size CHECK, no names)
+    (uuid.UUID(int=0x91600001), "t2", "x" * 300, "unknown"),                # not an id: never stored as given (size CHECK, no names)
 ])
 async def test_dismiss_with_a_code_writes_a_reason_only_signal(ttv, writer, header, actor):
     review = str(uuid.uuid4())
