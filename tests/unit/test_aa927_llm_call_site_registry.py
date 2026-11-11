@@ -153,6 +153,9 @@ EXCLUDED: dict[tuple[str, str], str] = {
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "
                                                    "overlay; no call",
+    ("scripts/quality/audit_s1_masters.py", "_no_model_patches"): (
+        "AA-1049 read-only S1 Master audit: patches LLMClient.generate with a stub that REFUSES every call and "
+        "counts it as not_run; no model call is ever made, so there is no row to write"),
     ("services/jobs/llm_contract_smoke_job.py", "_brand_fit.score"): (
         "AA-1026 contract smoke: the brand fit call runs on the smoke's pinned client (LLMClient.probe, stage "
         "adhoc_aa1026) and run_smoke writes one llm_call_log row per reply (_log_replies); the plan's capture client "
