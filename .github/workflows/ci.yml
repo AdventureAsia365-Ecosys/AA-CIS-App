@@ -166,18 +166,22 @@ jobs:
   # ratchet and Q0 steps as before. The split is by test file, balanced on .github/test-durations/unit.json
   # (.github/scripts/ci_shards.py; every file lands in exactly one shard, a new file weighs the median). Before
   # (10 main runs, 01/11/2026): one job, ~4.5-5 min, of which ~45 s was every worker importing all 667 files.
+  # AA-1084 (11/11/2026): 4 shards (3 ran 4.4-6 min with 835 files); the split weighs ~0.45 s of collection per file
+  # (measured on the 3-shard runs) and a long file as the floor of its shard; each shard lists its files longest first
+  # and xdist keeps that order (--no-loadscope-reorder), so no two-minute file starts last on a busy worker. The
+  # durations files are refreshed by the Test Durations workflow (test-durations.yml, bot PR bot/test-durations).
   # S271: skipped only for a docs-only pull request (scope output tests=false); a failed scope job runs them.
   test-unit-shard:
-    name: Unit shard ${{ matrix.shard }}/3
+    name: Unit shard ${{ matrix.shard }}/4
     needs: quality-paths
     if: ${{ !cancelled() && needs.quality-paths.outputs.tests != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     env:
-      UNIT_SHARDS: 3
+      UNIT_SHARDS: 4
       SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,11 +236,12 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --shards "$UNIT_SHARDS" --index "$SHARD" \
-            --workers 4 --file-overhead 0.07 --durations .github/test-durations/unit.json tests/unit tests/acp)
+            --workers 4 --file-overhead 0.45 --longest-first --durations .github/test-durations/unit.json \
+            tests/unit tests/acp)
           echo "Unit shard $SHARD/$UNIT_SHARDS: ${#FILES[@]} test files"
           mkdir -p coverage-shards
           pytest "${FILES[@]}" -v \
-            -n 4 --dist loadfile \
+            -n 4 --dist loadfile --no-loadscope-reorder \
             --tb=short \
             --cov=services \
             --cov=shared \
@@ -263,7 +268,7 @@ jobs:
     if: ${{ !cancelled() && needs.quality-paths.outputs.tests != 'false' }}
     runs-on: ubuntu-latest
     env:
-      UNIT_SHARDS: 3
+      UNIT_SHARDS: 4
     steps:
       - name: Every unit shard passed
         env:
@@ -351,8 +356,9 @@ jobs:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python .github/scripts/q0_red_on_base.py --base "$(git rev-parse HEAD^1)"
 
-      # Report only: each shard's real seconds, and the per-file durations of this run as an artifact to refresh
-      # .github/test-durations/unit.json when the shards drift apart.
+      # Report only: each shard's real seconds, and the per-file durations of this run as an artifact. AA-1084: the
+      # nightly Test Durations workflow (test-durations.yml) reads this artifact of the last successful merge-queue
+      # runs and refreshes .github/test-durations/unit.json through the bot PR bot/test-durations.
       - name: Shard balance (report)
         if: ${{ !cancelled() }}
         run: |

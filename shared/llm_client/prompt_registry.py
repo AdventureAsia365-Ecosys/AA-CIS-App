@@ -24,6 +24,7 @@ database error gives None for ``FAILURE_TTL_SECONDS``. Never raises.
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import json
 import threading
@@ -109,8 +110,21 @@ def _module_file(module: Optional[str], root: Path) -> Optional[Path]:
 
 def _module_names(path: Path, root: Path) -> tuple[dict[str, ast.AST], set[str], dict[str, tuple[str, str]]]:
     """(module-level definitions by name, local names bound to the writing policy, other imports
-    {local: (module, name)}) of one file. Imports anywhere in the file count (a function-level import too)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    {local: (module, name)}) of one file. Imports anywhere in the file count (a function-level import too).
+
+    AA-1084: memoised on the file's text (``_parse_module_names``). One stage hash parses the same handful of files
+    many times over (each name the policy walk follows re-reads its module), and the unit conftest clears the
+    per-stage cache before every test: that re-parsing was most of the gateway unit tests' time. Callers only read
+    the result; never mutate it."""
+    return _parse_module_names(str(path), str(root), path.read_text(encoding="utf-8"))
+
+
+@functools.lru_cache(maxsize=512)
+def _parse_module_names(
+    path_str: str, root_str: str, text: str
+) -> tuple[dict[str, ast.AST], set[str], dict[str, tuple[str, str]]]:
+    path, root = Path(path_str), Path(root_str)
+    tree = ast.parse(text, filename=path_str)
     defs: dict[str, ast.AST] = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

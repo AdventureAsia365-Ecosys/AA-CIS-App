@@ -21,12 +21,18 @@ Rules:
 - Weight of a file = its recorded seconds / ``--workers`` + ``--file-overhead``. With pytest-xdist every worker of a
   shard collects (imports) all of the shard's files while the tests themselves are spread over the workers, so a shard
   of many small files is slower than its test seconds say (unit suite: ~0.07 s of collection per file on a CI runner).
+- Shard cost (``plan``, AA-1084) = files x ``--file-overhead`` + max(recorded seconds / ``--workers``, the longest
+  file): xdist ``--dist loadfile`` keeps a file on one worker, so a long file is a floor its shard cannot go under
+  (the summed weights called a 145 s file's shard ~36 s of it). With one worker it is the plain sum.
 - A shard lists its files in path order, so within a shard pytest runs them in the same relative order as the
-  unsharded run did. ``--contiguous`` goes further for a suite whose files are not independent: each shard is one
-  consecutive range of the path order (an exact linear partition on the same weights), so a file keeps every
-  neighbour of the unsharded run except at the start of a shard.
+  unsharded run did. ``files --longest-first`` prints them longest first instead: with pytest-xdist
+  ``--no-loadscope-reorder`` the workers then start on the long files (xdist's default order is by test COUNT,
+  which can leave a two-minute file for last on a busy worker). ``--contiguous`` goes further for a suite whose
+  files are not independent: each shard is one consecutive range of the path order (an exact linear partition on
+  the same weights), so a file keeps every neighbour of the unsharded run except at the start of a shard.
 - The durations file is advisory: a stale one only unbalances the shards, never drops a file. Refresh it from the
-  shards' junit reports (``durations``; the aggregate job uploads the merged file as an artifact).
+  shards' junit reports (``durations``; the aggregate job uploads the merged file as an artifact); the nightly
+  Test Durations workflow does that from the merge-queue runs (.github/scripts/test_durations_bot.py, AA-1084).
 - ``files --shuffle SEED`` (AA-1024 l22, G8) prints the shard's files in a random order fixed by SEED, for the nightly
   random-order integration run (.github/workflows/nightly-integration.yml): pytest runs files in the order given, so
   a module that leans on an earlier module's leftovers fails there, with the seed to replay it.
@@ -77,25 +83,56 @@ def weights(files: list[str], durations: dict[str, float], workers: int = 1, ove
     """Expected wall seconds a file adds to its shard (see the module docstring)."""
     if workers < 1 or overhead < 0:
         raise ValueError("workers must be >= 1 and the file overhead >= 0")
+    return {f: secs / workers + overhead for f, secs in seconds(files, durations).items()}
+
+
+def seconds(files: list[str], durations: dict[str, float]) -> dict[str, float]:
+    """Recorded seconds per file; a file without a record weighs the median of the known ones (1.0 when none is)."""
     known = [durations[f] for f in files if f in durations]
     default = statistics.median(known) if known else 1.0
-    return {f: durations.get(f, default) / workers + overhead for f in files}
+    return {f: durations.get(f, default) for f in files}
+
+
+def shard_cost(total: float, longest: float, count: int, workers: int = 1, overhead: float = 0.0) -> float:
+    """Expected wall seconds of one shard: its files spread over ``workers`` (xdist ``--dist loadfile`` keeps a file
+    on one worker, so the longest file is a floor) plus the collection overhead of every file. With one worker this
+    is the plain sum of the weights."""
+    return count * overhead + max(total / workers, longest)
 
 
 def plan(
     files: list[str], durations: dict[str, float], shards: int, workers: int = 1, overhead: float = 0.0
 ) -> list[list[str]]:
-    """Greedy longest-processing-time split. Returns ``shards`` lists of files, each in path order."""
+    """Greedy longest-processing-time split on ``shard_cost``. Returns ``shards`` lists of files, each in path order.
+
+    Each file (longest first, then path) goes to the shard that is cheapest once it holds the file (ties: the
+    cheaper shard now, then the lower index). With one worker that is the classic split on summed weights; with
+    several, a shard is never priced under its longest file, which xdist runs on one worker (AA-1084)."""
     if shards < 1:
         raise ValueError("shards must be >= 1")
-    weight = weights(files, durations, workers, overhead)
-    loads = [0.0] * shards
+    weights(files, durations, workers, overhead)  # validates workers and overhead
+    secs = seconds(files, durations)
+    totals, longest, counts = [0.0] * shards, [0.0] * shards, [0] * shards
     buckets: list[list[str]] = [[] for _ in range(shards)]
-    for f in sorted(files, key=lambda f: (-weight[f], f)):
-        i = min(range(shards), key=lambda k: (loads[k], k))
+
+    def cost(k: int, extra: float = 0.0, n: int = 0) -> float:
+        return shard_cost(totals[k] + extra, max(longest[k], extra), counts[k] + n, workers, overhead)
+
+    for f in sorted(files, key=lambda f: (-secs[f], f)):
+        i = min(range(shards), key=lambda k: (round(cost(k, secs[f], 1), 9), round(cost(k), 9), k))
         buckets[i].append(f)
-        loads[i] += weight[f]
+        totals[i] += secs[f]
+        longest[i] = max(longest[i], secs[f])
+        counts[i] += 1
     return [sorted(b) for b in buckets]
+
+
+def longest_first(bucket: list[str], durations: dict[str, float], files: list[str] | None = None) -> list[str]:
+    """A shard's files, longest recorded first (ties: path). Given to pytest with ``--no-loadscope-reorder``, xdist
+    hands the files to its workers in this order, as each worker frees up: the long files start first instead of
+    landing last on a busy worker (the default orders files by test COUNT, AA-1084)."""
+    secs = seconds(files or bucket, durations)
+    return sorted(bucket, key=lambda f: (-secs[f], f))
 
 
 def plan_contiguous(
@@ -137,7 +174,14 @@ def plan_contiguous(
 
 
 def estimate(bucket: list[str], weight: dict[str, float]) -> float:
+    """Sum of the additive weights (the ``--contiguous`` split's measure)."""
     return sum(weight[f] for f in bucket)
+
+
+def bucket_cost(bucket: list[str], secs: dict[str, float], workers: int = 1, overhead: float = 0.0) -> float:
+    """``shard_cost`` of a list of files (``secs`` from ``seconds``)."""
+    return shard_cost(sum(secs[f] for f in bucket), max((secs[f] for f in bucket), default=0.0), len(bucket),
+                      workers, overhead)
 
 
 def check_partition(files: list[str], buckets: list[list[str]]) -> None:
@@ -187,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--index", type=int, required=True, help="1-based shard index")
             p.add_argument("--shuffle", type=int, default=None, metavar="SEED",
                            help="print the shard's files in a random order fixed by SEED (nightly random-order run)")
+            p.add_argument("--longest-first", action="store_true",
+                           help="print the shard's files longest first (for pytest-xdist --no-loadscope-reorder)")
     d = sub.add_parser("durations")
     d.add_argument("--out", required=True)
     d.add_argument("--prefix", default="",
@@ -220,16 +266,23 @@ def main(argv: list[str] | None = None) -> int:
         bucket = buckets[args.index - 1]
         if not bucket:
             raise SystemExit(f"shard {args.index}/{args.shards} is empty: lower the shard count")
+        if args.shuffle is not None and args.longest_first:
+            raise SystemExit("--shuffle and --longest-first are two different orders: pick one")
         if args.shuffle is not None:
             bucket = list(bucket)
             random.Random(args.shuffle).shuffle(bucket)
+        elif args.longest_first:
+            bucket = longest_first(bucket, durations, files)
         print("\n".join(bucket))
         return 0
     weight = weights(files, durations, args.workers, args.file_overhead)
+    secs = seconds(files, durations)
     unknown = [f for f in files if f not in durations]
     print(f"{len(files)} files in {args.shards} shards ({len(unknown)} without a recorded duration)")
     for i, bucket in enumerate(buckets, 1):
-        print(f"shard {i}/{args.shards}: {len(bucket)} files, ~{estimate(bucket, weight):.0f}s")
+        est = (estimate(bucket, weight) if args.contiguous
+               else bucket_cost(bucket, secs, args.workers, args.file_overhead))
+        print(f"shard {i}/{args.shards}: {len(bucket)} files, ~{est:.0f}s")
     return 0
 
 

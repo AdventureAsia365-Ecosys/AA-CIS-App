@@ -36,6 +36,17 @@ CASES = {
 SCOPED = {f"{name}_scoped": case for name, case in CASES.items()}
 
 
+@pytest.fixture(autouse=True)
+def _no_ledger_and_no_prompt_hash(monkeypatch):
+    """AA-1084 (CI speed): the snapshot compares provider calls only. Each case walks 37 routes twice; without this
+    every attempt hashed its stage's prompt source (the unit conftest clears that cache per test) and started a
+    background ledger write that fails on the missing database: ~9 s a case, the slowest unit file. Neither feeds the
+    calls recorded here (the prompt version and the ledger row are written after the provider call)."""
+    from shared.llm_client import call_log, prompt_registry
+    monkeypatch.setattr(prompt_registry, "version_for", lambda stage: None)
+    monkeypatch.setattr(call_log, "_in_background", lambda coro_fn, kwargs: None)
+
+
 @pytest.fixture(scope="module")
 def golden():
     return json.loads(GOLDEN.read_text(encoding="utf-8"))

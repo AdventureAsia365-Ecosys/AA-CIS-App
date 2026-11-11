@@ -2,6 +2,8 @@
 known false positives (pagination, __all__, word length, docstrings, comments) are not."""
 import textwrap
 
+import pytest
+
 from services.quality import lint, registry
 
 EXACT = {n for n, g in registry.gates().items() if g.get("lint_exact")}
@@ -20,14 +22,20 @@ def _ts(src: str) -> lint.Result:
     return res
 
 
-def test_repo_is_clean():
-    res = lint.run()
+@pytest.fixture(scope="module")
+def repo_lint() -> lint.Result:
+    """AA-1084 (CI speed): one scan of the repository for both tests below (a scan reads every tracked file)."""
+    return lint.run()
+
+
+def test_repo_is_clean(repo_lint):
+    res = repo_lint
     assert res.errors == [], "\n".join(res.errors[:20])
     assert res.scanned["python"] > 100 and res.scanned["ts"] > 50
 
 
-def test_report_renders_counts():
-    out = lint.render_report(lint.run())
+def test_report_renders_counts(repo_lint):
+    out = lint.render_report(repo_lint)
     assert "0 error(s)" in out and "qlint: allow" in out
 
 
