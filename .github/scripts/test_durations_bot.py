@@ -16,12 +16,12 @@ artifacts ``test-durations-unit`` / ``test-durations-integration``; the nightly 
            shard predicted on the fresh seconds drops by >= MIN_GAIN_S with the fresh file, or >= MIN_UNKNOWN files
            have no record in the committed one. Prints a summary (also to $GITHUB_STEP_SUMMARY) and writes
            ``changed=true|false`` to $GITHUB_OUTPUT.
-  publish  --repo <owner/repo> [--dry-run] [--auto-merge] [--run-url <url>]
+  publish  --repo <owner/repo> [--dry-run] [--run-url <url>]
            One commit on the latest main that changes only the durations files (Git Data API: no clone, no push of
-           workflow files), on the branch ``bot/test-durations``; opens or updates the one PR; with --auto-merge asks
-           GitHub to queue it once its checks pass. The merge queue then runs the FULL CI with the new split before
-           it lands, so a split that exposes an order-dependent test fails there and the PR stays open for a person.
-           Without --auto-merge (or when GitHub refuses it) the orchestrating agent merges the PR like any other.
+           workflow files), on the branch ``bot/test-durations``; opens or updates the one PR. The bot never merges
+           (root ADR 0011a lists the only two PR kinds ci-bot may merge): the orchestrating agent queues it like any
+           other PR, and the merge queue runs the FULL CI with the new split before it lands, so a split that exposes
+           an order-dependent test fails there and the PR stays open.
 
 Only these two JSON files ever change: they are read by the CI shard step alone (no deploy path, no runtime code).
 Standard library only; ``gh`` is the only external command (``fetch``, ``publish``).
@@ -301,7 +301,7 @@ def pr_body(changed: list[str], summary: str, run_url: str) -> str:
         "",
         "Only the shard split reads these files (no deploy path, no runtime code). The merge queue runs the full CI "
         "with the new split before this lands: an integration module that leans on its old neighbour fails there "
-        "(fix the test, not the split).",
+        "(fix the test, not the split). The bot never merges: the orchestrating agent queues this PR.",
     ]
     if run_url:
         parts += ["", f"Opened by [test-durations run]({run_url})."]
@@ -388,14 +388,7 @@ def cmd_publish(args: argparse.Namespace, gh: Gh) -> int:
             number, action = url.rstrip("/").rsplit("/", 1)[-1], f"opened PR {url}"
     finally:
         body_file.unlink(missing_ok=True)
-    queue = "auto-merge off: the orchestrating agent merges it"
-    if args.auto_merge:
-        try:
-            gh.cli("pr", "merge", number, "--repo", repo, "--squash", "--auto")
-            queue = "auto-merge on: it joins the merge queue once its checks pass"
-        except BotError as exc:
-            queue = f"auto-merge refused ({str(exc)[:160]}): the orchestrating agent merges it"
-    result = "; ".join([*notes, action, queue])
+    result = "; ".join([*notes, action, f"the orchestrating agent merges PR #{number} (the bot never merges)"])
     print(f"test-durations-bot: {result}")
     write_summary(f"### Test durations PR\n\n{result}.")
     return 0
@@ -418,7 +411,6 @@ def main(argv: Optional[list[str]] = None, gh: Optional[Gh] = None) -> int:
     u = sub.add_parser("publish")
     u.add_argument("--repo", required=True)
     u.add_argument("--dry-run", action="store_true")
-    u.add_argument("--auto-merge", action="store_true")
     u.add_argument("--run-url", default="")
     u.add_argument("--summary", default="", help="the refresh table, quoted in the PR body")
     args = p.parse_args(argv)

@@ -7,11 +7,11 @@
   verdict goes to $GITHUB_OUTPUT.
 - ``publish``: a dry run writes nothing; a live run makes one commit on the latest main that changes only the
   durations files (Git Data API), creates or moves ``bot/test-durations`` (a stale branch without a PR is recreated, a
-  workflow refusal closes the old PR and recreates the branch), opens or edits the one PR, and asks for auto-merge
-  only with --auto-merge; a refused auto-merge leaves the PR for the orchestrator; main already equal is a no-op.
+  workflow refusal closes the old PR and recreates the branch), opens or edits the one PR and never merges it (root
+  ADR 0011a: ci-bot merges only the root schema dump and the Infra migration copy); main already equal is a no-op.
 - ``fetch`` reads only successful merge_group runs of ci.yml and skips a run whose artifact is gone.
 - The workflow: main only, nightly, environment release, GITHUB_TOKEN read-only (+ actions: read), the App token minted
-  only when there is something to publish and never on a dry run, scoped to Contents + Pull requests.
+  only when there is something to publish and never on a dry run, scoped to Contents + Pull requests; no merge path.
 All gh calls go to a fake: no network.
 """
 from __future__ import annotations
@@ -42,14 +42,13 @@ class FakeGh:
     """Records every call; answers from a small in-memory GitHub."""
 
     def __init__(self, main_files: dict[str, str] | None = None, branch: str = "", prs: list | None = None,
-                 refuse_patch: str = "", refuse_merge: bool = False, runs: list | None = None,
+                 refuse_patch: str = "", runs: list | None = None,
                  missing_artifacts: set | None = None):
         self.calls: list[tuple] = []
         self.main_files = main_files or {}
         self.branch = branch
         self.prs = prs or []
         self.refuse_patch = refuse_patch
-        self.refuse_merge = refuse_merge
         self.runs = runs or []
         self.missing = missing_artifacts or set()
         self.blobs: dict[str, str] = {}
@@ -96,10 +95,6 @@ class FakeGh:
             return json.dumps(self.prs)
         if args[:2] == ("pr", "create"):
             return "https://github.com/o/r/pull/77\n"
-        if args[:2] == ("pr", "merge"):
-            if self.refuse_merge:
-                raise bot.BotError("auto merge is not allowed for this repository")
-            return ""
         if args[:2] == ("run", "list"):
             return json.dumps(self.runs)
         if args[:2] == ("run", "download"):
@@ -252,13 +247,13 @@ def test_publish_dry_run_writes_nothing(tmp_path):
 def test_publish_is_a_noop_when_main_has_the_files(tmp_path):
     gh = FakeGh(main_files={".github/test-durations/unit.json": '{"u": 1}\n',
                             ".github/test-durations/integration.json": '{"i": 2}\n'})
-    assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r", "--auto-merge"], gh=gh) == 0
+    assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r"], gh=gh) == 0
     assert not gh.api_calls("POST") and not gh.cli_calls("pr", "create")
 
 
 def test_publish_commits_only_the_changed_durations_on_main_and_opens_the_pr(tmp_path):
     gh = FakeGh(main_files={".github/test-durations/integration.json": '{"i": 2}\n'})
-    assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r", "--auto-merge"], gh=gh) == 0
+    assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r"], gh=gh) == 0
     tree = next(c for c in gh.api_calls("POST") if c[2].endswith("/git/trees"))[3]
     assert tree["base_tree"] == "t" * 40
     assert [e["path"] for e in tree["tree"]] == [".github/test-durations/unit.json"]
@@ -269,11 +264,11 @@ def test_publish_commits_only_the_changed_durations_on_main_and_opens_the_pr(tmp
     assert ref == {"ref": "refs/heads/bot/test-durations", "sha": "c" * 40}
     create = gh.cli_calls("pr", "create")[0]
     assert "--head" in create and create[create.index("--head") + 1] == "bot/test-durations"
-    assert gh.cli_calls("pr", "merge") == [("cli", "pr", "merge", "77", "--repo", "o/r", "--squash", "--auto")]
+    assert not gh.cli_calls("pr", "merge")   # the bot never merges (root ADR 0011a)
     assert not (tmp_path / "repo" / ".test-durations-pr-body.md").exists()
 
 
-def test_publish_moves_the_branch_of_an_open_pr_and_edits_it_without_auto_merge(tmp_path):
+def test_publish_moves_the_branch_of_an_open_pr_and_edits_it(tmp_path):
     gh = FakeGh(branch="o" * 40, prs=[{"number": 12, "url": "u"}])
     assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r"], gh=gh) == 0
     assert gh.api_calls("PATCH")[0][3] == {"sha": "c" * 40, "force": True}
@@ -296,12 +291,20 @@ def test_publish_recreates_the_branch_when_github_refuses_the_move_over_workflow
     assert gh.branch == "c" * 40
 
 
-def test_publish_fails_on_another_refusal_and_a_refused_auto_merge_leaves_the_pr(tmp_path):
+def test_publish_fails_on_another_refusal(tmp_path):
     gh = FakeGh(branch="o" * 40, prs=[{"number": 12, "url": "u"}], refuse_patch="422 Reference update failed")
     assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r"], gh=gh) == 1
-    gh = FakeGh(refuse_merge=True)
-    assert bot.main(["--root", str(_publish_root(tmp_path)), "publish", "--repo", "o/r", "--auto-merge"], gh=gh) == 0
-    assert gh.cli_calls("pr", "create")
+
+
+def test_the_bot_has_no_merge_path():
+    # Root ADR 0011a decision 1: ci-bot squash-merges only the root schema dump and the Infra migration copy; every
+    # other PR it opens is merged by a person or the orchestrating agent (as kit-sync.yml / llm-core-sync.yml).
+    with pytest.raises(SystemExit):
+        bot.main(["publish", "--repo", "o/r", "--auto-merge"], gh=FakeGh())
+    source = Path(bot.__file__).read_text(encoding="utf-8")
+    assert '"merge"' not in source and "--auto" not in source
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    assert "pr merge" not in wf and "--auto" not in wf and "AUTO_MERGE" not in wf
 
 
 # --- fetch ---------------------------------------------------------------------------------------------------------

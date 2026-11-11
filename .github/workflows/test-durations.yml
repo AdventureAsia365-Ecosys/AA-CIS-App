@@ -6,12 +6,12 @@ name: Test Durations
 # bot/test-durations that changes only those two files. Script: .github/scripts/test_durations_bot.py.
 #
 # The PR is opened with the aa-ecosys-ci-bot App token (Contents + Pull requests write, this repo only, minted only
-# when there is something to publish): a PR opened by GITHUB_TOKEN would start no CI. The bot then turns on
-# auto-merge, so the PR joins the merge queue once its checks pass; the queue runs the FULL CI with the new split on
-# the exact tree that lands. A red queue run leaves the PR open for a person (an integration module that leans on its
-# old neighbour shows up there: fix the test). The files feed no deploy path (deploy-dev.yml watches api/, shared/,
-# services/, worker/ only). Repo variable TEST_DURATIONS_AUTO_MERGE=false turns auto-merge off; the orchestrating
-# agent then merges the PR like any other.
+# when there is something to publish): a PR opened by GITHUB_TOKEN would start no CI. The bot never merges (root
+# ADR 0011a: ci-bot squash-merges only the root schema dump and the Infra migration copy; same rule as kit-sync.yml
+# and llm-core-sync.yml): the orchestrating agent merges the PR through the merge queue like any other, and the queue
+# runs the FULL CI with the new split on the exact tree that lands (an integration module that leans on its old
+# neighbour shows up there: fix the test). The files feed no deploy path (deploy-dev.yml watches api/, shared/,
+# services/, worker/ only).
 #
 # Manual run: Actions -> Test Durations -> Run workflow on main; dry_run (default true) computes and prints the PR it
 # would open and never mints a token or writes to GitHub.
@@ -96,11 +96,8 @@ jobs:
         if: steps.app-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          AUTO_MERGE: ${{ vars.TEST_DURATIONS_AUTO_MERGE != 'false' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          auto=()
-          if [ "$AUTO_MERGE" = "true" ]; then auto=(--auto-merge); fi
           python3 .github/scripts/test_durations_bot.py publish --repo "$GITHUB_REPOSITORY" --run-url "$RUN_URL" \
-            --summary "$(cat "$RUNNER_TEMP/refresh.md")" "${auto[@]}"
+            --summary "$(cat "$RUNNER_TEMP/refresh.md")"

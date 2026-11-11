@@ -40,14 +40,17 @@ migration squash) is another lane in the root repo.
   while the others ran ~100-130 s). Longest first, each worker pulling the next file when it is nearly idle, is LPT.
   Unit files were already independent of their order (loadfile spread them over workers arbitrarily).
 - **4 unit shards**, file overhead 0.45 s (fitted on the three shards above, minus a ~10 s fixed start).
-- **Durations refresh: nightly bot PR, auto-merged through the merge queue.** `test-durations.yml` (03:20 UTC):
+- **Durations refresh: nightly bot PR, merged by the orchestrating agent.** `test-durations.yml` (03:20 UTC):
   downloads `test-durations-unit` / `-integration` of the last 3 successful `merge_group` CI runs (CI no longer runs
   on push to main; the queue run is the tree that lands), takes the median per discovered file, and writes a file
   only when the longest shard drops >= 5 s or >= 10 files lack a record. It commits on the latest main through the
   Git Data API (only the two JSON files), on `bot/test-durations`, with the `aa-ecosys-ci-bot` App token (Contents +
-  Pull requests, this repo; minted only when there is something to publish), then `gh pr merge --squash --auto`.
-  Same safety as the root DB Schema Dump bot: lands only when every required check is green, here in the merge
-  queue's full run with the new split. No direct push to main.
+  Pull requests, this repo; minted only when there is something to publish). The bot never merges: root ADR 0011a
+  decision 1 and root `docs/security/github-apps.md` section 8 let ci-bot squash-merge only the root schema dump and
+  the Infra migration copy, and in this repo kit-sync / llm-core-sync already follow "the bot never merges". The
+  orchestrating agent queues the PR (`ship_merge.py AA-CIS-App#<n>`); the merge queue runs the full CI with the new
+  split before it lands. No direct push to main. `test_the_bot_has_no_merge_path` fails if a merge call or an
+  auto-merge switch comes back.
 - The bot PR body names no Linear id (a nightly PR would link itself to the issue forever); `pr-title.yml` exempts
   `bot/*` branches from the stray-id rule and needs no Refs line.
 
@@ -74,10 +77,12 @@ migration squash) is another lane in the root repo.
 ## Tradeoffs
 
 - 4 shards = one more runner per CI run (~20 s of setup each). Free on a public repo.
-- The bot auto-merges: no person looks at a nightly durations PR. Kept because the queue runs the full CI on the new
-  split first and the files feed no deploy path. Kill switch: repo variable `TEST_DURATIONS_AUTO_MERGE=false` (the
-  orchestrator then merges the PR). If GitHub refuses the App's auto-merge (ruleset bypass list), the run says so and
-  the PR waits for the orchestrator.
+- No bot auto-merge (review finding, S277 fix pass). The first build turned auto-merge on by default; that would
+  have been a third ci-bot merge kind outside ADR 0011a, with no check that the PR diff was still only the two JSON
+  files when the merge fired. Cost: the orchestrator merges one small PR when the bot opens one (only when the split
+  moves >= 5 s or >= 10 files lack a record). Bringing auto-merge back needs, first, an ADR 0011a amendment + a
+  github-apps.md section 8 row, and a check through the API that the PR's files are exactly the two JSON files and
+  its head is the bot's commit (as `schema_dump_automerge.py` does for the root bot).
 - Fresh integration weights move the contiguous shard boundaries: a module that leans on its old neighbour can now
   fail at the start of a shard (S277, CIS #1440 was one). That shows in this PR's own CI (a `.github/` change runs
   every job) and in each bot PR's queue run, never on main.
@@ -87,4 +92,5 @@ migration squash) is another lane in the root repo.
 - `test_aa1084_test_durations_bot.py::test_the_bot_suites_match_ci` fails when ci.yml's shard command and the bot's
   `SUITES` table drift apart (roots, exclude, workers, overhead, contiguous, shard env).
 - The xdist option `--no-loadscope-reorder` exists in pytest-xdist 3.8.0 (the pin); a bump must keep it.
-- Live: the first nightly run after merge is a dry check of the auto-merge permission; read its summary.
+- Live: after merge, run Test Durations by hand with dry_run=true and read its summary (no token, no PR); the first
+  real bot PR is merged by the orchestrator like any other.
