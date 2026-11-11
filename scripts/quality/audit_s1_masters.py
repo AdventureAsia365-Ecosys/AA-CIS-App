@@ -13,8 +13,11 @@ read every contract exit makes). Per Master, one JSON line:
 
 - ``writer``: ``metadata.writer_version`` (``v2``), else ``model_editorial``; ``writer_group`` v2 | older;
 - ``contract``: the S1 final contract recomputed today (``final_contract.check_s1``) WITH the master tenant's brand
-  forbidden words (``shared.tenant_brand_rules``, the active row), every finding (code, severity, class, field, count,
-  the code-built detail), next to the stored verdict;
+  forbidden words (``shared.tenant_brand_rules``, the active row), twice: ``verdict_today`` on the hard codes of
+  TODAY's validate run over the stored text (the input the live graph exit gives check_s1), and
+  ``verdict_stored_codes`` on the stored ``quality_scores.failure_codes`` (the record_s1_exit input). ``verdict``
+  (counts, not-publish list) is ``verdict_today``; every finding of it (code, severity, class, field, count, the
+  code-built detail), the stored-codes blocking codes and the stored verdict sit next to it;
 - ``brand_words``: the forbidden words found per field (brand list vs the AA core list);
 - ``rules``: the S1 writing rules run again on the stored text, all deterministic: validate (``graph.validate_node``;
   codes new / cleared vs the stored ``failure_codes``), the brand pre-audit (``pre_audit_checks``), the S1 code checks
@@ -28,8 +31,9 @@ read every contract exit makes). Per Master, one JSON line:
   claim of the pre-audit when it asked). No model is ever called: ``grounding.judge_units`` answers no verdict and
   ``LLMClient`` raises; an attempt is listed under ``errors``, never passed silently.
 
-Then a summary (counts per verdict, finding code, rule code and compose field, split by writer group; the tour ids
-whose verdict is not ``publish``) and a population block (the master tenant's raw_tours by source / Master / pipeline
+Then a summary (counts per verdict today and on the stored codes, the Masters where the two differ, finding code,
+rule code and compose field, split by writer group; the tour ids whose verdict today is not ``publish``) and a
+population block (the master tenant's raw_tours by source / Master / pipeline
 state, the live sources without an active Master): counts and ids only.
 
 Output: one ``AUDIT_SUMMARY`` line (counts), then two gzip+base64 blocks (``=== BEGIN <name>`` ... ``=== END <name>``):
@@ -57,7 +61,7 @@ sys.path.insert(0, os.getcwd())
 if os.path.isdir("/app") and "/app" not in sys.path:
     sys.path.insert(0, "/app")
 
-SCHEMA = "aa1049-s1-master-audit/1"
+SCHEMA = "aa1049-s1-master-audit/2"
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"   # aa_internal (admin_pipeline TENANT_SLUG_MAP)
 V2 = "v2"
 GROUPS = ("v2", "older")
@@ -246,16 +250,58 @@ def _no_model_patches(st: ExitStack, nm: _NoModel) -> None:
     st.enter_context(patch.object(LLMClient, "__init__", nm.init))
 
 
-def contract_of(row: Any, brand_words: list[str]) -> dict:
+def today_codes_of(stored: list[str], validate_today: list[str], writer_version: Optional[str]) -> list[str]:
+    """The failure codes the live S1 exit would hand the contract today (graph.final_contract_node reads
+    ``state["failure_codes"]`` after validate ran on the text): the hard-block codes come from TODAY's validate run
+    (they are validate's own codes: length / meta / missing field / forbidden word / day codes), the other stored
+    codes (grounding, rewrite-class) are kept as stored (check_s1 reads only the hard-block ones)."""
+    from services.content_generation.graph import hard_block_codes
+    hard = hard_block_codes({"writer_version": writer_version})
+    return sorted({c for c in stored if c not in hard} | set(validate_today))
+
+
+def _verdict_of(row: Any, brand_words: list[str], failure_codes: Optional[list[str]]) -> dict:
     from services.quality import final_contract as fc
     inp = fc.s1_input_from_row(row)
     inp.brand_forbidden_words = list(brand_words)
-    rec = fc.check_s1(inp, exit="report", actual="published").record()
-    stored = (_j(_get(row, "metadata"), {}).get("final_contract") or {}).get("verdict")
+    if failure_codes is not None:
+        inp.failure_codes = list(failure_codes)
+    return fc.check_s1(inp, exit="report", actual="published").record()
+
+
+def _blocks(rec: dict) -> list[str]:
+    return sorted({f["code"] for f in rec.get("findings") or [] if f.get("severity") == "block"})
+
+
+def contract_of(row: Any, brand_words: list[str], validate_today: Optional[list[str]] = None) -> dict:
+    """The S1 final contract recomputed today, twice:
+
+    - ``verdict_today``: with the failure codes of TODAY's validate run on the stored text (``today_codes_of``),
+      the input the live graph exit gives check_s1 (graph.final_contract_node, s1_input_from_state);
+    - ``verdict_stored_codes``: with the stored ``quality_scores.failure_codes`` (the record_s1_exit input).
+
+    ``verdict`` (what the counts and the not-publish list read) is ``verdict_today``; when validate could not run
+    (``validate_today`` None) it falls back to the stored-codes verdict and ``verdict_basis`` says so."""
     keep = ("code", "severity", "class_id", "field", "count", "detail")
-    return {"verdict": rec["verdict"], "stored_verdict": stored,
-            "verdict_changed": stored is not None and stored != rec["verdict"],
-            "findings": [{k: f[k] for k in keep if k in f} for f in rec.get("findings") or []]}
+    stored_rec = _verdict_of(row, brand_words, None)
+    if validate_today is not None:
+        md = _j(_get(row, "metadata"), {})
+        stored_codes = [str(c) for c in _j(_get(row, "failure_codes"), [])]
+        today_rec = _verdict_of(row, brand_words, today_codes_of(stored_codes, list(validate_today),
+                                                                 md.get("writer_version")))
+        basis = "today_validate"
+    else:
+        today_rec, basis = stored_rec, "stored_codes"
+    stored = (_j(_get(row, "metadata"), {}).get("final_contract") or {}).get("verdict")
+    verdict = today_rec["verdict"]
+    return {"verdict": verdict, "verdict_basis": basis,
+            "verdict_today": today_rec["verdict"] if basis == "today_validate" else None,
+            "verdict_stored_codes": stored_rec["verdict"],
+            "verdicts_differ": basis == "today_validate" and today_rec["verdict"] != stored_rec["verdict"],
+            "block_codes_stored_codes": _blocks(stored_rec),
+            "stored_verdict": stored,
+            "verdict_changed": stored is not None and stored != verdict,
+            "findings": [{k: f[k] for k in keep if k in f} for f in today_rec.get("findings") or []]}
 
 
 def brand_words_of(page: dict, brand_words: list[str]) -> dict:
@@ -375,21 +421,14 @@ def audit_one(row: Any, brand_words: list[str]) -> dict:
     page, tour = page_of(row), tour_of(row)
     with ExitStack() as st:
         _no_model_patches(st, nm)
-        try:
-            out["contract"] = contract_of(row, brand_words)
-        except Exception as e:  # noqa: BLE001 — a failed section is reported, the audit goes on
-            out["errors"]["contract"] = _err(e)
-        try:
-            out["brand_words"] = brand_words_of(page, brand_words)
-        except Exception as e:  # noqa: BLE001
-            out["errors"]["brand_words"] = _err(e)
         tour_w = facts = None
         try:
             tour_w = v2.with_agency_fields(tour, agency_of(row))
             facts = build_fact_table(tour_w)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 — a failed section is reported, the audit goes on
             out["errors"]["facts"] = _err(e)
         if facts is not None:
+            # the rules first: today's validate codes are the contract's input (contract_of)
             try:
                 out["rules"], extra, rule_errors = rules_of(row, page, tour, tour_w, facts, brand_words,
                                                             writer if group == V2 else None, nm)
@@ -397,6 +436,16 @@ def audit_one(row: Any, brand_words: list[str]) -> dict:
                 out["errors"].update(rule_errors)
             except Exception as e:  # noqa: BLE001
                 out["errors"]["rules"] = _err(e)
+        validate_today = ((out.get("rules") or {}).get("validate") or {}).get("codes")
+        try:
+            out["contract"] = contract_of(row, brand_words, validate_today)
+        except Exception as e:  # noqa: BLE001
+            out["errors"]["contract"] = _err(e)
+        try:
+            out["brand_words"] = brand_words_of(page, brand_words)
+        except Exception as e:  # noqa: BLE001
+            out["errors"]["brand_words"] = _err(e)
+        if facts is not None:
             try:
                 out["compose"] = {"applies": group == V2, **compose_of(page, tour_w, facts, brand_words)}
             except Exception as e:  # noqa: BLE001
@@ -416,12 +465,14 @@ def _per_group() -> dict:
 
 def summarize(lines: list[dict]) -> dict:
     """Counts per verdict, finding code, rule code and compose field, split by writer group (pure)."""
-    c = {k: _per_group() for k in ("masters", "verdict", "block_codes", "warn_codes", "validate_codes",
+    c = {k: _per_group() for k in ("masters", "verdict", "verdict_stored_codes", "verdicts_differ",
+                                     "verdict_basis", "block_codes", "warn_codes", "validate_codes",
                                      "validate_new", "pre_audit_codes", "pre_audit_needs_model", "s1_check_codes",
                                      "compose_fields", "compose_any", "brand_word_fields", "core_word_fields",
                                      "grounding_numeric", "not_run", "errors", "writers", "verdict_changed",
                                      "source_state")}
-    not_publish = []
+    not_publish: list[dict] = []
+    differ: list[dict] = []
     for ln in lines:
         groups = ("all", ln.get("writer_group") or "older")
         con = ln.get("contract") or {}
@@ -431,6 +482,10 @@ def summarize(lines: list[dict]) -> dict:
             c["masters"][g]["masters"] += 1
             c["writers"][g][ln.get("writer") or "unknown"] += 1
             c["verdict"][g][con.get("verdict") or "error"] += 1
+            c["verdict_stored_codes"][g][con.get("verdict_stored_codes") or "error"] += 1
+            c["verdict_basis"][g][con.get("verdict_basis") or "error"] += 1
+            if con.get("verdicts_differ"):
+                c["verdicts_differ"][g][f"{con.get('verdict_stored_codes')}->{con.get('verdict_today')}"] += 1
             if con.get("verdict_changed"):
                 c["verdict_changed"][g][f"{con.get('stored_verdict')}->{con.get('verdict')}"] += 1
             for f in con.get("findings") or []:
@@ -460,11 +515,20 @@ def summarize(lines: list[dict]) -> dict:
         if con.get("verdict") != "publish":
             not_publish.append({"tour_id": ln.get("tour_id"), "writer_group": ln.get("writer_group"),
                                 "verdict": con.get("verdict") or "error",
+                                "verdict_stored_codes": con.get("verdict_stored_codes") or "error",
                                 "block_codes": sorted({f["code"] for f in con.get("findings") or []
                                                        if f.get("severity") == "block"})})
+        if con.get("verdicts_differ"):
+            differ.append({"tour_id": ln.get("tour_id"), "writer_group": ln.get("writer_group"),
+                           "verdict_today": con.get("verdict_today"),
+                           "verdict_stored_codes": con.get("verdict_stored_codes"),
+                           "block_codes_today": sorted({f["code"] for f in con.get("findings") or []
+                                                        if f.get("severity") == "block"}),
+                           "block_codes_stored_codes": con.get("block_codes_stored_codes") or []})
     out = {k: {g: dict(v[g].most_common()) for g in v} for k, v in c.items()}
     out["masters"] = {g: v.get("masters", 0) for g, v in out["masters"].items()}
     out["not_publish"] = sorted(not_publish, key=lambda r: (r["writer_group"], r["verdict"], r["tour_id"] or ""))
+    out["verdicts_differ_list"] = sorted(differ, key=lambda r: (r["writer_group"], r["tour_id"] or ""))
     out["not_run_why"] = dict(NOT_RUN_WHY)
     return out
 
@@ -505,7 +569,9 @@ def block(name: str, payload: bytes) -> str:
 def render(lines: list[dict], summary: dict) -> str:
     """The stdout of a run: the AUDIT_SUMMARY line and the two blocks."""
     jsonl = "\n".join(json.dumps(ln, sort_keys=True, ensure_ascii=False, default=str) for ln in lines) + "\n"
-    head = {"masters": summary["masters"], "verdict": summary["verdict"], "compose_any": summary["compose_any"],
+    head = {"masters": summary["masters"], "verdict": summary["verdict"],
+            "verdict_stored_codes": summary["verdict_stored_codes"], "verdicts_differ": summary["verdicts_differ"],
+            "compose_any": summary["compose_any"],
             "errors": summary["errors"].get("all", {}), "not_publish": len(summary["not_publish"]),
             "raw_tours": (summary.get("population") or {}).get("raw_tours")}
     return "\n".join([

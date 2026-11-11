@@ -114,6 +114,10 @@ async def test_an_active_master_becomes_one_line_and_the_rest_are_counted(conn):
     line = a.audit_one(by_id[active], ["velvety"])
     assert line["errors"] == {}, line["errors"]
     assert line["writer_group"] == "v2" and line["contract"]["verdict"] in ("publish", "review")
+    # the headline verdict is computed on today's validate codes; the stored-codes verdict sits next to it
+    assert line["contract"]["verdict_basis"] == "today_validate"
+    assert line["contract"]["verdict"] == line["contract"]["verdict_today"]
+    assert line["contract"]["verdict_stored_codes"] in ("publish", "review")
     assert line["compose"]["days"]["planned"] == 2 and line["compose"]["applies"] is True
     old = a.audit_one(by_id[older], [])
     assert old["writer"] == "invented-model" and old["writer_group"] == "older" and old["errors"] == {}

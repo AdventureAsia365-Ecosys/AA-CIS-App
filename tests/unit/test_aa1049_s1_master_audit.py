@@ -233,3 +233,62 @@ def test_one_rule_set_failing_leaves_the_others_reporting():
         ln = audit.audit_one(row(), [])
     assert list(ln["errors"]) == ["rules.s1_checks"]
     assert "validate" in ln["rules"] and "pre_audit" in ln["rules"] and "grounding_numeric" in ln["rules"]
+
+
+# ── the contract input: today's validate codes (the live graph exit), next to the stored codes ──────
+
+
+@pytest.mark.parametrize("over, code", [
+    ({"aa_subtitle": None}, "MISSING_FIELD"),
+    ({"seo_title": "Velmora Canal and Corran Ridge Walk with the Chapel, the Station and the Guesthouse Night"},
+     "SEO_TITLE_TOO_LONG"),
+    ({"aa_highlights": "[]"}, "MISSING_FIELD"),
+])
+def test_a_hard_code_validate_finds_today_blocks_the_headline_verdict(over, code):
+    ln = audit.audit_one(row(**over), [])
+    con = ln["contract"]
+    assert code in ln["rules"]["validate"]["new"]
+    assert con["verdict_basis"] == "today_validate"
+    assert con["verdict"] == con["verdict_today"] != "publish"
+    assert code in {f["code"] for f in con["findings"] if f["severity"] == "block"}
+    # the stored codes (written before the rule fired) still say publish: both are reported, and they differ
+    assert con["verdict_stored_codes"] == "publish" and con["verdicts_differ"] is True
+    assert code not in con["block_codes_stored_codes"]
+
+
+def test_a_stale_stored_hard_code_that_validate_clears_today_does_not_block():
+    ln = audit.audit_one(row(failure_codes=json.dumps(["SEO_TITLE_TOO_LONG"])), [])
+    con = ln["contract"]
+    assert ln["rules"]["validate"]["cleared"] == ["SEO_TITLE_TOO_LONG"]
+    assert con["verdict"] == "publish" and con["verdict_stored_codes"] == "review"
+    assert con["block_codes_stored_codes"] == ["SEO_TITLE_TOO_LONG"] and con["verdicts_differ"] is True
+
+
+def test_today_codes_keep_the_stored_non_hard_codes_and_take_the_hard_ones_from_validate():
+    stored = ["SEO_TITLE_TOO_LONG", "UNSUPPORTED_FIGURE_INVENTED"]
+    assert audit.today_codes_of(stored, ["MISSING_FIELD"], "v2") == ["MISSING_FIELD", "UNSUPPORTED_FIGURE_INVENTED"]
+
+
+def test_without_todays_validate_the_verdict_falls_back_to_the_stored_codes_and_says_so():
+    from services.content_generation import graph
+    with patch.object(graph, "validate_node", side_effect=KeyError("x")):
+        ln = audit.audit_one(row(failure_codes=json.dumps(["SEO_TITLE_TOO_LONG"])), [])
+    con = ln["contract"]
+    assert "rules.validate" in ln["errors"]
+    assert con["verdict_basis"] == "stored_codes" and con["verdict_today"] is None
+    assert con["verdict"] == con["verdict_stored_codes"] == "review" and con["verdicts_differ"] is False
+
+
+def test_the_summary_and_readme_report_both_verdicts_and_the_masters_where_they_differ(tmp_path):
+    lines = [audit.audit_one(row(), []), audit.audit_one(row(tour_id="t-nosub", aa_subtitle=None), []),
+             audit.audit_one(row(tour_id="t-stale", failure_codes=json.dumps(["SEO_TITLE_TOO_LONG"])), [])]
+    s = audit.summarize(lines)
+    assert s["verdict"]["all"] == {"publish": 2, "review": 1}
+    assert s["verdict_stored_codes"]["all"] == {"publish": 2, "review": 1}
+    assert s["verdicts_differ"]["all"] == {"publish->review": 1, "review->publish": 1}
+    assert [r["tour_id"] for r in s["verdicts_differ_list"]] == ["t-nosub", "t-stale"]
+    assert [r["tour_id"] for r in s["not_publish"]] == ["t-nosub"]
+    assert s["not_publish"][0]["verdict_stored_codes"] == "publish"
+    md = local.readme({"schema": audit.SCHEMA, **s, "population": {}})
+    assert "Verdict on the stored codes" in md and "differs from the stored-codes verdict: 2" in md
+    assert "`t-nosub` | v2 | publish | review | MISSING_FIELD" in md

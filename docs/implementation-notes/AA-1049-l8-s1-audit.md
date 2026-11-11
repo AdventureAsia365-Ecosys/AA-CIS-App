@@ -19,6 +19,18 @@ from the live rows, with no model call.
   `export_aa1049_s1.BRAND_SQL` picks). `s1_input_from_row` alone leaves the brand list empty, so a brand word would
   pass the stored-row contract; the audit fills it in. The stored verdict (`metadata.final_contract.verdict`) is
   reported next to it.
+- **Two contract inputs, the headline is today's (review fix).** The first cut fed `check_s1` the STORED
+  `quality_scores.failure_codes`, so a Master whose text fails a hard code today (a NULL subtitle -> `MISSING_FIELD`,
+  a long `seo_title` -> `SEO_TITLE_TOO_LONG`, empty highlights) still came out `publish`, and a stale stored hard code
+  kept a clean Master blocked. The live graph exit (`graph.final_contract_node` -> `s1_input_from_state`) gives the
+  contract the codes of the validate run on that text. Now the rules run first and the contract runs twice:
+  `verdict_today` on `today_codes_of(stored, validate_today)` (the hard-block codes from today's validate, the other
+  stored codes kept: `check_s1` reads only the hard ones) and `verdict_stored_codes` on the stored codes (the
+  `record_s1_exit` input). `verdict` (counts, not-publish list, README headline) is `verdict_today`; when validate
+  could not run it falls back to the stored-codes verdict with `verdict_basis = stored_codes`. The summary adds
+  `verdict_stored_codes`, `verdicts_differ` (counts `stored->today`) and `verdicts_differ_list` (ids + both block-code
+  sets); the README shows both tables. Summary schema bumped to `aa1049-s1-master-audit/2` (the local helper refuses
+  an older run's output: rerun the container half).
 - **The S1 writing rules, run again on the stored text (all deterministic).** `graph.validate_node` (the codes the
   job gate reads; the DFS keyword check is off because `seo` is empty), `brand_audit_node.pre_audit_checks` (the
   deterministic brand pre-audit), `s1_checks.run_checks` (the S1-first code checks: days, figures, names, meta,

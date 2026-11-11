@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-SCHEMA = "aa1049-s1-master-audit/1"
+SCHEMA = "aa1049-s1-master-audit/2"
 LINES_BLOCK = "s1_master_audit.jsonl"
 SUMMARY_BLOCK = "s1_master_audit_summary.json"
 GROUPS = ("all", "v2", "older")
@@ -104,8 +104,17 @@ def readme(summary: dict) -> str:
         out += [f"| `{short(u['tour_id'])}` | {u['pipeline_status']} | {u['lifecycle_stage']} | {u['master_status']} | "
                 f"{u['master_status_reason'] or ''} | {u['latest_version_status'] or 'none'} |" for u in unm]
         out += [""]
-    out += ["## Final contract verdict (recomputed today, brand words included)", ""]
-    out += _table("Verdict", summary.get("verdict") or {}, key="verdict")
+    out += ["## Final contract verdict (recomputed today, brand words included)", "",
+            "Computed twice per Master. **Today** (the headline, and the not-publish list below): the hard codes "
+            "come from today's validate run on the stored text, the input the live S1 exit gives the contract. "
+            "**Stored codes**: the hard codes stored with the version when it was written (`quality_scores."
+            "failure_codes`). They differ when a rule changed since, or a stored code is stale.", ""]
+    out += _table("Verdict today", summary.get("verdict") or {}, key="verdict")
+    out += _table("Verdict on the stored codes", summary.get("verdict_stored_codes") or {}, key="verdict")
+    out += _table("Masters where the two differ (stored codes -> today)", summary.get("verdicts_differ") or {},
+                  key="change")
+    out += _table("Basis of the headline verdict (stored_codes = today's validate could not run)",
+                  summary.get("verdict_basis") or {}, key="basis")
     out += _table("Stored verdict -> today", summary.get("verdict_changed") or {}, key="change")
     out += _table("Blocking findings (Masters per code)", summary.get("block_codes") or {})
     out += _table("Warnings (Masters per code)", summary.get("warn_codes") or {})
@@ -134,12 +143,22 @@ def readme(summary: dict) -> str:
     out += _table("Not run (Masters)", summary.get("not_run") or {}, key="check")
     out += _table("Section errors (Masters)", summary.get("errors") or {}, key="section")
     out += _table("Source state of the active Masters", summary.get("source_state") or {}, key="state")
+    dif = summary.get("verdicts_differ_list") or []
+    out += [f"## Masters whose verdict today differs from the stored-codes verdict: {len(dif)}", ""]
+    if dif:
+        out += ["| tour_id | writer | stored codes | today | blocking today | blocking on stored codes |",
+                "|---|---|---|---|---|---|"]
+        out += [f"| `{short(r['tour_id'])}` | {r['writer_group']} | {r['verdict_stored_codes']} | "
+                f"{r['verdict_today']} | {', '.join(r['block_codes_today'])} | "
+                f"{', '.join(r['block_codes_stored_codes'])} |" for r in dif]
+        out += [""]
     np_ = summary.get("not_publish") or []
-    out += [f"## Masters whose verdict is not publish: {len(np_)}", ""]
+    out += [f"## Masters whose verdict today is not publish: {len(np_)}", ""]
     if np_:
-        out += ["| tour_id | writer | verdict | blocking codes |", "|---|---|---|---|"]
-        out += [f"| `{short(r['tour_id'])}` | {r['writer_group']} | {r['verdict']} | {', '.join(r['block_codes'])} |"
-                for r in np_]
+        out += ["| tour_id | writer | verdict today | on stored codes | blocking codes today |",
+                "|---|---|---|---|---|"]
+        out += [f"| `{short(r['tour_id'])}` | {r['writer_group']} | {r['verdict']} | "
+                f"{r.get('verdict_stored_codes', '')} | {', '.join(r['block_codes'])} |" for r in np_]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -181,7 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     n = lines.count(b"\n")
     print(f"decoded {n} Master line(s) -> {work / LINES_BLOCK}")
     print(f"summary -> {work / SUMMARY_BLOCK}; README -> {a.readme or work / 'README.md'}")
-    print("verdict " + json.dumps(summary.get("verdict", {}).get("all", {}), sort_keys=True))
+    print("verdict today " + json.dumps(summary.get("verdict", {}).get("all", {}), sort_keys=True))
+    print("verdict on stored codes " + json.dumps(summary.get("verdict_stored_codes", {}).get("all", {}),
+                                                  sort_keys=True))
     return 0
 
 
