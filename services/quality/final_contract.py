@@ -86,9 +86,13 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "api/routers/admin_pipeline.py::update_generated_content_fields": ("human_edit",),
         # every publish of a Master (auto publish after a run, review approve, promote, the legacy Lambda); each
         # caller names its exit (contract_exit=)
-        "services/export/handler.py::process_export": ("auto_publish", "approve", "promote", "lambda"),
+        "services/export/handler.py::process_export": ("auto_publish", "approve", "promote", "lambda", "recompose"),
         "api/routers/admin_pipeline.py::promote_tour_version": ("promote",),
         "services/export/handler.py::lambda_handler": ("lambda",),
+        # AA-1049 path A-new: the fixed-field recompose of a served Master (s1_recompose_store): the new version's
+        # insert (no model call) and its publish through process_export
+        "services/content_generation/s1_recompose_store.py::insert_recomposed_version": ("recompose",),
+        "services/content_generation/s1_recompose_store.py::_default_publish": ("recompose",),
         # the review approve (also the legacy Step Functions branch that does not publish here)
         "api/routers/v1_pipeline.py::approve_review": ("approve",),
     },

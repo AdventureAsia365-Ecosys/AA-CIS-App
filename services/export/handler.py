@@ -564,8 +564,9 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
 
     AA-1047 W1 (root ADR 0020 "one exit"): every publish runs the REPORT-mode final contract on the stored version
     and records it (``metadata.final_contract`` + its exit log) under ``contract_exit`` — ``auto_publish`` (an S1
-    run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler). Every caller names its
-    exit (topology test). It never blocks the publish."""
+    run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler), ``recompose``
+    (AA-1049 path A-new: a code-recomposed version of a served Master, ``content_generation/s1_recompose_store``).
+    Every caller names its exit (topology test). It never blocks the publish."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
