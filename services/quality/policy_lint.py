@@ -197,8 +197,10 @@ def scan_python(path: str, src: str, c: dict) -> list[str]:
         elif isinstance(node, ast.Compare):
             operands = [node.left] + list(node.comparators)
             lits = [o for o in operands if _int_in(o, all_b)]
+            if not lits:
+                continue  # AA-1084: get_source_segment splits the whole file per call; only a band literal needs it
             others = " ".join(ast.get_source_segment(src, o) or "" for o in operands if o not in lits)
-            if lits and LEN_OPERAND_RE.search(others):
+            if LEN_OPERAND_RE.search(others):
                 add(node, f"(p2) {others.strip()[:50]} compared with {lits[0].value} — use writing_policy.band(...)")
         elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice) \
                 and _int_in(node.slice.upper, band_b) \
