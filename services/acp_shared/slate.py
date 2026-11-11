@@ -623,8 +623,8 @@ def _choose_slate(
     **Every adopted tour first** (AA-1081, `cover_each_tour` Channels — Blog): `cover[channel]` holds the tenant's tours
     with no Subject on that Channel yet. Before the round robin, the Channel's queue (Bar-cleared, Debate-flagged last,
     rank order) is walked once and the first candidate that is on a tour still uncovered takes a seat, under every rule
-    above; it covers each tour it is on. A tour with a free candidate thus gets at least one Subject, and its seat counts
-    against `max_channels_per_place` before the later Channels take the place. `cover` None = no such pass.
+    above; it covers each tour it is on. A tour with a free candidate thus gets at least one Subject, and its seat
+    counts against `max_channels_per_place` before the later Channels take the place. `cover` None = no such pass.
 
     Deterministic: same inputs, same output. Returns `{channel: [(candidate, cleared_bar_reason)]}`
     for every Channel in `channels` — exactly what should be `INSERT`ed as `proposed` rows.
