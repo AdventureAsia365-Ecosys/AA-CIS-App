@@ -276,3 +276,48 @@ async def test_f4_short_with_a_gate_that_needs_the_rewrite_takes_the_rewrite(_lo
         await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
     rw.assert_called_once()
     ext.assert_not_called()
+
+
+# ---------------------------------------------------------------- the AA-777 truth cut after a sentences+extend entry
+
+F1_SENTENCE = "The river noise fades as the path turns towards the ridge."
+F1_FAIL = {"gate": qr.F1_GROUNDING, "passed": False, "blocking": True, "repairable": True,
+           "violations": [f"sentence states ['40'] not present in the content seed: '{F1_SENTENCE}'"]}
+
+
+@pytest.mark.parametrize("mode, counted", [("sentences", True), (f"sentences+{le.EXTEND_MODE}", True),
+                                           (le.EXTEND_MODE, False), ("seo_fields", False)])
+def test_a_sentence_repair_with_the_extend_still_counts_for_the_truth_cut(mode, counted):
+    log = [{"repair_mode": mode, "gate_ledger": [F1_FAIL]}]
+    assert (qr.F1_GROUNDING in service._cut_gates_repaired(log)) is counted
+    assert service._truth_repaired_before(log) is counted
+
+
+@pytest.mark.asyncio
+async def test_an_f1_item_repaired_with_the_extend_is_cut_at_attempt_three(_loop_stubs, monkeypatch):
+    """F4 short + a quoted F1 claim at attempt 1 → attempt 2 runs the sentence repair and the extend repair
+    (repair_mode 'sentences+length_extend'); F1 still fails → attempt 3 cuts it in code (AA-777) instead of a
+    second paid repair call. Attempt 3 runs in the legacy last-attempt mode only (stop-and-label ends at 2)."""
+    monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
+    passing = [{"gate": qr.F4_EXTREME_LENGTH, "passed": True, "violations": [], "blocking": True}]
+    truth_cut = {"repair_mode": "truth_cut", "sentences_cut": 1}
+    with patch.object(service, "write_content", return_value=(TEXT, 0.05, {}, None)), \
+            patch.object(service, "rewrite_with_feedback") as rewrite, \
+            patch.object(service, "extend_sections", side_effect=_call(GOOD)) as ext, \
+            patch.object(service, "repair_sentences", return_value=(["A plain replacement."], 0.01)) as repair, \
+            patch.object(service.sentence_repair, "splice_checked", side_effect=lambda text, *a, **k: text), \
+            patch.object(service, "_cut_blog_truth_items",
+                         side_effect=lambda text, items, **k: (text.replace(F1_SENTENCE, ""), [], truth_cut)) as cut, \
+            patch.object(service, "run_quality_gates", side_effect=[
+                _outcome(_short_ledger([F1_FAIL])), _outcome([*passing, F1_FAIL]), _outcome(passing)]), \
+            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, trace: (led, st, hr, {})), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
+    rewrite.assert_not_called()
+    ext.assert_called_once()
+    repair.assert_called_once()  # attempt 2 only: attempt 3 cuts, no second paid repair
+    cut.assert_called_once()
+    assert cut.call_args.kwargs["repaired"] >= {qr.F1_GROUNDING}
+    log = fin.call_args.kwargs["repair_log"]
+    assert any(e.get("repair_mode") == f"sentences+{le.EXTEND_MODE}" for e in log)
+    assert any(e.get("repair_mode") == "truth_cut" for e in log)

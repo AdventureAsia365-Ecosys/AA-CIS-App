@@ -582,12 +582,17 @@ def _blog_cut_refusal(before: str, after: Optional[str]) -> Optional[str]:
     return None
 
 
+# AA-1077 — the repair modes of an entry the sentence repair ran on: alone, or with the extend repair of a short
+# blog in the same attempt ('sentences+length_extend'; the extend never replaces the sentence repair).
+SENTENCE_REPAIR_MODES = frozenset({"sentences", f"sentences+{length_extend.EXTEND_MODE}"})
+
+
 def _cut_gates_repaired(repair_log: list[dict]) -> frozenset:
     """AA-777 — the cut gates (F1_grounding, F9_cta_fact and, r6 fix 6, F17_trip_fact) an earlier attempt
     already sent to a sentence repair: failing and blocking in the trimmed ledger (AA-791) of a repair_log
-    entry the sentence repair ran on (`repair_mode` 'sentences')."""
+    entry the sentence repair ran on (`repair_mode` 'sentences', or AA-1077 'sentences+length_extend')."""
     return frozenset(
-        g.get("gate") for e in repair_log if e.get("repair_mode") == "sentences"
+        g.get("gate") for e in repair_log if e.get("repair_mode") in SENTENCE_REPAIR_MODES
         for g in e.get("gate_ledger") or []
         if g.get("gate") in TRUTH_CUT_GATES | {F17_CUT_GATE} and not g.get("passed") and g.get("blocking", True))
 
