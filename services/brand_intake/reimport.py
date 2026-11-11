@@ -52,7 +52,8 @@ def plan_fill(active: dict, parsed_fields: dict) -> dict:
     """{"fill": {field: value}, "kept": [fields already set], "custom_validators": <new object or None>}.
 
     Pure. A field is filled only when the active version has it empty and the brief gives a value; nothing is
-    overwritten. `custom_validators` keeps every other key of the active object (the admin voice rubric override, AA-790)."""
+    overwritten. `custom_validators` keeps every other key of the active object (the admin voice rubric override,
+    AA-790)."""
     fill: dict[str, Any] = {}
     kept: list[str] = []
     for field in ("system_prompt", "default_cta"):

@@ -22,8 +22,9 @@ _PREVIOUS_SQL = ("(SELECT p.custom_validators FROM shared.tenant_brand_rules p "
                  "WHERE p.tenant_id = {tenant} AND p.version = {version} - 1 ORDER BY p.updated_at DESC LIMIT 1)")
 # The VALUES expression for custom_validators in a brand INSERT ({tenant} = the tenant_id parameter, {version} the
 # new version's, {param} the signature-word list as JSON text or NULL). The previous version's object (the tenant's
-# latest row, whatever its brand_name) is kept, other keys included (the admin voice rubric override, AA-790): a sent list replaces
-# only its `signature_words` key; NULL (the client did not send the field) carries the previous value over as is.
+# latest row, whatever its brand_name) is kept, other keys included (the admin voice rubric override, AA-790): a
+# sent list replaces only its `signature_words` key; NULL (the client did not send the field) carries the previous
+# value over as is.
 CUSTOM_VALIDATORS_VALUE_SQL = (
     "CASE WHEN {param}::jsonb IS NULL THEN " + _PREVIOUS_SQL + " ELSE "
     "(CASE WHEN jsonb_typeof(" + _PREVIOUS_SQL + ") = 'object' THEN " + _PREVIOUS_SQL + " ELSE '{{}}'::jsonb END)"
