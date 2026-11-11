@@ -70,6 +70,7 @@ async def _as_cis_app(conn):
             await conn.execute(f"GRANT USAGE ON SCHEMA {schema} TO cis_app")
             await conn.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO cis_app")
     await conn.execute("GRANT INSERT ON shared.notifications TO cis_app")
+    await conn.execute("GRANT USAGE ON SEQUENCE shared.notifications_id_seq TO cis_app")
     await conn.execute("GRANT UPDATE ON shared.job TO cis_app")
     async with conn.transaction():
         await conn.execute("SET LOCAL ROLE cis_app")
@@ -185,7 +186,7 @@ async def test_previous_demand_reads_the_current_ranked_row_per_segment(conn):
         tour_id = uuid.uuid4()
         await conn.execute(
             "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
-            "source_status, source_group_id, source_version) VALUES ($1, $2, $3, $4, 'Zentoria', '2 days', "
+            "source_status, source_group_id, source_version) VALUES ($1, $2, $3, $4, 'Vietnam', '2 days', "
             "'active'::silver_aa_internal.source_status_enum, $5, 1)",
             tour_id, MASTER, BATCH_ID, f"aa1083 {label}", uuid.uuid4())
         tours.append(tour_id)
