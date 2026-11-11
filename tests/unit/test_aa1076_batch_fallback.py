@@ -224,6 +224,117 @@ async def test_an_ingest_re_run_does_not_write_the_ledger_twice(lane, monkeypatc
     lane.ingest.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_spread_out_provider_errors_never_fail_the_job(lane, monkeypatch):
+    """Review S277: a provider error after submit reschedules (attempt not counted) instead of failing the attempt;
+    every good status read resets the count, so errors far apart never add up to a failed, unledgered batch."""
+    from shared.llm_client.adapters.anthropic_messages import AnthropicAPIError
+    monkeypatch.setattr(lbj, "_now", lambda: lbj._parse_ts("2026-11-11T01:00:00+00:00"))
+    replies = iter([AnthropicAPIError("overloaded", status_code=529), "working",
+                    ConnectionError("connection reset"), "working",
+                    AnthropicAPIError("unauthorized", status_code=401), "ended"])
+
+    def status(t, p):
+        r = next(replies)
+        if isinstance(r, Exception):
+            raise r
+        return SimpleNamespace(ended=r == "ended", processing_status=r, counts={})
+    monkeypatch.setattr(batch_lane, "status", status)
+    monkeypatch.setattr(batch_lane, "results", lambda *a, **k: {"s1-0": _ok("s1-0")})
+    monkeypatch.setattr(batch_lane, "ledgered", AsyncMock(return_value={"rows": 0, "usd": 0.0, "billed": 0}))
+    monkeypatch.setattr(lbj.call_log, "record_calls", AsyncMock())
+    prog, errors_seen = _sent(), []
+    for _ in range(5):
+        with pytest.raises(Reschedule) as exc:
+            await lbj.run(_ctx(_payload(), progress=prog))
+        prog = {**prog, **exc.value.progress}
+        errors_seen.append(prog["poll_errors"])
+    assert errors_seen == [1, 0, 1, 0, 1]
+    assert prog["last_error"].startswith("AnthropicAPIError: unauthorized")
+    out = await lbj.run(_ctx(_payload(), progress=prog))
+    assert out["phase"] == "done"
+    lane.ingest.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_poll_that_raises_three_times_then_ends_is_ingested(lane, monkeypatch):
+    from shared.llm_client.adapters.openai_batches import OpenAIBatchError
+    calls = {"n": 0}
+
+    def status(t, p):
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            raise OpenAIBatchError("502 bad gateway")
+        return SimpleNamespace(ended=True, processing_status="ended", counts={})
+    monkeypatch.setattr(batch_lane, "status", status)
+    monkeypatch.setattr(batch_lane, "results", lambda *a, **k: {"s1-0": _ok("s1-0")})
+    monkeypatch.setattr(batch_lane, "ledgered", AsyncMock(return_value={"rows": 0, "usd": 0.0, "billed": 0}))
+    record = AsyncMock()
+    monkeypatch.setattr(lbj.call_log, "record_calls", record)
+    prog, delays = _sent(), []
+    for _ in range(3):
+        with pytest.raises(Reschedule) as exc:
+            await lbj.run(_ctx(_payload(), progress=prog))
+        prog = {**prog, **exc.value.progress}
+        delays.append(exc.value.delay_seconds)
+    assert prog["poll_errors"] == 3 and delays == [60, 120, 120]
+    out = await lbj.run(_ctx(_payload(), progress=prog))
+    assert out["phase"] == "done"
+    record.assert_awaited_once()
+    lane.ingest.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_results_error_reschedules_and_the_next_run_ingests(lane, monkeypatch):
+    monkeypatch.setattr(batch_lane, "status", lambda t, p: SimpleNamespace(ended=True, processing_status="ended",
+                                                                          counts={}))
+    calls = {"n": 0}
+
+    def results(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("read timed out")
+        return {"s1-0": _ok("s1-0")}
+    monkeypatch.setattr(batch_lane, "results", results)
+    monkeypatch.setattr(batch_lane, "ledgered", AsyncMock(return_value={"rows": 0, "usd": 0.0, "billed": 0}))
+    monkeypatch.setattr(lbj.call_log, "record_calls", AsyncMock())
+    with pytest.raises(Reschedule) as exc:
+        await lbj.run(_ctx(_payload(), progress=_sent()))
+    assert exc.value.progress["phase"] == "ingesting" and exc.value.progress["poll_errors"] == 1
+    lane.ingest.assert_not_awaited()
+    out = await lbj.run(_ctx(_payload(), progress={**_sent(), **exc.value.progress}))
+    assert out["phase"] == "done"
+    lane.ingest.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_errors_in_a_row_fail_the_job_and_a_retry_polls_again(lane, monkeypatch):
+    def down(t, p):
+        raise ConnectionError("no route to host")
+    monkeypatch.setattr(batch_lane, "status", down)
+    ctx = _ctx(_payload(), progress={**_sent(), "poll_errors": lbj.POLL_ERROR_LIMIT - 1})
+    with pytest.raises(NonRetryable, match="provider errors in a row after submit") as exc:
+        await lbj.run(ctx)
+    assert "msgbatch_1" in str(exc.value) and "nothing is sent again" in str(exc.value)
+    # the counter is cleared so a Retry starts polling the same provider batch afresh
+    assert ctx.progress.await_args_list[-1].kwargs["poll_errors"] == 0
+    lane.submit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_deadline_cancel_reschedules_and_is_sent_again(lane, monkeypatch):
+    monkeypatch.setattr(batch_lane, "status", lambda t, p: SimpleNamespace(ended=False, processing_status="in_progress",
+                                                                          counts={}))
+
+    def cancel(t, p):
+        raise ConnectionError("connection reset")
+    monkeypatch.setattr(batch_lane, "cancel", cancel)
+    monkeypatch.setattr(lbj, "_now", lambda: lbj._parse_ts("2026-11-12T02:00:00+00:00"))
+    with pytest.raises(Reschedule) as exc:
+        await lbj.run(_ctx(_payload(), progress=_sent()))
+    assert exc.value.progress["poll_errors"] == 1 and "cancel_sent_at" not in exc.value.progress
+
+
 # ── the S1 hand-off: failed / expired items go on demand ─────────────────────────────────────────────────────────
 
 class _Pool:

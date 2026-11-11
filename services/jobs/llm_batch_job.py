@@ -14,6 +14,11 @@ Steps (``progress.phase``):
    provider console) instead of paying again.
 3. ``polling``: the provider status every POLL_DELAYS seconds (60 s growing to 10 min). Past DEADLINE_HOURS after
    submit the batch is cancelled; whatever it did not finish ends ``canceled`` / ``expired`` and goes on demand.
+   A provider or transport error after submit (status, cancel, results: a 5xx, overloaded, a connection blip, a 401
+   while a key rotates) never uses up the job's attempts: the batch is already sent and billed, so the run
+   reschedules itself (growing delay, ``poll_errors`` + ``last_error`` in progress, reset by the next good status
+   read) and the job fails only after POLL_ERROR_LIMIT errors in a row. Even then a Retry resumes polling the same
+   provider batch (the counter is cleared first), nothing is sent again.
 4. ``ingesting`` -> ``done``: one llm_call_log row per request at the batch rate (written once: a re-run that finds
    the batch's rows already in the ledger does not write them again), then the consumer's hand-off (idempotent
    job keys). The result: counts per outcome, spend, the standard-price equivalent and the hand-off summary.
@@ -41,6 +46,9 @@ logger = structlog.get_logger()
 KIND = "llm_batch"
 POLL_DELAYS = (60, 60, 120, 120, 300, 300, 600)     # seconds; the last one repeats
 DEADLINE_HOURS = 25                                # the providers end a batch at 24 h; one hour of slack
+# Provider errors in a row after submit before the job fails (~5 h of errors at the 10-minute delay). Spread-out errors
+# never add up: every good status read resets the count.
+POLL_ERROR_LIMIT = 36
 
 
 def poll_delay(polls: int) -> int:
@@ -107,17 +115,39 @@ async def _prepare_and_submit(ctx: JobContext, p: dict) -> dict:
                                      "submitted_at": _now().isoformat(), "polls": 0}, "submitted")
 
 
+async def _provider_call(ctx: JobContext, prog: dict, phase: str, fn, *args):
+    """One provider call after submit (status, cancel, results). Its error reschedules the row instead of failing the
+    attempt (the batch is sent and billed; a failed job would leave it unledgered and its tours never handed off):
+    ``poll_errors`` counts the errors in a row (reset by a good status read in ``_poll``); at POLL_ERROR_LIMIT the job
+    fails, with the counter cleared so a Retry polls the same provider batch again."""
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except Exception as e:  # noqa: BLE001 — any provider / transport error, a 401 while a key rotates included
+        errors = int(prog.get("poll_errors") or 0) + 1
+        last = f"{type(e).__name__}: {str(e)[:300]}"
+        logger.warning("llm_batch_provider_error", batch_id=prog.get("batch_id"),
+                       provider_batch_id=prog.get("provider_batch_id"), phase=phase, poll_errors=errors, error=last)
+        if errors >= POLL_ERROR_LIMIT:
+            await ctx.progress(poll_errors=0, last_error=last, last_error_at=_now().isoformat())
+            raise NonRetryable(f"{errors} provider errors in a row after submit (last: {last}); the provider batch "
+                               f"{prog.get('provider_batch_id')} is still there: Retry resumes polling it, nothing "
+                               "is sent again") from e
+        raise Reschedule(poll_delay(errors), {"phase": phase, "poll_errors": errors, "last_error": last,
+                                              "last_error_at": _now().isoformat()}, "provider error") from e
+
+
 async def _poll(ctx: JobContext, prog: dict, target: BatchTarget) -> Optional[object]:
     """The provider state when the batch has ended, else reschedules (raises)."""
     pbid = prog["provider_batch_id"]
-    st = await asyncio.to_thread(batch_lane.status, target, pbid)
+    st = await _provider_call(ctx, prog, "polling", batch_lane.status, target, pbid)
     if st.ended:
         return st
     polls = int(prog.get("polls") or 0) + 1
-    fields = {"phase": "polling", "provider_status": st.processing_status, "counts": st.counts, "polls": polls}
+    fields = {"phase": "polling", "provider_status": st.processing_status, "counts": st.counts, "polls": polls,
+              "poll_errors": 0}
     submitted = _parse_ts(prog.get("submitted_at"))
     if submitted and _now() - submitted > timedelta(hours=DEADLINE_HOURS) and not prog.get("cancel_sent_at"):
-        await asyncio.to_thread(batch_lane.cancel, target, pbid)
+        await _provider_call(ctx, {**prog, "poll_errors": 0}, "polling", batch_lane.cancel, target, pbid)
         fields["cancel_sent_at"] = _now().isoformat()
         logger.warning("llm_batch_deadline_cancel", batch_id=prog.get("batch_id"), provider_batch_id=pbid)
     raise Reschedule(poll_delay(polls), fields, f"provider {st.processing_status}")
@@ -130,8 +160,8 @@ async def _ingest(ctx: JobContext, p: dict, prog: dict, target: BatchTarget, sta
     items = prog.get("items") or []
     pbid = prog["provider_batch_id"]
     await ctx.progress(phase="ingesting", provider_status=state.processing_status, counts=state.counts)
-    results = await asyncio.to_thread(batch_lane.results, target, pbid, [i["custom_id"] for i in items],
-                                      state.processing_status)
+    results = await _provider_call(ctx, prog, "ingesting", batch_lane.results, target, pbid,
+                                   [i["custom_id"] for i in items], state.processing_status)
     since = _parse_ts(prog.get("submitted_at")) or (_now() - timedelta(days=2))
     seen = await batch_lane.ledgered(ctx.pool, target.log_stage, since, p["batch_id"])
     if seen["rows"]:
