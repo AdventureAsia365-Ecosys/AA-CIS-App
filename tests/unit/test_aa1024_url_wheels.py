@@ -281,7 +281,7 @@ def test_the_required_job_names_are_unchanged():
     jobs = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]
     names = {job.get("name") for job in jobs.values()}
     assert {"Security Audit", "Unit Tests", "Integration Tests", "Docker Build Check"} <= names
-    assert jobs["test-unit-shard"]["name"] == "Unit shard ${{ matrix.shard }}/3"
+    assert jobs["test-unit-shard"]["name"] == "Unit shard ${{ matrix.shard }}/4"
     assert jobs["test-integration-shard"]["name"] == "Integration shard ${{ matrix.shard }}/4"
 
 

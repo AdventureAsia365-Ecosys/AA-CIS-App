@@ -284,3 +284,75 @@ def test_committed_durations_name_real_test_files(durations):
     real = [k for k in keys if (REPO / k).is_file()]
     # A few stale keys (deleted tests) are harmless; a refresh written under other names matches almost none.
     assert keys and len(real) >= 0.8 * len(keys), f"{durations}: {len(real)}/{len(keys)} keys are test files"
+
+
+# --- AA-1084: the cost model (a long file is its shard's floor), longest-first order, 4 unit shards -----------------
+
+def test_one_worker_cost_model_is_the_classic_sum_split():
+    files = [f"t/test_{i:02d}.py" for i in range(17)]
+    durations = {f: float(1 + (i * 7) % 11) for i, f in enumerate(files)}
+    # The longest-first split on summed weights, written out the way plan() did before AA-1084.
+    loads, buckets = [0.0] * 3, [[], [], []]
+    for f in sorted(files, key=lambda f: (-durations[f], f)):
+        i = min(range(3), key=lambda k: (loads[k], k))
+        buckets[i].append(f)
+        loads[i] += durations[f] + 0.5
+    assert shards.plan(files, durations, 3, 1, 0.5) == [sorted(b) for b in buckets]
+
+
+def test_a_long_file_is_the_floor_of_its_shard():
+    files = ["t/test_big.py"] + [f"t/test_s{i:02d}.py" for i in range(12)]
+    durations = {"t/test_big.py": 40.0, **{f"t/test_s{i:02d}.py": 4.0 for i in range(12)}}
+    buckets = shards.plan(files, durations, 2, workers=4)
+    # xdist --dist loadfile runs the big file on ONE worker: 40 s whatever the other workers do. The summed-weight
+    # model called that shard ~11 s and gave it short files too; the cost model knows it cannot go under 40 s.
+    assert buckets[0] == ["t/test_big.py"] and len(buckets[1]) == 12
+    secs = shards.seconds(files, durations)
+    assert [shards.bucket_cost(b, secs, 4) for b in buckets] == [40.0, 12.0]
+    assert shards.shard_cost(48.0, 40.0, 3, workers=4, overhead=0.5) == 41.5
+    assert shards.shard_cost(200.0, 10.0, 2, workers=4) == 50.0
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 4, 7])
+def test_the_cost_model_split_is_a_partition_with_several_workers(n):
+    files = [f"t/test_{i:02d}.py" for i in range(23)]
+    durations = {f: float((i * 13) % 17) for i, f in enumerate(files[:-3])}  # three files without a record
+    buckets = shards.plan(files, durations, n, workers=4, overhead=0.45)
+    assert len(buckets) == n and all(b == sorted(b) for b in buckets)
+    shards.check_partition(files, buckets)
+    assert buckets == shards.plan(list(reversed(files)), durations, n, workers=4, overhead=0.45)
+
+
+def test_longest_first_orders_by_recorded_seconds_then_path():
+    durations = {"t/test_a.py": 1.0, "t/test_b.py": 9.0, "t/test_c.py": 9.0}
+    bucket = ["t/test_a.py", "t/test_c.py", "t/test_b.py", "t/test_new.py"]
+    # A file without a record weighs the median of the known ones (9.0 here): it ties with b and c, then path order.
+    assert shards.longest_first(bucket, durations) == ["t/test_b.py", "t/test_c.py", "t/test_new.py", "t/test_a.py"]
+    # Given the whole suite, the median comes from every known file (1.0 with two more short files), as plan()
+    # weighs it.
+    suite = bucket + ["t/test_y.py", "t/test_z.py"]
+    durations.update({"t/test_y.py": 1.0, "t/test_z.py": 1.0})
+    assert shards.longest_first(bucket, durations, suite)[-2:] == ["t/test_a.py", "t/test_new.py"]
+
+
+def test_cli_longest_first_prints_the_same_files_longest_first(tmp_path):
+    root = _tree(tmp_path, [f"suite/test_{i}.py" for i in range(6)])
+    (root / "d.json").write_text(json.dumps({f"suite/test_{i}.py": float(i) for i in range(6)}))
+    plain = _cli("files", "--shards", "1", "--index", "1", "--durations", "d.json", "suite", cwd=root)
+    first = _cli("files", "--shards", "1", "--index", "1", "--durations", "d.json", "--longest-first", "suite",
+                 cwd=root)
+    assert plain.returncode == 0 and first.returncode == 0, plain.stderr + first.stderr
+    assert plain.stdout.split() == [f"suite/test_{i}.py" for i in range(6)]
+    assert first.stdout.split() == [f"suite/test_{i}.py" for i in reversed(range(6))]
+    both = _cli("files", "--shards", "1", "--index", "1", "--longest-first", "--shuffle", "3", "suite", cwd=root)
+    assert both.returncode != 0
+
+
+def test_unit_shards_run_longest_first_in_that_order_on_four_shards():
+    shard = _ci()["jobs"]["test-unit-shard"]
+    run = _suite_args(shard)
+    assert "--longest-first" in run
+    # xdist would otherwise reorder the files by test COUNT and the longest-first order would be lost.
+    assert "--no-loadscope-reorder" in run
+    assert int(shard["env"]["UNIT_SHARDS"]) == 4
+    assert int(_ci()["jobs"]["test-unit"]["env"]["UNIT_SHARDS"]) == 4
