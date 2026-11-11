@@ -177,7 +177,8 @@ def test_a_clean_master_is_due_with_a_verdict_that_is_not_worse():
 @pytest.mark.parametrize("over, state", [
     ({"source_live": False}, st.SOURCE_NOT_LIVE),
     ({"pending_review": True}, st.PENDING_REVIEW),
-    ({"newer_id": "n1", "newer_status": "pending"}, st.NEWER_VERSION),
+    ({"newer_id": "n1", "newer_status": "draft"}, st.NEWER_VERSION),
+    ({"newer_id": "n1", "newer_status": "approved"}, st.NEWER_VERSION),
     ({"job_active": True}, st.JOB_ACTIVE),
     ({"metadata": json.dumps({"grounding": {"violations": []}})}, rc.NOT_V2),
     ({"human_edited": True}, rc.HUMAN_EDITED),
@@ -195,6 +196,7 @@ def test_a_recomposed_master_is_a_no_op():
 
 def test_a_newer_hitl_version_does_not_block_and_a_written_recompose_is_resumed():
     assert st.decide(row(newer_id="n1", newer_status="hitl"), [])["state"] == st.RECOMPOSE
+    assert st.decide(row(newer_id="n1", newer_status="rejected"), [])["state"] == st.RECOMPOSE
     d = st.decide(row(newer_id="n2", newer_status="approved",
                       newer_recompose_of="9f8e7d6c-0000-4000-8000-00000000000a"), [])
     assert d["state"] == st.RESUME and d["new_version_id"] == "n2"

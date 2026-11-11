@@ -40,6 +40,9 @@ PENDING_REVIEW = "pending_review"
 NEWER_VERSION = "newer_version"
 JOB_ACTIVE = "job_active"
 ERROR = "error"
+# a newer version in one of these states is settled (a person or the gate turned it down): it does not hold the
+# recompose of the served version; any other (draft, passed, approved, published) is work in flight
+SETTLED_NEWER = ("hitl", "rejected")
 # pipeline jobs that write or read the tour's Master text: a recompose waits until none is queued / running
 ACTIVE_JOB_KINDS = ("s1_rewrite", "a3_atomize", "revalidate", "llm_batch")
 
@@ -142,7 +145,7 @@ def decide(row: Any, brand_words: list[str], *, include_human_edited: bool = Fal
         # a recompose of THIS version written but not published (a run stopped between insert and publish)
         if _get(row, "newer_recompose_of") == vid and _get(row, "newer_status") == "approved":
             return {**out, "state": RESUME, "new_version_id": str(_get(row, "newer_id"))}
-        if _get(row, "newer_status") in ("pending", "approved"):
+        if _get(row, "newer_status") not in SETTLED_NEWER:
             return _skip(NEWER_VERSION)
     if _get(row, "pending_review"):
         return _skip(PENDING_REVIEW)

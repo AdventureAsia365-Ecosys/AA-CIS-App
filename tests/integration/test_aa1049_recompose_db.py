@@ -6,7 +6,7 @@ rolled back): scripts/quality/recompose_masters.py with services/content_generat
   ``recompose``) published through ``process_export``: the Master serves it, an ``a3_atomize`` job of the new version
   is queued by ``system:recompose``; a re-run after the job is a no-op;
 * APPLY refusals: no wave, a paused wave, a tour outside the wave, a pin that moved: nothing written;
-* skips: a pending review, a newer pending version;
+* skips: a pending review, a newer draft version;
 * resume: a version written whose publish failed is published by the next run, never written twice.
 
 process_export opens its own connection: it gets the test connection (never closed). No model call ($0).
@@ -203,7 +203,7 @@ async def test_apply_is_refused_without_an_open_wave_or_with_a_moved_pin(conn):
 
 
 @pytest.mark.asyncio
-async def test_a_pending_review_and_a_newer_pending_version_are_skipped(conn):
+async def test_a_pending_review_and_a_newer_draft_version_are_skipped(conn):
     reviewed, served = await _master(conn)
     drafted, _ = await _master(conn)
     await conn.execute(
@@ -211,7 +211,7 @@ async def test_a_pending_review_and_a_newer_pending_version_are_skipped(conn):
         "VALUES ($1, $2, $3, 'pending')", uuid.UUID(reviewed), uuid.UUID(served), MASTER)
     await conn.execute(
         "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, status) "
-        "VALUES ($1, $2, 2, 'A newer draft', 'pending')", uuid.UUID(drafted), MASTER)
+        "VALUES ($1, $2, 2, 'A newer draft', 'draft')", uuid.UUID(drafted), MASTER)
     code, out = await _run(conn, {"TOUR_IDS": f"{reviewed},{drafted}"})
     assert code == 0 and "newer_version=1" in out[1] and "pending_review=1" in out[1], out
 
