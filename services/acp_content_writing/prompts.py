@@ -139,13 +139,15 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
 # an adaptive-thinking model (Sonnet 5.5 thinks adaptively by default; thinking is billed as output inside max_tokens)
 # draft the whole article, check every sentence and copy it out again. This block bounds both: a word band inside the
 # F4 band (models overshoot counts, so the target sits low in it), a section cap, and one plan-then-write pass whose
-# reread is a quick check of the finished text, never a second draft. The band's floor is F4's floor in words (F4
-# holds a blog body under 4,700 characters, tags included): the block never tells the writer a shorter article is
+# reread is a quick check of the finished text, never a second draft. The band's floor sits above F4's floor (F4
+# holds a blog body under length_contract.BLOG_FLOOR_CHARS = 4,700 TAG-STRIPPED characters, about 810 words; AA-1077
+# corrected "tags included" and pins the margin in tests/unit/test_aa1077_length_contract.py; length_contract reads
+# these symbols, so the numbers live here only): the block never tells the writer a shorter article is
 # fine, which would contradict an F4 rewrite's own feedback; a thin seed reaches the floor with depth from its own
 # seed / Place background / FACTS lines and the FAQ, never with invented facts (S271 review). The other channels never
 # see it. Its four symbols are in the t9_write prompt manifest (v2).
-_BLOG_WORDS = (900, 1300)        # target words, body including the FAQ; the low end is also the floor (F4)
-_BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,200)
+_BLOG_WORDS = (900, 1300)        # target words, body including the FAQ; the low end is ~10 % above the F4 floor
+_BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,240: length_contract.BLOG_CEILING_CHARS)
 _BLOG_SECTIONS_MAX = 6           # "## " sections before the FAQ
 _BLOG_LENGTH_INSTRUCTIONS = (
     "\n\nLENGTH AND EFFORT FOR THIS BLOG (required):\n"

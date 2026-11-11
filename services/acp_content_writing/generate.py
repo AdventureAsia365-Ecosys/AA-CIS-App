@@ -377,6 +377,72 @@ class SentenceRepairError(Exception):
     """The sentence-repair reply was not one string per sentence — fall back to the full rewrite."""
 
 
+# AA-1077 — the extend repair of a too-short blog (length_extend.py). The model gets the thinnest body sections and the
+# seed's fact sentences the post does not tell yet, and returns ONE new paragraph per section; code splices them in
+# at each section's end and checks each one (no new specifics, no repeat, no broken seam) before it stands. Passing
+# sections are never sent, so they cannot change (S276: 9 of 18 full rewrites of a short blog added a new hold gate).
+_EXTEND_SYSTEM = """You lengthen a finished travel blog post that is too short. You get some of its sections and a
+numbered list of SOURCE FACTS the post does not tell yet. For each section you write ONE new paragraph that is added
+at the end of that section.
+Rules:
+- Use only the SOURCE FACTS, each in your own words, in the section it belongs to. A fact that fits no section is left
+  out; a section with no fitting fact gets an empty string.
+- Never add an activity, service, meal, time of day, duration, day number, distance, price, pace or view the facts do
+  not state. A fact marked optional stays optional. Background about a named place is fine only when a fact states it.
+- Keep the post's voice, person and tense. Never repeat a sentence, a fact or an opening the section already has.
+- Plain prose only: no heading, list, question, quote, call to action, brand name or citation tag.
+- Aim for the number of words asked for each section; never pad with filler to reach it.
+Return ONLY JSON: {"additions": ["<paragraph for section 1>", "<paragraph for section 2>"]} - one string per section,
+in the order given."""
+
+
+class ExtendRepairError(Exception):
+    """The extend reply was not one string per section (or was cut): the caller keeps the text as it was."""
+
+
+def extend_sections(
+    *, sections: list[dict], facts: list[str], voice: str | None = None, channel: str = "blog",
+    tenant_id: str | None = None, angle_gate_request_id: str | None = None, content_piece_id: str | None = None,
+    stage: str = "t9_write", attempt: int | None = 2, max_tokens: int = _MAX_TOKENS,
+) -> tuple[list[str], float, str | None]:
+    """AA-1077 — one call: a paragraph to add per section. `sections` items carry "heading", "text" and "words" (the
+    words to add); `facts` are the seed's untold fact sentences (quality_gates.unused_source_facts). Returns
+    (additions in section order, cost, model). Raises ExtendRepairError on a reply that is cut or does not parse into
+    one string per section. Logged on `stage` (the writer, as the sentence repair) with mode `length_extend`."""
+    numbered_facts = "\n".join(f"{i}. {f}" for i, f in enumerate(facts, 1))
+    numbered_sections = "\n\n".join(
+        f"SECTION {i} (add about {s['words']} words)\nHEADING: {s.get('heading') or '(opening)'}\nTEXT:\n{s['text']}"
+        for i, s in enumerate(sections, 1))
+    user = (f"SOURCE FACTS:\n{numbered_facts}\n\n" + (f"VOICE: {voice}\n\n" if voice else "")
+            + f"SECTIONS:\n{numbered_sections}")
+    request = LLMRequest(system_prompt=_EXTEND_SYSTEM, user_prompt=user, stage=stage, max_tokens=max_tokens)
+    signal = {"channel": channel, "attempt": attempt, "mode": "length_extend", "sections": len(sections),
+              "facts": len(facts), "words_asked": sum(int(s.get("words") or 0) for s in sections)}
+    # The reply is a JSON patch, never tenant-facing text: it must not stream into the T9 live view (AA-668).
+    with stream_sink.suppressed():
+        reply = generate_with_budget_retry(LLMClient().generate, request)
+    resp = reply.resp
+    record_call_sync(
+        stage=stage, role="writer", model=resp.model_used,
+        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+        content_piece_id=content_piece_id, quality_signal={**signal, **reply.signal()},
+        stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
+    )
+    if reply.still_cut:
+        raise ExtendRepairError(str(ReplyStillCut(stage, reply.max_tokens, reply.retry_max_tokens)))
+    text = _strip_fences(resp.content)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = repair_json(text, return_objects=True)
+    adds = data.get("additions") if isinstance(data, dict) else None
+    if not isinstance(adds, list) or len(adds) != len(sections) or not all(isinstance(a, str) for a in adds):
+        raise ExtendRepairError(f"bad extend reply: {str(resp.content)[:200]!r}")
+    return adds, reply.cost_usd, getattr(resp, "model_used", None)
+
+
 _SEO_FIT_SYSTEM = _wp.fill("""You write the search-result title and meta description for a finished blog post.
 Rules:
 - Title: <<title.min>>-<<title.max>> characters, uses every content word of the target keyword (the keyword is a raw
@@ -583,4 +649,4 @@ def write_faq(
 __all__ = ["SEO_FIT_STAGE", "write_faq", "SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError",
            "write_content",
            "rewrite_with_feedback",
-           "repair_sentences"]
+           "repair_sentences", "extend_sections", "ExtendRepairError"]

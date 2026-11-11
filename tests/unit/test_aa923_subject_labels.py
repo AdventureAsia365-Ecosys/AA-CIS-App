@@ -13,8 +13,8 @@ from api.core import staff_authz
 from api.routers import admin_content_quality as cq
 
 SECRET = "s3cret"
-VERSION = str(uuid.uuid4())
-CONTENT = str(uuid.uuid4())
+VERSION = str(uuid.UUID(int=0x92300001))   # fixed: parametrize inputs are identical in every xdist worker (S276 lint)
+CONTENT = str(uuid.UUID(int=0x92300002))
 TENANT = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SHA = "a" * 64
 

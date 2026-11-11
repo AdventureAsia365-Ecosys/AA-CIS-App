@@ -48,6 +48,7 @@ from typing import Iterable, Optional, TypedDict
 import structlog
 
 from services.acp_content_writing import authenticity
+from services.acp_content_writing import length_contract  # AA-1077: the blog length band
 from services.acp_content_writing import f9_policy  # AA-900 W0 (interim F9 policy)
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
                                                   contrast_excess, copies, dangling_opener, expand_to_sentence,
@@ -521,8 +522,10 @@ def gate_cannibalization(match: Optional[dict]) -> GateResultLite:
 # behavior is byte-identical to before this change.
 _MIN_CHARS = 20
 _MAX_CHARS = 6000
-_BLOG_MIN_CHARS = 4700  # ~800 words
-_BLOG_MAX_CHARS = 13000  # ~2,200 words
+# AA-1077 — the blog band's numbers live in length_contract (one owner for the writer target, F4, the extend repair
+# and the post-loop re-check); these names stay for their importers.
+_BLOG_MIN_CHARS = length_contract.BLOG_FLOOR_CHARS  # ~810 words
+_BLOG_MAX_CHARS = length_contract.BLOG_CEILING_CHARS  # ~2,240 words
 
 
 def _length_bounds_for_channel(channel: Optional[str]) -> tuple[int, int]:
@@ -547,6 +550,13 @@ def gate_extreme_length(content_text: str, channel: Optional[str] = None) -> Gat
     threshold."""
     min_chars, max_chars = _length_bounds_for_channel(channel)
     length = len(content_text or "")
+    if channel == "blog" and (side := length_contract.side(length, min_chars, max_chars)):
+        # AA-1077 — a blog violation names its side (`length_short` / `length_long`, the hold reason code), its words
+        # and the writer's target: the 13 phase 2 holds were full 546–775-word articles called "effectively empty".
+        n_words = length_contract.words(content_text)
+        msg = (length_contract.short_message(length, n_words) if side == length_contract.SHORT
+               else length_contract.long_message(length, n_words))
+        return _result(qr.F4_EXTREME_LENGTH, [msg])
     if length < min_chars:
         return _result(qr.F4_EXTREME_LENGTH, [f"content is only {length} chars — effectively empty"])
     if length > max_chars:

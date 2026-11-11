@@ -473,6 +473,9 @@ class ContentState(TypedDict):
     # left), set only when S1_CONTROL=contract. Declared so LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it
     # on and generated_content.metadata.s1_train stores it. Never written with the switch off -> main's state.
     s1_train:               Optional[dict]
+    # AA-1078: flag_fix's model fix was lost ({reason: reply_cut | error, stage, fields}); set only then. Declared so
+    # LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it on and the T2 job does not report QA passed over it.
+    fix_not_applied:        Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -959,9 +962,18 @@ def normalise_day_dashes(it: str) -> str:
     return _DAY_DASH_RE.sub(r"Day \1 — ", it)                # anywhere: single day, as before
 
 
+def _text(generated: dict, key: str) -> str:
+    """A text field of ``generated`` as a string: a missing key and a None value both read as "" (AA-1049 S277)."""
+    value = generated.get(key)
+    return "" if value is None else str(value)
+
+
 def validate_node(state: ContentState) -> ContentState:
-    """Node 2: Quality check — structured failure codes, 4 sub-dimensions, score 0-10."""
-    generated = state.get("generated", {})
+    """Node 2: Quality check — structured failure codes, 4 sub-dimensions, score 0-10.
+
+    AA-1049 (S277): a text field that is present but None (a stored NULL column, a model that returned null) reads as
+    missing (``_text``: ""), never ``None.lower()`` / ``len(None)``; the returned ``generated`` keeps the None."""
+    generated = state.get("generated") or {}
     if generated.get("itineraries"):
         import re as _re
         it = generated["itineraries"]
@@ -1006,7 +1018,7 @@ def validate_node(state: ContentState) -> ContentState:
         else:
             it = str(it)
         generated = {**generated, "itineraries": str(it).strip()}
-    tour      = state.get("tour", {})
+    tour      = state.get("tour") or {}
     issues: list[str] = []
     fired:  list[str] = []
     score = 10.0
@@ -1031,7 +1043,7 @@ def validate_node(state: ContentState) -> ContentState:
         score -= 0.5
 
     # Subtitle must not be generic
-    subtitle = generated.get("subtitle", "").lower()
+    subtitle = _text(generated, "subtitle").lower()
     generic_subtitle_flags = [
         "kingdom of happiness", "land of thunder dragon",
         "last shangri-la", "pristine wilderness",
@@ -1077,7 +1089,8 @@ def validate_node(state: ContentState) -> ContentState:
         "panoramic views", "beautiful landscapes", "stunning scenery",
         "breathtaking views", "pristine nature", "gross national happiness",
     ]
-    highlights_text = " ".join(highlights).lower() if isinstance(highlights, list) else ""
+    highlights_text = " ".join(str(h) for h in highlights if h is not None).lower() \
+        if isinstance(highlights, list) else ""
     for pattern in generic_highlight_patterns:
         if pattern in highlights_text:
             issues.append(f"Generic highlight phrase: '{pattern}'")
@@ -1086,7 +1099,7 @@ def validate_node(state: ContentState) -> ContentState:
 
     # seo_meta must not contain budget/accommodation language (AA audience = $250k+)
     _seo_meta_forbidden = SEO_META_FORBIDDEN  # AA-238/D4: canonical deny-list
-    seo_meta_lower = (generated.get("seo_meta") or "").lower().replace("-", " ")  # AA-238: catch hyphen variants
+    seo_meta_lower = _text(generated, "seo_meta").lower().replace("-", " ")  # AA-238: catch hyphen variants
     for term in _seo_meta_forbidden:
         if has_word(seo_meta_lower, term.replace("-", " ")):
             issues.append(f"Budget language in seo_meta: '{term}'")
@@ -1095,23 +1108,23 @@ def validate_node(state: ContentState) -> ContentState:
             break  # one violation is enough
 
     # SEO field lengths
-    if len(generated.get("seo_title", "")) > SEO_TITLE_MAX:
+    if len(_text(generated, "seo_title")) > SEO_TITLE_MAX:
         issues.append(f"seo_title exceeds {SEO_TITLE_MAX} chars")
         fired.append("SEO_TITLE_TOO_LONG")
         score -= 0.5
-    if len(generated.get("seo_meta", "")) > SEO_META_MAX:
+    if len(_text(generated, "seo_meta")) > SEO_META_MAX:
         issues.append(f"seo_meta exceeds {SEO_META_MAX} chars")
         fired.append("SEO_META_TOO_LONG")
         score -= 0.5
     # AA-201: enforce lower band — no under-length meta
-    _meta_len = generated.get("seo_meta", "").strip()
+    _meta_len = _text(generated, "seo_meta").strip()
     if _meta_len and len(_meta_len) < SEO_META_MIN:
         issues.append(f"seo_meta under {SEO_META_MIN} chars")
         fired.append("META_TOO_SHORT")
         score -= 0.5
 
     # Summary generic opener check
-    summary = generated.get("summary", "")
+    summary = _text(generated, "summary")
     generic_openers = [
         "journey into", "journey along", "embark on", "discover the magic",
         "experience the wonder", "this refined", "this carefully",
@@ -1125,7 +1138,7 @@ def validate_node(state: ContentState) -> ContentState:
             break
 
     # META_INCOMPLETE_SENTENCE: seo_meta must read as a complete sentence (AA-201)
-    meta = generated.get("seo_meta", "").strip()
+    meta = _text(generated, "seo_meta").strip()
     if meta and not meta_complete_sentence(meta):
         issues.append("seo_meta is not a complete sentence")
         fired.append("META_INCOMPLETE_SENTENCE")
@@ -1137,7 +1150,7 @@ def validate_node(state: ContentState) -> ContentState:
     _v2_report: list[dict] = []
 
     # ITINERARY_STRUCTURE_WEAK: must have day markers and be substantive
-    itinerary = generated.get("itineraries", "") or ""
+    itinerary = _text(generated, "itineraries")
     has_day_marker = bool(re.search(r'\bday\s*[1-9one two three]\b', itinerary.lower()))
     if not has_day_marker or len(itinerary) < 80:
         issues.append("Itinerary lacks day structure or is too short")
@@ -1237,10 +1250,7 @@ def validate_node(state: ContentState) -> ContentState:
             (kw["keyword"] if isinstance(kw, dict) else str(kw)).lower()
             for kw in seo_kws if kw
         ]
-        seo_field_text = (
-            (generated.get("seo_title", "") or "") + " " +
-            (generated.get("seo_meta", "") or "")
-        ).lower()
+        seo_field_text = (_text(generated, "seo_title") + " " + _text(generated, "seo_meta")).lower()
         if kw_texts and not _keyword_intent_matched(kw_texts, seo_field_text):
             if _v2_draft:
                 # AA-645 step 0: the v2 meta uses a source-covered keyword only when it fits (never forced, S233).

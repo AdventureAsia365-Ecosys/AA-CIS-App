@@ -103,3 +103,36 @@ async def test_the_report_lists_a_day_loss_master_in_the_flip_set(conn):
     assert flip["tour_id"] == lost_tour and "DAY_COUNT_VS_DURATION" in flip["block_codes"]
     assert out["day_loss"] == [{"tour_id": lost_tour, "country": "Thailand", "page_days": 2, "duration_days": 12}]
     assert "Karsh" not in json.dumps(out)       # ids and counts only, never page text
+
+
+@pytest.mark.asyncio
+async def test_record_s1_exit_checks_the_tenants_active_brand_words(conn):
+    """AA-1049 (S277, l9): the stored-row contract reads the tenant's active brand rule (shared.tenant_brand_rules
+    through admin_pipeline._resolve_brand_rule); a word only on that list blocks, as it does in the graph run."""
+    from scripts.quality import final_contract_report as report
+    from services.quality import final_contract_store as store
+    # one active rule per tenant (tenant_brand_rules_active_idx): the seeded master rule gets an invented word list
+    # (or one is added when no seed has the master tenant)
+    updated = await conn.execute(
+        "UPDATE shared.tenant_brand_rules SET forbidden_words = '[\"zorblat\"]'::jsonb "
+        "WHERE tenant_id = $1 AND is_active", MASTER)
+    if updated == "UPDATE 0":
+        await conn.execute(
+            "INSERT INTO shared.tenant_brand_rules (tenant_id, brand_name, version, is_active, forbidden_words) "
+            "VALUES ($1, 'default', 1, true, '[\"zorblat\"]'::jsonb)", MASTER)
+    tour, gc = await _version(conn, publish=True, country="Thailand")
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET aa_summary = 'A zorblat walk.' "
+                       "WHERE id = $1::uuid", gc)
+    row = await conn.fetchrow(store.S1_ROW_SQL, gc)
+    assert row["tenant_id"] == MASTER
+    assert await store.brand_words_of_row(conn, row) == ["zorblat"]
+    rec = await store.record_s1_exit(conn, gc, "approve", actual="approved")
+    assert rec["verdict"] == "review"
+    assert "FORBIDDEN_WORD" in [f["code"] for f in rec["findings"] if f["severity"] == "block"]
+    meta = await _metadata(conn, gc)
+    assert meta["final_contract"]["exit"] == "approve" and "FORBIDDEN_WORD" in meta["final_contract_log"][-1]["codes"]
+    # the report script resolves the same list once per brand
+    rows = [r for r in await conn.fetch(report.masters_sql(False)) if r["tour_id"] == tour]
+    words = await store.brand_words_by_key(conn, rows)
+    out = report.summarize(rows, brand_words=words)
+    assert out["publish_flip"]["by_code"].get("FORBIDDEN_WORD") == 1
