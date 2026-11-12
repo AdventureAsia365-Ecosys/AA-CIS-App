@@ -1633,14 +1633,30 @@ def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None, *, 
     lengthens the post with seed facts instead of padding.
     AA-1077 S278 — a blog's under-floor F4 violation carries the length TARGET (length_contract.short_rewrite_target,
     the floor plus the registry margin): the violation names the floor, and a rewrite told only the floor aimed at it
-    and landed 1-4 chars under (S278: 4,699 / 4,696 / 4,696)."""
+    and landed 1-4 chars under (S278: 4,699 / 4,696 / 4,696).
+    AA-1077 round 2 (S278 paid trial 73e6a233: F4 'lengthen' sent together with 6 F17 'or cut it', an F13_repeat and
+    an F9 cut; the rewrite came back 411 chars SHORTER) — for a blog under the floor the cut-type fixes come first,
+    each told to fill the place of a cut sentence with another given fact (length_contract.REPLACE_NOT_DELETE), and the
+    length line comes LAST, measured after those fixes. No line names where facts come from (6610ac8d copied "source
+    notes" into the text)."""
     failed = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)]  # AA-924
-    out = [f"{g['gate']}: {v}" + _f4_target(g["gate"], v, channel) for g in failed for v in g["violations"]]
+    pairs = [(g["gate"], v) for g in failed for v in g["violations"]]
+    short_blog = channel == "blog" and any(
+        gate == qr.F4_EXTREME_LENGTH and length_contract.violation_side(v) == length_contract.SHORT
+        for gate, v in pairs)
+    if short_blog:
+        pairs = ([p for p in pairs if p[0] != qr.F4_EXTREME_LENGTH]
+                 + [p for p in pairs if p[0] == qr.F4_EXTREME_LENGTH])
+    out = [f"{gate}: {v}" + _f4_target(gate, v, channel)
+           + (length_contract.REPLACE_NOT_DELETE
+              if short_blog and gate != qr.F4_EXTREME_LENGTH and length_contract.is_cut_violation(v) else "")
+           for gate, v in pairs]
     if source and any(_is_floor_block(g) for g in failed):
         unused = unused_source_facts(source, content_text or "", limit=F14_UNUSED_FACTS_MAX)
         if unused:
-            out.append(f"{F14_GATE}: source facts this post does not tell yet — lengthen it with these, in your own "
-                       "words, and add nothing else: " + "; ".join(f"'{f}'" for f in unused))
+            out.append(f"{F14_GATE}: facts you were given that this post does not tell yet — lengthen it with these, "
+                       f"in your own words, and add nothing else; {length_contract.NO_SOURCE_MENTION}: "
+                       + "; ".join(f"'{f}'" for f in unused))
     return out
 
 
@@ -2388,10 +2404,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                                     reason=truth_cut["truth_cut_refused"])
                 cut_only = truth_cut_done and not repair_items
                 replacements = None
+                # AA-1077 round 2 — a blog repair round that leaves the text under the F4 floor runs the expand step
+                # (length_extend.plan_after_repair) when the switch is on; the cut-type problems of a blog already
+                # under the floor are told to keep their sentence rather than delete it.
+                expand_round = (attempt == 2 and channel == "blog" and length_extend.mode() == length_extend.EXTEND_ON)
+                short_before = expand_round and length_contract.measure(content_text) < length_contract.BLOG_FLOOR_CHARS
                 if repair_items:
                     # S234 — the ±2 neighbouring sentences as context, and only the cited source.
                     for item in repair_items:
                         item["context"] = sentence_repair.neighbours(content_text, item)
+                        if short_before and length_contract.is_cut_violation(item.get("problem")):
+                            item["problem"] = f"{item['problem']}{length_contract.KEEP_NOT_CUT}"
                     # S234 round 2 — a style-only repair (F15_voice) runs on the cheap t9_repair stage.
                     stage_kw = {"stage": SEO_FIT_STAGE} if _style_only_repair(gate_ledger) else {}
                     progress_step("revise")  # AA-668: the repair call no longer reports to the live view
@@ -2497,18 +2520,32 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         facts_text=facts_text, **openers_kw, **search_kw, **lead_kw, **memory_kw,
                     )
                     fresh_text = True
-            if attempt > 1 and not fresh_text and extend_plan is not None:
-                # AA-1077 — the extend repair, after this attempt's sentence repair (if any) and before the SEO fit,
-                # the deterministic fixes and every gate, which then read the added paragraphs like any text.
+            expand_plan, expand_why, net = None, None, None
+            if attempt == 2 and channel == "blog" and length_extend.mode() == length_extend.EXTEND_ON:
+                # AA-1077 round 2 — the repair round's net length: the expand step runs on the text the repair (the
+                # sentence repair's cuts, or the full rewrite) left, whenever that text is under the floor, sized from
+                # its own deficit (the cuts' lost characters included) to the target. Before, the extend plan was
+                # sized on attempt 1's text and a full rewrite was never followed by one (S278 73e6a233 shrank
+                # 3,957 → 3,546 chars and was held on length).
+                expand_plan, expand_why = length_extend.plan_after_repair(
+                    content_text, before=prev_snapshot["content_text"], channel=channel, source=grounding_text)
+                net = {"before": length_contract.measure(prev_snapshot["content_text"]),
+                       "after_repair": length_contract.measure(content_text),
+                       "floor": length_contract.BLOG_FLOOR_CHARS, "target": length_contract.target_chars(),
+                       "repair": "rewrite" if fresh_text else (repair_log[-1].get("repair_mode") or "none"),
+                       "expand": expand_why}
+            if expand_plan is not None:
+                # AA-1077 — the extend repair, after this attempt's sentence repair or full rewrite and before the SEO
+                # fit, the deterministic fixes and every gate, which then read the added paragraphs like any text.
                 progress_step("revise")
                 content_text, ext_cost, ext_entry = await asyncio.to_thread(
-                    length_extend.extend, content_text, extend_plan, call=extend_sections, source=grounding_text,
+                    length_extend.extend, content_text, expand_plan, call=extend_sections, source=grounding_text,
                     cta=cta, ignore=brand_ignore, moments=hyg.moments, trip_ctx=trip_ctx,
                     voice=", ".join((brand_audience or {}).get("voice") or []) or None, channel=channel,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id), content_piece_id=str(piece_id),
                     attempt=attempt)
                 cost += ext_cost
-                prior = repair_log[-1].get("repair_mode")
+                prior = repair_log[-1].get("repair_mode") or ("rewrite" if fresh_text else None)
                 repair_log[-1]["repair_mode"] = (f"{prior}+{length_extend.EXTEND_MODE}"
                                                  if prior and prior != "seo_fields" else length_extend.EXTEND_MODE)
                 repair_log[-1][length_extend.EXTEND_MODE] = {**ext_entry, "cost_usd": round(ext_cost, 6)}
@@ -2516,6 +2553,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 logger.info("t9_length_extend", request_id=str(request_id), attempt=attempt,
                             added=ext_entry.get("added"), chars_before=ext_entry.get("chars_before"),
                             chars_after=ext_entry.get("chars_after"), error=ext_entry.get("error"))
+            if net is not None:
+                # the F4 gate below re-reads this attempt's whole text; the record says which step moved the length
+                net["after_expand"] = length_contract.measure(content_text) if expand_plan is not None else None
+                net["shrank_under_floor"] = (net["after_repair"] < net["before"]
+                                             and length_contract.measure(content_text) < net["floor"])
+                repair_log[-1]["length_net"] = net
             content_from = attempt  # AA-916 WM-08 — this attempt wrote (or repaired) the current text
             total_cost += cost
             if channel == "blog":

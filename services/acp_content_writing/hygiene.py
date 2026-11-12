@@ -1149,9 +1149,18 @@ def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
 # this as a 15-day journey…", "The content seed for this journey notes that…").
 # AA-814 follow-up: a Facts entry's 'Source: <provenance>; agency fact' line (facts._fact_entry) — the line label at the
 # start of a sentence, or the owner tag anywhere.
+# AA-1077 round 2 (S278 paid trial 6610ac8d: "The source notes name deer, birds, leopards…" after a lengthen fix that
+# named its sources): the itinerary, the source(s), the notes or the facts as the subject of a reporting verb, and
+# the prompt's own section labels ("source facts", "FACTS lines"). A reader-facing "the itinerary includes" is not one.
+_REPORTING_VERBS = (r"(?:calls|names|says|notes|mentions|lists|describes|states|records|confirms|gives|shows"
+                    r"|adds|explains)")
 LEAK_RE = re.compile(
     r"\b(?:content seed|the seed|this seed|source itinerary|place background|the itinerary calls it"
     r"|other trips that include|for context only|source notes"
+    r"|(?:the|this|our) itinerary " + _REPORTING_VERBS
+    + r"|(?:the|our) (?:sources?|notes|facts) (?:say|name|note|mention|list|describe|state|record|confirm|give|show"
+    r"|add|explain)s?"
+    r"|source (?:facts?|material|text|lines?)|facts (?:lines?|section|block)"
     r"|agency fact(?!\s*-?\s*sheets?\b)|platform fact(?!\s*-?\s*sheets?\b))\b|\[moment\b|\bscope:"
     r"|^\W*source:", re.I)
 # The whole sentence is a copied Facts 'Source:' line: it says nothing to a reader, so the fix deletes it.

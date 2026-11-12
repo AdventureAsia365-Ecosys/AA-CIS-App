@@ -34,7 +34,7 @@ import re
 from typing import Callable, Optional
 
 from services.acp_content_writing import length_contract as lc
-from services.acp_content_writing.hygiene import _is_cta
+from services.acp_content_writing.hygiene import LEAK_RE, _is_cta
 from services.acp_content_writing.quality_gates import expand_ledger, unused_source_facts
 from services.acp_shared.citation_tags import TAG_RE
 from services.quality import registry as qr
@@ -113,17 +113,62 @@ def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], so
     facts = unused_source_facts(source or "", content_text, limit=FACTS_MAX)
     if not facts:
         return None
-    words_needed = math.ceil(deficit / lc.CHARS_PER_WORD)
-    # spread the words: one section per WORDS_MAX words needed, at least two past half of it, within what exists
-    wanted = max(math.ceil(words_needed / WORDS_MAX), 2 if words_needed > WORDS_MAX // 2 else 1)
-    k = min(SECTIONS_MAX, len(body), len(facts), wanted)
-    per = min(WORDS_MAX, max(WORDS_MIN, math.ceil(words_needed / k)))
-    chosen = sorted(sorted(body, key=lambda s: (s["chars"], s["index"]))[:k], key=lambda s: s["index"])
     ledger = [({**g, "passed": True, "violations": [], "set_aside": EXTEND_MODE}
                if g.get("gate") == qr.F4_EXTREME_LENGTH else g) for g in gate_ledger or []]
     others = [g for g in expand_ledger(ledger) if not g.get("passed") and g.get("blocking", True)]
     return {"ledger": ledger, "only_length": not others, "facts": facts,
-            "sections": [{**s, "words": per} for s in chosen], "deficit_chars": deficit, "target_chars": target}
+            "sections": _choose(body, deficit, facts), "deficit_chars": deficit, "target_chars": target}
+
+
+def _choose(body: list[dict], deficit: int, facts: list[str], holes: Optional[dict] = None) -> list[dict]:
+    """The sections that get a paragraph, each with the words to add. Round 2: the sections a repair made shorter
+    (`holes`: section index -> chars lost) come first, largest loss first, so a cut sentence's place is filled; then
+    the thinnest. One section per WORDS_MAX words needed (at least two past half of it), within what exists."""
+    holes = holes or {}
+    words_needed = math.ceil(deficit / lc.CHARS_PER_WORD)
+    wanted = max(math.ceil(words_needed / WORDS_MAX), 2 if words_needed > WORDS_MAX // 2 else 1)
+    k = min(SECTIONS_MAX, len(body), len(facts), wanted)
+    per = min(WORDS_MAX, max(WORDS_MIN, math.ceil(words_needed / k)))
+    order = sorted(body, key=lambda s: (-holes.get(s["index"], 0), s["chars"], s["index"]))
+    return [{**s, "words": per, **({"hole_chars": holes[s["index"]]} if holes.get(s["index"]) else {})}
+            for s in sorted(order[:k], key=lambda s: s["index"])]
+
+
+def _holes(before: Optional[str], after: str) -> dict:
+    """{section index in `after`: chars it lost against the section with the same heading in `before`} (> 0 only)."""
+    if not before:
+        return {}
+    was = {s["heading"]: s["chars"] for s in sections(before)}
+    return {s["index"]: was[s["heading"]] - s["chars"] for s in sections(after)
+            if s["heading"] in was and was[s["heading"]] > s["chars"]}
+
+
+def plan_after_repair(content_text: str, *, before: Optional[str], channel: Optional[str],
+                      source: str) -> tuple[Optional[dict], str]:
+    """AA-1077 round 2 — the expand step of a repair round: (plan, reason). A blog repair round (the sentence repair
+    of cut-type fixes, or the full rewrite) that leaves the text UNDER the F4 floor is never accepted as it is: the
+    expand runs on the text the repair left, sized from ITS deficit to the target (the cuts' lost characters included:
+    S278 73e6a233 went 3,957 → 3,546 chars after 6 F17 cuts and was held on length), with the sections the repair
+    made shorter first. reason: 'expand' with a plan, else why not ('off', 'not_blog', 'at_or_over_floor',
+    'no_sections', 'no_untold_facts')."""
+    if channel != "blog":
+        return None, "not_blog"
+    if mode() != EXTEND_ON:
+        return None, "off"
+    now = lc.measure(content_text)
+    if now >= lc.BLOG_FLOOR_CHARS:
+        return None, "at_or_over_floor"
+    body = sections(content_text)
+    if not body:
+        return None, "no_sections"
+    facts = unused_source_facts(source or "", content_text, limit=FACTS_MAX)
+    if not facts:
+        return None, "no_untold_facts"
+    target = lc.extend_target_chars()
+    deficit = target - now
+    holes = _holes(before, content_text)
+    return ({"facts": facts, "sections": _choose(body, deficit, facts, holes), "deficit_chars": deficit,
+             "target_chars": target, "hole_chars": sum(holes.values())}, "expand")
 
 
 def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx) -> Optional[str]:
@@ -137,6 +182,9 @@ def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx)
     n = lc.words(add)
     if n > asked * WORDS_SLACK:
         return f"{n} words for {asked} asked"
+    leak = LEAK_RE.search(add)
+    if leak:   # round 2 — never a paragraph that says where its facts come from (F13_leak would hold the piece)
+        return f"names where facts come from ('{leak.group(0)}')"
     added = new_specifics("", add, trip_ctx=trip_ctx, source=source)
     if added:
         return "new specifics: " + "; ".join(added[:3])
@@ -154,7 +202,8 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
     entry: dict = {"sections": len(plan["sections"]), "facts_offered": len(plan["facts"]),
                    "words_asked": sum(s["words"] for s in plan["sections"]), "chars_before": before,
                    "target_chars": plan["target_chars"], "added": 0, "refused": [], "model": None}
-    asked = [{"heading": s["heading"], "text": s["text"], "words": s["words"]} for s in plan["sections"]]
+    asked = [{"heading": s["heading"], "text": s["text"], "words": s["words"],
+              **({"hole_chars": s["hole_chars"]} if s.get("hole_chars") else {})} for s in plan["sections"]]
     try:
         adds, cost, model = call(sections=asked, facts=plan["facts"], voice=voice, **call_kw)
     except Exception as e:  # noqa: BLE001 — an extend failure never fails the job; the old outcome stands
@@ -187,4 +236,4 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
 
 
 __all__ = ["EXTEND_ENV", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX", "mode", "sections",
-           "plan_for", "extend"]
+           "plan_for", "plan_after_repair", "extend"]

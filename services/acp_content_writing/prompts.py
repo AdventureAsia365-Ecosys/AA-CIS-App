@@ -38,6 +38,8 @@ markup the writer wasn't asked for before:
 """
 from __future__ import annotations
 
+import math
+
 from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_content_writing.ai_tells import (BLOG_HEADING_RULE, PROMPT_RULES, SELF_CHECK_RULE,
                                                    SOCIAL_AUDIENCE_RULE, VISIT_DETAIL_RULE, brand_texture_rule,
@@ -151,14 +153,46 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
 _BLOG_WORDS = (950, 1300)        # target words, body including the FAQ; the low end is the length target (floor + 17 %)
 _BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,240: length_contract.BLOG_CEILING_CHARS)
 _BLOG_SECTIONS_MAX = 6           # "## " sections before the FAQ
+# AA-1077 round 2 (S278 paid trial, t9_write v7): with only the word band, 3 first drafts landed at 690-840 words under
+# a 950-word floor (the target alone is not obeyed). The block now hands the writer a section plan whose budgets add
+# up to the floor, computed here from the symbols above and two restatements of numbers the blog format bullets
+# already give (pinned to that text by tests/unit/test_aa1077_s278_round2.py), so no new length number is introduced:
+# the FAQ counted at its low end ("3-4 Q/A pairs", "40-60 words per answer") and the richest section "at least half as
+# long again as any other section". One section under the cap is planned (depth to the richest moment, not more
+# sections); the opening counts as one section's share.
+_BLOG_FAQ_PLAN = (3, 40)         # (pairs, words per answer) the plan counts for the FAQ: the low ends of its bullet
+_BLOG_RICHEST_SHARE = 1.5        # the richest section's size against any other ("half as long again")
+
+
+def _blog_length_plan() -> dict:
+    """The writer's section plan: {"sections", "opening", "each", "richest", "faq", "total"} in words. Shares are
+    rounded UP to ten, so the total is never under the word floor `_BLOG_WORDS[0]`."""
+    faq = _BLOG_FAQ_PLAN[0] * _BLOG_FAQ_PLAN[1]
+    sections = _BLOG_SECTIONS_MAX - 1
+    shares = 1 + (sections - 1) + _BLOG_RICHEST_SHARE      # the opening, the other sections, the richest
+    each = int(math.ceil((_BLOG_WORDS[0] - faq) / shares / 10.0) * 10)
+    richest = int(math.ceil(each * _BLOG_RICHEST_SHARE / 10.0) * 10)
+    return {"sections": sections, "opening": each, "each": each, "richest": richest, "faq": faq,
+            "total": each + each * (sections - 1) + richest + faq}
+
+
+_PLAN = _blog_length_plan()
 _BLOG_LENGTH_INSTRUCTIONS = (
     "\n\nLENGTH AND EFFORT FOR THIS BLOG (required):\n"
     f"- The body is {_BLOG_WORDS[0]:,}-{_BLOG_WORDS[1]:,} words including the FAQ: never under {_BLOG_WORDS[0]:,}, "
-    f"never more than {_BLOG_WORDS_MAX:,}. When the seed is thin, reach the length with depth from the CONTENT SEED, "
-    "its Place background and the FACTS lines, and with the FAQ; never with invented facts or filler. "
+    f"never more than {_BLOG_WORDS_MAX:,}. When the seed is thin, reach the length with depth from the facts you are "
+    "given for each moment, its place background and the FAQ; never with invented facts or filler. "
     f'At most {_BLOG_SECTIONS_MAX} "## " sections before the "## FAQ" heading; depth goes to the richest moment, '
     "not to more sections.\n"
-    "- Write the article once. Before writing, decide only the section headings and which seed facts go in each; "
+    f"- PLAN THE LENGTH BEFORE WRITING (the budgets add up to {_PLAN['total']:,} words): an opening of about "
+    f"{_PLAN['opening']:,} words before the first heading; {_PLAN['sections']} \"## \" sections, the richest about "
+    f"{_PLAN['richest']:,} words and each of the other {_PLAN['sections'] - 1} about {_PLAN['each']:,}; then the FAQ, "
+    f"at least {_BLOG_FAQ_PLAN[0]} pairs of {_BLOG_FAQ_PLAN[1]} or more words each (about {_PLAN['faq']:,} words). "
+    "With fewer sections, their words go to the richest section and the opening, never away. A section short of its "
+    "budget gets more depth from the facts given for it, never a fact you were not given. Never mention where a fact "
+    "comes from: no \"the source\", \"the notes\", \"the seed\" or \"the itinerary says\".\n"
+    "- Write the article once. Before writing, decide only the section headings, which seed facts go in each and "
+    "its word budget; "
     "then write the final text directly. Never write a full draft and then copy it out again: the silent reread is "
     "one quick pass over the finished text that fixes a sentence in place.\n"
     "- Return one article only: no alternative versions, no notes, no outline, no list of the facts you used."
@@ -509,6 +543,10 @@ def build_user_prompt(
             "contain: remove that number or claim (rewrite the sentence without it). Never "
             "replace it with a different number or claim that is also missing from the content "
             "seed, and do not add new numbers anywhere else in the piece."
+            # AA-1077 round 2 (S278 trial 6610ac8d) — a lengthen fix copied its own feedback's source labels into the
+            # text ("The source notes name deer, birds, leopards"): every fix says nothing about where facts come from.
+            + "\nNever mention where a fact comes from: no \"the source\", \"the notes\", \"the seed\", \"the "
+            "facts\" or \"the itinerary says\"; state the fact itself."
         )
     prompt = "\n".join(lines)
     if channel_style["channel"] != "blog":
