@@ -1,4 +1,4 @@
--- Migration 400: AA-1077 (S278, blog length target) — register prompt version t9_write v6 in shared.prompt_version, so
+-- Migration 399: AA-1077 (S278, blog length target) — register prompt version t9_write v6 in shared.prompt_version, so
 -- the ledger can tell the blog prompt with the new word floor from the old one.
 --
 -- Why. S278 (12/11/2026) wrote 9 blog pieces on 3 audit tenants after the T7 600-word seed floor: 5 of 9 were held
@@ -14,15 +14,15 @@
 --
 -- What.
 --   1. One row (sha256 of the hashed symbols' source text in the source file, never the text; created_by
---      'migration-400'), the output of
---      `python3 scripts/prompt_registry_check.py --sql --unregistered --created-by migration-400` on the code PR's tree:
+--      'migration-399'), the output of
+--      `python3 scripts/prompt_registry_check.py --sql --unregistered --created-by migration-399` on the code PR's tree:
 --        t9_write  v6  SYSTEM_PROMPT, build_user_prompt, _BLOG_WORDS, _BLOG_WORDS_MAX, _BLOG_SECTIONS_MAX,
 --                      _BLOG_LENGTH_INSTRUCTIONS, _WALK_FOCUS_MARK, _WALK_FOCUS_RULE
 --                      (services/acp_content_writing/prompts.py)
 --      ON CONFLICT (stage, version) DO NOTHING.
 --   2. Guard: the row exists with exactly this hash and path (a version registered earlier with another hash would be
 --      kept silently by the ON CONFLICT and every call of it would carry prompt_version NULL).
---   3. Register 400.
+--   3. Register 399.
 --
 -- Behaviour. Until the code PR deploys, no deployed prompt matches v6 and nothing changes (calls keep 'v5'). After it
 -- deploys, within the registry cache TTL, t9_write rows carry 'v6'. No route, model, cost or prompt change by this
@@ -33,7 +33,7 @@
 -- (3) Infra Migration Apply applies it once every job table is idle (root ADR 0017a); (4) then the AA-1077 S278 code PR
 -- merges. No readiness bump. DM-7.1: no new table.
 --
--- Rollback (a NEW forward migration): DELETE FROM shared.prompt_version WHERE created_by = 'migration-400';
+-- Rollback (a NEW forward migration): DELETE FROM shared.prompt_version WHERE created_by = 'migration-399';
 -- (calls of this version then carry prompt_version NULL; rows already written keep their version).
 --
 -- The SQL that is applied to Dev is the copy in AA-CIS-Infra db/migrations/cis/; keep the two byte-identical.
@@ -48,14 +48,14 @@ SET LOCAL lock_timeout = '5s';
 DO $$
 BEGIN
     IF to_regclass('shared.prompt_version') IS NULL THEN
-        RAISE EXCEPTION 'migration 400: shared.prompt_version is missing (apply 321 first)';
+        RAISE EXCEPTION 'migration 399: shared.prompt_version is missing (apply 321 first)';
     END IF;
 END $$;
 
 -- ── 1. the manifest row ──────────────────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO shared.prompt_version (stage, version, prompt_sha256, source_path, created_by) VALUES
-    ('t9_write', 'v6', '91e34c9f5ce06002eb7565d1af7db9779dbb27bf77c0e0806e1725cc3d299cf3', 'services/acp_content_writing/prompts.py', 'migration-400')
+    ('t9_write', 'v6', '91e34c9f5ce06002eb7565d1af7db9779dbb27bf77c0e0806e1725cc3d299cf3', 'services/acp_content_writing/prompts.py', 'migration-399')
 ON CONFLICT (stage, version) DO NOTHING;
 
 -- ── 2. guard ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ BEGIN
            AND prompt_sha256 = '91e34c9f5ce06002eb7565d1af7db9779dbb27bf77c0e0806e1725cc3d299cf3'
            AND source_path = 'services/acp_content_writing/prompts.py'
     ) THEN
-        RAISE EXCEPTION 'migration 400: t9_write v6 is registered with another hash or path, or missing (a version '
+        RAISE EXCEPTION 'migration 399: t9_write v6 is registered with another hash or path, or missing (a version '
                         'is never edited: bump the manifest instead)';
     END IF;
 END $$;
@@ -76,7 +76,7 @@ END $$;
 -- ── 3. register ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('400', now(), 'AA-1077 S278: register prompt version t9_write v6 (blog word floor = length target, no prompt text)')
+VALUES ('399', now(), 'AA-1077 S278: register prompt version t9_write v6 (blog word floor = length target, no prompt text)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
