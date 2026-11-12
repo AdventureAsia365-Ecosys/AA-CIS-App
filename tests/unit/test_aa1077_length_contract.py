@@ -38,10 +38,10 @@ def test_the_writer_target_is_read_from_the_registered_prompt_symbols():
 
 def test_the_writer_floor_sits_above_the_f4_floor_and_its_max_under_the_ceiling():
     lo, _hi, most = lc.writer_words()
-    assert lo * lc.CHARS_PER_WORD >= lc.BLOG_FLOOR_CHARS * (1 + lc.TARGET_MARGIN_MIN)
+    assert lo * lc.CHARS_PER_WORD >= lc.BLOG_FLOOR_CHARS * (1 + lc.TARGET_MARGIN)
     assert most * lc.CHARS_PER_WORD <= lc.BLOG_CEILING_CHARS
-    # the extend repair aims between the F4 floor and the writer's floor, never past the ceiling
-    assert lc.BLOG_FLOOR_CHARS < lc.extend_target_chars() <= lo * lc.CHARS_PER_WORD + 10
+    # the extend repair aims at the length target (S278), at or under the writer's floor, never past the ceiling
+    assert lc.BLOG_FLOOR_CHARS < lc.extend_target_chars() == lc.target_chars() <= lo * lc.CHARS_PER_WORD
 
 
 def test_the_prompt_comment_no_longer_says_tags_included():
@@ -57,7 +57,8 @@ def test_a_short_blog_names_its_side_words_and_target():
     assert not r["passed"]
     (v,) = r["violations"]
     assert v.startswith("length_short: content is only 3947 chars")
-    assert "under the blog floor of 4,700 chars" in v and "900-1,300 words" in v
+    lo, hi, _ = lc.writer_words()
+    assert "under the blog floor of 4,700 chars" in v and f"{lo:,}-{hi:,} words" in v
     assert "effectively empty" not in v
     # the audit scripts' reading of the number still works
     assert re.search(r"only (\d+) chars", v).group(1) == "3947"

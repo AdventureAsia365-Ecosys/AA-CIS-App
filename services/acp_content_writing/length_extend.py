@@ -13,7 +13,7 @@ about 1.02 USD in second writer calls. The extend repair keeps every passing sec
   one, and then no extend runs). None = the old path, unchanged.
 - `extend` (one writer call through the gateway, `generate.extend_sections`, mode `length_extend`): the thinnest body
   sections (never the opening before the first heading, never the FAQ) each get ONE new paragraph, sized from the
-  deficit to `length_contract.extend_target_chars()` (the floor plus the normalizer's margin). Each paragraph is
+  deficit to `length_contract.extend_target_chars()` (the length target, S278: floor + margin). Each paragraph is
   checked in code before it stands: no heading / list / question / tag / CTA, not more than twice the words asked,
   no specific the source lacks (`repair_contract.new_specifics`: a number, time, ordinal, position or pace word —
   the source-fidelity rule: never an activity, service or time the seed lacks), and a clean seam

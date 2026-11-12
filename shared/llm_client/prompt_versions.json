@@ -711,6 +711,22 @@
         "judge_version"
       ],
       "prompt_sha256": "7f92769d2b7812f7cd737351e70e635e6285abeb7c6a336a856504c9a3d408b1"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v6",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE"
+      ],
+      "prompt_sha256": "91e34c9f5ce06002eb7565d1af7db9779dbb27bf77c0e0806e1725cc3d299cf3"
     }
   ]
 }
