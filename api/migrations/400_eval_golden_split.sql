@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 399: AA-1051 (Quality W5 code part, root ADR 0020; S275 decision "code eval part first") — the frozen
+-- Migration 400: AA-1051 (Quality W5 code part, root ADR 0020; S275 decision "code eval part first") — the frozen
 -- DEV / CAL / GATE split of the golden set items.
 --
 -- Why. The Writing Lab evaluates writer changes on the golden set (shared.eval_golden_item, CIS 284). Its only split is
@@ -23,7 +23,7 @@
 --      erasure and the FK cascade.
 --   3. RLS ENABLE + FORCE with the X1 runtime-parity policies (cis_app / cis_owner), like CIS 388 / 394. No tenant
 --      column and no text: a row reaches its tenant through its golden item (FK), which the erasure walks.
---   4. GRANT cis_app SELECT, INSERT, DELETE. Register 399.
+--   4. GRANT cis_app SELECT, INSERT, DELETE. Register 400.
 --
 -- PII (DM-6.1). None: ids, a split name, a rule id, a number and an actor id (admin or job label). No free text.
 --
@@ -38,7 +38,7 @@
 -- Class: expand (root ADR 0017 d3): a new table with its constraints, index, RLS, policies, a new trigger function and
 -- its trigger on the new table, grants on it and comments; the FK points from the new table at an existing one
 -- (allowed: the internal RI triggers of a new table's FK). No existing object changes, no seed row, no DO block.
--- Migration-only PR first (lane decision S278), then the code PR ("chain: cis/399").
+-- Migration-only PR first (lane decision S278), then the code PR ("chain: cis/400").
 --
 -- Number. 398 is the highest on main (12/11/2026).
 --
@@ -74,14 +74,14 @@ CREATE TABLE IF NOT EXISTS shared.eval_golden_split (
 CREATE INDEX IF NOT EXISTS eval_golden_split_set_split_idx ON shared.eval_golden_split (set_id, eval_split);
 
 COMMENT ON TABLE shared.eval_golden_split IS
-    'AA-1051 (CIS 399, root ADR 0020 W5): the frozen DEV / CAL / GATE side of each golden item (dev = rubric and '
+    'AA-1051 (CIS 400, root ADR 0020 W5): the frozen DEV / CAL / GATE side of each golden item (dev = rubric and '
     'policy work, cal = judge calibration, gate = sealed release and W5 proof decisions), placed by a hash of the '
     'sample id under a named rule. Append only; goes with its golden item (FK cascade; tenant erasure AA-839). No '
     'text, no tenant column. Admin data: no tenant route reads it.';
 COMMENT ON COLUMN shared.eval_golden_split.rule IS
-    'AA-1051 (399): the assignment rule (services/writer_proof/splits.py RULE); a new rule never rewrites a row.';
+    'AA-1051 (400): the assignment rule (services/writer_proof/splits.py RULE); a new rule never rewrites a row.';
 COMMENT ON COLUMN shared.eval_golden_split.bucket IS
-    'AA-1051 (399): the sample''s position in the hash space of the rule, 0 <= bucket < 1.';
+    'AA-1051 (400): the sample''s position in the hash space of the rule, 0 <= bucket < 1.';
 
 -- 2. append only ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ BEGIN
 END;
 $$;
 COMMENT ON FUNCTION shared.eval_golden_split_frozen() IS
-    'AA-1051 (CIS 399): refuses UPDATE on shared.eval_golden_split (a split side is frozen once written).';
+    'AA-1051 (CIS 400): refuses UPDATE on shared.eval_golden_split (a split side is frozen once written).';
 
 CREATE TRIGGER eval_golden_split_frozen BEFORE UPDATE ON shared.eval_golden_split
     FOR EACH ROW EXECUTE FUNCTION shared.eval_golden_split_frozen();
@@ -111,7 +111,7 @@ CREATE POLICY eval_golden_split_cis_owner_all ON shared.eval_golden_split AS PER
 GRANT SELECT, INSERT, DELETE ON shared.eval_golden_split TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('399', now(), 'AA-1051: shared.eval_golden_split (frozen DEV / CAL / GATE side of each golden item)')
+VALUES ('400', now(), 'AA-1051: shared.eval_golden_split (frozen DEV / CAL / GATE side of each golden item)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

@@ -1,4 +1,4 @@
-"""AA-1051 (Quality W5 code part, root ADR 0020) — CIS 399 shared.eval_golden_split on real Postgres (conftest replays
+"""AA-1051 (Quality W5 code part, root ADR 0020) — CIS 400 shared.eval_golden_split on real Postgres (conftest replays
 every migration).
 
 The table, its CHECKs (split name, rule shape, bucket range, actor), one row per golden item (set, sample), the FK to
@@ -60,8 +60,8 @@ async def _split(c, set_id, **over):
 
 
 @pytest.mark.asyncio
-async def test_399_registered_one_row_per_item_and_cascade(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '399'") == "399"
+async def test_400_registered_one_row_per_item_and_cascade(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '400'") == "400"
     s = await _item(conn)
     await _split(conn, s)
     with pytest.raises(asyncpg.exceptions.UniqueViolationError):
@@ -79,14 +79,14 @@ async def test_399_registered_one_row_per_item_and_cascade(conn):
     {"eval_split": "train"}, {"eval_split": "GATE"}, {"rule": "Bad Rule"}, {"rule": ""},
     {"bucket": 1.0}, {"bucket": -0.1}, {"assigned_by": ""},
 ])
-async def test_399_checks_refuse(conn, over):
+async def test_400_checks_refuse(conn, over):
     s = await _item(conn)
     with pytest.raises(asyncpg.exceptions.CheckViolationError):
         await _split(conn, s, **over)
 
 
 @pytest.mark.asyncio
-async def test_399_append_only(conn):
+async def test_400_append_only(conn):
     s = await _item(conn)
     await _split(conn, s)
     with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
@@ -94,7 +94,7 @@ async def test_399_append_only(conn):
 
 
 @pytest.mark.asyncio
-async def test_399_rls_policies_and_grants(conn):
+async def test_400_rls_policies_and_grants(conn):
     flags = await conn.fetchrow(
         "SELECT relrowsecurity AS rls, relforcerowsecurity AS force FROM pg_class "
         "WHERE oid = 'shared.eval_golden_split'::regclass")
