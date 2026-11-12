@@ -128,7 +128,8 @@ def _rows(fails_a=(), fails_b=(), missing=(), claims_b=0):
         if i in missing:
             continue
         rows.append({"sample_id": sid, "arm": "candidate", "mode": "regenerate", "result_id": f"res-{i}",
-                     "verdict": "fail" if i in fails_b else "pass", "failure_codes": ["fact.inclusion"] * (i in fails_b),
+                     "verdict": "fail" if i in fails_b else "pass",
+                     "failure_codes": ["fact.inclusion"] * (i in fails_b),
                      "details": {"judge_claims": [{"class": "fact.inclusion"}] * claims_b}, "hard_stop": False})
     return rows
 

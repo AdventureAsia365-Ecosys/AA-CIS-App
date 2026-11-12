@@ -217,7 +217,8 @@ def _metric_problems(metrics: Any) -> list[str]:
         if m.get("direction") not in DIRECTIONS:
             p.append(f"metric {n}: direction must be lower or higher")
         t = m.get("target")
-        if t is not None and not (isinstance(t, dict) and t.get("op") in TARGET_OPS and _num(t.get("value")) is not None):
+        ok_target = isinstance(t, dict) and t.get("op") in TARGET_OPS and _num(t.get("value")) is not None
+        if t is not None and not ok_target:
             p.append(f"metric {n}: target must be {{op: <=|>=|==, value: number}}")
         if m.get("primary"):
             primaries += 1
