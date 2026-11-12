@@ -2406,6 +2406,11 @@ a synthetic agency on TripPlanner: the routes refuse it (403 `e2e_read_only`, lo
 before a job is enqueued) unless every product of the request is `tripplanner` (`e2e_staff.E2E_ADDON_PRODUCTS`) and
 the tenant is synthetic; the create route `POST /admin/tenants/provision` stays refused; Playwright
 `admin-evidence/tp-addon.spec.ts`.
+Dev-only fixtures for these checks (AA-1087 S278 l18): `python -m services.tenant_account.e2e_fixtures` (ECS Exec on
+the API task, DRY RUN until `--apply`): `register-crm-agency --key sen-vang` enqueues the `tenant_provision` saga with
+the CRM E2E agency's own id (a `create` may carry `tenant_id` on Dev, `demo` only: CIS, Booking `bk_tenant_pull` and
+the CRM then name one synthetic tenant); `subject-gate-flag` adds one attempt with an invented off-catalogue booking
+link to a synthetic tenant's latest request and runs the real subject gate, which opens the flag the spec releases.
 `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end

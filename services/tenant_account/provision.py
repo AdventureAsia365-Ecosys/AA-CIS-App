@@ -13,7 +13,12 @@ Three modes (``ProvisionRequest``, validated again in the job because the payloa
   ``trialing`` until ``trial_ends_at``; the ``tenant_account_tick`` job ends it (``services/tenant_account/
   lifecycle.py``). The Dev guard (``dev_guard``, root ADR 0019 d16): on Dev the default ``kind`` is ``demo`` and an
   ``agency`` only as the one pilot (``pilot_weeks``). No ``acp_quota_ledger`` row any more (slice 3: the ACPv1
-  S2/S3/S4 ledger has no reader; the limits are entitlements).
+  S2/S3/S4 ledger has no reader; the limits are entitlements). AA-1087 (S278 lane l18): a ``create`` may carry
+  ``tenant_id`` on Dev only and only for a ``demo`` tenant (``register_id``): it registers a synthetic agency that
+  another app already holds under that id (the AA-Partner E2E agencies are seeded under fixed UUIDv5 ids), so CIS,
+  Booking (``bk_tenant_pull`` adopts its partner row) and the CRM name one synthetic tenant. The admin API bodies
+  cannot carry it; ``services/tenant_account/e2e_fixtures.py`` enqueues it. An id CIS already holds is
+  ``tenant_exists``.
 - ``attach``: add-ons for an existing tenant that is not offboarding or closed (an add-on needs a live content row,
   the CIS 353 guard). With ``only_new`` (set only by an approved add-on request, ``addon_requests.approve``; the admin
   API bodies cannot carry it) an add-on that is already live is left exactly as it is (step ``<product>_already_on``):
@@ -103,6 +108,7 @@ class ProvisionRequest:
     pilot_weeks: Optional[int] = None           # create, Dev only: the one pilot agency (root ADR 0019 d16)
     cancel: tuple[str, ...] = field(default_factory=tuple)   # detach: the add-on products to cancel
     only_new: bool = False                      # attach: never change a live add-on (an approved add-on request)
+    register_id: Optional[str] = None           # create, Dev demo only (AA-1087): the id another app already uses
 
     @property
     def idempotency_key(self) -> str:
@@ -118,6 +124,8 @@ class ProvisionRequest:
                 out["trial_days"] = self.trial_days
             if self.pilot_weeks is not None:
                 out["pilot_weeks"] = self.pilot_weeks
+            if self.register_id is not None:
+                out["tenant_id"] = self.register_id
         else:
             out["tenant_id"] = self.tenant_id
         if self.mode == "detach":
@@ -204,9 +212,19 @@ def parse(payload: dict[str, Any]) -> ProvisionRequest:
     refused = dev_guard.refusal(kind, pilot_weeks)
     if refused is not None:
         raise ProvisionError(*refused)
+    register_id = None
+    if payload.get("tenant_id") is not None:
+        # AA-1087: register a synthetic agency another app already holds under this id (Dev, demo only).
+        if not dev_guard.on_dev() or kind != "demo" or pilot_weeks is not None:
+            raise ProvisionError("register_id_dev_demo_only",
+                                 "a create names its tenant_id only on Dev, for a demo (synthetic) tenant")
+        try:
+            register_id = str(uuid.UUID(str(payload.get("tenant_id"))))
+        except ValueError:
+            raise ProvisionError("invalid_tenant", "tenant_id must be a UUID") from None
     return ProvisionRequest(request_key=key, mode=mode, name=name.strip(), slug=slug, plan_tier=tier,
                             posts_per_week=ppw, kind=kind, add_ons=add_ons, requested_by=requested_by,
-                            trial_days=trial_days, pilot_weeks=pilot_weeks)
+                            trial_days=trial_days, pilot_weeks=pilot_weeks, register_id=register_id)
 
 
 # ── SQL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -230,6 +248,11 @@ INSERT_TENANT_SQL = """
             CASE WHEN $10 THEN now() + make_interval(weeks => $11::int) END)
     RETURNING tenant_id
 """
+# AA-1087: the same row under the id another app already holds (Dev demo tenants only, see parse()).
+INSERT_TENANT_WITH_ID_SQL = INSERT_TENANT_SQL.replace(
+    "INSERT INTO shared.tenants (name,", "INSERT INTO shared.tenants (tenant_id, name,").replace(
+    "VALUES ($1,", "VALUES ($12::uuid, $1,")
+TENANT_EXISTS_SQL = "SELECT 1 FROM shared.tenants WHERE tenant_id = $1::uuid"
 PILOT_SQL = "SELECT tenant_id FROM shared.tenants WHERE is_pilot"
 # slice 3: the content row the 355 bridge made (active) starts the trial instead
 TRIAL_CONTENT_SQL = """
@@ -317,9 +340,17 @@ async def _create(conn, req: ProvisionRequest, actor: str,
     if pilot and await conn.fetchval(PILOT_SQL) is not None:
         raise ProvisionError("pilot_taken", "Dev already has its one pilot tenant (root ADR 0019 d16)")
     trial = req.trial_days is not None
-    tenant_id = await conn.fetchval(INSERT_TENANT_SQL, req.name, req.slug, req.plan_tier, plan["membership_plan_id"],
-                                    req.posts_per_week, int(plan["rpm"]), req.kind, req.kind == "demo",
-                                    "trial" if trial else "active", pilot, req.pilot_weeks or 0)
+    args = (req.name, req.slug, req.plan_tier, plan["membership_plan_id"], req.posts_per_week, int(plan["rpm"]),
+            req.kind, req.kind == "demo", "trial" if trial else "active", pilot, req.pilot_weeks or 0)
+    if req.register_id is not None:
+        if not dev_guard.on_dev() or req.kind != "demo":    # checked again: the payload came back from the database
+            raise ProvisionError("register_id_dev_demo_only",
+                                 "a create names its tenant_id only on Dev, for a demo (synthetic) tenant")
+        if await conn.fetchval(TENANT_EXISTS_SQL, req.register_id) is not None:
+            raise ProvisionError("tenant_exists", "CIS already holds a tenant with this id")
+        tenant_id = await conn.fetchval(INSERT_TENANT_WITH_ID_SQL, *args, req.register_id)
+    else:
+        tenant_id = await conn.fetchval(INSERT_TENANT_SQL, *args)
     await conn.execute(BRAND_SQL, tenant_id)
     steps.append("tenant_created")
     if pilot:

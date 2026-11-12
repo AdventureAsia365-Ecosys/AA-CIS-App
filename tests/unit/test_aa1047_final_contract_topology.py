@@ -26,6 +26,9 @@ SCAN_DIRS = ("api", "services")
 
 # Write sites that store no AI text a reader gets, with the reason. Keys like final_contract.EXITS.
 NOT_EXITS = {
+    "services/tenant_account/e2e_fixtures.py::subject_gate_flag":
+        "Dev-only E2E fixture (AA-1087 S278): stores one invented attempt text on a synthetic tenant so the real "
+        "subject gate opens a flag for the release spec; no AI text, refuses outside Dev",
     "services/acp_content_writing/service.py::_insert_placeholder_piece":
         "the empty 'processing' row a write starts with (no text yet)",
     "services/acp_content_writing/service.py::_finalize_piece":
