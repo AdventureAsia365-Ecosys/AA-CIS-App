@@ -23,6 +23,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from _later_deployments import set_later_deployments_aside  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 M366 = ROOT / "api" / "migrations" / "366_llm_family_fallback_chains.sql"
@@ -50,6 +51,9 @@ def cur():
     # included; on Dev 306 ran before 366, so the twins are on acc3 only (366's guard checks it).
     c.execute("DELETE FROM shared.llm_model_deployment WHERE model_key = ANY (%s) AND connection_key <> 'acc3'",
               (list(NEW_ROWS),))
+    # AA-1095: the deployments later migrations seeded (406's acc1 rows) did not exist when 366 ran on Dev; its
+    # attempt_cap rule counts every row, so they leave too (tests/integration/_later_deployments.py)
+    set_later_deployments_aside(c, 366)
     try:
         yield c
     finally:
