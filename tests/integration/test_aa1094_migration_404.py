@@ -1,12 +1,12 @@
-"""AA-1094 (S278 audit M20, root ADR 0019 d10) — migration 403: catalog.v_tenant_tour_v1, the live AA tours an agency
+"""AA-1094 (S278 audit M20, root ADR 0019 d10) — migration 404: catalog.v_tenant_tour_v1, the live AA tours an agency
 tenant has publishable text for (approved by it, its own edit, or AI text whose QA passed), for TripPlanner's /{slug}
 pages (contract catalog.tenant_tour.v1).
 
-conftest skips 403 (catalog recipe; it needs 359's catalog.v_tour and 379, both skipped too). Each test runs in ONE
+conftest skips 404 (catalog recipe; it needs 359's catalog.v_tour and 379, both skipped too). Each test runs in ONE
 transaction on the RDS-like state of test_aa860_migration_245 (module fixture), the way test_aa1040_migration_359 builds
 it: 273's replayed column is dropped first, 253 / 256 / 257 / 258 / 273 / 289 / 359 and 379 are applied as cis_owner
 (DB Migrate's live-owner switch), the CI stand-in of tenant_tour_versions gets the live version_number and qa_status
-columns, 403 is
+columns, 404 is
 applied (twice: re-runnable), the checks run, and the transaction is rolled back.
 
 Checks: registered once; the view's exact columns, owner catalog_owner, security_barrier, tripplanner only; the
@@ -35,10 +35,10 @@ from test_aa990_migration_289 import migration_255  # noqa: E402,F401  (module a
 
 BEFORE = t289.BEFORE + (t289.MIGRATION, "359_catalog_tour_text_updated_at.sql",
                         "379_tenant_tripplanner_catalog_view.sql")
-MIGRATION = "403_tenant_tour_catalog_view.sql"
+MIGRATION = "404_tenant_tour_catalog_view.sql"
 VIEW = "catalog.v_tenant_tour_v1"
 TTV = "gold_aa_internal.tenant_tour_versions"
-# Copied verbatim into AA-TripPlanner-Web backend/tests/test_aa1094_tenant_tours_pg.py (CIS_403_COLUMNS).
+# Copied verbatim into AA-TripPlanner-Web backend/tests/test_aa1038_tenant_site_pg.py (CIS_404_COLUMNS).
 COLUMNS = (
     "tenant_id uuid, source_system text, source_id text, tour_id uuid, slug text, title text, subtitle text, "
     "summary text, highlights jsonb, itinerary_text text, seo_title text, seo_meta text, country text, "
@@ -83,10 +83,10 @@ def _tenant(c, name, *, tripplanner=True, status="active", kind="agency"):
     tid = str(uuid.uuid4())
     c.execute("INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "
               "is_active, kind) VALUES (%s, %s, %s, 'starter'::plan_tier_enum, 3, 60, true, %s)",
-              (tid, name, f"zz403-{tid[:12]}", kind))
+              (tid, name, f"zz404-{tid[:12]}", kind))
     if tripplanner:
         c.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, updated_by) "
-                  "VALUES (%s, 'tripplanner', 'tripplanner.hosted', 'active', 'test:403')", (tid,))
+                  "VALUES (%s, 'tripplanner', 'tripplanner.hosted', 'active', 'test:404')", (tid,))
     if status != "active":
         c.execute("UPDATE shared.tenants SET account_status = %s WHERE tenant_id = %s::uuid", (status, tid))
     return tid
@@ -151,7 +151,7 @@ def _rows(c, tenant):
 
 
 def test_registered_owned_barrier_and_tripplanner_only(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '403'")
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '404'")
     assert cur.fetchone()[0] == 1
     cur.execute("""SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum)
                      AS cols FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0

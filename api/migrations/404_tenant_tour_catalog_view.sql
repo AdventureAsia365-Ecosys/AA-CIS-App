@@ -1,4 +1,4 @@
--- Migration 403: AA-1094 (S278 system audit M20, root ADR 0019 d10) — the contract view catalog.v_tenant_tour_v1:
+-- Migration 404: AA-1094 (S278 system audit M20, root ADR 0019 d10) — the contract view catalog.v_tenant_tour_v1:
 -- the AA tours an agency tenant has made its own, each with the tenant's own rewritten text, for TripPlanner's
 -- /{slug} pages (contract catalog.tenant_tour.v1, root docs/contracts/catalog.tenant_tour.v1.json).
 --
@@ -42,7 +42,7 @@
 --      text_updated_at = the version's created_at, human_edited) and content_hash (md5 of the served text and
 --      facts). No price, no score, no personal data. SELECT to tripplanner only. Contract v1: columns are only
 --      appended; a change of meaning is a _v2 view.
---   4. Register 403.
+--   4. Register 404.
 --
 -- What a tenant row means (decided here, recorded in the contract and the ADR 0019 d10 amendment): "on the agency's
 -- site" = the tenant has a publishable version of the tour (2a-c); a tour still being written, or whose versions are
@@ -59,7 +59,7 @@
 -- existing table, a view in the catalog schema under the catalog.* recipe (role switch, GRANT / REVOKE CREATE).
 -- MIG-4: migration-only PR; applied on Dev by Infra Migration Apply when the job tables are idle (ADR 0017a).
 -- DM-7.1: a view, no new table. The consumer grant goes into AA-CIS-Infra owners.yaml and the isolation probe
--- (expected from 403).
+-- (expected from 404).
 --
 -- Guards (RAISE rolls the whole file back): before — 359 registered (catalog.v_tour with text_updated_at), 379
 -- registered (the TripPlanner tenant scope: shared.tenant_subscription column grants to catalog_owner), schema
@@ -73,11 +73,11 @@
 -- CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; the view DDL; SET LOCAL ROLE cis_owner;
 -- REVOKE CREATE. DB Migrate runs the file as cis_owner (login db_migrator). Never RESET ROLE, no SECURITY DEFINER, no
 -- role DDL, no dynamic SQL. The conftest replay skips this file (catalog recipe, 245's owners);
--- tests/integration/test_aa1094_migration_403.py applies it the DB Migrate way inside a rolled-back transaction.
+-- tests/integration/test_aa1094_migration_404.py applies it the DB Migrate way inside a rolled-back transaction.
 --
--- Number. 401 is the highest on main (12/11) and 402 is held by another S278 lane. If the owner main max + 1 differs
--- at merge, renumber (git grep '403_' and '403' in this file, the test, conftest and the AA-TripPlanner-Web test
--- stand-in).
+-- Number. 403 (tour_price_reference_view_v2) is the highest on main (12/11, after the S278 review pass renumbered this
+-- file from 403). If the owner main max + 1 differs at merge, renumber (git grep '404_' and '404' in this file, the
+-- test, conftest, the AA-TripPlanner-Web test stand-in, the AA-CIS-Infra probe and owners.yaml, the root contract).
 --
 -- Locks. One column GRANT, one CREATE POLICY (a short ACCESS EXCLUSIVE lock on tenant_tour_versions, ~130 rows on
 -- Dev) and one CREATE VIEW. lock_timeout 5s, statement_timeout 1min. Idempotent (re-runnable grants, the policy
@@ -95,21 +95,21 @@ SET LOCAL statement_timeout = '1min';
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '359') THEN
-        RAISE EXCEPTION 'migration 403: apply 359 (catalog.v_tour text_updated_at) first';
+        RAISE EXCEPTION 'migration 404: apply 359 (catalog.v_tour text_updated_at) first';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '379') THEN
-        RAISE EXCEPTION 'migration 403: apply 379 (the TripPlanner tenant view and its grants) first';
+        RAISE EXCEPTION 'migration 404: apply 379 (the TripPlanner tenant view and its grants) first';
     END IF;
     IF (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') <> 'cis_owner' THEN
-        RAISE EXCEPTION 'migration 403: schema catalog is not owned by cis_owner (apply 245 first)';
+        RAISE EXCEPTION 'migration 404: schema catalog is not owned by cis_owner (apply 245 first)';
     END IF;
     IF to_regclass('gold_aa_internal.tenant_tour_versions') IS NULL THEN
-        RAISE EXCEPTION 'migration 403: gold_aa_internal.tenant_tour_versions does not exist';
+        RAISE EXCEPTION 'migration 404: gold_aa_internal.tenant_tour_versions does not exist';
     END IF;
     IF (SELECT count(*) FROM pg_attribute
          WHERE attrelid = 'gold_aa_internal.tenant_tour_versions'::regclass AND NOT attisdropped
            AND attname IN ('status', 'edit_source', 'qa_status')) <> 3 THEN
-        RAISE EXCEPTION 'migration 403: tenant_tour_versions lacks status / edit_source / qa_status (107)';
+        RAISE EXCEPTION 'migration 404: tenant_tour_versions lacks status / edit_source / qa_status (107)';
     END IF;
 END $$;
 
@@ -232,7 +232,7 @@ SELECT s.tenant_id,
   FROM served s;
 
 COMMENT ON VIEW catalog.v_tenant_tour_v1 IS
-    'AA-1094 (403, contract catalog.tenant_tour.v1, root ADR 0019 d10): per agency tenant in service with a '
+    'AA-1094 (404, contract catalog.tenant_tour.v1, root ADR 0019 d10): per agency tenant in service with a '
     'TripPlanner subscription, the live AA tours with a version publishable on its site (approved by the tenant, the '
     'tenant''s own edit, or ai_generated text whose T3 QA passed; never needs_review, QA-escalated, pending AI, failed '
     'or rejected text) with the served text (the tenant''s own version before AI text, then the latest; title falls '
@@ -244,7 +244,7 @@ GRANT SELECT ON catalog.v_tenant_tour_v1 TO tripplanner;
 -- ── Closing check as catalog_owner: the view answers ─────────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    RAISE NOTICE 'migration 403: as catalog_owner, % tenant tour row(s) for % tenant(s)',
+    RAISE NOTICE 'migration 404: as catalog_owner, % tenant tour row(s) for % tenant(s)',
         (SELECT count(*) FROM catalog.v_tenant_tour_v1),
         (SELECT count(DISTINCT tenant_id) FROM catalog.v_tenant_tour_v1);
 END $$;
@@ -262,18 +262,18 @@ DECLARE
     granted text;
 BEGIN
     IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = v::regclass) <> 'catalog_owner' THEN
-        RAISE EXCEPTION 'migration 403: % is not catalog_owner''s', v;
+        RAISE EXCEPTION 'migration 404: % is not catalog_owner''s', v;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = v::regclass AND 'security_barrier=true' = ANY(reloptions)) THEN
-        RAISE EXCEPTION 'migration 403: % is not security_barrier', v;
+        RAISE EXCEPTION 'migration 404: % is not security_barrier', v;
     END IF;
     IF NOT pg_catalog.has_table_privilege('tripplanner', v, 'SELECT') THEN
-        RAISE EXCEPTION 'migration 403: tripplanner cannot read %', v;
+        RAISE EXCEPTION 'migration 404: tripplanner cannot read %', v;
     END IF;
     FOREACH r IN ARRAY ARRAY['booking', 'aa_app_user', 'cis_app', 'crm_app'] LOOP
         IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = r)
            AND pg_catalog.has_table_privilege(r, v, 'SELECT') THEN
-            RAISE EXCEPTION 'migration 403: % can read % (tripplanner only)', r, v;
+            RAISE EXCEPTION 'migration 404: % can read % (tripplanner only)', r, v;
         END IF;
     END LOOP;
     SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum) INTO cols
@@ -284,18 +284,18 @@ BEGIN
                              'best_time_to_go text, cover_photo_path text, photo_count bigint, version_id uuid, '
                              'edit_source text, text_updated_at timestamp with time zone, human_edited boolean, '
                              'content_hash text' THEN
-        RAISE EXCEPTION 'migration 403: % columns are %', v, cols;
+        RAISE EXCEPTION 'migration 404: % columns are %', v, cols;
     END IF;
     IF pg_catalog.has_any_column_privilege('tripplanner', ttv, 'SELECT')
        OR pg_catalog.has_any_column_privilege('tripplanner', ttv, 'INSERT')
        OR pg_catalog.has_any_column_privilege('tripplanner', ttv, 'UPDATE') THEN
-        RAISE EXCEPTION 'migration 403: tripplanner can read or change % directly', ttv;
+        RAISE EXCEPTION 'migration 404: tripplanner can read or change % directly', ttv;
     END IF;
     IF pg_catalog.has_table_privilege('catalog_owner', ttv, 'SELECT')
        OR pg_catalog.has_any_column_privilege('catalog_owner', ttv, 'INSERT')
        OR pg_catalog.has_any_column_privilege('catalog_owner', ttv, 'UPDATE')
        OR pg_catalog.has_table_privilege('catalog_owner', ttv, 'DELETE') THEN
-        RAISE EXCEPTION 'migration 403: catalog_owner has more than column SELECT on %', ttv;
+        RAISE EXCEPTION 'migration 404: catalog_owner has more than column SELECT on %', ttv;
     END IF;
     SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO granted
       FROM pg_attribute a
@@ -303,21 +303,21 @@ BEGIN
        AND pg_catalog.has_column_privilege('catalog_owner', a.attrelid, a.attnum, 'SELECT');
     IF granted IS DISTINCT FROM
        'created_at,edit_source,id,published_tour_id,rewritten_content,status,tenant_id,version_number' THEN
-        RAISE EXCEPTION 'migration 403: catalog_owner reads % columns %', ttv, granted;
+        RAISE EXCEPTION 'migration 404: catalog_owner reads % columns %', ttv, granted;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies
                     WHERE schemaname = 'gold_aa_internal' AND tablename = 'tenant_tour_versions'
                       AND policyname = 'catalog_owner_tenant_text_read' AND cmd = 'SELECT'
                       AND roles = ARRAY['catalog_owner']::name[]) THEN
-        RAISE EXCEPTION 'migration 403: the policy catalog_owner_tenant_text_read is not SELECT TO catalog_owner';
+        RAISE EXCEPTION 'migration 404: the policy catalog_owner_tenant_text_read is not SELECT TO catalog_owner';
     END IF;
     IF pg_catalog.has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
-        RAISE EXCEPTION 'migration 403: catalog_owner still has CREATE on schema catalog';
+        RAISE EXCEPTION 'migration 404: catalog_owner still has CREATE on schema catalog';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('403', now(), 'AA-1094: catalog.v_tenant_tour_v1 (a TripPlanner tenant''s live AA tours with its own '
+VALUES ('404', now(), 'AA-1094: catalog.v_tenant_tour_v1 (a TripPlanner tenant''s live AA tours with its own '
                       'publishable text; catalog.tenant_tour.v1), catalog_owner reads publishable tenant versions')
 ON CONFLICT (version) DO NOTHING;
 
