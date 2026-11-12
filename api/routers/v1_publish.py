@@ -48,20 +48,22 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
 import asyncpg
 import boto3
 import structlog
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.core.aa544_tenant_pool import (
     PUBLISH_FLAG, PUBLISH_LOG_LIST_FLAG, PUT_BACK_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG,
     acquire_scoped_conn,
 )
+from api.routers.auth import studio_role_of
 from api.routers.v1_integrations import is_tombstoned_secret, reconnect_detail
 from api.routers._served import annotate_by_request, refuse_http
 from api.routers.v1_tours import get_tenant
@@ -429,9 +431,10 @@ def _publishable_channel(piece) -> str:
     # Content and editable, but must NOT be published until the tenant edits it (which re-opens it
     # for a fresh write) or an admin clears it. 422 (not 404) here because the tenant DOES own this
     # piece and the reason is actionable — no existence leak (ownership already confirmed above).
-    # AA-770 (S233) — the tenant always receives the content: a 'held' piece (a gate verdict, now
-    # an admin-only quality label) publishes like an approved one. Only a piece with no content
-    # yet ('processing') or a failed write is refused.
+    # AA-770 (S233) — the tenant always receives the content: a 'held' piece (a gate verdict, an
+    # admin-only quality label) is listed, read, edited and exported like an approved one. Only a
+    # piece with no content yet ('processing') or a failed write is refused here. AA-1088 (M3): its
+    # PUBLISH needs the account owner's explicit "publish anyway" (publish() below, _held_refusal()).
     if piece["status"] not in ("approved", "held"):
         raise HTTPException(
             status_code=422,
@@ -451,8 +454,52 @@ def _publishable_channel(piece) -> str:
     return channel
 
 
+# ── AA-1088 (M3, S278 system audit): a held piece needs the owner's explicit "publish anyway" ────────────────────────
+# A 'held' piece (unresolved product-truth after the writer's retries, or a detector that was down) used to publish
+# like an approved one with no word to the agency (AA-770), so a wrong trip fact could reach the agency's site
+# unseen. Now the first publish of a held piece is refused with a typed 409 (`content_needs_final_check`) and a
+# content-style sentence: no score, gate name or held reason (the tenant-safe rule of AA-770 / AA-796 stays). The
+# account owner (Content studio role `owner`, or a token without a role, which the role middleware treats as owner)
+# may then publish it anyway with `{"publish_anyway": true}`; that choice is written to the audit log
+# (`content_piece.published_anyway`) BEFORE the post goes out and fails closed (503) when the row cannot be written.
+# An editor gets the same 409 with `can_publish_anyway: false` and is asked to hand it to an owner.
+PUBLISH_NEEDS_CHECK_CODE = "content_needs_final_check"
+PUBLISH_NEEDS_CHECK_OWNER = (
+    "Before this piece goes live, please read it through once more: we could not confirm every detail in it against "
+    "the trip (dates, places, what is included). If it reads right, choose Publish anyway.")
+PUBLISH_NEEDS_CHECK_EDITOR = (
+    "Before this piece goes live, please read it through once more: we could not confirm every detail in it against "
+    "the trip (dates, places, what is included). An account owner can then publish it.")
+PUBLISH_ANYWAY_UNAVAILABLE = "We couldn't record your choice just now. Please try publishing it again in a minute."
+
+
+class PublishBody(BaseModel):
+    """Optional body of POST /v1/publish-log/{piece_id}/publish (no body = a plain publish)."""
+    # AA-1088: the account owner's explicit choice to publish a piece that needs a final check (ignored otherwise)
+    publish_anyway: bool = False
+
+
+def _may_publish_anyway(tenant: dict) -> bool:
+    """AA-1088 — only the account owner may publish a held piece anyway (studio role `owner`, or no role claim: the
+    legacy owner-shaped token, as in api/middleware/tenant_role.refusal)."""
+    return studio_role_of(tenant) in (None, "owner")
+
+
+def _held_refusal(tenant: dict) -> JSONResponse:
+    """The typed 409 for a held piece: top-level `detail` stays the sentence (every studio build shows a string
+    `detail`), plus `code` and `can_publish_anyway` for the studio's Publish anyway button."""
+    owner = _may_publish_anyway(tenant)
+    return JSONResponse(
+        status_code=409,
+        content={"detail": PUBLISH_NEEDS_CHECK_OWNER if owner else PUBLISH_NEEDS_CHECK_EDITOR,
+                 "code": PUBLISH_NEEDS_CHECK_CODE, "can_publish_anyway": owner},
+        headers={"X-Error-Code": PUBLISH_NEEDS_CHECK_CODE},
+    )
+
+
 @router.post("/{piece_id}/publish")
-async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
+async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
+                  body: Annotated[Optional[PublishBody], Body()] = None):
     """AA-458 — the real publish endpoint. No AA pre-gate (ADR-2026-038 §0.2, same principle
     AA-455's force-unpublish exists to police after the fact, not before). Ownership + approval
     verified in one query; 404 covers both "not yours" and "not approved yet" identically (no
@@ -476,7 +523,11 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     AA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code
     default 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only
     when the column exists). A NEW publish over the limit gets 429 with a clear message and a
-    Retry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused."""
+    Retry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused.
+
+    AA-1088 (M3) — a held piece answers 409 `content_needs_final_check` (body `detail`, `code`,
+    `can_publish_anyway`) unless the account owner sends `{"publish_anyway": true}`; that choice is
+    audited (`content_piece.published_anyway`) before the post goes out."""
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
@@ -495,6 +546,13 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         except TourNotServedError as exc:
             raise refuse_http(exc) from exc
         integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
+
+    # AA-1088 (M3): a held piece goes out only on the account owner's explicit "publish anyway" (typed 409 otherwise)
+    published_anyway = piece["status"] == "held"
+    if published_anyway and not (body is not None and body.publish_anyway and _may_publish_anyway(tenant)):
+        logger.info("publish_held_needs_final_check", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                    channel=channel, asked_anyway=bool(body and body.publish_anyway), role=studio_role_of(tenant))
+        return _held_refusal(tenant)
 
     # AA-1039 (option A): this content still has a WordPress page the tour retirement moved to draft and the tenant can
     # put back. A new post would put a second copy online and leave that page behind (409; on MAIN, the retirement
@@ -531,6 +589,23 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     # JWT `sub`, on the admin pool, before the tenant block.
     async with pool.acquire() as conn:
         limit = await daily_limit.effective_limit(conn, tenant_id)
+    if published_anyway:
+        # AA-1088: the owner's choice is on record before anything goes out; no row, no post (fails closed). MAIN pool:
+        # audit_log has no RLS and no aa_app_user grant (same exception as the publish audit row below).
+        try:
+            async with pool.acquire() as conn:
+                await write_audit_log(
+                    conn, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+                    action=TenantAuditAction.CONTENT_PUBLISHED_ANYWAY, resource_type="content_piece",
+                    resource_id=str(piece_id),
+                    details={"channel": channel, "membership_id": tenant.get("mid"),
+                             "studio_role": studio_role_of(tenant) or "owner", "revision_key": key},
+                )
+        except Exception as exc:  # noqa: BLE001 — logged; a 503 the owner can retry, never a post without the record
+            logger.warning("publish_anyway_audit_failed", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                           error=str(exc))
+            raise HTTPException(status_code=503, detail=PUBLISH_ANYWAY_UNAVAILABLE,
+                                headers={"Retry-After": "60"}) from exc
     # 2. claim (a savepoint inside the scoped transaction on the tenant pool)
     async with acquire_scoped_conn(request, tenant_id, PUBLISH_FLAG, fail_closed=True) as (conn, _):
         claimed = await claim(conn, piece_id=piece_id, tenant_id=tenant_id, channel=channel, key=key,
@@ -592,7 +667,8 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             action=TenantAuditAction.CONTENT_PUBLISHED, resource_type="content_piece",
             resource_id=str(piece_id),
             details={"channel": channel, "success": success,
-                     "external_url": external_url, "publish_id": row["publish_id"]},
+                     "external_url": external_url, "publish_id": row["publish_id"],
+                     **({"published_anyway": True} if published_anyway else {})},
         )
     except Exception as exc:
         logger.warning("publish_audit_log_failed", tenant_id=tenant_id, piece_id=str(piece_id), error=str(exc))

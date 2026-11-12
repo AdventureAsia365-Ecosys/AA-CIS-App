@@ -499,6 +499,10 @@ def _apply_schema(conn):
         # AA-1038 R5 slice 3 (S272): 390 alters 379's site table and replaces / adds catalog views (catalog recipe,
         # needs 379). test_aa1038_migration_390 applies 379 + 390 the DB Migrate way and undoes both at teardown.
         and not f.startswith('390')
+        # AA-1087 (S278): 401 replaces 357's catalog.v_tenant_account_v1 (is_synthetic appended) through the catalog
+        # recipe and needs 357 (skipped above). test_aa1087_migration_401 applies 357 + 401 the DB Migrate way on the
+        # RDS-like state and undoes both at teardown.
+        and not f.startswith('401')
     ])
 
     for mf in migration_files:

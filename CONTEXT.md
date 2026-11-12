@@ -3831,8 +3831,14 @@ the subject's `tenant_id` as the erasure key, the same CHECKs; one row per subje
 set from the T2 version drawer and the tour panel's Rewrite tab (`PieceLabel.tsx` `SubjectLabelSection`);
 `content_piece_label` and its T9 readers are unchanged.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
-and can export and publish a held Piece like an approved one — including a piece held because a detector
-was down (AA-925 `degraded`). **Tenants never see internal gate
+and can read, edit and export a held Piece like an approved one — including a piece held because a detector
+was down (AA-925 `degraded`). Its **publish** is the account owner's explicit choice (AA-1088, M3 of the S278
+audit): `POST /v1/publish-log/{id}/publish` answers a typed 409 `content_needs_final_check` (body `detail` =
+a content-style sentence with no score, gate or reason, `code`, `can_publish_anyway`; header `X-Error-Code`)
+until the owner (studio role `owner`, or a token without a role) sends `{"publish_anyway": true}`; that choice is
+written to `acp_shared.audit_log` (`content_piece.published_anyway`: channel, membership, role, revision key)
+before the post goes out and fails closed (503) without the row; an editor's `publish_anyway` is refused.
+Put back online (a page already live once) is not re-checked. **Tenants never see internal gate
 data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,
 `gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
 `not_ready` means there is no content yet). The same rule covers T2 tour versions (see **Tenant
