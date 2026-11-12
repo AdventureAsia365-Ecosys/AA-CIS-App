@@ -73,6 +73,9 @@ def test_the_write_allow_list_is_exactly_the_reviewed_routes():
         # (test_aa1035_s2_view_as.py)
         ("POST", "/admin/tenants/{tenant_id}/view-as"),
         ("POST", "/admin/view-as/sessions/{session_id}/end"),
+        # AA-1087 (S278, root ADR 0006a A10b-3): release a held piece, synthetic tenants only
+        # (test_aa1087_a10b_compliance_release.py)
+        ("POST", "/admin/tenant-qa/compliance/{flag_id}/release"),
     }
     # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
     # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.

@@ -30,6 +30,11 @@ TEMPORARY, removed at the end of project code with A10 / A10a (AA-816):
   (:data:`E2E_MAIL_DOMAIN`, :func:`is_e2e_mailbox_address`) and the Content studio role is ``viewer`` or ``editor``
   (:data:`E2E_INVITE_ROLES`: the body's role on a new invitation, the membership's stored role on a send-again).
 
+- AA-1087 (S278, root ADR 0006a A10b-3): one more allow-listed write, the Compliance release of a held piece
+  (:data:`E2E_COMPLIANCE_RELEASE_WRITES`), the CIS staff write of the synthetic pilot rehearsal. The route refuses the
+  A10b session (403 ``e2e_read_only``, before the flag is resolved or audited) unless the flag's tenant is synthetic
+  (:func:`is_synthetic_tenant`: ``is_canary IS TRUE`` and not the pilot).
+
 A10d (AA-1035, S270, root ADR 0006a A10d): a second Dev-only CIS E2E identity, :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`,
 role ``customer_success``, so the agent can prove the AA-1035 tenant-book scoping with a real Cognito session. Same
 directory rules as A10b (not an owner, no password, no Booking grant, no CRM role; CIS migration 378), same Dev-only
@@ -77,6 +82,13 @@ E2E_BOOKING_TEST_STAFF_EMAIL = "e2e-booking@e2e-mail.lumiguides.it.com"
 # exactly crm-ops + crm-support, never in the CIS directory (same address as AA-CIS-Infra workforce.py
 # E2E_CRM_STAFF_TEST_STAFF_EMAIL and AA-Partner e2e_staff.E2E_CRM_STAFF_EMAIL).
 E2E_CRM_STAFF_TEST_STAFF_EMAIL = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
+# A10e (AA-1087, S278; named here for the reconcile): the three Dev-only write-capable AA-Booking E2E accounts, each in
+# exactly one Booking group, never in the CIS directory (same addresses as AA-CIS-Infra workforce.py
+# E2E_BOOKING_{STAFF,MAKER,CHECKER}_TEST_STAFF_EMAIL and AA-Booking app/auth/e2e_staff.py). AA-Booking holds each one to
+# its own writes on synthetic agencies only; the CIS API never sees them.
+E2E_BOOKING_STAFF_TEST_STAFF_EMAIL = "e2e-booking-staff@e2e-mail.lumiguides.it.com"
+E2E_BOOKING_MAKER_TEST_STAFF_EMAIL = "e2e-booking-maker@e2e-mail.lumiguides.it.com"
+E2E_BOOKING_CHECKER_TEST_STAFF_EMAIL = "e2e-booking-checker@e2e-mail.lumiguides.it.com"
 
 # The one ENVIRONMENT value under which the account may exist (compared exactly).
 DEV_ONLY_ENVIRONMENT = "dev"
@@ -101,10 +113,16 @@ E2E_VIEW_AS_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/tenants/{tenant_id}/view-as"),
     ("POST", "/admin/view-as/sessions/{session_id}/end"),
 })
+# AA-1087 (S278, root ADR 0006a A10b-3): release a held piece (Tenant QA > Compliance: the staff review "approve" of an
+# agency's content that the subject gate held), synthetic tenants only (checked by
+# api/routers/admin_tenant_compliance.py before any write): the pilot rehearsal proves a CIS staff write in a browser.
+E2E_COMPLIANCE_RELEASE_WRITES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/admin/tenant-qa/compliance/{flag_id}/release"),
+})
 E2E_ALLOWED_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"),
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
-}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES
+}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES | E2E_COMPLIANCE_RELEASE_WRITES
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/content-quality/pieces/{_UUID}/sentences/apply")),
@@ -113,6 +131,7 @@ E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/members/{_UUID}/invitation/send")),
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/view-as")),
     ("POST", re.compile(rf"/admin/view-as/sessions/{_UUID}/end")),
+    ("POST", re.compile(rf"/admin/tenant-qa/compliance/{_UUID}/release")),
 )
 # The sentence-apply modes an A10b session may use (Cut, manual Edit). Not "rewrite".
 E2E_SENTENCE_MODES: frozenset[str] = frozenset({"cut", "manual"})

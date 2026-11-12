@@ -32,12 +32,12 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
   breakglass                   the break-glass user: present, CONFIRMED, disabled at rest, in cis-admin and
                                booking-admin. Each deviation is an issue.
   known_e2e_exceptions         Dev only (ENVIRONMENT exactly "dev", api/core/e2e_staff.dev_only_e2e_environment):
-                               the E2E staff identities root ADR 0006a A10 / A10a / A10b / A10c allows, each with
-                               its ADR clause, listed apart and NOT counted in drift_total. Only the exact address
-                               with its exact staff group set (and, for A10 / A10b, its directory row with the
-                               expected role) is listed; an E2E address with any other group set, a missing or
-                               wrong row, or on any other environment goes through the categories above like every
-                               user (AA-816 S253).
+                               the E2E staff identities root ADR 0006a A10 / A10a / A10b / A10c / A10d / A10e
+                               allows, each with its ADR clause, listed apart and NOT counted in drift_total. Only
+                               the exact address with its exact staff group set (and, for A10 / A10b / A10d, its
+                               directory row with the expected role; A10a / A10c / A10e have no row) is listed;
+                               an E2E address with any other group set, a missing or wrong row, or on any other
+                               environment goes through the categories above like every user (AA-816 S253).
 
 ListUsers cannot tell whether a user has a password (no attribute says so, and AdminGetUser is denied), so
 (d) is status based; `notes` in the result says so.
@@ -107,8 +107,9 @@ NOTES = (
     "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
-KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d) are listed under "
-                  "known_e2e_exceptions and not counted as drift, only with their exact address and staff groups.")
+KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d, A10e) are listed "
+                  "under known_e2e_exceptions and not counted as drift, only with their exact address and staff "
+                  "groups.")
 CRM_NOT_COMPARED_NOTE = ("CRM roles were not compared: the directory table for them (CIS migration 330) is not applied "
                          "yet, so the crm-* groups are neither checked nor reported.")
 
@@ -149,6 +150,23 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
         reason=("Dev-only CIS customer success E2E account: read-only session, synthetic tenants only, "
                 "no Booking access."),
         groups=frozenset({"cis-customer_success"}), directory_role=e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE),
+    # AA-1087 A10e (S278): the Dev-only write-capable AA-Booking E2E accounts, one Booking group each, created outside
+    # the CIS directory (AA-CIS-Infra crm_dev_identity.py e2e-booking-writers), like A10a / A10c.
+    e2e_staff.E2E_BOOKING_STAFF_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10e",
+        reason=("Dev-only AA-Booking staff E2E writer (send and confirm a supplier booking, synthetic agencies only); "
+                "never in the CIS staff directory."),
+        groups=frozenset({"booking-sales"}), directory_role=None),
+    e2e_staff.E2E_BOOKING_MAKER_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10e",
+        reason=("Dev-only AA-Booking finance maker E2E writer (record an agency payment, synthetic agencies only); "
+                "never in the CIS staff directory."),
+        groups=frozenset({"booking-finance"}), directory_role=None),
+    e2e_staff.E2E_BOOKING_CHECKER_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10e",
+        reason=("Dev-only AA-Booking finance checker E2E writer (approve or reject an agency payment, synthetic "
+                "agencies only); never in the CIS staff directory."),
+        groups=frozenset({"booking-finance"}), directory_role=None),
 })
 
 
