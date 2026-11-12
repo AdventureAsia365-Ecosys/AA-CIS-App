@@ -267,6 +267,90 @@ async def test_import_plan_and_apply():
     assert store.status_of(conn.rows["a"]) == "confirmed"
 
 
+@pytest.mark.asyncio
+async def test_export_then_import_unchanged_confirms_nothing():
+    """AA-1091 review: the export prefills Amount / Currency / Basis / Note with every saved price, also an unreviewed
+    parse (parsed, needs_review with doubts, a confirmed price whose text moved). Re-importing the same file must
+    give 0 changes and leave every status as it was."""
+    rows = [
+        _row("parsed", amount=D("1450"), origin="parsed"),
+        _row("doubt", price_raw="2-3 pax: USD 1,200; 4-6 pax: USD 980", amount=D("1200"), origin="parsed",
+             needs_review=True, review_reasons=["several_amounts", "tiered"]),
+        _row("moved", amount=D("900"), reviewed_at=NOW, reviewed_by="admin:z", price_raw_seen="older text"),
+        _row("conf", amount=D("800"), reviewed_at=NOW, reviewed_by="admin:z", note="Kept"),
+        _row("sugg"), _row("none", price_raw="On request"),
+    ]
+    conn = FakeConn(rows)
+    before = {k: store.status_of(r) for k, r in conn.rows.items()}
+    content = workbook.export_bytes([store.item_of(r) for r in rows])
+    plan, values = await store.plan_import(conn, workbook.read_rows(content))
+    assert plan.changes == 0 and plan.errors == 0 and values == {} and plan.confirm == []
+    assert {r["source_key"]: r["action"] for r in plan.rows} == {
+        "parsed": "unchanged", "doubt": "unchanged", "moved": "unchanged", "conf": "unchanged",
+        "sugg": "skip", "none": "skip"}
+    assert {r["source_key"]: r.get("status") for r in plan.rows if r["action"] == "unchanged"} == {
+        "parsed": "parsed", "doubt": "needs_review", "moved": "needs_review", "conf": "confirmed"}
+    assert await store.apply_import(conn, values, actor="admin:a", confirm_keys=plan.confirm) == []
+    assert not conn.executed and {k: store.status_of(r) for k, r in conn.rows.items()} == before
+
+
+@pytest.mark.asyncio
+async def test_import_confirm_column_confirms_as_is_and_a_changed_value_is_a_staff_entry():
+    conn = FakeConn([
+        _row("p", amount=D("1450"), origin="parsed"),                       # yes on the prefilled row: confirm
+        _row("q", amount=D("700"), origin="parsed", needs_review=True),     # yes on an emptied row: confirm saved
+        _row("s"),                                                          # yes with no saved price: suggestion
+        _row("m", price_raw="On request"),                                  # yes, nothing to confirm: skip
+        _row("c", amount=D("800"), reviewed_at=NOW, reviewed_by="admin:z"),  # yes, already confirmed: unchanged
+        _row("e", amount=D("600"), origin="parsed"),                        # a changed value: staff entry
+        _row("b"),                                                          # a bad Confirm value
+    ])
+    lines = [
+        ImportRow(2, "p", 1450, "USD", "per_person", None, "Yes"),
+        ImportRow(3, "q", None, None, None, None, "x"),
+        ImportRow(4, "s", None, None, None, None, "yes"),
+        ImportRow(5, "m", None, None, None, None, "yes"),
+        ImportRow(6, "c", 800, "USD", "per_person", None, "yes"),
+        ImportRow(7, "e", 650, "USD", "per_person", None, None),
+        ImportRow(8, "b", None, None, None, None, "maybe"),
+    ]
+    plan, values = await store.plan_import(conn, lines)
+    assert [r["action"] for r in plan.rows] == ["confirm", "confirm", "confirm", "skip", "unchanged", "update",
+                                               "error"]
+    assert plan.rows[6]["error"] == "Confirm must be yes or empty" and plan.errors == 1
+    assert plan.confirm == ["p", "q", "s"] and list(values) == ["e"] and plan.changes == 4
+    assert plan.rows[2]["after"] == {"amount": "1450.00", "currency": "USD", "basis": "per_person", "note": None}
+    applied = await store.apply_import(conn, values, actor="admin:a", confirm_keys=plan.confirm)
+    assert [(c.source_key, c.action) for c in applied] == [("e", "imported"), ("p", "confirmed"), ("q", "confirmed"),
+                                                           ("s", "confirmed")]
+    assert all(store.status_of(conn.rows[k]) == "confirmed" for k in "pqse")
+    assert conn.rows["p"]["origin"] == "parsed" and conn.rows["e"]["origin"] == "import"
+    assert store.status_of(conn.rows["m"]) == "missing"
+
+
+def test_confirm_value():
+    for v in ("yes", " YES ", "y", "x", "true", "1", "ok", True):
+        assert store.confirm_value(v) is True
+    for v in (None, "", "  ", "no", "N", False, 0):
+        assert store.confirm_value(v) is False
+    with pytest.raises(ReferencePriceError):
+        store.confirm_value("maybe")
+
+
+def test_export_writes_text_never_a_formula():
+    """AA-1091 review: openpyxl stores a str starting with "=" as a formula; a source text, a tour name or a note such
+    as =HYPERLINK(...) must reach the file as text (and come back unchanged on import)."""
+    item = store.item_of(_row("k", name="=HYPERLINK(\"http://invented.example\",\"x\")", price_raw="=1+1",
+                              amount=D("10"), reviewed_at=NOW, reviewed_by="admin:a", note="=2+2"))
+    content = workbook.export_bytes([item])
+    ws = load_workbook(io.BytesIO(content))["Reference prices"]
+    cells = {ws.cell(row=1, column=i).value: ws.cell(row=2, column=i) for i in range(1, ws.max_column + 1)}
+    for h in ("Tour", "Source price text", "Note"):
+        assert cells[h].data_type == "s", h
+    assert cells["Source price text"].value == "=1+1"
+    assert workbook.read_rows(content)[0].note == "=2+2"
+
+
 # ── workbook ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_export_then_read_round_trip():
@@ -279,10 +363,11 @@ def test_export_then_read_round_trip():
     header = [c.value for c in ws[1]]
     assert header[:11] == ["Key", "Tour", "Country", "Duration", "Live", "Source price text", "Status", "Amount",
                            "Currency", "Basis", "Note"]
-    assert ws.cell(row=2, column=12).value == 1450.0                     # suggested amount of "a"
+    assert header[11] == "Confirm" and ws.cell(row=2, column=12).value is None   # never prefilled
+    assert ws.cell(row=2, column=13).value == 1450.0                     # suggested amount of "a"
     lines = workbook.read_rows(content)
-    assert [(ln.line, ln.source_key, ln.amount, ln.currency, ln.basis, ln.note) for ln in lines] == [
-        (2, "a", None, None, None, None), (3, "b", 900, "USD", "per_person", "Kept")]
+    assert [(ln.line, ln.source_key, ln.amount, ln.currency, ln.basis, ln.note, ln.confirm) for ln in lines] == [
+        (2, "a", None, None, None, None, None), (3, "b", 900, "USD", "per_person", "Kept", None)]
     assert workbook.export_filename(NOW) == "reference-prices-20261112-0800.xlsx"
 
 

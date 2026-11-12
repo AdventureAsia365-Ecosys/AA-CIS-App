@@ -82,9 +82,9 @@ test("linesToShow keeps errors first, then the changes", () => {
   const rows = [
     { line: 2, source_key: "a", action: "create" }, { line: 3, source_key: "b", action: "skip" },
     { line: 4, source_key: "c", action: "error", error: "x" }, { line: 5, source_key: "d", action: "unchanged" },
-    { line: 6, source_key: "e", action: "update" },
+    { line: 6, source_key: "e", action: "update" }, { line: 7, source_key: "f", action: "confirm" },
   ];
-  assert.deepEqual(linesToShow(rows).map((r) => r.line), [4, 2, 6]);
+  assert.deepEqual(linesToShow(rows).map((r) => r.line), [4, 2, 6, 7]);
   assert.equal(linesToShow(rows, 1).length, 1);
 });
 

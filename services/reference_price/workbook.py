@@ -2,10 +2,12 @@
 
 Export: one sheet "Reference prices" (a row per tour of the page's filter: key, tour, country, duration, live, source
 text, status, amount, currency, basis, note, the parser's suggestion) and a sheet "How to" (what each column means and
-the allowed values). The customer-service team fills Amount / Currency / Basis (and Note) and imports the same file.
+the allowed values). The customer-service team fills Amount / Currency / Basis (and Note), or types yes in Confirm to
+confirm a price as it is, and imports the same file. Every text cell is written as a string, never a formula (a
+source text starting with "=" stays text: no formula injection).
 
 Import: the first sheet; columns are found by their header (case and spaces ignored, so a re-ordered sheet works). Key,
-Amount, Currency and Basis are required columns; Note is optional; every other column is ignored. Values are checked by
+Amount, Currency and Basis are required columns; Note and Confirm are optional; every other column is ignored. Values are checked by
 services/reference_price/store.py (plan_import), always as a DRY RUN first. Pure (no I/O besides openpyxl in memory).
 """
 from __future__ import annotations
@@ -28,17 +30,19 @@ MAX_ROWS = 5000
 # (header, item field or callable, width)
 COLUMNS: tuple[tuple[str, int], ...] = (
     ("Key", 38), ("Tour", 48), ("Country", 14), ("Duration", 12), ("Live", 7), ("Source price text", 48),
-    ("Status", 14), ("Amount", 12), ("Currency", 10), ("Basis", 12), ("Note", 32),
+    ("Status", 14), ("Amount", 12), ("Currency", 10), ("Basis", 12), ("Note", 32), ("Confirm", 10),
     ("Suggested amount", 12), ("Suggested currency", 10), ("Suggested basis", 12), ("Parser doubts", 28),
 )
-EDITABLE = ("Amount", "Currency", "Basis", "Note")
+EDITABLE = ("Amount", "Currency", "Basis", "Note", "Confirm")
 REQUIRED = ("key", "amount", "currency", "basis")
 
 HOW_TO = (
     "How to use this file",
     "",
-    "1. Fill Amount, Currency and Basis for each tour you want to price (Note is optional). Leave a row's three cells "
-    "empty to keep that tour as it is.",
+    "1. Fill or change Amount, Currency and Basis for each tour you want to price (Note is optional). A row whose "
+    "values you leave as they are keeps its status: a price CIS read from the source text (Status parsed or "
+    "needs_review) stays unconfirmed. To confirm such a price as it is, type yes in Confirm. On a row with an empty "
+    "price, yes in Confirm saves the Suggested amount / currency / basis as confirmed.",
     "2. Do not change the Key column: it is how the import finds the tour. Other columns are for reading only.",
     "3. In CIS admin > AA Catalogue > Reference prices, choose Import Excel. The first run is always a DRY RUN: it "
     "lists what would change and every row with an error. Fix the errors in the file, then import again and apply.",
@@ -51,7 +55,8 @@ HOW_TO = (
     "A reference price is never a selling price: AA-Booking shows it to staff next to the price its cost sheet "
     "computes, and never quotes it to an agency or a traveller as a contract price.",
     "Suggested amount / currency / basis: what CIS reads in the source price text. Copy them into Amount / Currency / "
-    "Basis when they are right.",
+    "Basis when they are right, or type yes in Confirm.",
+    "Confirm: yes (or empty). A changed Amount / Currency / Basis / Note is always saved as confirmed by you.",
 )
 
 
@@ -67,6 +72,7 @@ def _row(item: dict) -> list:
         item["source_key"], item.get("name"), item.get("country"), item.get("duration"),
         "yes" if item.get("live") else "no", item.get("price_raw"), item.get("status"),
         float(amount) if amount is not None else None, saved.get("currency"), saved.get("basis"), saved.get("note"),
+        None,
         float(sug["amount"]) if sug.get("amount") else None, sug.get("currency"), sug.get("basis"),
         ", ".join(item.get("parse_reasons") or []) or None,
     ]
@@ -89,6 +95,9 @@ def export_bytes(items: Iterable[dict]) -> bytes:
     for item in items:
         ws.append(_row(item))
         n += 1
+        for cell in ws[ws.max_row]:
+            if cell.data_type == "f":     # openpyxl reads a str starting with "=" as a formula: keep it as text
+                cell.data_type = "s"
     ws.freeze_panes = "B2"
     last = max(n + 1, 2)
     col = {h: ws.cell(row=1, column=i).column_letter for i, (h, _) in enumerate(COLUMNS, start=1)}
@@ -96,6 +105,9 @@ def export_bytes(items: Iterable[dict]) -> bytes:
     basis_dv.add(f"{col['Basis']}2:{col['Basis']}{last}")
     amount_dv = DataValidation(type="decimal", operator="greaterThan", formula1="0", allow_blank=True)
     amount_dv.add(f"{col['Amount']}2:{col['Amount']}{last}")
+    confirm_dv = DataValidation(type="list", formula1='"yes"', allow_blank=True)
+    confirm_dv.add(f"{col['Confirm']}2:{col['Confirm']}{last}")
+    ws.add_data_validation(confirm_dv)
     ws.add_data_validation(basis_dv)
     ws.add_data_validation(amount_dv)
     how = wb.create_sheet("How to")
@@ -146,6 +158,7 @@ def read_rows(content: bytes) -> list[ImportRow]:
             raise WorkbookError("The first sheet needs the columns Key, Amount, Currency and Basis (missing: "
                                 + ", ".join(m.capitalize() for m in missing) + ")")
         note_i = index.get("note")
+        confirm_i = index.get("confirm")
         out: list[ImportRow] = []
         for n, raw in enumerate(it, start=2):
             values = tuple(raw or ())
@@ -154,7 +167,8 @@ def read_rows(content: bytes) -> list[ImportRow]:
             key = _cell(values, index["key"])
             out.append(ImportRow(line=n, source_key=str(key).strip() if key is not None else "",
                                  amount=_cell(values, index["amount"]), currency=_cell(values, index["currency"]),
-                                 basis=_cell(values, index["basis"]), note=_cell(values, note_i)))
+                                 basis=_cell(values, index["basis"]), note=_cell(values, note_i),
+                                 confirm=_cell(values, confirm_i)))
             if len(out) > MAX_ROWS:
                 raise WorkbookError(f"The file has more than {MAX_ROWS} rows; split it")
         return out

@@ -390,6 +390,7 @@ class ImportRow:
     currency: Any
     basis: Any
     note: Any = None
+    confirm: Any = None             # the optional Confirm column: "yes" confirms the row's price as it is
 
 
 @dataclass
@@ -397,6 +398,7 @@ class ImportPlan:
     rows: list[dict] = field(default_factory=list)   # per line: line, source_key, action, error?, before?, after?
     errors: int = 0
     changes: int = 0
+    confirm: list[str] = field(default_factory=list)  # keys whose saved price / suggestion a "yes" confirms as is
 
     def summary(self) -> dict:
         counts: dict[str, int] = {}
@@ -405,14 +407,33 @@ class ImportPlan:
         return {"rows": len(self.rows), "errors": self.errors, "changes": self.changes, "actions": counts}
 
 
-def _same(saved: Optional[dict], v: Values, row: dict) -> bool:
+_YES = frozenset({"yes", "y", "x", "true", "1", "confirm", "confirmed", "ok"})
+_NO = frozenset({"", "no", "n", "false", "0"})
+
+
+def confirm_value(value: Any) -> bool:
+    """The Confirm cell: True for yes (y, x, true, 1, ok), False when empty or no; ReferencePriceError(422) else."""
+    text = "" if value is None or value is False else str(value).strip().lower()
+    if value is True or text in _YES:
+        return True
+    if text in _NO:
+        return False
+    raise ReferencePriceError(422, "Confirm must be yes or empty")
+
+
+def _same(saved: Optional[dict], v: Values) -> bool:
+    """The line repeats the saved values (an export prefills them): it is not a staff entry, whatever the status."""
     return (saved is not None and Decimal(saved["amount"]) == v.amount and saved["currency"] == v.currency
-            and saved["basis"] == v.basis and (saved["note"] or None) == v.note and status_of(row) == "confirmed")
+            and saved["basis"] == v.basis and (saved["note"] or None) == v.note)
 
 
 async def plan_import(conn, lines: list[ImportRow]) -> tuple[ImportPlan, dict[str, Values]]:
     """Validate every line against the scope: an unknown key, a bad value or a key twice is an error; a line with no
-    amount, currency and basis is skipped; a line equal to a confirmed saved price is unchanged."""
+    amount, currency and basis is skipped. A line whose values equal the saved price is unchanged WHATEVER the status
+    (the export prefills Amount / Currency / Basis / Note with the saved price, also an unreviewed parse: re-importing
+    the file must not confirm prices nobody looked at, AA-1091 review); only a value that differs is a staff entry
+    (saved as confirmed). Confirm = yes on such a line, or on a line left empty with a parser suggestion, confirms the
+    saved price / the suggestion as it is (store.confirm, origin kept)."""
     plan, values = ImportPlan(), {}
     keys = [str(ln.source_key or "").strip() for ln in lines]
     rows = {r["source_key"]: dict(r) for r in await conn.fetch(MANY_SQL, [k for k in keys if k])}
@@ -420,34 +441,59 @@ async def plan_import(conn, lines: list[ImportRow]) -> tuple[ImportPlan, dict[st
     for ln, k in zip(lines, keys):
         entry: dict[str, Any] = {"line": ln.line, "source_key": k}
         blank = all(v is None or str(v).strip() == "" for v in (ln.amount, ln.currency, ln.basis))
+        try:
+            yes = confirm_value(ln.confirm)
+        except ReferencePriceError as e:
+            yes, bad_confirm = False, e.detail
+        else:
+            bad_confirm = None
         if not k:
-            if blank:
+            if blank and not yes and bad_confirm is None:
                 continue
             entry.update(action="error", error="Key is empty")
         elif k in seen:
             entry.update(action="error", error="This key is on an earlier line too")
         elif k not in rows:
             entry.update(action="error", error="No active AA tour has this key")
-        elif blank:
-            entry.update(action="skip", name=rows[k].get("src_name"))
+        elif bad_confirm is not None:
+            entry.update(action="error", error=bad_confirm, name=rows[k].get("src_name"))
         else:
             row = rows[k]
             entry["name"] = row.get("src_name")
-            try:
-                v = validate(ln.amount, ln.currency, ln.basis, ln.note)
-            except ReferencePriceError as e:
-                entry.update(action="error", error=e.detail)
-            else:
-                saved = saved_of(row)
-                after = {"amount": str(v.amount), "currency": v.currency, "basis": v.basis, "note": v.note}
-                entry["before"] = _snapshot(row)
-                entry["after"] = after
-                if _same(saved, v, row):
-                    entry["action"] = "unchanged"
+            saved = saved_of(row)
+            status = status_of(row)
+            if blank:
+                parsed = rp.parse(row.get("price_raw")) if saved is None else None
+                if not yes or status == "confirmed" or (saved is None and not parsed.found):
+                    entry["action"] = "unchanged" if yes and status == "confirmed" else "skip"
                 else:
-                    entry["action"] = "create" if saved is None else "update"
-                    values[k] = v
+                    entry["before"] = _snapshot(row)
+                    entry["after"] = ({k2: saved[k2] for k2 in ("amount", "currency", "basis", "note")} if saved
+                                      else {"amount": str(parsed.amount), "currency": parsed.currency,
+                                            "basis": parsed.basis, "note": None})
+                    entry["action"] = "confirm"
+                    plan.confirm.append(k)
                     plan.changes += 1
+            else:
+                try:
+                    v = validate(ln.amount, ln.currency, ln.basis, ln.note)
+                except ReferencePriceError as e:
+                    entry.update(action="error", error=e.detail)
+                else:
+                    entry["before"] = _snapshot(row)
+                    entry["after"] = {"amount": str(v.amount), "currency": v.currency, "basis": v.basis,
+                                      "note": v.note}
+                    if not _same(saved, v):
+                        entry["action"] = "create" if saved is None else "update"
+                        values[k] = v
+                        plan.changes += 1
+                    elif yes and status != "confirmed":
+                        entry["action"] = "confirm"
+                        plan.confirm.append(k)
+                        plan.changes += 1
+                    else:
+                        entry["action"] = "unchanged"
+                        entry["status"] = status   # e.g. still "parsed": shown so nobody reads it as confirmed
         if k:
             seen.add(k)
         if entry["action"] == "error":
@@ -456,5 +502,12 @@ async def plan_import(conn, lines: list[ImportRow]) -> tuple[ImportPlan, dict[st
     return plan, values
 
 
-async def apply_import(conn, values: dict[str, Values], *, actor: str) -> list[Change]:
-    return [await save(conn, k, v, actor=actor, origin="import") for k, v in values.items()]
+async def apply_import(conn, values: dict[str, Values], *, actor: str,
+                       confirm_keys: Iterable[str] = ()) -> list[Change]:
+    """The staff entries of the file (origin import, confirmed), then the Confirm = yes keys (store.confirm)."""
+    changes = [await save(conn, k, v, actor=actor, origin="import") for k, v in values.items()]
+    keys = list(confirm_keys)
+    for i in range(0, len(keys), MAX_BULK):
+        done, _ = await confirm(conn, keys[i:i + MAX_BULK], actor=actor)
+        changes.extend(done)
+    return changes

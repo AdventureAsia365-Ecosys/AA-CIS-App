@@ -146,6 +146,15 @@ def test_export_and_import_with_dry_run(make_client):
     r = client.post("/admin/reference-prices/import", json={"file_base64": good, "dry_run": False}, headers=_h())
     assert r.json()["applied"] == 2 and conn.rows["b"]["origin"] == "import"
     assert [a[2] for a in conn.audit] == ["reference_price.imported"] * 2
+    # the exported file as it is: the unreviewed parse "c" stays unreviewed; Confirm = yes then confirms it as is
+    exported = client.get("/admin/reference-prices/export?status=all", headers=_h()).json()["content_base64"]
+    r = client.post("/admin/reference-prices/import", json={"file_base64": exported, "dry_run": False}, headers=_h())
+    assert r.status_code == 200 and r.json()["applied"] == 0 and conn.rows["c"]["reviewed_by"] is None
+    yes = _file([["Key", "Amount", "Currency", "Basis", "Confirm"], ["c", 900, "USD", "per_person", "yes"]])
+    r = client.post("/admin/reference-prices/import", json={"file_base64": yes, "dry_run": False}, headers=_h())
+    assert r.json()["summary"]["actions"] == {"confirm": 1} and r.json()["applied"] == 1
+    assert conn.rows["c"]["reviewed_by"] and conn.rows["c"]["origin"] == "parsed"
+    assert [a[2] for a in conn.audit][-1] == "reference_price.confirmed"
     assert client.post("/admin/reference-prices/import", json={"file_base64": "!!"}, headers=_h()).status_code == 400
     not_xlsx = base64.b64encode(b"plain text").decode()
     assert client.post("/admin/reference-prices/import", json={"file_base64": not_xlsx},

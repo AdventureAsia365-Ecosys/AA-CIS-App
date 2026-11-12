@@ -173,7 +173,10 @@ export function canAccept(item: RefItem): boolean {
 export interface ImportLine {
   line: number;
   source_key: string;
-  action: "create" | "update" | "unchanged" | "skip" | "error";
+  /** confirm: Confirm = yes on a row, its saved price / the parser's suggestion is confirmed as it is. */
+  action: "create" | "update" | "confirm" | "unchanged" | "skip" | "error";
+  /** On an unchanged line: the price's status, which a re-import never changes (e.g. still "parsed"). */
+  status?: RefStatus;
   name?: string | null;
   error?: string;
   before?: Record<string, unknown> | null;
@@ -187,10 +190,13 @@ export interface ImportResult {
   rows: ImportLine[];
 }
 
+/** The import actions listed after a DRY RUN (the others are only counted). */
+export const SHOWN_ACTIONS: readonly ImportLine["action"][] = ["error", "create", "update", "confirm"];
+
 /** The lines worth showing after a DRY RUN: errors first, then the changes (unchanged / skipped lines are counted). */
 export function linesToShow(rows: ImportLine[], max = 200): ImportLine[] {
-  const order = { error: 0, create: 1, update: 2, unchanged: 3, skip: 4 } as const;
-  return rows.filter((r) => r.action === "error" || r.action === "create" || r.action === "update")
+  const order = { error: 0, create: 1, update: 2, confirm: 3, unchanged: 4, skip: 5 } as const;
+  return rows.filter((r) => SHOWN_ACTIONS.includes(r.action))
     .sort((a, b) => order[a.action] - order[b.action] || a.line - b.line)
     .slice(0, max);
 }

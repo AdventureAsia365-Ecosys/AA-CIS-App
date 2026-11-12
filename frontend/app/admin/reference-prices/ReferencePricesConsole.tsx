@@ -43,6 +43,7 @@ import {
   FILTERS,
   MAX_IMPORT_BYTES,
   MAX_NOTE,
+  SHOWN_ACTIONS,
   canAccept,
   draftChanged,
   draftOf,
@@ -456,11 +457,11 @@ function ImportModal({ onClose, onApplied }: { onClose: () => void; onApplied: (
         const r = c.row.original;
         return r.action === "error"
           ? <span style={{ color: K.danger }}>{t("a_error")}: {r.error}</span>
-          : <span>{t(r.action === "create" ? "a_create" : "a_update")}
+          : <span>{t(r.action === "create" ? "a_create" : r.action === "confirm" ? "a_confirm" : "a_update")}
             {r.after && `: ${priceText(t, r.after.amount, r.after.currency, r.after.basis)}`}</span>;
       } },
   ], [t]);
-  const hidden = result ? result.rows.filter((r) => ["error", "create", "update"].includes(r.action)).length - shown.length : 0;
+  const hidden = result ? result.rows.filter((r) => SHOWN_ACTIONS.includes(r.action)).length - shown.length : 0;
   const canApply = !!result && result.summary.errors === 0 && result.summary.changes > 0 && !busy;
 
   return (
