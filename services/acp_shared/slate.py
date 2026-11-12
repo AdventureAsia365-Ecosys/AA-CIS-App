@@ -900,7 +900,10 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         thin = await _fetch_thin_walk_segments(tenant_id, conn, segments, enabled_channels)
         # AA-1081 — the Blog minimum seed (off unless T7_BLOG_MIN_SEED_WORDS is set): a short seed is skipped like a
         # thin one on that Channel and stays on the other Channels' queues.
-        short = await _fetch_short_blog_seeds(tenant_id, conn, segments, enabled_channels, held, thin)
+        seed_floor = blog_seed.seed_floor()
+        seed_words_of: dict[str, int] = {}
+        short = await _fetch_short_blog_seeds(tenant_id, conn, segments, enabled_channels, held, thin,
+                                              measured_out=seed_words_of, floor=seed_floor)
         skip = {c: frozenset((thin or {}).get(c, frozenset()) | short.get(c, frozenset()))
                 for c in set(thin or {}) | set(short)}
         # AA-1081 — every adopted tour gets a Blog topic when it has a free candidate (cover pass), and a typed reason
@@ -977,7 +980,12 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         else:
             kept_ids = {c.segment_id for c in segments}   # Debate cut mode drops; rank mode keeps every one
             blog_coverage = {
-                "status": "ok", "min_seed_words": blog_seed.min_seed_words(),
+                "status": "ok", "min_seed_words": seed_floor["min_seed_words"],
+                # S279 (AA-1077) — the floor's parts and, per Subject skipped on Blog for its seed, why (admin only)
+                "seed_floor": seed_floor,
+                "skipped": blog_skipped_subjects(
+                    "blog", segments, (thin or {}).get("blog", frozenset()), short.get("blog", frozenset()),
+                    seed_words_of, seed_floor),
                 "short_seed": len(short.get("blog", ())),
                 "tours": blog_tour_coverage(
                     "blog", coverage_in[0], segments, unseeded,
@@ -1085,12 +1093,17 @@ async def _fetch_thin_walk_segments(tenant_id: UUID, conn, segments: list[Candid
 
 async def _fetch_short_blog_seeds(tenant_id: UUID, conn, segments: list[Candidate], channels: list[str],
                                   held: dict[str, HeldSubjects], thin: dict[str, frozenset[str]],
-                                  ) -> dict[str, frozenset[str]]:
+                                  measured_out: Optional[dict[str, int]] = None,
+                                  floor: Optional[dict] = None) -> dict[str, frozenset[str]]:
     """AA-1081 (AA-1077 memo, option C) — {channel: Segment ids} for the `takes_route` Channels (Blog) among
     `channels`: the Bar-clearing, not held, not thin candidates whose Blog seed (`blog_seed.blog_seed_words`: the seed
-    atom's seed + the walk the pick would resolve) is under `T7_BLOG_MIN_SEED_WORDS`. Off (the default, the setting
-    unset or 0) -> {} and no read. A candidate whose seed cannot be measured is kept (logged), like Debate's errors."""
-    minimum = blog_seed.min_seed_words()
+    atom's seed + the walk the pick would resolve) is under the Blog seed floor (`blog_seed.seed_floor()`: the flat
+    `T7_BLOG_MIN_SEED_WORDS`, and since S279 at least the floor sized from the F4 blog floor and the measured chars per
+    seed word). Off (the flat setting unset or 0) -> {} and no read. A candidate whose seed cannot be measured is kept
+    (logged), like Debate's errors. `measured_out` receives {segment_id: seed words} of every measured candidate (the
+    per-Subject skip report); `floor` is the floor to apply (default the setting)."""
+    floor = floor if floor is not None else blog_seed.seed_floor()
+    minimum = int(floor.get("min_seed_words") or 0)
     walk_channels = [c for c in channels if CHANNEL_BARS[c]["takes_route"]]
     if minimum <= 0 or not walk_channels:
         return {}
@@ -1120,10 +1133,35 @@ async def _fetch_short_blog_seeds(tenant_id: UUID, conn, segments: list[Candidat
                     logger.warning("slate_blog_seed_measure_failed", tenant_id=str(tenant_id),
                                    segment_id=c.segment_id, error=str(exc))
         out[channel] = frozenset(s for s, w in words_of.items() if w < minimum)
+    if measured_out is not None:
+        measured_out.update(words_of)
     short_all = set().union(*out.values()) if out else set()
     logger.info("slate_blog_short_seed_skipped", tenant_id=str(tenant_id), minimum=minimum,
-                measured=len(words_of), skipped=len(short_all), segment_ids=sorted(short_all)[:50])
+                flat=floor.get("flat"), sized=floor.get("sized"), measured=len(words_of), skipped=len(short_all),
+                segment_ids=sorted(short_all)[:50])
     return out
+
+
+def blog_skipped_subjects(channel: str, segments: list[Candidate], thin: frozenset[str], short: frozenset[str],
+                          words: dict[str, int], floor: dict) -> list[dict]:
+    """S279 (AA-1077) — per Blog candidate the slate did not propose on Blog for its seed, why: `thin_walk` (the
+    walk is too thin), `seed_below_min` (under the flat Blog minimum seed) or `seed_below_length_floor` (clears the
+    flat floor but cannot carry the F4 blog floor at the measured chars per seed word), with its place, tours, seed
+    words and the floor it missed. Admin only (job result `blog_coverage.skipped`); the tenant read never shows it.
+    Sorted by reason, then place. Pure."""
+    rows = []
+    for c in segments:
+        sid = c.segment_id
+        if not sid or (sid not in thin and sid not in short) or not _clears_bar(channel, c)[0]:
+            continue
+        w = words.get(sid)
+        reason = blog_seed.SKIP_THIN_WALK if sid in thin else (blog_seed.skip_reason(w, floor)
+                                                               or blog_seed.SKIP_BELOW_MIN_SEED)
+        rows.append({"segment_id": sid, "place": c.place, "tour_ids": list(c.tour_ids), "reason": reason,
+                     "seed_words": w, "min_seed_words": floor.get("min_seed_words") or 0})
+    order = {r: i for i, r in enumerate(blog_seed.SKIP_REASONS)}
+    return sorted(rows, key=lambda r: (order.get(r["reason"], len(order)), (r["place"] or "").casefold(),
+                                       r["segment_id"]))
 
 
 T7_SLATE_KIND = "t7_slate"
@@ -1622,5 +1660,5 @@ __all__ = [
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",
     "BAR_CLEARED", "BAR_MISS_REASONS", "bar_misses", "bar_status", "bar_status_counts",
-    "NO_TOPIC_REASONS", "blog_tour_coverage", "tenant_blog_topics",
+    "NO_TOPIC_REASONS", "blog_skipped_subjects", "blog_tour_coverage", "tenant_blog_topics",
 ]

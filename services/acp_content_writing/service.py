@@ -111,6 +111,7 @@ from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (
 from services.acp_content_writing import brief_grounding  # AA-790 round 9 (writer_input marker)
 from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate  # AA-1000 (regression guard)
 from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
+from services.acp_content_writing import repeat_drop  # AA-1077 S279 (blog repeat drop)
 from services.content_generation.batch_prompt import prompt_version_of
 from services.quality.registry import threshold
 
@@ -2748,7 +2749,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                                                               ignore=brand_ignore, moments=hyg.moments,
                                                               trip_ctx=trip_ctx)
             content_text, trim_log, _ = step_guard("length_trim", before, content_text, trim_log, settle=False)
-            first_line_log = first_line_log + tf_log + final_log + trim_log
+            # AA-1077 (S279) — a blog's exact / near-exact repeat the final pass could not delete (it keeps a changed
+            # word) is dropped here, before F13 reads it, when the blog stays at or above the F4 floor; else F13
+            # holds it as before. Deterministic, under the step contract (compared as the gates read it).
+            repeat_log: list[str] = []
+            if channel == "blog" and repeat_drop.enabled():
+                before = content_text
+                content_text, repeat_log = repeat_drop.drop_repeats(content_text, hyg)
+                content_text, repeat_log, _ = step_guard("repeat_drop", before, content_text, repeat_log,
+                                                         settle=False)
+            first_line_log = first_line_log + tf_log + final_log + trim_log + repeat_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
