@@ -30,18 +30,34 @@ tenants in S275, yet no call was served from the cache.
   N extra short connections run at once during the pass.
 - **Failure rule unchanged.** A failing judge call (malformed reply, refusal, budget stop) makes that one candidate
   pass with `brand_fit_source="error"` and its billed cost row; the other calls go on.
-- **Why the cache missed (finding).** The cache key `(tenant, segment_id, brand_version)` has no model or route
-  version in it, and no TTL: neither explains a full miss. The cache is emptied explicitly by A3 (AA-645 step 0,
-  T13): `_a3_atomize_chain` dropped the cache rows of **every** Segment of the tour (all tenants, plus the Routes
-  through them) after **any** atomize that was not `skipped`. Day fingerprints are keyed per content version
-  (`atomize_day_fingerprint.tenant_tour_version_id`), so a new published version of a tour re-reads every day
-  (status `success`) even when the itinerary text gives back the very same atoms (atom ids are content hashes of the
-  place and action). Any re-atomize of the audit tenants' tours between S275 and S278 (the recompose of the served
-  Masters, path A-new, publishes a new version per tour and A3 re-atomize follows; a rerun does the same) empties the
-  cache of every Segment of those tours for every tenant, and the next `t7_slate` re-judges all of them. Not read live
-  from this lane (no DB access): the `a3_atomize` job results since S275 (`brand_fit_cache_cleared` > 0 on those
-  tours) confirm it; a brand-version change of the tenants is the other possible cause (the orchestrator's read-only
-  check). Either way the clear is a defect: the rule meant "the atom text changed", the code checked "atomize ran".
+- **Why the cache missed: NOT confirmed live yet (no DB access from the lane).** A brand-fit cache row is deleted
+  in one place only, the A3 atomize clear (AA-645 step 0, T13, `export.handler.clear_brand_fit_cache`; plus tenant
+  erasure); `segment_gc` keeps every Segment that has a cache row. So three other causes leave the old rows in place
+  and are told apart by what is still in the table:
+  1. **brand version** — the key is `(tenant, segment_id, brand_version)`; a new active brand row (a new
+     `version` in `shared.tenant_brand_rules`, the row `_resolve_brand_rule` picks) makes every lookup miss while the
+     old rows stay under the old version. That miss is correct behaviour and this fix would not change it.
+  2. **Segment id churn** — the slow run judged ids the earlier run never saw: a Segment minted after it, or one an
+     alias merge made canonical (AA-857 / AA-988 re-mint). Also correct behaviour.
+  3. **atomize clear** (the code defect fixed here) — `_a3_atomize_chain` dropped the rows of **every** Segment of
+     the tour (all tenants, plus the Routes through them) after **any** atomize that was not `skipped`. Day
+     fingerprints are keyed per content version (`atomize_day_fingerprint.tenant_tour_version_id`), so a new
+     published version re-reads every day (status `success`) even when the text gives back the same atoms (atom ids
+     are content hashes of the place and action). A recompose of the served Masters (path A-new) or a rerun between
+     S275 and S278 therefore empties the cache of those tours' Segments for every tenant.
+  4. otherwise **not cached before** — the earlier run never stored a score (not a candidate then, call failed).
+  The check is `scripts/quality/diag_aa1081_debate_cache_miss.py` ($0, read-only session, asyncpg + stdlib only so it
+  runs as one file through the S3-mediated ECS exec as `cis_app`). Per tenant of the slow run it takes the window from
+  the tenant's previous succeeded `t7_slate` to the slow run, and for each Segment the slow run judged (its cache rows
+  written since the run start) names ONE cause in the order above: an older row of the tenant under another
+  brand version; the Segment created or merged into in the window; a tour member of it whose `a3_atomize` job in the
+  window has `brand_fit_cache_cleared` > 0; else not cached before. It also prints the brand rows and current
+  version, the cache rows per brand version, the `t7_debate_judge` calls per job and the window's atomize totals.
+  Whatever the verdict, the atomize clear is a defect on its own: the rule meant "the atom text changed", the code
+  checked "atomize ran". If the verdict is `brand_version` or `new_or_merged_segment`, the S278 slowness was correct
+  re-judging, and the concurrency half of this slice is what fixes the run time.
+- **Confirmed cause (orchestrator fills in after the check):** _pending_ — record the summary `by_cause` per tenant
+  and the verdict here before merge.
 - **The fix: clear only Segments that changed.** `export.handler.segment_states()` reads, for the tour's Segments,
   the label (`canonical_place`, `canonical_action`: the judge's topic) and every member atom id (any tour: the judge's
   evidence) before and after the segment stage; `changed_segments()` names the Segments whose label or member set
@@ -64,6 +80,8 @@ tenants in S275, yet no call was served from the cache.
   always present, 0 when nothing changed).
 - `scripts/quality/bench_aa1081_debate_concurrency.py` (new, $0, force-added): the production `assess_candidates`
   over 320 invented misses with a fake judge.
+- `scripts/quality/diag_aa1081_debate_cache_miss.py` (new, $0, read-only, force-added): the cache-miss cause check
+  above; tests `tests/unit/quality/test_aa1081_cache_miss_diag.py`, `tests/integration/test_aa1081_cache_miss_diag_sql.py`.
 - Tests: `tests/unit/test_aa1081_debate_speed.py`, `tests/integration/test_aa1081_segment_states_sql.py`; the
   expected atomize outcome in `test_aa526_a3_atomize_trigger.py` and the skipped-atomize test in
   `test_aa645_step0_publish_atomize.py` follow the new keys.
@@ -91,3 +109,8 @@ tenants in S275, yet no call was served from the cache.
   changes atoms still re-judges the changed Segments only.
 - Before / after evidence lives in the jobs: `shared.job.result` of `a3_atomize` (`brand_fit_cache_cleared`,
   `brand_fit_segments_changed`) and of `t7_slate` (`segments_seen`), and the `debate_judged` log line of the worker.
+- Running the cause check (orchestrator, read-only): upload `scripts/quality/diag_aa1081_debate_cache_miss.py` to the
+  scripts bucket, presign, then ECS exec on the api task:
+  `python3 /tmp/s.py --run-start <first S278 t7_slate created_at, ISO>` (tenants default to every tenant with a
+  `t7_slate` job since then; `--tenant <uuid>` narrows). Read `summary.by_cause` and each tenant's `verdict`,
+  `brand_version_changed`, `current_brand_version` vs `cache_by_version`, and `judge_calls` of the earlier slate.
