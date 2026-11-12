@@ -15,7 +15,9 @@ from tests.unit.test_aa458_publish import (PIECE_ID, TENANT, _claimed, _integ_ro
 
 
 @pytest.mark.asyncio
-async def test_held_piece_publishes_like_an_approved_one():
+async def test_held_piece_publishes_on_the_owners_publish_anyway():
+    """AA-770 kept the content with the tenant; AA-1088 (M3) makes the publish of a held piece the account owner's
+    explicit choice (test_aa1088_held_publish.py covers the refusal and the audit row)."""
     write_result = {"publish_id": str(uuid.uuid4()), "status": "published", "external_id": "7",
                     "external_url": "https://b/7", "published_at": datetime(2026, 10, 13, tzinfo=timezone.utc),
                     "last_error": None}
@@ -26,7 +28,7 @@ async def test_held_piece_publishes_like_an_approved_one():
                                                   cms_type="wordpress"))
     with patch.object(mod, "_get_secret", return_value={"wp_url": "https://b", "username": "u", "app_password": "p"}), \
             patch.object(mod, "claim", _claimed()), patch.object(WordPressAdapter, "create_post", create):
-        result = await mod.publish(PIECE_ID, _make_request(pool), TENANT)
+        result = await mod.publish(PIECE_ID, _make_request(pool), TENANT, mod.PublishBody(publish_anyway=True))
     assert result["success"] is True and create.await_count == 1
 
 
