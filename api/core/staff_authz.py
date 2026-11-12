@@ -138,6 +138,12 @@ NOTIFICATIONS_READ = "notifications.read"
 # (a piece or version of another tenant is a 404); labels, place cards, compliance and every write stay
 # tenant_content.read / quality.write.
 TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
+# AA-1091 (S278, tech lead: "the customer-service team must be able to enter prices in CIS easily") — the structured
+# reference price of the AA tours (AA Catalogue › Reference prices, /admin/reference-prices; CIS 401). Read: the
+# catalogue roles, customer_success and finance (not the read-only viewer, AA-878: refused on every listed read); write (inline edit, accept, parse, Excel import): admin, content_lead
+# and customer_success (the customer-service team's CIS role). Never a selling price (root ADR 0005 d7).
+REFERENCE_PRICE_READ = "reference_price.read"
+REFERENCE_PRICE_WRITE = "reference_price.write"
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
@@ -153,15 +159,16 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         STAFF_READ, AUDIT_READ, ALERTS_WRITE,
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
-        TENANT_VIEW_AS, NOTIFICATIONS_READ,
+        TENANT_VIEW_AS, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
-        CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ,
+        CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ, REFERENCE_PRICE_READ,
+        REFERENCE_PRICE_WRITE,
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
-    "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ},
+    "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ},
     # Tenant QA W, AA Catalogue R, Writing Lab R.
     "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ,
                             NOTIFICATIONS_READ}),
@@ -171,7 +178,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     # the Tenant QA lists and details of the own book (tenant_content.book.read).
     "customer_success": frozenset({
         TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_BOOK_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND,
-        TENANT_VIEW_AS, NOTIFICATIONS_READ, TENANT_CONTENT_BOOK_READ,
+        TENANT_VIEW_AS, NOTIFICATIONS_READ, TENANT_CONTENT_BOOK_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE,
     }),
     # Tenants directory R / Tenant 360 R of the own book and the pool; sends an existing non-owner invitation again
     # (tenant.member.resend), nothing else. Never plans, billing, usage, cost, Tenant QA or AI spend (no
@@ -179,7 +186,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     # view-as of the own book and the pool (tenant.view_as; matrix "R (own + pool)").
     "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_RESEND, TENANT_VIEW_AS, NOTIFICATIONS_READ}),
     # Billing columns and plans of every tenant, plan change and suspend for debt (field-level), AI & spend R.
-    "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ, NOTIFICATIONS_READ}),
+    "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ}),
     # AI & spend W, Writing Lab W, AA Catalogue R. Slice 2: the tenant text of the Writing Lab, logged per read
     # (lab.tenant_text.read; never tenant_content.read, which would open Tenant QA and Content Trace too).
     "ai_ops": frozenset({
@@ -569,6 +576,16 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/facts"): QUALITY_WRITE,
     ("PATCH", "/admin/facts/{fact_id}"): QUALITY_WRITE,
     ("DELETE", "/admin/facts/{fact_id}"): QUALITY_WRITE,
+    # AA-1091 — AA Catalogue › Reference prices (the customer-service team's CIS page; customer_success has no
+    # content.read, so every read has an entry too)
+    ("GET", "/admin/reference-prices"): REFERENCE_PRICE_READ,
+    ("GET", "/admin/reference-prices/export"): REFERENCE_PRICE_READ,
+    ("GET", "/admin/reference-prices/{source_key}/history"): REFERENCE_PRICE_READ,
+    ("PATCH", "/admin/reference-prices/{source_key}"): REFERENCE_PRICE_WRITE,
+    ("DELETE", "/admin/reference-prices/{source_key}"): REFERENCE_PRICE_WRITE,
+    ("POST", "/admin/reference-prices/accept"): REFERENCE_PRICE_WRITE,
+    ("POST", "/admin/reference-prices/parse"): REFERENCE_PRICE_WRITE,
+    ("POST", "/admin/reference-prices/import"): REFERENCE_PRICE_WRITE,
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)

@@ -78,6 +78,13 @@ class PlatformAuditAction:
     FACT_CREATED = "fact.created"
     FACT_UPDATED = "fact.updated"
     FACT_DELETED = "fact.deleted"
+    # AA-1091 — the structured reference price of an AA tour (/admin/reference-prices); resource_type
+    # "tour_reference_price", resource_id the catalog key, details before / after (amount, currency, basis, ...).
+    REFERENCE_PRICE_SAVED = "reference_price.saved"          # inline edit
+    REFERENCE_PRICE_CONFIRMED = "reference_price.confirmed"  # accept (a saved price or the parser's suggestion)
+    REFERENCE_PRICE_CLEARED = "reference_price.cleared"
+    REFERENCE_PRICE_PARSED = "reference_price.parsed"        # "Parse source texts" (not reviewed)
+    REFERENCE_PRICE_IMPORTED = "reference_price.imported"    # Excel import (applied, not the DRY RUN)
 
 
 class AdminAuditAction:
