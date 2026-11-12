@@ -143,7 +143,8 @@ async def export_reference_prices(request: Request, status: str = _StatusQ, coun
 
 
 @router.post("/admin/reference-prices/accept")
-async def accept_reference_prices(body: RefPriceAcceptBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+async def accept_reference_prices(body: RefPriceAcceptBody, request: Request,
+                                  x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
         async with _pool(request).acquire() as conn, conn.transaction():
@@ -158,7 +159,8 @@ async def accept_reference_prices(body: RefPriceAcceptBody, request: Request, x_
 
 
 @router.post("/admin/reference-prices/parse")
-async def parse_reference_prices(body: RefPriceParseBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+async def parse_reference_prices(body: RefPriceParseBody, request: Request,
+                                 x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
         async with _pool(request).acquire() as conn, conn.transaction():
@@ -172,7 +174,8 @@ async def parse_reference_prices(body: RefPriceParseBody, request: Request, x_ad
 
 
 @router.post("/admin/reference-prices/import")
-async def import_reference_prices(body: RefPriceImportBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+async def import_reference_prices(body: RefPriceImportBody, request: Request,
+                                  x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
         content = base64.b64decode(body.file_base64, validate=True)
