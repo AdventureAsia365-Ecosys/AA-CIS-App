@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from _later_deployments import set_later_profiles_aside  # noqa: E402
 
 M367 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                     "367_llm_candidate_models_probe_state.sql")
@@ -32,10 +33,16 @@ SET_376_ASIDE = ("UPDATE shared.llm_model_catalog SET enabled = false, updated_b
                  "blocked_reason = 'Candidate (CIS 367): not routed. Enable after the availability sweep answers and "
                  "an approved trial.' WHERE model_key IN ('opus-4-6', 'opus-4-5') "
                  "AND updated_by = 'migration-376-aa1042'")
+# AA-1095 (S278): CIS 406 gives four of the candidates (opus-4-6, gpt-6-sol, gpt-6.1-sol, gpt-6.1-terra) an acc1
+# profile next to their acc3 one; this module checks the rows as 367 left them, so that key leaves too
+# (tests/integration/_later_deployments.py) and 406 is re-applied at the end.
+M406 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "406_llm_acc1_bedrock_connection.sql")
 
 
 def _run(c):
     c.execute(SET_376_ASIDE)
+    set_later_profiles_aside(c, 367)
     c.execute(open(M367, encoding="utf-8").read())
 
 
@@ -51,6 +58,7 @@ def cur():
         c.execute("ROLLBACK")
         _run(c)
         c.execute(open(M376, encoding="utf-8").read())      # back to the post-376 state the later modules see
+        c.execute(open(M406, encoding="utf-8").read())      # and 406's acc1 profiles
         conn.close()
 
 

@@ -99,13 +99,62 @@ def extend_target_chars() -> int:
     return target_chars()
 
 
+# AA-1077 round 2 (S278 paid trial, 6610ac8d) — the short rewrite was told to lengthen "from the CONTENT SEED, its
+# Place background and the FACTS lines" and wrote "The source notes name deer, birds, leopards…" (held F13_leak). No
+# instruction text the model may echo names where facts come from without this rule next to it.
+NO_SOURCE_MENTION = ('never mention where a fact comes from (no "the source", "the notes", "the seed", "the facts" or '
+                     '"the itinerary says"): state the fact itself')
+
+
 def short_rewrite_target() -> str:
     """S278 — what a blog's F4-short rewrite is told to reach (service._repair_feedback appends it to the violation, as
-    the over-max side gets its cut target): the target, never the floor the violation names."""
+    the over-max side gets its cut target): the target, never the floor the violation names. Round 2: the length is
+    measured AFTER the other fixes (a rewrite told to cut 6 sentences and lengthen came back shorter, S278 73e6a233),
+    and no source label (NO_SOURCE_MENTION)."""
     most = writer_words()[2]
-    return (f" — lengthen the piece to at least {target_chars():,} characters (about {target_words():,} "
-            f"words, never more than {most:,}), not just to the floor: give the richest sections more depth from the "
-            "CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler")
+    return (f" — after every fix above, the piece must still be at least {target_chars():,} characters (about "
+            f"{target_words():,} words, never more than {most:,}), not just at the floor: give the richest sections "
+            "more depth with the facts you were given that the piece does not use yet, their place background and the "
+            f"FAQ; never invented facts or filler; {NO_SOURCE_MENTION}")
+
+
+# AA-1077 round 2 — a violation whose fix may delete its sentence ("say it is optional or cut it", "cut it or say
+# something new", "rewrite or cut it", F1 "remove that number"). On a blog under the floor a cut leaves a hole the
+# length check then holds on (S278 73e6a233: 6 F17 cuts + 1 F13_repeat cut, 3,957 → 3,546 chars).
+_CUT_RE = re.compile(r"\bcut it\b|\bor cut\b|\bremove\b|\bdelete\b", re.I)
+REPLACE_NOT_DELETE = ("; the piece is short: if you cut this sentence, fill its place in the same section with another "
+                      "fact you were given, never leave the section shorter")
+
+
+# The sentence-repair side of the same rule: the repair prompt lets a PROBLEM be fixed by returning "" (a delete).
+KEEP_NOT_CUT = ("; the post is short: prefer the fix that keeps the sentence (say it is optional, or say only what "
+                "is true) over deleting it")
+
+
+def is_cut_violation(violation: str) -> bool:
+    """True when the violation's fix may delete its sentence (a cut-type fix)."""
+    return bool(_CUT_RE.search(str(violation or "")))
+
+
+# F13_repeat's own fix wording (hygiene: "cut it or say something new").
+_REPEAT_FIX = "say something new"
+
+
+def keeps_not_cut(item: dict) -> bool:
+    """True when a sentence-repair item gets KEEP_NOT_CUT: a cut-type problem that is not a repeat. Review (S278): a
+    near-duplicate (F13_repeat) kept by a repair is filler, a paraphrase near_duplicates misses or a 'new' detail the
+    repair prompt forbids; it is cut, and the expand step fills the section it shortened (length_extend._holes)."""
+    problem = str(item.get("problem") or "")
+    gates = item.get("gates") or [item.get("gate")]
+    return is_cut_violation(problem) and _qr.F13_REPEAT not in gates and _REPEAT_FIX not in problem
+
+
+def cut_projection(text: Optional[str], items: list[dict]) -> int:
+    """The F4 length left if every cut-type item's sentence is deleted (repeats included: they are cut). A sentence
+    repair is told to keep its sentences (KEEP_NOT_CUT) when this is under the floor, on any blog repair attempt, not
+    only when the text is already short (S278 review: attempt 3 could cut a just-expanded blog back under it)."""
+    gone = sum(len(it.get("sentence") or "") + 1 for it in items or [] if is_cut_violation(it.get("problem")))
+    return measure(text) - gone
 
 
 def floor_guard(before: Optional[str], after: Optional[str]) -> bool:
@@ -171,4 +220,6 @@ def code_for(entry: Optional[dict]) -> Optional[str]:
 __all__ = ["BLOG_FLOOR_CHARS", "BLOG_CEILING_CHARS", "CHARS_PER_WORD", "TARGET_MARGIN", "NORMALIZER_STEPS",
            "SHORT", "LONG", "CODE_SHORT", "CODE_LONG", "measure", "words", "writer_words", "floor_words",
            "target_chars", "target_words", "extend_target_chars", "short_rewrite_target", "floor_guard", "side",
+           "NO_SOURCE_MENTION", "REPLACE_NOT_DELETE", "KEEP_NOT_CUT", "is_cut_violation", "keeps_not_cut",
+           "cut_projection",
            "short_message", "long_message", "violation_side", "entry_side", "code_for"]

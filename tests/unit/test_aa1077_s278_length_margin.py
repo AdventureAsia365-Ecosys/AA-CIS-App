@@ -64,7 +64,7 @@ def test_a_short_blog_rewrite_is_told_the_target_not_the_floor():
     for chars in (4699, 4696, 3521):          # the S278 edge pieces and a thin one
         (line,) = svc._repair_feedback([_f4_entry(chars)], "blog")
         assert line.startswith(f"F4_extreme_length: length_short: content is only {chars} chars")
-        assert "at least 5,499 characters (about 950 words" in line and "not just to the floor" in line
+        assert "at least 5,499 characters (about 950 words" in line and "not just at the floor" in line
         assert "never invented facts" in line
 
 

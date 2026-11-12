@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from _later_deployments import set_later_deployments_aside  # noqa: E402
 
 from shared.llm_client import route_versions  # noqa: E402
 
@@ -51,6 +52,8 @@ def _body() -> str:
 
 def _set_383_aside(c) -> None:
     """The state 383 starts from on Dev (post-376), inside the test's transaction."""
+    # AA-1095: the deployments later migrations seeded (406's acc1 rows) did not exist then; attempt_cap counts them
+    set_later_deployments_aside(c, 383)
     # One statement from 383's first version on: a later revert row may point at it (reverted_from FK).
     c.execute("DELETE FROM shared.llm_route_config_version WHERE version >= "
               "(SELECT min(version) FROM shared.llm_route_config_version WHERE created_by = %s)", (ACTOR,))

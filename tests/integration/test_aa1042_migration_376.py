@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from _later_deployments import set_later_deployments_aside  # noqa: E402
 
 from shared.llm_client import route_versions  # noqa: E402
 
@@ -53,6 +54,8 @@ def _body() -> str:
 
 def _set_376_aside(c) -> None:
     """The state 376 starts from on Dev (post-366 / 367 / 370), inside the test's transaction."""
+    # AA-1095: the deployments later migrations seeded (406's acc1 rows) did not exist then; attempt_cap counts them
+    set_later_deployments_aside(c, 376)
     c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = %s", (ACTOR,))
     c.execute("DELETE FROM shared.llm_model_deployment WHERE connection_key = 'anthropic-direct' "
               "AND model_key = ANY (%s)", (list(WIRES),))       # a 306 replay elsewhere may have seeded some

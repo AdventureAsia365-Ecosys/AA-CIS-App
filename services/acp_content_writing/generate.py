@@ -391,6 +391,10 @@ Rules:
   not state. A fact marked optional stays optional. Background about a named place is fine only when a fact states it.
 - Keep the post's voice, person and tense. Never repeat a sentence, a fact or an opening the section already has.
 - Plain prose only: no heading, list, question, quote, call to action, brand name or citation tag.
+- Never mention where a fact comes from: no "the source", "the notes", "the facts" or "the itinerary says"; state the
+  fact itself, as the post does.
+- A section marked "a repair cut text here" lost sentences in a fix: its paragraph fills that place with a fact from
+  the list, never with what was cut.
 - Aim for the number of words asked for each section; never pad with filler to reach it.
 Return ONLY JSON: {"additions": ["<paragraph for section 1>", "<paragraph for section 2>"]} - one string per section,
 in the order given."""
@@ -411,7 +415,9 @@ def extend_sections(
     one string per section. Logged on `stage` (the writer, as the sentence repair) with mode `length_extend`."""
     numbered_facts = "\n".join(f"{i}. {f}" for i, f in enumerate(facts, 1))
     numbered_sections = "\n\n".join(
-        f"SECTION {i} (add about {s['words']} words)\nHEADING: {s.get('heading') or '(opening)'}\nTEXT:\n{s['text']}"
+        f"SECTION {i} (add about {s['words']} words"
+        + ("; a repair cut text here" if s.get("hole_chars") else "")
+        + f")\nHEADING: {s.get('heading') or '(opening)'}\nTEXT:\n{s['text']}"
         for i, s in enumerate(sections, 1))
     user = (f"SOURCE FACTS:\n{numbered_facts}\n\n" + (f"VOICE: {voice}\n\n" if voice else "")
             + f"SECTIONS:\n{numbered_sections}")

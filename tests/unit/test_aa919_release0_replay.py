@@ -19,6 +19,8 @@ and all 80 user prompts keep their pins.
 Regenerated AA-1077 (S278, t9_write v6): the LENGTH AND EFFORT block's word floor is the length target (900 -> 950
 words). Only the 20 T9 blog user prompts change (t9-blog-fake-00..19); every system prompt and the other 60 user
 prompts keep their pins.
+Regenerated AA-1077 round 2 (S278, t9_write v7): the block carries the section plan and the never-mention rule. Only
+the 20 T9 blog user prompts change again; with the v6 block put back they give the previous pins.
 """
 from __future__ import annotations
 

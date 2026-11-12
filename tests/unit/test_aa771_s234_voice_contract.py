@@ -488,7 +488,10 @@ class TestT9Prompt:
         floor is stated as a hard minimum (S271 review: F4 holds a body under 4,700 characters).
         Updated AA-1077 (S278, t9_write v6): the block's word floor is the length target (900 → 950 words,
         length_contract.target_words()), so `single` and `route` change; with "950" put back to "900" in the block they
-        are the previous bytes (d6be2507… / 7b62bcc7…). SYSTEM_PROMPT does not change."""
+        are the previous bytes (d6be2507… / 7b62bcc7…). SYSTEM_PROMPT does not change.
+        Updated AA-1077 round 2 (S278, t9_write v7): the block carries the section plan and the never-mention rule, and
+        a rewrite's feedback ends on the never-mention line, so `single` and `route` change; with the v6 block put back
+        and that line removed they are the previous bytes (88a0a8df… / 32f8ca0f…). SYSTEM_PROMPT does not change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -511,8 +514,8 @@ class TestT9Prompt:
         assert GOAL["key"] == GOALS[0]["key"]
         # AA-1047: byte-identical apart from the writing policy lines (tests/unit/aa1047_prompt_lines.py)
         assert sha(pre_aa1047(SYSTEM_PROMPT)) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
-        assert sha(single) == "88a0a8df06e2dadd76238fb9e8c390d159bb0cc308a02399dd65ce8570655118"
-        assert sha(route) == "32f8ca0feb8b02ed8c26417764322ae685ef0d8917877cf78d110c59d74cb97f"
+        assert sha(single) == "069680c25f4bbf88d0153504f506c3d448b55f1c40eba6b527fb9eb406ebe914"
+        assert sha(route) == "84f7c2c639971961dcc1a756418efcbad5062ef00946aeeb46b0ad1d4ecc8da4"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash

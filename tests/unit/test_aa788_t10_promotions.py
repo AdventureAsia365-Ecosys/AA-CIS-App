@@ -272,7 +272,7 @@ def test_f14_floor_rewrite_feedback_lists_unused_source_facts(modes):
     floor = qg.gate_social_shape(SHORT_POST, linkedin_spec(TRAIL), floor_blocking=True)
     fb = writing_service._repair_feedback([floor], "linkedin", source=SEED, content_text=SHORT_POST)
     assert fb[0].startswith(f"{qr.F14_SOCIAL_SHAPE}: post is") and len(fb) == 2
-    assert fb[1].startswith(f"{qr.F14_SOCIAL_SHAPE}: source facts this post does not tell yet")
+    assert fb[1].startswith(f"{qr.F14_SOCIAL_SHAPE}: facts you were given that this post does not tell yet")
     assert "'The old volcano stands above wide grassland and pine woods.'" in fb[1]
     # without a source, or without the floor block, the feedback is what it was
     assert writing_service._repair_feedback([floor], "linkedin") == fb[:1]

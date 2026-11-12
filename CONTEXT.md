@@ -977,7 +977,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `tests/unit/test_aa900_s271_w0_gateway.py` (every budgeted call-site ceiling >= `token_floor.effort_floor(model,
     effort)` of every model of the stage's route, read from the migrations). Alert:
     `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
-    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, never over
+    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, a section plan since v7, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling (bounded by the stage x model
     effort since CIS 381: medium for t9_write on Sonnet 5.5);
@@ -2412,6 +2412,11 @@ a synthetic agency on TripPlanner: the routes refuse it (403 `e2e_read_only`, lo
 before a job is enqueued) unless every product of the request is `tripplanner` (`e2e_staff.E2E_ADDON_PRODUCTS`) and
 the tenant is synthetic; the create route `POST /admin/tenants/provision` stays refused; Playwright
 `admin-evidence/tp-addon.spec.ts`.
+Dev-only fixtures for these checks (AA-1087 S278 l18): `python -m services.tenant_account.e2e_fixtures` (ECS Exec on
+the API task, DRY RUN until `--apply`): `register-crm-agency --key sen-vang` enqueues the `tenant_provision` saga with
+the CRM E2E agency's own id (a `create` may carry `tenant_id` on Dev, `demo` only: CIS, Booking `bk_tenant_pull` and
+the CRM then name one synthetic tenant); `subject-gate-flag` adds one attempt with an invented off-catalogue booking
+link to a synthetic tenant's latest request and runs the real subject gate, which opens the flag the spec releases.
 `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
@@ -3832,6 +3837,22 @@ leaves a blog under the floor and shorter (`floor_guard`: an in-band blog is not
 is not cut further); mandatory steps (usage-policy cut, final integrity pass) still cut and the re-check holds.
 `writer_input.length_trace` records `target` and `floor_kept`. `scripts/aa1077/margin_replay.py` ($0) replays stored
 length traces under the new rule.
+AA-1077 S278 round 2 — **repair round net length** (the paid trial held 2 of 3: a repair with 6 cut fixes shrank a short
+blog 3,957 → 3,546 chars; a lengthen line naming "CONTENT SEED … FACTS lines" was copied as "The source notes name …").
+t9_write v7 (CIS 405) adds a section plan to the blog block (`prompts._blog_length_plan`: opening, 5 sections with the
+richest 1.5×, FAQ at its low end; budgets add up to ≥ the word floor, from hashed symbols only) and a never-mention
+rule (block and every rewrite footer). No instruction names where facts come from without that rule
+(`length_contract.NO_SOURCE_MENTION`); F13_leak (`hygiene.LEAK_RE`) also catches "the itinerary says / names …" (provenance verbs only;
+"the itinerary gives you …" is reader copy), "the source(s) / notes say …", "source facts", "FACTS lines". A blog rewrite under the floor is told the
+cut-type fixes first (each with `REPLACE_NOT_DELETE`) and the length line LAST ("after every fix above"). With
+`T9_LENGTH_EXTEND=on`: every attempt-2 blog repair round (sentence repair or full rewrite) that leaves the text under the
+floor runs the expand step on THAT text (`length_extend.plan_after_repair`: deficit to the target incl. the cuts, the
+sections the repair shortened first, marked to the model), cut-type sentence-repair problems (never a repeat) carry
+`KEEP_NOT_CUT` when the cuts would leave the blog under the floor (attempts 2 and 3), attempt 3 (no expand after it)
+puts back any delete that would take the blog under the floor (`service._floor_kept_cuts`, `length_floor_kept`), an
+expand paragraph that names a source is refused, and `repair_log[-1].length_net` records before / after_repair /
+after_expand / expand reason (`attempt_3_no_expand` on attempt 3) / `shrank_under_floor`. Switch off = main's loop (the feedback order and
+wording above are on for everyone).
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
