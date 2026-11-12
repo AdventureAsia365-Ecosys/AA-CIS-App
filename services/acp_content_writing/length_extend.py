@@ -22,6 +22,13 @@ about 1.02 USD in second writer calls. The extend repair keeps every passing sec
   any attempt (F1 / F17 / F9 read the added text), and the AA-528 regression guard keeps attempt 1 when the added
   text broke a gate that passed (truth before length).
 
+Round 2 (S278 paid trial: a short blog's repair round with 6 F17 cuts shrank it 3,957 → 3,546 chars and held it on
+length): `plan_for` still routes attempt 2 (the F4 entry set aside), but the expand itself is planned by
+`plan_after_repair` on the text the repair LEFT, after the sentence repair's cuts or after a full rewrite, whenever
+that text is under the floor: its deficit includes the cut characters and the sections the repair shortened come
+first (`hole_chars`, marked to the model "a repair cut text here"). A paragraph that names where its facts come from
+(`hygiene.LEAK_RE`) is refused like one with a new specific.
+
 Switch: `T9_LENGTH_EXTEND=on` turns it on (read through quality.trial_flags: one audit-tenant trial job may set it,
 `trial_flags.ALLOWED`). Unset or any other value = off = main's full rewrite, byte for byte (lesson S272: a change of
 the writing loop that has not had its review rounds and its measured trial ships behind a flag whose default is
