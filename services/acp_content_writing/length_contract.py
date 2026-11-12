@@ -136,6 +136,27 @@ def is_cut_violation(violation: str) -> bool:
     return bool(_CUT_RE.search(str(violation or "")))
 
 
+# F13_repeat's own fix wording (hygiene: "cut it or say something new").
+_REPEAT_FIX = "say something new"
+
+
+def keeps_not_cut(item: dict) -> bool:
+    """True when a sentence-repair item gets KEEP_NOT_CUT: a cut-type problem that is not a repeat. Review (S278): a
+    near-duplicate (F13_repeat) kept by a repair is filler, a paraphrase near_duplicates misses or a 'new' detail the
+    repair prompt forbids; it is cut, and the expand step fills the section it shortened (length_extend._holes)."""
+    problem = str(item.get("problem") or "")
+    gates = item.get("gates") or [item.get("gate")]
+    return is_cut_violation(problem) and _qr.F13_REPEAT not in gates and _REPEAT_FIX not in problem
+
+
+def cut_projection(text: Optional[str], items: list[dict]) -> int:
+    """The F4 length left if every cut-type item's sentence is deleted (repeats included: they are cut). A sentence
+    repair is told to keep its sentences (KEEP_NOT_CUT) when this is under the floor, on any blog repair attempt, not
+    only when the text is already short (S278 review: attempt 3 could cut a just-expanded blog back under it)."""
+    gone = sum(len(it.get("sentence") or "") + 1 for it in items or [] if is_cut_violation(it.get("problem")))
+    return measure(text) - gone
+
+
 def floor_guard(before: Optional[str], after: Optional[str]) -> bool:
     """True when an OPTIONAL normalizer edit must not be made: it leaves the blog under the floor AND shorter than
     before (a blog in band is never taken under the floor; one already under it is never made shorter)."""
@@ -199,5 +220,6 @@ def code_for(entry: Optional[dict]) -> Optional[str]:
 __all__ = ["BLOG_FLOOR_CHARS", "BLOG_CEILING_CHARS", "CHARS_PER_WORD", "TARGET_MARGIN", "NORMALIZER_STEPS",
            "SHORT", "LONG", "CODE_SHORT", "CODE_LONG", "measure", "words", "writer_words", "floor_words",
            "target_chars", "target_words", "extend_target_chars", "short_rewrite_target", "floor_guard", "side",
-           "NO_SOURCE_MENTION", "REPLACE_NOT_DELETE", "KEEP_NOT_CUT", "is_cut_violation",
+           "NO_SOURCE_MENTION", "REPLACE_NOT_DELETE", "KEEP_NOT_CUT", "is_cut_violation", "keeps_not_cut",
+           "cut_projection",
            "short_message", "long_message", "violation_side", "entry_side", "code_for"]

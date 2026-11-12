@@ -3825,14 +3825,16 @@ blog 3,957 → 3,546 chars; a lengthen line naming "CONTENT SEED … FACTS lines
 t9_write v7 (CIS 405) adds a section plan to the blog block (`prompts._blog_length_plan`: opening, 5 sections with the
 richest 1.5×, FAQ at its low end; budgets add up to ≥ the word floor, from hashed symbols only) and a never-mention
 rule (block and every rewrite footer). No instruction names where facts come from without that rule
-(`length_contract.NO_SOURCE_MENTION`); F13_leak (`hygiene.LEAK_RE`) also catches "the itinerary says / names …",
-"the source(s) / notes / facts say …", "source facts", "FACTS lines". A blog rewrite under the floor is told the
+(`length_contract.NO_SOURCE_MENTION`); F13_leak (`hygiene.LEAK_RE`) also catches "the itinerary says / names …" (provenance verbs only;
+"the itinerary gives you …" is reader copy), "the source(s) / notes say …", "source facts", "FACTS lines". A blog rewrite under the floor is told the
 cut-type fixes first (each with `REPLACE_NOT_DELETE`) and the length line LAST ("after every fix above"). With
 `T9_LENGTH_EXTEND=on`: every attempt-2 blog repair round (sentence repair or full rewrite) that leaves the text under the
 floor runs the expand step on THAT text (`length_extend.plan_after_repair`: deficit to the target incl. the cuts, the
-sections the repair shortened first, marked to the model), a short blog's cut-type sentence-repair problems carry
-`KEEP_NOT_CUT`, an expand paragraph that names a source is refused, and `repair_log[-1].length_net` records before /
-after_repair / after_expand / expand reason / `shrank_under_floor`. Switch off = main's loop (the feedback order and
+sections the repair shortened first, marked to the model), cut-type sentence-repair problems (never a repeat) carry
+`KEEP_NOT_CUT` when the cuts would leave the blog under the floor (attempts 2 and 3), attempt 3 (no expand after it)
+puts back any delete that would take the blog under the floor (`service._floor_kept_cuts`, `length_floor_kept`), an
+expand paragraph that names a source is refused, and `repair_log[-1].length_net` records before / after_repair /
+after_expand / expand reason (`attempt_3_no_expand` on attempt 3) / `shrank_under_floor`. Switch off = main's loop (the feedback order and
 wording above are on for everyone).
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and

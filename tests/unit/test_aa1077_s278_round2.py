@@ -128,6 +128,9 @@ def test_the_old_lengthen_wording_is_gone():
     "Our sources say the chapel at Harrow Ford is very old.",
     "The notes mention a market on the shore of Lake Ombra.",
     "From the source facts, the ridge path is steep.",
+    "The sources state that the bridge is the oldest in the valley.",
+    "Our itinerary notes that the ridge path closes in deep snow.",
+    "The FACTS lines put the lake at the head of the valley.",
 ])
 def test_f13_leak_catches_a_meta_reference_to_the_sources(sentence):
     assert hygiene.LEAK_RE.search(sentence)
@@ -138,6 +141,19 @@ def test_f13_leak_catches_a_meta_reference_to_the_sources(sentence):
     "The source of the river lies above Kestrel Vale.",
     "The notes of the chapel bell carry over Harrow Ford.",
     "Its source lies high in the hills.",
+    # S278 review: reader-facing travel copy with a non-provenance verb is never a leak (each one would be a blocking
+    # F13_leak, a borrowed-sentence delete or a refused expand paragraph: a hole in a blog that is already short)
+    "The itinerary gives you a free afternoon in Harrow Ford.",
+    "The itinerary adds a boat ride on Lake Ombra.",
+    "Our itinerary lists three nights in Kestrel Vale.",
+    "This itinerary describes a loop around the ridge.",
+    "This itinerary adds a night at Harrow Ford.",
+    "The itinerary shows the best of the valley road.",
+    "The itinerary calls for an early start from Harrow Ford.",
+    "Our notes give you a packing list for the ridge.",
+    "The facts show the bridge at Harrow Ford dates to 1663.",
+    "Explore the source material of local legends around Lake Ombra.",
+    "The quick facts section below lists the opening hours of the chapel.",
 ])
 def test_f13_leak_leaves_reader_facing_sentences_alone(sentence):
     assert not hygiene.LEAK_RE.search(sentence)
@@ -483,3 +499,169 @@ def test_the_round_two_texts_name_no_internal_label_a_reader_could_see():
     """The new user-visible-risk strings never carry an issue id or an em-dash."""
     for text in (lc.REPLACE_NOT_DELETE, lc.KEEP_NOT_CUT, lc.NO_SOURCE_MENTION):
         assert not re.search(r"AA-\d", text) and "—" not in text
+
+
+# ---------------------------------------------------------------- S278 review: repeats are cut, attempt 3 keeps the floor
+
+def _item(sentence: str, problem: str, gate: str) -> dict:
+    return {"sentence": sentence, "problem": problem, "gate": gate, "gates": [gate]}
+
+
+@pytest.mark.parametrize("problem, gate, keep", [
+    (_f17("A boat ride waits."), qr.F17_TRIP_FACT, True),
+    ("states 3 hours, which the source does not contain — remove that number: 'x'", qr.F1_GROUNDING, True),
+    ("repeats an earlier sentence — cut it or say something new: 'Lake Ombra is still.'", qr.F13_REPEAT, False),
+    # a folded item whose problems include a repeat is cut like one
+    (_f17("A boat ride waits.") + "; ALSO: repeats an earlier sentence — cut it or say something new", qr.F17_TRIP_FACT,
+     False),
+    ("names a place outside the scope: 'x'", qr.F12_SCOPE, False),
+])
+def test_keep_not_cut_never_applies_to_a_repeat(problem, gate, keep):
+    assert lc.keeps_not_cut(_item("x", problem, gate)) is keep
+
+
+def test_cut_projection_counts_every_cut_type_sentence():
+    text = "## A\n\n" + "Kestrel Vale is green. " * 10
+    items = [_item("Kestrel Vale is green.", _f17("Kestrel Vale is green."), qr.F17_TRIP_FACT),
+             _item("Kestrel Vale is green.", "repeats an earlier sentence — cut it or say something new: 'x'",
+                   qr.F13_REPEAT),
+             _item("Kestrel Vale is green.", "names a place outside the scope: 'x'", qr.F12_SCOPE)]
+    assert lc.cut_projection(text, items) == lc.measure(text) - 2 * (len("Kestrel Vale is green.") + 1)
+
+
+def _at_floor_text() -> str:
+    """The trial fixture lifted just over the floor (an attempt-2 expand to about the floor), CUTS still in."""
+    return _text().replace(CTA, ADDS["Kestrel Vale"] + "\n\n" + ADDS["Harrow Ford"] + "\n\n" + CTA)
+
+
+def test_the_last_attempt_puts_back_the_cuts_that_would_take_a_blog_under_the_floor():
+    text = _at_floor_text()
+    assert lc.BLOG_FLOOR_CHARS <= lc.measure(text) < lc.BLOG_FLOOR_CHARS + sum(len(c) for c in CUTS)
+    items = sentence_items(text)
+    reps = [""] * len(items)
+    reps[0] = "A boat ride across Lake Ombra can be added on request."     # a rewrite still splices
+    kept_items, kept_reps = service._floor_kept_cuts(text, items, reps, cta=CTA)
+    assert [it.get("guard") for it in items[1:]] == [service.FLOOR_KEPT] * (len(CUTS) - 1)
+    assert kept_items == items[:1] and kept_reps == reps[:1]
+    out = service.sentence_repair.splice_checked(text, kept_items, kept_reps, cta=CTA)
+    assert lc.measure(out) >= lc.BLOG_FLOOR_CHARS and all(c in out for c in CUTS[1:])
+
+
+def test_a_last_attempt_cut_that_stays_over_the_floor_stands():
+    text = _at_floor_text() + "\n\n" + " ".join(PAD["The Ridge"])
+    items = sentence_items(text)
+    kept_items, kept_reps = service._floor_kept_cuts(text, items, [""] * len(items), cta=CTA)
+    assert kept_items == items and not any(it.get("guard") for it in items)
+
+
+def sentence_items(text: str) -> list[dict]:
+    ledger = [{"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable": True,
+               "violations": [_f17(c) for c in CUTS]}]
+    items = service.sentence_repair.plan(text, ledger)
+    assert items and len(items) == len(CUTS)
+    return items
+
+
+# The attempt-2 → attempt-3 shape the review named: attempt 2 expands a short blog to just over the floor, its gates
+# then flag 6 F17 sentences and a scope sentence, and the attempt-3 repair returns "" for every F17 item (and rewrites
+# the scope one). Before: the 6 deletes fixed F17, the rewrite fixed F12, F4 broke, and the AA-528 guard kept that
+# text (1 failing gate < 2): held on F4_extreme_length. Now: the cuts are put back (the piece holds on F17, at full
+# length), the rewrite stands and the round is recorded.
+R1 = "Stone walls divide the lower fields into narrow strips."
+LEAKY = "The source notes name herons on the shallow bays of Lake Ombra."
+SCOPE = "Hedges of hawthorn and hazel line the lower miles of the road."
+SCOPE_FIX = "Hawthorn and hazel grow thick beside the lower road."
+REWRITES = {LEAKY: "Herons hunt along the shallow bays.", SCOPE: SCOPE_FIX}
+
+
+def _attempt_three_text() -> str:
+    text = _text()
+    text = text.replace("A cairn marks the highest point of the path.",
+                        f"A cairn marks the highest point of the path. {R1}")
+    return text.replace("Coots and grebes nest among the reeds in the shallow bays.",
+                        f"Coots and grebes nest among the reeds in the shallow bays. {LEAKY}")
+
+
+def _three_attempt_gates(calls):
+    def f4(text):
+        return {**qg.gate_extreme_length(qg.strip_citation_tags(text), "blog"), "blocking": True}
+
+    def run(**kw):
+        text = kw["content_text"]
+        calls.append(text)
+        if len(calls) == 1:
+            return _outcome([f4(text), {"gate": qr.F13_REPEAT, "passed": False, "blocking": True, "repairable": True,
+                                        "violations": [f"repeats an earlier sentence — cut it or say something new: "
+                                                       f"'{R1}'"]},
+                             {"gate": qr.F13_LEAK, "passed": False, "blocking": True, "repairable": True,
+                              "violations": [f"names where the facts come from — rewrite it: '{LEAKY}'"]}])
+        ledger = [f4(text)]
+        cuts = [c for c in CUTS if c in text]
+        ledger.append({"gate": qr.F17_TRIP_FACT, "passed": not cuts, "blocking": True, "repairable": True,
+                       "violations": [_f17(c) for c in cuts]})
+        ledger.append({"gate": qr.F12_SCOPE, "passed": SCOPE not in text, "blocking": True, "repairable": True,
+                       "violations": [f"names a place outside the scope: '{SCOPE}'"] if SCOPE in text else []})
+        return _outcome(ledger)
+    return run
+
+
+def _repair(*, sentences, **kw):
+    _repair.calls.append([dict(it) for it in sentences])
+    return [REWRITES.get(it["sentence"], "") for it in sentences], 0.01
+
+
+def _two_adds(*, sections, facts, voice=None, **kw):
+    adds = [ADDS["Kestrel Vale"], ADDS["Harrow Ford"]]
+    return [adds[i] if i < len(adds) else "" for i in range(len(sections))], 0.02, "writer-model"
+
+
+@pytest.mark.asyncio
+async def test_attempt_three_cuts_never_take_a_just_expanded_blog_back_under_the_floor(_loop_stubs, monkeypatch):
+    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
+    calls: list[str] = []
+    _repair.calls = []
+    with patch.object(service, "write_content", return_value=(_attempt_three_text(), 0.05, {}, None)), \
+            patch.object(service, "rewrite_with_feedback") as rewrite, \
+            patch.object(service, "repair_sentences", side_effect=_repair), \
+            patch.object(service, "extend_sections", side_effect=_two_adds), \
+            patch.object(service, "run_quality_gates", side_effect=_three_attempt_gates(calls)), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
+    rewrite.assert_not_called()
+    assert len(calls) == 3 and len(_repair.calls) == 2
+    # attempt 2: the repeat was cut with no keep hint, then the expand lifted the blog over the floor (CUTS still in)
+    second = _repair.calls[0]
+    assert all(lc.KEEP_NOT_CUT not in it["problem"] for it in second if it["gate"] == qr.F13_REPEAT)
+    assert lc.measure(calls[1]) >= lc.BLOG_FLOOR_CHARS
+    # attempt 3: the F17 problems were told to keep their sentence (6 deletes would take it under the floor)
+    third = _repair.calls[1]
+    f17_items = [it for it in third if it["gate"] == qr.F17_TRIP_FACT]
+    assert len(f17_items) == len(CUTS) and all(it["problem"].endswith(lc.KEEP_NOT_CUT) for it in f17_items)
+    # the deletes were put back, the scope rewrite stood: held on F17 at full length, never on length
+    kw = fin.call_args.kwargs
+    assert lc.measure(kw["content_text"]) >= lc.BLOG_FLOOR_CHARS and all(c in kw["content_text"] for c in CUTS)
+    assert SCOPE_FIX in kw["content_text"] and SCOPE not in kw["content_text"]
+    assert kw["status"] == "held" and kw["held_reason"].startswith(qr.F17_TRIP_FACT)
+    entry = next(e for e in kw["repair_log"] if (e.get("length_net") or {}).get("expand") == "attempt_3_no_expand")
+    assert entry["length_floor_kept"] == len(CUTS) and entry["length_net"]["floor_kept"] == len(CUTS)
+    assert not entry["length_net"]["shrank_under_floor"]
+
+
+@pytest.mark.asyncio
+async def test_attempt_three_cuts_with_the_switch_off_are_main(_loop_stubs, monkeypatch):
+    """Switch off: no keep hint, no put-back, no length record (main's loop byte for byte)."""
+    monkeypatch.delenv(le.EXTEND_ENV, raising=False)
+    monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
+    _repair.calls = []
+    with patch.object(service, "write_content", return_value=(_attempt_three_text(), 0.05, {}, None)), \
+            patch.object(service, "rewrite_with_feedback", return_value=(_attempt_three_text(), 0.05, {}, None)), \
+            patch.object(service, "repair_sentences", side_effect=_repair), \
+            patch.object(service, "extend_sections") as ext, \
+            patch.object(service, "run_quality_gates", side_effect=_three_attempt_gates([])), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
+    ext.assert_not_called()
+    assert all(lc.KEEP_NOT_CUT not in it["problem"] for call in _repair.calls for it in call)
+    log = fin.call_args.kwargs["repair_log"]
+    assert not any("length_net" in e or "length_floor_kept" in e for e in log)

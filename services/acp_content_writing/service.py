@@ -582,6 +582,32 @@ def _blog_cut_refusal(before: str, after: Optional[str]) -> Optional[str]:
     return None
 
 
+# AA-1077 round 2 — the guard of a cut the last blog repair attempt put back (_floor_kept_cuts), and the length_net
+# 'expand' reason of that attempt (no expand runs after attempt 3).
+FLOOR_KEPT = "length_floor_kept"
+LAST_ATTEMPT_NO_EXPAND = "attempt_3_no_expand"
+
+
+def _floor_kept_cuts(content_text: str, items: list[dict], replacements: list[str],
+                     **splice_kw) -> tuple[list[dict], list[str]]:
+    """AA-1077 round 2 (S278 review) — the last blog repair attempt (attempt 3, no expand after it): when the repair's
+    splice would take the blog under the F4 floor, or make one already under it shorter (length_contract.floor_guard,
+    the normalizer's rule), every item whose replacement came back empty (a delete) keeps its pre-repair sentence
+    (`"guard": FLOOR_KEPT`, the refusal _blog_cut_refusal applies to the code cuts); the rewrites still splice.
+    Returns the (items, replacements) to splice. The kept sentence stays flagged, so the piece is held on its gate,
+    never on a length the repair itself caused."""
+    trial = sentence_repair.splice_checked(content_text, [dict(it) for it in items], list(replacements), **splice_kw)
+    if not length_contract.floor_guard(content_text, trial):
+        return items, replacements
+    pairs = []
+    for it, rep in zip(items, replacements):
+        if not it.get("heading") and not (rep or "").strip():
+            it["guard"] = FLOOR_KEPT
+        else:
+            pairs.append((it, rep))
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
 # AA-1077 — the repair modes of an entry the sentence repair ran on: alone, or with the extend repair of a short
 # blog in the same attempt ('sentences+length_extend'; the extend never replaces the sentence repair).
 SENTENCE_REPAIR_MODES = frozenset({"sentences", f"sentences+{length_extend.EXTEND_MODE}"})
@@ -2404,16 +2430,21 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                                     reason=truth_cut["truth_cut_refused"])
                 cut_only = truth_cut_done and not repair_items
                 replacements = None
-                # AA-1077 round 2 — a blog repair round that leaves the text under the F4 floor runs the expand step
-                # (length_extend.plan_after_repair) when the switch is on; the cut-type problems of a blog already
-                # under the floor are told to keep their sentence rather than delete it.
-                expand_round = (attempt == 2 and channel == "blog" and length_extend.mode() == length_extend.EXTEND_ON)
-                short_before = expand_round and length_contract.measure(content_text) < length_contract.BLOG_FLOOR_CHARS
+                # AA-1077 round 2 — with the switch on, every blog repair attempt watches its net length: a sentence
+                # repair whose cut-type fixes would leave the text under the F4 floor (length_contract.cut_projection)
+                # tells those problems to keep their sentence rather than delete it (never a repeat:
+                # length_contract.keeps_not_cut), attempt 2 then runs the expand step on what the repair left
+                # (length_extend.plan_after_repair) and attempt 3, which has no expand after it, puts back a cut that
+                # would take the blog under the floor (S278 review: a just-expanded blog cut back under it).
+                length_round = (attempt >= 2 and channel == "blog"
+                                and length_extend.mode() == length_extend.EXTEND_ON)
+                keep_hint = (length_round and bool(repair_items) and length_contract.cut_projection(
+                    content_text, repair_items) < length_contract.BLOG_FLOOR_CHARS)
                 if repair_items:
                     # S234 — the ±2 neighbouring sentences as context, and only the cited source.
                     for item in repair_items:
                         item["context"] = sentence_repair.neighbours(content_text, item)
-                        if short_before and length_contract.is_cut_violation(item.get("problem")):
+                        if keep_hint and length_contract.keeps_not_cut(item):
                             item["problem"] = f"{item['problem']}{length_contract.KEEP_NOT_CUT}"
                     # S234 round 2 — a style-only repair (F15_voice) runs on the cheap t9_repair stage.
                     stage_kw = {"stage": SEO_FIT_STAGE} if _style_only_repair(gate_ledger) else {}
@@ -2441,9 +2472,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     # pronoun with no referent (panel §5 fix 7: #19, #10) to its pre-repair sentence.
                     # AA-777 (r6 fix 1) — and a replacement that adds a number / time / pace word the sentence
                     # and the source lack keeps its old sentence (`trip_ctx` + the F1 grounding text).
-                    content_text = sentence_repair.splice_checked(content_text, repair_items, replacements,
-                                                                  ignore=brand_ignore, cta=cta, moments=hyg.moments,
-                                                                  trip_ctx=trip_ctx, source=grounding_text)
+                    splice_kw = {"ignore": brand_ignore, "cta": cta, "moments": hyg.moments, "trip_ctx": trip_ctx,
+                                 "source": grounding_text}
+                    splice_items, splice_reps = repair_items, replacements
+                    if length_round and attempt >= 3:
+                        splice_items, splice_reps = _floor_kept_cuts(content_text, repair_items, replacements,
+                                                                     **splice_kw)
+                    content_text = sentence_repair.splice_checked(content_text, splice_items, splice_reps,
+                                                                  **splice_kw)
                     _show_live_text(content_text, seo_meta, channel)  # AA-668: the spliced text, not the patch
                     # AA-777 — a truth cut followed by a repair of the other items keeps both in the log
                     repair_log[-1]["repair_mode"] = "truth_cut+sentences" if truth_cut_done else "sentences"
@@ -2455,6 +2491,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     kept = sum(item.get("guard") == "repeat_kept" for item in repair_items)
                     if kept:
                         repair_log[-1]["repeat_guard_kept"] = kept
+                    floor_kept = sum(item.get("guard") == FLOOR_KEPT for item in repair_items)
+                    if floor_kept:  # AA-1077 round 2 — cuts put back so the last attempt stays at the floor
+                        repair_log[-1]["length_floor_kept"] = floor_kept
                     hazard_kept = sum(item.get("guard") == "hazard_kept" for item in repair_items)
                     if hazard_kept:  # AA-777 r7 review — a repair that cut a hazard sentence was not spliced
                         repair_log[-1]["hazard_kept"] = hazard_kept
@@ -2521,14 +2560,18 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     )
                     fresh_text = True
             expand_plan, expand_why, net = None, None, None
-            if attempt == 2 and channel == "blog" and length_extend.mode() == length_extend.EXTEND_ON:
+            if attempt >= 2 and channel == "blog" and length_extend.mode() == length_extend.EXTEND_ON:
                 # AA-1077 round 2 — the repair round's net length: the expand step runs on the text the repair (the
                 # sentence repair's cuts, or the full rewrite) left, whenever that text is under the floor, sized from
                 # its own deficit (the cuts' lost characters included) to the target. Before, the extend plan was
                 # sized on attempt 1's text and a full rewrite was never followed by one (S278 73e6a233 shrank
-                # 3,957 → 3,546 chars and was held on length).
-                expand_plan, expand_why = length_extend.plan_after_repair(
-                    content_text, before=prev_snapshot["content_text"], channel=channel, source=grounding_text)
+                # 3,957 → 3,546 chars and was held on length). Attempt 3 (the last: no gate round would read new
+                # paragraphs again) has no expand; its floor guard is _floor_kept_cuts, and the round is recorded too.
+                if attempt == 2:
+                    expand_plan, expand_why = length_extend.plan_after_repair(
+                        content_text, before=prev_snapshot["content_text"], channel=channel, source=grounding_text)
+                else:
+                    expand_why = LAST_ATTEMPT_NO_EXPAND
                 net = {"before": length_contract.measure(prev_snapshot["content_text"]),
                        "after_repair": length_contract.measure(content_text),
                        "floor": length_contract.BLOG_FLOOR_CHARS, "target": length_contract.target_chars(),
@@ -2558,6 +2601,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 net["after_expand"] = length_contract.measure(content_text) if expand_plan is not None else None
                 net["shrank_under_floor"] = (net["after_repair"] < net["before"]
                                              and length_contract.measure(content_text) < net["floor"])
+                if repair_log[-1].get("length_floor_kept"):
+                    net["floor_kept"] = repair_log[-1]["length_floor_kept"]
                 repair_log[-1]["length_net"] = net
             content_from = attempt  # AA-916 WM-08 — this attempt wrote (or repaired) the current text
             total_cost += cost

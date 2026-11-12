@@ -103,3 +103,25 @@ def test_trial_piece_skips_without_a_seed():
 
 def test_floor_is_the_contract():
     assert rm.summarize([])["floor_chars"] == lc.BLOG_FLOOR_CHARS
+
+
+# ---------------------------------------------------------------- round 2 review: the F13_leak replay (leak_replay.py)
+
+def test_leak_replay_old_pattern_is_mains_and_counts_only_new_hits():
+    from scripts.aa1077 import leak_replay as lr
+    from services.acp_content_writing import hygiene
+    assert hygiene.LEAK_RE.pattern != lr.OLD_LEAK_PATTERN
+    rows = [
+        {"piece_id": "aaaaaaaa-1", "tenant": "audit-x", "channel": "blog",
+         "content_text": "## Vellmar Gorge\n\nThe itinerary says the huts at Vellmar Gorge are open in summer. "
+                         "The itinerary gives you a free afternoon at Lake Orrin.\n"},
+        {"piece_id": "bbbbbbbb-2", "tenant": "audit-x", "channel": "linkedin",
+         "content_text": "The source notes name the huts above Tessaly. Lake Orrin is calm in the morning.\n"},
+        {"piece_id": "cccccccc-3", "tenant": "audit-y", "channel": "blog",
+         "content_text": "## Tessaly\n\nOur itinerary lists two nights in Tessaly.\n"},
+    ]
+    lines, summary = lr.summarize(rows, hygiene.LEAK_RE)
+    # only the provenance phrase main did not catch counts; 'source notes' was already main's, reader copy never
+    assert [(x["piece"], x["phrases"]) for x in lines] == [("aaaaaaaa", ["the itinerary says"])]
+    assert summary["approved_pieces"] == 3 and summary["pieces_with_new_hit"] == 1
+    assert summary["new_hit_sentences"] == 1 and summary["by_channel"] == {"blog": 2, "linkedin": 1}
