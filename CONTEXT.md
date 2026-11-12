@@ -3771,7 +3771,7 @@ needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_lengt
 AA-1077 S278 — **blog length target**: every length AIM is one number above the floor, never the floor itself:
 `length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`, services/quality/thresholds.yaml;
 0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor (`prompts._BLOG_WORDS[0]`, t9_write v6,
-registered by CIS 400) is pinned to `target_words()` by a test, so a new margin is a prompt bump; the extend repair
+registered by CIS 399) is pinned to `target_words()` by a test, so a new margin is a prompt bump; the extend repair
 aims at the target; a blog's F4-short rewrite feedback carries "lengthen the piece to at least 5,499 characters …"
 (`service._f4_target`). The floor (4,700) is unchanged. The normalizer's optional steps
 (`length_contract.NORMALIZER_STEPS`: the FAQ answer fit; the stock-line cut guards itself) never make an edit that
