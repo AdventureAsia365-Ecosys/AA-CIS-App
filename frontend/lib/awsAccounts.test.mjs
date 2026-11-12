@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, VENDOR_CONNECTION_LABELS, accountLabel, accountName, withAccountNames,
+  LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, VENDOR_CONNECTION_LABELS, accountLabel, accountName, extraLiveAccounts,
+  isLiveAccount, withAccountNames,
 } from "./awsAccounts.ts";
 
 // AWS documentation example accounts (the resource-ID check allows them).
@@ -47,4 +48,27 @@ test("JSON views get names for account fields only", () => {
                                  satellite_account: "x" }, DIR);
   assert.deepEqual(out, { account: "444455556666", nested: [{ account_route: "111122223333" }], note: LLM_ACCOUNT,
                           satellite_account: "x" });
+});
+
+// AA-1095 — another Bedrock satellite comes from the directory (a registry row), never a key in the UI code.
+const SAT = "sat-payer";
+const DIR_PLUS = {
+  ...DIR,
+  [SAT]: { account_id: "777788889999", name: "777788889999", label: "777788889999 (LLM)", role: "LLM" },
+};
+
+test("a satellite the directory lists is live and named by its ID with the LLM role", () => {
+  assert.equal(isLiveAccount(SAT, DIR_PLUS), true);
+  assert.equal(accountName(SAT, DIR_PLUS), "777788889999");
+  assert.equal(accountLabel(SAT, DIR_PLUS), "777788889999 (LLM)");
+  assert.deepEqual(extraLiveAccounts(DIR_PLUS), [SAT]);
+});
+
+test("without the directory row the satellite key stays the retired account", () => {
+  assert.equal(isLiveAccount(SAT, DIR), false);
+  assert.equal(isLiveAccount(SAT), false);
+  assert.equal(accountName(SAT, DIR), "Retired account");
+  assert.deepEqual(extraLiveAccounts(DIR), []);
+  assert.deepEqual(extraLiveAccounts(null), []);
+  assert.equal(isLiveAccount(RETIRED_ACCOUNT, DIR_PLUS), false);
 });

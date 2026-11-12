@@ -291,7 +291,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   acc3 only (migration 331: Nova Lite, Llama 4 Scout for the place card check). Outside AWS: the OpenAI API
   (`openai-direct`, last resort of the judge routes) and the Anthropic API (`anthropic-direct`, deployments seeded
   behind acc3 by 306, no key yet), plus Jev, DataForSEO and Geoapify as registry rows (322). acc1 left the ecosystem
-  (AA-998). The cross-account trust is provisioned in AA-CIS-Infra.
+  (AA-998) and came back for ONE thing (AA-1095, root ADR 0001a Note S278): the registry connection `acc1` (migration
+  413, assume role, account ID from the task env `BEDROCK_ACCT_PAYER`) serves the Bedrock chat models while AWS blocks
+  acc3; no code names it (the guard below still holds), the admin names it by its account ID from the registry. Route
+  order per family (one route-control version, `api/services/llm_family_order.py`): Claude = Anthropic API, then
+  acc1, then acc3; GPT on Bedrock = acc1, then the OpenAI API, then acc3. The cross-account trust is provisioned in
+  AA-CIS-Infra.
   Embeddings (Cohere Embed v4) run natively on acc2, through the GLOBAL cross-region profile
   `global.cohere.embed-v4:0` since migration 238 (AA-856: the `us.` quota is fixed at 20 rpm, the global
   one is adjustable; one quota shared by f10_embed, a3_place_embed and TripPlanner search). Claude cannot be invoked from a local shell — the satellite roles only trust the
@@ -1864,7 +1869,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   opens (or comments on) one GitHub issue labelled `nightly-red`, the next green night closes it.
 - **No acc1 in runtime code (AA-998)**: `tests/unit/test_aa998_no_acc1_runtime.py` fails when `acc1`, its account
   ID, its IAM roles, its account env var or its CLI profile appears in api/ (not migrations), services/,
-  shared/, worker/, scripts/ or frontend/ — comments included.
+  shared/, worker/, scripts/ or frontend/ — comments included. AA-1095 keeps it: the acc1 Bedrock connection is a
+  registry row (migration 413) the code reaches by its row; the switch-over run-script lives in the root repo.
 - **Writing-path change control (AA-1052, root ADR 0020 W6 and amendment d12)**: the required **Unit Tests** job runs
   `tests/unit/test_aa1052_change_control.py` (also `python -m services.quality.change_control`). (1) The lock
   `services/quality/change_control.lock.json` holds the sha of each writing-path component (`writing_policy` source,

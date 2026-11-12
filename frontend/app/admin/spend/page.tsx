@@ -33,7 +33,8 @@ import {
 import { useChartColors } from "../../_kit/useTheme";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
-  LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, isLiveAccount,
+  LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, extraLiveAccounts, isLiveAccount,
+  type AwsAccounts,
 } from "@/lib/awsAccounts";
 import {
   RETIRED_COST_OPS_TABS, SPEND_APPS_TAB, SPEND_TAB, SPEND_VIEWS, parseSpendView, retiredTabTarget, type SpendView,
@@ -119,6 +120,10 @@ const ROLE_COLOR: Record<string, Tone> = { writer: "accent", judge: "success", v
 // AA-998: one LLM account. "retired" groups the older llm_call_log rows of the former fallback account (history
 // only, shown without an ID). AWS accounts are named by their account ID (lib/awsAccounts.ts), never by the key.
 const ACCOUNTS = [LLM_ACCOUNT, MAIN_ACCOUNT, "openai", "anthropic", "typesafe", RETIRED_ACCOUNT, "unknown"] as const;
+/** AA-1095: the account buckets in display order, with the directory's other Bedrock satellites after the LLM one. */
+function accountBuckets(dir?: AwsAccounts | null): string[] {
+  return [LLM_ACCOUNT, ...extraLiveAccounts(dir), ...ACCOUNTS.slice(1)];
+}
 const ACCOUNT_COLOR: Record<string, string> = {
   [LLM_ACCOUNT]: K.slate, [MAIN_ACCOUNT]: K.success, openai: K.ink3, anthropic: K.ink3, typesafe: K.accent,
   [RETIRED_ACCOUNT]: K.accent, unknown: K.muted,
@@ -148,7 +153,7 @@ function useAcctNames() {
     short: (k: string) => (OTHER_ACCOUNT_META[k] ? t(OTHER_ACCOUNT_META[k].short) : accountName(k, dir, text)),
     long: (k: string) => {
       if (OTHER_ACCOUNT_META[k]) return t(OTHER_ACCOUNT_META[k].label);
-      return isLiveAccount(k) ? t("acctBedrock", accountLabel(k, dir, text)) : t("acctRetiredBedrock", text.retired);
+      return isLiveAccount(k, dir) ? t("acctBedrock", accountLabel(k, dir, text)) : t("acctRetiredBedrock", text.retired);
     },
     name: (k: string | null | undefined) => accountName(k, dir, text),
     label: (k: string | null | undefined) => accountLabel(k, dir, text),
@@ -170,14 +175,14 @@ const ceName = (r: { account_id: string; account_key?: string | null }, name: (k
 // logged account is the AA-998 retired fallback account's history -> "retired". Gateway S6: a vendor-API row now
 // stores its connection key ("openai-direct", "anthropic-direct") as the account; it is keyed by its provider too,
 // never "retired".
-function acctKey(b: { account: string; provider: string }): string {
+function acctKey(b: { account: string; provider: string }, dir?: AwsAccounts | null): string {
   if (b.provider === "openai") return "openai";
   if (b.provider === "anthropic") return "anthropic";
   if (b.account === "unknown") {
     if (b.provider === "typesafe") return "typesafe";   // AA-660 — Jev
     return "unknown";
   }
-  return LIVE_ACCOUNTS.includes(b.account) ? b.account : RETIRED_ACCOUNT;
+  return isLiveAccount(b.account, dir) ? b.account : RETIRED_ACCOUNT;
 }
 
 function fmtUsd(n: number): string {
@@ -247,7 +252,7 @@ interface TenantRow {
   models: Set<string>;
 }
 
-function buildTenantRows(branches: Branch[]): TenantRow[] {
+function buildTenantRows(branches: Branch[], dir?: AwsAccounts | null): TenantRow[] {
   const m = new Map<string, TenantRow>();
   for (const b of branches) {
     const k = tenantKey(b);
@@ -261,7 +266,7 @@ function buildTenantRows(branches: Branch[]): TenantRow[] {
     r.tokens += b.tokens_in_total + b.tokens_out_total;
     r.fallback += b.fallback_count; r.truncated += b.truncated_count;
     r.okCount += b.ok_count; r.okElig += b.ok_eligible_count;
-    const ak = acctKey(b);
+    const ak = acctKey(b, dir);
     r.byAccount[ak] = (r.byAccount[ak] ?? 0) + b.total_cost_usd;
     r.models.add(b.model);
   }
@@ -274,8 +279,10 @@ function TenantSpendTable({ branches, onFallbackClick }: {
 }) {
   const t = useT(COST);
   const names = useAcctNames();
-  const rows = useMemo(() => buildTenantRows(branches), [branches]);
-  const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => acctKey(b) === a)), [branches]);
+  const dir = useAwsAccounts();
+  const rows = useMemo(() => buildTenantRows(branches, dir), [branches, dir]);
+  const accountsPresent = useMemo(
+    () => accountBuckets(dir).filter(a => branches.some(b => acctKey(b, dir) === a)), [branches, dir]);
   if (rows.length === 0) return <div style={{ color: K.muted2, fontSize: 13, padding: "8px 0" }}>{t("noLlmInRange")}</div>;
   return (
     <DataTable<TenantRow>
@@ -326,6 +333,7 @@ function StageLeaf({ b }: { b: Branch }) {
   const t = useT(COST);
   const { formatDateTime } = useFormat();
   const fbPct = b.call_count > 0 ? b.fallback_count / b.call_count : 0;
+  const dir = useAwsAccounts();
   return (
     <div style={{
       display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4,
@@ -334,7 +342,7 @@ function StageLeaf({ b }: { b: Branch }) {
       <span style={{ fontFamily: mono, fontSize: 12, color: K.ink, minWidth: "min(150px, 100%)", overflowWrap: "anywhere" }}>
         {b.stage}</span>
       <Badge tone={ROLE_COLOR[b.role] ?? "neutral"}>{b.role}</Badge>
-      <AcctDot account={acctKey(b)} />
+      <AcctDot account={acctKey(b, dir)} />
       <span style={{ fontSize: 12, color: K.muted2, minWidth: 110 }}>{b.tenant_label}</span>
       <span style={{ fontSize: 12, color: K.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
       <span style={{ fontSize: 12, color: K.ink2, minWidth: 84, fontFamily: mono, whiteSpace: "nowrap" }}>
@@ -394,18 +402,19 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
   const [open, setOpen] = useState(true);
   const t = useT(COST);
   const names = useAcctNames();
+  const dir = useAwsAccounts();
   const cost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
   const calls = branches.reduce((s, b) => s + b.call_count, 0);
   // second-level key: if grouped by account -> break down by model; if by tenant -> by account
   const sub = useMemo(() => {
     const m = new Map<string, Branch[]>();
     for (const b of branches) {
-      const k = groupBy === "account" ? b.model : acctKey(b);
+      const k = groupBy === "account" ? b.model : acctKey(b, dir);
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(b);
     }
     return m;
-  }, [branches, groupBy]);
+  }, [branches, groupBy, dir]);
   return (
     <Section padded={false} style={{ overflow: "hidden" }}>
       <Pressable aria-expanded={open} onClick={() => setOpen(o => !o)} style={{
@@ -480,6 +489,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
   const { formatDateTime } = useFormat();
   const [calls, setCalls] = useState<CallRow[] | null>(null);
   const [err, setErr] = useState("");
+  const dir = useAwsAccounts();
   useEffect(() => {
     const qs = new URLSearchParams(rangeQs);
     qs.set("fallback_used", "true");
@@ -525,7 +535,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
             cc<CallRow>("stage", t("colStage"), (c) => c.stage, (c) => c.stage, { mono: true }),
             cc<CallRow>("model", t("colModel"), (c) => c.model, (c) => c.model, { mono: true }),
             { id: "account", header: t("colAccount"), accessorFn: (c) => c.account ?? "",
-              cell: ({ row: { original: c } }) => <AcctDot account={acctKey({ account: c.account ?? "unknown", provider: c.provider ?? "" })} /> },
+              cell: ({ row: { original: c } }) => <AcctDot account={acctKey({ account: c.account ?? "unknown", provider: c.provider ?? "" }, dir)} /> },
             cc<CallRow>("cost", t("colCost"), (c) => c.cost_usd ?? 0, (c) => fmtUsd(c.cost_usd), { right: true, mono: true }),
             cc<CallRow>("stop", t("colStop"), (c) => c.stop_reason ?? "", (c) => c.stop_reason ?? "—", { color: () => K.muted2 }),
           ]}
@@ -578,6 +588,7 @@ function CostOperationsInner() {
   const t = useT(COST);
   const { formatDate, formatDateTime } = useFormat();
   const names = useAcctNames();
+  const dir = useAwsAccounts();
   const params = useSearchParams();
   const wanted = params.get("tab");
   const [days, setDays] = useState(30);
@@ -707,12 +718,13 @@ function CostOperationsInner() {
     for (const b of allDfs) m.set(tenantKey(b), b.tenant_label);
     return [...m.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
   }, [allBranches, allDfs]);
-  const acctOptions = useMemo(() => ACCOUNTS.filter(a => allBranches.some(b => acctKey(b) === a)), [allBranches]);
+  const acctOptions = useMemo(
+    () => accountBuckets(dir).filter(a => allBranches.some(b => acctKey(b, dir) === a)), [allBranches, dir]);
 
   // filtered views
   const llm = useMemo(() => allBranches.filter(b =>
-    (!tenantFilter || tenantKey(b) === tenantFilter) && (!acctFilter || acctKey(b) === acctFilter)
-  ), [allBranches, tenantFilter, acctFilter]);
+    (!tenantFilter || tenantKey(b) === tenantFilter) && (!acctFilter || acctKey(b, dir) === acctFilter)
+  ), [allBranches, tenantFilter, acctFilter, dir]);
   const dfsRows = useMemo(() => allDfs.filter(b =>
     !tenantFilter || tenantKey(b) === tenantFilter
   ), [allDfs, tenantFilter]);
@@ -735,17 +747,17 @@ function CostOperationsInner() {
   // Overview breakdowns
   const spendByAccount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const b of llm) { const ak = acctKey(b); m.set(ak, (m.get(ak) ?? 0) + b.total_cost_usd); }
+    for (const b of llm) { const ak = acctKey(b, dir); m.set(ak, (m.get(ak) ?? 0) + b.total_cost_usd); }
     const rows = [...m.entries()].map(([key, cost]) => ({ key, label: names.long(key), cost }));
     if (dfsCost > 0) rows.push({ key: "dfs", label: t("dfsThirdParty"), cost: dfsCost });
     return rows.sort((a, b) => b.cost - a.cost);
-  }, [llm, dfsCost, names, t]);
+  }, [llm, dfsCost, names, t, dir]);
   // AA-623 — Cost Explorer per account, Bedrock vs infra, next to the token estimate for the same
   // account. Only Bedrock-on-AWS estimate is comparable: OpenAI/legacy rows never hit an AWS bill.
   const ceByAccount = useMemo(() => {
     const estByAcct = new Map<string, number>();
     for (const b of allBranches) {
-      const k = acctKey(b);
+      const k = acctKey(b, dir);
       estByAcct.set(k, (estByAcct.get(k) ?? 0) + b.total_cost_usd);
     }
     return (costExplorer?.accounts ?? []).map(a => {
@@ -754,7 +766,7 @@ function CostOperationsInner() {
       const label = a.account_key ? names.label(a.account_key) : a.account_id;
       return { ...a, key, label, estimated: estByAcct.get(key) ?? 0 };
     });
-  }, [costExplorer, allBranches, names]);
+  }, [costExplorer, allBranches, names, dir]);
   const bedrockEstimated = ceByAccount.reduce((s, r) => s + r.estimated, 0);
   const ceTopServices = useMemo(() => (costExplorer?.services ?? []).slice(0, 10), [costExplorer]);
   // Stored CE days only cover windows someone clicked "Refresh from AWS" for — flag gaps.
@@ -785,14 +797,14 @@ function CostOperationsInner() {
   const llmTree = useMemo(() => {
     const m = new Map<string, Branch[]>();
     for (const b of llm) {
-      const k = groupBy === "account" ? acctKey(b) : tenantKey(b);
+      const k = groupBy === "account" ? acctKey(b, dir) : tenantKey(b);
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(b);
     }
     // sort groups by cost desc
     return [...m.entries()].sort((a, b) =>
       b[1].reduce((s, x) => s + x.total_cost_usd, 0) - a[1].reduce((s, x) => s + x.total_cost_usd, 0));
-  }, [llm, groupBy]);
+  }, [llm, groupBy, dir]);
 
   const trend = useMemo(() => {
     const m = new Map<string, { day: string; llm: number; dfs: number }>();

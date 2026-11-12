@@ -225,7 +225,7 @@ export function connectionName(c: Pick<Connection, "connection_key" | "kind" | "
   dir?: AwsAccounts | null, text?: AccountText): string {
   if (c.kind !== "bedrock") return c.connection_key;
   if (c.account_id) return c.account_id;
-  if (isLiveAccount(c.connection_key)) return accountName(c.connection_key, dir, text);
+  if (isLiveAccount(c.connection_key, dir)) return accountName(c.connection_key, dir, text);
   return c.connection_key;
 }
 

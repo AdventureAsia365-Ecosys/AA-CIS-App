@@ -50,7 +50,7 @@ import structlog
 from api.services.cost_incidents import CostIncident, incident_view, incidents_overlapping
 from api.services.platform_cost import month_window, provider_family
 from shared.aws_client import cost_explorer as ce
-from shared.aws_client.accounts import account_label
+from shared.aws_client.accounts import account_label, is_live
 
 logger = structlog.get_logger()
 
@@ -437,8 +437,9 @@ def _with_budget(row: dict[str, Any], budget: Optional[float], alert_pct: Option
 def _account_of(provider: Optional[str], account: Optional[str]) -> str:
     if (provider or "").startswith("bedrock"):
         acc = account or "acc2"           # an older Bedrock row without account ran on acc2 (platform_cost rule)
-        # AA-998: any other account is the retired fallback account's history.
-        return acc if acc in ("acc2", "acc3") else ce.RETIRED_ACCOUNT_KEY
+        # AA-998: any other account is the retired fallback account's history. AA-1095: unless the registry names it
+        # as a live Bedrock satellite (e.g. the payer account serving chat models while acc3 is blocked).
+        return acc if acc in ("acc2", "acc3") or is_live(acc) else ce.RETIRED_ACCOUNT_KEY
     return account or "none"
 
 
