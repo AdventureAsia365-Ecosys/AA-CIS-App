@@ -39,7 +39,7 @@ async def _row(c, **over):
     row.update(over)
     await c.execute(
         f"INSERT INTO {TABLE} (source_key, amount, currency, basis, origin, updated_by, reviewed_by, reviewed_at, note) "
-        "VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::timestamptz, $9)",
+        "VALUES ($1, $2::text::numeric, $3, $4, $5, $6, $7, $8::text::timestamptz, $9)",
         row["source_key"], row["amount"], row["currency"], row["basis"], row["origin"], row["updated_by"],
         row["reviewed_by"], row["reviewed_at"], row["note"])
 
@@ -59,7 +59,7 @@ async def test_401_registered_and_one_row_per_key(conn):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("over", [
-    {"amount": "0"}, {"amount": "-5"}, {"amount": "10000000000"},
+    {"amount": "0"}, {"amount": "-5"},
     {"currency": "usd"}, {"currency": "US"}, {"currency": "DOLLAR"},
     {"basis": "per_day"}, {"basis": ""},
     {"origin": "jev"},
@@ -70,6 +70,12 @@ async def test_401_registered_and_one_row_per_key(conn):
 async def test_401_checks_refuse(conn, over):
     with pytest.raises(asyncpg.exceptions.CheckViolationError):
         await _row(conn, **over)
+
+
+@pytest.mark.asyncio
+async def test_401_amount_out_of_range(conn):
+    with pytest.raises(asyncpg.exceptions.NumericValueOutOfRangeError):
+        await _row(conn, amount="10000000000")
 
 
 @pytest.mark.asyncio
