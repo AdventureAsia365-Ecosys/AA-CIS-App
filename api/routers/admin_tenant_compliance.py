@@ -13,6 +13,12 @@
 Flags are admin data (memory: the tenant sees content only); tenants read the reason through the publish answer and
 the Publish list, never this route. Reads every staff role may make (TENANT_READ); the release is QUALITY_WRITE and
 audited. 503 until CIS 360 is applied.
+
+AA-1087 (S278, root ADR 0006a A10b-3): the Dev-only E2E CIS admin (A10b) may release a flag of a SYNTHETIC tenant only
+(``shared.tenants.is_canary IS TRUE`` and not the pilot, api/core/e2e_staff.is_synthetic_tenant): any other flag is
+403 ``e2e_read_only`` right after the flag is read and before it is resolved or audited (log
+``compliance_release_e2e_refused`` with ``reason``). Any other Dev-only E2E identity (A10d) is refused outright. Every
+other staff member is unaffected.
 """
 from __future__ import annotations
 
@@ -25,7 +31,8 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.core.staff_authz import staff_policy
+from api.core import e2e_staff
+from api.core.staff_authz import request_staff_identity, staff_policy
 from services.acp_shared import subject_gate
 from services.acp_shared.audit_log import write_audit_log
 from services.tour_lifecycle.fanout import MIGRATION
@@ -129,6 +136,21 @@ RELEASE_SQL = """
 """
 
 
+async def _refuse_e2e(request: Request, conn, tenant_id: str, flag_id: UUID) -> None:
+    """AA-1087 (A10b-3): the A10b session releases a synthetic tenant's flag only; any other Dev-only E2E identity
+    never. 403 ``e2e_read_only`` before any write or audit row. No-op for every other staff member."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
+        return
+    if not e2e_staff.has_allowlisted_writes(identity):
+        logger.warning("compliance_release_e2e_refused", flag_id=str(flag_id), reason="not_allowlisted")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+    if not await e2e_staff.is_synthetic_tenant(conn, UUID(tenant_id)):
+        logger.warning("compliance_release_e2e_refused", flag_id=str(flag_id), tenant_id=tenant_id,
+                       reason="tenant_not_synthetic")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+
+
 @router.post("/{flag_id}/release")
 async def release_flag(flag_id: UUID, body: ReleaseBody, request: Request,
                        x_admin_user_id: Optional[str] = Header(None)):
@@ -141,6 +163,7 @@ async def release_flag(flag_id: UUID, body: ReleaseBody, request: Request,
                 flag = await conn.fetchrow(RELEASE_FLAG_SQL, str(flag_id))
                 if flag is None:
                     raise HTTPException(status_code=404, detail="Flag not found (only a subject check can be released)")
+                await _refuse_e2e(request, conn, flag["tenant_id"], flag_id)
                 if flag["state"] != "open":
                     raise HTTPException(status_code=409, detail="This flag is already resolved")
                 sha = subject_gate.content_sha256(flag["content_text"] or "")
