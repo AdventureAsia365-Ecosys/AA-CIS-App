@@ -232,7 +232,7 @@ def test_t9_sibling_prompts_differ_by_their_focus():
 def test_manifest_v3_hashes_the_focus_symbols():
     from shared.llm_client.prompt_registry import load_manifest, newest, prompt_hash_of
     entry = newest(load_manifest(), "t9_write")
-    assert entry["version"] == "v6"   # AA-1077: v6 = blog word floor = length target (CIS 399); AA-1047: v4/v5 writing policy; v3 walk focus
+    assert entry["version"] == "v7"   # AA-1077: v7 plan + no-source rule (CIS 405), v6 target (CIS 399); v3 walk focus
     assert {"_WALK_FOCUS_MARK", "_WALK_FOCUS_RULE", "_BLOG_LENGTH_INSTRUCTIONS"} <= set(entry["symbols"])
     assert prompt_hash_of(entry["source_path"], entry["symbols"]) == entry["prompt_sha256"]
     t8 = newest(load_manifest(), "t8_angle_gen")

@@ -264,18 +264,44 @@ async def test_a_short_only_attempt_one_gets_the_extend_repair_not_the_rewrite(_
 
 @pytest.mark.asyncio
 async def test_f4_short_with_a_gate_that_needs_the_rewrite_takes_the_rewrite(_loop_stubs):
+    """The rewrite still runs for a gate only it can fix. AA-1077 round 2: when the rewrite comes back under the
+    floor, the expand step follows it in the same attempt (repair mode 'rewrite+length_extend'); before, a short
+    rewrite was left short."""
     cta_fail = {"gate": qr.F6_CTA_PRESENT, "passed": False, "blocking": True, "repairable": True,
                 "violations": ["the CTA is missing"]}
     a1 = [_short_ledger()[0], cta_fail]
     passing = [{"gate": qr.F4_EXTREME_LENGTH, "passed": True, "violations": [], "blocking": True}]
     with patch.object(service, "write_content", return_value=(TEXT, 0.05, {}, None)), \
             patch.object(service, "rewrite_with_feedback", return_value=(TEXT + "\nMore.", 0.05, {}, None)) as rw, \
-            patch.object(service, "extend_sections") as ext, \
+            patch.object(service, "extend_sections", side_effect=_call(GOOD)) as ext, \
             patch.object(service, "run_quality_gates", side_effect=[_outcome(a1), _outcome(passing)]), \
-            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})):
+            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, **kw: (led, st, hr, {})), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
+    rw.assert_called_once()
+    ext.assert_called_once()
+    entry = next(e for e in fin.call_args.kwargs["repair_log"] if e.get("length_net"))
+    assert entry["repair_mode"] == f"rewrite+{le.EXTEND_MODE}"
+    assert entry["length_net"]["repair"] == "rewrite" and entry["length_net"]["expand"] == "expand"
+    assert entry["length_net"]["after_expand"] > entry["length_net"]["after_repair"]
+
+
+@pytest.mark.asyncio
+async def test_f4_short_with_a_rewrite_gate_and_the_switch_off_is_main(_loop_stubs, monkeypatch):
+    monkeypatch.setenv(le.EXTEND_ENV, "off")
+    cta_fail = {"gate": qr.F6_CTA_PRESENT, "passed": False, "blocking": True, "repairable": True,
+                "violations": ["the CTA is missing"]}
+    passing = [{"gate": qr.F4_EXTREME_LENGTH, "passed": True, "violations": [], "blocking": True}]
+    with patch.object(service, "write_content", return_value=(TEXT, 0.05, {}, None)), \
+            patch.object(service, "rewrite_with_feedback", return_value=(TEXT + "\nMore.", 0.05, {}, None)) as rw, \
+            patch.object(service, "extend_sections") as ext, \
+            patch.object(service, "run_quality_gates",
+                         side_effect=[_outcome([_short_ledger()[0], cta_fail]), _outcome(passing)]), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
         await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
     rw.assert_called_once()
     ext.assert_not_called()
+    assert not any("length_net" in e for e in fin.call_args.kwargs["repair_log"])
 
 
 # ---------------------------------------------------------------- the AA-777 truth cut after a sentences+extend entry

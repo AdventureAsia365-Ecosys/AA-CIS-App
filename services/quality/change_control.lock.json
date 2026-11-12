@@ -12,8 +12,8 @@
       "refs": "AA-1077"
     },
     "prompt_registry": {
-      "sha": "96b8a2285aad2aef",
-      "evidence": "break-glass:decided policy change ahead of its measurement: S278 live run, 5 of 9 blogs length_short, 3 at the floor edge (4,699/4,696/4,696 under a 900-word writer floor); blog length target = F4 floor x 1.17 (t9.blog_length_target_margin), writer floor 950 words (t9_write v6); replay tests/unit/test_aa1077_s278_length_margin.py, live measure on the next audit-tenant blog run",
+      "sha": "93942918915283fe",
+      "evidence": "break-glass:decided fix ahead of its measurement: S278 paid 3-piece blog trial on an audit tenant held 2 of 3 (first drafts 690-840 words under the 950-word floor; a repair round with 6 cut fixes shrank 3,957 -> 3,546 chars; a lengthen line naming its sources leaked 'source notes'); t9_write v7 adds a section plan and the never-mention rule; offline regression tests/unit/test_aa1077_s278_round2.py; live measure = the orchestrator's 3-piece trial",
       "refs": "AA-1077"
     },
     "route_defaults": {

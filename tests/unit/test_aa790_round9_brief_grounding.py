@@ -42,7 +42,10 @@ CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "ads", "email
 # AA-1077 S278: recomputed after the block's word floor became the length target (900 -> 950 words, t9_write v6);
 # with "950" put back to "900" in the block the 192 prompts give the previous pin
 # (was f9876035d8a581d555df777d18e6407e8fa50f08caf097221ad7e31a16b85431).
-ROUND6_FIXTURE_SHA = "1162a72d0787838e57c7a5bb2e75d25d69f5ba0e6b2516ea306804bcf4905fa5"
+# AA-1077 round 2 (S278, t9_write v7): recomputed after the block's section plan and the rewrite's never-mention line;
+# with the v6 block put back and that line removed, the 192 prompts give the previous pin
+# (was 1162a72d0787838e57c7a5bb2e75d25d69f5ba0e6b2516ea306804bcf4905fa5).
+ROUND6_FIXTURE_SHA = "dcd60ece5c1bf5c5ead64a7e4d3e35569a19652f05df64ae823a771041b72d41"
 
 
 def fixture_prompts(**extra) -> list[str]:

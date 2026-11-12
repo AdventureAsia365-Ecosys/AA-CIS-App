@@ -47,6 +47,18 @@ def _f4_feedback(lines: list) -> list:
     return [head + _f4_form(f[len(head):]) if f.startswith(head) else f for f in lines]
 
 
+# AA-1077 round 2 — a declared change of the blog rewrite feedback: for a blog under the floor the F4 length line comes
+# last and each cut-type line carries length_contract.REPLACE_NOT_DELETE (S278 trial 73e6a233). Both sides compare in
+# that form, so a routing or wording change of anything else still fails here.
+def _round2_feedback(lines: list, channel: str) -> list:
+    tail = lc.REPLACE_NOT_DELETE
+    lines = [f[:-len(tail)] if f.endswith(tail) else f for f in lines]
+    head = qr.F4_EXTREME_LENGTH + ": "
+    if channel == "blog" and any(f.startswith(head) and lc.violation_side(f[len(head):]) == lc.SHORT for f in lines):
+        lines = [f for f in lines if not f.startswith(head)] + [f for f in lines if f.startswith(head)]
+    return lines
+
+
 def _route(plan):
     return "rewrite" if plan is None else "none" if plan == [] else "repair"
 
@@ -89,7 +101,7 @@ def test_legacy_view_equals_the_pre_fold_ledger(case_id):
         expected = FROZEN["repair_feedback"][f"{case_id}|{ch}"]
         if case_id in INTENDED:
             expected = [f for f in expected if not f.startswith(INTENDED[case_id] + ":")]
-        assert _f4_feedback(feedback) == _f4_feedback(expected)
+        assert _f4_feedback(_round2_feedback(feedback, ch)) == _f4_feedback(_round2_feedback(expected, ch))
 
 
 @pytest.mark.parametrize("case_id", sorted(CASES))

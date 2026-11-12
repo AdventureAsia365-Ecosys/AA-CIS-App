@@ -1149,9 +1149,19 @@ def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
 # this as a 15-day journey…", "The content seed for this journey notes that…").
 # AA-814 follow-up: a Facts entry's 'Source: <provenance>; agency fact' line (facts._fact_entry) — the line label at the
 # start of a sentence, or the owner tag anywhere.
+# AA-1077 round 2 (S278 paid trial 6610ac8d: "The source notes name deer, birds, leopards…" after a lengthen fix that
+# named its sources): the itinerary, the source(s) or the notes as the subject of a PROVENANCE verb (it says / names /
+# notes where a fact comes from), and the prompt's own labels ("source facts", "FACTS lines"). Review (S278): only
+# provenance verbs. "The itinerary gives you a free afternoon", "Our itinerary lists three nights", "The itinerary
+# calls for an early start", "the facts show", "the source material of local legends" are reader-facing copy, and a
+# match here is a blocking F13_leak, a borrowed-sentence delete and a refused expand paragraph (a hole, then a cut).
+_PROVENANCE_VERBS = r"(?:calls(?!\s+for\b)|names|says|notes|mentions|states|records)"
 LEAK_RE = re.compile(
     r"\b(?:content seed|the seed|this seed|source itinerary|place background|the itinerary calls it"
     r"|other trips that include|for context only|source notes"
+    r"|(?:the|this|our) itinerary " + _PROVENANCE_VERBS
+    + r"|(?:the|our) (?:sources?|notes) (?:say|name|note|mention|state)s?"
+    r"|source (?:facts?|text|lines?)|facts lines"
     r"|agency fact(?!\s*-?\s*sheets?\b)|platform fact(?!\s*-?\s*sheets?\b))\b|\[moment\b|\bscope:"
     r"|^\W*source:", re.I)
 # The whole sentence is a copied Facts 'Source:' line: it says nothing to a reader, so the fix deletes it.
