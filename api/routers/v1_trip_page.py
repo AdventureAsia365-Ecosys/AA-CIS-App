@@ -107,9 +107,12 @@ def _jsonb(val):
 
 # AA-986 L4: the page rule is the served rule of shared/tour_liveness.py (Master live AND source version live), so a
 # superseded version no longer shows (it 301s to the current one, get_trip_page).
+# AA-1094 (S278 audit M12): the answer carries the tour's AA catalogue key, `source_id` = COALESCE(source_group_id,
+# tour_id) (the catalog.v_tour key, raw_tours.source_key since CIS 258), so the CRM "Book now" widget on this page books
+# the same catalogue product the page describes, never a key taken from the link.
 _PAGE_DATA_SQL = f"""
         SELECT
-            rt.tour_id::text, rt.country, rt.duration,
+            rt.tour_id::text, (COALESCE(rt.source_group_id, rt.tour_id))::text AS source_id, rt.country, rt.duration,
             pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_itineraries,
             pt.aa_highlights, pt.seo_title, pt.seo_meta
         FROM silver_aa_internal.raw_tours rt
@@ -201,6 +204,8 @@ async def get_trip_page(tour_id: str, request: Request):
 
     return {
         "tour_id":       row["tour_id"],
+        # AA-1094: the AA catalogue key (catalog.v_tour source_id) of the tour this page shows.
+        "source_id":     row["source_id"],
         "country":       row["country"],
         "duration":      row["duration"],
         "name":          row["aa_name"],
