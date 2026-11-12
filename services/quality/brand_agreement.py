@@ -69,12 +69,18 @@ def decision(n: int, label_fail: int, label_pass: int, best: Optional[dict], cur
     if best is None:
         return {"status": "no_signal", "proposed_threshold": None, "keep": "rank_only",
                 "why": "the judge gives one answer for every text: kappa is undefined."}
-    k, t = best["kappa"], best["threshold"]
+    # A pass/fail gate (T10 F9) has no score to cut on: its agreement row carries no threshold (AA-1079 S278:
+    # the first measure with enough labels crashed here on KeyError).
+    k, t = best["kappa"], best.get("threshold")
     if k >= GATE_KAPPA:
+        if t is None:
+            return {"status": "calibrated", "proposed_threshold": None, "keep": "gate_allowed",
+                    "why": f"kappa {k} reaches {GATE_KAPPA} on {n} pairs: the pass/fail gate agrees with the labels."}
         return {"status": "calibrated", "proposed_threshold": t, "keep": "cut_allowed",
                 "why": (f"kappa {k} at threshold {t} (current {current}) reaches {GATE_KAPPA} on {n} pairs: the cut "
                         f"may come back at {t} (T7_DEBATE_MODE=cut, t7.brand_fit_cut = {t}).")}
     level = "moderate" if k >= MODERATE_KAPPA else "weak"
+    at = "" if t is None else f" at threshold {t}"
     return {"status": f"not_calibrated_{level}", "proposed_threshold": t, "keep": "rank_only",
-            "why": (f"best kappa {k} at threshold {t} (current {current}) is below {GATE_KAPPA}: keep Debate rank "
+            "why": (f"best kappa {k}{at} (current {current}) is below {GATE_KAPPA}: keep Debate rank "
                     f"only and the T2 brand-fit score report only.")}
