@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.5"
+  version: "1.6"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -81,6 +81,10 @@ info:
     disabled = an active disabled override, served as 0; none = no key resolves, the consumer fails closed),
     monthly_usd, month_spent_usd and month_calls (the tenant's ledger rows of the current UTC month on every app,
     shadow rows out). Read by tenant_id. No personal data, no price.
+    1.6 (AA-1087, additive; no HTTP shape change): catalog.v_tenant_account_v1 (CIS 401, Booking only) appends
+    is_synthetic = shared.tenants.is_canary IS TRUE and not the pilot (NULL or FALSE canary and the pilot are real).
+    AA-Booking's Dev-only E2E write identities (root ADR 0006a A10e) may write only to records of an agency whose
+    is_synthetic is true; a reader that cannot see the column treats every agency as real (fail closed).
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
