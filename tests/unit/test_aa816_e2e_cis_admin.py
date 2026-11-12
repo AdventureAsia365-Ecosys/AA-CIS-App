@@ -76,6 +76,10 @@ def test_the_write_allow_list_is_exactly_the_reviewed_routes():
         # AA-1087 (S278, root ADR 0006a A10b-3): release a held piece, synthetic tenants only
         # (test_aa1087_a10b_compliance_release.py)
         ("POST", "/admin/tenant-qa/compliance/{flag_id}/release"),
+        # AA-1094 (S278, root ADR 0006a A10b-4): attach / cancel the TripPlanner add-on, synthetic tenants only
+        # (test_aa1094_a10b_tp_addon.py)
+        ("POST", "/admin/tenants/{tenant_id}/provision"),
+        ("POST", "/admin/tenants/{tenant_id}/provision/cancel"),
     }
     # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
     # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.
