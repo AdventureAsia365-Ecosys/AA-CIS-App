@@ -1,4 +1,4 @@
--- Migration 413: AA-1095 (S278) — Bedrock connection `acc1` (the payer account of acc3's organization) and its 13
+-- Migration 406: AA-1095 (S278) — Bedrock connection `acc1` (the payer account of acc3's organization) and its 13
 -- chat-model deployments, seeded SWITCHED OFF; the route order is set afterwards by one route-control version.
 -- break-glass: tech lead S278 12/11: AWS refuses chat models on acc3; acc1 rows seeded off, behind every live row
 --
@@ -31,13 +31,13 @@
 --        get an acc1 row that is off too, so no candidate becomes routable by this file; the admin Test connection
 --        still probes a switched-off deployment, and switching one on is an admin decision
 --      A model with no catalog row is skipped (NOTICE).
---   5. Register 413.
+--   5. Register 406.
 --   Not here: an "acc1" key in shared.llm_model_catalog.bedrock_profile_ids. The deployment row is the routing source
 --   (vendor_route.deployment_plan; the wire-drift check has nothing to compare without a catalog profile), the
 --   older replays guard the candidate rows' exact profiles (367), and TripPlanner, which also reads the profiles, never
 --   calls acc1 (its gateway holds credentials for BEDROCK_ACCT_PRIMARY only).
---   The route order (tech lead S278, 15:45: Claude = Anthropic API, then acc1, then acc3; GPT = acc1, then the OpenAI
---   API, then acc3) is NOT set here: after the deploy one run-script of the root repo (tools/llm/, on the CIS
+--   The route order (tech lead S278, 15:45; model-first: Claude = Anthropic API, then acc1, then acc3; GPT = acc1,
+--   then acc3 (skipped while it refuses), then the model's OpenAI API twin) is NOT set here: after the deploy one run-script of the root repo (tools/llm/, on the CIS
 --   container) switches acc1 on and saves the per-family provider order (api/services/llm_family_order.py) as one
 --   route-control version (audited, one-click revert).
 --   Chains, scopes, account_route and every existing deployment / connection row are not touched.
@@ -78,7 +78,7 @@ SET LOCAL lock_timeout = '5s';
 
 DO $$
 DECLARE
-    actor     constant text := 'migration-413-aa1095';
+    actor     constant text := 'migration-406-aa1095';
     ext_id    constant text := 'aa1095-satellite-bedrock-acc1';
     models    constant jsonb := '{
         "sonnet-5-5":    "global.anthropic.claude-sonnet-5-5",
@@ -105,16 +105,16 @@ BEGIN
     -- ── 0. Guards: predecessors ─────────────────────────────────────────────────────────────────────────────────
     IF to_regclass('shared.llm_provider_connection') IS NULL OR to_regclass('shared.llm_model_deployment') IS NULL
        OR to_regclass('shared.llm_connection_cost_policy') IS NULL THEN
-        RAISE EXCEPTION 'migration 413: the connection registry (304), the cost policy (317) is missing';
+        RAISE EXCEPTION 'migration 406: the connection registry (304), the cost policy (317) is missing';
     END IF;
     SELECT * INTO acc3 FROM shared.llm_provider_connection WHERE connection_key = 'acc3';
     IF NOT FOUND OR acc3.kind <> 'bedrock' OR acc3.auth_mode <> 'assume_role' THEN
-        RAISE EXCEPTION 'migration 413: connection acc3 is missing or not a bedrock assume_role row';
+        RAISE EXCEPTION 'migration 406: connection acc3 is missing or not a bedrock assume_role row';
     END IF;
     SELECT * INTO c FROM shared.llm_provider_connection WHERE connection_key = 'acc1';
     IF FOUND AND (c.kind <> 'bedrock' OR c.auth_mode <> 'assume_role' OR c.external_id IS DISTINCT FROM ext_id
                   OR c.role_name IS DISTINCT FROM 'AA1-Bedrock-Invoker') THEN
-        RAISE EXCEPTION 'migration 413: a connection acc1 exists with another kind / role / ExternalId';
+        RAISE EXCEPTION 'migration 406: a connection acc1 exists with another kind / role / ExternalId';
     END IF;
 
     -- ── 1. The account env allowlist: + BEDROCK_ACCT_PAYER ────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ BEGIN
         ADD CONSTRAINT llm_provider_connection_account_id_env_check
         CHECK (account_id_env IS NULL OR account_id_env IN ('BEDROCK_ACCT_PRIMARY', 'BEDROCK_ACCT_PAYER'));
     COMMENT ON CONSTRAINT llm_provider_connection_account_id_env_check ON shared.llm_provider_connection IS
-        'AA-1095 (CIS 413): + BEDROCK_ACCT_PAYER (acc1, Bedrock serving while acc3 is blocked); was '
+        'AA-1095 (CIS 406): + BEDROCK_ACCT_PAYER (acc1, Bedrock serving while acc3 is blocked); was '
         'BEDROCK_ACCT_PRIMARY only (304). Same list as shared/llm_client/connections.ACCOUNT_ID_ENVS.';
 
     -- ── 2. The connection (off) ───────────────────────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ BEGIN
     SELECT alert_pct, hard_stop INTO pol FROM shared.llm_connection_cost_policy WHERE connection_key = 'acc3';
     INSERT INTO shared.llm_connection_cost_policy (connection_key, alert_pct, hard_stop, notes, updated_by)
     VALUES ('acc1', coalesce(pol.alert_pct, 80), coalesce(pol.hard_stop, true),
-            'AA-1095 (S278): copied from acc3 (migration 413).', actor)
+            'AA-1095 (S278): copied from acc3 (migration 406).', actor)
     ON CONFLICT (connection_key) DO NOTHING;
 
     -- ── 4. The 13 deployments, behind every existing deployment of the model ─────────────────────────────────
@@ -152,7 +152,7 @@ BEGIN
       FROM jsonb_each_text(models) AS m (key, value)
      WHERE NOT EXISTS (SELECT 1 FROM shared.llm_model_catalog k WHERE k.model_key = m.key);
     IF missing IS NOT NULL THEN
-        RAISE NOTICE 'migration 413: no catalog row, no acc1 deployment: %', missing;
+        RAISE NOTICE 'migration 406: no catalog row, no acc1 deployment: %', missing;
     END IF;
 
     INSERT INTO shared.llm_model_deployment
@@ -171,33 +171,33 @@ BEGIN
     IF c.kind <> 'bedrock' OR c.auth_mode <> 'assume_role' OR c.data_scope <> 'aws_only'
        OR c.role_name <> 'AA1-Bedrock-Invoker' OR c.external_id <> ext_id OR c.region <> 'us-west-1'
        OR c.account_id_env IS DISTINCT FROM 'BEDROCK_ACCT_PAYER' OR c.account_id IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 413: connection acc1 is not the decided row';
+        RAISE EXCEPTION 'migration 406: connection acc1 is not the decided row';
     END IF;
     IF c.enabled THEN
-        RAISE NOTICE 'migration 413: connection acc1 is already switched on (kept)';
+        RAISE NOTICE 'migration 406: connection acc1 is already switched on (kept)';
     END IF;
 
     SELECT string_agg(d.model_key, ', ' ORDER BY d.model_key) INTO bad
       FROM shared.llm_model_deployment d
      WHERE d.connection_key = 'acc1' AND d.wire_id IS DISTINCT FROM models ->> d.model_key;
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 413: acc1 deployments whose wire id is not the decided profile: %', bad;
+        RAISE EXCEPTION 'migration 406: acc1 deployments whose wire id is not the decided profile: %', bad;
     END IF;
 
     SELECT string_agg(d.model_key || ' (' || d.wire_id || ')', ', ' ORDER BY d.model_key) INTO bad
       FROM shared.llm_model_deployment d
      WHERE d.connection_key = 'acc3' AND models ? d.model_key AND d.wire_id <> models ->> d.model_key;
     IF bad IS NOT NULL THEN
-        RAISE NOTICE 'migration 413: acc3 deployments with another wire id than acc1''s: %', bad;
+        RAISE NOTICE 'migration 406: acc3 deployments with another wire id than acc1''s: %', bad;
     END IF;
 
     SELECT count(*) INTO seeded FROM shared.llm_model_deployment WHERE connection_key = 'acc1';
-    RAISE NOTICE 'migration 413: % acc1 deployments, connection acc1 enabled=%, monthly cap % USD', seeded, c.enabled,
+    RAISE NOTICE 'migration 406: % acc1 deployments, connection acc1 enabled=%, monthly cap % USD', seeded, c.enabled,
         c.monthly_budget_usd;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('413', now(), 'AA-1095: Bedrock connection acc1 (off) + 13 chat-model deployments, account env allowlist '
+VALUES ('406', now(), 'AA-1095: Bedrock connection acc1 (off) + 13 chat-model deployments, account env allowlist '
                       '+ BEDROCK_ACCT_PAYER')
 ON CONFLICT (version) DO NOTHING;
 

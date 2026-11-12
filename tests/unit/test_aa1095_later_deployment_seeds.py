@@ -2,7 +2,7 @@
 is in tests/integration/_later_deployments.LATER_DEPLOYMENT_SEEDS, and every route replay test sets those rows aside.
 
 Why: the replay tests of 366 / 376 / 383 re-run the file's chain rules (attempt_cap counts every deployment row of a
-routed model, on or off) after the full replay. Migration 413 seeded acc1 deployments of the same models and 26 replay
+routed model, on or off) after the full replay. Migration 406 seeded acc1 deployments of the same models and 26 replay
 tests went red (S278). The seeds between 366 and 383 (367, 376) were there when the replay tests were written and
 those tests already pass with them (376's test resets its own rows). The helper is read as text (AST), so this unit
 test needs no psycopg2 and no database.
@@ -82,5 +82,5 @@ def test_the_helper_lists_only_actors_after_the_replayed_number():
     spec = importlib.util.spec_from_file_location("_later_deployments", HELPER)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert mod.later_seed_actors(366) == ["migration-413-aa1095"]
-    assert mod.later_seed_actors(413) == []
+    assert mod.later_seed_actors(366) == ["migration-406-aa1095"]
+    assert mod.later_seed_actors(406) == []

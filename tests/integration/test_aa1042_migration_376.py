@@ -54,7 +54,7 @@ def _body() -> str:
 
 def _set_376_aside(c) -> None:
     """The state 376 starts from on Dev (post-366 / 367 / 370), inside the test's transaction."""
-    # AA-1095: the deployments later migrations seeded (413's acc1 rows) did not exist then; attempt_cap counts them
+    # AA-1095: the deployments later migrations seeded (406's acc1 rows) did not exist then; attempt_cap counts them
     set_later_deployments_aside(c, 376)
     c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = %s", (ACTOR,))
     c.execute("DELETE FROM shared.llm_model_deployment WHERE connection_key = 'anthropic-direct' "

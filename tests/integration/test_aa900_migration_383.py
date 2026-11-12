@@ -52,7 +52,7 @@ def _body() -> str:
 
 def _set_383_aside(c) -> None:
     """The state 383 starts from on Dev (post-376), inside the test's transaction."""
-    # AA-1095: the deployments later migrations seeded (413's acc1 rows) did not exist then; attempt_cap counts them
+    # AA-1095: the deployments later migrations seeded (406's acc1 rows) did not exist then; attempt_cap counts them
     set_later_deployments_aside(c, 383)
     # One statement from 383's first version on: a later revert row may point at it (reverted_from FK).
     c.execute("DELETE FROM shared.llm_route_config_version WHERE version >= "

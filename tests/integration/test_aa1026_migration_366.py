@@ -51,7 +51,7 @@ def cur():
     # included; on Dev 306 ran before 366, so the twins are on acc3 only (366's guard checks it).
     c.execute("DELETE FROM shared.llm_model_deployment WHERE model_key = ANY (%s) AND connection_key <> 'acc3'",
               (list(NEW_ROWS),))
-    # AA-1095: the deployments later migrations seeded (413's acc1 rows) did not exist when 366 ran on Dev; its
+    # AA-1095: the deployments later migrations seeded (406's acc1 rows) did not exist when 366 ran on Dev; its
     # attempt_cap rule counts every row, so they leave too (tests/integration/_later_deployments.py)
     set_later_deployments_aside(c, 366)
     try:

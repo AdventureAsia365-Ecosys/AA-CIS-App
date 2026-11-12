@@ -17,7 +17,7 @@ from __future__ import annotations
 
 # migration number -> the updated_by of the deployment rows it seeds
 LATER_DEPLOYMENT_SEEDS: dict[int, str] = {
-    413: "migration-413-aa1095",   # AA-1095: connection acc1's 13 chat-model deployments (seeded off)
+    406: "migration-406-aa1095",   # AA-1095: connection acc1's 13 chat-model deployments (seeded off)
 }
 
 # the replay tests that call set_later_deployments_aside, with the migration each one re-runs

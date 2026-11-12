@@ -1,8 +1,8 @@
-"""AA-1095 (S278) — migration 413 (Bedrock connection acc1, seeded off, and its 13 chat-model deployments) against
+"""AA-1095 (S278) — migration 406 (Bedrock connection acc1, seeded off, and its 13 chat-model deployments) against
 real Postgres.
 
-conftest applies every migration, 413 included. These tests run the file again directly (errors NOT swallowed): from
-the pre-413 state, twice (idempotent), with an admin's later edit kept, and its guards. Every test leaves the post-413
+conftest applies every migration, 406 included. These tests run the file again directly (errors NOT swallowed): from
+the pre-406 state, twice (idempotent), with an admin's later edit kept, and its guards. Every test leaves the post-406
 state behind.
 """
 import os
@@ -18,7 +18,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                         "413_llm_acc1_bedrock_connection.sql")
+                         "406_llm_acc1_bedrock_connection.sql")
 MODELS = {
     "sonnet-5-5": "global.anthropic.claude-sonnet-5-5",
     "opus-5-5": "global.anthropic.claude-opus-5-5",
@@ -34,7 +34,7 @@ MODELS = {
     "gpt-6.1-sol": "global.openai.gpt-6.1-sol",
     "gpt-6.1-terra": "global.openai.gpt-6.1-terra",
 }
-ACTOR = "migration-413-aa1095"
+ACTOR = "migration-406-aa1095"
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def cur():
     conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
     conn.autocommit = True
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    _run(c)                         # another module may have replayed the registry: back to post-413
+    _run(c)                         # another module may have replayed the registry: back to post-406
     try:
         yield c
     finally:
@@ -57,7 +57,7 @@ def _run(c):
 
 
 def _undo(c):
-    """The pre-413 state: no acc1 connection, deployments or cost policy; 304's env CHECK."""
+    """The pre-406 state: no acc1 connection, deployments or cost policy; 304's env CHECK."""
     c.execute("DELETE FROM shared.llm_model_deployment WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_provider_health WHERE connection_key = 'acc1'")
@@ -65,7 +65,7 @@ def _undo(c):
     c.execute("ALTER TABLE shared.llm_provider_connection DROP CONSTRAINT llm_provider_connection_account_id_env_check")
     c.execute("ALTER TABLE shared.llm_provider_connection ADD CONSTRAINT llm_provider_connection_account_id_env_check "
               "CHECK (account_id_env IS NULL OR account_id_env IN ('BEDROCK_ACCT_PRIMARY'))")
-    c.execute("DELETE FROM shared.schema_versions WHERE version = '413'")
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '406'")
 
 
 def _present(c) -> dict:
@@ -112,7 +112,7 @@ def test_post_replay_state(cur):
     assert cur.fetchone() is not None
 
 
-def test_from_the_pre_413_state_and_idempotent(cur):
+def test_from_the_pre_406_state_and_idempotent(cur):
     _undo(cur)
     cur.execute("SELECT count(*) AS n FROM shared.llm_provider_connection WHERE connection_key = 'acc1'")
     assert cur.fetchone()["n"] == 0
@@ -128,7 +128,7 @@ def test_from_the_pre_413_state_and_idempotent(cur):
     cur.execute("SELECT enabled FROM shared.llm_provider_connection WHERE connection_key = 'acc1'")
     assert cur.fetchone()["enabled"] is True
     assert _deployments(cur)["sonnet-5-5"]["priority"] == 15
-    cur.execute("SELECT 1 FROM shared.schema_versions WHERE version = '413'")
+    cur.execute("SELECT 1 FROM shared.schema_versions WHERE version = '406'")
     assert cur.fetchone()
 
 
