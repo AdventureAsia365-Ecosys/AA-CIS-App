@@ -47,6 +47,9 @@ class TenantAuditAction:
     CONTENT_PIECE_EDITED = "content_piece.edited"  # AA-569 — tenant hand-edit on My Content
     CONTENT_EXPORTED = "content_piece.exported"  # AA-613 — tenant downloaded/exported a piece
     CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
+    # AA-1088 (M3) — the account owner chose "Publish anyway" on a piece that needed a final check (a held piece);
+    # written before the post goes out. details: channel, membership_id, studio_role, revision_key
+    CONTENT_PUBLISHED_ANYWAY = "content_piece.published_anyway"
     # AA-802 — tenant downloaded a T2 tour version as DOCX (the admin "tenant has an older copy" check)
     TOUR_VERSION_EXPORTED = "tenant_tour_version.exported"
     CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
