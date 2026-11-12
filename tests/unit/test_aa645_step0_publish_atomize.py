@@ -328,10 +328,19 @@ async def test_clear_brand_fit_cache_without_segments_sends_nothing():
     db.execute.assert_not_awaited()
 
 
+def _segment_rows(sql, *args):
+    """tour_segment_ids -> one Segment; segment_states -> the same label and members on every read (AA-1081)."""
+    if "array_agg" in sql:
+        return [{"segment_id": "seg_a", "canonical_place": "Orrin Lake", "canonical_action": "walk",
+                 "atom_ids": ["atom_1", "atom_2"]}]
+    return [{"segment_id": "seg_a"}]
+
+
 @pytest.mark.asyncio
 async def test_a_skipped_atomize_keeps_the_cache():
+    """AA-1081: an atomize that changed no Segment (here: skipped) deletes no cache row."""
     conn = AsyncMock()
-    conn.fetch = AsyncMock(return_value=[{"segment_id": "seg_a"}])
+    conn.fetch = AsyncMock(side_effect=_segment_rows)
     with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
          patch("services.acp_contract.a3_atomize.run_a3_atomize",
                AsyncMock(return_value={"status": "skipped", "atom_count": 0, "orphan_atoms_deleted": 0})), \
@@ -339,5 +348,5 @@ async def test_a_skipped_atomize_keeps_the_cache():
          patch("services.jobs.recompute_job.enqueue_recompute", AsyncMock(return_value=("job-9", True))), \
          patch("services.places.enqueue.after_atomize", AsyncMock(return_value={})):
         out = await handler._run_a3_atomize_background(tour_id=TOUR_ID, rewritten={}, country="", version_id="v")
-    assert "brand_fit_cache_cleared" not in out
+    assert out["brand_fit_segments_changed"] == 0 and out["brand_fit_cache_cleared"] == 0
     assert not [c for c in conn.execute.await_args_list if "debate_brand_fit_cache" in c.args[0]]

@@ -57,6 +57,38 @@ async def tour_segment_ids(conn, tour_id: str) -> list[str]:
     return [r["segment_id"] for r in rows]
 
 
+# AA-1081 (S278) — what a Segment's T7 Debate brand-fit score was computed from: its label (the judge's topic) and its
+# member atoms (the judge's evidence; an atom id is a content hash of its place and action, so a changed text is a
+# changed id). Read before and after the segment stage of an atomize.
+_SEGMENT_STATE_SQL = """
+    SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
+           coalesce(array_agg(asm.atom_id ORDER BY asm.atom_id) FILTER (WHERE asm.atom_id IS NOT NULL),
+                    '{}'::text[]) AS atom_ids
+    FROM acp_contract.atom_segment asg
+    LEFT JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
+    WHERE asg.segment_id = ANY($1::text[])
+    GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
+"""
+
+
+async def segment_states(conn, segment_ids: list[str]) -> dict[str, tuple]:
+    """AA-1081 — {segment_id: (canonical_place, canonical_action, member atom ids)} of these Segments (a missing id
+    is absent)."""
+    if not segment_ids:
+        return {}
+    rows = await conn.fetch(_SEGMENT_STATE_SQL, list(segment_ids))
+    return {r["segment_id"]: (r["canonical_place"], r["canonical_action"], tuple(r["atom_ids"] or ()))
+            for r in rows}
+
+
+def changed_segments(before: dict[str, tuple], after: dict[str, tuple], segment_ids) -> list[str]:
+    """AA-1081 — the Segments among `segment_ids` whose label or member atoms differ between the two
+    `segment_states()` reads. A Segment missing from either read counts as changed (the safe side: its cache rows
+    go). Pure."""
+    return sorted(s for s in set(segment_ids)
+                  if before.get(s) is None or after.get(s) is None or before[s] != after[s])
+
+
 async def clear_brand_fit_cache(db, segment_ids: list[str]) -> int:
     """AA-645 step 0 (T13) — delete the T7 Debate brand-fit cache rows (every tenant, every brand_version) of these
     Segments and of the Routes that pass through any of them. A Segment keeps its id when a tour is rewritten
@@ -360,19 +392,33 @@ async def _a3_atomize_chain(tour_id: str, rewritten: dict, country: str, version
             # atoms this atomize replaced, and the Segments those atoms left still need their brand-fit cache cleared
             # and their score re-landed (recurrence / questions changed).
             segment_ids_before = await tour_segment_ids(pool, tour_id)
+            # AA-1081 (S278): what each of those Segments is judged on, read before the segment stage rewrites the
+            # tour's memberships (best effort: None = unknown, every Segment of the tour counts as changed).
+            try:
+                states_before = await segment_states(pool, segment_ids_before)
+            except Exception:
+                states_before = None
+                logger.warning("a3_segment_states_failed", tour_id=tour_id, exc_info=True)
             await run_stages(["segment"], RecomputeScope(tour_id=tour_id), pool=pool)
             segment_ids = sorted(set(segment_ids_before) | set(await tour_segment_ids(pool, tour_id)))
             # AA-645 step 0 (T13): the T7 Debate brand-fit cache scored these Segments (and the Routes through
-            # them) on their atoms' old text; drop those rows when this run changed the tour's atoms, so the
-            # next Slate re-judges them on the new text (lazy, cached again on first use).
+            # them) on their atoms' old text; drop the rows of the Segments this run changed, so the next Slate
+            # re-judges them on the new text (lazy, cached again on first use). AA-1081 (S278): only a Segment whose
+            # label or member atoms changed — a re-read that gives the same atoms (a new version with the same day
+            # text, a recompose of the fixed fields) keeps its scores; before, any non-skipped atomize cleared every
+            # Segment of the tour for every tenant, and the next t7_slate re-judged them all.
             # Best effort on its own: a failed DELETE must not stop the Score/Route recompute below.
-            if result.get("status") != "skipped" or result.get("orphan_atoms_deleted"):
-                try:
-                    outcome["brand_fit_cache_cleared"] = await clear_brand_fit_cache(pool, segment_ids)
-                except Exception as cache_exc:
-                    outcome["brand_fit_cache_cleared"] = (
-                        f"failed: {type(cache_exc).__name__}: {str(cache_exc)[:200]}")
-                    logger.warning("a3_brand_fit_cache_clear_failed", tour_id=tour_id, exc_info=True)
+            try:
+                if states_before is None:
+                    changed = segment_ids
+                else:
+                    changed = changed_segments(states_before, await segment_states(pool, segment_ids), segment_ids)
+                outcome["brand_fit_segments_changed"] = len(changed)
+                outcome["brand_fit_cache_cleared"] = await clear_brand_fit_cache(pool, changed)
+            except Exception as cache_exc:
+                outcome["brand_fit_cache_cleared"] = (
+                    f"failed: {type(cache_exc).__name__}: {str(cache_exc)[:200]}")
+                logger.warning("a3_brand_fit_cache_clear_failed", tour_id=tour_id, exc_info=True)
             job_id, created = await enqueue_recompute(
                 pool, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
                 debounce_s=WAVE_DEBOUNCE_S, created_by="a3_atomize")

@@ -3509,7 +3509,10 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
      tripadvisor…). Deterministic and cached; cut threshold 0.5, measured on real SERP data.
    - _brand-fit_: the same brand-fit scorer (judge route) the T2 judge uses
      (`services/content_generation/brand_fit.py`), cached per
-     `(tenant, candidate, brand_version)` in `acp_shared.debate_brand_fit_cache`.
+     `(tenant, candidate, brand_version)` in `acp_shared.debate_brand_fit_cache`. Cache misses are judged
+     `T7_DEBATE_CONCURRENCY` at a time (env, default 8, 1 = one at a time; AA-1081 S278) in worker threads with the
+     job's context, inside the gateway's own connection / TPM / tenant-budget limits; the signals keep the input
+     order, so the rank equals a one-at-a-time run.
    - Safety rules (cut mode): never cuts more than 50% of a list; an error on a candidate lets it pass; if
      Debate fails entirely the Slate behaves as before.
 3. Bar check per Channel, only for the tenant's enabled Channels (`acp_shared.tenant_config.channels`,
@@ -4486,7 +4489,9 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
     `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed
     atoms drops the T7 Debate brand-fit cache rows (`acp_shared.debate_brand_fit_cache`) of the tour's Segments and
-    the Routes through them (T13); the next Slate re-judges them.
+    the Routes through them (T13); the next Slate re-judges them. AA-1081 (S278): only the Segments whose label or
+    member atoms differ before / after the segment stage (`export.handler.segment_states` / `changed_segments`); a
+    re-read that gives back the same atoms (a new version of the same days, a recompose) keeps every score.
   - **Accepted score pointer** `published_tours.quality_score_id` (FK to `silver_aa_internal.quality_scores`,
     ON DELETE SET NULL, CIS 268) = the published version's latest score row (`evaluated_at DESC, id DESC`).
     Export sets it with that rule; a revalidation (`_revalidate_tour`, `revalidate` job) writes the new score
