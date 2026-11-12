@@ -40,9 +40,12 @@ class ReferencePriceError(ValueError):
     """A write that cannot be applied: ``status`` is the HTTP status (404 unknown key, 409 stale, 422 bad value)."""
 
     def __init__(self, status: int, detail: str):
-        super().__init__(detail)
+        super().__init__(status, detail)
         self.status = status
         self.detail = detail
+
+    def __str__(self) -> str:
+        return self.detail
 
 
 SCOPE_SQL = f"""
@@ -215,7 +218,8 @@ def validate(amount: Any, currency: Any, basis: Any, note: Any = None) -> Values
     c = str(currency or "").strip().upper()
     c = rp.currency_of(c) or c
     if c not in rp.CODES:
-        raise ReferencePriceError(422, f"Currency must be a 3-letter code such as USD (one of {', '.join(sorted(rp.CODES))})")
+        raise ReferencePriceError(
+            422, f"Currency must be a 3-letter code such as USD (one of {', '.join(sorted(rp.CODES))})")
     b = basis_value(basis)
     if b is None:
         raise ReferencePriceError(422, "Basis must be per_person, per_group or from")
@@ -353,7 +357,8 @@ def parse_plan(rows: list[dict]) -> dict:
     return {"create": create, "update": update, "unparseable": unparseable}
 
 
-async def parse_missing(conn, *, actor: str, dry_run: bool = True, live_only: bool = False) -> tuple[dict, list[Change]]:
+async def parse_missing(conn, *, actor: str, dry_run: bool = True,
+                        live_only: bool = False) -> tuple[dict, list[Change]]:
     rows = [r for r in await scope_rows(conn) if r.get("live") or not live_only]
     plan = parse_plan(rows)
     summary = {

@@ -44,6 +44,7 @@ export const PAGES: VisualPage[] = [
   { slug: "decisions", route: "/admin/decisions", path: "/admin/decisions", auth: "staff" },
   { slug: "docs", route: "/admin/docs", path: "/admin/docs", auth: "staff" },
   { slug: "facts", route: "/admin/facts", path: "/admin/facts", auth: "staff" },
+  { slug: "reference-prices", route: "/admin/reference-prices", path: "/admin/reference-prices", auth: "staff" },   // AA-1091
   { slug: "jobs", route: "/admin/jobs", path: "/admin/jobs", auth: "staff" },
   { slug: "lab", route: "/admin/lab", path: "/admin/lab", auth: "staff" },
   { slug: "lab-writing-memory", route: "/admin/lab/writing-memory", path: "/admin/lab/writing-memory", auth: "staff" },

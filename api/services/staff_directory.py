@@ -130,6 +130,16 @@ PRESET_PLATFORM_OWNER = "platform_owner"
 PRESET_CIS_ROLE = "admin"
 PRESET_BOOKING_ROLE = "admin"
 PRESET_CRM_ROLE = "platform_admin"
+# AA-1091 (S278): the "Pricing team" preset: what the customer-service team needs to enter prices in CIS (Reference
+# prices: reference_price.write, held by admin / content_lead / customer_success) and in Booking (supplier rates,
+# pricing rules, trip plan components and departures: Booking pricing.write / supply.write / trip_plan.write, held by
+# Booking admin / contracting). It only raises: a role that already has those rights is kept; CRM roles are untouched.
+PRESET_PRICING_TEAM = "pricing_team"
+PRESETS: tuple[str, ...] = (PRESET_PLATFORM_OWNER, PRESET_PRICING_TEAM)
+PRICING_CIS_ROLE = "customer_success"
+PRICING_KEEP_CIS_ROLES = frozenset({"admin", "content_lead", "customer_success"})
+PRICING_BOOKING_ROLE = "contracting"
+PRICING_KEEP_BOOKING_ROLES = frozenset({"admin", "contracting"})
 
 # TEMPORARY (AA-816, S243 decision "option B"; root ADR 0006a): the ONE non-company address the directory accepts,
 # the SES inbound test mailbox the Cognito email-code E2E test reads its sign-in code from. Exact match only, CIS
@@ -787,18 +797,21 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
 
     ``preset="platform_owner"`` (AA-1031, the Staff page's "Platform owner" preset) sets CIS ``admin`` and Booking
     ``admin`` and adds CRM ``platform_admin`` to the roles already held, in one transaction and one audit row
-    (``details.preset``). It cannot be combined with the other fields. The owner flag is never set here."""
+    (``details.preset``). ``preset="pricing_team"`` (AA-1091) gives CIS ``customer_success`` and Booking
+    ``contracting`` unless the member already holds a role with those rights (kept), and leaves the CRM roles as they
+    are. A preset cannot be combined with the other fields. The owner flag is never set here."""
     if preset is not None:
-        if preset != PRESET_PLATFORM_OWNER:
-            raise StaffDirectoryError(400, f"Unknown preset; the only preset is {PRESET_PLATFORM_OWNER}", "preset")
+        if preset not in PRESETS:
+            raise StaffDirectoryError(400, f"Unknown preset; the presets are {', '.join(PRESETS)}", "preset")
         if role is not _UNSET or booking_role is not _UNSET or crm_roles is not _UNSET:
             raise StaffDirectoryError(400, "A preset sets every role itself; send it alone", "preset_conflict")
-        role, booking_role = PRESET_CIS_ROLE, PRESET_BOOKING_ROLE
+        if preset == PRESET_PLATFORM_OWNER:
+            role, booking_role = PRESET_CIS_ROLE, PRESET_BOOKING_ROLE
     elif role is _UNSET and booking_role is _UNSET and crm_roles is _UNSET:
         raise StaffDirectoryError(400, "Nothing to change: give a CIS role, a Booking role and/or CRM roles", "empty")
     new_role = require_cis_role(role) if role is not _UNSET else None
     new_booking = require_booking_role(booking_role) if booking_role is not _UNSET else None
-    crm_given = preset is not None or crm_roles is not _UNSET
+    crm_given = preset == PRESET_PLATFORM_OWNER or crm_roles is not _UNSET
     asked_crm = require_crm_roles(crm_roles) if crm_roles is not _UNSET else ()
 
     async with pool.acquire() as conn:
@@ -812,7 +825,12 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             if crm_given and not crm_ok:
                 raise _crm_unavailable()
             old_crm = await _crm_roles(conn, staff_id) if crm_ok else ()
-            if preset is not None:
+            if preset == PRESET_PRICING_TEAM:   # AA-1091: raise only, from the roles read in this transaction
+                if old_role not in PRICING_KEEP_CIS_ROLES:
+                    new_role = PRICING_CIS_ROLE
+                if old_booking not in PRICING_KEEP_BOOKING_ROLES:
+                    booking_role = new_booking = PRICING_BOOKING_ROLE
+            if preset == PRESET_PLATFORM_OWNER:
                 new_crm = require_crm_roles(set(old_crm) | {PRESET_CRM_ROLE})
             else:
                 new_crm = asked_crm if crm_given else old_crm

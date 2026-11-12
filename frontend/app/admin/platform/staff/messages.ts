@@ -222,6 +222,15 @@ export const MANAGE = defineMessages(
     presetQ: "Give every admin role?",
     presetBody: "gets CIS Administrator, Booking admin and CRM Agency admin in one change. They sign in again to use the new access.",
     presetDone: "Platform owner preset saved in CIS and the company sign-in. The person signs in again to use it.",
+    // AA-1091: the "Pricing team" preset (the customer-service team enters prices in CIS and Booking)
+    pricingTitle: "Pricing team preset",
+    pricingNote:
+      "One save gives what the customer-service team needs to enter prices: CIS Customer Success (Reference prices) and Booking Contracting (supplier rates, pricing rules, trip plans, departures). A role that already has these rights is kept; CRM roles are not changed.",
+    pricingHas: "This account can already enter prices in CIS and Booking.",
+    pricingApply: "Apply pricing preset",
+    pricingQ: "Give the pricing roles?",
+    pricingBody: "gets CIS Customer Success and Booking Contracting (roles that already have these rights are kept). They sign in again to use the new access.",
+    pricingDone: "Pricing team preset saved in CIS and the company sign-in. The person signs in again to use it.",
     disableQ: "Disable this account?",
     disableBody:
       "can no longer sign in, and every session is ended. An access token already issued stays valid for up to 15 minutes. You can enable the account again later.",
@@ -314,6 +323,14 @@ export const MANAGE = defineMessages(
     presetQ: "Cấp mọi vai trò quản trị?",
     presetBody: "nhận Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM trong một lần thay đổi. Họ đăng nhập lại để dùng quyền mới.",
     presetDone: "Đã lưu mẫu chủ sở hữu nền tảng trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
+    pricingTitle: "Mẫu nhóm nhập giá",
+    pricingNote:
+      "Một lần lưu cấp đủ quyền để nhóm chăm sóc khách hàng nhập giá: Customer Success trong CIS (Giá tham khảo) và Hợp đồng trong Booking (giá nhà cung cấp, quy tắc giá, kế hoạch tour, ngày khởi hành). Vai trò đã có các quyền này được giữ nguyên; vai trò CRM không đổi.",
+    pricingHas: "Tài khoản này đã nhập được giá trong CIS và Booking.",
+    pricingApply: "Áp dụng mẫu nhập giá",
+    pricingQ: "Cấp vai trò nhập giá?",
+    pricingBody: "nhận Customer Success trong CIS và Hợp đồng trong Booking (vai trò đã có các quyền này được giữ nguyên). Họ đăng nhập lại để dùng quyền mới.",
+    pricingDone: "Đã lưu mẫu nhóm nhập giá trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
     disableQ: "Vô hiệu hoá tài khoản này?",
     disableBody:
       "sẽ không đăng nhập được nữa, và mọi phiên đều bị kết thúc. Access token đã cấp vẫn còn hiệu lực tối đa 15 phút. Bạn có thể bật lại tài khoản sau.",

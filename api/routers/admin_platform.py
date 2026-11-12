@@ -81,7 +81,8 @@ _SELECT_WITH_CRM = _SELECT.replace("g.role AS booking_role, ", "g.role AS bookin
 CisRole = Literal["admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops"]
 BookingRole = Literal["admin", "sales", "contracting", "content_creator", "finance"]
 CrmRole = Literal["platform_admin", "ops", "support"]
-Preset = Literal["platform_owner"]
+# AA-1091: pricing_team = CIS customer_success + Booking contracting (staff_directory.PRESET_PRICING_TEAM)
+Preset = Literal["platform_owner", "pricing_team"]
 
 
 async def _select_sql(conn: Any) -> tuple[str, bool]:
@@ -178,7 +179,8 @@ class CreateStaffBody(BaseModel):
 class ChangeRolesBody(BaseModel):
     """Only the fields sent are changed; ``"booking_role": null`` removes the Booking grant, ``"crm_roles": []``
     (or null) removes every CRM role. ``"preset": "platform_owner"`` (AA-1031) is sent alone and sets CIS admin +
-    Booking admin + CRM Agency admin."""
+    Booking admin + CRM Agency admin; ``"preset": "pricing_team"`` (AA-1091) gives CIS customer_success + Booking
+    contracting, keeping a role that already has those rights."""
     model_config = ConfigDict(extra="forbid")
     role: Optional[CisRole] = None
     booking_role: Optional[BookingRole] = None

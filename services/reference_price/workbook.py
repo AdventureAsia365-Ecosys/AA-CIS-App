@@ -113,6 +113,10 @@ def export_filename(now: datetime | None = None) -> str:
     return f"reference-prices-{stamp}.xlsx"
 
 
+def _cell(values: tuple, i: Any) -> Any:
+    return values[i] if i is not None and i < len(values) else None
+
+
 class WorkbookError(ValueError):
     """The file cannot be read as a reference price sheet (HTTP 422)."""
 
@@ -143,18 +147,14 @@ def read_rows(content: bytes) -> list[ImportRow]:
                                 + ", ".join(m.capitalize() for m in missing) + ")")
         note_i = index.get("note")
         out: list[ImportRow] = []
-        for n, values in enumerate(it, start=2):
-            values = tuple(values or ())
-
-            def cell(i):
-                return values[i] if i is not None and i < len(values) else None
-
-            key = cell(index["key"])
+        for n, raw in enumerate(it, start=2):
+            values = tuple(raw or ())
             if all(v is None or str(v).strip() == "" for v in values):
                 continue
+            key = _cell(values, index["key"])
             out.append(ImportRow(line=n, source_key=str(key).strip() if key is not None else "",
-                                 amount=cell(index["amount"]), currency=cell(index["currency"]),
-                                 basis=cell(index["basis"]), note=cell(note_i)))
+                                 amount=_cell(values, index["amount"]), currency=_cell(values, index["currency"]),
+                                 basis=_cell(values, index["basis"]), note=_cell(values, note_i)))
             if len(out) > MAX_ROWS:
                 raise WorkbookError(f"The file has more than {MAX_ROWS} rows; split it")
         return out

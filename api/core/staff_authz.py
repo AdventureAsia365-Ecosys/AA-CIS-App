@@ -138,10 +138,11 @@ NOTIFICATIONS_READ = "notifications.read"
 # (a piece or version of another tenant is a 404); labels, place cards, compliance and every write stay
 # tenant_content.read / quality.write.
 TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
-# AA-1091 (S278, tech lead: "the customer-service team must be able to enter prices in CIS easily") — the structured
-# reference price of the AA tours (AA Catalogue › Reference prices, /admin/reference-prices; CIS 401). Read: the
-# catalogue roles, customer_success and finance (not the read-only viewer, AA-878: refused on every listed read); write (inline edit, accept, parse, Excel import): admin, content_lead
-# and customer_success (the customer-service team's CIS role). Never a selling price (root ADR 0005 d7).
+# AA-1091 (S278, tech lead: "the customer-service team must be able to enter prices in CIS easily") - the structured
+# reference price of the AA tours (AA Catalogue > Reference prices, /admin/reference-prices; CIS 401). Read: the
+# catalogue roles, customer_success and finance (not the read-only viewer, AA-878: refused on every listed read).
+# Write (inline edit, accept, parse, Excel import): admin, content_lead and customer_success (the customer-service
+# team's CIS role). Never a selling price (root ADR 0005 d7).
 REFERENCE_PRICE_READ = "reference_price.read"
 REFERENCE_PRICE_WRITE = "reference_price.write"
 

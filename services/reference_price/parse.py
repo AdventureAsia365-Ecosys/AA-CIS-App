@@ -2,8 +2,9 @@
 structured REFERENCE price (amount, currency, basis) plus the doubts a person should look at.
 
 Root ADR 0005 d7: "an existing free-text price may be parsed once into a reference price with a review flag". The
-result is never a selling price. Pure functions, no I/O; the store (services/reference_price/store.py) saves a parse with
-origin 'parsed' and ``needs_review`` = bool(reasons), and staff confirm or correct it on the admin Reference prices page.
+result is never a selling price. Pure functions, no I/O; the store (services/reference_price/store.py) saves a parse
+with origin 'parsed' and ``needs_review`` = bool(reasons); staff confirm or correct it on the admin Reference prices
+page.
 
 The amount rule is the one AA-Booking's ``parse_reference`` uses (backend/app/catalog/trip_plan_sync.py, the first
 amount of the text with its currency), so both sides read "$1,722/person" the same way; this parser also finds the

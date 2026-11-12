@@ -26,7 +26,6 @@ contract view catalog.v_tour_price_reference_v2 (CIS 402). Included without a pr
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 from typing import Any, Optional
 
@@ -177,7 +176,7 @@ async def import_reference_prices(body: ImportBody, request: Request, x_admin_us
     actor = _actor(x_admin_user_id)
     try:
         content = base64.b64decode(body.file_base64, validate=True)
-    except (binascii.Error, ValueError):
+    except ValueError:   # binascii.Error is a ValueError
         raise HTTPException(status_code=400, detail="The file is not valid base64") from None
     try:
         lines = workbook.read_rows(content)

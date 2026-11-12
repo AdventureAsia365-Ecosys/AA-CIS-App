@@ -3,8 +3,9 @@ catalog key, the live flag from published_tours, the LEFT JOIN of CIS 401's tabl
 import through the real UPSERT and the status rule after each write, as cis_app would run them.
 
 Needs CIS 401 (silver_aa_internal.tour_reference_price). It ships in the migration-only PR before this code; until that
-PR is on the branch the module is skipped (it then runs on every CI round: the conftest replays 401). raw_tours.source_key
-(CIS 258, a catalog-recipe file the replay skips) is added inside the test transaction when the replay lacks it.
+PR is on the branch the module is skipped (it then runs on every CI round: the conftest replays 401).
+raw_tours.source_key (CIS 258, a catalog-recipe file the replay skips) is added inside the test transaction when the
+replay lacks it.
 Invented tour names only; every test runs in one transaction that is rolled back."""
 import os
 import sys
