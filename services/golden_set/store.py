@@ -153,14 +153,14 @@ async def apply(conn, gs: GoldenSet, baseline: dict[str, dict], *, allow_downgra
                 i["label_verdict"], i["label_source"], _j(i["injection_spec"]), _j(i["refs"]), i["input_sha256"],
                 i["pick_reason"])
     out["set_id"] = str(set_id)
-    # AA-1051: each item's frozen DEV / CAL / GATE side (CIS 399), written with the items (and filled for an existing
-    # version on a re-run). Without the table (399 not applied) nothing is written and the report says so.
+    # AA-1051: each item's frozen DEV / CAL / GATE side (CIS 400), written with the items (and filled for an existing
+    # version on a re-run). Without the table (400 not applied) nothing is written and the report says so.
     from services.writer_proof import splits
     if await splits.table_exists(conn):
         out["splits"] = await splits.write_missing(conn, str(set_id),
                                                    assigned_by=f"golden_import:{gs.set_row['imported_by']}")
     else:
-        out["splits"] = "table missing (CIS 399 not applied): no split rows written"
+        out["splits"] = "table missing (CIS 400 not applied): no split rows written"
     if out["superseded"] and await conn.fetchval("SELECT to_regclass('shared.writing_memory_release') IS NOT NULL"):
         # AA-919 (WM-18 scope 5): the active releases whose evidence names the old golden set go to reverify (they
         # keep serving; a re-run needs approval). Same transaction as the supersede.

@@ -1,5 +1,5 @@
 """AA-919 (WM-17) — import an AA-729 golden-set fixture into shared.eval_golden_set / eval_golden_item and write the
-baseline_import runs (shared.prompt_eval_runs + eval_item_result), and (AA-1051, CIS 399) each item's frozen DEV / CAL /
+baseline_import runs (shared.prompt_eval_runs + eval_item_result), and (AA-1051, CIS 400) each item's frozen DEV / CAL /
 GATE side in shared.eval_golden_split. $0: no model call (llm_guard), reads only the
 fixture (and optional AA-729 score files) and the DB.
 
@@ -84,10 +84,10 @@ def _baseline_report(b: dict) -> dict:
 
 
 async def _split_preview(conn, gs: derive.GoldenSet) -> Any:
-    """AA-1051: the DEV / CAL / GATE side the apply would give each item (CIS 399), counts per writer only."""
+    """AA-1051: the DEV / CAL / GATE side the apply would give each item (CIS 400), counts per writer only."""
     from services.writer_proof import splits
     if not await splits.table_exists(conn):
-        return "table missing (CIS 399 not applied): the apply writes no split rows"
+        return "table missing (CIS 400 not applied): the apply writes no split rows"
     return {"rule": splits.RULE, "per_writer": splits.summarise(
         [{"sample_id": i["sample_id"], "writer": i["writer"]} for i in gs.items])["proposed_for_missing"]}
 

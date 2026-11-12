@@ -1,4 +1,4 @@
-"""AA-1051 — the frozen DEV / CAL / GATE side of each golden item (CIS 399, shared.eval_golden_split).
+"""AA-1051 — the frozen DEV / CAL / GATE side of each golden item (CIS 400, shared.eval_golden_split).
 
 The S271 audit (Writing Lab redesign, "golden v2") gives the golden set three disjoint uses: DEV (rubric and policy
 work), CAL (judge calibration) and GATE (sealed: release and W5 proof decisions only). A sample's side is fixed by a
@@ -128,7 +128,7 @@ async def write_missing(conn, set_id: str, *, assigned_by: str) -> dict:
 
 async def run(conn, *, name: str, version: Optional[str], apply: bool, assigned_by: str) -> dict:
     if not await table_exists(conn):
-        raise SplitRefused("shared.eval_golden_split does not exist (CIS 399 not applied)")
+        raise SplitRefused("shared.eval_golden_split does not exist (CIS 400 not applied)")
     gs = await conn.fetchrow(SET_SQL, name, version)
     if gs is None:
         raise SplitRefused(f"no golden set {name}@{version or 'active'}")

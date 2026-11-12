@@ -6,8 +6,8 @@ the backfill (splits.run) DRY RUN reads only and its apply fills the items of a 
 store reads each item's side; the pre-registration runs query, the W5 spend query and the cost report queries run on
 the real tables.
 
-Needs CIS 399 (shared.eval_golden_split): the code PR ships after the migration PR (MIG-4 chain), so CI replays it.
-A checkout without the file (the code branch before main has 399) skips this module."""
+Needs CIS 400 (shared.eval_golden_split): the code PR ships after the migration PR (MIG-4 chain), so CI replays it.
+A checkout without the file (the code branch before main has 400) skips this module."""
 import json
 import os
 import sys
@@ -27,8 +27,8 @@ from services.writing_memory import r2  # noqa: E402
 from tests.unit.aa919_fake_golden import TENANT_A, TENANT_B, fake_fixture  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "399_eval_golden_split.sql")
-pytestmark = pytest.mark.skipif(not os.path.exists(MIGRATION), reason="CIS 399 is not in this checkout yet")
+MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "400_eval_golden_split.sql")
+pytestmark = pytest.mark.skipif(not os.path.exists(MIGRATION), reason="CIS 400 is not in this checkout yet")
 
 
 @pytest_asyncio.fixture
@@ -44,7 +44,7 @@ async def conn():
         await c.execute(migration_body(284))                       # its grants (other modules revoke cis_app's)
         await c.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON shared.prompt_eval_runs TO cis_app")   # Dev (244)
         await c.execute("GRANT SELECT ON shared.tenants TO cis_app")
-        await c.execute("GRANT SELECT, INSERT, DELETE ON shared.eval_golden_split TO cis_app")         # 399
+        await c.execute("GRANT SELECT, INSERT, DELETE ON shared.eval_golden_split TO cis_app")         # 400
         await c.execute("GRANT SELECT ON shared.llm_call_log TO cis_app")
         await c.execute("GRANT SELECT, INSERT ON shared.job TO cis_app")                               # Dev grant
         await c.execute("DO $$ BEGIN IF to_regclass('shared.writing_memory_release') IS NOT NULL THEN "
@@ -95,7 +95,7 @@ async def test_backfill_dry_run_reads_only_and_apply_fills_the_set(conn):
     await conn.execute("SET LOCAL ROLE cis_app")
     rep = await importer.run(gs, b, apply=True, conn=conn)
     set_id = rep["db"]["set_id"]
-    await conn.execute("DELETE FROM shared.eval_golden_split WHERE set_id = $1::uuid", set_id)   # "before 399"
+    await conn.execute("DELETE FROM shared.eval_golden_split WHERE set_id = $1::uuid", set_id)   # "before 400"
     name = gs.set_row["name"]
     dry = await splits.run(conn, name=name, version="1.0.0", apply=False, assigned_by="pytest")
     assert dry["summary"]["missing"] == len(gs.items) and not await _sides(conn, set_id)

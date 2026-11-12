@@ -73,7 +73,7 @@ refuses to spend writer money on a result that cannot count:
   - Hard stop 1 counts a new hard fact class only on a candidate verdict fail against a control verdict pass
     (eval_checks.compare_item).
 
-AA-1051 (Quality W5 code part, root ADR 0020): the frozen DEV / CAL / GATE split (CIS 399, shared.eval_golden_split,
+AA-1051 (Quality W5 code part, root ADR 0020): the frozen DEV / CAL / GATE split (CIS 400, shared.eval_golden_split,
 services/writer_proof/splits.py) and pre-registered runs.
   - `eval_split` (dev | cal | gate) plans only the non-trap items of that side (traps stay in the probe), and the
     judge calibration that decides `judge_counts` reads the CAL items only; the planned items with a label are judged
@@ -123,7 +123,7 @@ logger = structlog.get_logger()
 GOLDEN_SET = "aa729"
 RUN_KINDS = ("r2", "reverify")
 GOALS = ("non_inferior", "improve")
-EVAL_SPLITS = ("dev", "cal", "gate")          # AA-1051: shared.eval_golden_split (CIS 399)
+EVAL_SPLITS = ("dev", "cal", "gate")          # AA-1051: shared.eval_golden_split (CIS 400)
 PREREG_ARMS = ("B", "A_prime")                # AA-1051: the arms a pre-registered run may be
 NULL_WORKFLOW = "null"                        # AA-1051: the W5 eval null run (writer_proof.prereg.WORKFLOWS)
 MAX_SAMPLE_IDS = 200
@@ -1100,7 +1100,7 @@ class PgStore:
     async def items(self, set_id, writer, tenant_id):
         from services.writer_proof import splits
         async with self.pool.acquire() as conn:
-            # AA-1051: each item's DEV / CAL / GATE side (CIS 399) when the table exists, else None
+            # AA-1051: each item's DEV / CAL / GATE side (CIS 400) when the table exists, else None
             side = ("s.eval_split" if await splits.table_exists(conn) else "NULL::text")
             join = ("LEFT JOIN shared.eval_golden_split s ON s.set_id = g.set_id AND s.sample_id = g.sample_id"
                     if side != "NULL::text" else "")

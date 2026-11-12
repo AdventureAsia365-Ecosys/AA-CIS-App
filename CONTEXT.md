@@ -4206,7 +4206,7 @@ _Avoid_: test set (ambiguous), eval data, Pinned Exemplar (a release item, not a
 
 **Eval side (DEV / CAL / GATE; AA-1051, root ADR 0020 W5)**:
 The frozen use of a golden item, orthogonal to its R2 split: `dev` (rubric and policy work), `cal` (judge calibration)
-or `gate` (sealed: release and W5 proof decisions only). Stored in `shared.eval_golden_split` (CIS 399, append only,
+or `gate` (sealed: release and W5 proof decisions only). Stored in `shared.eval_golden_split` (CIS 400, append only,
 FK to the item): placed by `sha256("aa1051-eval:<sample_id>")` under rule `aa1051-split-v1` (cal 30%, gate 30%, dev
 40%), per sample so a sample keeps its side in every golden version; readers read the stored row, never recompute it.
 Written by the golden importer and by `python -m services.writer_proof.splits` (DRY RUN first). An R2 run with
