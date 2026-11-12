@@ -42,11 +42,12 @@ COLUMNS = (
     "version_id uuid, edit_source text, text_updated_at timestamp with time zone, human_edited boolean, "
     "content_hash text"
 )
-# The SELECT of AA-TripPlanner-Web backend/browse/tenant_tours.py (column names, never *).
-TP_CARDS_SQL = f"""SELECT source_system, source_id, tour_id, slug, title, summary, country, duration_raw,
-                          duration_days, best_time_to_go, cover_photo_path, photo_count, text_updated_at,
-                          human_edited
-                     FROM {VIEW} WHERE tenant_id = %s::uuid ORDER BY title"""
+# The columns AA-TripPlanner-Web backend/browse/tenant_tours.py selects (COLUMNS; never *), keyed by tenant as it is.
+TP_CARDS_SQL = f"""SELECT t.source_system, t.source_id, t.tour_id::text AS tour_id, t.slug, t.title, t.subtitle,
+                          t.summary, t.highlights, t.itinerary_text, t.seo_title, t.seo_meta, t.country,
+                          t.duration_raw, t.duration_days, t.best_time_to_go, t.cover_photo_path, t.photo_count,
+                          t.version_id::text AS version_id, t.text_updated_at, t.human_edited, t.content_hash
+                     FROM {VIEW} t WHERE t.tenant_id = %s::uuid ORDER BY t.title"""
 GRANTED = "created_at,edit_source,id,published_tour_id,rewritten_content,status,tenant_id,version_number"
 
 
@@ -187,7 +188,7 @@ def test_tenant_sees_only_its_finished_text_of_live_tours(cur):
     assert [r["source_id"] for r in rows] == [_source_id(cur, cur.tour_a)]
     (row,) = rows
     assert row["title"] == "2: invented tenant title" and row["summary"] == "Invented summary"
-    assert str(row["tour_id"]) == cur.tour_a
+    assert row["tour_id"] == cur.tour_a
     assert row["country"] == "Laos" and row["human_edited"] is False
     (full,) = _as(cur, "tripplanner", f"SELECT version_id::text AS v, highlights, edit_source FROM {VIEW} "
                                       "WHERE tenant_id = %s::uuid", cur.agency)
@@ -228,7 +229,7 @@ def test_text_follows_the_key_across_a_source_reupload(cur):
                 (cur.tour_a,))
     new_tour, _ = t228._tour(cur, name="Invented Ridge Trek v2", country="Laos", group=cur.group_a)
     (row,) = _rows(cur, cur.agency)
-    assert str(row["tour_id"]) == new_tour and row["title"] == "1: invented tenant title"
+    assert row["tour_id"] == new_tour and row["title"] == "1: invented tenant title"
 
 
 def test_view_rows_are_not_widened_by_the_tenant_guc(cur):
