@@ -225,11 +225,15 @@ export const MANAGE = defineMessages(
     // AA-1091: the "Pricing team" preset (the customer-service team enters prices in CIS and Booking)
     pricingTitle: "Pricing team preset",
     pricingNote:
-      "One save gives what the customer-service team needs to enter prices: CIS Customer Success (Reference prices) and Booking Contracting (supplier rates, pricing rules, trip plans, departures). A role that already has these rights is kept; CRM roles are not changed.",
+      "One save gives what the customer-service team needs to enter prices: CIS Customer Success (Reference prices) and Booking Contracting (supplier rates, pricing rules, trip plans, departures). It only adds: a role that already has these rights is kept, and it never replaces another role. CRM roles are not changed.",
+    pricingBlocked: (roles: string) =>
+      `This account holds ${roles}. Each app gives one role per person, so the preset would replace it and remove its rights. Change the roles by hand above if that is what you want.`,
+    pricingCisRole: (r: string) => `CIS ${r}`,
+    pricingBookingRole: (r: string) => `Booking ${r}`,
     pricingHas: "This account can already enter prices in CIS and Booking.",
     pricingApply: "Apply pricing preset",
     pricingQ: "Give the pricing roles?",
-    pricingBody: "gets CIS Customer Success and Booking Contracting (roles that already have these rights are kept). They sign in again to use the new access.",
+    pricingBody: "gets the roles to enter prices; no other role is replaced. They sign in again to use the new access.",
     pricingDone: "Pricing team preset saved in CIS and the company sign-in. The person signs in again to use it.",
     disableQ: "Disable this account?",
     disableBody:
@@ -325,11 +329,15 @@ export const MANAGE = defineMessages(
     presetDone: "Đã lưu mẫu chủ sở hữu nền tảng trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
     pricingTitle: "Mẫu nhóm nhập giá",
     pricingNote:
-      "Một lần lưu cấp đủ quyền để nhóm chăm sóc khách hàng nhập giá: Customer Success trong CIS (Giá tham khảo) và Hợp đồng trong Booking (giá nhà cung cấp, quy tắc giá, kế hoạch tour, ngày khởi hành). Vai trò đã có các quyền này được giữ nguyên; vai trò CRM không đổi.",
+      "Một lần lưu cấp đủ quyền để nhóm chăm sóc khách hàng nhập giá: Customer Success trong CIS (Giá tham khảo) và Hợp đồng trong Booking (giá nhà cung cấp, quy tắc giá, kế hoạch tour, ngày khởi hành). Mẫu này chỉ thêm quyền: vai trò đã có các quyền này được giữ nguyên, và không bao giờ thay một vai trò khác. Vai trò CRM không đổi.",
+    pricingBlocked: (roles: string) =>
+      `Tài khoản này đang giữ ${roles}. Mỗi ứng dụng chỉ cho một vai trò mỗi người, nên mẫu này sẽ thay vai trò đó và làm mất quyền của nó. Nếu đúng ý bạn, hãy đổi vai trò bằng tay ở phía trên.`,
+    pricingCisRole: (r: string) => `CIS ${r}`,
+    pricingBookingRole: (r: string) => `Booking ${r}`,
     pricingHas: "Tài khoản này đã nhập được giá trong CIS và Booking.",
     pricingApply: "Áp dụng mẫu nhập giá",
     pricingQ: "Cấp vai trò nhập giá?",
-    pricingBody: "nhận Customer Success trong CIS và Hợp đồng trong Booking (vai trò đã có các quyền này được giữ nguyên). Họ đăng nhập lại để dùng quyền mới.",
+    pricingBody: "nhận các vai trò để nhập giá; không vai trò nào khác bị thay. Họ đăng nhập lại để dùng quyền mới.",
     pricingDone: "Đã lưu mẫu nhóm nhập giá trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
     disableQ: "Vô hiệu hoá tài khoản này?",
     disableBody:

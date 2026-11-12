@@ -180,7 +180,8 @@ class ChangeRolesBody(BaseModel):
     """Only the fields sent are changed; ``"booking_role": null`` removes the Booking grant, ``"crm_roles": []``
     (or null) removes every CRM role. ``"preset": "platform_owner"`` (AA-1031) is sent alone and sets CIS admin +
     Booking admin + CRM Agency admin; ``"preset": "pricing_team"`` (AA-1091) gives CIS customer_success + Booking
-    contracting, keeping a role that already has those rights."""
+    contracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than
+    replace another role)."""
     model_config = ConfigDict(extra="forbid")
     role: Optional[CisRole] = None
     booking_role: Optional[BookingRole] = None
