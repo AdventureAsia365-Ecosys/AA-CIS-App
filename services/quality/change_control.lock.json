@@ -7,14 +7,14 @@
       "refs": "AA-1052"
     },
     "gates": {
-      "sha": "9886c49b391a9359",
-      "evidence": "parity:tests/unit/test_aa1079_brand_calibration.py",
-      "refs": "AA-1079"
+      "sha": "8280a86bda5fe76b",
+      "evidence": "break-glass:decided policy change ahead of its measurement: S278 live run, 5 of 9 blogs length_short, 3 at the floor edge (4,699/4,696/4,696 under a 900-word writer floor); blog length target = F4 floor x 1.17 (t9.blog_length_target_margin), writer floor 950 words (t9_write v6); replay tests/unit/test_aa1077_s278_length_margin.py, live measure on the next audit-tenant blog run",
+      "refs": "AA-1077"
     },
     "prompt_registry": {
-      "sha": "e590707416bf9bec",
-      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
-      "refs": "AA-1052"
+      "sha": "96b8a2285aad2aef",
+      "evidence": "break-glass:decided policy change ahead of its measurement: S278 live run, 5 of 9 blogs length_short, 3 at the floor edge (4,699/4,696/4,696 under a 900-word writer floor); blog length target = F4 floor x 1.17 (t9.blog_length_target_margin), writer floor 950 words (t9_write v6); replay tests/unit/test_aa1077_s278_length_margin.py, live measure on the next audit-tenant blog run",
+      "refs": "AA-1077"
     },
     "route_defaults": {
       "sha": "c7260792542e4027",

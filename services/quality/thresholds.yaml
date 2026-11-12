@@ -79,6 +79,13 @@ thresholds:
     description: "AA-1079 deterministic cross-brand check: word 5-gram Jaccard of two brands' versions of one tour at or above it warns (AA-741 phase 3: 8 rewritten tours mean 0.18, max 0.37)."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
 
+  # ---------------------------------------------------------------------------------------------- T9
+  t9.blog_length_target_margin:
+    value: 0.17
+    used_by: [services/acp_content_writing/length_contract.py]
+    description: "AA-1077 S278: the blog length target sits this fraction above the F4 floor (4,700 chars -> 5,499 chars, the writer's 950-word floor, the extend repair's and the F4 rewrite's aim); never the floor itself. The prompt's hashed word floor (prompts._BLOG_WORDS) is pinned to it by tests/unit/test_aa1077_s278_length_margin.py, so a change here needs a t9_write prompt bump. S278: with 0.11 (900 words) 3 of 9 pieces came in 1-4 chars under the floor and the normalizer cut up to 241 more."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+
   # --------------------------------------------------------------------------------------------- T10
   t10.reuse_similarity:
     value: 0.92

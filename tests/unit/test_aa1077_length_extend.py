@@ -249,7 +249,7 @@ async def test_a_short_only_attempt_one_gets_the_extend_repair_not_the_rewrite(_
             patch.object(service, "rewrite_with_feedback") as rewrite, \
             patch.object(service, "extend_sections", side_effect=_call(GOOD)) as ext, \
             patch.object(service, "run_quality_gates", side_effect=[_outcome(_short_ledger()), _outcome(passing)]), \
-            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, trace: (led, st, hr, {})), \
+            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, **kw: (led, st, hr, {})), \
             patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
         await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
     rewrite.assert_not_called()
@@ -310,7 +310,7 @@ async def test_an_f1_item_repaired_with_the_extend_is_cut_at_attempt_three(_loop
                          side_effect=lambda text, items, **k: (text.replace(F1_SENTENCE, ""), [], truth_cut)) as cut, \
             patch.object(service, "run_quality_gates", side_effect=[
                 _outcome(_short_ledger([F1_FAIL])), _outcome([*passing, F1_FAIL]), _outcome(passing)]), \
-            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, trace: (led, st, hr, {})), \
+            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, **kw: (led, st, hr, {})), \
             patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
         await service.run_write_background(REQUEST_ID, PIECE_ID, _ctx(), pool=MagicMock())
     rewrite.assert_not_called()

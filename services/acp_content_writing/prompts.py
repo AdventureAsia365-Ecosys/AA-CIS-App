@@ -142,11 +142,13 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
 # reread is a quick check of the finished text, never a second draft. The band's floor sits above F4's floor (F4
 # holds a blog body under length_contract.BLOG_FLOOR_CHARS = 4,700 TAG-STRIPPED characters, about 810 words; AA-1077
 # corrected "tags included" and pins the margin in tests/unit/test_aa1077_length_contract.py; length_contract reads
-# these symbols, so the numbers live here only): the block never tells the writer a shorter article is
-# fine, which would contradict an F4 rewrite's own feedback; a thin seed reaches the floor with depth from its own
-# seed / Place background / FACTS lines and the FAQ, never with invented facts (S271 review). The other channels never
-# see it. Its four symbols are in the t9_write prompt manifest (v2).
-_BLOG_WORDS = (900, 1300)        # target words, body including the FAQ; the low end is ~10 % above the F4 floor
+# these symbols, so the numbers live here only; AA-1077 S278: the low end is length_contract.target_words(), the F4
+# floor plus the registry margin t9.blog_length_target_margin, pinned by tests/unit/test_aa1077_s278_length_margin.py;
+# at 900 words, 11 % above the floor, 3 of 9 S278 pieces landed 1-4 chars under it): the block never tells the writer
+# a shorter article is fine, which would contradict an F4 rewrite's own feedback; a thin seed reaches the floor with
+# depth from its own seed / Place background / FACTS lines and the FAQ, never with invented facts (S271 review). The
+# other channels never see it. Its four symbols are in the t9_write prompt manifest (v2; the 950 floor is v6).
+_BLOG_WORDS = (950, 1300)        # target words, body including the FAQ; the low end is the length target (floor + 17 %)
 _BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,240: length_contract.BLOG_CEILING_CHARS)
 _BLOG_SECTIONS_MAX = 6           # "## " sections before the FAQ
 _BLOG_LENGTH_INSTRUCTIONS = (

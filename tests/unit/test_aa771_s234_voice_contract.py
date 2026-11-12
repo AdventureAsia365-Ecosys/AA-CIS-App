@@ -485,7 +485,10 @@ class TestT9Prompt:
         Updated AA-741 (S271 phase-1 audit, t9_write v2): both blog variants end with the LENGTH AND EFFORT block
         (prompts._BLOG_LENGTH_INSTRUCTIONS: a word band, a section cap, one plan-then-write pass) before the JSON
         envelope, so `single` and `route` change; SYSTEM_PROMPT does not (other channels never see the block). Its
-        floor is stated as a hard minimum (S271 review: F4 holds a body under 4,700 characters)."""
+        floor is stated as a hard minimum (S271 review: F4 holds a body under 4,700 characters).
+        Updated AA-1077 (S278, t9_write v6): the block's word floor is the length target (900 → 950 words,
+        length_contract.target_words()), so `single` and `route` change; with "950" put back to "900" in the block they
+        are the previous bytes (d6be2507… / 7b62bcc7…). SYSTEM_PROMPT does not change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -508,8 +511,8 @@ class TestT9Prompt:
         assert GOAL["key"] == GOALS[0]["key"]
         # AA-1047: byte-identical apart from the writing policy lines (tests/unit/aa1047_prompt_lines.py)
         assert sha(pre_aa1047(SYSTEM_PROMPT)) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
-        assert sha(single) == "d6be250786c6f276036fe183be959b8f75fb64b54801b0bbcd2dd80d4c1c5636"
-        assert sha(route) == "7b62bcc7b7dab960089ebeb3642dbdd827f35cc063797c1131a714a6be273bb9"
+        assert sha(single) == "88a0a8df06e2dadd76238fb9e8c390d159bb0cc308a02399dd65ce8570655118"
+        assert sha(route) == "32f8ca0feb8b02ed8c26417764322ae685ef0d8917877cf78d110c59d74cb97f"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash
