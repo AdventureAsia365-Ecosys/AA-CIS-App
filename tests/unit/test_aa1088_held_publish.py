@@ -22,8 +22,8 @@ from services.acp_shared.audit_log import TenantAuditAction
 from tests.unit.test_aa458_publish import (PIECE_ID, TENANT, _claimed, _integ_row, _make_request, _piece_row,
                                            _sequential_pool)
 
-OWNER = {**TENANT, "csr": "owner", "mid": str(uuid.uuid4())}
-EDITOR = {**TENANT, "csr": "editor", "mid": str(uuid.uuid4())}
+OWNER = {**TENANT, "csr": "owner", "mid": "7b1c2d3e-0000-4000-8000-00000000a001"}
+EDITOR = {**TENANT, "csr": "editor", "mid": "7b1c2d3e-0000-4000-8000-00000000a002"}
 WP_CREDS = {"wp_url": "https://invented-blog.example", "username": "u", "app_password": "p"}
 
 
