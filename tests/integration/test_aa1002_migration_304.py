@@ -69,7 +69,10 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           "370_llm_route_control_versions.sql",
           # AA-1042 (S269): 376's Anthropic API rows live on the deployment table _undo drops; its catalog rows
           # (provider anthropic) leave with _undo, as the pre-304 provider CHECK refuses them
-          "376_llm_anthropic_api_catalog_fallbacks.sql")]
+          "376_llm_anthropic_api_catalog_fallbacks.sql",
+          # AA-1095 (S278): 413's acc1 connection, cost policy and deployments live on the tables _undo drops, and its
+          # account env CHECK replaces 304's
+          "413_llm_acc1_bedrock_connection.sql")]
 # AA-1024 l22 (G8): every migration after 304 that names a table _undo drops (or 304's catalog capabilities column)
 # is in LATER above or here, with the reason it need not be re-run; tests/unit/test_aa1024_replay_later_list.py fails
 # on a new one in neither list (lessons S259..S270: a new FK / CHECK / grant / row on these tables broke this module
