@@ -157,8 +157,8 @@ async def test_w5_job_reads_and_the_control_fingerprint(conn):
             spend.R2_JOB_KIND, json.dumps(payload), status)
     jobs = await spend.read_jobs(conn, pid)
     mine = [j for j in jobs["active"] if j["prereg_id"] in (pid, "zz-other")]
-    assert sorted((j["prereg_id"], j["status"], j["cap_usd"]) for j in mine) == [
-        (pid, "queued", 9.5), ("zz-other", "running", 5.0)]
+    assert sorted((j["prereg_id"], j["status"], j["cap_usd"]) for j in mine) == sorted([
+        (pid, "queued", 9.5), ("zz-other", "running", 5.0)])
     assert all(j["prereg_id"] for j in jobs["active"]) and jobs["attempts"] == {"B": 2}
     assert spend.reserved(mine, "t9") == {"workflow": 9.5, "total": 14.5}
 
