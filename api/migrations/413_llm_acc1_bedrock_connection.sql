@@ -1,5 +1,6 @@
 -- Migration 413: AA-1095 (S278) — Bedrock connection `acc1` (the payer account of acc3's organization) and its 13
 -- chat-model deployments, seeded SWITCHED OFF; the route order is set afterwards by one route-control version.
+-- break-glass: tech lead S278 12/11: AWS refuses chat models on acc3; acc1 rows seeded off, behind every live row
 --
 -- Why. AWS refuses 7 chat models on acc3 (the LLM account) at account level since 29/10 (AccessDeniedException "not
 -- available for this account", TPM quota 0 on five; AWS cases open), so every Claude 5.x / GPT stage falls to the
@@ -20,9 +21,10 @@
 --      must be live first; the admin Test connection works on a switched-off connection, so the 13 models are probed
 --      before the switch. ON CONFLICT DO NOTHING: an admin's later edit is kept.
 --   3. Its shared.llm_connection_cost_policy row, copied from acc3's (alert 80 % / hard stop when acc3 has none).
---   4. 13 deployments on acc1 (origin seed, enabled = the catalog row's AND the acc3 row's enabled, priority 90 = behind every live deployment of the
---      model (Dev: 10 to 30), and still ahead of the Anthropic API rows 306 / 376 seed at 100, whose re-run guard
---      refuses an AWS row sorting after them): wire id = global.<Bedrock model id>, the profiles that answered on 12/11:
+--   4. 13 deployments on acc1 (origin seed, enabled = the catalog row's AND the acc3 row's enabled, priority 90 =
+--      behind every live deployment of the model (Dev: 10 to 30), and still ahead of the Anthropic API rows 306 / 376
+--      seed at 100, whose re-run guard refuses an AWS row sorting after them): wire id = global.<Bedrock model id>,
+--      the profiles that answered on 12/11:
 --        sonnet-5-5 opus-5-5 haiku-5-5 sonnet-5 sonnet-4-6 opus-4-6 haiku-4-5 (Claude)
 --        gpt-6-luna gpt-6-astra gpt-6-sol gpt-5.6-luna gpt-6.1-sol gpt-6.1-terra (GPT). The candidates (gpt-6-sol,
 --        gpt-6.1-sol, gpt-6.1-terra: catalog row off; opus-4-6: acc3 row off, served by the Anthropic API since 376)
@@ -34,15 +36,18 @@
 --   (vendor_route.deployment_plan; the wire-drift check has nothing to compare without a catalog profile), the
 --   older replays guard the candidate rows' exact profiles (367), and TripPlanner, which also reads the profiles, never
 --   calls acc1 (its gateway holds credentials for BEDROCK_ACCT_PRIMARY only).
---   The route order (tech lead S278, 15:45: Claude = Anthropic API, then acc1, then acc3; GPT = acc1, then acc3, then
---   the OpenAI API twin on the chain) is NOT set here: AA-CIS-App scripts/llm_ops/aa1095_acc1_route_order.py switches
---   acc1 on and saves the provider order as one route-control version (audited, one-click revert) after the deploy.
+--   The route order (tech lead S278, 15:45: Claude = Anthropic API, then acc1, then acc3; GPT = acc1, then the OpenAI
+--   API, then acc3) is NOT set here: after the deploy one run-script of the root repo (tools/llm/, on the CIS
+--   container) switches acc1 on and saves the per-family provider order (api/services/llm_family_order.py) as one
+--   route-control version (audited, one-click revert).
 --   Chains, scopes, account_route and every existing deployment / connection row are not touched.
 --
 -- Behaviour on Dev. None until the switch: the connection is off, so deployment_plan never picks an acc1 row. The
--- static attempt count of the route rules (llm_route_chains attempt_cap) counts every deployment row, on or off: some
--- validate / writer chains then count 7 possible attempts (NOTICE list below; the route control reports them as
--- existing warnings). At run time refused acc3 rows are skipped by the refusal circuit at 0 USD and are not attempts.
+-- static attempt count of the route rules (llm_route_chains attempt_cap) counts every deployment row, on or off: a chain's
+-- count grows by one per model with an acc1 row, so some chains count more than 6; the route control reports them as
+-- existing warnings (never a blocking error: the rows exist before any save). At run time refused acc3 rows are skipped
+-- by the refusal circuit at 0 USD and are not attempts. The replay tests of 366 / 376 / 383 set these rows aside before
+-- re-running those files (tests/integration/_later_deployments.py).
 --
 -- Guards (RAISE rolls the whole file back):
 --   before: the registry tables (304, 317, 322); connection acc3 is a bedrock assume_role row; no acc1 row of another
@@ -131,7 +136,7 @@ BEGIN
          'us-west-1', 'AA1-Bedrock-Invoker', ext_id, NULL, NULL, NULL, 'aws_only', acc3.timeout_s, acc3.max_retries,
          acc3.max_concurrency, acc3.rpm_limit, coalesce(acc3.monthly_budget_usd, 100), false,
          'AA-1095 (S278): Bedrock chat models while acc3 is blocked (root ADR 0001a, Note S278). Seeded off; '
-         'scripts/llm_ops/aa1095_acc1_route_order.py switches it on and sets the provider order.',
+         'a route-control version switches it on and sets the provider order per model family.',
          actor, 'bedrock:BEDROCK_ACCT_PAYER:aws_only', ARRAY['writer', 'judge', 'validate']::text[], 'none')
     ON CONFLICT (connection_key) DO NOTHING;
 
