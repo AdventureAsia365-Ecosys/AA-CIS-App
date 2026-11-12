@@ -1451,23 +1451,26 @@ async def _apply_faq_answer_fit(content_text: str, flags: list[dict], *, context
     record in context["faq_answer_fit"] (writer_input, admin-only) and adds what `on` dropped to the admin-only
     F7_faq_autofix flag (a new entry, or the attempt's existing one). Returns (text, flags, cost).
     AA-1077 — `floor_aware` (the normalizer): a drop that would take a blog at or over the F4 floor under it is not
-    made (the pairs stay, the record says `floor_kept`); a non-answer is a warning, a blog under the floor a hold."""
+    made (the pairs stay, the record says `floor_kept`); a non-answer is a warning, a blog under the floor a hold.
+    S278: nor is a drop that makes a blog already under the floor shorter (length_contract.floor_guard; 4,696 → 4,455
+    on a held piece): the contract lets an optional step cut only what keeps the blog at or over the floor."""
     before = content_text
     content_text, record = await faq_answer_fit.apply_answer_fit(
         content_text, context=context, piece_id=piece_id, request_id=request_id)
     if not record:
         return content_text, flags, 0.0
     floor = length_contract.BLOG_FLOOR_CHARS
-    kept_for_floor = (floor_aware and content_text != before and length_contract.measure(content_text) < floor
-                      <= length_contract.measure(before))
+    kept_for_floor = floor_aware and content_text != before and length_contract.floor_guard(before, content_text)
     if kept_for_floor:
-        record = {**record, "floor_kept": True}
+        record = {**record, "floor_kept": True, "floor_kept_chars": [length_contract.measure(before),
+                                                                     length_contract.measure(content_text)]}
         content_text = before
     context["faq_answer_fit"] = record
     lines = faq_answer_fit.fit_log_lines(record)
     if kept_for_floor:
-        lines = [f"kept the FAQ answer(s) the fit would drop: the drop would leave the blog under its "
-                 f"{floor:,}-char length floor"]
+        b, a = record["floor_kept_chars"]
+        lines = [f"kept the FAQ answer(s) the fit would drop: the drop ({b:,} → {a:,} chars) would leave the blog "
+                 f"under its {floor:,}-char length floor"]
     if lines:
         entry = next((f for f in flags if f.get("gate") == qr.F7_FAQ_AUTOFIX), None)
         if entry is None:
@@ -1627,19 +1630,30 @@ def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None, *, 
     so another channel (max 6,000) never gets it (S248 review).
     AA-788 — with the writer's `source` and the attempt's `content_text`, an under-floor F14 block (AA-780) also lists
     the source's fact sentences the post does not tell yet (quality_gates.unused_source_facts), so the rewrite
-    lengthens the post with seed facts instead of padding."""
-    target = F4_OVER_MAX_TARGET if channel == "blog" else ""
+    lengthens the post with seed facts instead of padding.
+    AA-1077 S278 — a blog's under-floor F4 violation carries the length TARGET (length_contract.short_rewrite_target,
+    the floor plus the registry margin): the violation names the floor, and a rewrite told only the floor aimed at it
+    and landed 1-4 chars under (S278: 4,699 / 4,696 / 4,696)."""
     failed = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)]  # AA-924
-    out = [
-        f"{g['gate']}: {v}" + (target if g["gate"] == qr.F4_EXTREME_LENGTH and _F4_OVER_RE.search(v) else "")
-        for g in failed for v in g["violations"]
-    ]
+    out = [f"{g['gate']}: {v}" + _f4_target(g["gate"], v, channel) for g in failed for v in g["violations"]]
     if source and any(_is_floor_block(g) for g in failed):
         unused = unused_source_facts(source, content_text or "", limit=F14_UNUSED_FACTS_MAX)
         if unused:
             out.append(f"{F14_GATE}: source facts this post does not tell yet — lengthen it with these, in your own "
                        "words, and add nothing else: " + "; ".join(f"'{f}'" for f in unused))
     return out
+
+
+def _f4_target(gate: str, violation: str, channel: Optional[str]) -> str:
+    """The size a blog's F4 rewrite is told to reach: under the max for the long side (AA-984), the length target for
+    the short side (AA-1077 S278); '' for every other gate, violation and channel (their bands differ)."""
+    if gate != qr.F4_EXTREME_LENGTH or channel != "blog":
+        return ""
+    if _F4_OVER_RE.search(violation):
+        return F4_OVER_MAX_TARGET
+    if length_contract.violation_side(violation) == length_contract.SHORT:
+        return length_contract.short_rewrite_target()
+    return ""
 
 
 # AA-788 — at most this many unused source facts go into an under-floor F14 rewrite's feedback.
@@ -2037,7 +2051,7 @@ LENGTH_TRACE_STEP = "length_trace"
 
 
 def _recheck_length(content_text: str, gate_ledger: list, status: str, held_reason: Optional[str], *,
-                    trace: dict) -> tuple[list, str, Optional[str], dict]:
+                    trace: dict, floor_kept: Optional[list] = None) -> tuple[list, str, Optional[str], dict]:
     """AA-1077 — F4 again on the text a blog stores (the last step of _normalize_final_text). S276: 3 of 7 approved
     phase 2 blogs were stored under the 4,700-char floor while their ledger said F4 passed, and 10 of 13 F4 holds
     were stored 192–557 chars shorter than the F4 reading. A fresh F4 failure replaces the ledger's F4 entry and
@@ -2048,8 +2062,10 @@ def _recheck_length(content_text: str, gate_ledger: list, status: str, held_reas
     fresh = gate_extreme_length(strip_citation_tags(content_text), "blog")
     side = length_contract.entry_side(fresh)
     entry = {"step": LENGTH_TRACE_STEP, "chars": dict(trace), "floor": length_contract.BLOG_FLOOR_CHARS,
-             "words": length_contract.words(content_text), "verdict": length_contract.code_for(fresh) or "in",
-             "held": False}
+             "target": length_contract.target_chars(), "words": length_contract.words(content_text),
+             "verdict": length_contract.code_for(fresh) or "in", "held": False}
+    if floor_kept:   # S278 — the optional normalizer steps whose edit the floor stopped (the ledger note)
+        entry["floor_kept"] = list(floor_kept)
     if side is None:
         return gate_ledger, status, held_reason, entry
     ledger = list(gate_ledger)
@@ -2137,8 +2153,9 @@ async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: 
         content_text, hyg, gate_ledger, flags, status, held_reason)
     if channel == "blog":
         trace["final_integrity"] = length_contract.measure(content_text)
+        kept = ["faq_answer_fit"] if (context.get("faq_answer_fit") or {}).get("floor_kept") else []
         gate_ledger, status, held_reason, entry = _recheck_length(content_text, gate_ledger, status, held_reason,
-                                                                  trace=trace)
+                                                                  trace=trace, floor_kept=kept)
         context["length_trace"] = {"attempt": attempt, **entry}   # writer_input (admin-only), not the repair log
     return {"content_text": content_text, "gate_ledger": gate_ledger, "flags": flags, "status": status,
             "held_reason": held_reason, "repair_log": repair_log, "summary": summary, "embedding": embedding,

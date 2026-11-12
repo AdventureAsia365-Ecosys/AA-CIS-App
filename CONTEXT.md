@@ -972,7 +972,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `tests/unit/test_aa900_s271_w0_gateway.py` (every budgeted call-site ceiling >= `token_floor.effort_floor(model,
     effort)` of every model of the stage's route, read from the migrations). Alert:
     `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
-    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
+    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling (bounded by the stage x model
     effort since CIS 381: medium for t9_write on Sonnet 5.5);
@@ -3768,6 +3768,17 @@ from the seed's untold fact sentences (one `t9_write` call, `generate.extend_sec
 checked in code (plain prose, size, `repair_contract.new_specifics`, seam integrity) before every gate re-runs; a gate
 needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`
 (paid, capped, never writes a piece).
+AA-1077 S278 — **blog length target**: every length AIM is one number above the floor, never the floor itself:
+`length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`, services/quality/thresholds.yaml;
+0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor (`prompts._BLOG_WORDS[0]`, t9_write v6,
+registered by CIS 400) is pinned to `target_words()` by a test, so a new margin is a prompt bump; the extend repair
+aims at the target; a blog's F4-short rewrite feedback carries "lengthen the piece to at least 5,499 characters …"
+(`service._f4_target`). The floor (4,700) is unchanged. The normalizer's optional steps
+(`length_contract.NORMALIZER_STEPS`: the FAQ answer fit; the stock-line cut guards itself) never make an edit that
+leaves a blog under the floor and shorter (`floor_guard`: an in-band blog is not taken under it, one already under it
+is not cut further); mandatory steps (usage-policy cut, final integrity pass) still cut and the re-check holds.
+`writer_input.length_trace` records `target` and `floor_kept`. `scripts/aa1077/margin_replay.py` ($0) replays stored
+length traces under the new rule.
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1

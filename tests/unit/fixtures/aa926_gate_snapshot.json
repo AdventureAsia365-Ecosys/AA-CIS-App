@@ -8534,7 +8534,7 @@
       "passed": false,
       "repairable": true,
       "violations": [
-       "length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -8713,7 +8713,7 @@
       "gate": "F4_extreme_length",
       "passed": false,
       "violations": [
-       "length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -8909,7 +8909,7 @@
       "passed": false,
       "repairable": true,
       "violations": [
-       "length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -9088,7 +9088,7 @@
       "gate": "F4_extreme_length",
       "passed": false,
       "violations": [
-       "length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -9284,7 +9284,7 @@
       "passed": false,
       "repairable": true,
       "violations": [
-       "length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -9463,7 +9463,7 @@
       "gate": "F4_extreme_length",
       "passed": false,
       "violations": [
-       "length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -9659,7 +9659,7 @@
       "passed": false,
       "repairable": true,
       "violations": [
-       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -9836,7 +9836,7 @@
       "gate": "F4_extreme_length",
       "passed": false,
       "violations": [
-       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -13472,7 +13472,7 @@
       "passed": false,
       "repairable": true,
       "violations": [
-       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -13649,7 +13649,7 @@
       "gate": "F4_extreme_length",
       "passed": false,
       "violations": [
-       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words"
+       "length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words"
       ]
      },
      {
@@ -14805,55 +14805,55 @@
     "F14_social_shape: post is 47 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
    ],
    "f16-1|blog": [
-    "F4_extreme_length: length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words — lengthen the piece to at least 5,499 characters (about 950 words, never more than 1,600), not just to the floor: give the richest sections more depth from the CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug",
     "F16_faq: the blog ends with 0 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
    ],
    "f16-1|facebook": [
-    "F4_extreme_length: length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 441 chars (about 75 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug",
     "F16_faq: the blog ends with 0 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
    ],
    "f16-2|blog": [
-    "F4_extreme_length: length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words — lengthen the piece to at least 5,499 characters (about 950 words, never more than 1,600), not just to the floor: give the richest sections more depth from the CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug",
     "F16_faq: the blog ends with 1 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
    ],
    "f16-2|facebook": [
-    "F4_extreme_length: length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 525 chars (about 93 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug",
     "F16_faq: the blog ends with 1 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
    ],
    "f16-3|blog": [
-    "F4_extreme_length: length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words — lengthen the piece to at least 5,499 characters (about 950 words, never more than 1,600), not just to the floor: give the richest sections more depth from the CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug",
     "F16_faq: the blog ends with 2 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
    ],
    "f16-3|facebook": [
-    "F4_extreme_length: length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 600 chars (about 107 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug",
     "F16_faq: the blog ends with 2 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
    ],
    "f16-ok|blog": [
-    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words — lengthen the piece to at least 5,499 characters (about 950 words, never more than 1,600), not just to the floor: give the richest sections more depth from the CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug"
    ],
    "f16-ok|facebook": [
-    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug"
@@ -14899,7 +14899,7 @@
    "f2b-ok|blog": [],
    "f2b-ok|facebook": [],
    "f4-1|blog": [
-    "F4_extreme_length: content is only 9 chars — effectively empty"
+    "F4_extreme_length: content is only 9 chars — effectively empty — lengthen the piece to at least 5,499 characters (about 950 words, never more than 1,600), not just to the floor: give the richest sections more depth from the CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler"
    ],
    "f4-1|facebook": [
     "F4_extreme_length: content is only 9 chars — effectively empty"
@@ -14911,13 +14911,13 @@
     "F4_extreme_length: content is 6720 chars — far beyond any real channel example"
    ],
    "f4-3|blog": [
-    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words — lengthen the piece to at least 5,499 characters (about 950 words, never more than 1,600), not just to the floor: give the richest sections more depth from the CONTENT SEED, its Place background and the FACTS lines, and the FAQ; never invented facts or filler",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug"
    ],
    "f4-3|facebook": [
-    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 900-1,300 words",
+    "F4_extreme_length: length_short: content is only 680 chars (about 118 words), under the blog floor of 4,700 chars (about 810 words); the writer aims for 950-1,300 words",
     "F4_seo_surface: no SEO title — the search headline is not optional",
     "F4_seo_surface: no meta description — the search snippet is not optional",
     "F4_seo_surface: no slug"
