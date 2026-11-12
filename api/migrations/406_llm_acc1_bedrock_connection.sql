@@ -31,11 +31,16 @@
 --        get an acc1 row that is off too, so no candidate becomes routable by this file; the admin Test connection
 --        still probes a switched-off deployment, and switching one on is an admin decision
 --      A model with no catalog row is skipped (NOTICE).
---   5. Register 406.
---   Not here: an "acc1" key in shared.llm_model_catalog.bedrock_profile_ids. The deployment row is the routing source
---   (vendor_route.deployment_plan; the wire-drift check has nothing to compare without a catalog profile), the
---   older replays guard the candidate rows' exact profiles (367), and TripPlanner, which also reads the profiles, never
---   calls acc1 (its gateway holds credentials for BEDROCK_ACCT_PRIMARY only).
+--   5. The same 13 catalog rows (same predicate as the deployments) get an "acc1" key in bedrock_profile_ids = the
+--      deployment's wire id, only where the row has none (a re-run changes nothing). Standing invariant of the
+--      wire-drift guard (tests/integration/test_aa1002_deployment_wire_drift.py): an enabled Bedrock deployment calls
+--      bedrock_profile_ids ->> connection_key, so the catalog and the deployment row change together. TripPlanner
+--      reads the profiles too and never calls acc1: its gateway skips every account but BEDROCK_ACCT_PRIMARY's (acc3)
+--      and acc2. updated_by and updated_at of the catalog rows are not touched (only the profile key and a note):
+--      the older replays key on them. This re-adds the key 295 (AA-998) removed, now with an account that holds the
+--      Bedrock invoker role only (root ADR 0001a, Note S278); 295's own guards (no acc1-only row, no account_route
+--      'acc1') stay true. The replay tests of 295 / 367 set the key aside (tests/integration/_later_deployments.py).
+--   6. Register 406.
 --   The route order (tech lead S278, 15:45; model-first: Claude = Anthropic API, then acc1, then acc3; GPT = acc1,
 --   then acc3 (skipped while it refuses), then the model's OpenAI API twin) is NOT set here: after the deploy one run-script of the root repo (tools/llm/, on the CIS
 --   container) switches acc1 on and saves the per-family provider order (api/services/llm_family_order.py) as one
@@ -54,21 +59,25 @@
 --           kind / role / ExternalId (a key collision).
 --   after:  the acc1 row is bedrock / assume_role / aws_only with the role, ExternalId, region and env above and is
 --           off unless an admin had switched it on; every seeded deployment's wire id is the decided global. profile;
---           an acc3 deployment of the same model with another wire id is a NOTICE.
+--           every acc1 deployment's catalog row has bedrock_profile_ids ->> 'acc1' = that wire id (a catalog acc1 key
+--           with another value is refused, never overwritten); an acc3 deployment of the same model with another
+--           wire id is a NOTICE.
 --
 -- Order with the code. Before the AA-CIS-App code PR (MIG-4: this migration-only PR, then the code). Old code never
 -- calls acc1 (connection off). Contract file (it changes a CHECK and inserts config rows): applied on Dev by the Infra
 -- Migration Apply once every job table is idle (root ADR 0017a).
 --
--- Preflight (read-only, as cis_app; expected: acc3_rows = 1, acc1_rows = 0, models = 13):
+-- Preflight (read-only, as cis_app; expected: acc3_rows = 1, acc1_rows = 0, acc1_profiles = 0, models = 13):
 --   SELECT (SELECT count(*) FROM shared.llm_provider_connection WHERE connection_key = 'acc3') AS acc3_rows,
 --          (SELECT count(*) FROM shared.llm_provider_connection WHERE connection_key = 'acc1') AS acc1_rows,
+--          (SELECT count(*) FROM shared.llm_model_catalog WHERE bedrock_profile_ids ? 'acc1') AS acc1_profiles,
 --          (SELECT count(*) FROM shared.llm_model_catalog WHERE model_key IN ('sonnet-5-5', 'opus-5-5', 'haiku-5-5',
 --             'sonnet-5', 'sonnet-4-6', 'opus-4-6', 'haiku-4-5', 'gpt-6-luna', 'gpt-6-astra', 'gpt-6-sol',
 --             'gpt-5.6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')) AS models;
 --
 -- Rollback (a NEW forward migration): switch acc1 off (PATCH /admin/llm-connections/acc1 {"enabled": false}) first,
--- revert the route-control version, then DELETE the 13 acc1 deployments, the cost policy row and the connection.
+-- revert the route-control version, then DELETE the 13 acc1 deployments, the cost policy row and the connection, and
+-- remove the "acc1" key of bedrock_profile_ids (bedrock_profile_ids - 'acc1') on the 13 catalog rows.
 --
 -- X1. One BEGIN … COMMIT block, no role switch. DB Migrate runs cis/ files as cis_owner, the owner of these tables.
 
@@ -166,7 +175,15 @@ BEGIN
       JOIN shared.llm_model_catalog k ON k.model_key = m.key
     ON CONFLICT (model_key, connection_key) DO NOTHING;
 
-    -- ── 5. Guards: the rows as decided ────────────────────────────────────────────────────────────────────────
+    -- ── 5. The catalog profile those deployments call (the wire-drift invariant), only where none is set ───────
+    UPDATE shared.llm_model_catalog k
+       SET bedrock_profile_ids = k.bedrock_profile_ids || jsonb_build_object('acc1', m.value),
+           notes = COALESCE(k.notes || ' ', '') || 'AA-1095 (S278): acc1 profile = its acc1 deployment (CIS 406).'
+      FROM jsonb_each_text(models) AS m (key, value)
+     WHERE k.model_key = m.key
+       AND NOT (k.bedrock_profile_ids ? 'acc1');
+
+    -- ── 6. Guards: the rows as decided ────────────────────────────────────────────────────────────────────────
     SELECT * INTO c FROM shared.llm_provider_connection WHERE connection_key = 'acc1';
     IF c.kind <> 'bedrock' OR c.auth_mode <> 'assume_role' OR c.data_scope <> 'aws_only'
        OR c.role_name <> 'AA1-Bedrock-Invoker' OR c.external_id <> ext_id OR c.region <> 'us-west-1'
@@ -184,6 +201,15 @@ BEGIN
         RAISE EXCEPTION 'migration 406: acc1 deployments whose wire id is not the decided profile: %', bad;
     END IF;
 
+    SELECT string_agg(d.model_key || ' (' || COALESCE(k.bedrock_profile_ids ->> 'acc1', '<none>') || ')', ', '
+                      ORDER BY d.model_key) INTO bad
+      FROM shared.llm_model_deployment d
+      JOIN shared.llm_model_catalog k ON k.model_key = d.model_key
+     WHERE d.connection_key = 'acc1' AND k.bedrock_profile_ids ->> 'acc1' IS DISTINCT FROM d.wire_id;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 406: catalog acc1 profiles that are not the acc1 deployment''s wire id: %', bad;
+    END IF;
+
     SELECT string_agg(d.model_key || ' (' || d.wire_id || ')', ', ' ORDER BY d.model_key) INTO bad
       FROM shared.llm_model_deployment d
      WHERE d.connection_key = 'acc3' AND models ? d.model_key AND d.wire_id <> models ->> d.model_key;
@@ -197,8 +223,8 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('406', now(), 'AA-1095: Bedrock connection acc1 (off) + 13 chat-model deployments, account env allowlist '
-                      '+ BEDROCK_ACCT_PAYER')
+VALUES ('406', now(), 'AA-1095: Bedrock connection acc1 (off) + 13 chat-model deployments and their acc1 catalog '
+                      'profiles, account env allowlist + BEDROCK_ACCT_PAYER')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

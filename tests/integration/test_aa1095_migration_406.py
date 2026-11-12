@@ -57,7 +57,9 @@ def _run(c):
 
 
 def _undo(c):
-    """The pre-406 state: no acc1 connection, deployments or cost policy; 304's env CHECK."""
+    """The pre-406 state: no acc1 connection, deployments, cost policy or catalog profile; 304's env CHECK."""
+    c.execute("UPDATE shared.llm_model_catalog SET bedrock_profile_ids = bedrock_profile_ids - 'acc1' "
+              "WHERE bedrock_profile_ids ? 'acc1'")
     c.execute("DELETE FROM shared.llm_model_deployment WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_provider_health WHERE connection_key = 'acc1'")
@@ -105,8 +107,10 @@ def test_post_replay_state(cur):
                 "LEFT JOIN shared.llm_model_deployment a ON a.model_key = k.model_key AND a.connection_key = 'acc3' "
                 "WHERE k.model_key = ANY (%s)", (list(MODELS),))
     assert {k: d["enabled"] for k, d in deps.items()} == {r["model_key"]: r["on_"] for r in cur.fetchall()}
-    cur.execute("SELECT count(*) AS n FROM shared.llm_model_catalog WHERE bedrock_profile_ids ? 'acc1'")
-    assert cur.fetchone()["n"] == 0                             # routing reads the deployment rows, not the profiles
+    # the wire-drift invariant: each acc1 deployment's catalog row names the same profile under "acc1"
+    cur.execute("SELECT model_key, bedrock_profile_ids ->> 'acc1' AS p FROM shared.llm_model_catalog "
+                "WHERE bedrock_profile_ids ? 'acc1'")
+    assert {r["model_key"]: r["p"] for r in cur.fetchall()} == present
 
     cur.execute("SELECT alert_pct, hard_stop FROM shared.llm_connection_cost_policy WHERE connection_key = 'acc1'")
     assert cur.fetchone() is not None
@@ -116,9 +120,18 @@ def test_from_the_pre_406_state_and_idempotent(cur):
     _undo(cur)
     cur.execute("SELECT count(*) AS n FROM shared.llm_provider_connection WHERE connection_key = 'acc1'")
     assert cur.fetchone()["n"] == 0
+    cur.execute("SELECT model_key, updated_by, updated_at FROM shared.llm_model_catalog WHERE model_key = ANY (%s)",
+                (list(MODELS),))
+    stamps = {r["model_key"]: (r["updated_by"], r["updated_at"]) for r in cur.fetchall()}
     _run(cur)
     first = _deployments(cur)
     assert set(first) == set(_present(cur))
+    cur.execute("SELECT model_key, bedrock_profile_ids ->> 'acc1' AS p, updated_by, updated_at "
+                "FROM shared.llm_model_catalog WHERE model_key = ANY (%s)", (list(MODELS),))
+    rows = cur.fetchall()
+    assert {r["model_key"]: r["p"] for r in rows} == {k: d["wire_id"] for k, d in first.items()}
+    # only the profile key (and a note): the older replays key on updated_by
+    assert {r["model_key"]: (r["updated_by"], r["updated_at"]) for r in rows} == stamps
     # an admin's later edits are kept by a second run
     cur.execute("UPDATE shared.llm_provider_connection SET enabled = true, updated_by = 'admin:test' "
                 "WHERE connection_key = 'acc1'")
@@ -150,6 +163,18 @@ def test_guard_refuses_an_acc1_row_of_another_role(cur):
         _run(cur)
     cur.execute("ROLLBACK")                     # the file's own BEGIN is still open after the raise
     cur.execute("DELETE FROM shared.llm_provider_connection WHERE connection_key = 'acc1'")
+
+
+def test_guard_refuses_a_catalog_acc1_profile_of_another_value(cur):
+    _undo(cur)
+    cur.execute("UPDATE shared.llm_model_catalog SET bedrock_profile_ids = bedrock_profile_ids || "
+                "'{\"acc1\": \"global.anthropic.claude-sonnet-4-6-other\"}'::jsonb WHERE model_key = 'sonnet-4-6'")
+    with pytest.raises(psycopg2.Error, match=r"catalog acc1 profiles that are not .* sonnet-4-6 \(global\.anthropic"
+                                             r"\.claude-sonnet-4-6-other\)"):
+        _run(cur)
+    cur.execute("ROLLBACK")
+    cur.execute("UPDATE shared.llm_model_catalog SET bedrock_profile_ids = bedrock_profile_ids - 'acc1' "
+                "WHERE model_key = 'sonnet-4-6'")
 
 
 def test_the_route_chains_and_existing_rows_are_not_touched(cur):
