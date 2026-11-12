@@ -54,7 +54,7 @@ import structlog
 
 from api.core.app_registry import APPS, SHARED_COST_TAGS, app_for_cost_tag
 from shared.aws_client import cost_explorer as ce
-from shared.aws_client.accounts import account_label, account_name
+from shared.aws_client.accounts import account_id, account_label, account_name, is_live
 
 logger = structlog.get_logger()
 
@@ -293,8 +293,8 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
                                   "account_name": account_name(a["account"]), "calls": int(a["calls"] or 0),
                                   "cost_usd": round(cost, 4), "billed_in_aws_acc2": bool(a["billed_in_acc2"])})
         if a["account"] not in (None, "acc2") and (a["provider"] or "").startswith("bedrock"):
-            # acc3, or (history before AA-998) the retired fallback account.
-            sat = a["account"] if a["account"] == "acc3" else ce.RETIRED_ACCOUNT_KEY
+            # acc3, a registry satellite (AA-1095), or (history before AA-998) the retired fallback account.
+            sat = a["account"] if a["account"] == "acc3" or is_live(a["account"]) else ce.RETIRED_ACCOUNT_KEY
             sat_estimate[sat] = sat_estimate.get(sat, 0.0) + cost
 
     crm_status: dict[str, Any] = {"status": "not_requested"}
@@ -400,8 +400,13 @@ async def _satellites(pool: Any, start: date, end: date, estimate: dict[str, flo
             "account_id": None,
             "ce_bedrock_usd": round(sum(a["bedrock_usd"] for a in retired), 4) if retired else None,
             "llm_log_estimate_usd": round(estimate.get(ce.RETIRED_ACCOUNT_KEY, 0.0), 4)}
+    # AA-1095: a registry satellite with logged spend (no Cost Explorer reader there: the ledger estimate only).
+    others = sorted(k for k in estimate if k not in ("acc3", ce.RETIRED_ACCOUNT_KEY))
+    for k in others:
+        out[k] = {"account_id": account_id(k), "ce_bedrock_usd": None,
+                  "llm_log_estimate_usd": round(estimate.get(k, 0.0), 4)}
     # AA-998: what the page renders — one line per account, named by its ID ("Retired account" without one).
-    out["lines"] = [{"key": k, "label": account_label(k), **out[k]} for k in ("acc3", ce.RETIRED_ACCOUNT_KEY)
+    out["lines"] = [{"key": k, "label": account_label(k), **out[k]} for k in ("acc3", *others, ce.RETIRED_ACCOUNT_KEY)
                     if k in out]
     out["ce_fetched_at"] = (data or {}).get("fetched_at")
     return out

@@ -5,7 +5,9 @@
 // account ID instead, from GET /api/admin/aws-accounts (backend shared/aws_client/accounts.py). This repo is public,
 // so no ID is written here. A vendor-API call stores its connection key as the account (gateway S6: "openai-direct",
 // "anthropic-direct"); pages name it by its vendor ("OpenAI API"). Any other stored account (the history of the
-// retired fallback account) is "Retired account", with no ID.
+// retired fallback account) is "Retired account", with no ID. AA-1095: another Bedrock satellite is data, not a key
+// here: the directory lists every assume-role Bedrock connection of the gateway registry (e.g. the account serving
+// the chat models while the LLM account is blocked), and a key the directory lists is live (named by its ID, role LLM).
 //
 // This is the only frontend file that may spell the keys: the guard tests/unit/test_aa998_no_account_keys_in_ui.py
 // fails on any other occurrence. Pages use the constants and accountName() below.
@@ -54,11 +56,21 @@ export const ACCOUNT_TEXT: AccountText = {
   llm: "LLM",
 };
 
-function roleOf(key: string, text: AccountText): string {
-  return key === MAIN_ACCOUNT ? text.main : key === LLM_ACCOUNT ? text.llm : "";
+function roleOf(key: string, text: AccountText, dir?: AwsAccounts | null): string {
+  if (key === MAIN_ACCOUNT) return text.main;
+  return key === LLM_ACCOUNT || isLiveAccount(key, dir) ? text.llm : "";
 }
 
-export const isLiveAccount = (key: string | null | undefined): boolean => !!key && LIVE_ACCOUNTS.includes(key);
+/** A live account key: the fixed ones, or (AA-1095) a key the directory lists other than the retired one. */
+export const isLiveAccount = (key: string | null | undefined, dir?: AwsAccounts | null): boolean =>
+  !!key && (LIVE_ACCOUNTS.includes(key)
+    || (key !== RETIRED_ACCOUNT && !!dir && Object.prototype.hasOwnProperty.call(dir, key)));
+
+/** AA-1095: the live keys the directory adds to LIVE_ACCOUNTS (the registry's other Bedrock satellites), sorted. */
+export function extraLiveAccounts(dir?: AwsAccounts | null): string[] {
+  if (!dir) return [];
+  return Object.keys(dir).filter((k) => k !== RETIRED_ACCOUNT && !LIVE_ACCOUNTS.includes(k)).sort();
+}
 
 /** What a page shows for an account key: the account ID of a live account ("AWS account" until the directory has
  *  loaded or when the API could not read the ID), the vendor of a vendor-API connection, "Retired account" for any
@@ -68,7 +80,7 @@ export function accountName(
 ): string {
   if (!key || key === "unknown" || key === "none") return "";
   if (Object.prototype.hasOwnProperty.call(VENDOR_CONNECTION_LABELS, key)) return VENDOR_CONNECTION_LABELS[key];
-  if (!isLiveAccount(key)) return text.retired;
+  if (!isLiveAccount(key, dir)) return text.retired;
   return dir?.[key]?.account_id ?? text.unresolved;
 }
 
@@ -77,8 +89,8 @@ export function accountLabel(
   key: string | null | undefined, dir?: AwsAccounts | null, text: AccountText = ACCOUNT_TEXT,
 ): string {
   const name = accountName(key, dir, text);
-  if (!name || !key || !isLiveAccount(key)) return name;
-  return `${name} (${roleOf(key, text)})`;
+  if (!name || !key || !isLiveAccount(key, dir)) return name;
+  return `${name} (${roleOf(key, text, dir)})`;
 }
 
 const ACCOUNT_FIELDS = new Set(["account", "account_route", "satellite_account"]);
