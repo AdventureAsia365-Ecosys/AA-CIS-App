@@ -29,8 +29,17 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
   entry; it re-parses only an unconfirmed parse whose text changed.
 - **Excel import is all-or-nothing.** The first call is always the DRY RUN (`dry_run` defaults to true); an apply with
   any error line is refused (422 with the per-line plan) and nothing is saved. A row with Amount, Currency and Basis all
-  empty is skipped (kept as it is); a row equal to a confirmed price is `unchanged`. Columns are found by header, so a
-  re-ordered or trimmed sheet works; Key / Amount / Currency / Basis are required, Note optional.
+  empty is skipped (kept as it is). A row whose values equal the saved price is `unchanged` WHATEVER the status: the
+  export prefills Amount / Currency / Basis / Note with every saved price, also an unreviewed parse, so re-importing
+  the file never confirms a price nobody looked at (review fix; first version counted only a confirmed price as
+  unchanged, so a round trip confirmed every parsed / needs-review row). Only a value that differs is a staff entry
+  (confirmed). An optional **Confirm** column (`yes`, also y / x / ok / true / 1; empty or no = nothing) confirms a
+  row's saved price, or on an emptied row the parser's suggestion, as it is (`store.confirm`, origin kept, audit
+  `reference_price.confirmed`): the team can review in Excel. Columns are found by header, so a re-ordered or trimmed
+  sheet works; Key / Amount / Currency / Basis are required, Note and Confirm optional.
+- **No formula in the export.** openpyxl stores any str starting with "=" as a formula; every exported cell that came
+  out as a formula is set back to a string (inline string in the file), so a source text such as `=HYPERLINK(...)` is
+  text in Excel and comes back unchanged on import (no apostrophe to strip).
 - **Binary over JSON.** The REST API Gateway in front of the API is not binary safe (AA-741), so the export answers base64
   JSON and the page builds the file; the import sends base64 JSON. 5 MB file cap, 5,000 rows.
 - **Capabilities.** `reference_price.read`: admin, content_lead, content, customer_success, finance (not the read-only
@@ -49,8 +58,13 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
   `contracting` and mirrors it to the WORKFORCE group `booking-contracting`, and Booking already maps that group to its
   `contracting` role, which holds `pricing.write`, `supply.write` and `trip_plan.write` (AA-Booking
   `backend/app/auth/staff.py`). What was missing is a one-click, explained grant: `preset="pricing_team"` gives CIS
-  `customer_success` and Booking `contracting`, keeps a role that already has those rights (admin / content_lead /
-  customer_success in CIS, admin / contracting in Booking), never demotes, never touches CRM roles, one audit row with
+  `customer_success` and Booking `contracting` and is **additive only**: it fills an empty slot (CIS `viewer`, no
+  Booking grant), keeps a role that already has those rights (admin / content_lead / customer_success in CIS, admin /
+  contracting in Booking), and refuses with 409 `preset_would_replace` (naming the roles) when it would have to replace
+  any other role, because a person holds ONE role per app (review fix: the first version replaced CIS finance / content
+  / support... and Booking sales / finance / content_creator, so a finance member lost invoices and payments in one
+  click). The Staff drawer computes the same plan (`pricingTeamPlan`): the button is disabled with the reason when a
+  role would be replaced, and the confirm dialog lists each before -> after. Never touches CRM roles, one audit row with
   `details.preset`. The role texts of the invitation e-mail now say what contracting does.
 
 ## Changed (against the issue text)
@@ -63,6 +77,11 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
   writes). Booking must still switch its reference read from v1 to v2 (listed for the orchestrator).
 
 ## Tradeoffs
+
+- The pricing preset refuses instead of replacing a lateral role: an owner who really wants a finance member to become
+  Customer Success changes the role by hand (an explicit choice), rather than losing rights silently.
+- Confirm in Excel reuses the Accept path (origin kept), so a confirmed parse still says `parsed` in the history; a
+  changed value says `import`.
 
 - The list loads every in-scope tour (~1k rows) and filters / pages in Python: simple, and the counts and countries are
   those of the whole filtered set (lesson S218). At ~10k tours the filter should move into SQL.
@@ -88,7 +107,8 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
 
 **Who can do this:** a staff member with the CIS role Customer Success (or Content lead / Administrator). A platform
 owner gives it on Platform › Staff & access: open the person, then **Apply pricing preset** (CIS Customer Success +
-Booking Contracting in one save). The person signs in again.
+Booking Contracting in one save). The preset only adds roles: when the person already holds another role (for example
+Finance), the page says so and the owner sets the roles by hand. The person signs in again.
 
 **Where:** CIS admin › AA Catalogue › **Reference prices**.
 
@@ -112,8 +132,9 @@ lowest per-person price), add a note if useful (no personal data), press **Save*
 
 1. Start with **Read source texts**: CIS shows what it would save (a DRY RUN); press **Save these suggestions**.
 2. Filter **Not reviewed** (or click the tile), check the rows, select them and press **Accept N selected**.
-3. For the rest, **Export Excel** (the file follows the current filter), fill Amount / Currency / Basis in Excel (the
-   yellow columns; leave a row empty to keep it), keep the Key column.
+3. For the rest, **Export Excel** (the file follows the current filter), fill or correct Amount / Currency / Basis in
+   Excel (the yellow columns), keep the Key column. A row you leave as it is keeps its status; to confirm a CIS-read
+   price as it is, type **yes** in **Confirm** (on a row with an empty price, yes saves the Suggested values).
 4. **Import Excel** → **Check the file (DRY RUN)**: CIS lists every error and every change. Fix the errors in the file
    and check again. When there is no error, **Apply import**.
 

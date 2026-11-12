@@ -2294,8 +2294,10 @@ directory writer with its own audit field and synced (added and removed) like th
 directory addresses hold none, and the A10c CRM staff E2E user stays outside the directory. The Staff page's "Platform
 owner" preset sets CIS admin + Booking admin + CRM `platform_admin` in one change (never the owner flag). The "Pricing team"
 preset (AA-1091, `preset="pricing_team"`) gives CIS `customer_success` (Reference prices) and Booking `contracting`
-(group `booking-contracting`: Booking `pricing.write`, `supply.write`, `trip_plan.write`), keeping a role that already
-has those rights and leaving the CRM roles as they are; one audit row with `details.preset`. Root ADR 0006 +
+(group `booking-contracting`: Booking `pricing.write`, `supply.write`, `trip_plan.write`). It only adds: it fills an empty
+slot (CIS `viewer`, no Booking grant), keeps a role that already has those rights, and refuses (409
+`preset_would_replace`) rather than replace any other role (one role per app: a CIS finance or Booking finance member
+would lose those rights); CRM roles are untouched; one audit row with `details.preset`. Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
