@@ -501,7 +501,7 @@ def test_the_round_two_texts_name_no_internal_label_a_reader_could_see():
         assert not re.search(r"AA-\d", text) and "—" not in text
 
 
-# ---------------------------------------------------------------- S278 review: repeats are cut, attempt 3 keeps the floor
+# ---------------------------------------------------------------- S278 review: repeats are cut, attempt 3 keeps it
 
 def _item(sentence: str, problem: str, gate: str) -> dict:
     return {"sentence": sentence, "problem": problem, "gate": gate, "gates": [gate]}
