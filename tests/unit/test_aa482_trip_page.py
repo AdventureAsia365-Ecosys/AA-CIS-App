@@ -34,6 +34,8 @@ def _make_pool(fetch_page_row=None, fetch_rows=None):
 
 _TOUR_ROW = {
     "tour_id": "770a38dd-4e7b-4b55-9ded-0e9ced757301",
+    # AA-1094: the AA catalogue key of the tour (its source group; a tour without one is its own key).
+    "source_id": "5f1e0c2a-7d3b-4c9e-8a61-2b4d6f8e0a13",
     "country": "Bhutan", "duration": "12 days",
     "aa_name": "Bhutan: West to Central", "aa_subtitle": "Dzongs & Valleys",
     "aa_summary": "A private journey through Bhutan.",
@@ -61,6 +63,8 @@ class TestAA482TripPage:
         assert isinstance(result["highlights"], list)
         assert result["seo_meta"] == _TOUR_ROW["seo_meta"]
         assert result["summary"] == _TOUR_ROW["aa_summary"]
+        # AA-1094 (audit M12): the catalogue key the CRM "Book now" widget books, from the page's own row
+        assert result["source_id"] == _TOUR_ROW["source_id"]
         # url_alive=true update was issued
         update_call = conn.execute.await_args
         assert "url_alive = true" in update_call.args[0]
@@ -159,3 +163,9 @@ class TestAA979TripPageBaseUrl:
     async def test_unset_env_keeps_the_admin_host(self, monkeypatch):
         monkeypatch.delenv("TRIP_PAGE_BASE_URL", raising=False)
         assert v1_trip_page.trip_page_url("t1") == "https://aa-cis.lumiguides.it.com/trip/t1"
+
+
+def test_page_query_selects_the_catalogue_key_of_the_row():
+    """AA-1094: source_id is the catalog.v_tour key of the page's own raw row (CIS 258 source_key rule)."""
+    sql = " ".join(v1_trip_page._PAGE_DATA_SQL.split())
+    assert "(COALESCE(rt.source_group_id, rt.tour_id))::text AS source_id" in sql

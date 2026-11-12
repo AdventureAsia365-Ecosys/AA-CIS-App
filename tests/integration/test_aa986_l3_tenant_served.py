@@ -356,7 +356,12 @@ async def test_tenant_reads_its_discontinued_warning_from_the_real_service(ctx):
 @pytest.mark.asyncio
 async def test_trip_page_answers_410_301_404(ctx):
     req = _request(ctx.conn, False)
-    assert (await v1_trip_page.get_trip_page(ctx.served, req))["tour_id"] == ctx.served
+    page = await v1_trip_page.get_trip_page(ctx.served, req)
+    assert page["tour_id"] == ctx.served
+    # AA-1094: the page names its AA catalogue key (COALESCE(source_group_id, tour_id)), what "Book now" books.
+    key = await ctx.conn.fetchval("SELECT (COALESCE(source_group_id, tour_id))::text AS k FROM silver_aa_internal."
+                                  "raw_tours WHERE tour_id = $1::uuid", ctx.served)
+    assert page["source_id"] == key
     with pytest.raises(HTTPException) as e:
         await v1_trip_page.get_trip_page(ctx.gone, req)
     assert e.value.status_code == 410
