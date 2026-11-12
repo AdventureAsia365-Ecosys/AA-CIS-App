@@ -484,10 +484,10 @@ def _apply_schema(conn):
         # the catalog recipe over 253's _live_tour (skipped above). test_aa1029_migration_365 applies 253 ... 289 + 365
         # the DB Migrate way on the RDS-like state and rolls back.
         and not f.startswith('365')
-        # AA-1091 (S278): 402 creates catalog.v_tour_price_reference_v2 (Booking's structured reference price) through
-        # the catalog recipe over 253's _live_tour (skipped above) and 401's table. test_aa1091_migration_402 applies
-        # 253 ... 289 + 402 the DB Migrate way on the RDS-like state and rolls back.
-        and not f.startswith('402')
+        # AA-1091 (S278): 403 creates catalog.v_tour_price_reference_v2 (Booking's structured reference price) through
+        # the catalog recipe over 253's _live_tour (skipped above) and 402's table. test_aa1091_migration_403 applies
+        # 253 ... 289 + 403 the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('403')
         # AA-1037 R4 (S269): 377 creates catalog.v_tenant_billing_v1 (Booking's agency invoice read) through the
         # catalog recipe (needs 245's owners and 357's column grants). test_aa1037_migration_377 applies 357 + 377 the
         # DB Migrate way on the RDS-like state and undoes both at teardown.
