@@ -23,7 +23,7 @@ export type NavIcon =
   | "overview" | "appHealth" | "reports" | "dataCoverage"
   | "tenants" | "agencies" | "erasure" | "plans" | "assignments"
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "placeCards" | "photos" | "facts" | "supply"
-  | "aaContent"
+  | "aaContent" | "referencePrices"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
@@ -90,6 +90,8 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/places/cards", label: "Place cards", icon: "placeCards" },
     { href: "/admin/photos", label: "Photos", icon: "photos" },
     { href: "/admin/facts", label: "Facts", icon: "facts" },
+    // AA-1091: the tours' structured reference prices (the customer-service team enters and reviews them)
+    { href: "/admin/reference-prices", label: "Reference prices", icon: "referencePrices" },
     { href: "/admin/supply-content", label: "Supply copy", icon: "supply" },
     { href: "/admin/aa-content", label: "AA content", icon: "aaContent" },
     { href: "/admin/seo-intelligence", label: "SEO Intelligence", icon: "seo" },

@@ -57,8 +57,9 @@ def test_role_perms_match_the_s241_matrix():
     content_work = {"content.read", "content.write", "review.act"}
     assert set(ROLE_PERMS) == set(_STAFF_ROLES) | {"viewer"} | set(_R2_ROLES)
     # AA-878 read-only role (tests/unit/test_aa878_viewer_role.py); AA-1035 slice 2: every role holds the bell
+    # AA-1091: + the Reference prices page (read; writes: admin, content_lead, customer_success)
     assert ROLE_PERMS["viewer"] == {"content.read", "notifications.read"}
-    assert ROLE_PERMS["content"] == ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read"}
+    assert ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read", "reference_price.read"}
     assert ROLE_PERMS["admin"] == content_work | {
         "master.admin", "atoms.write", "photos.write", "a4.unpublish", "quality.write",
         "content.settings.write",
@@ -69,6 +70,7 @@ def test_role_perms_match_the_s241_matrix():
         "billing.read", "billing.write", "wave.run", "lab.read", "tenant.book.account.read",
         "tenant.member.resend", "tenant.book.write",   # AA-1035 S267 fix pass
         "tenant.view_as", "notifications.read",        # AA-1035 R2 slice 2 (lab.tenant_text.read: ai_ops only)
+        "reference_price.read", "reference_price.write",   # AA-1091
     }
     # admin holds every role capability but the Lab-only logged read of ai_ops and the book-scoped Tenant QA read of
     # customer_success (admin reads tenant text in its own right: tenant_content.read)
@@ -112,6 +114,9 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
         ("GET", "/admin/tenants/{tenant_id}/details"),
         # AA-1035 slice 2: the bell has its own capability (every role) so the tenant desk roles read it too
         ("GET", "/admin/notifications"), ("GET", "/admin/notifications/count"),
+        # AA-1091: the Reference prices page has its own read capability (customer_success holds no content.read)
+        ("GET", "/admin/reference-prices"), ("GET", "/admin/reference-prices/export"),
+        ("GET", "/admin/reference-prices/{source_key}/history"),
     }
     for open_read in ["/admin/llm-config", "/admin/job-runner/jobs/{job_id}", "/admin/review-queue",
                       "/admin/search"]:
@@ -195,6 +200,8 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/supply-content/{entity_id}/unpublish",
         # AA-1035 R2: AA Catalogue R (catalog.read) and the aa_internal catalog of Master Content (scoped)
         "/admin/atoms", "/admin/atoms/summary", "/admin/atoms/unatomized-tours", "/admin/tenants/{tenant_id}/details",
+        # AA-1091: content reads the Reference prices page (reference_price.read; writes stay with the writers)
+        "/admin/reference-prices", "/admin/reference-prices/export", "/admin/reference-prices/{source_key}/history",
     }
 
 

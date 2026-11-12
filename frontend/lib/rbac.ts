@@ -38,6 +38,12 @@ const TENANT_DESK: StaffRole[] = ["admin", "customer_success", "support", "finan
 const TENANT_BOOK: StaffRole[] = ["admin", "customer_success", "support"];
 // AA-1035: AI & spend.
 const AI_SPEND: StaffRole[] = ["admin", "ai_ops", "finance"];
+// AA-1091: AA Catalogue › Reference prices — readers (reference_price.read) and writers (reference_price.write: the
+// customer-service team's customer_success role, admin, content_lead).
+const REFERENCE_PRICE_READERS: StaffRole[] = [
+  "admin", "content_lead", "content", "customer_success", "finance",
+];
+const REFERENCE_PRICE_WRITERS: StaffRole[] = ["admin", "content_lead", "customer_success"];
 
 // AA-878 — the read-only role (the UI-smoke E2E account). It reads the content pages and is refused on every
 // write: requireAdmin() (lib/auth-server.ts) answers 403 to any non-GET from it before the admin secret is
@@ -139,6 +145,9 @@ export const PAGE_RULES: PageRule[] = [
   // AA-814 — platform Facts Entries (sourced claims every agency's writer may cite): every staff role reads; add / edit /
   // delete need quality.write (admin; API_WRITE_RULES "facts" below, backend staff_authz POLICY).
   { prefix: "/admin/facts", roles: ALL_STAFF },
+  // AA-1091 — the tours' structured reference prices (inline edit, accept, Excel export / import with DRY RUN); the
+  // backend re-checks (reference_price.read / .write).
+  { prefix: "/admin/reference-prices", roles: REFERENCE_PRICE_READERS },
 ];
 
 export function pageRule(pathname: string): PageRule | undefined {
@@ -215,6 +224,8 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-1028 R1 slice 3 — the plan catalogue (create, edit, retire); the backend re-checks (tenant.write). Tenant 360
   // overrides and the add-on saga are under "tenants" above.
   { prefix: "plans", roles: ["admin"] },
+  // AA-1091 — reference price writes (save, clear, accept, parse, import); the backend re-checks (reference_price.write).
+  { prefix: "reference-prices", roles: REFERENCE_PRICE_WRITERS },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
@@ -308,7 +319,9 @@ export type Capability =
   | "lab.tenant_text.read"        // ai_ops: tenant text in the Writing Lab only, every read logged by the backend
   | "notifications.read"          // the staff bell (every role)
   // AA-1035 R2 close-out
-  | "tenant_content.book.read";   // Tenant QA lists / details of the own book (customer_success), scoped
+  | "tenant_content.book.read"    // Tenant QA lists / details of the own book (customer_success), scoped
+  // AA-1091 — AA Catalogue › Reference prices (the customer-service team enters the tours' reference prices)
+  | "reference_price.read" | "reference_price.write";
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -318,23 +331,27 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
     "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
+    "reference_price.read", "reference_price.write",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-    "lab.read", "wave.run", "notifications.read",
+    "lab.read", "wave.run", "notifications.read", "reference_price.read", "reference_price.write",
   ],
-  content: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
+  content: [
+    "content.read", "content.write", "review.act", "catalog.read", "notifications.read", "reference_price.read",
+  ],
   tenant_qa: [
     "content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
     "notifications.read",
   ],
   customer_success: [
     "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
-    "tenant.view_as", "notifications.read", "tenant_content.book.read",
+    "tenant.view_as", "notifications.read", "tenant_content.book.read", "reference_price.read",
+    "reference_price.write",
   ],
   support: ["tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"],
-  finance: ["billing.read", "billing.write", "spend.read", "notifications.read"],
+  finance: ["billing.read", "billing.write", "spend.read", "notifications.read", "reference_price.read"],
   ai_ops: [
     "content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read", "lab.tenant_text.read",
     "notifications.read",

@@ -76,6 +76,36 @@ export function crmRolesOf(s: Pick<StaffAccount, "crm_roles">): CrmRole[] {
   return CRM_ROLES.filter((r) => held.has(r));
 }
 
+/** AA-1091: the roles of the "Pricing team" preset (backend staff_directory.PRICING_KEEP_*: a role with the rights is
+ *  kept). CIS: reference_price.write; Booking: pricing / supply / trip plan writes. */
+export const PRICING_CIS_ROLES: readonly string[] = ["admin", "content_lead", "customer_success"];
+export const PRICING_BOOKING_ROLES: readonly string[] = ["admin", "contracting"];
+
+/** AA-1091: what the "Pricing team" preset would do (backend staff_directory.pricing_team_plan). It only adds: an
+ *  empty slot (CIS viewer, no Booking grant) is filled, a role with the rights is kept, and any other role is never
+ *  replaced (`blocked` names those slots; the backend refuses with 409 preset_would_replace). */
+export interface PricingPlan {
+  cis: { from: string; to: string } | null;
+  booking: { from: string | null; to: string } | null;
+  blocked: { cis: string | null; booking: string | null };
+}
+export function pricingTeamPlan(s: Pick<StaffAccount, "role" | "booking_role">): PricingPlan {
+  const cisKept = PRICING_CIS_ROLES.includes(s.role);
+  const cisFill = !cisKept && (!s.role || s.role === "viewer");
+  const bk = s.booking_role ?? null;
+  const bkKept = bk !== null && PRICING_BOOKING_ROLES.includes(bk);
+  return {
+    cis: cisFill ? { from: s.role, to: "customer_success" } : null,
+    booking: !bkKept && bk === null ? { from: null, to: "contracting" } : null,
+    blocked: { cis: !cisKept && !cisFill ? s.role : null, booking: !bkKept && bk !== null ? bk : null },
+  };
+}
+
+/** AA-1091: the "Pricing team" preset is already in place (the account can enter prices in CIS and Booking). */
+export function hasPricingTeamRoles(s: Pick<StaffAccount, "role" | "booking_role">): boolean {
+  return PRICING_CIS_ROLES.includes(s.role) && PRICING_BOOKING_ROLES.includes(s.booking_role ?? "");
+}
+
 /** The "Platform owner" preset is already in place: CIS admin, Booking admin and CRM Agency admin. */
 export function hasPlatformOwnerRoles(s: Pick<StaffAccount, "role" | "booking_role" | "crm_roles">): boolean {
   return s.role === "admin" && s.booking_role === "admin" && crmRolesOf(s).includes("platform_admin");
@@ -417,7 +447,7 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
 
 // ── Manage one account (drawer) ──────────────────────────────────────────────────────────────────
 
-type Confirm = null | "disable" | "sign-out" | "preset";
+type Confirm = null | "disable" | "sign-out" | "preset" | "pricing";
 
 export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true }: {
   staff: StaffAccount;
@@ -466,6 +496,12 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
     void run("roles", "PATCH", `${base}/roles`, m("rolesSaved"), body);
   };
   const presetInPlace = hasPlatformOwnerRoles(staff);
+  const pricingInPlace = hasPricingTeamRoles(staff);   // AA-1091
+  const pricing = pricingTeamPlan(staff);
+  const pricingBlocked = [
+    pricing.blocked.cis && m("pricingCisRole", roleLabel(pricing.blocked.cis)),
+    pricing.blocked.booking && m("pricingBookingRole", bookingRoleLabel(pricing.blocked.booking)),
+  ].filter(Boolean).join(", ");
 
   return (
     <section data-testid="staff-manage" aria-label={m("manageAria")} style={{
@@ -547,6 +583,25 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           </Button>
         </div>
       )}
+      {/* AA-1091: the "Pricing team" preset (CIS customer_success + Booking contracting; adds only, never replaces a
+          role, CRM untouched). */}
+      {staff.is_active && (
+        <div data-testid="staff-pricing-preset" style={{
+          display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px",
+          background: K.line2, borderRadius: RADIUS.sm,
+        }}>
+          <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("pricingTitle")}</span>
+            <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
+              {pricingInPlace ? m("pricingHas") : pricingBlocked ? m("pricingBlocked", pricingBlocked) : m("pricingNote")}
+            </span>
+          </span>
+          <Button size="sm" variant="secondary" testId="staff-pricing-preset-apply" onClick={() => setConfirm("pricing")}
+            disabled={pricingInPlace || !!pricingBlocked || !!busy}>
+            {m("pricingApply")}
+          </Button>
+        </div>
+      )}
 
       <ConfirmModal
         open={confirm === "disable"}
@@ -570,6 +625,19 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           <strong>{staff.display_name || staff.username}</strong> {m("presetBody")}
         </>}
         onConfirm={() => void run("preset", "PATCH", `${base}/roles`, m("presetDone"), { preset: "platform_owner" })}
+      />
+      <ConfirmModal
+        open={confirm === "pricing"}
+        onClose={() => setConfirm(null)}
+        busy={busy === "pricing"}
+        title={m("pricingQ")}
+        confirmLabel={m("pricingApply")}
+        body={<>
+          <strong>{staff.display_name || staff.username}</strong> {m("pricingBody")}
+          {pricing.cis && m("cisChange", roleLabel(pricing.cis.from), roleLabel(pricing.cis.to))}
+          {pricing.booking && m("bookingChange", bookingRoleLabel(pricing.booking.from), bookingRoleLabel(pricing.booking.to))}
+        </>}
+        onConfirm={() => void run("pricing", "PATCH", `${base}/roles`, m("pricingDone"), { preset: "pricing_team" })}
       />
       <ConfirmModal
         open={confirm === "sign-out"}

@@ -77,7 +77,8 @@ CIS_ROLE_TEXT: dict[str, str] = {
     # AA-1035 R2 (root ADR 0019 d3)
     "content_lead": "Content lead (catalogue, waves, review, master content, atoms and photos, tenant content QA)",
     "tenant_qa": "Tenant content QA (held pieces, labels, place cards, content trace)",
-    "customer_success": "Customer success (the tenants assigned to you: health, members, invitations)",
+    "customer_success": ("Customer success (the tenants assigned to you: health, members, invitations; the tours' "
+                         "reference prices)"),   # AA-1091
     "support": "Support (assigned and unassigned tenants: members and invitations)",
     "finance": "Finance (plans, billing and spend figures of every tenant)",
     "ai_ops": "AI operations (model routing, AI budgets, Writing Lab)",
@@ -85,7 +86,7 @@ CIS_ROLE_TEXT: dict[str, str] = {
 BOOKING_ROLE_TEXT: dict[str, str] = {
     "admin": "Booking administrator",
     "sales": "Sales",
-    "contracting": "Contracting",
+    "contracting": "Contracting (supplier rates, pricing rules, trip plans and departures)",   # AA-1091
     "content_creator": "Content creator",
     "finance": "Finance (invoices and payments)",
 }

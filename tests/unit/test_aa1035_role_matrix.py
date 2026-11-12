@@ -33,17 +33,21 @@ ROLES = ("admin", "content", "viewer") + R2_ROLES
 EXPECTED_PERMS = {
     "content_lead": {"content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
                      "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-                     "lab.read", "wave.run", "notifications.read"},
-    "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read"},
+                     "lab.read", "wave.run", "notifications.read",
+                     "reference_price.read", "reference_price.write"},   # AA-1091
+    "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read",
+                "reference_price.read"},   # AA-1091
     "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
                   "notifications.read"},
     # slice 2: + read-only view-as of the own book (tenant.view_as) and the bell (notifications.read)
     # close-out: + the Tenant QA reads of the own book (tenant_content.book.read)
     "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write",
-                         "tenant.member.resend", "tenant.view_as", "notifications.read", "tenant_content.book.read"},
+                         "tenant.member.resend", "tenant.view_as", "notifications.read", "tenant_content.book.read",
+                         # AA-1091: the customer-service team enters the tours' reference prices
+                         "reference_price.read", "reference_price.write"},
     # S267 fix pass: support only sends a non-owner invitation again (no tenant.member.write); slice 2: + view-as
     "support": {"tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"},
-    "finance": {"billing.read", "billing.write", "spend.read", "notifications.read"},
+    "finance": {"billing.read", "billing.write", "spend.read", "notifications.read", "reference_price.read"},
     # slice 2: the logged Writing Lab read of tenant text (lab.tenant_text.read, never tenant_content.read)
     "ai_ops": {"content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read",
                "lab.tenant_text.read", "notifications.read"},
