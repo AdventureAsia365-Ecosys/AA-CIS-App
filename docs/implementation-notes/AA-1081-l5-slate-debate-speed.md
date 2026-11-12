@@ -1,8 +1,8 @@
 # AA-1081 (lane l5 of S278) — T7 slate run time (Debate judge concurrency, cache kept for unchanged Segments)
 
-Live evidence (S278, 4 `t7_slate` jobs on the audit tenants, CIS 318a7982): 756-894 s per job against the S276 p50
-
 Parallel lane note (the first AA-1081 slice, Blog topic coverage, is `AA-1081.md`).
+
+Live evidence (S278, 4 `t7_slate` jobs on the audit tenants, CIS 318a7982): 756-894 s per job against the S276 p50
 of 232 s. Almost all of it is `t7_debate_judge` run one call after the other: 319-326 ok calls per job at ~2.2 s each
 (sum 635-766 s), ~0.037 USD per job, plus 25-36 refused shadow calls on acc3. The same tours were judged for these
 tenants in S275, yet no call was served from the cache.
