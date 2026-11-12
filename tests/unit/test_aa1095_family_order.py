@@ -71,19 +71,18 @@ def test_an_unknown_connection_goes_last_in_its_current_order():
     assert order == ["anthropic-direct", "acc1", "acc3", "mystery"]
 
 
-def test_the_model_first_chain_view_of_a_writer_and_a_validate_stage():
+def test_the_model_first_walk_of_a_writer_chain():
     out = fo.family_provider_order(PRIORITIES, FAMILIES, CONNECTIONS, LEAD)
     orders = {**_orders(PRIORITIES), **out}
     writer = ["sonnet-5-5", "sonnet-4-6", "haiku-4-5", "gpt-6-luna-openai"]
-    assert fo.chain_view(writer, orders) == [
+    assert [f"{m}@{c}" for m in writer for c in orders[m]] == [
         "sonnet-5-5@anthropic-direct", "sonnet-5-5@acc1", "sonnet-5-5@acc3",
         "sonnet-4-6@acc1", "sonnet-4-6@acc3",
         "haiku-4-5@anthropic-direct", "haiku-4-5@acc1", "haiku-4-5@acc3",
         "gpt-6-luna-openai@openai-direct"]
     validate = ["gpt-6-luna", "gpt-6-luna-openai", "nova-lite"]
-    assert fo.chain_view(validate, orders) == [
+    assert [f"{m}@{c}" for m in validate for c in orders[m]] == [
         "gpt-6-luna@acc1", "gpt-6-luna@acc3", "gpt-6-luna-openai@openai-direct", "nova-lite@acc2"]
-    assert fo.chain_view(["sonnet-5-5", "sonnet-5-5"], orders)[:1] == ["sonnet-5-5@anthropic-direct"]
 
 
 def test_the_route_control_accepts_the_orders_as_one_proposal():

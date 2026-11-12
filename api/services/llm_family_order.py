@@ -20,7 +20,7 @@ which validates it, writes ONE audited version and keeps the one-click revert.
 """
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+from typing import Mapping, Optional
 
 from shared.llm_client import data_scope, family_rule, route_settings, route_versions
 
@@ -69,10 +69,4 @@ def family_provider_order(priorities: Mapping[str, Mapping[str, int]], families:
     return out
 
 
-def chain_view(chain: Iterable[str], orders: Mapping[str, list[str]]) -> list[str]:
-    """``model@connection`` in the model-first order the gateway walks a stage chain (pure; for the before / after
-    print of the run-script). ``orders``: model -> its connection order."""
-    return [f"{m}@{c}" for m in dict.fromkeys(chain) for c in orders.get(m, [])]
-
-
-__all__ = ["ANTHROPIC_KIND", "OPENAI_KINDS", "ORDER_MODE", "chain_view", "family_provider_order", "wanted_order"]
+__all__ = ["ANTHROPIC_KIND", "OPENAI_KINDS", "ORDER_MODE", "family_provider_order", "wanted_order"]
