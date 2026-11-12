@@ -8,10 +8,14 @@ LLM account is blocked; a registry row, so the caller passes its key and this mo
 
 - Claude models (``family_rule.WRITER_FAMILY``): the Anthropic API connections first, then ``lead``, then the other
   AWS connections (the blocked account last among them: the gateway skips its refused rows at 0 USD), then the rest.
-- every other model with a ``lead`` deployment (the GPT models on Bedrock): ``lead`` first, then the OpenAI API
-  connections of the model, then the other AWS connections, then the rest. A GPT model's OpenAI API twin is its own
-  catalog model right behind it on the chain (CIS 366), so in model-first order the chain tries Bedrock on ``lead``,
-  the blocked account (skipped at 0 USD while it refuses), then the OpenAI API twin.
+- every other model with a ``lead`` deployment (the GPT models on Bedrock): ``lead`` first, then the other AWS
+  connections (the blocked account), then the rest. Such a model has no OpenAI API deployment of its own: an OpenAI
+  connection serves only ``provider='openai'`` catalog rows (``vendor_route``, S235), so the OpenAI API path of a GPT
+  model is its twin, a separate catalog model right behind it on the chain (CIS 366). In model-first order the GPT
+  chain is therefore: Bedrock on ``lead``, then the blocked account (skipped at 0 USD while it refuses), then the
+  OpenAI API twin. Once the blocked account answers again it is tried before the twin (AWS preferred); the tech
+  lead's order "``lead``, the OpenAI API, then the blocked account" holds only while it refuses (root ADR 0001a Note
+  S278 records this).
 - any other model keeps its order.
 
 ``family_provider_order`` is pure (the run-script and the tests call it); the save goes through
@@ -25,7 +29,6 @@ from typing import Mapping, Optional
 from shared.llm_client import data_scope, family_rule, route_settings, route_versions
 
 ANTHROPIC_KIND = "anthropic"
-OPENAI_KINDS = frozenset({"openai", "azure_openai"})
 ORDER_MODE = route_settings.MODEL_FIRST
 
 
@@ -44,8 +47,7 @@ def wanted_order(order: list[str], family: Optional[str], lead: str, connections
         groups = ([c for c in order if _kind(connections, c) == ANTHROPIC_KIND],
                   [c for c in order if c == lead])
     elif lead in order:
-        groups = ([c for c in order if c == lead],
-                  [c for c in order if _kind(connections, c) in OPENAI_KINDS])
+        groups = ([c for c in order if c == lead],)
     else:
         return list(order)
     head = [c for g in groups for c in g]
@@ -69,4 +71,4 @@ def family_provider_order(priorities: Mapping[str, Mapping[str, int]], families:
     return out
 
 
-__all__ = ["ANTHROPIC_KIND", "OPENAI_KINDS", "ORDER_MODE", "family_provider_order", "wanted_order"]
+__all__ = ["ANTHROPIC_KIND", "ORDER_MODE", "family_provider_order", "wanted_order"]

@@ -101,9 +101,9 @@ BASE_URL_ALLOWLIST: dict[str, tuple[str, ...]] = {
 }
 
 # Closed lists, same as the table CHECKs (migration 304): env vars a connection may name instead of a value.
-# AA-1095 (S278, CIS 413): + BEDROCK_ACCT_PAYER, the account that serves Bedrock chat models while the account of
+# AA-1095 (S278, CIS 406): + BEDROCK_ACCT_PAYER, the account that serves Bedrock chat models while the account of
 # BEDROCK_ACCT_PRIMARY is blocked (the payer of its organization; a registry row, never a key in this code). Same list
-# as the 413 CHECK. Both hold satellite account IDs (the repo is public).
+# as the 406 CHECK. Both hold satellite account IDs (the repo is public).
 ACCOUNT_ID_ENVS = frozenset({"BEDROCK_ACCT_PRIMARY", "BEDROCK_ACCT_PAYER"})
 CREDENTIAL_ENVS = frozenset({"OPENAI_API_KEY"})         # today's OpenAI key from the task definition, until S9
 # AA-1002 (S2): the kind each env-held key belongs to. A connection may name a credential env only of its own kind, so

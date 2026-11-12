@@ -225,7 +225,7 @@ def test_migration_closed_lists_are_the_code_lists():
     # 304's lists are the LLM kinds; AA-1017's 322 widens them (tests/unit/test_aa1017_registry_v2.py checks 322).
     assert _check_values("llm_provider_connection_kind_check") == set(connections.LLM_KINDS)
     assert _check_values("llm_provider_connection_data_scope_check") == set(connections.DATA_SCOPES)
-    # AA-1095: CIS 413 widens this list with BEDROCK_ACCT_PAYER (tests/unit/test_aa1095_bedrock_acc1.py: latest CHECK).
+    # AA-1095: CIS 406 widens this list with BEDROCK_ACCT_PAYER (tests/unit/test_aa1095_bedrock_acc1.py: latest CHECK).
     assert _check_values("llm_provider_connection_account_id_env_check") == {"BEDROCK_ACCT_PRIMARY"}
     assert _check_values("llm_provider_connection_account_id_env_check") < set(connections.ACCOUNT_ID_ENVS)
     assert _check_values("llm_provider_connection_credential_env_check") == set(connections.CREDENTIAL_ENVS)

@@ -1,8 +1,10 @@
 """AA-1095 (S278, tech lead 12/11 15:45) — the per-family provider order (api/services/llm_family_order.py).
 
 Pins both families' orders around the Bedrock connection that serves while the LLM account is blocked ("acc1", a
-registry row): Claude = Anthropic API, then acc1, then acc3; GPT on Bedrock = acc1, then the OpenAI API, then acc3.
-The priorities below are the Dev shape after CIS 413 (acc3 10, acc1 90, anthropic-direct 100); invented values only.
+registry row): Claude = Anthropic API, then acc1, then acc3; GPT on Bedrock = acc1, then acc3 (skipped at 0 USD while
+it refuses), then the OpenAI API twin, a separate catalog model behind it on the chain (an OpenAI connection serves only
+provider='openai' rows, so a Bedrock GPT model never has an OpenAI API deployment of its own). The priorities below are
+the Dev shape after CIS 406 (acc3 10, acc1 90, anthropic-direct 100); invented values only.
 """
 from api.services import llm_family_order as fo
 from api.services import llm_route_control as rc
@@ -18,7 +20,7 @@ CONNECTIONS = {
 }
 FAMILIES = {
     "sonnet-5-5": "anthropic", "opus-5-5": "anthropic", "haiku-4-5": "anthropic", "sonnet-4-6": "anthropic",
-    "gpt-6-luna": "openai", "gpt-6-astra": "openai", "gpt-6-luna-openai": "openai", "nova-lite": "amazon",
+    "gpt-6-luna": "openai", "gpt-6-astra": "openai", "gpt-6-luna-openai": "openai", "gpt-6-astra-openai": "openai", "nova-lite": "amazon",
     "maverick-x": "meta",
 }
 PRIORITIES = {
@@ -27,8 +29,9 @@ PRIORITIES = {
     "haiku-4-5": {"acc3": 20, "anthropic-direct": 100, "acc1": 90},
     "sonnet-4-6": {"acc3": 10, "acc1": 90},                             # no Anthropic API row
     "gpt-6-luna": {"acc3": 10, "acc1": 90},
-    "gpt-6-astra": {"acc3": 10, "acc1": 90, "openai-direct": 100},     # an OpenAI API row on the same model
-    "gpt-6-luna-openai": {"openai-direct": 10},                         # the twin: one deployment, never reordered
+    "gpt-6-astra": {"acc3": 20, "acc1": 90},
+    "gpt-6-luna-openai": {"openai-direct": 10},                         # the twins: one deployment, never reordered
+    "gpt-6-astra-openai": {"openai-direct": 10},
     "nova-lite": {"acc2": 10},
     "maverick-x": {"acc3": 10, "acc2": 20},                             # no acc1 row: kept as it is
 }
@@ -46,10 +49,21 @@ def test_claude_models_put_the_anthropic_api_first_then_acc1_then_acc3():
     assert out["sonnet-4-6"] == ["acc1", "acc3"]                        # no API row: acc1 still ahead of acc3
 
 
-def test_gpt_models_put_acc1_first_then_the_openai_api_then_acc3():
+def test_gpt_models_on_bedrock_put_acc1_first_then_acc3_and_the_openai_twin_is_untouched():
     out = fo.family_provider_order(PRIORITIES, FAMILIES, CONNECTIONS, LEAD)
     assert out["gpt-6-luna"] == ["acc1", "acc3"]
-    assert out["gpt-6-astra"] == ["acc1", "openai-direct", "acc3"]
+    assert out["gpt-6-astra"] == ["acc1", "acc3"]
+    assert "gpt-6-luna-openai" not in out and "gpt-6-astra-openai" not in out
+
+
+def test_a_gpt_model_walks_acc1_then_acc3_then_its_openai_api_twin():
+    """The real GPT chain in model-first order: the OpenAI API comes after acc3, as the twin model's rung. While acc3
+    refuses, the gateway skips its rows at 0 USD, so the first two real attempts are acc1 and the OpenAI API."""
+    out = fo.family_provider_order(PRIORITIES, FAMILIES, CONNECTIONS, LEAD)
+    orders = {**_orders(PRIORITIES), **out}
+    chain = ["gpt-6-astra", "gpt-6-astra-openai"]
+    assert [f"{m}@{c}" for m in chain for c in orders[m]] == [
+        "gpt-6-astra@acc1", "gpt-6-astra@acc3", "gpt-6-astra-openai@openai-direct"]
 
 
 def test_models_without_a_change_are_left_out():
@@ -93,7 +107,8 @@ def test_the_route_control_accepts_the_orders_as_one_proposal():
     assert errors == []
     assert fo.ORDER_MODE == route_settings.MODEL_FIRST and target["order_mode"] == "model_first"
     assert target["priorities"]["sonnet-5-5"] == {"anthropic-direct": 10, "acc1": 20, "acc3": 30}
-    assert target["priorities"]["gpt-6-astra"] == {"acc1": 10, "openai-direct": 20, "acc3": 30}
+    assert target["priorities"]["gpt-6-astra"] == {"acc1": 10, "acc3": 20}
+    assert target["priorities"]["gpt-6-astra-openai"] == {"openai-direct": 10}
     assert target["priorities"]["maverick-x"] == {"acc3": 10, "acc2": 20}
     kinds = {d["kind"] for d in route_versions.diff(live, target)}
     assert kinds == {"order_mode", "provider_order"}                   # no stage chain changes

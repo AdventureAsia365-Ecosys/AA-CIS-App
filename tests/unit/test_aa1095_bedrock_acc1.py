@@ -1,6 +1,6 @@
 """AA-1095 (S278) — Bedrock chat models served from acc1 while AWS blocks acc3 (root ADR 0001a, Note S278).
 
-acc1 comes back as DATA only: the registry connection 'acc1' of CIS migration 413 (assume_role, account from the env
+acc1 comes back as DATA only: the registry connection 'acc1' of CIS migration 406 (assume_role, account from the env
 var BEDROCK_ACCT_PAYER that AA-CIS-Infra sets on the api and worker tasks). The runtime code names no account key for
 it (tests/unit/test_aa998_no_acc1_runtime.py still holds): the satellite client, the account directory of the admin
 and the cost pages read the registry. Without the registry row, the key is refused / shown as "Retired account", as
@@ -31,7 +31,7 @@ PAYER = connections.ProviderConnection(
 
 @pytest.fixture
 def registry(monkeypatch):
-    """The registry holds acc3 (its 304 mirror) and the 413 payer row; the payer env is set."""
+    """The registry holds acc3 (its 304 mirror) and the 406 payer row; the payer env is set."""
     rows = {"acc3": connections.BUILTIN_CONNECTIONS["acc3"], "acc1": PAYER}
     monkeypatch.setenv("BEDROCK_ACCT_PAYER", PAYER_ID)
     monkeypatch.setattr(connections, "run_sync", lambda fn: rows if fn is connections._fetch_all else [])
@@ -63,7 +63,7 @@ def _latest_env_check() -> tuple[str, set]:
 
 
 def test_the_env_allowlist_matches_the_latest_check():
-    # MIG-4: the migration (413, its own PR) widens the CHECK before this code ships; on a branch without it the code
+    # MIG-4: the migration (406, its own PR) widens the CHECK before this code ships; on a branch without it the code
     # may know BEDROCK_ACCT_PAYER one step ahead of the DB, never the other way round.
     assert connections.ACCOUNT_ID_ENVS == frozenset({"BEDROCK_ACCT_PRIMARY", "BEDROCK_ACCT_PAYER"})
     name, values = _latest_env_check()
