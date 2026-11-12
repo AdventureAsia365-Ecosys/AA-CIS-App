@@ -45,8 +45,9 @@ _TENANTS_SQL = """
     ORDER BY 1
 """
 _PREV_SLATE_SQL = """
-    SELECT max(finished_at) AS finished_at FROM shared.job
+    SELECT coalesce(started_at, created_at) AS started_at, finished_at FROM shared.job
     WHERE kind = 't7_slate' AND payload->>'tenant_id' = $1 AND status = 'succeeded' AND finished_at < $2
+    ORDER BY finished_at DESC LIMIT 1
 """
 _SLATE_JOBS_SQL = """
     SELECT id, status, created_at, started_at, finished_at FROM shared.job
@@ -61,7 +62,7 @@ _CURRENT_BRAND_SQL = """
     ORDER BY (brand_name = 'default') DESC, version DESC LIMIT 1
 """
 _BRAND_ROWS_SQL = """
-    SELECT brand_name, version, is_active, created_at, updated_at FROM shared.tenant_brand_rules
+    SELECT brand_name, version, is_active, updated_at FROM shared.tenant_brand_rules
     WHERE tenant_id = $1::uuid ORDER BY brand_name, version
 """
 _CACHE_BY_VERSION_SQL = """
@@ -147,8 +148,10 @@ def _iso(v):
 
 
 async def diagnose_tenant(conn, tenant_id: str, run_start: datetime, since: datetime) -> dict:
-    prev = await conn.fetchval(_PREV_SLATE_SQL, tenant_id, run_start)
-    window_start = prev or since
+    prev = await conn.fetchrow(_PREV_SLATE_SQL, tenant_id, run_start)
+    window_start = prev["finished_at"] if prev else since
+    # the listings (slate jobs, judge calls) start with the earlier slate itself: did it judge, and how much?
+    listed_from = prev["started_at"] if prev else since
     current_version = await conn.fetchval(_CURRENT_BRAND_SQL, tenant_id)
     by_version = [dict(r) for r in await conn.fetch(_CACHE_BY_VERSION_SQL, tenant_id, run_start)]
     versions_before_run = [r["brand_version"] for r in by_version if r["n_before_run"]]
@@ -157,14 +160,15 @@ async def diagnose_tenant(conn, tenant_id: str, run_start: datetime, since: date
         f["older_versions"] = list(f["older_versions"] or [])
     out = {
         "tenant_id": tenant_id, "window_start": _iso(window_start), "window_from_previous_slate": prev is not None,
+        "listed_from": _iso(listed_from),
         "current_brand_version": current_version,
         "brand_rows": [{k: _iso(v) for k, v in dict(r).items()} for r in await conn.fetch(_BRAND_ROWS_SQL, tenant_id)],
         "cache_by_version": [{k: _iso(v) for k, v in r.items()} for r in by_version],
         "slate_jobs": [{k: _iso(v) if k != "id" else str(v) for k, v in dict(r).items()}
-                       for r in await conn.fetch(_SLATE_JOBS_SQL, tenant_id, window_start)],
+                       for r in await conn.fetch(_SLATE_JOBS_SQL, tenant_id, listed_from)],
         "judge_calls": [{"job_id": str(r["job_id"]) if r["job_id"] else None, "status": r["status"],
                          "is_shadow": r["is_shadow"], "n": r["n"], "first_at": _iso(r["first_at"])}
-                        for r in await conn.fetch(_JUDGE_CALLS_SQL, tenant_id, window_start)],
+                        for r in await conn.fetch(_JUDGE_CALLS_SQL, tenant_id, listed_from)],
         "atomize_in_window": dict(await conn.fetchrow(_ATOMIZE_SQL, window_start, run_start)),
         **summarize(facts, window_start, current_version, versions_before_run),
     }

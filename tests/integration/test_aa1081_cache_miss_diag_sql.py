@@ -75,6 +75,10 @@ async def _seed(c):
     # an atomize in the window that cleared rows of the tour, and one before it (out of the window)
     await _job(c, "a3_atomize", {"tour_id": tour}, status="succeeded", created=_t(12), finished=_t(12),
                result={"tour_id": tour, "brand_fit_cache_cleared": 3, "brand_fit_segments_changed": 1})
+    # one judge call of the earlier slate
+    await c.execute("INSERT INTO shared.llm_call_log (stage, role, model, quality_signal, tenant_id, status, "
+                    "created_at) VALUES ('t7_debate_judge', 'judge', 'zz-judge', '{}'::jsonb, $1::uuid, 'ok', $2)",
+                    tenant, _t(9, 1))
     # cache: older rows (before the slow run) and what the slow run wrote
     await _cache(c, tenant, "zz1081d_brand", 1, _t(5))
     await _cache(c, tenant, "zz1081d_hit", 2, _t(5))
@@ -90,6 +94,7 @@ async def test_each_judged_segment_gets_its_cause(conn):
 
     assert out["window_start"] == PREV_SLATE_END.isoformat()
     assert out["window_from_previous_slate"] is True
+    assert out["listed_from"] == _t(9).isoformat()
     assert out["current_brand_version"] == 2
     assert {s["segment_id"]: s["cause"] for s in out["segments"]} == {
         "zz1081d_brand": "brand_version",
@@ -107,6 +112,7 @@ async def test_each_judged_segment_gets_its_cause(conn):
     assert [r["brand_version"] for r in out["cache_by_version"]] == [1, 2]
     assert [j["status"] for j in out["slate_jobs"]] == ["succeeded", "succeeded"]
     assert {r["version"] for r in out["brand_rows"]} == {1, 2}
+    assert [(j["status"], j["is_shadow"], j["n"]) for j in out["judge_calls"]] == [("ok", False, 1)]
     json.dumps(out, default=str)   # the script prints it
 
 
