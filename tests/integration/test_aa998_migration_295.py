@@ -3,11 +3,7 @@ Postgres.
 
 conftest applies every migration (169 / 259 seed acc1 profiles on haiku, sonnet, haiku-5-5, sonnet-5-5; 137 allows
 account_route 'acc1'; 295 removes both). These tests run the file again directly, errors NOT swallowed: from the
-pre-295 state, twice (idempotent), and each guard. Every test restores the post-295 state, then re-runs 413.
-
-AA-1095 (S278): acc1 serves Bedrock chat models again, as a gateway connection only (root ADR 0001a, Note S278).
-Migration 413 gives the 13 chat-model catalog rows an acc1 profile equal to their acc1 deployment's wire id; the
-account_route CHECK stays acc3 / NULL (routing to acc1 is by deployment, never by account_route).
+pre-295 state, twice (idempotent), and each guard. Every test restores the post-295 state.
 """
 import os
 import sys
@@ -20,8 +16,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "295_llm_acc3_only.sql")
-# AA-1095: 413 puts the acc1 profiles of the gateway's chat models back (as Bedrock deployments of connection acc1)
-MIGRATION_413 = os.path.join(os.path.dirname(MIGRATION), "413_llm_acc1_bedrock_connection.sql")
 SEEDED = ("haiku", "sonnet", "haiku-5-5", "sonnet-5-5")   # the rows 169 / 259 gave an acc1 profile
 OLD_CHECK = "CHECK (account_route IN ('acc1', 'acc3') OR account_route IS NULL)"   # 137
 STAGE = "zz_aa998_test_stage"
@@ -39,7 +33,6 @@ def cur():
         c.execute("DELETE FROM shared.llm_role_config WHERE stage = %s", (STAGE,))
         c.execute("DELETE FROM shared.llm_model_catalog WHERE model_key = 'zz-aa998-only-acc1'")
         _run(c)                                 # back to the post-295 state for other tests
-        c.execute(open(MIGRATION_413, encoding="utf-8").read())   # AA-1095: then the post-413 state
         conn.close()
 
 
@@ -69,11 +62,8 @@ def _insert_stage(c, account_route):
               (STAGE, account_route))
 
 
-def test_post_replay_state_has_acc1_only_as_a_bedrock_deployment(cur):
-    # AA-1095: an acc1 profile exists only where 413 put it (a chat model with an acc1 deployment of the same wire id)
-    cur.execute("SELECT k.model_key FROM shared.llm_model_catalog k WHERE k.bedrock_profile_ids ? 'acc1' "
-                "AND NOT EXISTS (SELECT 1 FROM shared.llm_model_deployment d WHERE d.model_key = k.model_key "
-                "AND d.connection_key = 'acc1' AND d.wire_id = k.bedrock_profile_ids ->> 'acc1')")
+def test_post_replay_state_has_no_acc1(cur):
+    cur.execute("SELECT model_key FROM shared.llm_model_catalog WHERE bedrock_profile_ids ? 'acc1'")
     assert cur.fetchall() == []
     cur.execute("SELECT count(*) FROM shared.llm_role_config WHERE account_route = 'acc1'")
     assert cur.fetchone()[0] == 0

@@ -179,7 +179,7 @@ def _deployments(c):
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
               "FROM shared.llm_model_deployment "
               "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017', 'migration-367-aa1026', "
-              "'migration-376-aa1042') "
+              "'migration-376-aa1042', 'migration-413-aa1095') "
               "AND model_key <> 'gpt-4.1' "
               "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]

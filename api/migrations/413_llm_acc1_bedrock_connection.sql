@@ -20,16 +20,20 @@
 --      must be live first; the admin Test connection works on a switched-off connection, so the 13 models are probed
 --      before the switch. ON CONFLICT DO NOTHING: an admin's later edit is kept.
 --   3. Its shared.llm_connection_cost_policy row, copied from acc3's (alert 80 % / hard stop when acc3 has none).
---   4. 13 deployments on acc1 (origin seed, enabled, priority 100 = behind every existing deployment of the model,
---      the 306 recipe): wire id = global.<Bedrock model id>, the profiles that answered on 12/11:
+--   4. 13 deployments on acc1 (origin seed, enabled = the catalog row's AND the acc3 row's enabled, priority 90 = behind every live deployment of the
+--      model (Dev: 10 to 30), and still ahead of the Anthropic API rows 306 / 376 seed at 100, whose re-run guard
+--      refuses an AWS row sorting after them): wire id = global.<Bedrock model id>, the profiles that answered on 12/11:
 --        sonnet-5-5 opus-5-5 haiku-5-5 sonnet-5 sonnet-4-6 opus-4-6 haiku-4-5 (Claude)
---        gpt-6-luna gpt-6-astra gpt-6-sol gpt-5.6-luna gpt-6.1-sol gpt-6.1-terra (GPT; the catalog's enabled flag of
---        gpt-6-sol / gpt-6.1-sol / gpt-6.1-terra stays the model switch, off today)
+--        gpt-6-luna gpt-6-astra gpt-6-sol gpt-5.6-luna gpt-6.1-sol gpt-6.1-terra (GPT). The candidates (gpt-6-sol,
+--        gpt-6.1-sol, gpt-6.1-terra: catalog row off; opus-4-6: acc3 row off, served by the Anthropic API since 376)
+--        get an acc1 row that is off too, so no candidate becomes routable by this file; the admin Test connection
+--        still probes a switched-off deployment, and switching one on is an admin decision
 --      A model with no catalog row is skipped (NOTICE).
---   5. shared.llm_model_catalog.bedrock_profile_ids gains "acc1" = the same wire id on those 13 rows (TripPlanner's
---      legacy path and the wire-drift check read it; TripPlanner never calls acc1: its gateway holds credentials for
---      BEDROCK_ACCT_PRIMARY only, and it reads the deployment rows first).
---   6. Register 413.
+--   5. Register 413.
+--   Not here: an "acc1" key in shared.llm_model_catalog.bedrock_profile_ids. The deployment row is the routing source
+--   (vendor_route.deployment_plan; the wire-drift check has nothing to compare without a catalog profile), the
+--   older replays guard the candidate rows' exact profiles (367), and TripPlanner, which also reads the profiles, never
+--   calls acc1 (its gateway holds credentials for BEDROCK_ACCT_PRIMARY only).
 --   The route order (tech lead S278, 15:45: Claude = Anthropic API, then acc1, then acc3; GPT = acc1, then acc3, then
 --   the OpenAI API twin on the chain) is NOT set here: AA-CIS-App scripts/llm_ops/aa1095_acc1_route_order.py switches
 --   acc1 on and saves the provider order as one route-control version (audited, one-click revert) after the deploy.
@@ -44,8 +48,8 @@
 --   before: the registry tables (304, 317, 322); connection acc3 is a bedrock assume_role row; no acc1 row of another
 --           kind / role / ExternalId (a key collision).
 --   after:  the acc1 row is bedrock / assume_role / aws_only with the role, ExternalId, region and env above and is
---           off unless an admin had switched it on; every seeded deployment's wire id is global.<id> and equals the
---           catalog's acc1 profile; an acc3 deployment of the same model with another wire id is a NOTICE.
+--           off unless an admin had switched it on; every seeded deployment's wire id is the decided global. profile;
+--           an acc3 deployment of the same model with another wire id is a NOTICE.
 --
 -- Order with the code. Before the AA-CIS-App code PR (MIG-4: this migration-only PR, then the code). Old code never
 -- calls acc1 (connection off). Contract file (it changes a CHECK and inserts config rows): applied on Dev by the Infra
@@ -59,8 +63,7 @@
 --             'gpt-5.6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')) AS models;
 --
 -- Rollback (a NEW forward migration): switch acc1 off (PATCH /admin/llm-connections/acc1 {"enabled": false}) first,
--- revert the route-control version, then DELETE the 13 acc1 deployments, the cost policy row and the connection, and
--- remove the acc1 key of bedrock_profile_ids.
+-- revert the route-control version, then DELETE the 13 acc1 deployments, the cost policy row and the connection.
 --
 -- X1. One BEGIN … COMMIT block, no role switch. DB Migrate runs cis/ files as cis_owner, the owner of these tables.
 
@@ -149,22 +152,16 @@ BEGIN
 
     INSERT INTO shared.llm_model_deployment
         (model_key, connection_key, wire_id, priority, enabled, origin, notes, updated_by)
-    SELECT m.key, 'acc1', m.value, 100, true, 'seed',
+    SELECT m.key, 'acc1', m.value, 90,
+           k.enabled AND coalesce((SELECT a.enabled FROM shared.llm_model_deployment a
+                                    WHERE a.model_key = m.key AND a.connection_key = 'acc3'), true),
+           'seed',
            'AA-1095 (S278): answered a Converse call on acc1 through this profile (12/11/2026).', actor
       FROM jsonb_each_text(models) AS m (key, value)
       JOIN shared.llm_model_catalog k ON k.model_key = m.key
     ON CONFLICT (model_key, connection_key) DO NOTHING;
 
-    -- ── 5. The catalog's acc1 profile ─────────────────────────────────────────────────────────────────────────
-    UPDATE shared.llm_model_catalog k
-       SET bedrock_profile_ids = coalesce(k.bedrock_profile_ids, '{}'::jsonb) || jsonb_build_object('acc1', m.value),
-           updated_at          = now(),
-           updated_by          = actor
-      FROM jsonb_each_text(models) AS m (key, value)
-     WHERE k.model_key = m.key AND k.provider = 'bedrock'
-       AND (k.bedrock_profile_ids ->> 'acc1') IS DISTINCT FROM m.value;
-
-    -- ── 6. Guards: the rows as decided ────────────────────────────────────────────────────────────────────────
+    -- ── 5. Guards: the rows as decided ────────────────────────────────────────────────────────────────────────
     SELECT * INTO c FROM shared.llm_provider_connection WHERE connection_key = 'acc1';
     IF c.kind <> 'bedrock' OR c.auth_mode <> 'assume_role' OR c.data_scope <> 'aws_only'
        OR c.role_name <> 'AA1-Bedrock-Invoker' OR c.external_id <> ext_id OR c.region <> 'us-west-1'
@@ -177,13 +174,9 @@ BEGIN
 
     SELECT string_agg(d.model_key, ', ' ORDER BY d.model_key) INTO bad
       FROM shared.llm_model_deployment d
-      JOIN shared.llm_model_catalog k ON k.model_key = d.model_key
-     WHERE d.connection_key = 'acc1'
-       AND (d.wire_id IS DISTINCT FROM models ->> d.model_key
-            OR (k.bedrock_profile_ids ->> 'acc1') IS DISTINCT FROM d.wire_id);
+     WHERE d.connection_key = 'acc1' AND d.wire_id IS DISTINCT FROM models ->> d.model_key;
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 413: acc1 deployments whose wire id is not the decided profile or the catalog''s '
-                        'acc1 profile: %', bad;
+        RAISE EXCEPTION 'migration 413: acc1 deployments whose wire id is not the decided profile: %', bad;
     END IF;
 
     SELECT string_agg(d.model_key || ' (' || d.wire_id || ')', ', ' ORDER BY d.model_key) INTO bad
@@ -200,7 +193,7 @@ END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
 VALUES ('413', now(), 'AA-1095: Bedrock connection acc1 (off) + 13 chat-model deployments, account env allowlist '
-                      '+ BEDROCK_ACCT_PAYER, catalog acc1 profiles')
+                      '+ BEDROCK_ACCT_PAYER')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

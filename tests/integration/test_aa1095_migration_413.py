@@ -16,7 +16,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
-from shared.llm_client.connections import ACCOUNT_ID_ENVS  # noqa: E402
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                          "413_llm_acc1_bedrock_connection.sql")
@@ -58,13 +57,11 @@ def _run(c):
 
 
 def _undo(c):
-    """The pre-413 state: no acc1 connection, deployments, cost policy or catalog profile; 304's env CHECK."""
+    """The pre-413 state: no acc1 connection, deployments or cost policy; 304's env CHECK."""
     c.execute("DELETE FROM shared.llm_model_deployment WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_provider_health WHERE connection_key = 'acc1'")
     c.execute("DELETE FROM shared.llm_provider_connection WHERE connection_key = 'acc1'")
-    c.execute("UPDATE shared.llm_model_catalog SET bedrock_profile_ids = bedrock_profile_ids - 'acc1' "
-              "WHERE bedrock_profile_ids ? 'acc1'")
     c.execute("ALTER TABLE shared.llm_provider_connection DROP CONSTRAINT llm_provider_connection_account_id_env_check")
     c.execute("ALTER TABLE shared.llm_provider_connection ADD CONSTRAINT llm_provider_connection_account_id_env_check "
               "CHECK (account_id_env IS NULL OR account_id_env IN ('BEDROCK_ACCT_PRIMARY'))")
@@ -89,7 +86,7 @@ def test_post_replay_state(cur):
     assert row["kind"] == "bedrock" and row["auth_mode"] == "assume_role" and row["data_scope"] == "aws_only"
     assert row["role_name"] == "AA1-Bedrock-Invoker" and row["external_id"] == "aa1095-satellite-bedrock-acc1"
     assert row["region"] == "us-west-1" and row["account_id"] is None
-    assert row["account_id_env"] == "BEDROCK_ACCT_PAYER" and row["account_id_env"] in ACCOUNT_ID_ENVS
+    assert row["account_id_env"] == "BEDROCK_ACCT_PAYER"     # in connections.ACCOUNT_ID_ENVS with the code PR
     assert row["enabled"] is False                              # switched on by the run-script after the deploy
     assert list(row["served_roles"]) == ["writer", "judge", "validate"]
     assert row["balance_source"] == "none"
@@ -102,10 +99,14 @@ def test_post_replay_state(cur):
     assert len(present) == 13, sorted(set(MODELS) - set(present))
     deps = _deployments(cur)
     assert {k: d["wire_id"] for k, d in deps.items()} == present
-    assert all(d["priority"] == 100 and d["enabled"] and d["origin"] == "seed" for d in deps.values())
-    cur.execute("SELECT model_key, bedrock_profile_ids ->> 'acc1' AS acc1 FROM shared.llm_model_catalog "
-                "WHERE bedrock_profile_ids ? 'acc1'")
-    assert {r["model_key"]: r["acc1"] for r in cur.fetchall()} == present
+    assert all(d["priority"] == 90 and d["origin"] == "seed" for d in deps.values())
+    # on exactly where the catalog row and the model's acc3 row are on (no candidate becomes routable)
+    cur.execute("SELECT k.model_key, k.enabled AND coalesce(a.enabled, true) AS on_ FROM shared.llm_model_catalog k "
+                "LEFT JOIN shared.llm_model_deployment a ON a.model_key = k.model_key AND a.connection_key = 'acc3' "
+                "WHERE k.model_key = ANY (%s)", (list(MODELS),))
+    assert {k: d["enabled"] for k, d in deps.items()} == {r["model_key"]: r["on_"] for r in cur.fetchall()}
+    cur.execute("SELECT count(*) AS n FROM shared.llm_model_catalog WHERE bedrock_profile_ids ? 'acc1'")
+    assert cur.fetchone()["n"] == 0                             # routing reads the deployment rows, not the profiles
 
     cur.execute("SELECT alert_pct, hard_stop FROM shared.llm_connection_cost_policy WHERE connection_key = 'acc1'")
     assert cur.fetchone() is not None
@@ -164,6 +165,5 @@ def test_the_route_chains_and_existing_rows_are_not_touched(cur):
     cur.execute("SELECT model_key, connection_key, priority, enabled, wire_id FROM shared.llm_model_deployment "
                 "WHERE connection_key <> 'acc1'")
     assert {(r["model_key"], r["connection_key"]): dict(r) for r in cur.fetchall()} == before_deps
-    cur.execute("SELECT count(*) AS n FROM shared.llm_model_catalog WHERE updated_by = %s "
-                "AND NOT (model_key = ANY (%s))", (ACTOR, list(MODELS)))
+    cur.execute("SELECT count(*) AS n FROM shared.llm_model_catalog WHERE updated_by = %s", (ACTOR,))
     assert cur.fetchone()["n"] == 0
