@@ -1,0 +1,70 @@
+{
+  "format": 1,
+  "id": "w5-null-t9-blog",
+  "workflow": "null",
+  "status": "draft",
+  "registered_by": null,
+  "registered_on": null,
+  "golden_set": {
+    "name": "aa729"
+  },
+  "eval_split": "gate",
+  "sample_ids": [],
+  "noise_sample_ids": [],
+  "release_id": null,
+  "judge": {
+    "model_key": "gpt-6-luna-openai",
+    "connection": "openai-direct"
+  },
+  "metrics": [
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower",
+      "primary": true
+    },
+    {
+      "name": "fail_claims_per_item",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "hard_stops",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "requests_per_object",
+      "kind": "computed",
+      "direction": "lower"
+    }
+  ],
+  "decision": {
+    "rule": "non_inferior",
+    "metric": "item_fail_rate",
+    "margin_abs": 0.15,
+    "alpha": 0.05,
+    "noise_se_k": 2.0
+  },
+  "requirements": {
+    "paired_all": true,
+    "max_mixed_judges": 0,
+    "max_hard_stop_1": 0
+  },
+  "power": {
+    "min_power": 0.8,
+    "writer_sd": null,
+    "claims_per_item": 60
+  },
+  "cap_usd": 5.0,
+  "note": "Eval null run (root ADR 0020 W5 item 1): t9_blog with no candidate change (B == A by configuration) on 12 GATE items. Must come out non_inferior with every item paired, one judge and no hard stop 1; a false regression blocks every later B. The judge and the margin are proposals: the tech lead sets them when registering (the judge = the instrument R1 pins)."
+}

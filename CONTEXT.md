@@ -4236,6 +4236,27 @@ default, $0: model calls raise in that process; a new version must be newer than
 text lands in this public repo; tests use invented fixtures only.
 _Avoid_: test set (ambiguous), eval data, Pinned Exemplar (a release item, not an eval sample).
 
+**Eval side (DEV / CAL / GATE; AA-1051, root ADR 0020 W5)**:
+The frozen use of a golden item, orthogonal to its R2 split: `dev` (rubric and policy work), `cal` (judge calibration)
+or `gate` (sealed: release and W5 proof decisions only). Stored in `shared.eval_golden_split` (CIS 400, append only,
+FK to the item): placed by `sha256("aa1051-eval:<sample_id>")` under rule `aa1051-split-v1` (cal 30%, gate 30%, dev
+40%), per sample so a sample keeps its side in every golden version; readers read the stored row, never recompute it.
+Written by the golden importer and by `python -m services.writer_proof.splits` (DRY RUN first). An R2 run with
+`--eval-split gate` plans only GATE items (traps stay in the probe) and decides `judge_counts` on the CAL items only,
+reporting `details.kappa_eval_split` (CAL vs the planned side; audit target: within 0.1).
+_Avoid_: holdout (that is the R2 phase split), test split.
+
+**Writer proof (W5; AA-1051, root ADR 0020 D12)**:
+A small paid run that measures one writer change on a pre-registered fixed GATE sample: the eval null run (T9 blog, no
+change, must come out non_inferior), T9, S1 and T2. A proof is one or two R2 runs (arm B, optional repeat arm A') under
+stage `adhoc_aa1051`, queued by `python -m services.writer_proof.runner run --live --confirm CONFIRM --cap-usd <n>`
+only when its **pre-registration** (`services/writer_proof/prereg/<id>.json`: metrics, fixed sample ids, an absolute
+non-inferiority margin, the pinned judge, the cap) is registered and unchanged since its first result (the run rows
+carry its sha), the power check from the R1 vote variance is adequate, and the D12 caps hold (null $5, T9 $15, S1 $8,
+T2 $5, $33 in total, read from the ledger). `runner report` gives the pre-registered verdict, the targets and the cost
+and requests per object from `shared.llm_call_log`.
+_Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
+
 **Scope (writing memory)**:
 `platform` (applies to every tenant's writer; never holds tenant text; needs evidence from ≥ 3
 distinct tenants when the evidence is tenant content, plus Nghiệp's approval) or `tenant` (one

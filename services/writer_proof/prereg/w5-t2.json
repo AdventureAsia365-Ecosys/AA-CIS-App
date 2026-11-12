@@ -1,0 +1,73 @@
+{
+  "format": 1,
+  "id": "w5-t2",
+  "workflow": "t2",
+  "status": "draft",
+  "registered_by": null,
+  "registered_on": null,
+  "golden_set": {
+    "name": "aa729"
+  },
+  "eval_split": "gate",
+  "sample_ids": [],
+  "noise_sample_ids": [],
+  "release_id": null,
+  "judge": {
+    "model_key": "gpt-6-luna-openai",
+    "connection": "openai-direct"
+  },
+  "metrics": [
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower",
+      "primary": true
+    },
+    {
+      "name": "writer_requests_per_object",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 2
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0.1
+      }
+    },
+    {
+      "name": "enforce_findings_after_repair",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    }
+  ],
+  "decision": {
+    "rule": "non_inferior",
+    "metric": "item_fail_rate",
+    "margin_abs": 0.1,
+    "alpha": 0.05,
+    "noise_se_k": 2.0
+  },
+  "requirements": {
+    "paired_all": true,
+    "max_mixed_judges": 0,
+    "max_hard_stop_1": 0
+  },
+  "power": {
+    "min_power": 0.8,
+    "writer_sd": null,
+    "claims_per_item": 59
+  },
+  "cap_usd": 5.0,
+  "note": "T2 proof (W5 item 4): 20 GATE tenant tours (>= 2 elephant, >= 3 thin-source), v2 effort high vs medium; control = the stored v1 re-judged at $0. Enforce findings after repair must be 0 and <= 25% of the v1 control (external until the claim instrument enforces)."
+}

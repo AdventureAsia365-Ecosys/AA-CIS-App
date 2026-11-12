@@ -302,7 +302,7 @@ def kappa_max(pairs: Iterable[tuple[str, str]]) -> Optional[float]:
 # MIN_KAPPA_PAIRS pairs with >= MIN_KAPPA_PER_LABEL of each label). A stratum is `measurable` when it meets the same
 # pair / label minimums, and `below` when it is measurable and its kappa is under MIN_KAPPA: the report names those.
 
-STRATUM_DIMS = ("channel", "tenant", "tier", "split")
+STRATUM_DIMS = ("channel", "tenant", "tier", "split", "eval_split")   # eval_split: DEV / CAL / GATE (AA-1051)
 STRATA_MAX = 40                  # rows kept in a run's details (the overall row first): ids and counts only
 
 
@@ -316,6 +316,8 @@ def item_strata(item: dict) -> list[tuple[str, str]]:
     out.extend(("tier", t) for t in tiers)
     if item.get("split") in ("tune", "holdout"):
         out.append(("split", item["split"]))
+    if item.get("eval_split") in ("dev", "cal", "gate"):
+        out.append(("eval_split", item["eval_split"]))
     return out
 
 

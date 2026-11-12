@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "id": "w5-s1",
+  "workflow": "s1",
+  "status": "draft",
+  "registered_by": null,
+  "registered_on": null,
+  "golden_set": {
+    "name": "aa729"
+  },
+  "eval_split": "gate",
+  "sample_ids": [],
+  "noise_sample_ids": [],
+  "release_id": null,
+  "judge": {
+    "model_key": "gpt-6-luna-openai",
+    "connection": "openai-direct"
+  },
+  "metrics": [
+    {
+      "name": "fail_claims_per_item",
+      "kind": "computed",
+      "direction": "lower",
+      "primary": true
+    },
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0.065
+      }
+    },
+    {
+      "name": "serious_error_rate_diff_upper_bound",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0.003
+      }
+    },
+    {
+      "name": "day_loss",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    }
+  ],
+  "decision": {
+    "rule": "non_inferior",
+    "metric": "fail_claims_per_item",
+    "margin_abs": 0.5,
+    "alpha": 0.05,
+    "noise_se_k": 2.0
+  },
+  "requirements": {
+    "paired_all": true,
+    "max_mixed_judges": 0,
+    "max_hard_stop_1": 0
+  },
+  "power": {
+    "min_power": 0.8,
+    "writer_sd": null,
+    "claims_per_item": 68
+  },
+  "cap_usd": 8.0,
+  "note": "S1 proof (W5 item 3): 25 held-out golden tours on GATE, current vs new graph on the same pinned route and effort; the blind 2-pass panel ($0) supplies the serious-error rate (v2 baseline 0.0015 per sentence, bootstrap upper bound of the difference <= +0.003) and day loss 0/50. The 25 stratified tours (Japan, Rajasthan, source contradictions, Optional-heavy) must first be frozen into the golden set to be pre-registered here."
+}
