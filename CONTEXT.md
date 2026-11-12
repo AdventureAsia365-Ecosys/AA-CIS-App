@@ -2139,7 +2139,7 @@ CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`,
 after the tenant block, and returns it as `from_price` (null when Booking has none or the view cannot be read: fail
 soft). CIS never computes a price and never shows `raw_tours.price_raw` as one (ADR 0005 d7).
 
-**Tour reference prices (AA-1091, root ADR 0005 d7; CIS 401 / 402).** The structured REFERENCE price of an AA tour
+**Tour reference prices (AA-1091, root ADR 0005 d7; CIS 402 / 403).** The structured REFERENCE price of an AA tour
 (amount, currency, basis `per_person` | `per_group` | `from`) lives in `silver_aa_internal.tour_reference_price`, one row
 per catalog key (`raw_tours.source_key`, stable across source versions); the free text stays in `raw_tours.price_raw`
 for audit. `services/reference_price/`: `parse.py` (pure: the first amount and its currency, the basis words and the
@@ -2153,7 +2153,7 @@ accept, Excel export / import as base64 JSON (the REST API Gateway is not binary
 one `acp_shared.audit_log` row per changed key (`reference_price.*`, resource `tour_reference_price`). Capabilities
 `reference_price.read` (admin, content_lead, content, customer_success, finance) and `reference_price.write` (admin,
 content_lead, customer_success: the customer-service team). AA-Booking reads the saved values through
-`catalog.v_tour_price_reference_v2` (CIS 402, catalog recipe, SELECT to `booking` only): one row per live tour with the
+`catalog.v_tour_price_reference_v2` (CIS 403, catalog recipe, SELECT to `booking` only): one row per live tour with the
 source text, amount, currency, basis and the same status rule; `v1` (CIS 365, text only) stays until Booking stops
 reading it. A reference price is never a selling price: Booking never quotes it to an agency or a traveller.
 

@@ -1,6 +1,6 @@
 """AA-1091 item 5 — /admin/reference-prices through the real app with a fake pool: who reaches it (customer_success
 reads and writes, content reads only, support never), the list / save / accept / parse / export / import shapes, the
-import refusal while a line has an error (nothing saved), the audit rows, and 503 before CIS 401. Invented data only."""
+import refusal while a line has an error (nothing saved), the audit rows, and 503 before CIS 402. Invented data only."""
 from __future__ import annotations
 
 import base64
@@ -161,7 +161,7 @@ def test_export_and_import_with_dry_run(make_client):
                        headers=_h()).status_code == 422
 
 
-def test_503_before_cis_401(make_client):
+def test_503_before_cis_402(make_client):
     client = make_client(RouteConn([], fail=asyncpg.exceptions.UndefinedTableError("missing")))
     r = client.get("/admin/reference-prices", headers=_h())
-    assert r.status_code == 503 and "CIS 401" in r.json()["detail"]
+    assert r.status_code == 503 and "CIS 402" in r.json()["detail"]

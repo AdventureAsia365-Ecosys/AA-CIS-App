@@ -1,9 +1,9 @@
 """AA-1091 item 5 — services/reference_price/store.py against real Postgres: the scope SQL (AA master active rows with a
-catalog key, the live flag from published_tours, the LEFT JOIN of CIS 401's table), save / accept / parse / clear /
+catalog key, the live flag from published_tours, the LEFT JOIN of CIS 402's table), save / accept / parse / clear /
 import through the real UPSERT and the status rule after each write, as cis_app would run them.
 
-Needs CIS 401 (silver_aa_internal.tour_reference_price). It ships in the migration-only PR before this code; until that
-PR is on the branch the module is skipped (it then runs on every CI round: the conftest replays 401).
+Needs CIS 402 (silver_aa_internal.tour_reference_price). It ships in the migration-only PR before this code; until that
+PR is on the branch the module is skipped (it then runs on every CI round: the conftest replays 402).
 raw_tours.source_key (CIS 258, a catalog-recipe file the replay skips) is added inside the test transaction when the
 replay lacks it.
 Invented tour names only; every test runs in one transaction that is rolled back."""
@@ -32,7 +32,7 @@ async def conn():
     c = await asyncpg.connect(DSN)
     if await c.fetchval("SELECT to_regclass('silver_aa_internal.tour_reference_price') IS NULL AS ok"):
         await c.close()
-        pytest.skip("CIS 401 is not on this branch yet (migration-only PR first)")
+        pytest.skip("CIS 402 is not on this branch yet (migration-only PR first)")
     tr = c.transaction()
     await tr.start()
     try:
@@ -123,3 +123,15 @@ async def test_import_plan_and_apply_on_real_rows(conn):
     assert item["saved"]["origin"] == "import" and item["saved"]["note"] == "Private jeep"
     plan, values = await store.plan_import(conn, [ImportRow(2, a, 2300, "EUR", "per_group", "Private jeep")])
     assert plan.rows[0]["action"] == "unchanged" and not values
+
+    # review fix: an unreviewed parse re-imported as exported stays unreviewed; Confirm = yes confirms it as is
+    await store.parse_missing(conn, actor="admin:pytest", dry_run=False)
+    assert (await _items(conn))[b]["status"] == "parsed"
+    plan, values = await store.plan_import(conn, [ImportRow(3, b, 900, "EUR", "from")])
+    assert plan.rows[0]["action"] == "unchanged" and plan.changes == 0 and not plan.confirm
+    plan, values = await store.plan_import(conn, [ImportRow(3, b, 900, "EUR", "from", None, "yes")])
+    assert plan.rows[0]["action"] == "confirm" and plan.confirm == [b]
+    applied = await store.apply_import(conn, values, actor="admin:pytest", confirm_keys=plan.confirm)
+    assert [(c.source_key, c.action) for c in applied] == [(b, "confirmed")]
+    item = (await _items(conn))[b]
+    assert item["status"] == "confirmed" and item["saved"]["origin"] == "parsed"

@@ -1,5 +1,5 @@
 """AA-1091 item 5 — AA Catalogue › Reference prices: the structured reference price of the AA tours
-(silver_aa_internal.tour_reference_price, CIS 401) for the customer-service team.
+(silver_aa_internal.tour_reference_price, CIS 402) for the customer-service team.
 
   GET    /admin/reference-prices?status=&country=&q=&live_only=&page=&page_size=
              the tours of the page filter with their source text, saved price, status and the parser's suggestion;
@@ -20,8 +20,8 @@ Root ADR 0005 d7: a reference price, never a selling price; the free text stays 
 (api/core/staff_authz.py POLICY): reads reference_price.read (admin, content_lead, content, customer_success, finance,
 viewer), writes reference_price.write (admin, content_lead, customer_success); the viewer is refused on every write.
 Every change leaves one acp_shared.audit_log row per key (tenant_id NULL, actor admin:<staff id>, before / after) in the
-write's transaction. Before CIS 401 is applied every route answers 503. AA-Booking reads the saved values through the
-contract view catalog.v_tour_price_reference_v2 (CIS 402). Included without a prefix (staff_policy reads the route).
+write's transaction. Before CIS 402 is applied every route answers 503. AA-Booking reads the saved values through the
+contract view catalog.v_tour_price_reference_v2 (CIS 403). Included without a prefix (staff_policy reads the route).
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ logger = structlog.get_logger()
 router = APIRouter(tags=["admin-reference-prices"], dependencies=[Depends(staff_policy)])
 
 RESOURCE = "tour_reference_price"
-_NOT_MIGRATED = "Reference prices are not available yet: the database update (CIS 401) is not applied"
+_NOT_MIGRATED = "Reference prices are not available yet: the database update (CIS 402) is not applied"
 _ACTIONS = {
     "saved": PlatformAuditAction.REFERENCE_PRICE_SAVED,
     "confirmed": PlatformAuditAction.REFERENCE_PRICE_CONFIRMED,

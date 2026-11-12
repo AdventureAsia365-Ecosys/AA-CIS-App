@@ -27,10 +27,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-BASES: tuple[str, ...] = ("per_person", "per_group", "from")   # CIS 401 tour_reference_price_basis_check
+BASES: tuple[str, ...] = ("per_person", "per_group", "from")   # CIS 402 tour_reference_price_basis_check
 MAX_AMOUNT = Decimal("9999999999.99")                         # numeric(12,2)
 MIN_PLAUSIBLE = Decimal("5")
-RAW_MAX = 2000                                                # CIS 401 price_raw_seen length
+RAW_MAX = 2000                                                # CIS 402 price_raw_seen length
 
 # ISO 4217 codes seen in AA supplier sheets (and the region's), upper case. A three-letter word that is not here is not
 # a currency ("PAX", "DAY").

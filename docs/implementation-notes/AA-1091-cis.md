@@ -48,12 +48,12 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
   POLICY entry).
 - **Booking contract: a v2 view, not columns on v1.** `catalog.v_tour_price_reference_v1` (CIS 365) is "one row per live
   tour with a source text"; listing every live tour (the 281 without text can get a staff price) changes that meaning,
-  so CIS 402 adds `catalog.v_tour_price_reference_v2` (one row per live tour: text, amount, currency, basis, status,
+  so CIS 403 adds `catalog.v_tour_price_reference_v2` (one row per live tour: text, amount, currency, basis, status,
   origin, reviewed / updated times) and keeps v1 until Booking stops reading it.
-- **Migrations.** 401 expand (the table, its CHECKs, an index, the `cis_app` grant). 402 contract (the catalog recipe
-  view, the `catalog_owner` SELECT on the 401 table: an expand file may grant only to the owner's runtime roles, the
-  preflight refused it in 401). One migration-only PR (batch cis 401-402); the code PR raises readiness to 401 only
-  (`REQUIRED_CIS_ABOVE_GAP`), never to 402.
+- **Migrations.** 402 expand (the table, its CHECKs, an index, the `cis_app` grant). 403 contract (the catalog recipe
+  view, the `catalog_owner` SELECT on the 402 table: an expand file may grant only to the owner's runtime roles, the
+  preflight refused it in 402). One migration-only PR (batch cis 402-403); the code PR raises readiness to 402 only
+  (`REQUIRED_CIS_ABOVE_GAP`), never to 403.
 - **Item 6: a "Pricing team" preset, not a new Booking role.** The Staff page already writes `shared.staff_app_grant` role
   `contracting` and mirrors it to the WORKFORCE group `booking-contracting`, and Booking already maps that group to its
   `contracting` role, which holds `pricing.write`, `supply.write` and `trip_plan.write` (AA-Booking
@@ -68,6 +68,9 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
   `details.preset`. The role texts of the invitation e-mail now say what contracting does.
 
 ## Changed (against the issue text)
+
+- Renumbered in the review pass: main took CIS 401 (the tenant account is_synthetic view) while this lane was open, so
+  the table is CIS 402 (expand) and the Booking view CIS 403 (contract); readiness requires 402.
 
 - Item 5's "bulk edit" is a server-paged table with an inline editor in every row (amount, currency, basis, note, Save,
   Accept, Clear) plus "Accept N selected" for the bulk acceptance of suggestions; there is no separate bulk-edit form.
@@ -94,10 +97,10 @@ The Booking side (workbench, suggested components, bulk import, provisional pric
 
 ## Should know
 
-- Before CIS 401 is applied every route answers 503 and the page says "not available yet on this server".
-- `tests/integration/test_aa1091_reference_price_db.py` is skipped while 401 is not on the branch (the code PR is cut from
-  `main` before the migration PR merges); once `main` has 401 the conftest replays it and the module runs. It was run
-  locally with 401 copied in (2 passed).
+- Before CIS 402 is applied every route answers 503 and the page says "not available yet on this server".
+- `tests/integration/test_aa1091_reference_price_db.py` is skipped while 402 is not on the branch (the code PR is cut from
+  `main` before the migration PR merges); once `main` has 402 the conftest replays it and the module runs. It was run
+  locally with 402 copied in (2 passed; re-run after the review fixes).
 - The `routeControl.test.mjs` "no issue ids" failure in `npm run test:unit` is on `main` already (not this change).
 - Every audit row: action `reference_price.saved | confirmed | cleared | parsed | imported`, resource type
   `tour_reference_price`, resource id = the catalog key, details before / after (amount, currency, basis, origin, note,

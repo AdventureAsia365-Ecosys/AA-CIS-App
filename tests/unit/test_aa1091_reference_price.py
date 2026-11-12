@@ -78,7 +78,7 @@ def _row(key="k1", *, name="Invented Ridge Trek", country="Laos", live=True, pri
     return row
 
 
-def test_status_rule_matches_the_402_view():
+def test_status_rule_matches_the_403_view():
     assert store.status_of(_row()) == "suggested"
     assert store.status_of(_row(price_raw="On request")) == "missing"
     assert store.status_of(_row(price_raw=None)) == "missing"

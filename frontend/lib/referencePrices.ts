@@ -1,7 +1,7 @@
 // frontend/lib/referencePrices.ts — AA-1091: the structured reference price of the AA tours for the admin page
 // app/admin/reference-prices (AA Catalogue › Reference prices). Types, the list URL, the inline-edit draft and its
 // check, the import / export helpers and one call helper that turns a FastAPI error into one readable line.
-// Backend: api/routers/admin_reference_prices.py (CIS 401); every call goes through the BFF /api/admin/reference-prices.
+// Backend: api/routers/admin_reference_prices.py (CIS 402); every call goes through the BFF /api/admin/reference-prices.
 // Dependency-free (no React), so lib/referencePrices.test.mjs can import it.
 
 export const BASE = "/api/admin/reference-prices";

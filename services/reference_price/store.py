@@ -1,5 +1,5 @@
 """services.reference_price.store — AA-1091 item 5: read and write the structured reference price of the AA tours
-(silver_aa_internal.tour_reference_price, CIS 401), one row per catalog key (raw_tours.source_key).
+(silver_aa_internal.tour_reference_price, CIS 402), one row per catalog key (raw_tours.source_key).
 
 Scope: the AA master tenant's active, not deleted source rows with a catalog key (one per key: the active version of a
 source group). ``live`` says whether the key's Master is published (catalog._live_tour's rule: published_tours of the AA
@@ -15,7 +15,7 @@ Status of a key (``status_of``):
 
 The functions take a connection the caller holds (inside its own transaction for writes) and return plain dicts; the
 router writes one acp_shared.audit_log row per changed key (before / after). Same status rule as the Booking contract
-view catalog.v_tour_price_reference_v2 (CIS 402).
+view catalog.v_tour_price_reference_v2 (CIS 403).
 """
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def saved_of(row: dict) -> Optional[dict]:
 
 
 def text_changed(row: dict) -> bool:
-    """The source text moved away from the one the saved price was set against (the 402 view's IS DISTINCT FROM)."""
+    """The source text moved away from the one the saved price was set against (the 403 view's IS DISTINCT FROM)."""
     return row.get("amount") is not None and row.get("price_raw_seen") != row.get("price_raw")
 
 
