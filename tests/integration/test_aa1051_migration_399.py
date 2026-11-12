@@ -65,9 +65,11 @@ async def test_399_registered_one_row_per_item_and_cascade(conn):
     s = await _item(conn)
     await _split(conn, s)
     with pytest.raises(asyncpg.exceptions.UniqueViolationError):
-        await _split(conn, s, eval_split="dev")
+        async with conn.transaction():                          # a savepoint: the test goes on after the error
+            await _split(conn, s, eval_split="dev")
     with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
-        await _split(conn, s, sample_id="zz-1051-missing")
+        async with conn.transaction():
+            await _split(conn, s, sample_id="zz-1051-missing")
     await conn.execute("DELETE FROM shared.eval_golden_item WHERE set_id = $1", s)
     assert await conn.fetchval("SELECT count(*) AS ok FROM shared.eval_golden_split WHERE set_id = $1", s) == 0
 
