@@ -43,6 +43,13 @@ listed as
 "<writer>:<class>". A verdict needs votes // 2 + 1 real votes that agree (2 of 3); otherwise it is unverified, a miss
 on a violation and not cleared on an ok claim (D7: "a miss is unverified"), and the instrument conditions also need
 unverified / items <= UNVERIFIED_MAX.
+
+Pooled classes (services/ground_truth/pools.py, tech lead S278: measure a pool first, split later). The record also
+measures every declared pool on every writer it names, with the same bar applied to the pool: the writer's precision
+(unchanged), the pool's n_pos (violations of all its members) >= the bar's n_pos and at least one caught. A passing
+pool is listed as "<writer>:<pool id>" in `passing_pools` and calibrates only its members on that writer
+(`calibrated`, pools.calibrated_keys); each member keeps its own n_pos / tp / recall and `split_ready` names the
+members that reach the bar alone. The record states the declaration (`pools`, `pools_sha`).
 """
 from __future__ import annotations
 
@@ -54,6 +61,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from services.ground_truth import claims as cl
 from services.ground_truth import policy
+from services.ground_truth import pools as pl
 from services.ground_truth import sample_size as ss
 from shared.aa_llm import tokens as llm_tokens
 
@@ -349,6 +357,7 @@ def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap:
             "split": _split_name(items), "splits": dict(Counter(i.split for i in items)),
             "objects": len({i.object_key for i in items}),
             "labels": {f"{c}:{lab}": n for (c, lab), n in sorted(by_class.items())},
+            "pool_positives": pl.positives((i.writer, i.claim_class) for i in items if i.label == "violation"),
             "instruments": rows, "expected_total_usd": total, "cap_usd": cap,
             "fits_cap": total * SAFETY <= cap,
             "worst_case_total_usd": round(sum(r["worst_case_usd"] for r in rows), 4)}
@@ -574,7 +583,29 @@ def _precision(tp: int, fired: int, bar: Any) -> dict:
                                          and lb >= bar.lower_bound)}
 
 
-def measure(items: list[Item], votes: dict[str, list]) -> dict:
+def _pool_records(pools: dict[str, pl.Pool], writers: dict[str, dict], per_writer: dict, pos: Counter, tp: Counter,
+                  bar: Any) -> dict:
+    """One entry per declared pool: the pool's n_pos / tp / recall per writer it names (members summed), the
+    writers it passes on (writer precision bar, pool n_pos >= bar.n_pos, >= 1 caught), and per member its own
+    n_pos / tp per writer and whether it reaches the bar alone (split later)."""
+    out = {}
+    for pid, p in sorted(pools.items()):
+        ws = [w for w in sorted(per_writer) if w in p.writers]
+        n_pos = {w: sum(pos[(w, m)] for m in p.members) for w in ws}
+        caught = {w: sum(tp[(w, m)] for m in p.members) for w in ws}
+        passing = sorted(w for w in ws if writers[w]["precision_passes_bar"] and n_pos[w] >= bar.n_pos
+                         and caught[w] >= 1)
+        members = {m: {"n_pos_by_writer": {w: pos[(w, m)] for w in ws if pos[(w, m)]},
+                       "tp_by_writer": {w: tp[(w, m)] for w in ws if pos[(w, m)]}} for m in sorted(p.members)}
+        out[pid] = {**p.declaration(), "n_pos_by_writer": n_pos, "tp_by_writer": caught,
+                    "recall_by_writer": {w: round(caught[w] / n_pos[w], 4) for w in ws if n_pos[w]},
+                    "passing_writers": passing, "passes_bar": bool(passing),
+                    "members_detail": members,
+                    "split_ready": sorted(f"{w}:{m}" for m in p.members for w in ws if pos[(w, m)] >= bar.n_pos)}
+    return out
+
+
+def measure(items: list[Item], votes: dict[str, list], *, pools: Optional[dict[str, pl.Pool]] = None) -> dict:
     """The measurement record of one instrument. Precision and its Wilson lower bound are taken over EVERY fire on one
     writer surface (tp = fires on violations of any class of that writer, fired = every fire on it): `writers` holds
     them per writer, the top-level precision pools every writer (reading only). Per class: n_pos / tp / recall (and the
@@ -584,7 +615,8 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
     (over items with >= 2 real votes), hard-subset recall, ok-cleared rate and the unverified count. An unverified item
     (no agreeing majority of real votes) is a miss on a violation and not cleared on an ok claim. `split` names the
     items' split; only a held-out record lists passing classes ("<writer>:<class>"; a train or mixed one is
-    exploration: the bar columns still show, `passing_classes` stays empty)."""
+    exploration: the bar columns still show, `passing_classes` stays empty). `pools` (default pools.POOLS): the
+    declared pools, measured with the same bar (`pools`, `passing_pools`, `calibrated`: see the module doc)."""
     per_class: dict[str, Counter] = defaultdict(Counter)
     per_writer: dict[str, Counter] = defaultdict(Counter)
     tp_writer_class: Counter = Counter()
@@ -649,22 +681,32 @@ def measure(items: list[Item], votes: dict[str, list]) -> dict:
     instrument_ok = (retest is not None and retest >= RETEST_BAR and ok_rate is not None and ok_rate >= OK_CLEARED_BAR
                      and hard["passes"] and unverified_rate is not None and unverified_rate <= UNVERIFIED_MAX)
     split = _split_name(items)
-    return {"split": split, **pooled, "writers": writers,
-            "classes": classes, "retest": retest, "ok_cleared": ok_rate, "hard_subset": hard,
-            "unverified": unverified, "unverified_by_label": dict(unverified_by_label),
-            "unverified_rate": unverified_rate,
-            "passing_classes": passing if instrument_ok and split == "held_out" else [],
-            "instrument_conditions_met": instrument_ok}
+    declared = pl.declared(pools)
+    pool_recs = _pool_records(declared, writers, per_writer, pos_writer_class, tp_writer_class, bar)
+    decides = instrument_ok and split == "held_out"
+    rec = {"split": split, **pooled, "writers": writers,
+           "classes": classes, "retest": retest, "ok_cleared": ok_rate, "hard_subset": hard,
+           "unverified": unverified, "unverified_by_label": dict(unverified_by_label),
+           "unverified_rate": unverified_rate,
+           "passing_classes": passing if decides else [],
+           "pools": pool_recs, "pools_sha": pl.pools_sha(declared),
+           "passing_pools": sorted(f"{w}:{pid}" for pid, v in pool_recs.items() for w in v["passing_writers"])
+           if decides else [],
+           "instrument_conditions_met": instrument_ok}
+    rec["calibrated"] = pl.calibrated_keys(rec)
+    return rec
 
 
-def report(items: list[Item], run_result: dict, insts: list[Instrument]) -> dict:
-    """One measurement record per instrument and the recommendation (the instrument with the most passing classes on
-    the held-out split, then the id); the tech lead pins it (D7), this code never does. A train or mixed run
-    recommends nothing."""
-    records = {i.id: measure(items, run_result["votes"].get(i.id) or {}) for i in insts}
-    best = sorted(records.items(), key=lambda kv: (-len(kv[1]["passing_classes"]), kv[0]))
-    rec = best[0][0] if best and best[0][1]["passing_classes"] else None
+def report(items: list[Item], run_result: dict, insts: list[Instrument], *,
+           pools: Optional[dict[str, pl.Pool]] = None) -> dict:
+    """One measurement record per instrument and the recommendation (the instrument that calibrates the most
+    "<writer>:<class>" keys on the held-out split: passing classes plus the members of passing pools, then the id);
+    the tech lead pins it (D7), this code never does. A train or mixed run recommends nothing."""
+    records = {i.id: measure(items, run_result["votes"].get(i.id) or {}, pools=pools) for i in insts}
+    best = sorted(records.items(), key=lambda kv: (-len(kv[1]["calibrated"]), kv[0]))
+    rec = best[0][0] if best and best[0][1]["calibrated"] else None
     return {"split": _split_name(items), "records": records, "recommended": rec,
+            "pools_sha": pl.pools_sha(pools),
             "spent_usd": run_result.get("spent_usd"), "charged_usd": run_result.get("charged_usd"),
             "ledger_usd": run_result.get("ledger_usd"), "partial": bool(run_result.get("stopped")),
             "stopped": run_result.get("stopped"), "identity_mismatches": run_result.get("identity_mismatches"),
