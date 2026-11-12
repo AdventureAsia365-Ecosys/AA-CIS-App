@@ -48,6 +48,7 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "content_piece.edited": ("content", "Edited a draft"),
     "content_piece.exported": ("content", "Downloaded a post"),
     "content_piece.published": ("content", "Published a post"),
+    "content_piece.published_anyway": ("content", "Chose to publish a post after a final read"),  # AA-1088 (M3)
     "content_piece.unpublished": ("content", "Unpublished a post"),
     "content_piece.put_back_online": ("content", "Put a page back online"),  # AA-1039 (option A)
     "content_piece.moved_to_draft": ("content", "Moved a page to draft"),  # AA-1039 (S276)
@@ -178,6 +179,8 @@ def detail_text(action: str, raw_details: Any) -> str:
     d = _details(raw_details)
     channel = _CHANNEL_LABELS.get(str(d.get("channel") or d.get("integration_type") or "").lower(), "")
     if action in ("content_piece.created", "content_piece.unpublished", "content_piece.finished"):
+        return channel
+    if action == "content_piece.published_anyway":
         return channel
     if action == "content_piece.published":
         if d.get("success") is False:

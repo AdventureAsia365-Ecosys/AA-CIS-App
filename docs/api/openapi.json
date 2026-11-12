@@ -6203,6 +6203,18 @@
         "title": "ProvisionJobOut",
         "type": "object"
       },
+      "PublishBody": {
+        "description": "Optional body of POST /v1/publish-log/{piece_id}/publish (no body = a plain publish).",
+        "properties": {
+          "publish_anyway": {
+            "default": false,
+            "title": "Publish Anyway",
+            "type": "boolean"
+          }
+        },
+        "title": "PublishBody",
+        "type": "object"
+      },
       "PutBackList": {
         "properties": {
           "data": {
@@ -55610,7 +55622,7 @@
     },
     "/v1/publish-log/{piece_id}/publish": {
       "post": {
-        "description": "AA-458 — the real publish endpoint. No AA pre-gate (ADR-2026-038 §0.2, same principle\nAA-455's force-unpublish exists to police after the fact, not before). Ownership + approval\nverified in one query; 404 covers both \"not yours\" and \"not approved yet\" identically (no\nexistence leak). A retryable prior 'failed' publish_log row for this piece is updated in\nplace rather than accumulating duplicate failure rows; a 'published' or 'unpublished' row is\nleft untouched and a fresh attempt gets its own new row (preserves that row's real\nunpublished_at/unpublished_by audit trail — AA-455's whole reason for those columns).\n\nAA-497 — same angle_gate_option_id-first join as list_pending() above, same reason.\n\nAA-469 Việc 4 — same cp.channel-first (COALESCE onto agr.channel) read as list_pending()\nabove, same reason (angle_gate_request.channel is no longer stable after a piece is\nwritten — see set_channel()).\n\nAA-726 — idempotent: a 'requested' row is written before the remote call (one per piece\nrevision + channel, services/acp_publish/idempotency.py). The same revision already published\nis replayed from publish_log (no second post); one in flight returns 409; a retry after a\nlost response looks the post up on the remote first (WordPress by revision slug, Facebook by\nmessage) before posting.\n\nAA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code\ndefault 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only\nwhen the column exists). A NEW publish over the limit gets 429 with a clear message and a\nRetry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused.",
+        "description": "AA-458 — the real publish endpoint. No AA pre-gate (ADR-2026-038 §0.2, same principle\nAA-455's force-unpublish exists to police after the fact, not before). Ownership + approval\nverified in one query; 404 covers both \"not yours\" and \"not approved yet\" identically (no\nexistence leak). A retryable prior 'failed' publish_log row for this piece is updated in\nplace rather than accumulating duplicate failure rows; a 'published' or 'unpublished' row is\nleft untouched and a fresh attempt gets its own new row (preserves that row's real\nunpublished_at/unpublished_by audit trail — AA-455's whole reason for those columns).\n\nAA-497 — same angle_gate_option_id-first join as list_pending() above, same reason.\n\nAA-469 Việc 4 — same cp.channel-first (COALESCE onto agr.channel) read as list_pending()\nabove, same reason (angle_gate_request.channel is no longer stable after a piece is\nwritten — see set_channel()).\n\nAA-726 — idempotent: a 'requested' row is written before the remote call (one per piece\nrevision + channel, services/acp_publish/idempotency.py). The same revision already published\nis replayed from publish_log (no second post); one in flight returns 409; a retry after a\nlost response looks the post up on the remote first (WordPress by revision slug, Facebook by\nmessage) before posting.\n\nAA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code\ndefault 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only\nwhen the column exists). A NEW publish over the limit gets 429 with a clear message and a\nRetry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused.\n\nAA-1088 (M3) — a held piece answers 409 `content_needs_final_check` (body `detail`, `code`,\n`can_publish_anyway`) unless the account owner sends `{\"publish_anyway\": true}`; that choice is\naudited (`content_piece.published_anyway`) before the post goes out.",
         "operationId": "publish_v1_publish_log__piece_id__publish_post",
         "parameters": [
           {
@@ -55624,6 +55636,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PublishBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
