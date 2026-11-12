@@ -73,11 +73,24 @@ refuses to spend writer money on a result that cannot count:
   - Hard stop 1 counts a new hard fact class only on a candidate verdict fail against a control verdict pass
     (eval_checks.compare_item).
 
+AA-1051 (Quality W5 code part, root ADR 0020): the frozen DEV / CAL / GATE split (CIS 399, shared.eval_golden_split,
+services/writer_proof/splits.py) and pre-registered runs.
+  - `eval_split` (dev | cal | gate) plans only the non-trap items of that side (traps stay in the probe), and the
+    judge calibration that decides `judge_counts` reads the CAL items only; the planned items with a label are judged
+    too and reported per side (`details.kappa_eval_split`: kappa of CAL and of the planned side, and their gap). A set
+    without split rows refuses such a run at $0.
+  - `sample_ids` fixes the planned items (a pre-registered sample): an id that is not an item of the writer and owner,
+    or not on the asked side, refuses the run at $0.
+  - `prereg_id` / `prereg_sha256` (set by the W5 proof runner, services/writer_proof/runner.py, never by hand): the
+    run records them in `details.prereg`, needs a fixed sample, a side and a pinned judge, logs under `adhoc_aa1051`
+    (cfg.W5_STAGE), and is refused at $0 when an earlier run of the same pre-registration that already has a result
+    recorded another sha (the file was edited after its first result).
+
 CLI (inside the api/worker container; DRY RUN prints the plan and the estimate, $0):
   python -m services.writing_memory.r2 --writer a1 [--release <id>] [--tiers fact_dense,long_9d] [--limit 8]
          [--cap-usd 2] [--goal non_inferior] [--seed-fault qa_trace] [--stage adhoc_aa900]
          [--judge-model <catalog key> [--judge-connection <connection key>]] [--calibrate-only | --allow-uncalibrated]
-         [--enqueue]
+         [--eval-split dev|cal|gate] [--sample-ids s-001,s-002] [--enqueue]
 `--enqueue` queues the job `writing_memory_r2` on the worker (the run itself is never done in an exec session: a long
 paid run dies with the session, lessons S234).
 """
@@ -91,6 +104,7 @@ import json
 import re
 import statistics
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional, Protocol
@@ -106,6 +120,12 @@ logger = structlog.get_logger()
 GOLDEN_SET = "aa729"
 RUN_KINDS = ("r2", "reverify")
 GOALS = ("non_inferior", "improve")
+EVAL_SPLITS = ("dev", "cal", "gate")          # AA-1051: shared.eval_golden_split (CIS 399)
+PREREG_ARMS = ("B", "A_prime")                # AA-1051: the arms a pre-registered run may be
+MAX_SAMPLE_IDS = 200
+_SAMPLE_RE = re.compile(r"^[a-z0-9-]{1,40}$")
+_PREREG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 SEED_FAULTS = {
     "unsourced_claim": (" This trip also includes a complimentary private helicopter transfer and a five-star spa"
                         " night."),
@@ -138,6 +158,8 @@ class Store(Protocol):
     async def run_spend(self, run_id: str, since: datetime) -> float: ...
     async def month_spend(self) -> float: ...
     async def item_cost_samples(self, writer: str) -> list[float]: ...
+    # AA-1051: called only for a pre-registered run (conf.prereg_id): the earlier runs of that pre-registration
+    # async def prereg_runs(self, prereg_id: str) -> list[dict]: [{run_id, sha256, results}]
 
 
 @dataclass
@@ -158,6 +180,14 @@ class R2Config:
     require_calibrated: bool = True
     judge_model: Optional[str] = None       # S271 W0: pin the judge to one catalog model (no route, no fallback)
     judge_connection: Optional[str] = None  # ... and to one connection of it (needs judge_model)
+    # AA-1051 (W5): the golden side the plan reads (dev | cal | gate; CAL then calibrates the judge) and a fixed sample
+    eval_split: Optional[str] = None
+    sample_ids: Optional[list[str]] = None
+    # AA-1051 (W5): set by the proof runner only (services/writer_proof/runner.py): the pre-registration of the run
+    prereg_id: Optional[str] = None
+    prereg_sha256: Optional[str] = None
+    prereg_workflow: Optional[str] = None
+    prereg_arm: Optional[str] = None
 
     def validate(self) -> None:
         if self.writer not in ("a1", "t2", "t9_blog", "t9_social"):
@@ -194,6 +224,38 @@ class R2Config:
             raise R2Refused("judge_connection pins a connection of the pinned judge model: give judge_model too")
         if self.calibrate_only and (self.seed_fault or self.run_kind != "r2"):
             raise R2Refused("calibrate_only is an r2 run without a seeded fault (it writes nothing)")
+        self._validate_w5()
+
+    def _validate_w5(self) -> None:
+        """AA-1051: the split, the fixed sample and the pre-registration fields."""
+        if self.eval_split is not None and self.eval_split not in EVAL_SPLITS:
+            raise R2Refused(f"eval_split must be one of {EVAL_SPLITS}")
+        if self.sample_ids is not None:
+            ids = list(self.sample_ids)
+            if not ids or len(ids) > MAX_SAMPLE_IDS:
+                raise R2Refused(f"sample_ids must hold 1..{MAX_SAMPLE_IDS} ids")
+            if any(not isinstance(i, str) or not _SAMPLE_RE.match(i) for i in ids) or len(set(ids)) != len(ids):
+                raise R2Refused("sample_ids must be distinct golden sample ids (^[a-z0-9-]{1,40}$)")
+        pre = (self.prereg_id, self.prereg_sha256, self.prereg_workflow, self.prereg_arm)
+        if any(v is not None for v in pre):
+            if not (isinstance(self.prereg_id, str) and _PREREG_RE.match(self.prereg_id)):
+                raise R2Refused("prereg_id must match ^[a-z0-9][a-z0-9-]{0,63}$")
+            if not (isinstance(self.prereg_sha256, str) and _SHA_RE.match(self.prereg_sha256)):
+                raise R2Refused("prereg_sha256 must be a sha256 hex digest")
+            if not (isinstance(self.prereg_workflow, str) and _KEY_RE.match(self.prereg_workflow)):
+                raise R2Refused("prereg_workflow must name the workflow")
+            if self.prereg_arm not in PREREG_ARMS:
+                raise R2Refused(f"prereg_arm must be one of {PREREG_ARMS}")
+            if not self.sample_ids or not self.eval_split:
+                raise R2Refused("a pre-registered run needs its fixed sample (sample_ids) and its side (eval_split)")
+            if not self.judge_model:
+                raise R2Refused("a pre-registered run needs a pinned judge (judge_model; root ADR 0020 D7)")
+            if self.seed_fault or self.calibrate_only or self.run_kind != "r2" or not self.require_calibrated:
+                raise R2Refused("a pre-registered run is a calibrated r2 run (no seeded fault, no calibrate-only)")
+            if self.log_stage != cfg.W5_STAGE:
+                raise R2Refused(f"a pre-registered run logs under {cfg.W5_STAGE} (the W5 spend gate reads it)")
+        elif self.log_stage == cfg.W5_STAGE:
+            raise R2Refused(f"{cfg.W5_STAGE} is the label of pre-registered W5 runs (services/writer_proof)")
 
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
@@ -273,6 +335,73 @@ def calibration_items(items: list[dict]) -> list[dict]:
     (post_edit), with a frozen output."""
     return [it for it in items if not it.get("trap") and not it.get("post_edit")
             and it.get("label_verdict") in ("pass", "fail") and it.get("control_output") is not None]
+
+
+def select_items(items: list[dict], *, eval_split: Optional[str], sample_ids: Optional[list[str]]
+                 ) -> tuple[list[dict], list[str]]:
+    """AA-1051: (the items a run may plan, problems). `eval_split` keeps the non-trap items of that side (each item
+    carries `eval_split` from shared.eval_golden_split; traps stay for the probe); `sample_ids` keeps exactly those
+    items. A problem (no split rows, an id that is not an item, an id on another side) refuses the run at $0."""
+    problems: list[str] = []
+    pool = list(items)
+    if eval_split:
+        non_trap = [it for it in items if not it.get("trap")]
+        if non_trap and all(it.get("eval_split") is None for it in non_trap):
+            problems.append("the golden set has no split rows (shared.eval_golden_split): run the split backfill "
+                            "(python -m services.writer_proof.splits --apply) first")
+        missing = sorted(str(it.get("sample_id")) for it in non_trap if it.get("eval_split") is None)
+        if missing and len(missing) < len(non_trap):
+            problems.append(f"{len(missing)} items have no split row (first {missing[:5]})")
+        pool = [it for it in items if it.get("trap") or it.get("eval_split") == eval_split]
+    if sample_ids:
+        by_id = {it.get("sample_id"): it for it in items}
+        unknown = sorted(set(sample_ids) - set(by_id))
+        if unknown:
+            problems.append(f"sample ids not in the golden set for this writer and owner: {unknown[:5]}")
+        wrong = sorted(i for i in sample_ids if i in by_id and eval_split and by_id[i].get("trap") is not True
+                       and by_id[i].get("eval_split") != eval_split)
+        if wrong:
+            problems.append(f"sample ids not on the {eval_split} side: {wrong[:5]}")
+        want = set(sample_ids)
+        pool = [it for it in pool if it.get("sample_id") in want]
+    return pool, problems
+
+
+def calibration_split(calib: list[dict], planned: list[dict], eval_split: Optional[str]
+                      ) -> tuple[list[dict], set[str]]:
+    """AA-1051: (the items judged against their label, the ids whose pairs decide `judge_counts`). Without a side:
+    every calibration item, all counting (unchanged). With one: the CAL items count; the labelled planned items of the
+    asked side are judged too (for release 0 their control is the same call) and only reported (kappa per side)."""
+    if not eval_split:
+        return calib, {it["item_id"] for it in calib}
+    counting = [it for it in calib if it.get("eval_split") == "cal"]
+    planned_ids = {it["item_id"] for it in planned}
+    extra = [it for it in calib if it["item_id"] in planned_ids and it.get("eval_split") != "cal"]
+    return counting + extra, {it["item_id"] for it in counting}
+
+
+def prereg_refusal(conf: "R2Config", prior: list[dict]) -> Optional[str]:
+    """AA-1051: why a pre-registered run may not start, or None. An earlier run of the same pre-registration that has
+    at least one result and recorded another sha means the file was edited after its first result."""
+    for r in prior or []:
+        if int(r.get("results") or 0) > 0 and r.get("sha256") != conf.prereg_sha256:
+            return (f"pre-registration {conf.prereg_id} was edited after its first result: run {r.get('run_id')} "
+                    f"recorded sha {str(r.get('sha256'))[:12]}…, the file now hashes to {conf.prereg_sha256[:12]}…")
+    return None
+
+
+def kappa_by_side(records: list[dict], side: Optional[str]) -> Optional[dict]:
+    """AA-1051: kappa of the CAL pairs and of the planned side's pairs (records carry `eval_split`), and their gap
+    (audit target: GATE within 0.1 of CAL). None without a side."""
+    if not side:
+        return None
+    out: dict[str, Any] = {}
+    for name in sorted({"cal", side}):
+        pairs = [(r["label"], r["judge"]) for r in records if r.get("eval_split") == name]
+        out[name] = {"pairs": len(pairs), "kappa": ec.cohen_kappa(pairs)}
+    k_cal, k_side = out["cal"]["kappa"], out[side]["kappa"]
+    out["gap"] = round(abs(k_cal - k_side), 3) if (k_cal is not None and k_side is not None) else None
+    return out
 
 
 def _release_prompt(release: Optional[dict]) -> Optional[str]:
@@ -454,11 +583,18 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     items = await store.items(gs["set_id"], writer, owner_tenant)
     if not items:
         raise R2Refused("no golden items for this writer and owner")
+    pool_items, problems = select_items(items, eval_split=conf.eval_split, sample_ids=conf.sample_ids)
+    if problems:
+        raise R2Refused("; ".join(problems))
+    if conf.prereg_id:
+        why = prereg_refusal(conf, await store.prereg_runs(conf.prereg_id))
+        if why:
+            raise R2Refused(why)
     active = await store.active_parts(writer, owner_tenant)
     ctl_mode = ec.control_mode(conf.run_kind)
     baseline = await store.baseline_run(gs["set_id"], writer)
     tiers = ec.selected_tiers(writer, conf.tiers)
-    plan = ec.plan_phases(items, tiers=tiers, limit=conf.limit)
+    plan = ec.plan_phases(pool_items, tiers=tiers, limit=conf.limit)
     if conf.seed_fault:
         plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     planned = plan["probe"] + plan["tune"] + plan["holdout"]
@@ -467,9 +603,11 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     control_run, sources = ctl["control_run"], ctl["sources"]
     if ctl_mode == "rejudge" and control_run is None:
         raise R2Refused("no control run (no active release with an eval run, no baseline import)")
-    calib = calibration_items(items)
-    frozen_src = await store.calibration_sources(baseline, [it["item_id"] for it in calib]) if baseline else {}
-    calib_ids = {it["item_id"] for it in calib}
+    calib_all, counting_ids = calibration_split(calibration_items(items), planned, conf.eval_split)
+    calib = [it for it in calib_all if it["item_id"] in counting_ids]
+    frozen_src = (await store.calibration_sources(baseline, [it["item_id"] for it in calib_all])
+                  if baseline else {})
+    calib_ids = {it["item_id"] for it in calib_all}
     cal_ready = calibration_ready(calib, frozen_src)
     # S271 W0: refused at $0 (nothing stored) when the result could not count
     if (conf.require_calibrated or conf.calibrate_only) and not cal_ready["possible"]:
@@ -509,6 +647,13 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         "require_calibrated": conf.require_calibrated, "estimate": estimate_item,
         "judge": {"model_key": conf.judge_model, "connection": conf.judge_connection,
                   "pinned": bool(conf.judge_model)}}
+    if conf.eval_split or conf.sample_ids:              # AA-1051
+        details["eval_split"] = conf.eval_split
+        details["sample_ids"] = len(conf.sample_ids or [])
+        details["calibration_counting_items"] = len(calib)
+    if conf.prereg_id:
+        details["prereg"] = {"id": conf.prereg_id, "sha256": conf.prereg_sha256, "workflow": conf.prereg_workflow,
+                             "arm": conf.prereg_arm}
     run_id = await store.create_run({
         "prompt_version": prompt_version(writer, writer_prompt, conf.judge_model),
         "triggered_by": conf.triggered_by[:128], "run_kind": conf.run_kind, "writer": writer,
@@ -629,9 +774,10 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                     cal_v = await judged(it, it["control_output"], "calibration_errors")
                     if cal_v is not None:
                         counters["calibration_judged"] += 1
-                        pairs.append((it["label_verdict"], cal_v.verdict))
+                        if iid in counting_ids:          # AA-1051: with a side, only CAL decides judge_counts
+                            pairs.append((it["label_verdict"], cal_v.verdict))
                         cal_recs.append({"label": it["label_verdict"], "judge": cal_v.verdict,
-                                         "strata": ec.item_strata(it)})
+                                         "strata": ec.item_strata(it), "eval_split": it.get("eval_split")})
                         if same:
                             ctl_v = cal_v
                 if (ctl_text is not None and ctl_v is None and not (same and cal_v is None)
@@ -668,6 +814,8 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
             details["kappa_strata"] = ec.kappa_by_stratum(cal_recs)
             details["kappa_strata_below"] = ec.strata_below(details["kappa_strata"])
             out.kappa_strata_below = list(details["kappa_strata_below"])
+            if conf.eval_split:                         # AA-1051: kappa of CAL vs the planned side
+                details["kappa_eval_split"] = kappa_by_side(cal_recs, conf.eval_split)
             if progress:
                 await progress(phase="calibrated", kappa=out.judge_kappa, pairs=len(pairs),
                                strata_below=",".join(out.kappa_strata_below) or None)
@@ -857,6 +1005,17 @@ def _j(v):
     return json.loads(v) if isinstance(v, str) else v
 
 
+# AA-1051: the runs of one pre-registration (details.prereg written by run_r2), with their result rows counted
+PREREG_RUNS_SQL = """
+    SELECT p.id::text AS run_id, p.details->'prereg'->>'sha256' AS sha256, p.details->'prereg'->>'arm' AS arm,
+           p.created_at, p.verdict, p.stop_reason,
+           (SELECT count(*) FROM shared.eval_item_result r WHERE r.run_id = p.id)::int AS results
+      FROM shared.prompt_eval_runs p
+     WHERE p.pipeline = 'writing_memory' AND p.details->'prereg'->>'id' = $1
+     ORDER BY p.created_at, p.id
+"""
+
+
 class PgStore:
     """The production store: cis_app on the shared RDS (every tenant read filters tenant_id explicitly)."""
 
@@ -892,14 +1051,19 @@ class PgStore:
         return None if r is None else {**dict(r), "shared_inputs": _j(r["shared_inputs"]) or {}}
 
     async def items(self, set_id, writer, tenant_id):
+        from services.writer_proof import splits
         async with self.pool.acquire() as conn:
+            # AA-1051: each item's DEV / CAL / GATE side (CIS 399) when the table exists, else None
+            side = ("s.eval_split" if await splits.table_exists(conn) else "NULL::text")
+            join = ("LEFT JOIN shared.eval_golden_split s ON s.set_id = g.set_id AND s.sample_id = g.sample_id"
+                    if side != "NULL::text" else "")
             rows = await conn.fetch(
-                """SELECT item_id::text AS item_id, sample_id, input_sha256, writer, channel, scope,
-                          tenant_id::text AS tenant_id, split, trap, tiers, input, control_output, post_edit,
-                          label_verdict, injection_spec
-                     FROM shared.eval_golden_item
-                    WHERE set_id = $1::uuid AND writer = $2 AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
-                    ORDER BY sample_id""", set_id, writer, tenant_id)
+                f"""SELECT g.item_id::text AS item_id, g.sample_id, g.input_sha256, g.writer, g.channel, g.scope,
+                          g.tenant_id::text AS tenant_id, g.split, g.trap, g.tiers, g.input, g.control_output,
+                          g.post_edit, g.label_verdict, g.injection_spec, {side} AS eval_split
+                     FROM shared.eval_golden_item g {join}
+                    WHERE g.set_id = $1::uuid AND g.writer = $2 AND ($3::uuid IS NULL OR g.tenant_id = $3::uuid)
+                    ORDER BY g.sample_id""", set_id, writer, tenant_id)
         return [{**dict(r), "tiers": list(r["tiers"] or []), "input": _j(r["input"]),
                  "control_output": _j(r["control_output"]), "injection_spec": _j(r["injection_spec"])} for r in rows]
 
@@ -1045,6 +1209,12 @@ class PgStore:
         async with self.pool.acquire() as conn:
             return await month_spend(conn)
 
+    async def prereg_runs(self, prereg_id):
+        """AA-1051: the earlier runs of a pre-registration, oldest first, with their recorded sha and result count."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(PREREG_RUNS_SQL, prereg_id)
+        return [dict(r) for r in rows]
+
     async def item_cost_samples(self, writer):
         """S271 W0 (F8): the logged cost of the writer's last candidate items (finished r2 / reverify runs, no seeded
         fault: a seeded item makes no writer call), newest first. What `item_estimate` reserves from."""
@@ -1140,11 +1310,14 @@ async def estimate(pool, conf: R2Config) -> dict:
     if gs is None:
         raise R2Refused("no active golden set")
     items = await store.items(gs["set_id"], conf.writer, owner)
-    plan = ec.plan_phases(items, tiers=ec.selected_tiers(conf.writer, conf.tiers), limit=conf.limit)
+    pool_items, split_problems = select_items(items, eval_split=conf.eval_split, sample_ids=conf.sample_ids)
+    plan = ec.plan_phases(pool_items, tiers=ec.selected_tiers(conf.writer, conf.tiers), limit=conf.limit)
     if conf.seed_fault:
         plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     n = {k: len(v) for k, v in plan.items()}
-    calib = calibration_items(items)
+    calib_all, counting_ids = calibration_split(calibration_items(items),
+                                                plan["probe"] + plan["tune"] + plan["holdout"], conf.eval_split)
+    calib = [it for it in calib_all if it["item_id"] in counting_ids]
     calib_labels = {v: sum(1 for it in calib if it["label_verdict"] == v) for v in ("pass", "fail")}
     # S271 W0: what the run would refuse at $0, and the ledger estimate
     ctl_mode = ec.control_mode(conf.run_kind)
@@ -1154,7 +1327,13 @@ async def estimate(pool, conf: R2Config) -> dict:
     frozen_src = await store.calibration_sources(baseline, [it["item_id"] for it in calib]) if baseline else {}
     cal_ready = calibration_ready(calib, frozen_src)
     est = item_estimate(conf.writer, await store.item_cost_samples(conf.writer))
-    refusals = []
+    refusals = list(split_problems)                      # AA-1051: the side and the fixed sample
+    prereg_prior: list[dict] = []
+    if conf.prereg_id:
+        prereg_prior = await store.prereg_runs(conf.prereg_id)
+        why = prereg_refusal(conf, prereg_prior)
+        if why:
+            refusals.append(why)
     if (conf.require_calibrated or conf.calibrate_only) and not cal_ready["possible"]:
         refusals.append("calibration cannot be measured")
     if ctl_mode == "rejudge" and not conf.calibrate_only and ctl["plan"]["found"] < ctl["plan"]["planned"]:
@@ -1163,7 +1342,7 @@ async def estimate(pool, conf: R2Config) -> dict:
         refusals.append("judge family")
     # calibration (every labelled item) + the planned controls (the same call for release 0's frozen controls)
     n_written = 0 if conf.calibrate_only else sum(n.values())
-    judge_only = (len(calib) + n_written) * cfg.JUDGE_CALL_ESTIMATE_USD
+    judge_only = (len(calib_all) + n_written) * cfg.JUDGE_CALL_ESTIMATE_USD
     gen = n_written * (cfg.JUDGE_CALL_ESTIMATE_USD if conf.seed_fault else est["item_usd"]
                        + cfg.JUDGE_CALL_ESTIMATE_USD)
     est_max = round(judge_only + gen, 3)
@@ -1187,7 +1366,14 @@ async def estimate(pool, conf: R2Config) -> dict:
             "item_estimate": est, "estimated_usd_max": est_max, "cap_usd": conf.cap_usd,
             "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.MONTH_CAP_USD,
             "month_after_cap_ok": month + conf.cap_usd <= cfg.MONTH_CAP_USD,
-            "judge_family_check": family_check, "would_refuse": refusals}
+            "judge_family_check": family_check, "would_refuse": refusals,
+            # AA-1051
+            "eval_split": conf.eval_split, "sample_ids": len(conf.sample_ids or []),
+            "eval_split_counts": dict(sorted(Counter(str(it.get("eval_split")) for it in items
+                                                     if not it.get("trap")).items())),
+            "calibration_judged_items": len(calib_all),
+            "prereg": ({"id": conf.prereg_id, "sha256": conf.prereg_sha256, "prior_runs": prereg_prior}
+                       if conf.prereg_id else None)}
 
 
 def _parse(argv=None) -> tuple[R2Config, argparse.Namespace]:
@@ -1210,13 +1396,17 @@ def _parse(argv=None) -> tuple[R2Config, argparse.Namespace]:
                       help="stop after the judge calibration: judge cost only, no writer call (verdict informative)")
     gate.add_argument("--allow-uncalibrated", action="store_true",
                       help="spend writer money even when the judge does not count (an informative run)")
+    ap.add_argument("--eval-split", choices=EVAL_SPLITS,
+                    help="AA-1051: plan only this golden side (CAL then calibrates the judge)")
+    ap.add_argument("--sample-ids", help="AA-1051: comma-separated fixed sample ids")
     ap.add_argument("--enqueue", action="store_true", help="queue the writing_memory_r2 job (the paid run)")
     a = ap.parse_args(argv)
     conf = R2Config(writer=a.writer, release_id=a.release, run_kind=a.run_kind,
                     tiers=[t for t in (a.tiers or "").split(",") if t] or None, limit=a.limit, cap_usd=a.cap_usd,
                     goal=a.goal, seed_fault=a.seed_fault, triggered_by=f"cli:{a.requested_by}", log_stage=a.stage,
                     calibrate_only=a.calibrate_only, require_calibrated=not a.allow_uncalibrated,
-                    judge_model=a.judge_model, judge_connection=a.judge_connection)
+                    judge_model=a.judge_model, judge_connection=a.judge_connection, eval_split=a.eval_split,
+                    sample_ids=[i for i in (a.sample_ids or "").split(",") if i] or None)
     return conf, a
 
 

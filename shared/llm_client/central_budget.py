@@ -57,7 +57,7 @@ FAILURE_TTL_SECONDS = 60.0
 JOB_KIND_TTL_SECONDS = 600.0
 # The llm_call_log labels eval rows are written under (services/writing_memory/config.py EVAL_LOG_STAGES + SHADOW_STAGE;
 # a unit test keeps the two in step: shared/ must not import services/).
-EVAL_STAGES = ("writing_memory_eval", "adhoc_aa900", "writing_memory_shadow")
+EVAL_STAGES = ("writing_memory_eval", "adhoc_aa900", "adhoc_aa1051", "writing_memory_shadow")
 ADHOC_PREFIX = "adhoc_"
 # The scopes an llm row may have (= migration 340's spend_budget_scope_check for provider 'llm').
 SCOPE_RE = re.compile(r"^(?:(app|stage|job):[a-z0-9][a-z0-9_.-]{0,99}|eval|adhoc)$")

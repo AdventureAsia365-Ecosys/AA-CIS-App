@@ -119,8 +119,12 @@ async def plan(conn, gs: GoldenSet, *, allow_downgrade: bool = False) -> dict:
             problems.append(f"{version} is not newer than the active {active['version']} (--allow-downgrade to make "
                             f"an older version active on purpose)")
         supersedes = {"set_id": str(active["set_id"]), "version": active["version"]}
+    from services.writer_proof import splits
+    planned_splits: Any = ("table missing (CIS 399 not applied)" if not await splits.table_exists(conn)
+                           else splits.summarise([{"sample_id": i["sample_id"], "writer": i["writer"]}
+                                                  for i in gs.items])["proposed_for_missing"])
     return {"action": action, "existing_set_id": None if existing is None else str(existing["set_id"]),
-            "supersedes": supersedes, "problems": problems}
+            "supersedes": supersedes, "problems": problems, "splits": planned_splits}
 
 
 async def apply(conn, gs: GoldenSet, baseline: dict[str, dict], *, allow_downgrade: bool = False) -> dict:
@@ -153,6 +157,14 @@ async def apply(conn, gs: GoldenSet, baseline: dict[str, dict], *, allow_downgra
                 i["label_verdict"], i["label_source"], _j(i["injection_spec"]), _j(i["refs"]), i["input_sha256"],
                 i["pick_reason"])
     out["set_id"] = str(set_id)
+    # AA-1051: each item's frozen DEV / CAL / GATE side (CIS 399), written with the items (and filled for an existing
+    # version on a re-run). Without the table (399 not applied) nothing is written and the report says so.
+    from services.writer_proof import splits
+    if await splits.table_exists(conn):
+        out["splits"] = await splits.write_missing(conn, str(set_id),
+                                                   assigned_by=f"golden_import:{gs.set_row['imported_by']}")
+    else:
+        out["splits"] = "table missing (CIS 399 not applied): no split rows written"
     if out["superseded"] and await conn.fetchval("SELECT to_regclass('shared.writing_memory_release') IS NOT NULL"):
         # AA-919 (WM-18 scope 5): the active releases whose evidence names the old golden set go to reverify (they
         # keep serving; a re-run needs approval). Same transaction as the supersede.

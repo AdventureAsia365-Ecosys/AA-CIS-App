@@ -51,7 +51,10 @@ EVAL_ROLE = "judge"
 # run from the Releases tab; `adhoc_aa900` for the eval of a prompt / model / route change PR (stage = adhoc_<issue>,
 # handbook §5.7). Only the label changes: routes, caps and verdict rules are the same.
 CHANGE_EVAL_STAGE = "adhoc_aa900"
-EVAL_LOG_STAGES = (EVAL_STAGE, CHANGE_EVAL_STAGE)
+# AA-1051 (root ADR 0020 W5, D12): the label of a pre-registered W5 proof run (services/writer_proof). Its own budget:
+# the D12 caps (writer_proof/prereg.py), not the learning-loop month cap, so it is not in MEMORY_STAGES.
+W5_STAGE = "adhoc_aa1051"
+EVAL_LOG_STAGES = (EVAL_STAGE, CHANGE_EVAL_STAGE, W5_STAGE)
 SHADOW_STAGE = "writing_memory_shadow"  # the llm_call_log label of every shadow call (no judge, no route of its own)
 R2_RUN_CAP_USD = 10.0            # E4 / D3: <= $10 per R2 run; a run may be given a LOWER cap, never a higher one
 SHADOW_RUN_CAP_USD = 7.0         # qlint: allow a dollar cap (cost-cuts K3: T2 50 x $0.10 + 20 x $0.10), not a score

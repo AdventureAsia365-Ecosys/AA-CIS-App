@@ -47,7 +47,7 @@ def test_cli_flag_and_job_payload_carry_the_label():
 
 def test_month_cap_and_run_spend_read_the_change_label():
     assert cfg.CHANGE_EVAL_STAGE in cfg.MEMORY_STAGES
-    assert set(cfg.EVAL_LOG_STAGES) == {"writing_memory_eval", "adhoc_aa900"}
+    assert set(cfg.EVAL_LOG_STAGES) == {"writing_memory_eval", "adhoc_aa900", "adhoc_aa1051"}
     assert r2.PgStore(None, stages=("adhoc_aa900",)).stages == ("adhoc_aa900",)
 
 
