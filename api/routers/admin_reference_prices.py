@@ -13,7 +13,8 @@
              the .xlsx of the filter as base64 JSON {filename, content_base64, rows} (the REST API Gateway in front of
              the API is not binary safe, AA-741; the page decodes it)
   POST   /admin/reference-prices/import         {file_base64, dry_run: true}: per-line plan (create / update /
-                                                confirm / unchanged / skip / error); an apply needs a file with no error line
+                                                confirm / unchanged / skip / error); an apply needs a file with no
+                                                error line
   GET    /admin/reference-prices/{source_key}/history   the audit rows of one key, newest first
 
 Root ADR 0005 d7: a reference price, never a selling price; the free text stays in raw_tours.price_raw. Who may call

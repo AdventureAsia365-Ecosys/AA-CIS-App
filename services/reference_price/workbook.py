@@ -7,8 +7,9 @@ confirm a price as it is, and imports the same file. Every text cell is written 
 source text starting with "=" stays text: no formula injection).
 
 Import: the first sheet; columns are found by their header (case and spaces ignored, so a re-ordered sheet works). Key,
-Amount, Currency and Basis are required columns; Note and Confirm are optional; every other column is ignored. Values are checked by
-services/reference_price/store.py (plan_import), always as a DRY RUN first. Pure (no I/O besides openpyxl in memory).
+Amount, Currency and Basis are required columns; Note and Confirm are optional; every other column is ignored. Values
+are checked by services/reference_price/store.py (plan_import), always as a DRY RUN first. Pure (no I/O besides
+openpyxl in memory).
 """
 from __future__ import annotations
 
