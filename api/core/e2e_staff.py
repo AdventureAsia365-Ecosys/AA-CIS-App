@@ -35,6 +35,14 @@ TEMPORARY, removed at the end of project code with A10 / A10a (AA-816):
   A10b session (403 ``e2e_read_only``, before the flag is resolved or audited) unless the flag's tenant is synthetic
   (:func:`is_synthetic_tenant`: ``is_canary IS TRUE`` and not the pilot).
 
+- AA-1094 (S278, root ADR 0006a A10b-4): two more allow-listed writes, the TripPlanner add-on of a synthetic tenant
+  (:data:`E2E_TRIPPLANNER_ADDON_WRITES`: the ``tenant_provision`` attach and cancel routes, the same staff path as
+  Tenant 360 > Subscription "Add an add-on" / "Cancel"), so the agent can serve a synthetic agency on TripPlanner and
+  show its own tours live. The routes refuse the A10b session (403 ``e2e_read_only``, before a job is enqueued) unless
+  every add-on of the request is a :data:`E2E_ADDON_PRODUCTS` product (``tripplanner``: no CRM seats, no content plan)
+  and the tenant is synthetic (:func:`is_synthetic_tenant`). The create route (``POST /admin/tenants/provision``) stays
+  refused: a new tenant is never an E2E write.
+
 A10d (AA-1035, S270, root ADR 0006a A10d): a second Dev-only CIS E2E identity, :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`,
 role ``customer_success``, so the agent can prove the AA-1035 tenant-book scoping with a real Cognito session. Same
 directory rules as A10b (not an owner, no password, no Booking grant, no CRM role; CIS migration 378), same Dev-only
@@ -119,10 +127,19 @@ E2E_VIEW_AS_WRITES: frozenset[tuple[str, str]] = frozenset({
 E2E_COMPLIANCE_RELEASE_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/tenant-qa/compliance/{flag_id}/release"),
 })
+# AA-1094 (S278, root ADR 0006a A10b-4): attach / cancel the TripPlanner add-on of a synthetic tenant (the
+# tenant_provision saga's attach and cancel modes), checked by api/routers/admin_tenant_provision.py before a job is
+# enqueued: every product of the request in E2E_ADDON_PRODUCTS and the tenant synthetic.
+E2E_TRIPPLANNER_ADDON_WRITES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/admin/tenants/{tenant_id}/provision"),
+    ("POST", "/admin/tenants/{tenant_id}/provision/cancel"),
+})
+# The add-on products an A10b session may attach or cancel (never crm: seats are a CRM licence count).
+E2E_ADDON_PRODUCTS: frozenset[str] = frozenset({"tripplanner"})
 E2E_ALLOWED_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"),
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
-}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES | E2E_COMPLIANCE_RELEASE_WRITES
+}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES | E2E_COMPLIANCE_RELEASE_WRITES | E2E_TRIPPLANNER_ADDON_WRITES
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/content-quality/pieces/{_UUID}/sentences/apply")),
@@ -132,6 +149,8 @@ E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/view-as")),
     ("POST", re.compile(rf"/admin/view-as/sessions/{_UUID}/end")),
     ("POST", re.compile(rf"/admin/tenant-qa/compliance/{_UUID}/release")),
+    ("POST", re.compile(rf"/admin/tenants/{_UUID}/provision")),
+    ("POST", re.compile(rf"/admin/tenants/{_UUID}/provision/cancel")),
 )
 # The sentence-apply modes an A10b session may use (Cut, manual Edit). Not "rewrite".
 E2E_SENTENCE_MODES: frozenset[str] = frozenset({"cut", "manual"})
