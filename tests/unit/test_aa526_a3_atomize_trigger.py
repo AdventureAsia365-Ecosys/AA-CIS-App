@@ -294,7 +294,7 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         assert pl.await_args.kwargs["tour_id"] == str(TOUR_ID) and pl.await_args.kwargs["version_id"] == str(GC_ID)
         # AA-645 step 0: the atomize summary, and the T7 brand-fit cache rows of this tour's Segments dropped (T13)
         assert out == {"atomize": {"status": "success", "atom_count": 3},
-                       "brand_fit_cache_cleared": 0,
+                       "brand_fit_segments_changed": 2, "brand_fit_cache_cleared": 0,
                        "segment_score_route": "ok", "segments": 2, "score_route_job": "job-9",
                        "score_route_job_reused": True, "place_extract_job": "job-p",
                        "place_extract_job_reused": False,

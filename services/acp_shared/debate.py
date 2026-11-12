@@ -34,8 +34,12 @@ than half a Channel's list in one run"). Both are implemented in `apply_debate()
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
+import functools
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
@@ -74,6 +78,26 @@ REPORT_SIGNALS_MAX = 300
 # Evidence shown to the brand-fit judge per candidate (distinct atom texts, each trimmed).
 EVIDENCE_ITEMS = 12
 EVIDENCE_CHARS = 240
+
+
+# AA-1081 (S278) — how many brand-fit judge calls (cache misses) one Debate pass keeps in flight. One at a time a
+# refresh with ~320 misses took 12-15 min (~2.2 s a call); the gateway's own limits still apply to every call.
+DEBATE_CONCURRENCY_ENV = "T7_DEBATE_CONCURRENCY"
+DEBATE_CONCURRENCY_DEFAULT = 8
+DEBATE_CONCURRENCY_MAX = 32
+
+
+def debate_concurrency() -> int:
+    """`T7_DEBATE_CONCURRENCY` (read per call): an integer 1..32; unset, not a number or below 1 = the default 8,
+    above 32 = 32. 1 is the old one-at-a-time run."""
+    raw = (os.environ.get(DEBATE_CONCURRENCY_ENV) or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEBATE_CONCURRENCY_DEFAULT
+    if value < 1:
+        return DEBATE_CONCURRENCY_DEFAULT
+    return min(value, DEBATE_CONCURRENCY_MAX)
 
 
 def debate_mode() -> str:
@@ -254,11 +278,19 @@ async def t7_prefilter(tenant_id: UUID, candidate: "Candidate", brand_profile: d
 
 async def assess_candidates(
     tenant_id: UUID, candidates: list["Candidate"], conn, *, cache_only: bool = False,
-    any_brand_version: bool = False,
+    any_brand_version: bool = False, concurrency: Optional[int] = None,
 ) -> list[DebateSignal]:
     """AA-1079 — Debate's judgement of each candidate, one `DebateSignal` per candidate in input order; nothing is
     cut here (`apply_signals()` decides that). Any per-candidate failure counts that candidate as PASSING (never
     flagged on a failure). Brand fit is only asked when `contested` did not flag the candidate (same cost as before).
+
+    AA-1081 (S278) — two passes. The first walks the candidates in order on `conn` (contested, cache read, evidence
+    read for a cache miss). The second asks the Jev pre-filter and the brand-fit judge for the cache misses, at most
+    `concurrency` at once (`debate_concurrency()`, env `T7_DEBATE_CONCURRENCY`, default 8): the judge call is
+    synchronous, so each runs in a worker thread with a copy of the caller's context (job tenant, capacity line).
+    The gateway still applies its own limits to every call (connection `max_concurrency` / `rpm_limit`, the TPM
+    reservation, the tenant AI budget). The cache writes go back through `conn` one at a time. Each signal lands at
+    its candidate's index, so the result (and the rank built on it) is the same as a one-at-a-time run.
 
     `cache_only=True` (the $0 replay, `scripts/quality/replay_aa1079_debate.py`): a brand-fit cache miss is reported
     as `cache_miss` and passes; no Jev decision, no LLM call, no cache write. `any_brand_version=True` reads the
@@ -273,9 +305,10 @@ async def assess_candidates(
         logger.warning("debate_brand_profile_fetch_failed", tenant_id=str(tenant_id), error=str(exc))
 
     run_brand_fit = bool(brand_profile and has_brand_signals(brand_profile))
-    signals: list[DebateSignal] = []
+    signals: list[Optional[DebateSignal]] = [None] * len(candidates)
+    to_judge: list[tuple[int, "Candidate", dict, Optional[float]]] = []
 
-    for candidate in candidates:
+    for i, candidate in enumerate(candidates):
         contested = None
         # Standard #1 — contested (deterministic, always attempted regardless of brand profile).
         try:
@@ -286,8 +319,8 @@ async def assess_candidates(
                 )
                 contested = row["contested"] if row else None
             if contested is not None and contested >= CONTESTED_CUT_THRESHOLD:
-                signals.append(DebateSignal(flags=(FLAG_CONTESTED,), severity=float(contested),
-                                            contested=float(contested)))
+                signals[i] = DebateSignal(flags=(FLAG_CONTESTED,), severity=float(contested),
+                                          contested=float(contested))
                 continue
         except Exception as exc:
             logger.warning("debate_contested_check_failed", segment_id=candidate.segment_id,
@@ -295,7 +328,7 @@ async def assess_candidates(
 
         contested_value = float(contested) if contested is not None else None
         if not run_brand_fit:
-            signals.append(DebateSignal(contested=contested_value, brand_fit_source="skipped"))
+            signals[i] = DebateSignal(contested=contested_value, brand_fit_source="skipped")
             continue
 
         # Standard #4 — brand-fit (LLM, cached, only when the tenant has a real brand profile).
@@ -303,63 +336,90 @@ async def assess_candidates(
             cached = await _cached_brand_fit(conn, tenant_id, candidate, brand_profile["_version"],
                                              any_brand_version=any_brand_version)
             if cached is None and cache_only:
-                signals.append(DebateSignal(contested=contested_value, brand_fit_source="cache_miss"))
+                signals[i] = DebateSignal(contested=contested_value, brand_fit_source="cache_miss")
                 continue
-            topic = jev = None
-            if cached is None:
-                topic = await _fetch_candidate_text(conn, candidate)
-                jev = await t7_prefilter(tenant_id, candidate, brand_profile, topic)   # AA-700 T7-1
             if cached is not None:
-                judge_score, source = cached["judge_score"], "cache"
-            elif jev.accepted(T7_Q):
-                judge_score, source = 10.0, "jev_accept"
-            elif jev.rejected(T7_Q):
-                judge_score, source = _T7_JEV_REJECT_SCORE, "jev_reject"
-            else:
-                # NOTE: score_candidate_fit() is synchronous (same as judge_node.py's own call
-                # site in the T2 LangGraph) — a real LLM call here blocks this task's event
-                # loop for its duration. Same pre-existing characteristic every judge_node.py
-                # call already has platform-wide, not a new regression introduced by Debate;
-                # a cache HIT (the expected steady state after brand_version stabilizes) never
-                # reaches this line at all.
-                # AA-763 (G4): own stage key, same route as s1_judge.
-                result = score_candidate_fit(brand_profile, topic, stage=T7_DEBATE_JUDGE)
-                # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its
-                # own use of the same helper).
-                await record_call(
-                    stage=T7_DEBATE_JUDGE, role="judge", model=result.model_used,
-                    tokens_in=result.input_tokens, tokens_out=result.output_tokens,
-                    cost_usd=result.cost_usd, tenant_id=str(tenant_id),
-                    quality_signal={
-                        "source": "debate", "judge_score": result.judge_score,
-                        "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
-                    },
-                    stop_reason=result.stop_reason, account=result.account,
-                    fallback_used=result.fallback_used, **billed_fields(result),
-                )
-                await _store_brand_fit_cache(conn, tenant_id, candidate, brand_profile["_version"], result)
-                judge_score, source = result.judge_score, "llm"
-            judge_score = float(judge_score)
-            if judge_score < BRAND_FIT_CUT_THRESHOLD:
-                # Lower judge_score = worse fit = "how bad" — invert so a bigger number
-                # means "cut this first", consistent with contested's own convention above.
-                signals.append(DebateSignal(flags=(FLAG_BRAND_FIT,), severity=10.0 - judge_score,
-                                            judge_score=judge_score, contested=contested_value,
-                                            brand_fit_source=source))
-            else:
-                signals.append(DebateSignal(judge_score=judge_score, contested=contested_value,
-                                            brand_fit_source=source))
+                signals[i] = _brand_fit_signal(cached["judge_score"], "cache", contested_value)
+                continue
+            to_judge.append((i, candidate, await _fetch_candidate_text(conn, candidate), contested_value))
         except Exception as exc:
             logger.warning("debate_brand_fit_check_failed", segment_id=candidate.segment_id,
                             route_id=candidate.route_id, error=str(exc))
-            # AA-927: a judge reply billed but unusable (malformed JSON) still gets its cost row.
-            # Only score_candidate_fit attaches billed calls, and only when it raised (its own
-            # success row is written right after it returns, above).
-            if not cache_only:
-                await record_billed_failure(stage=T7_DEBATE_JUDGE, role="judge", billed=billed_calls(exc),
-                                            error=str(exc), tenant_id=str(tenant_id))
-            signals.append(DebateSignal(contested=contested_value, brand_fit_source="error"))
-    return signals
+            signals[i] = DebateSignal(contested=contested_value, brand_fit_source="error")
+
+    if to_judge:
+        width = max(1, min(concurrency or debate_concurrency(), len(to_judge)))
+        gate = asyncio.Semaphore(width)
+        conn_lock = asyncio.Lock()   # one asyncpg connection: one statement at a time
+        executor = ThreadPoolExecutor(max_workers=width, thread_name_prefix="t7-debate-judge")
+        try:
+            async def _one(i: int, candidate: "Candidate", topic: dict, contested_value: Optional[float]) -> None:
+                async with gate:
+                    signals[i] = await _judge_brand_fit(tenant_id, candidate, brand_profile, topic,
+                                                        contested_value, conn, conn_lock, executor)
+
+            await asyncio.gather(*(_one(*item) for item in to_judge))
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        logger.info("debate_judged", tenant_id=str(tenant_id), candidates=len(candidates),
+                    judged=len(to_judge), concurrency=width)
+    return [s if s is not None else DebateSignal(brand_fit_source="error") for s in signals]
+
+
+def _brand_fit_signal(judge_score, source: str, contested_value: Optional[float]) -> DebateSignal:
+    judge_score = float(judge_score)
+    if judge_score < BRAND_FIT_CUT_THRESHOLD:
+        # Lower judge_score = worse fit = "how bad" — invert so a bigger number
+        # means "cut this first", consistent with contested's own convention above.
+        return DebateSignal(flags=(FLAG_BRAND_FIT,), severity=10.0 - judge_score, judge_score=judge_score,
+                            contested=contested_value, brand_fit_source=source)
+    return DebateSignal(judge_score=judge_score, contested=contested_value, brand_fit_source=source)
+
+
+async def _judge_brand_fit(tenant_id: UUID, candidate: "Candidate", brand_profile: dict, topic: dict,
+                           contested_value: Optional[float], conn, conn_lock: asyncio.Lock,
+                           executor: ThreadPoolExecutor) -> DebateSignal:
+    """AA-1081 — one cache miss: the Jev pre-filter, then (grey) the brand-fit judge in a worker thread, its
+    `llm_call_log` row and its cache row. Never raises: a failure lets the candidate pass (`error`)."""
+    try:
+        jev = await t7_prefilter(tenant_id, candidate, brand_profile, topic)   # AA-700 T7-1
+        if jev.accepted(T7_Q):
+            return _brand_fit_signal(10.0, "jev_accept", contested_value)
+        if jev.rejected(T7_Q):
+            return _brand_fit_signal(_T7_JEV_REJECT_SCORE, "jev_reject", contested_value)
+        # score_candidate_fit() is synchronous (the gateway call): it runs in a worker thread with a copy of this
+        # task's context, so the job's tenant and capacity line bound on the context reach the gateway.
+        # AA-763 (G4): own stage key, same route as s1_judge.
+        ctx = contextvars.copy_context()
+        call = functools.partial(score_candidate_fit, brand_profile, topic, stage=T7_DEBATE_JUDGE)
+        result = await asyncio.get_running_loop().run_in_executor(executor, ctx.run, call)
+        # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its own use of the same helper).
+        await record_call(
+            stage=T7_DEBATE_JUDGE, role="judge", model=result.model_used,
+            tokens_in=result.input_tokens, tokens_out=result.output_tokens,
+            cost_usd=result.cost_usd, tenant_id=str(tenant_id),
+            quality_signal={
+                "source": "debate", "judge_score": result.judge_score,
+                "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
+            },
+            stop_reason=result.stop_reason, account=result.account,
+            fallback_used=result.fallback_used, **billed_fields(result),
+        )
+        async with conn_lock:
+            await _store_brand_fit_cache(conn, tenant_id, candidate, brand_profile["_version"], result)
+        return _brand_fit_signal(result.judge_score, "llm", contested_value)
+    except Exception as exc:
+        logger.warning("debate_brand_fit_check_failed", segment_id=candidate.segment_id,
+                       route_id=candidate.route_id, error=str(exc))
+        # AA-927: a judge reply billed but unusable (malformed JSON) still gets its cost row. Only
+        # score_candidate_fit attaches billed calls, and only when it raised (its own success row is written right
+        # after it returns, above).
+        try:
+            await record_billed_failure(stage=T7_DEBATE_JUDGE, role="judge", billed=billed_calls(exc),
+                                        error=str(exc), tenant_id=str(tenant_id))
+        except Exception as log_exc:  # noqa: BLE001 — the cost row never fails the candidate
+            logger.warning("debate_billed_failure_log_failed", error=str(log_exc)[:200])
+        return DebateSignal(contested=contested_value, brand_fit_source="error")
 
 
 def apply_signals(

@@ -208,6 +208,18 @@ def test_the_decision_rule_needs_enough_labels_and_kappa():
     assert ba.decision(50, 20, 30, None, 7.0)["status"] == "no_signal"
 
 
+def test_the_decision_rule_takes_a_pass_fail_gate_row_without_a_threshold():
+    # T10 F9 is pass/fail: measure() passes its agreement row (no "threshold" key) as best (S278 KeyError).
+    row = ba.agreement([(False, False)] * 10 + [(True, True)] * 30 + [(True, False)] * 2)
+    assert "threshold" not in row
+    d = ba.decision(row["n"], row["label_fail"], row["label_pass"], row, 7.0)
+    assert d["status"] == "calibrated" and d["proposed_threshold"] is None and d["keep"] == "gate_allowed"
+    weak = ba.agreement([(False, True)] * 6 + [(True, False)] * 6 + [(True, True)] * 30)
+    w = ba.decision(weak["n"], weak["label_fail"], weak["label_pass"], weak, 7.0)
+    assert w["status"].startswith("not_calibrated") and w["proposed_threshold"] is None
+    assert "threshold None" not in w["why"]
+
+
 # ── the measurement script ──────────────────────────────────────────────────────────────────────────────────────
 
 def _labelled_items():
