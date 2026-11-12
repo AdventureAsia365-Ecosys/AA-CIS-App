@@ -8,7 +8,8 @@
 //     [TP_PLAN=tripplanner.hosted] [E2E_DRY_RUN=1] [E2E_CANCEL=1] npx playwright test --project admin-evidence tp-addon
 //
 // TENANT_SYNTHETIC = a synthetic tenant (shared.tenants.is_canary true, not the pilot), in service. TENANT_REAL = a
-// real tenant (optional, the 403 check: the route refuses it before a job is enqueued). E2E_DRY_RUN=1 signs in and
+// real tenant, never the pilot (optional, the 403 check: the route refuses it before a job is enqueued; the probe
+// names a plan that does not exist, so it could attach nothing even if the guard broke). E2E_DRY_RUN=1 signs in and
 // reads the Subscription tab only. E2E_CANCEL=1 cancels the add-on instead (clean-up; the subscription row stays,
 // status canceled). Writes on Dev (not a dry run): one tenant_provision job, the tenant's tripplanner subscription,
 // its subscription.changed / entitlement.changed feed rows and the audit row naming the job, the AA-884 staff.request
@@ -23,6 +24,7 @@ const SHOTS = 'tests/e2e/results/admin-evidence';
 const SYNTHETIC = process.env.TENANT_SYNTHETIC ?? '';
 const REAL = process.env.TENANT_REAL ?? '';
 const PLAN = process.env.TP_PLAN ?? 'tripplanner.hosted';
+const PROBE_PLAN = 'tripplanner.e2e_probe_none'; // never a real plan: the 403 probe on TENANT_REAL can attach nothing
 const DRY_RUN = process.env.E2E_DRY_RUN === '1';
 const CANCEL = process.env.E2E_CANCEL === '1';
 const LIVE = ['trialing', 'active', 'past_due'];
@@ -98,8 +100,10 @@ test('A10b admin: TripPlanner add-on of a synthetic tenant; refused on a real te
   }
 
   if (REAL) {
+    // Safe by construction (S278 review): the probe names a plan that does not exist, so even if the synthetic-only
+    // guard ever broke, the job would fail with an unknown plan and attach nothing to the real tenant.
     const refused = await post(page, `/api/admin/tenants/${REAL}/provision`,
-      { request_key: key('real'), add_ons: [{ product: 'tripplanner', plan_key: PLAN, seats: null }] });
+      { request_key: key('real'), add_ons: [{ product: 'tripplanner', plan_key: PROBE_PLAN, seats: null }] });
     expect([refused.status, refused.body?.detail]).toEqual([403, 'e2e_read_only']);
   }
 
