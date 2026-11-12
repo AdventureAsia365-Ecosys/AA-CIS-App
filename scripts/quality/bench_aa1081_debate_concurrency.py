@@ -73,15 +73,15 @@ def _candidates(n: int) -> list[Candidate]:
                       said=200, place=f"Invented Place {i}", action="walk") for i in range(n)]
 
 
-def _judge(reply_s: float):
-    def score_candidate_fit(brand_profile, topic, *, stage):
+def _fake_fit(reply_s: float):
+    def fake_fit(brand_profile, topic, *, stage):
         time.sleep(reply_s)
         n = int(topic["place"].rsplit(" ", 1)[1])
         score = (5.0, 7.5, 9.0)[n % 3]
         return BrandFitResult(brand_fit_score=score, cross_brand_distinct=score, mission_present=True, feedback="",
                               judge_score=score, model_used="bench-judge", cost_usd=0.0, input_tokens=0,
                               output_tokens=0, stop_reason="stop", account=None, fallback_used=False)
-    return score_candidate_fit
+    return fake_fit
 
 
 async def _no_log(**kwargs):
@@ -99,7 +99,7 @@ async def _profile(conn, tenant_id):
 def _one(n: int, width: int, reply_s: float) -> tuple[float, list]:
     with patch.object(debate, "_fetch_brand_profile", _profile), \
          patch.object(debate, "t7_prefilter", _prefilter), \
-         patch.object(debate, "score_candidate_fit", _judge(reply_s)), \
+         patch.object(debate, "score_candidate_fit", _fake_fit(reply_s)), \
          patch.object(debate, "record_call", _no_log), \
          patch.object(debate, "record_billed_failure", _no_log):
         t0 = time.perf_counter()
