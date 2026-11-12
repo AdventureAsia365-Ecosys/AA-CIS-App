@@ -995,7 +995,8 @@ READ_ONLY_DENIED = "Role '{role}' is read-only"
 def request_staff_identity(request: Request) -> Any:
     """The Cognito StaffIdentity the staff bearer middleware put on this request (scope state, or the contextvar
     it also sets), or None."""
-    state = request.scope.get("state")
+    # A direct call (tests, jobs) may pass a request stand-in without an ASGI scope: fall back to the contextvar.
+    state = (getattr(request, "scope", None) or {}).get("state")
     identity = state.get("staff_identity") if isinstance(state, dict) else None
     if identity is None:
         from api.core.staff_identity import current_staff
