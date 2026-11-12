@@ -1,0 +1,92 @@
+{
+  "format": 1,
+  "id": "w5-t9",
+  "workflow": "t9",
+  "status": "draft",
+  "registered_by": null,
+  "registered_on": null,
+  "golden_set": {
+    "name": "aa729"
+  },
+  "eval_split": "gate",
+  "sample_ids": [],
+  "noise_sample_ids": [],
+  "release_id": null,
+  "judge": {
+    "model_key": "gpt-6-luna-openai",
+    "connection": "openai-direct"
+  },
+  "metrics": [
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower",
+      "primary": true
+    },
+    {
+      "name": "first_pass_yield",
+      "kind": "computed",
+      "direction": "higher",
+      "target": {
+        "op": ">=",
+        "value": 0.3
+      }
+    },
+    {
+      "name": "requests_per_object",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 5
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0.25
+      }
+    },
+    {
+      "name": "contract_violations",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    },
+    {
+      "name": "unsupported_trip_promises_human_read_10",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    }
+  ],
+  "decision": {
+    "rule": "improve",
+    "metric": "item_fail_rate",
+    "margin_abs": 0.1,
+    "alpha": 0.05,
+    "noise_se_k": 2.0
+  },
+  "requirements": {
+    "paired_all": true,
+    "max_mixed_judges": 0,
+    "max_hard_stop_1": 0
+  },
+  "power": {
+    "min_power": 0.8,
+    "writer_sd": null,
+    "claims_per_item": 60,
+    "effect_abs": 0.3
+  },
+  "cap_usd": 15.0,
+  "note": "T9 writer contract proof (W5 item 2): 12-15 GATE blogs, B = the current writers after W3 vs A = the stored finals, A' repeat arm on 6-8 noise items. First-pass yield target 50% (floor 30%). The improve rule is powered at a true drop of 0.3 in item_fail_rate (power.effect_abs, a proposal: it must exceed the 0.1 margin); 12 items may not reach 0.8 power, the power check says how many do. R2's T9 writer is the first draft only: requests and cost per object here are first-draft numbers; the full-loop numbers come from the W3 graph and are read from the ledger of its live pieces."
+}
