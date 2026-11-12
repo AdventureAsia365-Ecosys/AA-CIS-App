@@ -82,6 +82,13 @@ E2E_BOOKING_TEST_STAFF_EMAIL = "e2e-booking@e2e-mail.lumiguides.it.com"
 # exactly crm-ops + crm-support, never in the CIS directory (same address as AA-CIS-Infra workforce.py
 # E2E_CRM_STAFF_TEST_STAFF_EMAIL and AA-Partner e2e_staff.E2E_CRM_STAFF_EMAIL).
 E2E_CRM_STAFF_TEST_STAFF_EMAIL = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
+# A10e (AA-1087, S278; named here for the reconcile): the three Dev-only write-capable AA-Booking E2E accounts, each in
+# exactly one Booking group, never in the CIS directory (same addresses as AA-CIS-Infra workforce.py
+# E2E_BOOKING_{STAFF,MAKER,CHECKER}_TEST_STAFF_EMAIL and AA-Booking app/auth/e2e_staff.py). AA-Booking holds each one to
+# its own writes on synthetic agencies only; the CIS API never sees them.
+E2E_BOOKING_STAFF_TEST_STAFF_EMAIL = "e2e-booking-staff@e2e-mail.lumiguides.it.com"
+E2E_BOOKING_MAKER_TEST_STAFF_EMAIL = "e2e-booking-maker@e2e-mail.lumiguides.it.com"
+E2E_BOOKING_CHECKER_TEST_STAFF_EMAIL = "e2e-booking-checker@e2e-mail.lumiguides.it.com"
 
 # The one ENVIRONMENT value under which the account may exist (compared exactly).
 DEV_ONLY_ENVIRONMENT = "dev"

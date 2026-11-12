@@ -372,6 +372,11 @@ E2E_BOOKING = "e2e-booking@e2e-mail.lumiguides.it.com"
 E2E_CIS_ADMIN = "e2e-cis-admin@e2e-mail.lumiguides.it.com"
 E2E_CRM_STAFF = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
 E2E_CIS_CS = "e2e-cis-cs@e2e-mail.lumiguides.it.com"
+# AA-1087 A10e: the three Dev-only write-capable AA-Booking E2E accounts (one Booking group each, no CIS row).
+E2E_BK_STAFF = "e2e-booking-staff@e2e-mail.lumiguides.it.com"
+E2E_BK_MAKER = "e2e-booking-maker@e2e-mail.lumiguides.it.com"
+E2E_BK_CHECKER = "e2e-booking-checker@e2e-mail.lumiguides.it.com"
+A10E_GROUPS = {E2E_BK_STAFF: "booking-sales", E2E_BK_MAKER: "booking-finance", E2E_BK_CHECKER: "booking-finance"}
 
 
 def _e2e_world():
@@ -401,9 +406,17 @@ def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
     assert e2e_staff.E2E_CONTENT_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
     assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
-    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF, E2E_CIS_CS}
+    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF, E2E_CIS_CS,
+                                       E2E_BK_STAFF, E2E_BK_MAKER, E2E_BK_CHECKER}
     assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {"ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b",
-                                                               "ADR 0006a A10c", "ADR 0006a A10d"}
+                                                               "ADR 0006a A10c", "ADR 0006a A10d", "ADR 0006a A10e"}
+    # A10e (AA-1087): exactly one Booking group each, never in the CIS directory (AA-CIS-Infra workforce.py).
+    for email, group in A10E_GROUPS.items():
+        assert sr.KNOWN_E2E_STAFF[email].groups == {group}
+        assert sr.KNOWN_E2E_STAFF[email].directory_role is None
+        assert sr.KNOWN_E2E_STAFF[email].clause == "ADR 0006a A10e"
+    assert (e2e_staff.E2E_BOOKING_STAFF_TEST_STAFF_EMAIL, e2e_staff.E2E_BOOKING_MAKER_TEST_STAFF_EMAIL,
+            e2e_staff.E2E_BOOKING_CHECKER_TEST_STAFF_EMAIL) == (E2E_BK_STAFF, E2E_BK_MAKER, E2E_BK_CHECKER)
     # A10d (AA-1035): exactly cis-customer_success, in the CIS directory as customer_success.
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_CS].groups == {"cis-customer_success"}
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_CS].directory_role == staff_directory.E2E_CIS_CS_TEST_STAFF_ROLE
@@ -964,6 +977,44 @@ def test_a10c_with_an_unexpected_group_stays_drift(extra):
 def test_off_dev_the_a10c_identity_is_drift():
     report = _run_e2e(*_a10c_world(), known_e2e=False)
     assert (E2E_CRM_STAFF, "no_row") in [(f["email"], f["reason"]) for f in report["cognito_without_row"]]
+
+
+def _a10e_world(extra=None):
+    """The E2E world plus the three A10e users, each only in its one Booking group (no CIS row); ``extra`` maps an
+    address to one more group it is put in."""
+    users, groups, rows, grants = _e2e_world()
+    for i, (email, group) in enumerate(A10E_GROUPS.items()):
+        u = _user(email, f"s-e2e-a10e-{i}", status="FORCE_CHANGE_PASSWORD")
+        users.append(u)
+        for g in [group] + ([extra[email]] if extra and email in extra else []):
+            groups[g] = list(groups.get(g) or []) + [u]
+    return users, groups, rows, grants
+
+
+def test_on_dev_the_a10e_identities_are_listed_apart_and_not_drift():
+    report = _run_e2e(*_a10e_world())
+    assert report["drift_total"] == 0, report
+    assert report["cognito_without_row"] == []
+    got = {k["email"]: (k["clause"], k["exempt_from"], k["groups"], k["row_username"])
+           for k in report["known_e2e_exceptions"] if k["clause"] == "ADR 0006a A10e"}
+    assert got == {email: ("ADR 0006a A10e", ["cognito_without_row"], [group], None)
+                   for email, group in A10E_GROUPS.items()}
+    assert report["counts"]["known_e2e_exceptions"] == 6
+
+
+@pytest.mark.parametrize("email,extra", [(E2E_BK_STAFF, "booking-finance"), (E2E_BK_MAKER, "booking-sales"),
+                                         (E2E_BK_CHECKER, "booking-admin"), (E2E_BK_STAFF, "cis-admin")])
+def test_a10e_with_an_unexpected_group_stays_drift(email, extra):
+    report = _run_e2e(*_a10e_world({email: extra}))
+    assert (email, "no_row") in [(f["email"], f["reason"]) for f in report["cognito_without_row"]]
+    assert email not in {k["email"] for k in report["known_e2e_exceptions"]}
+    assert report["drift_total"] == 1
+
+
+def test_off_dev_the_a10e_identities_are_drift():
+    report = _run_e2e(*_a10e_world(), known_e2e=False)
+    without = {(f["email"], f["reason"]) for f in report["cognito_without_row"]}
+    assert {(email, "no_row") for email in A10E_GROUPS} <= without
 
 
 @pytest.mark.asyncio
