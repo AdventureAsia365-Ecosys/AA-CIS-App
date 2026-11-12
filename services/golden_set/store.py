@@ -119,12 +119,8 @@ async def plan(conn, gs: GoldenSet, *, allow_downgrade: bool = False) -> dict:
             problems.append(f"{version} is not newer than the active {active['version']} (--allow-downgrade to make "
                             f"an older version active on purpose)")
         supersedes = {"set_id": str(active["set_id"]), "version": active["version"]}
-    from services.writer_proof import splits
-    planned_splits: Any = ("table missing (CIS 399 not applied)" if not await splits.table_exists(conn)
-                           else splits.summarise([{"sample_id": i["sample_id"], "writer": i["writer"]}
-                                                  for i in gs.items])["proposed_for_missing"])
     return {"action": action, "existing_set_id": None if existing is None else str(existing["set_id"]),
-            "supersedes": supersedes, "problems": problems, "splits": planned_splits}
+            "supersedes": supersedes, "problems": problems}
 
 
 async def apply(conn, gs: GoldenSet, baseline: dict[str, dict], *, allow_downgrade: bool = False) -> dict:

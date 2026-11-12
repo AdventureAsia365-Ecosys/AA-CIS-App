@@ -1,5 +1,6 @@
 """AA-919 (WM-17) — import an AA-729 golden-set fixture into shared.eval_golden_set / eval_golden_item and write the
-baseline_import runs (shared.prompt_eval_runs + eval_item_result). $0: no model call (llm_guard), reads only the
+baseline_import runs (shared.prompt_eval_runs + eval_item_result), and (AA-1051, CIS 399) each item's frozen DEV / CAL /
+GATE side in shared.eval_golden_split. $0: no model call (llm_guard), reads only the
 fixture (and optional AA-729 score files) and the DB.
 
     python -m services.golden_set.importer --fixture s3:scripts/out/aa729/fixture-1.1.0.json            # DRY RUN
@@ -82,6 +83,15 @@ def _baseline_report(b: dict) -> dict:
             for w, v in b.items()}
 
 
+async def _split_preview(conn, gs: derive.GoldenSet) -> Any:
+    """AA-1051: the DEV / CAL / GATE side the apply would give each item (CIS 399), counts per writer only."""
+    from services.writer_proof import splits
+    if not await splits.table_exists(conn):
+        return "table missing (CIS 399 not applied): the apply writes no split rows"
+    return {"rule": splits.RULE, "per_writer": splits.summarise(
+        [{"sample_id": i["sample_id"], "writer": i["writer"]} for i in gs.items])["proposed_for_missing"]}
+
+
 async def run(gs: derive.GoldenSet, baseline: dict, *, apply: bool, conn=None, allow_downgrade: bool = False) -> dict:
     from services.golden_set import store
 
@@ -99,6 +109,7 @@ async def run(gs: derive.GoldenSet, baseline: dict, *, apply: bool, conn=None, a
     if not apply:
         async with conn.transaction(readonly=True):
             report["db"] = await store.plan(conn, gs, allow_downgrade=allow_downgrade)
+            report["splits"] = await _split_preview(conn, gs)
         report["ok"] = not report["db"]["problems"]
         return report
     async with conn.transaction():
