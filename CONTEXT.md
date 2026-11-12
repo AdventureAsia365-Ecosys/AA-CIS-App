@@ -2139,6 +2139,24 @@ CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`,
 after the tenant block, and returns it as `from_price` (null when Booking has none or the view cannot be read: fail
 soft). CIS never computes a price and never shows `raw_tours.price_raw` as one (ADR 0005 d7).
 
+**Tour reference prices (AA-1091, root ADR 0005 d7; CIS 402 / 403).** The structured REFERENCE price of an AA tour
+(amount, currency, basis `per_person` | `per_group` | `from`) lives in `silver_aa_internal.tour_reference_price`, one row
+per catalog key (`raw_tours.source_key`, stable across source versions); the free text stays in `raw_tours.price_raw`
+for audit. `services/reference_price/`: `parse.py` (pure: the first amount and its currency, the basis words and the
+doubt codes `several_amounts`, `tiered`, `basis_assumed` …; never invents a currency), `store.py` (scope = AA master
+active rows with a key; status `confirmed` / `parsed` / `needs_review` (doubts, or the text changed since the value was
+set: `price_raw_seen`) / `suggested` / `missing`; save, accept, clear, "read source texts" (DRY RUN first, confirmed and
+staff entries never touched), Excel import plan / apply), `workbook.py` (openpyxl export with a How-to sheet, import by
+column header). Admin page AA Catalogue › Reference prices (`/admin/reference-prices`, `api/routers/
+admin_reference_prices.py`): server filters (status, country, search, live only) and paging, inline edit per row, bulk
+accept, Excel export / import as base64 JSON (the REST API Gateway is not binary safe) with a DRY RUN before any write;
+one `acp_shared.audit_log` row per changed key (`reference_price.*`, resource `tour_reference_price`). Capabilities
+`reference_price.read` (admin, content_lead, content, customer_success, finance) and `reference_price.write` (admin,
+content_lead, customer_success: the customer-service team). AA-Booking reads the saved values through
+`catalog.v_tour_price_reference_v2` (CIS 403, catalog recipe, SELECT to `booking` only): one row per live tour with the
+source text, amount, currency, basis and the same status rule; `v1` (CIS 365, text only) stays until Booking stops
+reading it. A reference price is never a selling price: Booking never quotes it to an agency or a traveller.
+
 CIS as a consumer of Booking supply facts (AA-835, root ADR 0004a; contracts `supply.hotel.v1` / `supply.service.v1`,
 Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `services/supply_content/`:
 - `pull.py`, one batch per api ops-sampler tick (`api/core/ops_metrics_sampler.py`, off with `SUPPLY_FEED_PULL=off`):
@@ -2274,7 +2292,12 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
 WORKFORCE groups `crm-platform-admin` / `crm-ops` / `crm-support`, root ADR 0006b decision 6), written by the same
 directory writer with its own audit field and synced (added and removed) like the CIS / Booking groups; the E2E
 directory addresses hold none, and the A10c CRM staff E2E user stays outside the directory. The Staff page's "Platform
-owner" preset sets CIS admin + Booking admin + CRM `platform_admin` in one change (never the owner flag). Root ADR 0006 +
+owner" preset sets CIS admin + Booking admin + CRM `platform_admin` in one change (never the owner flag). The "Pricing team"
+preset (AA-1091, `preset="pricing_team"`) gives CIS `customer_success` (Reference prices) and Booking `contracting`
+(group `booking-contracting`: Booking `pricing.write`, `supply.write`, `trip_plan.write`). It only adds: it fills an empty
+slot (CIS `viewer`, no Booking grant), keeps a role that already has those rights, and refuses (409
+`preset_would_replace`) rather than replace any other role (one role per app: a CIS finance or Booking finance member
+would lose those rights); CRM roles are untouched; one audit row with `details.preset`. Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has

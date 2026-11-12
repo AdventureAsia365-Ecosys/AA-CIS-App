@@ -1038,6 +1038,63 @@ async def test_platform_owner_preset_on_oneself_keeps_the_cis_role(db, stubbed):
 
 
 @pytest.mark.asyncio
+async def test_pricing_team_preset_gives_customer_success_and_booking_contracting(db, stubbed):
+    """AA-1091: the customer-service team's preset fills the empty slots: CIS viewer -> customer_success (Reference
+    prices), no Booking grant -> contracting (rates, pricing rules, trip plans); CRM roles untouched, one audit row
+    with details.preset."""
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="viewer", crm=("support",))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-customer_success"))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-contracting"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, preset="pricing_team")
+    assert result.status == sd.STATUS_OK
+    assert db.row(uid)["role"] == "customer_success" and db.grants[(uid, "booking")] == "contracting"
+    assert db.crm_roles(uid) == ["support"]
+    assert db.actions() == [sd.StaffAudit.ROLES_CHANGED]
+    assert db.audit[0]["details"] == {
+        "role": {"before": "viewer", "after": "customer_success"},
+        "booking_role": {"before": None, "after": "contracting"},
+        "preset": "pricing_team"}
+    stub.assert_no_pending_responses()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cis, booking, lost", [
+    ("finance", None, "CIS finance"),                       # billing / spend rights would go
+    ("content", "contracting", "CIS content"),
+    ("customer_success", "finance", "Booking finance"),     # invoices and payments would go
+    ("support", "sales", "CIS support and Booking sales"),
+])
+async def test_pricing_team_preset_never_replaces_another_role(db, stubbed, cis, booking, lost):
+    """AA-1091 review: one role per app, so a lateral role (CIS finance, content, support...; Booking finance, sales,
+    content_creator) is never overwritten: 409 preset_would_replace naming it, no DB write, no audit, no Cognito call."""
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role=cis, booking=booking)
+    with pytest.raises(sd.StaffDirectoryError) as exc:
+        await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, preset="pricing_team")
+    assert exc.value.status == 409 and exc.value.code == "preset_would_replace"
+    assert lost in exc.value.detail
+    assert db.row(uid)["role"] == cis and db.grants.get((uid, "booking")) == booking
+    assert db.audit == []
+    stub.assert_no_pending_responses()
+
+
+@pytest.mark.asyncio
+async def test_pricing_team_preset_keeps_roles_that_already_have_the_rights(db, stubbed):
+    cognito, stub = stubbed
+    lead = db.add(email=NEW_EMAIL, role="content_lead", booking="admin")
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=lead, preset="pricing_team")
+    assert result.status == sd.STATUS_OK and db.audit == []           # nothing to raise: no write, no Cognito call
+    assert db.row(lead)["role"] == "content_lead" and db.grants[(lead, "booking")] == "admin"
+    _expect(stub, "admin_add_user_to_group", _group("owner@adventure.asia", "booking-contracting"))
+    result = await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=db.owner, preset="pricing_team")
+    assert db.row(db.owner)["role"] == "admin"                        # an owner is never demoted by the preset
+    assert db.audit[-1]["details"] == {"booking_role": {"before": None, "after": "contracting"},
+                                       "preset": "pricing_team"}
+    stub.assert_no_pending_responses()
+
+
+@pytest.mark.asyncio
 async def test_preset_is_sent_alone_and_only_by_an_owner(db, stubbed):
     cognito, _ = stubbed
     uid = db.add(email=NEW_EMAIL, role="content")
@@ -1135,7 +1192,9 @@ def test_roles_route_refuses_bad_crm_input(api, db):
     client, _, token = api
     uid = db.add(email=NEW_EMAIL, role="content")
     for body, status in (({"crm_roles": ["boss"]}, 422), ({"crm_roles": "ops"}, 422), ({"preset": "boss"}, 422),
-                         ({"preset": "platform_owner", "role": "admin"}, 400)):
+                         ({"preset": "platform_owner", "role": "admin"}, 400),
+                         ({"preset": "pricing_team", "booking_role": "sales"}, 400),
+                         ({"preset": "pricing_team"}, 409)):          # AA-1091: would replace CIS content
         resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json=body)
         assert resp.status_code == status, (body, resp.text)
     assert db.audit == [] or all(a["action"] != sd.StaffAudit.ROLES_CHANGED for a in db.audit)

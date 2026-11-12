@@ -47,6 +47,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
+  "DELETE /admin/reference-prices/{source_key}": {
+    "capability": "reference_price.write",
+    "module": "api.routers.admin_reference_prices"
+  },
   "DELETE /admin/tenants/{tenant_id}/assignments/{admin_user_id}": {
     "capability": "tenant.assign",
     "module": "api.routers.admin_tenant360"
@@ -647,6 +651,18 @@
     "capability": "ops.read|lab.read",
     "module": "api.routers.admin_quality_lineage"
   },
+  "GET /admin/reference-prices": {
+    "capability": "reference_price.read",
+    "module": "api.routers.admin_reference_prices"
+  },
+  "GET /admin/reference-prices/export": {
+    "capability": "reference_price.read",
+    "module": "api.routers.admin_reference_prices"
+  },
+  "GET /admin/reference-prices/{source_key}/history": {
+    "capability": "reference_price.read",
+    "module": "api.routers.admin_reference_prices"
+  },
   "GET /admin/reports": {
     "capability": "ops.read",
     "module": "api.routers.admin_reports"
@@ -1075,6 +1091,10 @@
     "capability": "staff.write",
     "module": "api.routers.admin_platform"
   },
+  "PATCH /admin/reference-prices/{source_key}": {
+    "capability": "reference_price.write",
+    "module": "api.routers.admin_reference_prices"
+  },
   "PATCH /admin/settings/seo": {
     "capability": "content.settings.write",
     "module": "api.routers.admin_settings"
@@ -1490,6 +1510,18 @@
   "POST /admin/raw-tours/{tour_id}/set-active": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/reference-prices/accept": {
+    "capability": "reference_price.write",
+    "module": "api.routers.admin_reference_prices"
+  },
+  "POST /admin/reference-prices/import": {
+    "capability": "reference_price.write",
+    "module": "api.routers.admin_reference_prices"
+  },
+  "POST /admin/reference-prices/parse": {
+    "capability": "reference_price.write",
+    "module": "api.routers.admin_reference_prices"
   },
   "POST /admin/reports/snapshots": {
     "capability": "ops.write",

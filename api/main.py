@@ -87,6 +87,7 @@ from api.routers.admin_writing_memory import router as admin_writing_memory_rout
 from api.routers.admin_claim_labels import router as admin_claim_labels_router  # AA-1048 W2
 from api.routers.admin_claim_shadow import router as admin_claim_shadow_router  # AA-1050 W4
 from api.routers.admin_facts import router as admin_facts_router  # AA-814
+from api.routers.admin_reference_prices import router as admin_reference_prices_router  # AA-1091
 from api.routers.admin_reports import router as admin_reports_router  # AA-1003
 from api.routers.admin_quality_funnel import router as admin_quality_funnel_router  # AA-900 W0
 from api.routers.admin_quality_lineage import router as admin_quality_lineage_router  # AA-1052 W6
@@ -369,6 +370,7 @@ app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-mem
 app.include_router(admin_claim_labels_router)  # AA-1048 W2 — /admin/writing-memory/claim-labels (no include prefix)
 app.include_router(admin_claim_shadow_router)  # AA-1050 W4 — /admin/writing-memory/claim-shadow (no include prefix)
 app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
+app.include_router(admin_reference_prices_router)  # AA-1091 — /admin/reference-prices (tour reference prices)
 app.include_router(admin_reports_router)  # AA-1003 — /admin/reports (report register, runs; no include prefix)
 app.include_router(admin_quality_funnel_router)  # AA-900 W0 — GET /admin/quality/funnel (CIS-08 snapshot, $0)
 app.include_router(admin_quality_lineage_router)  # AA-1052 W6 — GET /admin/quality/lineage/* (stored fields, $0)

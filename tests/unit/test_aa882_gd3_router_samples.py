@@ -100,6 +100,8 @@ SAMPLES = [
     ("admin_quality_lineage", "GET", "/admin/quality/lineage/coverage", None),   # AA-1052 W6 (ops.read or lab.read)
     ("admin_facts", "GET", "/admin/facts", None),      # AA-814
     ("admin_facts", "PATCH", "/admin/facts/{fact_id}", {"body": "b", "expected_updated_at": "2026-10-29T08:00:00Z"}),
+    ("admin_reference_prices", "GET", "/admin/reference-prices", None),   # AA-1091 (content reads, admin writes)
+    ("admin_reference_prices", "POST", "/admin/reference-prices/accept", {"source_keys": ["k"]}),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
 ]
