@@ -25,8 +25,9 @@
 --        updated_by / created_at / updated_at
 --      No FK: raw_tours.source_key is not unique (one key, several source versions). No tenant column: AA master tours
 --      only (the writer checks the key against the AA master tenant's active rows).
---   2. GRANT cis_app SELECT, INSERT, UPDATE, DELETE (the admin routes write, the list reads), catalog_owner SELECT (the
---      Booking contract view of the next file reads it under the catalog recipe).
+--   2. GRANT cis_app SELECT, INSERT, UPDATE, DELETE (the admin routes write, the list reads). catalog_owner's SELECT
+--      (the Booking contract view reads it under the catalog recipe) is granted by 402: an expand file grants only to
+--      the owner's runtime roles.
 --   3. Register 401.
 --
 -- PII (DM-6.1). None: a price, codes, the source price text (business data already in raw_tours) and staff actor ids
@@ -100,7 +101,6 @@ COMMENT ON COLUMN silver_aa_internal.tour_reference_price.price_raw_seen IS
     'AA-1091 (401): the raw_tours.price_raw the value was set against; a different current text = needs review.';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON silver_aa_internal.tour_reference_price TO cis_app;
-GRANT SELECT ON silver_aa_internal.tour_reference_price TO catalog_owner;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
 VALUES ('401', now(), 'AA-1091: silver_aa_internal.tour_reference_price (structured reference price per catalog key)')

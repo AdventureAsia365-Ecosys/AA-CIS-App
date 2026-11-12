@@ -91,6 +91,9 @@ def test_columns_owner_barrier_and_consumers(cur):
         assert cur.fetchone()[0] is False, role
     cur.execute("SELECT has_schema_privilege('catalog_owner', 'catalog', 'CREATE') AS ok")
     assert cur.fetchone()[0] is False
+    cur.execute("SELECT has_table_privilege('catalog_owner', 'silver_aa_internal.tour_reference_price', 'SELECT') AS a, "
+                "has_table_privilege('catalog_owner', 'silver_aa_internal.tour_reference_price', 'UPDATE') AS b")
+    assert cur.fetchone() == (True, False)
 
 
 def test_one_row_per_live_tour_and_the_status_rule(cur):

@@ -23,7 +23,10 @@
 --      SELECT to booking only. Contract v2: columns are only appended; a change of meaning is a _v3 view. The values are
 --      reference only, never a selling price: Booking never shows them to an agency or a traveller as a contract price
 --      and never puts them in its price.from.v1 view.
---   2. Register 402.
+--   2. catalog_owner gets SELECT on silver_aa_internal.tour_reference_price (401), the table the view reads (the
+--      catalog_owner_aa_master_read policy already narrows its raw_tours read to AA master rows; the price table has
+--      AA master keys only).
+--   3. Register 402.
 --
 -- Behaviour. None on apply: nothing reads the view until AA-Booking reads it (feature-detected, like v1).
 --
@@ -70,6 +73,7 @@ BEGIN
     END IF;
 END $$;
 
+GRANT SELECT ON silver_aa_internal.tour_reference_price TO catalog_owner;
 GRANT CREATE ON SCHEMA catalog TO catalog_owner;
 SET LOCAL ROLE catalog_owner;
 

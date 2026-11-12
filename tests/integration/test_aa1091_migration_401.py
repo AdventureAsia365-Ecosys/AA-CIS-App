@@ -1,8 +1,8 @@
 """AA-1091 item 5 — CIS 401 silver_aa_internal.tour_reference_price on real Postgres (conftest replays every migration).
 
 The table, its key (one row per catalog key), its CHECKs (amount range, ISO currency shape, basis and origin values,
-review pair, text lengths), the grants (cis_app SELECT / INSERT / UPDATE / DELETE, catalog_owner SELECT for the 402
-view) and the registration. The writers and readers are tested in the code PR (test_aa1091_reference_price_db.py).
+review pair, text lengths), the grants (cis_app SELECT / INSERT / UPDATE / DELETE; catalog_owner's SELECT comes with
+402) and the registration. The writers and readers are tested in the code PR (test_aa1091_reference_price_db.py).
 
 Invented values only; everything runs in a transaction that is rolled back."""
 import os
@@ -91,7 +91,7 @@ async def test_401_grants(conn):
     for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert await conn.fetchval("SELECT has_table_privilege('cis_app', $1, $2) AS ok", TABLE, priv) is True, priv
     if await conn.fetchval("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'catalog_owner') AS ok"):
-        assert await conn.fetchval("SELECT has_table_privilege('catalog_owner', $1, 'SELECT') AS ok", TABLE) is True
+        # 402 (skipped by the replay) grants catalog_owner SELECT; never a write
         assert await conn.fetchval("SELECT has_table_privilege('catalog_owner', $1, 'INSERT') AS ok", TABLE) is False
     for role in ("booking", "tripplanner", "crm_app"):
         if await conn.fetchval("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS ok", role):
