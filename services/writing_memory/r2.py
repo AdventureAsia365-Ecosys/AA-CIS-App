@@ -84,7 +84,10 @@ services/writer_proof/splits.py) and pre-registered runs.
   - `prereg_id` / `prereg_sha256` (set by the W5 proof runner, services/writer_proof/runner.py, never by hand): the
     run records them in `details.prereg`, needs a fixed sample, a side and a pinned judge, logs under `adhoc_aa1051`
     (cfg.W5_STAGE), and is refused at $0 when an earlier run of the same pre-registration that already has a result
-    recorded another sha (the file was edited after its first result).
+    recorded another sha (the file was edited after its first result), or when an earlier run of the same arm already
+    has a result (a pre-registered decision runs once, `prereg_refusal`). A null run (prereg workflow `null`) is
+    refused at $0 unless its control was written under today's writer configuration (`null_config_problems`), so B
+    == A by construction; checked by the DRY RUN and again on the worker at the run's start.
 
 CLI (inside the api/worker container; DRY RUN prints the plan and the estimate, $0):
   python -m services.writing_memory.r2 --writer a1 [--release <id>] [--tiers fact_dense,long_9d] [--limit 8]
@@ -122,6 +125,7 @@ RUN_KINDS = ("r2", "reverify")
 GOALS = ("non_inferior", "improve")
 EVAL_SPLITS = ("dev", "cal", "gate")          # AA-1051: shared.eval_golden_split (CIS 399)
 PREREG_ARMS = ("B", "A_prime")                # AA-1051: the arms a pre-registered run may be
+NULL_WORKFLOW = "null"                        # AA-1051: the W5 eval null run (writer_proof.prereg.WORKFLOWS)
 MAX_SAMPLE_IDS = 200
 _SAMPLE_RE = re.compile(r"^[a-z0-9-]{1,40}$")
 _PREREG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -159,7 +163,9 @@ class Store(Protocol):
     async def month_spend(self) -> float: ...
     async def item_cost_samples(self, writer: str) -> list[float]: ...
     # AA-1051: called only for a pre-registered run (conf.prereg_id): the earlier runs of that pre-registration
-    # async def prereg_runs(self, prereg_id: str) -> list[dict]: [{run_id, sha256, results}]
+    # async def prereg_runs(self, prereg_id: str) -> list[dict]: [{run_id, sha256, arm, results}]
+    # ... and only for a null run (prereg_workflow NULL_WORKFLOW): the stored fingerprint of the control run
+    # async def run_fingerprint(self, run_id: str) -> Optional[dict]
 
 
 @dataclass
@@ -382,12 +388,48 @@ def calibration_split(calib: list[dict], planned: list[dict], eval_split: Option
 
 def prereg_refusal(conf: "R2Config", prior: list[dict]) -> Optional[str]:
     """AA-1051: why a pre-registered run may not start, or None. An earlier run of the same pre-registration that has
-    at least one result and recorded another sha means the file was edited after its first result."""
+    at least one result and recorded another sha means the file was edited after its first result; one that recorded
+    the same arm means this arm already ran (a pre-registered decision is taken once: no same-configuration rerun until
+    it passes, the audit's R2-gate). A run with no result (refused at $0) does not count."""
     for r in prior or []:
         if int(r.get("results") or 0) > 0 and r.get("sha256") != conf.prereg_sha256:
             return (f"pre-registration {conf.prereg_id} was edited after its first result: run {r.get('run_id')} "
                     f"recorded sha {str(r.get('sha256'))[:12]}…, the file now hashes to {conf.prereg_sha256[:12]}…")
+    for r in prior or []:
+        if int(r.get("results") or 0) > 0 and r.get("arm") == conf.prereg_arm:
+            return (f"pre-registration {conf.prereg_id} arm {conf.prereg_arm} already has a run with results "
+                    f"({r.get('run_id')}): a pre-registered proof runs once; register a new file for a new attempt")
     return None
+
+
+def null_config_problems(control_fp: Optional[dict], now_fp: Optional[dict]) -> list[str]:
+    """AA-1051: why a W5 null run (prereg workflow NULL_WORKFLOW) would not be null by construction, [] when it is.
+    The null run regenerates with today's writers (B) against the control's stored outputs (A): B == A only when the
+    control was written under the same configuration (the audit: "A = stored finals at matching config_fp"). Stricter
+    than `releases.reverify_reasons`: a control without a config_fp (a baseline import of frozen text, a run before
+    W0), or a component missing / unavailable on either side, is a problem, never "no change". mode_flags is compared
+    the reverify way (only by the worker against a worker record: an exec session does not know the worker env).
+    Pure."""
+    from services.writing_memory import config_fp as cf
+    if not isinstance(control_fp, dict) or not isinstance(control_fp.get("config_fp"), dict):
+        return ["the control run records no writer configuration (config_fp): a baseline import of frozen text or a "
+                "run from before W0. A null run needs controls written under the current configuration: run a "
+                "reverify of the writer's active release on this golden set version first"]
+    now_fp = now_fp or {}
+    out = [f"{k} differs from the control's" for k in ("golden_set", "writer_route", "gate_taxonomy")
+           if control_fp.get(k) != now_fp.get(k)]
+    old = control_fp["config_fp"].get("parts") or {}
+    new = (now_fp.get("config_fp") or {}).get("parts") or {}
+    for c in cf.COMPONENTS:
+        if c == "mode_flags":
+            continue
+        if c not in old or c not in new or cf.UNAVAILABLE in (old[c], new[c]):
+            out.append(f"config_fp {c} cannot be compared (missing or unavailable)")
+        elif old[c] != new[c]:
+            out.append(f"config_fp {c} differs from the control's")
+    if "mode_flags" in cf.reverify_components(control_fp, now_fp):
+        out.append("config_fp mode_flags differs from the control's")
+    return out
 
 
 def kappa_by_side(records: list[dict], side: Optional[str]) -> Optional[dict]:
@@ -603,6 +645,11 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     control_run, sources = ctl["control_run"], ctl["sources"]
     if ctl_mode == "rejudge" and control_run is None:
         raise R2Refused("no control run (no active release with an eval run, no baseline import)")
+    if conf.prereg_workflow == NULL_WORKFLOW:            # AA-1051: re-checked on the worker, at the run's start
+        why = null_config_problems(await store.run_fingerprint(control_run) if control_run else None,
+                                   await store.fingerprint(writer))
+        if why:
+            raise R2Refused("the null run is not null by construction: " + "; ".join(why))
     calib_all, counting_ids = calibration_split(calibration_items(items), planned, conf.eval_split)
     calib = [it for it in calib_all if it["item_id"] in counting_ids]
     frozen_src = (await store.calibration_sources(baseline, [it["item_id"] for it in calib_all])
@@ -1215,6 +1262,12 @@ class PgStore:
             rows = await conn.fetch(PREREG_RUNS_SQL, prereg_id)
         return [dict(r) for r in rows]
 
+    async def run_fingerprint(self, run_id):
+        """AA-1051: the fingerprint a run stored (prompt_eval_runs.fingerprint), or None."""
+        async with self.pool.acquire() as conn:
+            v = await conn.fetchval("SELECT fingerprint FROM shared.prompt_eval_runs WHERE id = $1::uuid", run_id)
+        return _j(v)
+
     async def item_cost_samples(self, writer):
         """S271 W0 (F8): the logged cost of the writer's last candidate items (finished r2 / reverify runs, no seeded
         fault: a seeded item makes no writer call), newest first. What `item_estimate` reserves from."""
@@ -1340,6 +1393,12 @@ async def estimate(pool, conf: R2Config) -> dict:
         refusals.append(f"controls found {ctl['plan']['found']} < planned {ctl['plan']['planned']}")
     if family_check != "ok":
         refusals.append("judge family")
+    null_check = None
+    if conf.prereg_workflow == NULL_WORKFLOW:            # AA-1051: B == A by construction, or refused at $0
+        null_check = null_config_problems(
+            await store.run_fingerprint(ctl["control_run"]) if ctl["control_run"] else None,
+            await store.fingerprint(conf.writer))
+        refusals.extend(f"null run: {w}" for w in null_check)
     # calibration (every labelled item) + the planned controls (the same call for release 0's frozen controls)
     n_written = 0 if conf.calibrate_only else sum(n.values())
     judge_only = (len(calib_all) + n_written) * cfg.JUDGE_CALL_ESTIMATE_USD
@@ -1373,7 +1432,8 @@ async def estimate(pool, conf: R2Config) -> dict:
                                                      if not it.get("trap")).items())),
             "calibration_judged_items": len(calib_all),
             "prereg": ({"id": conf.prereg_id, "sha256": conf.prereg_sha256, "prior_runs": prereg_prior}
-                       if conf.prereg_id else None)}
+                       if conf.prereg_id else None),
+            "null_check": null_check}
 
 
 def _parse(argv=None) -> tuple[R2Config, argparse.Namespace]:

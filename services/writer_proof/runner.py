@@ -6,9 +6,16 @@ with the pinned judge, logged under stage adhoc_aa1051:
   B        the sample, candidate = the current writers (or the pre-registered release), control A = the stored output
            re-judged at $0 writer cost (release 0's frozen golden text);
   A_prime  only with noise_sample_ids: the same configuration again on the noise sample (run-to-run noise).
-The null run is the T9 blog workflow with no candidate change (B == A by configuration): it must come out
-non_inferior with every item paired, one judge and no hard stop 1, or the eval itself is not stable enough to judge a
-real candidate.
+The null run is the T9 blog workflow with no candidate change: B == A by construction, i.e. the control's stored
+outputs were written under today's writer configuration (r2.null_config_problems: the control run's fingerprint and
+config_fp equal the current ones; a baseline import of frozen text is refused, a reverify on the current golden
+version comes first). It must come out non_inferior with every item paired, one judge and no hard stop 1, or the eval
+itself is not stable enough to judge a real candidate. Checked by `plan` and again by R2 on the worker.
+
+Once only: a pre-registration runs one time. A live run is refused while a job of it is queued or running, and once
+any of its runs has results (R2 also refuses an arm that already has a run with results); each arm's job carries an
+idempotency key (pre-registration, sha, arm, attempt), so two operators starting the same run queue it once. `report`
+decides on the first run with results of each arm and lists any other as a rerun.
 
 Commands (DRY RUN unless `run --live`; every command prints one JSON document, ids and counts only):
 
@@ -79,6 +86,15 @@ def _power(pre: pr.Prereg, r1_report: Optional[str], instrument: Optional[str]) 
         return {"checked": False, "why": str(e)}
 
 
+def arm_caps(cap: Any, estimates: dict[str, float]) -> dict[str, float]:
+    """Each arm's run cap: its share of the workflow cap (spend.split_cap), at most the R2 run cap. Pure."""
+    from services.writing_memory import config as cfg
+    c = spend._num(cap)
+    if not estimates or c is None or c <= 0:
+        return {}
+    return {arm: min(share, cfg.R2_RUN_CAP_USD) for arm, share in spend.split_cap(c, estimates).items()}
+
+
 async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrument: Optional[str] = None,
                cap_usd: Optional[float] = None) -> dict:
     """The DRY RUN of a proof ($0, reads only). `blocking` lists what would refuse a live run (besides --confirm)."""
@@ -101,6 +117,19 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
                         f"{gs['name']}@{gs['version']}: register a new file for the new version")
     async with pool.acquire() as conn:
         out["spend"] = await spend.read_spend(conn, pre.workflow)
+        jobs = await spend.read_jobs(conn, pre.id)
+        prior = [dict(r) for r in await conn.fetch(r2.PREREG_RUNS_SQL, pre.id)]
+    out["spend"]["reserved"] = spend.reserved(jobs["active"], pre.workflow)
+    out["jobs"] = {"active": jobs["active"], "attempts": jobs["attempts"]}
+    mine = [j["job_id"] for j in jobs["active"] if j.get("prereg_id") == pre.id]
+    if mine:
+        blocking.append(f"a job of {pre.id} is already queued or running ({', '.join(mine)}): wait for its result; a "
+                        "second run would spend the cap again")
+    done = [r["run_id"] for r in prior if int(r.get("results") or 0) > 0]
+    out["prior_runs"] = [{k: r.get(k) for k in ("run_id", "arm", "results", "verdict", "stop_reason")} for r in prior]
+    if done:
+        blocking.append(f"{pre.id} already has a run with results ({', '.join(done)}): a pre-registered proof runs "
+                        "once (read it with `report`; register a new file for a new attempt)")
     estimates: dict[str, float] = {}
     out["arms"] = {}
     if pre.doc.get("sample_ids"):
@@ -111,6 +140,7 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
                 blocking.append(f"{arm}: {e}")
                 continue
             estimates[arm] = float(est["estimated_usd_max"])
+            # R2's own "estimated > cap" compares with a placeholder cap: the arm's real cap is checked below
             blocking.extend(f"{arm}: {w}" for w in est["would_refuse"] if not w.startswith("estimated "))
             out["arms"][arm] = est
     else:
@@ -120,15 +150,22 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
     gate_cap = cap_usd if cap_usd is not None else pre.doc["cap_usd"]
     out["spend_gate_preview"] = spend.refusals(
         workflow=pre.workflow, prereg_cap=float(pre.doc["cap_usd"]), cap_usd=gate_cap, confirm=spend.CONFIRM_TOKEN,
-        spent_workflow=out["spend"]["workflow"], spent_total=out["spend"]["total"], estimate_usd=total_est)
+        spent_workflow=out["spend"]["workflow"], spent_total=out["spend"]["total"], estimate_usd=total_est,
+        reserved_workflow=out["spend"]["reserved"]["workflow"], reserved_total=out["spend"]["reserved"]["total"])
     blocking.extend(out["spend_gate_preview"])
-    out["arm_caps"] = spend.split_cap(float(gate_cap), estimates) if estimates else {}
+    out["arm_caps"] = arm_caps(gate_cap, estimates)
+    for arm, est in estimates.items():
+        # each arm's job stops at its own cap: an estimate above it would pay part of the run for an invalid verdict
+        if est > out["arm_caps"][arm] + 1e-4:
+            blocking.append(f"{arm}: estimated {est} USD > its run cap {out['arm_caps'][arm]} (its share of the "
+                            f"{gate_cap} USD cap, at most the R2 run cap {r2.cfg.R2_RUN_CAP_USD}): plan fewer items")
     out["power"] = _power(pre, r1_report, instrument)
     if not out["power"].get("checked"):
         blocking.append(f"power not checked: {out['power'].get('why')}")
     elif not out["power"]["adequate"]:
-        blocking.append(f"underpowered: power {out['power']['power_at_zero']} < {out['power']['min_power']} "
-                        f"(n {out['power']['n_items']}, needs {out['power']['n_needed']})")
+        blocking.append(f"underpowered ({out['power']['rule']} at a true effect of {out['power']['true_effect']}): "
+                        f"power {out['power']['power']} < {out['power']['min_power']} "
+                        f"(n {out['power']['n_items']}, needs {out['power']['n_needed'] or 'no n: effect <= margin'})")
     out["blocking"] = list(dict.fromkeys(blocking))
     out["ready_for_live"] = not out["blocking"]
     return out
@@ -142,7 +179,8 @@ async def run_live(pool, pre: pr.Prereg, *, r1_report: str, instrument: Optional
     p = await plan(pool, pre, r1_report=r1_report, instrument=instrument, cap_usd=cap_usd)
     gate = spend.refusals(workflow=pre.workflow, prereg_cap=float(pre.doc["cap_usd"]), cap_usd=cap_usd,
                           confirm=confirm, spent_workflow=p["spend"]["workflow"], spent_total=p["spend"]["total"],
-                          estimate_usd=p["estimated_usd_max"])
+                          estimate_usd=p["estimated_usd_max"], reserved_workflow=p["spend"]["reserved"]["workflow"],
+                          reserved_total=p["spend"]["reserved"]["total"])
     blocking = list(dict.fromkeys(p["blocking"] + gate))
     if blocking:
         raise RunRefused("; ".join(blocking))
@@ -154,10 +192,36 @@ async def run_live(pool, pre: pr.Prereg, *, r1_report: str, instrument: Optional
     queued = {}
     for arm, conf in arm_confs(pre, caps=p["arm_caps"], triggered_by=f"w5:{requested_by}").items():
         conf.validate()
-        job_id, created = await enqueue(pool, R2, payload_of(conf), created_by=conf.triggered_by)
-        queued[arm] = {"job_id": job_id, "created": created, "cap_usd": conf.cap_usd}
+        # one job per (pre-registration, sha, arm, attempt): a concurrent second start computes the same key and
+        # gets the first one's job back instead of a second paid run
+        key = idempotency_key(pre, arm, p["jobs"]["attempts"].get(arm, 0) + 1)
+        job_id, created = await enqueue(pool, R2, payload_of(conf), created_by=conf.triggered_by,
+                                        idempotency_key=key)
+        queued[arm] = {"job_id": job_id, "created": created, "cap_usd": conf.cap_usd, "idempotency_key": key}
     return {"prereg": pre.id, "sha256": pre.sha256, "queued": queued, "estimated_usd_max": p["estimated_usd_max"],
             "cap_usd": cap_usd}
+
+
+def idempotency_key(pre: pr.Prereg, arm: str, attempt: int) -> str:
+    """The job key of one arm's run. `attempt` = jobs ever queued for that arm + 1: a run refused at $0 (no result)
+    may be started again, never two at once. Pure."""
+    return f"w5:{pre.id}:{pre.sha256[:16]}:{arm}:{attempt}"
+
+
+def counted_runs(prior: list[dict]) -> tuple[dict[str, str], list[dict]]:
+    """({arm: run id}, reruns): the FIRST run with results of each arm decides (oldest first, PREREG_RUNS_SQL order);
+    any later run of the same arm with results is a rerun, reported and never counted. Pure."""
+    counted: dict[str, str] = {}
+    reruns: list[dict] = []
+    for r in prior:
+        arm = r.get("arm")
+        if not arm or int(r.get("results") or 0) <= 0:
+            continue
+        if arm in counted:
+            reruns.append({"run_id": r["run_id"], "arm": arm, "results": int(r["results"])})
+        else:
+            counted[arm] = r["run_id"]
+    return counted, reruns
 
 
 async def report(pool, pre: pr.Prereg) -> dict:
@@ -172,13 +236,9 @@ async def report(pool, pre: pr.Prereg) -> dict:
     lock = pr.lock_problem(pre, prior)
     if lock:
         return {"prereg": pre.id, "ok": False, "refused": lock}
-    latest = {}
-    for r in runs:                                       # the newest run of each arm
-        arm = (r.get("prereg") or {}).get("arm")
-        if arm:
-            latest[arm] = r["run_id"]
+    latest, reruns = counted_runs(prior)                 # the first run with results of each arm
     if "B" not in latest:
-        return {"prereg": pre.id, "ok": False, "refused": "no B run yet", "runs": len(runs)}
+        return {"prereg": pre.id, "ok": False, "refused": "no B run with results yet", "runs": len(runs)}
     rows = {rid: [x for x in results if x["run_id"] == rid] for rid in latest.values()}
     det = details.get(latest["B"])
     det = json.loads(det) if isinstance(det, str) else (det or {})
@@ -186,7 +246,10 @@ async def report(pool, pre: pr.Prereg) -> dict:
                               a_prime_rows=rows.get(latest.get("A_prime"), None) if "A_prime" in latest else None)
     cost = cost_report.report(runs, ledger, results)
     computed = decision.computed_metrics(rows[latest["B"]], cost.pop("per_result"))
-    return {"prereg": pre.id, "sha256": pre.sha256, "ok": True, "runs": latest, "decision": verdict,
+    return {"prereg": pre.id, "sha256": pre.sha256, "ok": True, "runs": latest, "reruns": reruns,
+            "rerun_note": ("runs after the first one of an arm are reported, never counted: the verdict is the first "
+                           "run's") if reruns else None,
+            "decision": verdict,
             "computed": computed, "targets": decision.targets(pre.doc, computed), "cost": cost,
             "d12": {"workflow_cap_usd": pr.WORKFLOWS[pre.workflow]["cap_usd"], "total_cap_usd": pr.TOTAL_CAP_USD}}
 

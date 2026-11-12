@@ -15,14 +15,23 @@ the R1 calibration already measured: the claim instrument's own disagreement wit
   3. One paired difference d = B - A of one item, both judged independently, has Var(d) = 2 var_j + writer_sd^2
      (writer_sd: the pre-registration's assumption for the writer's own run-to-run spread; null = 0, so the result is
      an UPPER bound on power: the judge noise alone).
-  4. The decision (decision.py) declares non_inferior when mean(d) + z_(1-alpha) SE <= margin, SE = sqrt(Var(d) / n).
-     If the true difference is 0, power = Phi(margin / SE - z_(1-alpha)); the n that reaches min_power is
-     ceil((z_(1-alpha) + z_power)^2 Var(d) / margin^2), and the smallest margin the sample can resolve at min_power is
-     (z_(1-alpha) + z_power) SE.
+  4. The power of the pre-registered rule (decision.py), SE = sqrt(Var(d) / n), d signed so that positive = worse:
+     non_inferior  declared when mean(d) + z_(1-alpha) SE <= margin. At a true difference of 0,
+                   power = Phi(margin / SE - z_(1-alpha)); the n that reaches min_power is
+                   ceil((z_(1-alpha) + z_power)^2 Var(d) / margin^2), and the smallest margin the sample can resolve
+                   at min_power is (z_(1-alpha) + z_power) SE.
+     improve       declared when mean(d) + z_(1-alpha) SE < 0 AND -mean(d) >= margin, i.e. mean(d) <= -max(z SE,
+                   margin). At the pre-registered true improvement delta (power.effect_abs, > margin),
+                   power = Phi((delta - max(z_(1-alpha) SE, margin)) / SE): at delta == margin it is at most 0.5.
+                   The n that reaches min_power needs SE <= min(delta / (z_(1-alpha) + z_power),
+                   (delta - margin) / z_power); the smallest true improvement the sample detects at min_power is
+                   max((z_(1-alpha) + z_power) SE, margin + z_power SE).
+     The noise allowance (k SE_noise of the A' arm) is unknown before the run: the margin stands for it, so both are
+     upper bounds when the A' noise turns out larger.
 
-`adequate` is power >= min_power at the pre-registered n and margin. An underpowered pre-registration is refused by the
-runner's spend gate (a paid run that cannot decide is waste: the S271 lesson "an eval refuses at $0 when it cannot
-give a valid verdict").
+`adequate` is power >= min_power at the pre-registered n, margin, rule and (improve) true effect. An underpowered
+pre-registration is refused by the runner's spend gate (a paid run that cannot decide is waste: the S271 lesson "an
+eval refuses at $0 when it cannot give a valid verdict").
 
     python -m services.writer_proof.power --r1-report <scratch>/r1-report.json --instrument <id> --prereg <id|path>
 """
@@ -86,12 +95,18 @@ def judge_variance(rates: list[tuple[str, float, int]], *, metric: str, claims_p
 
 
 def check(votes_by_claim: dict[str, list], *, n_items: int, margin_abs: float, metric: str, alpha: float = 0.05,
-          min_power: float = 0.8, claims_per_item: int = 60, writer_sd: Optional[float] = None) -> dict:
-    """The power record of one pre-registered decision. Pure."""
+          min_power: float = 0.8, claims_per_item: int = 60, writer_sd: Optional[float] = None,
+          rule: str = "non_inferior", effect_abs: Optional[float] = None) -> dict:
+    """The power record of one pre-registered decision (`rule` non_inferior at a true difference of 0, or improve at
+    the true improvement `effect_abs`). Pure."""
     if n_items < 1:
         raise PowerRefused("the pre-registration has no sample ids")
     if not margin_abs > 0:
         raise PowerRefused("margin_abs must be > 0")
+    if rule not in ("non_inferior", "improve"):
+        raise PowerRefused(f"no power rule for decision rule {rule!r}")
+    if rule == "improve" and not (effect_abs is not None and effect_abs > 0):
+        raise PowerRefused("an improve decision needs the true improvement it is powered for (power.effect_abs)")
     rates = claim_rates(votes_by_claim)
     if len(rates) < MIN_CLAIMS:
         raise PowerRefused(f"{len(rates)} claims with >= 2 real votes; >= {MIN_CLAIMS} needed for a variance")
@@ -101,16 +116,41 @@ def check(votes_by_claim: dict[str, list], *, n_items: int, margin_abs: float, m
     nd = NormalDist()
     z_a, z_b = nd.inv_cdf(1 - alpha), nd.inv_cdf(min_power)
     se = math.sqrt(var_d / n_items)
-    power = 1.0 if se == 0 else nd.cdf(margin_abs / se - z_a)
-    n_needed = 1 if var_d == 0 else math.ceil((z_a + z_b) ** 2 * var_d / margin_abs ** 2)
-    return {"metric": metric, "claims": len(rates), "claims_not_unanimous": flips,
+    if rule == "non_inferior":
+        effect = 0.0
+        power = 1.0 if se == 0 else nd.cdf(margin_abs / se - z_a)
+        n_needed: Optional[int] = 1 if var_d == 0 else math.ceil((z_a + z_b) ** 2 * var_d / margin_abs ** 2)
+        resolvable = {"min_resolvable_margin": round((z_a + z_b) * se, 6)}
+    else:
+        effect = float(effect_abs)
+        if se == 0:
+            power = 1.0 if effect >= margin_abs else 0.0
+        else:
+            power = nd.cdf((effect - max(z_a * se, margin_abs)) / se)
+        n_needed = _improve_n(var_d, effect, margin_abs, z_a, z_b)
+        resolvable = {"min_detectable_effect": round(max((z_a + z_b) * se, margin_abs + z_b * se), 6)}
+    return {"metric": metric, "rule": rule, "true_effect": effect, "claims": len(rates),
+            "claims_not_unanimous": flips,
             "claims_per_item": claims_per_item, "pseudo_items": jv["pseudo_items"], "scaled": jv["scaled"],
             "judge_var_per_item": round(jv["var"], 6), "writer_sd": writer_sd,
             "var_diff": round(var_d, 6), "n_items": n_items, "se_diff": round(se, 6), "margin_abs": margin_abs,
-            "alpha": alpha, "power_at_zero": round(power, 4), "min_power": min_power,
-            "n_needed": n_needed, "min_resolvable_margin": round((z_a + z_b) * se, 6),
+            "alpha": alpha, "power": round(power, 4), "min_power": min_power,
+            "n_needed": n_needed, **resolvable,
             "adequate": power >= min_power,
             "bound": "upper bound (judge noise only)" if writer_sd is None else "judge noise + assumed writer_sd"}
+
+
+def _improve_n(var_d: float, effect: float, margin: float, z_a: float, z_b: float) -> Optional[int]:
+    """The n at which the improve rule reaches the target power at the true improvement `effect`; None when no n can
+    (effect <= margin: the rule then passes at most half the time)."""
+    if effect <= margin:
+        return None
+    if var_d == 0:
+        return 1
+    se_max = effect / (z_a + z_b)
+    if z_b > 0:
+        se_max = min(se_max, (effect - margin) / z_b)
+    return max(1, math.ceil(var_d / se_max ** 2))
 
 
 def check_prereg(pre: Any, votes_by_claim: dict[str, list]) -> dict:
@@ -123,7 +163,8 @@ def check_prereg(pre: Any, votes_by_claim: dict[str, list]) -> dict:
                  ["margin_abs"]), metric=doc["decision"]["metric"], alpha=float(doc["decision"]["alpha"]),
                  min_power=float(pw.get("min_power", 0.8)),
                  claims_per_item=int(pw.get("claims_per_item") or DEFAULT_CLAIMS_PER_ITEM[writer]),
-                 writer_sd=pw.get("writer_sd"))
+                 writer_sd=pw.get("writer_sd"), rule=doc["decision"]["rule"],
+                 effect_abs=None if pw.get("effect_abs") is None else float(pw["effect_abs"]))
 
 
 def votes_of(report: dict, instrument: Optional[str]) -> dict[str, list]:

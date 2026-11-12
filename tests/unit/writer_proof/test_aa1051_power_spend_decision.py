@@ -46,7 +46,7 @@ def test_writer_sd_lowers_power():
     v = _votes(600, 7)
     a = power.check(v, n_items=20, margin_abs=1.0, metric="fail_claims_per_item", claims_per_item=60)
     b = power.check(v, n_items=20, margin_abs=1.0, metric="fail_claims_per_item", claims_per_item=60, writer_sd=1.5)
-    assert b["power_at_zero"] < a["power_at_zero"] and b["var_diff"] > a["var_diff"]
+    assert b["power"] < a["power"] and b["var_diff"] > a["var_diff"]
 
 
 def test_power_refuses_too_few_claims_and_bad_inputs():
@@ -75,6 +75,38 @@ def test_check_prereg_and_votes_of():
         power.votes_of({}, None)
 
 
+def test_improve_power_is_computed_at_the_pre_registered_effect():
+    v = _votes(600, 3)
+    kw = dict(n_items=12, margin_abs=0.5, metric="fail_claims_per_item", claims_per_item=60)
+    ni = power.check(v, **kw)
+    assert ni["rule"] == "non_inferior" and ni["true_effect"] == 0.0 and "min_resolvable_margin" in ni
+    # a true improvement equal to the margin: the improve rule passes at most about half the time, never adequate
+    at_margin = power.check(v, rule="improve", effect_abs=0.5, **kw)
+    assert at_margin["power"] <= 0.5 and not at_margin["adequate"] and at_margin["n_needed"] is None
+    # a large true improvement on a large sample is adequate; the same effect on 12 items is underpowered
+    big = power.check(v, rule="improve", effect_abs=1.0, **{**kw, "n_items": 200})
+    small = power.check(v, rule="improve", effect_abs=1.0, **kw)
+    assert big["adequate"] and big["power"] > small["power"]
+    assert small["n_needed"] > 12 and not small["adequate"] and small["min_detectable_effect"] > 1.0
+    with pytest.raises(power.PowerRefused, match="effect_abs"):
+        power.check(v, rule="improve", **kw)
+
+
+def test_improve_power_n_needed_reaches_the_target():
+    v = _votes(600, 3)
+    kw = dict(margin_abs=0.5, metric="fail_claims_per_item", claims_per_item=60, rule="improve", effect_abs=2.0)
+    n = power.check(v, n_items=12, **kw)["n_needed"]
+    assert power.check(v, n_items=n, **kw)["adequate"] and not power.check(v, n_items=max(1, n - 2), **kw)["adequate"]
+
+
+def test_check_prereg_passes_the_rule_and_the_effect():
+    d = json.loads(pr.path_for("w5-t9").read_text())
+    d.update(sample_ids=sorted(f"zz-{i:02d}" for i in range(12)))
+    pre = pr.from_doc(d)
+    out = power.check_prereg(pre, _votes(720, 4))
+    assert out["rule"] == "improve" and out["true_effect"] == d["power"]["effect_abs"] > d["decision"]["margin_abs"]
+
+
 # ── spend gate ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def _gate(**over):
@@ -101,6 +133,23 @@ def test_gate_passes_with_confirm_and_a_cap():
 ])
 def test_gate_refuses(over, needle):
     assert any(needle in r for r in _gate(**over))
+
+
+def test_gate_counts_what_queued_or_running_jobs_reserve():
+    assert any("reserve 5.0000" in r and "D12 cap 5.0" in r for r in _gate(reserved_workflow=5.0, reserved_total=5.0))
+    assert any("D12 total" in r for r in _gate(reserved_workflow=0.0, reserved_total=29.0))
+    assert any("fail closed" in r for r in _gate(reserved_total=None))
+    # T9 with --cap-usd 15: a first job queued with a 15 USD cap refuses a second start before any ledger row
+    t9 = dict(workflow="t9", prereg_cap=15.0, cap_usd=15.0, estimate_usd=12)
+    assert _gate(**t9) == [] and any("D12 cap 15.0" in r for r in _gate(**t9, reserved_workflow=15.0,
+                                                                          reserved_total=15.0))
+
+
+def test_reserved_sums_the_caps_by_workflow():
+    active = [{"job_id": "j1", "workflow": "t9", "cap_usd": 9.0}, {"job_id": "j2", "workflow": "t9", "cap_usd": 4.5},
+              {"job_id": "j3", "workflow": "null", "cap_usd": 5.0}]
+    assert spend.reserved(active, "t9") == {"workflow": 13.5, "total": 18.5}
+    assert spend.reserved([], "t9") == {"workflow": 0.0, "total": 0.0}
 
 
 def test_t9_cap_is_15_and_split_cap_never_passes_it():

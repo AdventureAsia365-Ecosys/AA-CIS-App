@@ -8,6 +8,7 @@ the real tables.
 
 Needs CIS 399 (shared.eval_golden_split): the code PR ships after the migration PR (MIG-4 chain), so CI replays it.
 A checkout without the file (the code branch before main has 399) skips this module."""
+import json
 import os
 import sys
 import uuid
@@ -45,6 +46,7 @@ async def conn():
         await c.execute("GRANT SELECT ON shared.tenants TO cis_app")
         await c.execute("GRANT SELECT, INSERT, DELETE ON shared.eval_golden_split TO cis_app")         # 399
         await c.execute("GRANT SELECT ON shared.llm_call_log TO cis_app")
+        await c.execute("GRANT SELECT, INSERT ON shared.job TO cis_app")                               # Dev grant
         await c.execute("DO $$ BEGIN IF to_regclass('shared.writing_memory_release') IS NOT NULL THEN "
                         "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.writing_memory_release TO cis_app; END IF; "
                         "END $$")
@@ -133,3 +135,46 @@ async def test_r2_store_reads_the_side_and_the_w5_queries_run(conn):
     runs, ledger, results = await cost_report.load(conn, prereg_id=None, run_ids=[base_run])
     assert [r["run_id"] for r in runs] == [base_run] and results and all(r["sample_id"] for r in results)
     assert cost_report.report(runs, ledger, results)["runs"][0]["ledger_rows"] == 0
+
+
+@pytest.mark.asyncio
+async def test_w5_job_reads_and_the_control_fingerprint(conn):
+    """The spend gate's queue reads (queued / running W5 jobs with their caps, the jobs per arm of one
+    pre-registration) and R2's control fingerprint read, on the real tables as cis_app."""
+    gs, b = _gs()
+    await conn.execute("SET LOCAL ROLE cis_app")
+    rep = await importer.run(gs, b, apply=True, conn=conn)
+    pid = f"zz-w5-{uuid.uuid4().hex[:6]}"
+    rows = [("queued", {"prereg_id": pid, "prereg_workflow": "t9", "prereg_arm": "B", "cap_usd": 9.5}),
+            ("running", {"prereg_id": "zz-other", "prereg_workflow": "null", "prereg_arm": "B", "cap_usd": 5}),
+            ("failed", {"prereg_id": pid, "prereg_workflow": "t9", "prereg_arm": "B", "cap_usd": 9.5}),
+            ("queued", {"writer": "t9_blog", "cap_usd": 2.0})]                     # not a W5 job
+    for status, payload in rows:
+        await conn.execute(
+            "INSERT INTO shared.job (kind, payload, status, locked_by, locked_until) "
+            "VALUES ($1, $2::jsonb, $3, CASE WHEN $3 = 'running' THEN 'pytest' END, "
+            "CASE WHEN $3 = 'running' THEN now() + interval '1 minute' END)",
+            spend.R2_JOB_KIND, json.dumps(payload), status)
+    jobs = await spend.read_jobs(conn, pid)
+    mine = [j for j in jobs["active"] if j["prereg_id"] in (pid, "zz-other")]
+    assert sorted((j["prereg_id"], j["status"], j["cap_usd"]) for j in mine) == [
+        (pid, "queued", 9.5), ("zz-other", "running", 5.0)]
+    assert all(j["prereg_id"] for j in jobs["active"]) and jobs["attempts"] == {"B": 2}
+    assert spend.reserved(mine, "t9") == {"workflow": 9.5, "total": 14.5}
+
+    class _Pool:
+        def acquire(self):
+            class _A:
+                async def __aenter__(self_):
+                    return conn
+
+                async def __aexit__(self_, *a):
+                    return False
+            return _A()
+
+    writer = gs.items[0]["writer"]
+    base_run = rep["db"]["baseline_runs"][writer]["run_id"]
+    fp = await r2.PgStore(_Pool()).run_fingerprint(base_run)
+    assert isinstance(fp, dict) and fp.get("golden_set") and "config_fp" not in fp
+    assert "no writer configuration" in r2.null_config_problems(fp, {"golden_set": fp["golden_set"]})[0]
+    assert await r2.PgStore(_Pool()).run_fingerprint(str(uuid.uuid4())) is None

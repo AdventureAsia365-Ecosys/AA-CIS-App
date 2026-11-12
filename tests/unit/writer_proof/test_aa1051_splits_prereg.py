@@ -112,6 +112,8 @@ def test_shipped_drafts_are_valid_drafts_within_d12(pid):
 def test_d12_caps_add_up_to_the_total():
     assert sum(w["cap_usd"] for w in pr.WORKFLOWS.values()) == pr.TOTAL_CAP_USD == 33.0
     assert spend.W5_STAGE == cfg.W5_STAGE
+    from services.jobs.writing_memory_job import R2
+    assert spend.R2_JOB_KIND == R2 and spend.R2_RUN_CAP_USD == cfg.R2_RUN_CAP_USD
 
 
 def test_registered_doc_is_valid_and_sha_ignores_formatting():
@@ -153,6 +155,24 @@ def test_decision_and_metric_problems():
     prim = [{"name": "cost_per_object_usd", "kind": "computed", "direction": "lower", "primary": True}]
     assert any("paired" in p for p in pr.problems(_doc(metrics=prim, decision={**d["decision"],
                                                                                 "metric": "cost_per_object_usd"})))
+
+
+def test_a_null_run_takes_no_release_and_no_improve_rule():
+    p = pr.problems(_doc(release_id="12345678-1234-1234-1234-123456789abc"))
+    assert any("null run takes no release_id" in x for x in p)
+    p = pr.problems(_doc(decision={"rule": "improve", "metric": "item_fail_rate", "margin_abs": 0.15, "alpha": 0.05,
+                                   "noise_se_k": 2.0},
+                         power={"min_power": 0.8, "writer_sd": None, "claims_per_item": 60, "effect_abs": 0.3}))
+    assert any("null run decides non_inferior" in x for x in p)
+
+
+@pytest.mark.parametrize("eff,needle", [(None, "needs power.effect_abs"), (0.1, "must be > decision.margin_abs"),
+                                        (-1, "effect_abs must be null or a number > 0"), (0.3, None)])
+def test_an_improve_rule_needs_an_effect_above_the_margin(eff, needle):
+    d = json.loads(pr.path_for("w5-t9").read_text())
+    d["power"] = {**d["power"], "effect_abs": eff}
+    p = pr.problems(d)
+    assert (needle is None and p == []) or any(needle in x for x in p), p
 
 
 def test_load_refuses_a_missing_file_and_a_wrong_name(tmp_path):

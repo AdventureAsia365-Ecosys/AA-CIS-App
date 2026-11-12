@@ -22,9 +22,13 @@ call what the proof measures and how it decides:
     "decision": {"rule": "non_inferior" | "improve", "metric": "item_fail_rate", "margin_abs": 0.10,
                  "alpha": 0.05, "noise_se_k": 2.0},
     "requirements": {"paired_all": true, "max_mixed_judges": 0, "max_hard_stop_1": 0},
-    "power": {"min_power": 0.8, "writer_sd": null, "claims_per_item": 60},
+    "power": {"min_power": 0.8, "writer_sd": null, "claims_per_item": 60, "effect_abs": null},
     "cap_usd": 5.0                                <= the workflow's D12 cap
   }
+
+`power.effect_abs` is the pre-registered true improvement an `improve` decision is powered for (required for that
+rule, > margin_abs: the margin is the smallest improvement that counts, the effect what the sample must detect). A
+`null` workflow takes no release_id and decides non_inferior only.
 
 The margin is ABSOLUTE (in the metric's own unit), fixed, and > 0. `computed` metrics come from the run's result
 rows and the ledger (decision.py, cost_report.py); `external` ones (a human read, the blind S1 panel) are recorded
@@ -159,6 +163,12 @@ def problems(doc: Any) -> list[str]:
     rel = doc.get("release_id")
     if rel is not None and not (isinstance(rel, str) and _UUID_RE.match(rel)):
         p.append("release_id must be null or a release UUID")
+    if wf == "null":
+        # B == A by construction (runner / R2 null check): no candidate release, and nothing to improve
+        if rel is not None:
+            p.append("a null run takes no release_id (B is today's writers, A their stored outputs)")
+        if isinstance(doc.get("decision"), dict) and doc["decision"].get("rule") != "non_inferior":
+            p.append("a null run decides non_inferior (there is no change to improve)")
     judge = doc.get("judge")
     if not (isinstance(judge, dict) and isinstance(judge.get("model_key"), str) and _KEY_RE.match(judge["model_key"])
             and (judge.get("connection") is None or (isinstance(judge["connection"], str)
@@ -182,6 +192,17 @@ def problems(doc: Any) -> list[str]:
         cpi = pw.get("claims_per_item")
         if cpi is not None and (not isinstance(cpi, int) or isinstance(cpi, bool) or cpi < 1):
             p.append("power.claims_per_item must be a positive integer")
+        eff = pw.get("effect_abs")
+        dec = doc.get("decision") if isinstance(doc.get("decision"), dict) else {}
+        if eff is not None and (_num(eff) is None or _num(eff) <= 0):
+            p.append("power.effect_abs must be null or a number > 0")
+        elif dec.get("rule") == "improve":
+            margin = _num(dec.get("margin_abs"))
+            if eff is None:
+                p.append("an improve decision needs power.effect_abs: the true improvement the power is computed at")
+            elif margin is not None and _num(eff) <= margin:
+                p.append("power.effect_abs must be > decision.margin_abs: at a true effect equal to the margin the "
+                         "improve rule passes at most about half the time")
     cap = _num(doc.get("cap_usd"))
     if cap is None or not 0 < cap <= spec["cap_usd"]:
         p.append(f"cap_usd must be in (0, {spec['cap_usd']}] (root ADR 0020 D12 for {wf})")

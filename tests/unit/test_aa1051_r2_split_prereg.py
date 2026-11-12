@@ -24,15 +24,33 @@ def _sided(items, sides):
     return items
 
 
+def _fp(**parts):
+    """A run fingerprint with a config_fp (invented component digests)."""
+    base = {c: f"sha-{c}" for c in ("routes", "stage_params", "catalog", "route_control", "mode_flags", "prompts",
+                                    "memory_items", "l0_lexicon", "brand_config", "policy")}
+    base.update(parts)
+    return {"gate_taxonomy": "qtax-v1", "golden_set": "aa729@1.1.0",
+            "writer_route": {"stage": "zz_write", "model_id": "zz-model", "fallbacks": [], "account_route": None},
+            "config_fp": {"service": "api", "parts": base}}
+
+
 class PreregStore(FakeStore):
-    def __init__(self, items, prior=(), **kw):
+    def __init__(self, items, prior=(), control_fp=None, now_fp=None, **kw):
         super().__init__(items, **kw)
         self.prior = list(prior)
         self.asked = []
+        self.control_fp = _fp() if control_fp is None else control_fp
+        self.now_fp = _fp() if now_fp is None else now_fp
 
     async def prereg_runs(self, prereg_id):
         self.asked.append(prereg_id)
         return list(self.prior)
+
+    async def run_fingerprint(self, run_id):
+        return self.control_fp
+
+    async def fingerprint(self, writer):
+        return self.now_fp
 
 
 def _conf(**over):
@@ -128,6 +146,32 @@ def test_prereg_refusal():
                                                                     "results": 1}])
 
 
+def test_prereg_refusal_refuses_a_rerun_of_an_arm_with_results():
+    c = _w5()
+    assert "already has a run with results" in r2.prereg_refusal(
+        c, [{"run_id": "x", "sha256": SHA, "arm": "B", "results": 3}])
+    assert r2.prereg_refusal(c, [{"run_id": "x", "sha256": SHA, "arm": "B", "results": 0}]) is None
+    assert r2.prereg_refusal(c, [{"run_id": "x", "sha256": SHA, "arm": "A_prime", "results": 3}]) is None
+
+
+def test_null_config_problems():
+    assert r2.null_config_problems(_fp(), _fp()) == []
+    assert "no writer configuration" in r2.null_config_problems({"golden_set": "aa729@1.1.0"}, _fp())[0]
+    assert "no writer configuration" in r2.null_config_problems(None, _fp())[0]
+    assert r2.null_config_problems(_fp(prompts="sha-other"), _fp()) == ["config_fp prompts differs from the control's"]
+    assert any("cannot be compared" in p for p in r2.null_config_problems(_fp(routes="unavailable"), _fp()))
+    missing = _fp()
+    del missing["config_fp"]["parts"]["policy"]
+    assert any("policy cannot be compared" in p for p in r2.null_config_problems(missing, _fp()))
+    other = {**_fp(), "golden_set": "aa729@1.0.0"}
+    assert r2.null_config_problems(other, _fp()) == ["golden_set differs from the control's"]
+    # mode_flags: compared only by the worker against a worker record (an exec session does not know its env)
+    w_old, w_new = _fp(mode_flags="a"), _fp(mode_flags="b")
+    w_old["config_fp"]["service"] = w_new["config_fp"]["service"] = "worker"
+    assert r2.null_config_problems(w_old, w_new) == ["config_fp mode_flags differs from the control's"]
+    assert r2.null_config_problems(_fp(mode_flags="a"), _fp(mode_flags="b")) == []
+
+
 def test_kappa_by_side():
     recs = ([{"label": "pass", "judge": "pass", "eval_split": "cal"}] * 4
             + [{"label": "fail", "judge": "fail", "eval_split": "cal"}] * 4
@@ -202,3 +246,19 @@ def test_item_strata_has_the_side():
                                                      "eval_split": "gate"})
     assert all(d != "eval_split" for d, _ in ec.item_strata({"tenant_id": None, "tiers": []}))
     assert json.dumps(ec.STRATUM_DIMS)
+
+
+def test_null_run_is_refused_at_zero_cost_when_the_control_config_differs():
+    """B == A by construction: a null run against a baseline import (frozen text, no config_fp) or a control written
+    under another writer configuration is refused before any run row or spend; another workflow is not checked."""
+    items = _store_with_sides()._items
+    gate_ids = sorted(it["sample_id"] for it in items if it.get("eval_split") == "gate")
+    conf = _w5(sample_ids=gate_ids)
+    for store in (PreregStore(items, control_fp={"golden_set": "aa729@1.1.0", "baseline_source": "fixture"}),
+                  PreregStore(items, now_fp=_fp(prompts="sha-after-w3"))):
+        with pytest.raises(r2.R2Refused, match="not null by construction"):
+            asyncio.run(r2.run_r2(store, conf, writer_fn=lambda *a, **k: None, judge_fn=make_judge(), flush=_noop))
+        assert not store.runs and not store.results
+    t9 = PreregStore(items, now_fp=_fp(prompts="sha-after-w3"))
+    run(t9, _w5(sample_ids=gate_ids, prereg_id="w5-t9", prereg_workflow="t9"))
+    assert t9.runs
