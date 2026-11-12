@@ -1,17 +1,21 @@
 """AA-1094 (S278 audit M20, root ADR 0019 d10) — migration 403: catalog.v_tenant_tour_v1, the live AA tours an agency
-tenant made its own with its latest finished T2 text, for TripPlanner's /{slug} pages (contract catalog.tenant_tour.v1).
+tenant has publishable text for (approved by it, its own edit, or AI text whose QA passed), for TripPlanner's /{slug}
+pages (contract catalog.tenant_tour.v1).
 
 conftest skips 403 (catalog recipe; it needs 359's catalog.v_tour and 379, both skipped too). Each test runs in ONE
 transaction on the RDS-like state of test_aa860_migration_245 (module fixture), the way test_aa1040_migration_359 builds
 it: 273's replayed column is dropped first, 253 / 256 / 257 / 258 / 273 / 289 / 359 and 379 are applied as cis_owner
-(DB Migrate's live-owner switch), the CI stand-in of tenant_tour_versions gets the live version_number column, 403 is
+(DB Migrate's live-owner switch), the CI stand-in of tenant_tour_versions gets the live version_number and qa_status
+columns, 403 is
 applied (twice: re-runnable), the checks run, and the transaction is rolled back.
 
 Checks: registered once; the view's exact columns, owner catalog_owner, security_barrier, tripplanner only; the
-catalog_owner grants and the policy; as tripplanner: a tenant sees only its own finished versions of LIVE AA tours, the
-latest one per catalogue key (also across an AA source re-upload), its text with a blank title falling back to AA's;
-pending / failed / rejected versions, a paused AA tour, a suspended tenant and a tenant without TripPlanner are absent;
-the SELECT AA-TripPlanner-Web runs answers as tripplanner. Invented names and places only.
+catalog_owner grants and the policy; as tripplanner: a tenant sees only its own publishable versions of LIVE AA tours,
+its own (approved or edited) text before newer AI text, then the latest one per catalogue key (also across an AA source
+re-upload); the agency's edit as the portal writes it (pending, tenant_edit) is served; needs_review, QA-escalated,
+pending AI, failed and rejected versions, a paused AA tour, a suspended tenant and a tenant without TripPlanner are
+absent; a blank title falls back to AA's; a writer-JSON day list itinerary reads as "Day N" blocks; the SELECT
+AA-TripPlanner-Web runs answers as tripplanner. Invented names and places only.
 """
 import json
 import os
@@ -65,11 +69,13 @@ def _as(c, role, sql, *args):
 
 
 def _live_ttv(c):
-    """The CI stand-in of tenant_tour_versions (conftest TTV_STANDIN_DDL) has no version_number; Dev's table has it
-    (NOT NULL). Added inside the test transaction, rolled back after. RLS on as on Dev (244 enables it)."""
+    """The CI stand-in of tenant_tour_versions (conftest TTV_STANDIN_DDL) has no version_number and no qa_status; Dev's
+    table has both (NOT NULL; qa_status default 'pending', 107). Added inside the test transaction, rolled back after.
+    RLS on as on Dev (244 enables it)."""
     c.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (TTV,))
     assert c.fetchone()[0], "the RDS-like state must have tenant_tour_versions (x1_244_ci_shape)"
     c.execute(f"ALTER TABLE {TTV} ADD COLUMN IF NOT EXISTS version_number integer NOT NULL DEFAULT 1")
+    c.execute(f"ALTER TABLE {TTV} ADD COLUMN IF NOT EXISTS qa_status text NOT NULL DEFAULT 'pending'")
     c.execute(f"ALTER TABLE {TTV} ENABLE ROW LEVEL SECURITY")
 
 
@@ -91,16 +97,18 @@ def _published_id(c, tour_id):
     return c.fetchone()[0]
 
 
-def _version(c, tenant, tour_id, *, n, status="ai_generated", text=None, edit_source="ai_generated", age_min=0):
+def _version(c, tenant, tour_id, *, n, status="ai_generated", text=None, edit_source="ai_generated", age_min=0,
+             qa_status="passed"):
     content = text if text is not None else {
         "name": f"{n}: invented tenant title", "subtitle": "Invented subtitle", "summary": "Invented summary",
         "highlights": ["Invented highlight"], "itineraries": "Day 1 — Arrive\nInvented day.",
         "seo_title": "Invented seo title", "seo_meta": "Invented meta", "trip_type": "", "status": "done"}
     vid = str(uuid.uuid4())
     c.execute(f"""INSERT INTO {TTV} (id, tenant_id, published_tour_id, version_number, rewritten_content, status,
-                                     edit_source, created_at)
-                  VALUES (%s, %s, %s::uuid, %s, %s::jsonb, %s, %s, now() - make_interval(mins => %s))""",
-              (vid, tenant, _published_id(c, tour_id), n, json.dumps(content), status, edit_source, age_min))
+                                     edit_source, created_at, qa_status)
+                  VALUES (%s, %s, %s::uuid, %s, %s::jsonb, %s, %s, now() - make_interval(mins => %s), %s)""",
+              (vid, tenant, _published_id(c, tour_id), n, json.dumps(content), status, edit_source, age_min,
+               qa_status))
     return vid
 
 
@@ -174,34 +182,74 @@ def test_catalog_owner_reads_eight_columns_through_one_policy(cur):
                       AND policyname = 'catalog_owner_tenant_text_read'""")
     cmd, roles, qual = cur.fetchone()
     assert cmd == "SELECT" and roles == ["catalog_owner"]
-    assert "approved" in qual and "needs_review" in qual and "rejected" not in qual
+    assert "approved" in qual and "tenant_edit" in qual and "qa_status" in qual and "passed" in qual
+    assert "needs_review" not in qual and "rejected" not in qual and "escalated" not in qual
 
 
-def test_tenant_sees_only_its_finished_text_of_live_tours(cur):
-    _version(cur, cur.agency, cur.tour_a, n=1, status="approved", age_min=30)
-    newest = _version(cur, cur.agency, cur.tour_a, n=2, status="needs_review", age_min=5)
-    _version(cur, cur.agency, cur.tour_a, n=3, status="rejected", age_min=1)       # refused: never shown
-    _version(cur, cur.agency, cur.tour_b, n=1, status="pending")                     # still writing: not listed
-    _version(cur, cur.agency, cur.paused, n=1, status="approved")                    # AA paused it: not listed
-    _version(cur, cur.other, cur.tour_b, n=1, status="ai_generated", edit_source="tenant_edit")
-    rows = _rows(cur, cur.agency)
-    assert [r["source_id"] for r in rows] == [_source_id(cur, cur.tour_a)]
-    (row,) = rows
-    assert row["title"] == "2: invented tenant title" and row["summary"] == "Invented summary"
-    assert row["tour_id"] == cur.tour_a
-    assert row["country"] == "Laos" and row["human_edited"] is False
-    (full,) = _as(cur, "tripplanner", f"SELECT version_id::text AS v, highlights, edit_source FROM {VIEW} "
-                                      "WHERE tenant_id = %s::uuid", cur.agency)
-    assert full["v"] == newest and full["highlights"] == ["Invented highlight"]
-    assert full["edit_source"] == "ai_generated"
-    (other,) = _rows(cur, cur.other)
-    assert other["source_id"] == _source_id(cur, cur.tour_b) and other["human_edited"] is True
+def _served(c, tenant):
+    return _as(c, "tripplanner", f"SELECT source_id, version_id::text AS v, title, summary, highlights, edit_source, "
+                                 f"human_edited, country, tour_id::text AS tour_id FROM {VIEW} "
+                                 "WHERE tenant_id = %s::uuid ORDER BY source_id", tenant)
 
 
-def test_failed_and_rejected_only_is_not_adopted(cur):
-    _version(cur, cur.agency, cur.tour_a, n=1, status="failed")
-    _version(cur, cur.agency, cur.tour_b, n=1, status="rejected")
+def test_approved_text_is_never_replaced_by_newer_ai_text(cur):
+    approved = _version(cur, cur.agency, cur.tour_a, n=1, status="approved", age_min=30, qa_status="escalated")
+    _version(cur, cur.agency, cur.tour_a, n=2, status="ai_generated", age_min=5)     # newer, QA passed, unreviewed
+    _version(cur, cur.agency, cur.tour_a, n=3, status="needs_review", age_min=2)      # newer, below the line
+    _version(cur, cur.agency, cur.tour_a, n=4, status="rejected", age_min=1)          # refused: never shown
+    _version(cur, cur.agency, cur.paused, n=1, status="approved")                     # AA paused it: not listed
+    (row,) = _served(cur, cur.agency)
+    assert row["source_id"] == _source_id(cur, cur.tour_a) and row["v"] == approved
+    assert row["title"] == "1: invented tenant title" and row["summary"] == "Invented summary"
+    assert row["tour_id"] == cur.tour_a and row["country"] == "Laos"
+    assert row["highlights"] == ["Invented highlight"] and row["human_edited"] is False
+    (tp,) = _rows(cur, cur.agency)                                                     # TripPlanner's own SELECT
+    assert tp["version_id"] == approved
+
+
+def test_the_agency_edit_as_the_portal_writes_it_is_served(cur):
+    # The edit route inserts the agency's edit as status pending, edit_source tenant_edit, qa_status left at its default.
+    _version(cur, cur.agency, cur.tour_a, n=1, status="ai_generated", age_min=30)
+    edit = _version(cur, cur.agency, cur.tour_a, n=2, status="pending", edit_source="tenant_edit", age_min=10,
+                    qa_status="pending", text={"name": "Invented agency title", "summary": "Invented agency summary"})
+    _version(cur, cur.agency, cur.tour_a, n=3, status="ai_generated", age_min=1)       # a later AI re-rewrite
+    (row,) = _served(cur, cur.agency)
+    assert row["v"] == edit and row["title"] == "Invented agency title" and row["human_edited"] is True
+    assert row["edit_source"] == "tenant_edit"
+
+
+def test_latest_ai_text_with_qa_passed_is_served_when_the_agency_has_none(cur):
+    _version(cur, cur.agency, cur.tour_a, n=1, status="ai_generated", age_min=30)
+    newest = _version(cur, cur.agency, cur.tour_a, n=2, status="ai_generated", age_min=5)
+    (row,) = _served(cur, cur.agency)
+    assert row["v"] == newest and row["title"] == "2: invented tenant title" and row["human_edited"] is False
+
+
+def test_unpublishable_versions_are_not_listed(cur):
+    _version(cur, cur.agency, cur.tour_a, n=1, status="needs_review")                  # below the line / held
+    _version(cur, cur.agency, cur.tour_a, n=2, status="ai_generated", qa_status="escalated")   # QA did not clear
+    _version(cur, cur.agency, cur.tour_a, n=3, status="ai_generated", qa_status="failed")
+    _version(cur, cur.agency, cur.tour_a, n=4, status="ai_generated", qa_status="pending")
+    _version(cur, cur.agency, cur.tour_b, n=1, status="pending")                       # AI still writing
+    _version(cur, cur.agency, cur.tour_b, n=2, status="failed")
+    _version(cur, cur.agency, cur.tour_b, n=3, status="rejected", edit_source="tenant_edit")
     assert _rows(cur, cur.agency) == []
+    cur.execute("SET LOCAL ROLE catalog_owner")
+    cur.execute(f"SELECT count(*) AS n FROM {TTV} WHERE tenant_id = %s::uuid", (cur.agency,))
+    assert cur.fetchone()[0] == 0                                                      # the policy hides them all
+    cur.execute("RESET ROLE")
+
+
+def test_a_writer_json_day_list_itinerary_reads_as_day_blocks(cur):
+    days = [{"day": 1, "title": "Arrive", "body": "Invented first day."},
+            {"day": 2, "title": None, "body": "", "description": "Invented second day."},
+            "a stray string the day reader skips"]
+    _version(cur, cur.agency, cur.tour_a, n=1, status="approved", text={"name": "Invented", "itineraries": days})
+    _version(cur, cur.agency, cur.tour_b, n=1, status="approved",
+             text={"name": "Invented", "itineraries": ["Invented line one", "Invented line two"]})
+    got = {r["source_id"]: r["itinerary_text"] for r in _rows(cur, cur.agency)}
+    assert got[_source_id(cur, cur.tour_a)] == "Day 1 — Arrive\nInvented first day.\n\nDay 2 — \nInvented second day."
+    assert got[_source_id(cur, cur.tour_b)] == "Invented line one\nInvented line two"
 
 
 def test_suspended_tenant_and_tenant_without_tripplanner_have_no_rows(cur):

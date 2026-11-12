@@ -12,29 +12,44 @@
 --   1. Column-level SELECT for catalog_owner on gold_aa_internal.tenant_tour_versions (id, tenant_id,
 --      published_tour_id, version_number, rewritten_content, status, edit_source, created_at): the content of a
 --      version and nothing of its gates (no quality_score, qa_*, judge_breakdown, generation_meta, fs_id, job_id,
---      edited_by_user: the tenant projection rule of api/routers/_tenant_projection.py).
+--      edited_by_user: the tenant projection rule of api/routers/_tenant_projection.py; the policy reads qa_status
+--      itself, which needs no grant).
 --   2. The policy catalog_owner_tenant_text_read (PERMISSIVE SELECT TO catalog_owner) on that table (RLS is on and
---      catalog_owner is not its owner, so without a policy the view would see no row): a version whose rewrite is
---      finished and not refused by the tenant, status approved, ai_generated or needs_review (needs_review is only
---      "the T2 score was < 7.0", a finished rewrite the tenant sees as ai_generated, AA-796). Pending, failed and
---      rejected versions stay invisible to the view.
+--      catalog_owner is not its owner, so without a policy the view would see no row): a PUBLISHABLE version, one of
+--        a. status approved: the tenant approved it (whatever wrote it);
+--        b. edit_source tenant_edit with status pending: the agency's own edit (the portal's only write; the edit
+--           route inserts it as pending, api/routers/v1_tours.py _VERSION_EDIT_INSERT_SQL);
+--        c. status ai_generated AND qa_status passed: a T2 rewrite that met the pass line with no T3 hard code
+--           (t2_rewrite_job._t2_status) and whose T3 QA gate really cleared.
+--      Never shown: pending AI rewrites (still writing), failed, rejected, needs_review AI text (below the pass line,
+--      a T3 hard code that survived, a held fallback writer or an elephant-riding policy hold:
+--      t2_orchestrator.linear_status, t2_rewrite_job policy_hold) and ai_generated text whose QA gate did not
+--      clear (qa_status pending / failed / escalated). The tenant still receives all of these in its portal; this
+--      rule is only what goes PUBLIC under the agency's brand (as AA-side held content needs the owner's audited
+--      publish). qa_status is read only inside the policy: catalog_owner gets no grant on it and the view exposes
+--      no gate column.
 --   3. catalog.v_tenant_tour_v1 (security_barrier, owner catalog_owner): one row per (tenant, AA catalogue key) for a
 --      tenant in service (trial, active, past_due; kind internal excluded) that holds a TripPlanner subscription, for
---      every LIVE AA tour (catalog.v_tour) of which the tenant has a finished version: the latest such version of
---      that key (created_at, then version_number; a version written for an older source version of the same key
---      counts, so a re-upload of the AA source keeps the tenant's text). Columns: the tenant id, the AA catalogue
---      key (source_system, source_id) and the live tour id and slug, the tenant's text (title, subtitle, summary,
---      highlights, itinerary_text, seo_title, seo_meta; a blank field is NULL; a blank title falls back to AA's), the
---      AA facts of the live tour (country, duration_raw, duration_days, best_time_to_go, cover_photo_path,
---      photo_count), the version (version_id, edit_source, text_updated_at = the version's created_at,
---      human_edited) and content_hash (md5 of the served text and facts). No price, no score, no personal data.
---      SELECT to tripplanner only. Contract v1: columns are only appended; a change of meaning is a _v2 view.
+--      every LIVE AA tour (catalog.v_tour) of which the tenant has a publishable version. The served version of a key:
+--      a version the tenant owns (a or b) before an AI one (c), so newer unreviewed AI text never replaces what the
+--      agency approved or wrote; then the latest (created_at, then version_number). A version written for an older
+--      source version of the same key counts, so a re-upload of the AA source keeps the tenant's text. Columns: the
+--      tenant id, the AA catalogue key (source_system, source_id) and the live tour id and slug, the tenant's text
+--      (title, subtitle, summary, highlights, itinerary_text, seo_title, seo_meta; a blank field is NULL; a blank
+--      title falls back to AA's; an itinerary stored as the writer's JSON day list becomes "Day N — Title" blocks as
+--      CIS day_parse.written_itinerary_text renders it), the AA facts of the live tour (country, duration_raw,
+--      duration_days, best_time_to_go, cover_photo_path, photo_count), the version (version_id, edit_source,
+--      text_updated_at = the version's created_at, human_edited) and content_hash (md5 of the served text and
+--      facts). No price, no score, no personal data. SELECT to tripplanner only. Contract v1: columns are only
+--      appended; a change of meaning is a _v2 view.
 --   4. Register 403.
 --
--- What a tenant row means (decided here, recorded in the contract): "adopted" = the tenant has a finished, not
--- rejected T2 version of the tour; a tour still being written, or whose only versions failed or were rejected, is
--- not listed (no AA-text fallback under the agency's brand). Liveness is AA's (ADR 0015): a retired or paused AA tour
--- leaves the view at once, whatever the tenant's version says.
+-- What a tenant row means (decided here, recorded in the contract and the ADR 0019 d10 amendment): "on the agency's
+-- site" = the tenant has a publishable version of the tour (2a-c); a tour still being written, or whose versions are
+-- all unpublishable, is not listed (no AA-text fallback under the agency's brand). Liveness is AA's (ADR 0015): a
+-- retired or paused AA tour leaves the view at once, whatever the tenant's version says. Whether needs_review / QA-
+-- escalated AI text should also go public without an agency step is a tech-lead decision (S278 decision list); this
+-- file takes the conservative side, and widening it is a later forward migration.
 --
 -- Behaviour on apply. Nothing reads the view until the AA-1094 TripPlanner code is deployed; that code detects the
 -- view (42P01 / 42501 before this file: a tenant path lists no tour, the demo path keeps the AA catalogue). The new
@@ -91,6 +106,11 @@ BEGIN
     IF to_regclass('gold_aa_internal.tenant_tour_versions') IS NULL THEN
         RAISE EXCEPTION 'migration 403: gold_aa_internal.tenant_tour_versions does not exist';
     END IF;
+    IF (SELECT count(*) FROM pg_attribute
+         WHERE attrelid = 'gold_aa_internal.tenant_tour_versions'::regclass AND NOT attisdropped
+           AND attname IN ('status', 'edit_source', 'qa_status')) <> 3 THEN
+        RAISE EXCEPTION 'migration 403: tenant_tour_versions lacks status / edit_source / qa_status (107)';
+    END IF;
 END $$;
 
 -- ── 1. What catalog_owner may read of a tenant version ───────────────────────────────────────────────────────────
@@ -101,16 +121,19 @@ GRANT SELECT (id, tenant_id, published_tour_id, version_number, rewritten_conten
 GRANT SELECT (tenant_id, account_status, kind) ON shared.tenants TO catalog_owner;
 GRANT SELECT (tenant_id, product) ON shared.tenant_subscription TO catalog_owner;
 
--- ── 2. Which versions catalog_owner sees: finished, not refused by the tenant ────────────────────────────────────
+-- ── 2. Which versions catalog_owner sees: publishable on the agency's site ───────────────────────────────────────
 DROP POLICY IF EXISTS catalog_owner_tenant_text_read ON gold_aa_internal.tenant_tour_versions;
 CREATE POLICY catalog_owner_tenant_text_read ON gold_aa_internal.tenant_tour_versions
     AS PERMISSIVE FOR SELECT TO catalog_owner
-    USING (status = ANY (ARRAY['approved', 'ai_generated', 'needs_review']));
+    USING (status = 'approved'
+           OR (status = 'pending' AND edit_source = 'tenant_edit')
+           OR (status = 'ai_generated' AND qa_status = 'passed'));
 
 GRANT CREATE ON SCHEMA catalog TO catalog_owner;
 SET LOCAL ROLE catalog_owner;
 
--- ── 3. The view: per tenant and live AA tour, the tenant's latest finished text ──────────────────────────────────
+-- ── 3. The view: per tenant and live AA tour, the tenant's served text ───────────────────────────────────────────
+-- The WHERE repeats the policy's status / edit_source arms (qa_status, read by the policy alone, is not granted).
 CREATE OR REPLACE VIEW catalog.v_tenant_tour_v1 WITH (security_barrier = true) AS
 WITH tenant_text AS (
     SELECT DISTINCT ON (v.tenant_id, rt.source_key)
@@ -124,13 +147,16 @@ WITH tenant_text AS (
       JOIN gold_aa_internal.published_tours pt ON pt.id = v.published_tour_id
       JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
       JOIN shared.tenants t ON t.tenant_id = v.tenant_id
-     WHERE v.status IN ('approved', 'ai_generated', 'needs_review')
+     WHERE (v.status IN ('approved', 'ai_generated')
+            OR (v.status = 'pending' AND v.edit_source = 'tenant_edit'))
        AND jsonb_typeof(v.rewritten_content) = 'object'
        AND t.kind <> 'internal'
        AND t.account_status IN ('trial', 'active', 'past_due')
        AND EXISTS (SELECT 1 FROM shared.tenant_subscription s
                     WHERE s.tenant_id = v.tenant_id AND s.product = 'tripplanner')
-     ORDER BY v.tenant_id, rt.source_key, v.created_at DESC, v.version_number DESC, v.id
+     ORDER BY v.tenant_id, rt.source_key,
+              (v.status = 'approved' OR v.edit_source = 'tenant_edit') DESC,   -- the agency's own text first
+              v.created_at DESC, v.version_number DESC, v.id
 ),
 served AS (
     SELECT x.tenant_id,
@@ -143,7 +169,25 @@ served AS (
            NULLIF(btrim(x.rc ->> 'summary'), '') AS summary,
            CASE WHEN jsonb_typeof(x.rc -> 'highlights') = 'array' THEN x.rc -> 'highlights'
                 ELSE '[]'::jsonb END AS highlights,
-           NULLIF(btrim(x.rc ->> 'itineraries'), '') AS itinerary_text,
+           -- a string as stored; the writer's JSON day list as CIS day_parse.written_itinerary_text renders it
+           -- ("Day N — Title\nBody" blocks, body falling back to description; a list of strings joined by lines)
+           NULLIF(btrim(CASE jsonb_typeof(x.rc -> 'itineraries')
+               WHEN 'string' THEN x.rc ->> 'itineraries'
+               WHEN 'array' THEN CASE
+                   WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(x.rc -> 'itineraries') d(e)
+                                 WHERE jsonb_typeof(d.e) = 'object' AND d.e ? 'day')
+                   THEN (SELECT string_agg('Day ' || COALESCE(d.e ->> 'day', '') || ' — '
+                                           || COALESCE(d.e ->> 'title', '') || E'\n'
+                                           || COALESCE(NULLIF(d.e ->> 'body', ''), NULLIF(d.e ->> 'description', ''),
+                                                       ''),
+                                           E'\n\n' ORDER BY d.ord)
+                           FROM jsonb_array_elements(x.rc -> 'itineraries') WITH ORDINALITY d(e, ord)
+                          WHERE jsonb_typeof(d.e) = 'object')
+                   ELSE (SELECT string_agg(d.e #>> '{}', E'\n' ORDER BY d.ord)
+                           FROM jsonb_array_elements(x.rc -> 'itineraries') WITH ORDINALITY d(e, ord)
+                          WHERE jsonb_typeof(d.e) = 'string')
+               END
+           END), '') AS itinerary_text,
            NULLIF(btrim(x.rc ->> 'seo_title'), '') AS seo_title,
            NULLIF(btrim(x.rc ->> 'seo_meta'), '') AS seo_meta,
            l.country::text AS country,
@@ -189,10 +233,11 @@ SELECT s.tenant_id,
 
 COMMENT ON VIEW catalog.v_tenant_tour_v1 IS
     'AA-1094 (403, contract catalog.tenant_tour.v1, root ADR 0019 d10): per agency tenant in service with a '
-    'TripPlanner subscription, the live AA tours it made its own (a finished, not rejected T2 version: approved, '
-    'ai_generated, needs_review) with its latest such text (title falls back to AA''s), the AA facts of the live tour '
-    'and the version id. AA liveness wins (catalog.v_tour). No price, no score, no personal data. TripPlanner only. '
-    'Contract v1: columns are only appended.';
+    'TripPlanner subscription, the live AA tours with a version publishable on its site (approved by the tenant, the '
+    'tenant''s own edit, or ai_generated text whose T3 QA passed; never needs_review, QA-escalated, pending AI, failed '
+    'or rejected text) with the served text (the tenant''s own version before AI text, then the latest; title falls '
+    'back to AA''s), the AA facts of the live tour and the version id. AA liveness wins (catalog.v_tour). No price, no '
+    'score, no personal data. TripPlanner only. Contract v1: columns are only appended.';
 
 GRANT SELECT ON catalog.v_tenant_tour_v1 TO tripplanner;
 
@@ -273,7 +318,7 @@ END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
 VALUES ('403', now(), 'AA-1094: catalog.v_tenant_tour_v1 (a TripPlanner tenant''s live AA tours with its own '
-                      'finished T2 text; catalog.tenant_tour.v1), catalog_owner reads finished tenant versions')
+                      'publishable text; catalog.tenant_tour.v1), catalog_owner reads publishable tenant versions')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
