@@ -160,7 +160,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # AA-1039 follow-up (S276): 395 (tour_retirement_policy.auto_draft, the agency opt-in to automatic drafts) too.
 # AA-1080 (S277): 397 (the tenant pool INSERT on tenant_brand_rules.custom_validators, the signature words) too.
 # AA-1049 (S277): 398 (published_tours.master_status_reason 'policy_hold') too.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 399) if k != 336]
+# AA-1091 (S278): 401 (silver_aa_internal.tour_reference_price, the Reference prices routes) too.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 402) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
@@ -187,6 +188,13 @@ async def test_dev_without_395_is_schema_behind():
     keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 395]
     status, body = await readiness.readiness(_keys_pool(394, keys), now=0.0)
     assert status == 503 and body["missing_schema_versions"] == ["395"]
+
+
+@pytest.mark.asyncio
+async def test_dev_without_401_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 401]
+    status, body = await readiness.readiness(_keys_pool(400, keys), now=0.0)
+    assert status == 503 and body["missing_schema_versions"] == ["401"]
 
 
 @pytest.mark.asyncio

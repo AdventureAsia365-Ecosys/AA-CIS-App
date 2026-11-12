@@ -78,7 +78,7 @@ async def _audit(conn, actor: str, changes: list[store.Change], extra: Optional[
                               resource_id=c.source_key, details=details)
 
 
-class SaveBody(BaseModel):
+class RefPriceSaveBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     amount: Any
     currency: str = Field(max_length=8)
@@ -87,18 +87,18 @@ class SaveBody(BaseModel):
     expected_updated_at: Optional[str] = Field(default=None, max_length=64)
 
 
-class AcceptBody(BaseModel):
+class RefPriceAcceptBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_keys: list[str] = Field(min_length=1, max_length=store.MAX_BULK)
 
 
-class ParseBody(BaseModel):
+class RefPriceParseBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     dry_run: bool = True
     live_only: bool = False
 
 
-class ImportBody(BaseModel):
+class RefPriceImportBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     file_base64: str = Field(min_length=1, max_length=_B64_MAX)
     dry_run: bool = True
@@ -143,7 +143,7 @@ async def export_reference_prices(request: Request, status: str = _StatusQ, coun
 
 
 @router.post("/admin/reference-prices/accept")
-async def accept_reference_prices(body: AcceptBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+async def accept_reference_prices(body: RefPriceAcceptBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
         async with _pool(request).acquire() as conn, conn.transaction():
@@ -158,7 +158,7 @@ async def accept_reference_prices(body: AcceptBody, request: Request, x_admin_us
 
 
 @router.post("/admin/reference-prices/parse")
-async def parse_reference_prices(body: ParseBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+async def parse_reference_prices(body: RefPriceParseBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
         async with _pool(request).acquire() as conn, conn.transaction():
@@ -172,7 +172,7 @@ async def parse_reference_prices(body: ParseBody, request: Request, x_admin_user
 
 
 @router.post("/admin/reference-prices/import")
-async def import_reference_prices(body: ImportBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+async def import_reference_prices(body: RefPriceImportBody, request: Request, x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
         content = base64.b64decode(body.file_base64, validate=True)
@@ -203,7 +203,7 @@ async def import_reference_prices(body: ImportBody, request: Request, x_admin_us
 
 
 @router.patch("/admin/reference-prices/{source_key}")
-async def save_reference_price(source_key: str, body: SaveBody, request: Request,
+async def save_reference_price(source_key: str, body: RefPriceSaveBody, request: Request,
                                x_admin_user_id: Optional[str] = Header(None)):
     actor = _actor(x_admin_user_id)
     try:
