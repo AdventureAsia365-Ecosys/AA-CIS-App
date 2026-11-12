@@ -85,8 +85,9 @@ REFUSAL_STOPS = frozenset({"refusal", "content_filter", "safety", "refused"})
 # Cause precedence of an unverified verdict (the first one seen in this order is the reason).
 UNVERIFIED_CAUSES = ("budget", "error", "identity", "refused", "miss", "split")
 
-# W2 measurement records: instrument id -> the "<writer>:<class>" it passed on the held-out side (r1.report
-# passing_classes). Empty: no R1 record has passed yet.
+# W2 measurement records: instrument id -> the "<writer>:<class>" it calibrated on the held-out side (r1.measure
+# `calibrated` = pools.calibrated_keys: its passing classes plus the members of its passing pools, never a class
+# outside a pool's members). Empty: no R1 record has passed yet.
 CALIBRATED: dict[str, frozenset[str]] = {}
 # "<writer>:<class>" -> "enforce". Empty in W4 shadow: every class warns (the flip is a later, measured PR).
 ENFORCE_OVERRIDES: dict[str, str] = {}

@@ -3282,6 +3282,17 @@ off: no read, no call). Calls go through the gateway on stage `claim_shadow` (pl
 disagreement ids). The enforce flip (holds for measured classes, truth-cut clause first) is a later, measured change.
 _Avoid_: shadow judge (the gateway's model shadow, `llm_shadow_log`, is a different thing).
 
+**Pooled claim class (AA-1048, tech lead S278, root ADR 0020 amendment)**:
+A declared union of closely related claim classes that the R1 record measures as one class, because no single class
+has enough held-out violations yet ("measure the pool first, split later"). Declared only in code
+(`services/ground_truth/pools.py` `POOLS`, a reviewed PR; today `pool.fact_unsupported` = fact.embellish +
+fact.inclusion + fact.misbinding + fact.number on t2, t9_blog, t9_social). `r1.measure` applies the unchanged bar to
+the pool per writer (writer precision over every fire, pool n_pos >= 20, >= 1 caught, held-out, instrument
+conditions) and lists `passing_pools`; a passing pool calibrates only its members on that writer (`calibrated` =
+`pools.calibrated_keys`, what `claim_shadow.CALIBRATED` may hold). Each member keeps its own counts; `split_ready`
+names a member that reaches the bar alone, which is then measured as its own class.
+_Avoid_: class group, family (a set family is a label set id family, `claims.SET_FAMILIES`).
+
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):
 `served` (live source version + live Master), `paused` (Master inactive, or a supersede waiting for the new
