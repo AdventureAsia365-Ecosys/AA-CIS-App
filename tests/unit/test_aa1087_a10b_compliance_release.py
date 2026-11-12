@@ -47,12 +47,15 @@ def test_the_release_route_is_on_the_allow_list():
     assert e2e_staff.E2E_COMPLIANCE_RELEASE_WRITES <= e2e_staff.E2E_ALLOWED_WRITES
 
 
+_FLAG = "5f0e2c1a-0000-4000-8000-00000000c0de"  # fixed: parametrize ids must match in every xdist worker
+
+
 @pytest.mark.parametrize("path,allowed", [
-    (f"/admin/tenant-qa/compliance/{uuid.uuid4()}/release", True),
-    (f"/admin/tenant-qa/compliance/{uuid.uuid4()}/release/", False),
-    (f"/admin/tenant-qa/compliance/{uuid.uuid4()}/dismiss", False),
+    (f"/admin/tenant-qa/compliance/{_FLAG}/release", True),
+    (f"/admin/tenant-qa/compliance/{_FLAG}/release/", False),
+    (f"/admin/tenant-qa/compliance/{_FLAG}/dismiss", False),
     ("/admin/tenant-qa/compliance/not-a-uuid/release", False),
-    (f"/admin/tenant-qa/compliance/{uuid.uuid4()}/release/x", False),
+    (f"/admin/tenant-qa/compliance/{_FLAG}/release/x", False),
 ])
 def test_the_concrete_path_is_matched_in_full(path, allowed):
     assert e2e_staff.is_allowed_e2e_write_path("POST", path) is allowed
