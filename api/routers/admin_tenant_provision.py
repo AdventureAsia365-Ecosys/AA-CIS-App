@@ -16,6 +16,14 @@ the AA-797 tenant writes). There are no tenant API keys (AA-1036 R3 slice 3, roo
 step.
 
 This router is included before ``admin.router`` so ``/tenants/provision`` is never read as a tenant id.
+
+AA-1094 (S278, root ADR 0006a A10b-4): the Dev-only E2E CIS admin (A10b) may attach or cancel a TripPlanner add-on of
+a SYNTHETIC tenant (``shared.tenants.is_canary IS TRUE`` and not the pilot, api/core/e2e_staff.is_synthetic_tenant)
+through the two routes below, so the agent can serve a synthetic agency on TripPlanner. Anything else is 403
+``e2e_read_only`` before a job is enqueued (log ``tenant_provision_e2e_refused`` with ``reason``): a product other
+than ``tripplanner`` (``product_not_allowed``), a tenant that is not synthetic (``tenant_not_synthetic``), any other
+Dev-only E2E identity (A10d, ``not_allowlisted``). The create route stays refused by the bearer middleware. Every other
+staff member is unaffected.
 """
 from __future__ import annotations
 
@@ -23,14 +31,18 @@ import json
 import uuid
 from typing import Literal, Optional
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.core.staff_authz import staff_policy
+from api.core import e2e_staff
+from api.core.staff_authz import request_staff_identity, staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _require_tenant_admin, verify_admin_secret
 from services.jobs import tenant_provision_job
 from services.tenant_account import provision as pv
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 
@@ -82,6 +94,27 @@ class ProvisionJobOut(BaseModel):
 
 def _actor_id(x_admin_user_id: Optional[str]) -> Optional[str]:
     return x_admin_user_id[:40] if isinstance(x_admin_user_id, str) and x_admin_user_id else None
+
+
+async def _refuse_e2e(request: Request, tenant_id: uuid.UUID, products: list[str]) -> None:
+    """AA-1094 (A10b-4): the A10b session attaches / cancels a TripPlanner add-on of a synthetic tenant only; any other
+    Dev-only E2E identity never. 403 ``e2e_read_only`` before a job is enqueued. No-op for every other staff member."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
+        return
+    if not e2e_staff.has_allowlisted_writes(identity):
+        reason = "not_allowlisted"
+    elif not products or not set(products) <= e2e_staff.E2E_ADDON_PRODUCTS:
+        reason = "product_not_allowed"
+    else:
+        async with request.app.state.pool.acquire() as conn:
+            synthetic = await e2e_staff.is_synthetic_tenant(conn, tenant_id)
+        if synthetic:
+            return
+        reason = "tenant_not_synthetic"
+    logger.warning("tenant_provision_e2e_refused", tenant_id=str(tenant_id), products=sorted(set(products)),
+                   reason=reason)
+    raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
 
 async def _enqueue(request: Request, payload: dict) -> ProvisionJobOut:
@@ -142,6 +175,7 @@ async def provision_add_ons(
 ):
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
+    await _refuse_e2e(request, tenant_id, [a.product for a in body.add_ons])
     payload = {"request_key": body.request_key, "mode": "attach", "tenant_id": str(tenant_id),
                "add_ons": [a.model_dump() for a in body.add_ons], "requested_by": _actor_id(x_admin_user_id)}
     return await _enqueue(request, payload)
@@ -160,6 +194,7 @@ async def provision_cancel(
 ):
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
+    await _refuse_e2e(request, tenant_id, list(body.products))
     payload = {"request_key": body.request_key, "mode": "detach", "tenant_id": str(tenant_id),
                "products": list(body.products), "requested_by": _actor_id(x_admin_user_id)}
     return await _enqueue(request, payload)

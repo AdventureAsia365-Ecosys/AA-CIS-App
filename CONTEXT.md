@@ -2399,7 +2399,13 @@ the evidence run can show the view-as banner; the session it opens is read-only 
 (root ADR 0006a A10b-3, S278) adds POST `/admin/tenant-qa/compliance/{flag_id}/release` (release a held piece, the
 staff review "approve" of the synthetic pilot rehearsal): the route refuses it (403 `e2e_read_only`, log
 `compliance_release_e2e_refused`, before the flag is resolved or audited) unless the flag's tenant is synthetic
-(`is_canary IS TRUE`, not the pilot); Playwright `admin-evidence/compliance-release.spec.ts`.
+(`is_canary IS TRUE`, not the pilot); Playwright `admin-evidence/compliance-release.spec.ts`. AA-1094 (root ADR 0006a
+A10b-4, S278) adds POST `/admin/tenants/{id}/provision` and `/admin/tenants/{id}/provision/cancel` (the
+`tenant_provision` attach / cancel behind Tenant 360 › Subscription "Add an add-on" / "Cancel"), so the agent can serve
+a synthetic agency on TripPlanner: the routes refuse it (403 `e2e_read_only`, log `tenant_provision_e2e_refused`,
+before a job is enqueued) unless every product of the request is `tripplanner` (`e2e_staff.E2E_ADDON_PRODUCTS`) and
+the tenant is synthetic; the create route `POST /admin/tenants/provision` stays refused; Playwright
+`admin-evidence/tp-addon.spec.ts`.
 Dev-only fixtures for these checks (AA-1087 S278 l18): `python -m services.tenant_account.e2e_fixtures` (ECS Exec on
 the API task, DRY RUN until `--apply`): `register-crm-agency --key sen-vang` enqueues the `tenant_provision` saga with
 the CRM E2E agency's own id (a `create` may carry `tenant_id` on Dev, `demo` only: CIS, Booking `bk_tenant_pull` and
