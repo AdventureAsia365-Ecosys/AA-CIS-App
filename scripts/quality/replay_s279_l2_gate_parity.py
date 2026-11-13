@@ -125,10 +125,20 @@ async def run(limit: int) -> dict:
 
         mism: dict[str, list] = {"review_queue": [], "t2_versions": [], "pieces_length": [], "pieces_f9": [],
                                  "publish": []}
-        async with pool.acquire() as conn:
-            rq = await conn.fetch(_RQ_SQL, limit)
-            tv = await conn.fetch(_T2_SQL, limit)
-            pieces = await conn.fetch(_PIECE_SQL, limit)
+        missing: list[str] = []
+
+        async def rows(sql: str, name: str) -> list:
+            try:
+                async with pool.acquire() as conn:
+                    return list(await conn.fetch(sql, limit))
+            except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError):
+                missing.append(name)          # a database without that table (a local scratch DB): reported, skipped
+                return []
+
+        rq = await rows(_RQ_SQL, "review_queue")
+        tv = await rows(_T2_SQL, "tenant_tour_versions")
+        pieces = await rows(_PIECE_SQL, "content_piece")
+        out["tables_missing"] = missing
 
         def band(score: float) -> str:
             for name in ("critical", "low", "ok"):
