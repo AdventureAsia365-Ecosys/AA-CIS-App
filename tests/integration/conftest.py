@@ -510,6 +510,10 @@ def _apply_schema(conn):
         # recipe and needs 359's catalog.v_tour and 379 (both skipped above) and the live tenant_tour_versions.
         # test_aa1094_migration_404 applies 253 ... 359 + 379 + 404 the DB Migrate way in a rolled-back transaction.
         and not f.startswith('404')
+        # AA-1093 (S279): 410 creates catalog.v_tenant_erasure_v1 (Booking / TripPlanner read the erasure requests)
+        # through the catalog recipe (needs 245's owners). test_aa1093_migration_408_410 applies it the DB Migrate way on
+        # the RDS-like state and undoes it at teardown.
+        and not f.startswith('410')
     ])
 
     for mf in migration_files:
