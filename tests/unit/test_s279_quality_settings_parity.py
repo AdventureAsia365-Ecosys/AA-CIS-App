@@ -312,3 +312,15 @@ def test_a_good_value_passes_every_rule():
                        ("cis.t9.blog_chars_min", 5000)):
         assert settings.validate(settings.definition(key), value) is None, key
         assert quality_settings.cross_problem(key, value) is None, key
+
+
+# ── the $0 replay script (live step after deploy) ─────────────────────────────────────────────────────────────────
+
+def test_the_replay_before_values_are_the_seeds_and_agree_with_the_values_in_force():
+    from scripts.quality import replay_s279_l2_gate_parity as rp
+    for key, value in rp.BEFORE.items():
+        assert settings.definition(key).default_value == value, key
+    from services.jobs import t2_rewrite_job as t2
+    assert all(len(set(rp._both(lambda s=s: t2._t2_status(s)))) == 1 for s in rp._SCORES)
+    with serve({"cis.quality.pass_line": 8.0}):           # an approved change shows as a verdict difference
+        assert rp._both(lambda: t2._t2_status(7.5)) == ("needs_review", "ai_generated")
