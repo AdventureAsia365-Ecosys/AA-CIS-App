@@ -793,6 +793,29 @@
         "title": "ApproveIn",
         "type": "object"
       },
+      "ApproveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "snapshot_id"
+        ],
+        "title": "ApproveRequest",
+        "type": "object"
+      },
       "AssignRequest": {
         "properties": {
           "destination_id": {
@@ -3162,6 +3185,21 @@
         "title": "DraftBody",
         "type": "object"
       },
+      "DrillRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ],
+        "title": "DrillRequest",
+        "type": "object"
+      },
       "DryRunBody": {
         "additionalProperties": false,
         "properties": {
@@ -3381,6 +3419,109 @@
         "title": "EnqueueBody",
         "type": "object"
       },
+      "ErasureRequestItem": {
+        "description": "One request as the CRM sees it (contract ErasureRequest).",
+        "properties": {
+          "approval_expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Expires At"
+          },
+          "cursor": {
+            "title": "Cursor",
+            "type": "string"
+          },
+          "is_pilot": {
+            "title": "Is Pilot",
+            "type": "boolean"
+          },
+          "is_synthetic": {
+            "title": "Is Synthetic",
+            "type": "boolean"
+          },
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "dry_run",
+              "awaiting_approval",
+              "apply",
+              "verify",
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "round": {
+            "title": "Round",
+            "type": "integer"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "tenant_id",
+          "phase",
+          "round",
+          "opened_at",
+          "is_pilot",
+          "is_synthetic",
+          "steps",
+          "updated_at",
+          "cursor"
+        ],
+        "title": "ErasureRequestItem",
+        "type": "object"
+      },
+      "ErasureRequestPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureRequestItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ErasureRequestPage",
+        "type": "object"
+      },
       "ErasureRunRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3477,6 +3618,47 @@
           "subject"
         ],
         "title": "ErasureRunRequest",
+        "type": "object"
+      },
+      "ErasureStep": {
+        "properties": {
+          "app": {
+            "const": "crm",
+            "title": "App",
+            "type": "string"
+          },
+          "approved_plan_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Plan Hash"
+          },
+          "not_before": {
+            "title": "Not Before",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "waiting",
+              "active",
+              "done",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "status",
+          "not_before"
+        ],
+        "title": "ErasureStep",
         "type": "object"
       },
       "EvidenceBody": {
@@ -7211,6 +7393,38 @@
         "title": "RelocateRequest",
         "type": "object"
       },
+      "ReportAccepted": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "dry_run",
+              "awaiting_approval",
+              "apply",
+              "verify",
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "created",
+          "phase"
+        ],
+        "title": "ReportAccepted",
+        "type": "object"
+      },
       "ResearchScope": {
         "properties": {
           "country": {
@@ -7382,6 +7596,17 @@
             },
             "title": "Cancelled Jobs",
             "type": "array"
+          },
+          "erasure_request_cancelled": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erasure Request Cancelled"
           },
           "jev_allowlist_restored": {
             "title": "Jev Allowlist Restored",
@@ -8825,7 +9050,8 @@
             "enum": [
               "account.status_changed",
               "subscription.changed",
-              "entitlement.changed"
+              "entitlement.changed",
+              "account.erasure_requested"
             ],
             "title": "Type",
             "type": "string"
@@ -24437,6 +24663,608 @@
         "summary": "Erasure inventory and apply settings",
         "tags": [
           "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests": {
+      "get": {
+        "operationId": "list_requests_admin_job_runner_erasure_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenant_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tenant erasure requests (offboarding saga)",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/drill": {
+      "post": {
+        "description": "Plan section 6: the exit windows and the stages are proven with window 0 on a synthetic tenant. The tenant must\nbe offboarded, synthetic (is_canary, never the pilot) and have no round started yet. Its open request becomes a\ndrill (every not_before = T0), or a drill request is created. Nothing is approved or applied here.",
+        "operationId": "start_drill_admin_job_runner_erasure_requests_drill_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start a drill (window 0) for an offboarded synthetic tenant",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/{request_id}": {
+      "get": {
+        "operationId": "get_request_admin_job_runner_erasure_requests__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One tenant erasure request with its steps",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/{request_id}/advance": {
+      "post": {
+        "operationId": "advance_now_admin_job_runner_erasure_requests__request_id__advance_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run the erasure saga job of this request now",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/{request_id}/approve": {
+      "post": {
+        "operationId": "approve_admin_job_runner_erasure_requests__request_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve the combined fingerprint (Cognito administrator only)",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/{request_id}/new-round": {
+      "post": {
+        "description": "A new round: phase dry_run, round + 1, no app active until the next pass picks the apps past their not_before\nthat are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record,\ntheir approved_plan_hash too: a restore stays refused). Allowed while no CIS apply job of the round has started:\nin dry_run, awaiting_approval, apply, or failed (the usual case: the saga stopped on an expired approval, a\nplan_changed, a failed step or a census above 0); never for the pilot or a request the tech lead stopped.",
+        "operationId": "new_round_admin_job_runner_erasure_requests__request_id__new_round_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start a new DRY RUN round of this request",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/{request_id}/stop": {
+      "post": {
+        "description": "The contract's \"the tech lead decides (a new round, or stop)\": the request moves to (or stays in) failed with\nthe blocker stopped_by_tech_lead and never starts a new round. Only in dry_run, awaiting_approval or failed:\nnever while the apps may be erasing (apply, verify). Nothing is erased or restored here; what an app already\nerased is the runbook's manual follow-up.",
+        "operationId": "stop_admin_job_runner_erasure_requests__request_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop this request for good (it stays failed)",
+        "tags": [
+          "admin-tenant-erasure"
         ]
       }
     },
@@ -42856,7 +43684,7 @@
     },
     "/admin/tenants/{tenant_id}/offboard": {
       "post": {
-        "description": "Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.\nSoft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or\noverwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so\nPOST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.\nAA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354\ntrigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant).\nThe tenant's QUEUED jobs are cancelled (running ones finish).\nThe Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can\nput it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention\nwindow, with explicit approval, per the data-erasure runbook), not automated here.",
+        "description": "Tenant offboarding (PRD v1.0 §3.2): account_status offboarding + the audit row. Soft state only (AA-797, Nghiệp\n14/10/2026): no tenant data or setting is deleted or overwritten (brand rules, planning config, T2 versions,\ncontent, markets, plan_id, users), so POST /tenants/{id}/restore brings the tenant back whole; PATCH on an\noffboarded tenant returns 409. AA-1036: account_status is the one offboarded marker (no API key any more; the 354\ntrigger keeps is_active / cancelled_at in step, the studio session exchange refuses the tenant). QUEUED jobs are\ncancelled (running ones finish). The Jev allow-list row is removed (AA-741), snapshotted into the audit row for\nrestore. AA-1093 L2: T0 of the erasure saga (one erasure request, each app's earliest date, the event\naccount.erasure_requested); nothing is erased before the DRY RUNs and an administrator's approval (AA-839 window).",
         "operationId": "offboard_tenant_admin_tenants__tenant_id__offboard_post",
         "parameters": [
           {
@@ -43343,7 +44171,7 @@
     },
     "/admin/tenants/{tenant_id}/restore": {
       "post": {
-        "description": "Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.\nOffboard deletes nothing, so restore only clears the offboard markers (cancelled_at,\ncancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted\n(AA-1036: no API key is issued; members sign in with the partner pool as before).\nplan_tier / plan_id / rate limit and every\nsetting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are\nlisted so the admin can re-run them. 409 unless the tenant is offboarded.",
+        "description": "Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings. Offboard deletes\nnothing, so restore only clears the offboard markers (cancelled_at, cancellation_reason), sets account_status\nactive, re-adds the Jev allow-list row offboard snapshotted (AA-1036: no API key is issued; members sign in with\nthe partner pool as before). plan_tier / plan_id / rate limit and every setting are left exactly as they were.\nJobs offboard cancelled are NOT re-enqueued; they are listed so the admin can re-run them. AA-1093 L2: the open\nerasure request is cancelled (409 once an app may have erased its part). 409 unless the tenant is offboarded.",
         "operationId": "restore_tenant_admin_tenants__tenant_id__restore_post",
         "parameters": [
           {
@@ -53845,6 +54673,123 @@
         "summary": "List Account Events",
         "tags": [
           "tenant-account"
+        ]
+      }
+    },
+    "/tenant/v1/erasure-requests": {
+      "get": {
+        "operationId": "list_erasure_requests_tenant_v1_erasure_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErasureRequestPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Erasure Requests",
+        "tags": [
+          "tenant-erasure"
+        ]
+      }
+    },
+    "/tenant/v1/erasure-requests/{request_id}/reports": {
+      "post": {
+        "operationId": "report_erasure_step_tenant_v1_erasure_requests__request_id__reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportAccepted"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Erasure Step",
+        "tags": [
+          "tenant-erasure"
         ]
       }
     },

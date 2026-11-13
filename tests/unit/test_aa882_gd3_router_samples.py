@@ -32,6 +32,8 @@ SAMPLES = [
     ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
     ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),
     ("admin_tenant_addon_requests", "POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline", {}),
+    ("admin_tenant_erasure", "GET", "/admin/job-runner/erasure/requests", None),                # AA-1093 L2
+    ("admin_tenant_erasure", "POST", "/admin/job-runner/erasure/requests/{request_id}/approve", {}),  # AA-1093 L2
     ("admin_plans", "POST", "/admin/plans", {}),
     ("admin_pipeline", "POST", "/admin/review-queue/{review_id}/approve", {}),
     ("admin_pipeline", "POST", "/admin/run-tour-async", {}),
