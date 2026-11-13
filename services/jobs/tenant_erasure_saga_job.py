@@ -238,9 +238,9 @@ async def _dry_run(pool, conn, req: dict, now: datetime) -> dict:
 
 async def _apply(pool, conn, req: dict, tenant: Optional[dict], now: datetime, env: Optional[dict]) -> dict:
     rid, rnd, tid = req["request_id"], int(req["round"]), req["tenant_id"]
-    if not policy.apply_enabled(env):
+    if not policy.apply_enabled():
         return await _stopped(conn, req, [{"app": "cis", "kind": "apply_disabled",
-                                           "detail": f"{policy.APPLY_SWITCH_ENV} is off"}])
+                                           "detail": f"the setting {policy.APPLY_SETTING} is off"}])
     reasons = saga.request_guard(req, environment=policy.environment(env))
     if reasons:
         return await _stopped(conn, req, [{"app": "cis", "kind": "guard", "detail": "; ".join(reasons)}])

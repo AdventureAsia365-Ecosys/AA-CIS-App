@@ -1255,13 +1255,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`booking.v_tenant_erasure_report_v1`, `tripplanner.v_tenant_erasure_report_v1`, read as JSON rows: a missing view
     or grant = `app_not_ready`, a blocker, never a skip); the CRM uses `GET /tenant/v1/erasure-requests` and
     `POST /tenant/v1/erasure-requests/{id}/reports` (M2M scope `cis.tenant/erasure`). T0 = `POST
-    /admin/tenants/{id}/offboard` (request with `not_before` per app: the CRM T0 + 90 days, the others T0 +
-    `ERASURE_TENANT_RETENTION_DAYS`; never for the pilot); `POST /admin/tenants/{id}/restore` cancels it until an app
+    /admin/tenants/{id}/offboard` (request with `not_before` per app: the CRM T0 + setting
+    `cis.erasure.crm_window_days` (90 days), the others T0 + `cis.erasure.tenant_retention_days` (30); never for the
+    pilot); `POST /admin/tenants/{id}/restore` cancels it until an app
     applied (409 after). Stages: stage 1 CIS + Booking + TripPlanner, stage 2 the CRM alone (`saga.STAGES`); each stage
     is a round: dry_run (each active app's plan hash; CIS = its own `data_erasure` DRY RUN, hashed without the tables
     the saga writes) → awaiting_approval (combined fingerprint = sha256(request, tenant, round, app:hash)) → approval
-    by a **Cognito administrator** within `ERASURE_DRY_RUN_MAX_AGE_HOURS` (24 h; admin secret alone refused; never
-    the pilot; on Dev synthetic only; apply switch `TENANT_ERASURE_SAGA_APPLY`, default off) → apply (the other apps in
+    by a **Cognito administrator** within `cis.erasure.saga_approval_valid_hours` (24 h; admin secret alone refused;
+    never the pilot; on Dev synthetic only; apply switch setting `cis.erasure.saga_apply_enabled`, default off; the
+    three keys come with CIS 411) → apply (the other apps in
     parallel, CIS **last**: `tenant_backup`, a fresh DRY RUN matched to the approved hash, the `data_erasure` apply
     with the approval's snapshot id and approver) → verify (each app's `pii:` census must be 0) → next stage or done
     with a receipt. Job kind `tenant_erasure_saga` (`services/jobs/tenant_erasure_saga_job.py`, payload `{request_id}`

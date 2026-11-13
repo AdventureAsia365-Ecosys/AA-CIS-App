@@ -313,7 +313,7 @@ def approval_refusal(request: Mapping[str, Any], *, fingerprint: str, now: datet
                        "Approving a tenant erasure needs an administrator's company sign-in (Cognito); the admin "
                        "secret or a password session cannot")
     if not apply_on:
-        return Refused(403, "apply_disabled", f"the erasure saga apply is off here ({policy.APPLY_SWITCH_ENV})")
+        return Refused(403, "apply_disabled", f"the erasure saga apply is off here (setting {policy.APPLY_SETTING})")
     if request.get("phase") != "awaiting_approval":
         return Refused(409, "phase", f"the request is in phase {request.get('phase')}, not awaiting_approval")
     current = request.get("combined_fingerprint")

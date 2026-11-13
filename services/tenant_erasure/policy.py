@@ -1,51 +1,58 @@
-"""AA-1093 lane L2 — the knobs of the tenant erasure saga.
+"""AA-1093 lane L2 — the knobs of the tenant erasure saga, all in the platform settings registry (Platform › Settings,
+shared/settings; tech lead S279: a window, validity or switch is a setting, never a code literal or an env var alone):
 
-Where each value comes from today (the settings registry reader of S279 lane L1 is not on main yet; moving these
-onto it is a recorded follow-up, never a new env var):
-  * the exit window of CIS, Booking and TripPlanner: the CIS tenant retention window of the data_erasure job
-    (erasure_job.tenant_retention_days, ERASURE_TENANT_RETENTION_DAYS, default 30 = decision D1). The same value gates
-    the CIS apply itself, so the saga can never schedule CIS earlier than the job allows.
-  * the CRM window: decision D2 (90 days; AA erases the CRM data after it without the owner's click). Follow-up:
-    setting cis.erasure.crm_window_days.
-  * how long a combined fingerprint may be approved, and how long an approval stays valid: the DRY RUN validity of
-    the data_erasure job (erasure_job.dry_run_max_age, ERASURE_DRY_RUN_MAX_AGE_HOURS, default 24 h = decision D7).
-  * the apply switch: default OFF (TENANT_ERASURE_SAGA_APPLY must be "on" / "true" on the api and the worker; follow-up:
-    setting cis.erasure.saga_apply_enabled). The CIS apply also needs ERASURE_APPLY_ENABLED (the data_erasure job's own
-    switch), so turning the saga on alone never erases CIS rows.
+  * stage 1 window (CIS, Booking, TripPlanner): cis.erasure.tenant_retention_days (CIS 407, 30 days = decision D1),
+    read through erasure_job.tenant_retention_days, so the saga and the data_erasure job never disagree on the CIS date;
+  * stage 2 window (the CRM): cis.erasure.crm_window_days (CIS 411, 90 days = decision D2);
+  * how long a combined fingerprint may be approved, and how long an approval stays valid:
+    cis.erasure.saga_approval_valid_hours (CIS 411, 24 hours = decision D7);
+  * the apply switch: cis.erasure.saga_apply_enabled (CIS 411, default off). The CIS apply also needs the data_erasure
+    job's own switch (ERASURE_APPLY_ENABLED), so turning the saga on alone never erases CIS rows.
 A drill (mode drill, synthetic tenants only) uses window 0 for every app.
 """
 from __future__ import annotations
 
 import os
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Optional
 
-APPLY_SWITCH_ENV = "TENANT_ERASURE_SAGA_APPLY"
-# Decision D2 (S279 plan). Follow-up: the settings registry key cis.erasure.crm_window_days (no env var on purpose).
-CRM_WINDOW = timedelta(days=90)
+from shared import settings as _settings
+
+CRM_WINDOW_SETTING = "cis.erasure.crm_window_days"
+APPROVAL_VALID_SETTING = "cis.erasure.saga_approval_valid_hours"
+APPLY_SETTING = "cis.erasure.saga_apply_enabled"
+# The approved decisions (D2, D7, switch off), used only by a build whose compiled defaults lack the key (before CIS
+# 411's seed is in the tree); everywhere else the registry answers, its default being the same value.
+_SEED = {CRM_WINDOW_SETTING: 90, APPROVAL_VALID_SETTING: 24, APPLY_SETTING: False}
 
 APPS = ("cis", "booking", "tripplanner", "crm")
 
 
-def apply_enabled(env: Optional[dict] = None) -> bool:
-    raw = ((env if env is not None else os.environ).get(APPLY_SWITCH_ENV) or "off").strip().lower()
-    return raw in ("on", "true", "1")
+def setting(key: str) -> Any:
+    try:
+        return _settings.get(key)
+    except KeyError:
+        return _SEED[key]
+
+
+def apply_enabled() -> bool:
+    return setting(APPLY_SETTING) is True
 
 
 def windows(mode: str, env: Optional[dict] = None) -> dict[str, timedelta]:
-    """The exit window per app: 0 for a drill; else the CRM window and the CIS retention window for the rest."""
+    """The exit window per app: 0 for a drill; else stage 1 = the CIS tenant retention, stage 2 = the CRM window.
+    ``env`` (tests): passed to erasure_job.tenant_retention_days (its emergency override)."""
     if mode == "drill":
         return {app: timedelta(0) for app in APPS}
     from services.jobs import erasure_job as ej   # lazy: loading a router must not import every job module
 
     others = timedelta(days=ej.tenant_retention_days(env))
-    return {"cis": others, "booking": others, "tripplanner": others, "crm": CRM_WINDOW}
+    return {"cis": others, "booking": others, "tripplanner": others,
+            "crm": timedelta(days=int(setting(CRM_WINDOW_SETTING)))}
 
 
-def approval_validity(env: Optional[dict] = None) -> timedelta:
-    from services.jobs import erasure_job as ej
-
-    return ej.dry_run_max_age(env)
+def approval_validity() -> timedelta:
+    return timedelta(hours=max(1, int(setting(APPROVAL_VALID_SETTING))))
 
 
 def environment(env: Optional[dict] = None) -> str:

@@ -161,8 +161,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # AA-1080 (S277): 397 (the tenant pool INSERT on tenant_brand_rules.custom_validators, the signature words) too.
 # AA-1049 (S277): 398 (published_tours.master_status_reason 'policy_hold') too.
 # AA-1091 (S278): 402 (silver_aa_internal.tour_reference_price, the Reference prices routes) too.
-# AA-1093 L2 (S279): 408 / 409 (the tenant erasure saga tables and the feed event type) too.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 410) if k != 336]
+# AA-1093 L2 (S279): 408 / 409 / 411 (the tenant erasure saga tables, the feed event type, its settings) too.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 412) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
@@ -192,10 +192,10 @@ async def test_dev_without_395_is_schema_behind():
 
 
 @pytest.mark.asyncio
-async def test_dev_without_408_409_is_schema_behind():
-    keys = [k for k in DEV_KEYS_WITHOUT_336 if k not in (408, 409)]
+async def test_dev_without_the_erasure_saga_keys_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k not in (408, 409, 411)]
     status, body = await readiness.readiness(_keys_pool(407, keys), now=0.0)
-    assert status == 503 and body["missing_schema_versions"] == ["408", "409"]
+    assert status == 503 and body["missing_schema_versions"] == ["408", "409", "411"]
 
 
 @pytest.mark.asyncio

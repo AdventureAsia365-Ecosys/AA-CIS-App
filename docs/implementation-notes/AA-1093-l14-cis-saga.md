@@ -3,7 +3,8 @@
 Plan: root `docs/audits/2026-11-13-S279-session/aa1093-plan.md` (Part 2, lane L2), decisions D1, D2, D5-D8.
 Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747, lane l11), byte copy in
 `docs/contracts/`. Migrations CIS 408 (expand: tables), 409 (contract: the feed event type and exact grants), 410
-(contract: `catalog.v_tenant_erasure_v1`) ship first in their own PR (MIG-4); this code PR needs 408 and 409.
+(contract: `catalog.v_tenant_erasure_v1`), 411 (contract: the three settings) ship first in one migration-only PR
+(MIG-4); this code PR needs 408, 409 and 411 (readiness raised to them).
 
 ## Decisions
 
@@ -47,12 +48,15 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
 
 ## Tradeoffs
 
-- Thresholds (tech lead S279: settings, not literals): the settings registry reader is not on main yet (only CIS 407's
-  tables). The windows reuse the existing CIS knob `ERASURE_TENANT_RETENTION_DAYS` (stage 1) and the approval
-  validity reuses `ERASURE_DRY_RUN_MAX_AGE_HOURS`; the CRM window is the D2 value in `policy.CRM_WINDOW` (no new env
-  var on purpose); the apply switch is the env flag `TENANT_ERASURE_SAGA_APPLY` (default off). **Follow-up:** settings
-  `cis.erasure.crm_window_days`, `cis.erasure.stage1_window_days`, `cis.erasure.approval_valid_hours`,
-  `cis.erasure.saga_apply_enabled` in the registry once its reader is on main, and read them in `policy.py`.
+- Thresholds (tech lead S279: settings, not literals): the settings registry reader landed on main during the lane
+  (#1472), so every knob is a registry setting. Stage 1 window = the existing `cis.erasure.tenant_retention_days`
+  (CIS 407, read through `erasure_job.tenant_retention_days`, so the saga and the `data_erasure` job agree); CIS 411
+  adds `cis.erasure.crm_window_days` (90), `cis.erasure.saga_approval_valid_hours` (24) and
+  `cis.erasure.saga_apply_enabled` (false), seeded **enforced = false**: the settings-lint guard refuses an enforced
+  key no code reads, and the migration-only PR ships before this code (MIG-4). **Follow-up:** one forward migration
+  that sets `enforced = true` on the three keys after this PR is deployed (and drops them from the not-enforced list in
+  `tests/unit/test_s279_settings_seed_parity.py`). `policy._SEED` holds the same decided values only for a build whose
+  compiled defaults lack the keys (this branch before main has 411).
 - Polling: a waiting pass reschedules itself (`Reschedule`, 30 s while a CIS job runs, 10 min while another app has
   not reported). After the registry's reschedule cap the job fails and the ops sampler queues a new one.
 - The CIS census is the `data_erasure` verification (rows left per table), not a `pii:` comment census.
@@ -60,8 +64,9 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
 ## Should know
 
 - Apply order on Dev: CIS 408 (expand) and 409 / 410 (contract) before this PR's deploy (readiness raised to 408 / 409).
-- A drill never applies in this lane. Applying a drill on Dev also needs `ERASURE_APPLY_ENABLED=true`,
-  `TENANT_ERASURE_SAGA_APPLY=on` and `ERASURE_TENANT_RETENTION_DAYS=0` (the `data_erasure` job's own window check).
+- A drill never applies in this lane. Applying a drill on Dev also needs `ERASURE_APPLY_ENABLED=true`, the setting
+  `cis.erasure.saga_apply_enabled` on and `cis.erasure.tenant_retention_days` 0 (or its env override
+  `ERASURE_TENANT_RETENTION_DAYS=0`: the `data_erasure` job's own window check).
 - Until the Booking (bk-057), TripPlanner (tp-030) and CRM lanes ship, their steps show `app_not_ready` / `pending`:
   expected, and the request never reaches `awaiting_approval`.
 - AA-CIS-Infra must add the scope `cis.tenant/erasure` to the M2M resource server and the CRM client

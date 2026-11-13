@@ -67,9 +67,9 @@ def _rid(request_id: str) -> str:
 def settings_view(env: Optional[dict] = None) -> dict:
     live = policy.windows("live", env)
     return {
-        "apply_enabled": policy.apply_enabled(env),
-        "apply_switch": policy.APPLY_SWITCH_ENV,
-        "approval_valid_hours": int(policy.approval_validity(env).total_seconds() // 3600),
+        "apply_enabled": policy.apply_enabled(),
+        "apply_switch": policy.APPLY_SETTING,
+        "approval_valid_hours": int(policy.approval_validity().total_seconds() // 3600),
         "window_days": {app: live[app].days for app in saga.APPS},
         "environment": policy.environment(env) or None,
     }

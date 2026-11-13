@@ -279,14 +279,27 @@ def test_crm_report_rules():
 
 # ── policy and the job ──────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_apply_switch_is_off_by_default():
-    assert policy.apply_enabled({}) is False
-    assert policy.apply_enabled({policy.APPLY_SWITCH_ENV: "on"}) is True
-    assert policy.apply_enabled({policy.APPLY_SWITCH_ENV: "yes please"}) is False
+def test_the_knobs_are_registry_settings_with_the_decided_defaults(monkeypatch):
+    assert policy.apply_enabled() is False                                       # default off
+    assert policy.approval_validity() == timedelta(hours=24)                    # D7
+    assert policy.windows("live", {})["crm"] == timedelta(days=90)              # D2
+    seen = []
+
+    def fake(key):
+        seen.append(key)
+        return {policy.APPLY_SETTING: True, policy.APPROVAL_VALID_SETTING: 6, policy.CRM_WINDOW_SETTING: 120}[key]
+    monkeypatch.setattr(policy._settings, "get", fake)
+    assert policy.apply_enabled() is True and policy.approval_validity() == timedelta(hours=6)
+    assert policy.windows("live", {})["crm"] == timedelta(days=120)
+    assert set(seen) == {policy.APPLY_SETTING, policy.APPROVAL_VALID_SETTING, policy.CRM_WINDOW_SETTING}
 
 
-def test_approval_validity_follows_the_dry_run_validity():
-    assert policy.approval_validity({}) == timedelta(hours=24)
+def test_a_build_without_the_compiled_key_keeps_the_decided_values(monkeypatch):
+    def missing(key):
+        raise KeyError(key)
+    monkeypatch.setattr(policy._settings, "get", missing)
+    assert policy.apply_enabled() is False and policy.approval_validity() == timedelta(hours=24)
+    assert policy.windows("live", {})["crm"] == timedelta(days=90)
 
 
 def test_job_payload_is_the_request_id_only():

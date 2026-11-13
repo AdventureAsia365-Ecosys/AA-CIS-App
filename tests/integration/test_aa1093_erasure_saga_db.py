@@ -151,6 +151,12 @@ def _staff(p, identity=None, role="admin"):
                            scope={"state": {"staff_identity": identity}} if identity else {"state": {}})
 
 
+def _switch(monkeypatch, on: bool):
+    """The registry switch cis.erasure.saga_apply_enabled (the reader serves the compiled default under tests)."""
+    real = policy.setting
+    monkeypatch.setattr(policy, "setting", lambda key: on if key == policy.APPLY_SETTING else real(key))
+
+
 COGNITO = SimpleNamespace(auth="cognito", admin_id="0f0f0f0f-1093-4000-8000-000000000001")
 
 
@@ -263,12 +269,12 @@ async def test_drill_stage_one_cis_last_then_stage_two_crm(pool, monkeypatch):
     fp = await _stage1_to_approval(p, tid, rid, now)
 
     # the approval
-    monkeypatch.delenv(policy.APPLY_SWITCH_ENV, raising=False)
+    _switch(monkeypatch, False)
     for ident, why in ((None, 403), (COGNITO, 403)):                       # admin secret alone; switch off
         with pytest.raises(HTTPException) as e:
             await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-drill-1"), _staff(p, ident))
         assert e.value.status_code == why
-    monkeypatch.setenv(policy.APPLY_SWITCH_ENV, "on")
+    _switch(monkeypatch, True)
     with pytest.raises(HTTPException) as e:
         await ar.approve(rid, ar.ApproveRequest(fingerprint="f" * 64, snapshot_id="snap-drill-1"),
                          _staff(p, COGNITO))
@@ -368,7 +374,7 @@ async def test_a_changed_cis_plan_stops_the_apply(pool, monkeypatch):
     rid = (await _offboard(p, tid, mode="drill"))["request_id"]
     now = datetime.now(timezone.utc) + timedelta(seconds=1)
     fp = await _stage1_to_approval(p, tid, rid, now)
-    monkeypatch.setenv(policy.APPLY_SWITCH_ENV, "on")
+    _switch(monkeypatch, True)
     await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-2"), _staff(p, COGNITO))
     for app in ("booking", "tripplanner"):
         await _report(p, app, rid, tid, "apply", plan_hash=PEER_HASH[app])
