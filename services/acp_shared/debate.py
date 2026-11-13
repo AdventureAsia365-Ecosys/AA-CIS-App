@@ -21,7 +21,7 @@ signal is measurable or a judgement call:
 
 **Rank only until calibrated (AA-1079, S277).** The AA-741 phase 3 audit (root
 `docs/audits/2026-11-10-S276-aa741-phase3/` §4.3) found Debate flagging 499 of 502 free candidates: the
-`MAX_CUT_FRACTION` cap, not the judgement, decided what was dropped. `debate_mode()` (env `T7_DEBATE_MODE`,
+`max_cut_fraction()` cap, not the judgement, decided what was dropped. `debate_mode()` (env `T7_DEBATE_MODE`,
 `rank` when unset) now keeps every candidate: the flags ride on the Candidate (`debate_flags`,
 `debate_severity`), `_choose_slate()` orders unflagged candidates before flagged ones (rank-sum order inside each
 group) and the `t7_slate` job result records them (`debate_report()`). `cut` is the pre-AA-1079 behaviour, kept
@@ -48,7 +48,9 @@ from services.content_generation.stages import T7_DEBATE_JUDGE
 
 import structlog
 
-from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
+from services.acp_contract.atom_ranking import compute_contested, contested_cut_threshold
+from services.quality import settings_keys as _keys
+from shared import settings as _settings
 from services.content_generation.brand_fit import billed_calls, has_brand_signals, score_candidate_fit
 from shared.llm_client.call_log import billed_fields, record_billed_failure, record_call
 from shared.llm_client.decide import decide
@@ -62,8 +64,10 @@ logger = structlog.get_logger()
 # AA-631 safety rail — the origin's own rule ("never cut more than half a Channel's list per
 # run"), now needed for the hybrid design too: `contested` is a hard threshold rather than an
 # LLM judgement with its own restraint, so a single bad threshold/data point could otherwise
-# cut an unbounded fraction of a Channel's candidates in one `propose_slate()` call.
-MAX_CUT_FRACTION = 0.5
+# cut an unbounded fraction of a Channel's candidates in one `propose_slate()` call. S279 L2: the 0.5 is the setting
+# cis.t7.debate_max_cut_fraction (Platform › Settings, evidence-gated), read at call time.
+def max_cut_fraction() -> float:
+    return float(_settings.get(_keys.T7_DEBATE_MAX_CUT_FRACTION))
 
 # AA-1079 — what Debate does with its flags. `rank` (the default, also when the env var is unset or unknown): no
 # candidate is dropped, flagged ones are ordered after unflagged ones. `cut`: the AA-631 cut under the cap above.
@@ -101,8 +105,9 @@ def debate_concurrency() -> int:
 
 
 def debate_mode() -> str:
-    """`rank` unless `T7_DEBATE_MODE` says `cut` (any other value, or none, is rank: the safe side)."""
-    raw = (os.environ.get(DEBATE_MODE_ENV) or "").strip().lower()
+    """`rank` unless the setting cis.quality_modes.t7_debate says `cut` (S279 L2; the env var `T7_DEBATE_MODE` stays
+    its emergency override for one release). Anything else is rank: the safe side."""
+    raw = _settings.get(_keys.MODES["t7_debate"])
     return raw if raw in DEBATE_MODES else DEBATE_MODE_RANK
 
 
@@ -241,7 +246,9 @@ async def _store_brand_fit_cache(
 # Brand-fit "fails" a candidate below this judge_score — mirrors judge_node.py's own MIN_QUALITY
 # gate (7.0) rather than inventing a second number: brand-fit that would not pass the T2 rewrite
 # gate anyway should not be recommended to a tenant, whether or not they ever pick it.
-BRAND_FIT_CUT_THRESHOLD = threshold("t7.brand_fit_cut")  # services/quality/thresholds.yaml (AA-926)
+def brand_fit_cut() -> float:
+    """thresholds.yaml t7.brand_fit_cut (AA-926); S279 L2: a setting (the pass line), read at call time."""
+    return float(threshold("t7.brand_fit_cut"))
 
 
 # AA-700 T7-1 — Jev prefilter before the Luna brand-fit call (cache miss only). Enforced + confident:
@@ -249,7 +256,8 @@ BRAND_FIT_CUT_THRESHOLD = threshold("t7.brand_fit_cut")  # services/quality/thre
 # before. Tenant content → asked only for Jev allow-listed tenants (design C2).
 T7_STAGE = "t7_debate"
 T7_Q = "t7_topic_fits_brand"
-_T7_JEV_REJECT_SCORE = BRAND_FIT_CUT_THRESHOLD - 0.5   # cut, but ordered after Luna's clearly bad ones
+def _t7_jev_reject_score() -> float:
+    return brand_fit_cut() - 0.5   # cut, but ordered after Luna's clearly bad ones
 _T7_EVIDENCE_ITEMS = 8
 
 
@@ -318,7 +326,7 @@ async def assess_candidates(
                     candidate.segment_id,
                 )
                 contested = row["contested"] if row else None
-            if contested is not None and contested >= CONTESTED_CUT_THRESHOLD:
+            if contested is not None and contested >= contested_cut_threshold():
                 signals[i] = DebateSignal(flags=(FLAG_CONTESTED,), severity=float(contested),
                                           contested=float(contested))
                 continue
@@ -368,7 +376,7 @@ async def assess_candidates(
 
 def _brand_fit_signal(judge_score, source: str, contested_value: Optional[float]) -> DebateSignal:
     judge_score = float(judge_score)
-    if judge_score < BRAND_FIT_CUT_THRESHOLD:
+    if judge_score < brand_fit_cut():
         # Lower judge_score = worse fit = "how bad" — invert so a bigger number
         # means "cut this first", consistent with contested's own convention above.
         return DebateSignal(flags=(FLAG_BRAND_FIT,), severity=10.0 - judge_score, judge_score=judge_score,
@@ -386,7 +394,7 @@ async def _judge_brand_fit(tenant_id: UUID, candidate: "Candidate", brand_profil
         if jev.accepted(T7_Q):
             return _brand_fit_signal(10.0, "jev_accept", contested_value)
         if jev.rejected(T7_Q):
-            return _brand_fit_signal(_T7_JEV_REJECT_SCORE, "jev_reject", contested_value)
+            return _brand_fit_signal(_t7_jev_reject_score(), "jev_reject", contested_value)
         # score_candidate_fit() is synchronous (the gateway call): it runs in a worker thread with a copy of this
         # task's context, so the job's tenant and capacity line bound on the context reach the gateway.
         # AA-763 (G4): own stage key, same route as s1_judge.
@@ -400,7 +408,7 @@ async def _judge_brand_fit(tenant_id: UUID, candidate: "Candidate", brand_profil
             cost_usd=result.cost_usd, tenant_id=str(tenant_id),
             quality_signal={
                 "source": "debate", "judge_score": result.judge_score,
-                "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
+                "passed": result.judge_score >= brand_fit_cut(),
             },
             stop_reason=result.stop_reason, account=result.account,
             fallback_used=result.fallback_used, **billed_fields(result),
@@ -427,7 +435,7 @@ def apply_signals(
 ) -> list["Candidate"]:
     """Pure. `rank` (AA-1079): every candidate is kept, in input order; a flagged one carries its flags and severity
     (`Candidate.debate_flags` / `debate_severity`), which `_choose_slate()` orders after the unflagged ones. `cut`
-    (AA-631): the flagged candidates are cut, worst first, up to `MAX_CUT_FRACTION` of the list; the rest are let
+    (AA-631): the flagged candidates are cut, worst first, up to `max_cut_fraction()` of the list; the rest are let
     through uncut, original relative order kept."""
     if len(signals) != len(candidates):
         raise ValueError("one DebateSignal per candidate")
@@ -438,7 +446,7 @@ def apply_signals(
     flagged = [(c, sig.severity) for c, sig in zip(candidates, signals) if sig.flags]
     if not flagged:
         return list(candidates)
-    max_cuts = int(len(candidates) * MAX_CUT_FRACTION)
+    max_cuts = int(len(candidates) * max_cut_fraction())
     flagged.sort(key=lambda pair: -pair[1])  # worst-first
     actually_cut = {id(c) for c, _ in flagged[:max_cuts]}
     if len(flagged) > max_cuts:
@@ -452,7 +460,7 @@ def apply_signals(
 def would_cut(signals: list[DebateSignal]) -> int:
     """How many candidates the AA-631 cut would drop from this list (the cap applied). Pure."""
     flagged = sum(1 for s in signals if s.flags)
-    return min(flagged, int(len(signals) * MAX_CUT_FRACTION))
+    return min(flagged, int(len(signals) * max_cut_fraction()))
 
 
 async def apply_debate(

@@ -64,7 +64,10 @@ OTHER = "other"
 FIDELITY_CLASSES = frozenset({TRIP_PROMISE, UNSUPPORTED_OTHER, FACT_CHECK_UNQUOTED, SEO_FIELD_CLAIM})
 INFRASTRUCTURE_CLASSES = frozenset({JUDGE_UNAVAILABLE})
 # AA-1047: the classes that may hold are the writing policy's F9 route rows (writing_policy.yaml f9_class_rows).
-HOLD_CLASSES = _wp.f9_hold_classes()
+# S279 L2: each class's verdict (hold / warn) is a setting (cis.quality_claims.f9_<class>), read at call time:
+# hold_classes().
+def hold_classes() -> frozenset:
+    return _wp.f9_hold_classes()
 
 # ---------------------------------------------------------------------------------------------- trip promise
 
@@ -189,7 +192,11 @@ def _claims_violation(status: str, claims: Iterable[dict]) -> str:
 
 
 def policy_mode() -> str:
-    raw = (os.environ.get(F9_POLICY_MODE_ENV) or "").strip().lower()
+    """The setting cis.quality_modes.t10_f9_policy (S279 L2; env T10_F9_POLICY_MODE stays its emergency override)."""
+    from services.quality import settings_keys
+    from shared import settings
+
+    raw = settings.get(settings_keys.MODES["t10_f9_policy"])
     return raw if raw in (INTERIM_MODE, LEGACY_MODE) else INTERIM_MODE
 
 
@@ -221,9 +228,10 @@ def apply_policy(g: dict, lexicon=None, *, mode: Optional[str] = None) -> dict:
             classes[it["class"]] = classes.get(it["class"], 0) + 1
         m = _STATUS_RE.match(str(v))
         status = m.group(1) if m else status
-        held = [it for it in items if it["class"] in HOLD_CLASSES]
+        hold = hold_classes()
+        held = [it for it in items if it["class"] in hold]
         hold_claims += held
-        rest = [it for it in items if it["class"] not in HOLD_CLASSES]
+        rest = [it for it in items if it["class"] not in hold]
         if not held:
             warned.append(v)
         elif rest:
@@ -243,6 +251,6 @@ __all__ = [
     "POLICY_VERSION", "F9_POLICY_MODE_ENV", "INTERIM_MODE", "LEGACY_MODE", "F9_CLAIM_RE", "CLAIMS_MARK",
     "NO_REASON_MARK", "TRIP_PROMISE", "UNSUPPORTED_OTHER", "FACT_CHECK_UNQUOTED", "SEO_FIELD_CLAIM",
     "CTA_NOT_REFLECTED", "TEXT_INTEGRITY", "JUDGE_UNAVAILABLE", "REASONLESS", "OTHER", "FIDELITY_CLASSES",
-    "INFRASTRUCTURE_CLASSES", "HOLD_CLASSES", "trip_promise_kinds", "parse_claims", "violation_items",
+    "INFRASTRUCTURE_CLASSES", "hold_classes", "trip_promise_kinds", "parse_claims", "violation_items",
     "violation_classes", "entry_classes", "policy_mode", "apply_policy",
 ]

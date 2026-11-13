@@ -442,9 +442,6 @@ class Verdict:
     ref: str = ""
 
 
-_POLICY_RULES = _wp.rules_config()
-
-
 @dataclass(frozen=True)
 class RulesConfig:
     """The two open product decisions (design f9-v2 G2 and 'uncited background'), as flags the
@@ -452,10 +449,12 @@ class RulesConfig:
     AA-1047: the defaults are compiled from the writing policy (services/quality/writing_policy.yaml `rules_config`)
     and stamped with its policy_sha. S272: they stay main's ('warn', 'warn': an uncited background sentence warns
     only when no place has a card, else it fails) until the W2 claim instrument; the D1 intent (pass) is recorded in
-    the policy's `claims.background` with `enforcement: block_until_w2_instrument`."""
-    hypothetical: str = _POLICY_RULES["hypothetical"]
-    uncited_background: str = _POLICY_RULES["uncited_background"]
-    policy_sha: str = _wp.policy_sha()
+    the policy's `claims.background` with `enforcement: block_until_w2_instrument`. S279 L2: the two verdicts are
+    settings (cis.quality_claims.rules_*, Platform › Settings, evidence-gated): a config built without them takes the
+    values in force when it is built (call time), stamped with the policy sha in force."""
+    hypothetical: str = field(default_factory=lambda: _wp.rules_config()["hypothetical"])
+    uncited_background: str = field(default_factory=lambda: _wp.rules_config()["uncited_background"])
+    policy_sha: str = field(default_factory=lambda: _wp.policy_sha_in_force())
 
 
 def parse_rows(data: Optional[dict], sentences: list[PieceSentence]) -> tuple[dict[str, ClaimRow], list[str]]:
@@ -668,7 +667,7 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
 
 def apply_rules(rows: dict[str, ClaimRow], source_lines: list[SourceLine], sentences: list[PieceSentence], *,
                 lexicon: Optional[ScopeLexicon] = None, cta: Optional[str] = None,
-                config: RulesConfig = RulesConfig()) -> list[Verdict]:
+                config: Optional[RulesConfig] = None) -> list[Verdict]:
     """One verdict per sentence. A sentence with no row is read as 'generic' (the tripwires
     decide), which is also the deterministic-only mode: `apply_rules({}, …)`.
 
@@ -682,7 +681,7 @@ def apply_rules(rows: dict[str, ClaimRow], source_lines: list[SourceLine], sente
     (hygiene's ≥60% CTA-word rule) skips the tripwires — a model's 'cta' label alone does not."""
     c = _Ctx(by_id={ln.id: ln for ln in source_lines}, lexicon=lexicon or scope_lexicon(source_lines),
              number_src=[ln.text for ln in source_lines if ln.kind != KIND_OTHER_TRIP],
-             source_lines=source_lines, cta=cta, config=config)
+             source_lines=source_lines, cta=cta, config=config or RulesConfig())
     out: list[Verdict] = []
     for s in sentences:
         row = rows.get(s.sid)

@@ -11,7 +11,9 @@ api/routers/admin_settings_registry.py; reader shared/settings).
 - ``approve`` / ``reject``: decide an open proposal. maker_checker: the approver is not the proposer, unless the
   setting ``cis.settings.two_person_approval`` is off (dev phase, tech lead S279 Q2): then the administrator may approve
   their own change (``self_approved``), and a high-impact one queues an e-mail to the tech lead (ops recipients).
-  An approval whose ``effective_from`` has come supersedes the older approved rows of the same scope.
+  An approval whose ``effective_from`` has come supersedes the older approved rows of the same scope. An approval
+  re-checks the value against its definition and, for a quality key, the rules between keys against the approved rows
+  read in its transaction (409 ``cross_check``; S279 L2 review).
 
 Every write leaves one acp_shared.audit_log row in its transaction (settings.value_proposed / _approved / _rejected,
 tenant_id = the row's tenant or NULL, details: before / after / reason / evidence). The reader of this process is
@@ -173,7 +175,50 @@ def _check_value(d: Definition, value: Any) -> Any:
     problem = settings.validate(d, value)
     if problem:
         raise SettingsError(422, f"{d.label}: {problem}", "out_of_bounds")
+    # S279 L2: the rules between quality keys (a cap under the pass line, a band's minimum under its maximum, an aim
+    # inside the meta band, a Channel bar's fields), checked against the other values in force
+    from services.quality import quality_settings
+
+    problem = quality_settings.cross_problem(d.key, value)
+    if problem:
+        raise SettingsError(422, f"{d.label}: {problem}", "cross_check")
     return value
+
+
+# S279 L2 review: the rules between quality keys are re-checked when a proposal is approved, against the approved
+# platform rows read in the decision transaction (never the 30 s process cache): the values in force now
+# ($3 = false) and the values once every future-dated approval is in force ($3 = true). One advisory lock serializes
+# the approvals of quality keys, so two approvals of related keys cannot each miss the other.
+_CROSS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('cis.quality.cross', 407))"
+_APPROVED_SQL = """
+    SELECT DISTINCT ON (key) key, value::text AS value_text FROM shared.setting_value
+     WHERE key = ANY($1::text[]) AND tenant_id IS NULL AND status = 'approved' AND id <> $2::uuid
+       AND ($3 OR effective_from <= now())
+     ORDER BY key, effective_from DESC, version DESC
+"""
+
+
+async def _recheck_on_approval(conn: Any, d: Definition, proposal: dict) -> None:
+    """Refuse (409) an approval whose value no longer fits its definition or that breaks a rule between quality keys
+    with the other approved values, now or once a future-dated approval takes effect."""
+    value = proposal["value"]
+    problem = settings.validate(d, value)
+    if problem:
+        raise SettingsError(409, f"{d.label}: {problem}", "out_of_bounds")
+    from services.quality import quality_settings, settings_keys
+
+    if not quality_settings.governs(d.key):
+        return
+    await conn.execute(_CROSS_LOCK_SQL)
+    keys = list(settings_keys.ALL_KEYS)
+    for eventual in (False, True):
+        rows = {r["key"]: _json(r["value_text"]) for r in await conn.fetch(_APPROVED_SQL, keys, proposal["id"],
+                                                                           eventual)}
+        problem = quality_settings.cross_problem(
+            d.key, value, get=lambda k, rows=rows: rows[k] if k in rows else settings.definition(k).default_value)
+        if problem:
+            when = "once the approved future-dated changes take effect" if eventual else "with the values in force"
+            raise SettingsError(409, f"{d.label}: {problem} ({when}); propose a value that fits", "cross_check")
 
 
 def _resource_id(key: str, tenant_id: Optional[str]) -> str:
@@ -290,6 +335,8 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
     note = (note or "").strip() or None
     if not approve and (note is None or len(note) < 3):
         raise SettingsError(422, "Say why the proposal is rejected", "note_required")
+    if approve:
+        await _recheck_on_approval(conn, d, proposal)
     self_approved = False
     if approve and actor == proposal["proposed_by"] and d.approval == "maker_checker":
         # The flag itself is maker_checker (CIS 407): while it is on, the one person it checks cannot turn it off.

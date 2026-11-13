@@ -26,8 +26,6 @@
   "services/acp_content_writing/hygiene.py:_PIECE_WIDE_MIN",
   "services/acp_content_writing/hygiene.py:_REPEAT_MIN_WORDS",
   "services/acp_content_writing/hygiene.py:_SOCIAL_SUPPORT_MIN",
-  "services/acp_content_writing/length_contract.py:BLOG_CEILING_CHARS",
-  "services/acp_content_writing/length_contract.py:BLOG_FLOOR_CHARS",
   "services/acp_content_writing/length_extend.py:FACTS_MAX",
   "services/acp_content_writing/length_extend.py:SECTIONS_MAX",
   "services/acp_content_writing/prompts.py:_BLOG_SECTIONS_MAX",

@@ -3893,9 +3893,11 @@ checked in code (plain prose, size, `repair_contract.new_specifics`, seam integr
 needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`
 (paid, capped, never writes a piece).
 AA-1077 S278 — **blog length target**: every length AIM is one number above the floor, never the floor itself:
-`length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`, services/quality/thresholds.yaml;
-0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor (`prompts._BLOG_WORDS[0]`, t9_write v6,
-registered by CIS 399) is pinned to `target_words()` by a test, so a new margin is a prompt bump; the extend repair
+`length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`; S279 L2: the setting
+cis.quality.t9_blog_length_target_margin, 0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor
+(`prompts._blog_words()[0]`, t9_write v8, CIS 413) renders `target_words()` at call time (the F4 floor
+cis.t9.blog_chars_min and the margin are settings); a value other than the seed puts `.s<8 hex>` on the ledger's
+prompt version; the extend repair
 aims at the target; a blog's F4-short rewrite feedback carries "lengthen the piece to at least 5,499 characters …"
 (`service._f4_target`). The floor (4,700) is unchanged. The normalizer's optional steps
 (`length_contract.NORMALIZER_STEPS`: the FAQ answer fit; the stock-line cut guards itself) never make an edit that
@@ -3927,12 +3929,24 @@ Writing Memory hard stop 1 = every `fact.*` class with `severity: hard`). `code_
 (`repair_contract`, `degraded`, `day_oracle`) and `aliases` maps each Q0 corpus class id (`other.length`,
 `other.cta`, …) to its canonical class, so the Q0 cases are never relabelled to fit the taxonomy.
 `python -m scripts.quality.redundancy_census` lists enforcing detectors whose classes another code check already
-enforces (input for gate removals, AA-924). The 7.0 pass line and the other score cut-offs live only in
-`services/quality/thresholds.yaml` (one `pass_line`, one key per consumer: A1 retry, judge, T2 status, T3, T7,
-admin views, golden-set eval); Jev floors stay per question in `shared.decision_question`. Names are persisted
-(ledger, `repair_log`, `held_reason`, flags, `llm_call_log.quality_signal`): never rename one; a removed gate stays
-with `retired: true`. The admin UI reads labels, `PASS_LINE` and `SCORE_BANDS` from
-`frontend/lib/quality-registry.generated.ts` (`python -m services.quality.gen_frontend`).
+enforces (input for gate removals, AA-924). **Quality settings (S279 lane L2, CIS 412):** the 7.0 pass line and the
+other score cut-offs, the detector modes, the claim verdicts, the T10 / seed-align / adjudicator / T9 brief / T7
+debate / T2 judge gate / T3 background modes, the T7 debate cut and Channel bars, the SEO bands and the blog length
+band are settings of the platform settings registry (Platform › Settings: evidence-gated, maker-checker,
+`services/quality/settings_keys.py` names every key). `services/quality/thresholds.yaml` keeps one key per consumer
+(A1 retry, judge, T2 status, T3, T7, admin views, golden-set eval), each naming its `setting` (`registry.threshold`
+reads it at call time); taxonomy.yaml keeps the detectors without their mode; writing_policy.yaml keeps the structure
+(`writing_policy.effective` lays the values in; the compiled file and `policy_sha` stay the seeded policy). Rules
+between keys (a cap under the pass line, a band's minimum under its maximum, the blog length band inside the word
+band the t9_write prompt states, the Channel bar fields) are `quality_settings.cross_problem`, checked when a value is
+proposed and again when it is approved (against the approved rows read in the decision transaction, now and once
+future-dated approvals take effect: 409 `cross_check`); the SEO bands and meta aims are listed but not editable yet (the A1 / T2 writer
+prompts read them at process start). The change-control `gates` lock pins the governance and seed of every gate
+setting and requires evidence_required on each. Jev floors stay per question in `shared.decision_question`. Names
+are persisted (ledger, `repair_log`, `held_reason`, flags, `llm_call_log.quality_signal`): never rename one; a removed
+gate stays with `retired: true`. The admin UI reads gate labels from `frontend/lib/quality-registry.generated.ts`
+(`python -m services.quality.gen_frontend`) and the pass line, score bands and SEO bands at runtime
+(`useQualityThresholds`, GET /admin/quality/thresholds).
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:

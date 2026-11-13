@@ -113,7 +113,7 @@ from services.acp_content_writing.seed_align import adjudicate as seed_adjudicat
 from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
 from services.acp_content_writing import repeat_drop  # AA-1077 S279 (blog repeat drop)
 from services.content_generation.batch_prompt import prompt_version_of
-from services.quality.registry import threshold
+from services.quality.registry import threshold_reader
 from shared import settings
 
 logger = structlog.get_logger()
@@ -192,7 +192,7 @@ def seo_builder_mode() -> str:
 # flag (AA-499) and the cross-tenant `F10_cannibalization_cross_tenant` BLOCKING gate (AA-484) —
 # a shared threshold for the same underlying question ("is this near-duplicate content?") is
 # more defensible than inventing a second number for the softer, flag-only case.
-_REUSE_SIMILARITY_THRESHOLD = threshold("t10.reuse_similarity")
+_reuse_similarity = threshold_reader("t10.reuse_similarity")   # S279 L2: a setting, read per call
 
 
 class ContentWritingError(Exception):
@@ -1512,7 +1512,7 @@ async def _apply_faq_answer_fit(content_text: str, flags: list[dict], *, context
         content_text, context=context, piece_id=piece_id, request_id=request_id)
     if not record:
         return content_text, flags, 0.0
-    floor = length_contract.BLOG_FLOOR_CHARS
+    floor = length_contract.floor_chars()
     kept_for_floor = floor_aware and content_text != before and length_contract.floor_guard(before, content_text)
     if kept_for_floor:
         record = {**record, "floor_kept": True, "floor_kept_chars": [length_contract.measure(before),
@@ -2130,7 +2130,7 @@ def _recheck_length(content_text: str, gate_ledger: list, status: str, held_reas
     from services.acp_content_writing.quality_gates import gate_extreme_length  # lazy, as the other F4 re-runs
     fresh = gate_extreme_length(strip_citation_tags(content_text), "blog")
     side = length_contract.entry_side(fresh)
-    entry = {"step": LENGTH_TRACE_STEP, "chars": dict(trace), "floor": length_contract.BLOG_FLOOR_CHARS,
+    entry = {"step": LENGTH_TRACE_STEP, "chars": dict(trace), "floor": length_contract.floor_chars(),
              "target": length_contract.target_chars(), "words": length_contract.words(content_text),
              "verdict": length_contract.code_for(fresh) or "in", "held": False}
     if floor_kept:   # S278 — the optional normalizer steps whose edit the floor stopped (the ledger note)
@@ -2467,7 +2467,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 length_round = (attempt >= 2 and channel == "blog"
                                 and length_extend.mode() == length_extend.EXTEND_ON)
                 keep_hint = (length_round and bool(repair_items) and length_contract.cut_projection(
-                    content_text, repair_items) < length_contract.BLOG_FLOOR_CHARS)
+                    content_text, repair_items) < length_contract.floor_chars())
                 if repair_items:
                     # S234 — the ±2 neighbouring sentences as context, and only the cited source.
                     for item in repair_items:
@@ -2602,7 +2602,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     expand_why = LAST_ATTEMPT_NO_EXPAND
                 net = {"before": length_contract.measure(prev_snapshot["content_text"]),
                        "after_repair": length_contract.measure(content_text),
-                       "floor": length_contract.BLOG_FLOOR_CHARS, "target": length_contract.target_chars(),
+                       "floor": length_contract.floor_chars(), "target": length_contract.target_chars(),
                        "repair": "rewrite" if fresh_text else (repair_log[-1].get("repair_mode") or "none"),
                        "expand": expand_why}
             if expand_plan is not None:
@@ -2658,7 +2658,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         embedding, pool, cross_tenant=True,
                         exclude_tenant_id=UUID(tenant_id), limit=1,
                     )
-                    if cross_matches and cross_matches[0].similarity >= _REUSE_SIMILARITY_THRESHOLD:
+                    if cross_matches and cross_matches[0].similarity >= _reuse_similarity():
                         top = cross_matches[0]
                         # AA-484's own issue text (STEP0, citing AA-425's real finding): the
                         # highest-risk group for cannibalization is a tenant with NO active
@@ -2983,7 +2983,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # already covers "avoid repeating an angle for the SAME atom"; this is the
             # complementary case: two different atoms converging on near-identical content.
             match = next((s for s in similar if s.atom_id != atom_id), None)
-            if match and match.similarity >= _REUSE_SIMILARITY_THRESHOLD:
+            if match and match.similarity >= _reuse_similarity():
                 flags.append({
                     "gate": qr.WITHIN_TENANT_REUSE, "blocking": False,
                     "similarity": round(match.similarity, 4), "similar_piece_id": match.piece_id,

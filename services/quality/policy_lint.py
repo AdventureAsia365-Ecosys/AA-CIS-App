@@ -21,7 +21,7 @@ services/quality/writing_policy.{yaml,py,compiled.json}, this file, and frontend
        gate the registry does not know.
   (p7) TS (frontend/, portal/): a meta / title / slug length compared with a band-bound literal, a band-named constant
        with a band literal, a maxLength / minLength attribute with one on a meta / title / slug line, or a field-keyed
-       object literal with one — import it from quality-registry.generated.ts.
+       object literal with one — read it at runtime (S279 L2: useQualityThresholds, lib/qualityThresholds.ts).
 
 Not covered (S272 review 2, recorded in the AA-1047 notes): a band bound built into a string by concatenation
 (`"..." + str(155)`), and a bare band literal with no field word in its statement.
@@ -253,22 +253,22 @@ def scan_ts(path: str, src: str, c: dict) -> list[str]:
     for i, line in enumerate(src.splitlines(), 1):
         code = line.split("//", 1)[0]
         if TS_CONST_RE.search(code):
-            out.append(f"{path}:{i}: (p7) SEO band constant with a literal — import it from "
-                       "lib/quality-registry.generated.ts")
+            out.append(f"{path}:{i}: (p7) SEO band constant with a literal — read it at runtime "
+                       "(useQualityThresholds, lib/qualityThresholds.ts)")
             continue
         named = TS_NAMED_CONST_RE.search(code)
         attr = TS_ATTR_RE.search(code) if re.search(r"meta|title|slug|desc", code, re.I) else None
         keyed = [int(x) for m in TS_KEYED_RE.finditer(code) for x in m.groups() if x]
         if (named and int(named.group(1) or named.group(2)) in band_b) or (attr and int(attr.group(1)) in band_b) \
                 or any(n in band_b for n in keyed):
-            out.append(f"{path}:{i}: (p7) a meta / title / slug band literal — import it from "
-                       "lib/quality-registry.generated.ts")
+            out.append(f"{path}:{i}: (p7) a meta / title / slug band literal — read it at runtime "
+                       "(useQualityThresholds, lib/qualityThresholds.ts)")
             continue
         for m in TS_CMP_RE.finditer(code):
             n = int(m.group(1) or m.group(2))
             if n in all_b:
-                out.append(f"{path}:{i}: (p7) a meta / title / slug length compared with {n} — import the band "
-                           "from lib/quality-registry.generated.ts")
+                out.append(f"{path}:{i}: (p7) a meta / title / slug length compared with {n} — read the band at "
+                           "runtime (useQualityThresholds, lib/qualityThresholds.ts)")
                 break
     return out
 

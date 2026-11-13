@@ -99,11 +99,16 @@ ACTIONS = ("repair", "cut")
 # ---------------------------------------------------------------- modes
 
 def class_mode(cls: str) -> str:
-    """The class's own env, else the global one, else off; anything but off / shadow / repair reads as off."""
-    raw = os.environ.get(f"{MODE_ENV}_{cls.upper()}")
-    if raw is None or not raw.strip():
-        raw = os.environ.get(MODE_ENV, "")
-    mode = raw.strip().lower()
+    """The class's own setting (cis.quality_modes.t10_adjudicate_<class>, unless `inherit`), else the mode of every
+    class (cis.quality_modes.t10_adjudicate), default off; anything but off / shadow / repair reads as off (S279 L2;
+    the env vars T10_ADJ_MODE_<CLASS> / T10_ADJ_MODE stay their emergency overrides for one release)."""
+    from services.quality import settings_keys as keys
+    from shared import settings
+
+    raw = settings.get(keys.ADJUDICATE_CLASS_MODES[cls]) if cls in keys.ADJUDICATE_CLASS_MODES else keys.INHERIT
+    if raw == keys.INHERIT:
+        raw = settings.get(keys.MODES["t10_adjudicate"])
+    mode = str(raw or "").strip().lower()
     return mode if mode in MODES and cls in CLASSES else OFF
 
 

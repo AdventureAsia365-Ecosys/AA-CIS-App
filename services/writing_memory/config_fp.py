@@ -371,9 +371,13 @@ def build(writer: str, *, routes: Any, policies: Any = (), params: Any = (), cat
 
 
 def _policy_sha() -> str:
+    """The writing policy sha in force; S279 lane L2: with a quality setting other than its seed, the policy sha in
+    force (bands, verdicts laid in) plus the fingerprint of every quality setting, so a release names the gate values
+    it ran with. At the seeded values: policy_sha() exactly, as before L2."""
     try:
-        from services.quality import writing_policy
-        return writing_policy.policy_sha()
+        from services.quality import quality_settings, writing_policy
+        fp = quality_settings.settings_fp()
+        return writing_policy.policy_sha_in_force() + (f"+{fp}" if fp else "")
     except Exception as e:  # noqa: BLE001 — a fingerprint never fails on a policy read problem
         logger.warning("wm_config_fp_policy_unreadable", error=f"{type(e).__name__}: {str(e)[:200]}")
         return UNAVAILABLE

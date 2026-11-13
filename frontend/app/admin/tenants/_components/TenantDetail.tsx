@@ -28,7 +28,8 @@ import { ViewAsStart } from "./ViewAsStart";
 import { fmtDailyPublishLimit } from "./tenant360";
 import { T360_WORDS_MESSAGES } from "./tenant360.messages";
 import type { Tenant } from "./tenantRow";
-import { SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
+import { useScoreBands } from "../../_components/useQualityThresholds";
 import { TEN } from "../messages";
 
 // ─── Detail types (unchanged from previous) ───────────────────────────────────
@@ -64,8 +65,10 @@ interface TenantDetails {
   };
 }
 
-const SCORE_COLOR = (s: number | null) =>
-  s == null ? K.muted2 : s >= SCORE_BANDS.top ? K.success : s >= SCORE_BANDS.pass ? K.accent : K.danger;
+const SCORE_COLOR = (s: number | null, bands: ScoreBands | null | undefined) => {
+  const tone = scoreTone(s, bands);
+  return tone === "success" ? K.success : tone === "warning" ? K.accent : tone === "danger" ? K.danger : K.muted2;
+};
 
 const STATUS_TONE: Record<string, Tone> = {
   approved: "success", ai_generated: "info", rejected: "danger", needs_review: "warning",
@@ -75,6 +78,7 @@ function StatusChip({ status }: { status: string }) {
   return <Badge tone={STATUS_TONE[status] ?? "neutral"} dot={false} style={{ textTransform: "none", letterSpacing: 0 }}>{status}</Badge>;
 }
 function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursView?: string }) {
+  const bands = useScoreBands();
   const tr = useT(TEN);
   const { formatDate: fmtD } = useFormat();
   const isPublished = toursView === "published";
@@ -99,7 +103,7 @@ function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursVi
           ) },
           { id: "country", header: tr("colCountry"), accessorFn: (x) => x.country ?? "", cell: ({ row: { original: x } }) => <span style={{ color: K.muted }}>{x.country ?? "—"}</span> },
           { id: "score", header: tr("colScore"), accessorFn: (x) => x.quality_score ?? -1, meta: { align: "right" }, cell: ({ row: { original: x } }) => (
-            <span style={{ fontWeight: 700, color: SCORE_COLOR(x.quality_score) }}>{x.quality_score != null ? x.quality_score.toFixed(1) : "—"}</span>
+            <span style={{ fontWeight: 700, color: SCORE_COLOR(x.quality_score, bands) }}>{x.quality_score != null ? x.quality_score.toFixed(1) : "—"}</span>
           ) },
           { id: "status", header: tr("colStatus"), accessorKey: "status", meta: { align: "right" }, cell: ({ row: { original: x } }) => <StatusChip status={x.status} /> },
           ...(isPublished ? [] : [{ id: "version", header: tr("colVersion"), accessorFn: (x: RewrittenTour) => x.version_number ?? -1, meta: { align: "right" },
@@ -367,6 +371,7 @@ interface RewriteActivityItem {
   edit_source: string | null; created_at: string;
 }
 function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
+  const bands = useScoreBands();
   const t = useT(TEN);
   const { formatDate: fmtD } = useFormat();
   return (
@@ -389,7 +394,7 @@ function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
             cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, color: K.muted2 }}>v{r.version_number}</span> },
           { id: "status", header: t("colStatus"), accessorKey: "status", meta: { align: "right" }, cell: ({ row: { original: r } }) => <StatusChip status={r.status} /> },
           { id: "score", header: t("colScore"), accessorFn: (r) => r.quality_score ?? -1, meta: { align: "right" }, cell: ({ row: { original: r } }) => (
-            <span style={{ fontWeight: 700, color: SCORE_COLOR(r.quality_score) }}>{r.quality_score != null ? r.quality_score.toFixed(1) : "—"}</span>
+            <span style={{ fontWeight: 700, color: SCORE_COLOR(r.quality_score, bands) }}>{r.quality_score != null ? r.quality_score.toFixed(1) : "—"}</span>
           ) },
           { id: "date", header: t("colDate"), accessorKey: "created_at", meta: { align: "right" },
             cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, color: K.muted2 }}>{fmtD(r.created_at)}</span> },

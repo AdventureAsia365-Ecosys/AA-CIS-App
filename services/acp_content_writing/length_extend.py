@@ -163,7 +163,7 @@ def plan_after_repair(content_text: str, *, before: Optional[str], channel: Opti
     if mode() != EXTEND_ON:
         return None, "off"
     now = lc.measure(content_text)
-    if now >= lc.BLOG_FLOOR_CHARS:
+    if now >= lc.floor_chars():
         return None, "at_or_over_floor"
     body = sections(content_text)
     if not body:
@@ -238,7 +238,7 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
                 continue
         entry["refused"].append({"section": sec["index"], "why": why[:200]})
     entry["chars_after"] = lc.measure(cur)
-    entry["reached_floor"] = entry["chars_after"] >= lc.BLOG_FLOOR_CHARS
+    entry["reached_floor"] = entry["chars_after"] >= lc.floor_chars()
     return cur, float(cost or 0.0), entry
 
 

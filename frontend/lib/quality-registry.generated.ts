@@ -53,22 +53,6 @@ export const RETIRED_GATES: ReadonlySet<string> = new Set([
   "F2_banned_patterns", "F2_brand_forbidden", "promises_an_option", "F5_atom_density", "F3_structural_variance", "F7_faq_dedup", "F8_framework", "F15_voice_warn",
 ]);
 
-/** The quality pass line (thresholds.yaml review.approve_floor → pass_line). */
-export const PASS_LINE = 7;
-
-/** Score colour bands: top and above = green; pass line and above = amber/gold; low and above = amber
- *  on the review page; below = red. */
-export const SCORE_BANDS = {
-  top: 9,
-  pass: 7,
-  low: 5,
-} as const;
-
-/** AA-1047 — the writing policy's SEO bands (services/quality/writing_policy.yaml, decision D5): one meta
- *  band and one title band for every workflow; the slug cap. */
-export const WRITING_POLICY_SHA = "739223d6cc24f1e5";
-export const SEO_BANDS = {
-  meta: { min: 140, max: 155 },
-  title: { min: 45, max: 60 },
-  slug: { max: 60 },
-} as const;
+// S279 lane L2: the pass line, the score colour bands and the SEO bands are settings of the platform
+// settings registry; the pages read them at runtime (lib/qualityThresholds.ts,
+// GET /admin/quality/thresholds).

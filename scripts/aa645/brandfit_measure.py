@@ -376,7 +376,9 @@ def main(argv=None) -> int:
         raise SystemExit("brand_fit.score_brand_fit has no rubric parameter — overlay not applied")
 
     if args.single_call:
-        brand_fit._REPEAT_BAND = (99.0, 99.0)       # read at call time in score_brand_fit -> never repeats
+        # never repeats: S279 L2 reads the band per call through brand_fit._repeat_band() (the settings
+        # cis.quality.brand_fit_repeat_band_low / _high); the module constant _REPEAT_BAND is gone
+        brand_fit._repeat_band = lambda: (99.0, 99.0)
     arms = {a.strip() for a in args.arms.split(",") if a.strip()}
     units = load_units(args.pages, arms, rubrics, args.limit)
     brand = load_brand(args)

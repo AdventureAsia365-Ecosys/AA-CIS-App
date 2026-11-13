@@ -69,7 +69,7 @@ def replay_trace(chars: dict, *, old_words: int = OLD_WORDS_DEFAULT) -> Optional
     from services.acp_content_writing import length_contract as lc
     if not isinstance(chars, dict) or chars.get("loop") is None:
         return None
-    floor = lc.BLOG_FLOOR_CHARS
+    floor = lc.floor_chars()
     loop = int(chars["loop"])
     cuts = step_cuts(chars)
     stored = cuts[-1][2] if cuts else loop
@@ -112,7 +112,7 @@ def summarize(rows: list[dict]) -> dict:
     from services.acp_content_writing import length_contract as lc
     traced = [r for r in rows if r["change"] != "no_trace"]
     return {
-        "pieces": len(rows), "traced": len(traced), "floor_chars": lc.BLOG_FLOOR_CHARS,
+        "pieces": len(rows), "traced": len(traced), "floor_chars": lc.floor_chars(),
         "target_chars": lc.target_chars(), "target_words": lc.target_words(),
         "short_stored": sorted(r["piece"] for r in traced if r["stored_verdict"] != "in"),
         "short_guarded": sorted(r["piece"] for r in traced if r["guarded_verdict"] != "in"),

@@ -35,7 +35,9 @@ ERROR_CODE = "approve_blocked"
 OVERRIDE_MIN_CHARS = 10
 
 # The auto-publish score floor (thresholds.yaml a1.publish_floor, the one admin_pipeline._is_publishable reads).
-_PUBLISH_FLOOR = threshold("a1.publish_floor")
+def _publish_floor() -> float:
+    """thresholds.yaml a1.publish_floor; S279 L2: a setting, read at call time."""
+    return float(threshold("a1.publish_floor"))
 
 
 def _json(value: Any, default):
@@ -92,8 +94,8 @@ def blockers(row: Any) -> list[dict]:
     score = r["quality_score"]
     if score is None:
         out.append({"code": "no_score", "detail": "the version has no quality score"})
-    elif score < _PUBLISH_FLOOR:
-        out.append({"code": "score_below_floor", "detail": f"score {score:.1f} is below {_PUBLISH_FLOOR:g}"})
+    elif score < _publish_floor():
+        out.append({"code": "score_below_floor", "detail": f"score {score:.1f} is below {_publish_floor():g}"})
     hard = sorted(set(r["failure_codes"]) & set(hard_block_codes(r)))
     if hard:
         out.append({"code": "hard_codes", "detail": "hard codes still present: " + ", ".join(hard)})

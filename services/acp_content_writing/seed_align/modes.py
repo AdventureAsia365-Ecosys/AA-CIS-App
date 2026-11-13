@@ -30,6 +30,8 @@ from services.acp_content_writing.seed_align import checks as sa_checks
 from services.acp_content_writing.seed_align import nlp as sa_nlp
 from services.acp_content_writing.seed_align import seed_graph
 from services.quality import registry as qr
+from services.quality import settings_keys as _keys
+from shared import settings as _settings
 
 logger = structlog.get_logger()
 
@@ -68,12 +70,14 @@ def _env_for(cls: str) -> str:
 
 
 def class_mode(cls: str) -> str:
-    """The mode a class runs in: its own env, else the global one, else off. An unknown value reads as off; `hold`
-    reads as `repair` unless the class may hold and is promoted."""
-    raw = os.environ.get(_env_for(cls))
-    if raw is None or not raw.strip():
-        raw = os.environ.get(MODE_ENV, "")
-    mode = raw.strip().lower()
+    """The mode a class runs in: its own setting (cis.quality_modes.t10_seed_align_<class>, unless `inherit`), else the
+    mode of every class (cis.quality_modes.t10_seed_align), default off (S279 L2: Platform › Settings, evidence-gated;
+    the env vars T10_SA_MODE_<CLASS> / T10_SA_MODE stay their emergency overrides for one release). An unknown value
+    reads as off; `hold` reads as `repair` unless the class may hold and is promoted."""
+    raw = _settings.get(_keys.SEED_ALIGN_CLASS_MODES[cls]) if cls in _keys.SEED_ALIGN_CLASS_MODES else _keys.INHERIT
+    if raw == _keys.INHERIT:
+        raw = _settings.get(_keys.MODES["t10_seed_align"])
+    mode = str(raw or "").strip().lower()
     if mode not in MODES or cls not in CLASS_GATE or cls not in sa_checks.BUILT_CLASSES:
         return OFF
     if mode == HOLD and not (cls in HOLD_CAPABLE and cls in HOLD_PROMOTED):
