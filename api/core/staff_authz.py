@@ -439,6 +439,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): _TENANT_BOOK_WRITE,   # AA-1035: + customer_success, scoped
     ("POST", "/admin/tenants/{tenant_id}/offboard"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/restore"): TENANT_WRITE,
+    # AA-1086 G2 (root ADR 0019 d16): leave pilot mode (clears is_pilot / pilot_ends_at, audited, reason required)
+    ("POST", "/admin/tenants/{tenant_id}/pilot/end"): TENANT_WRITE,
     # AA-1035: GET /admin/tenants/{tenant_id}/details — Master Content (every content.read role) reads the aa_internal
     # catalog through it; require_tenant_scope keeps those roles on the aa_internal tenant (scope "internal"). finance
     # (billing.read) opens Tenant 360 on it too and gets the header only (no tours, runs or brand text: admin.py).

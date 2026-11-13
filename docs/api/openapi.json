@@ -3257,6 +3257,67 @@
         "title": "EmbeddingReembedRunRequest",
         "type": "object"
       },
+      "EndPilotRequest": {
+        "properties": {
+          "reason": {
+            "description": "Why the pilot ends now (required, recorded in the audit trail)",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "EndPilotRequest",
+        "type": "object"
+      },
+      "EndPilotResponse": {
+        "properties": {
+          "changed": {
+            "description": "False when the tenant was not the pilot: nothing was written",
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "ended_early": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended Early"
+          },
+          "is_pilot": {
+            "title": "Is Pilot",
+            "type": "boolean"
+          },
+          "previous_pilot_ends_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Pilot Ends At"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "is_pilot",
+          "changed"
+        ],
+        "title": "EndPilotResponse",
+        "type": "object"
+      },
       "EnqueueBody": {
         "additionalProperties": false,
         "description": "S273 (decision \"t9-heldout-first\"): one batch of adjudication work. Without the three filters every disputed\nand audit claim of the set is queued, as before.",
@@ -42887,6 +42948,107 @@
           }
         },
         "summary": "Tenant offboarding — cancel tenant (soft)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/pilot/end": {
+      "post": {
+        "description": "AA-1086 gap G2 (root ADR 0019 d16): clear ``shared.tenants.is_pilot`` and ``pilot_ends_at`` so the unique index\n``tenants_one_pilot_key`` frees Dev's one pilot slot. Administrator only (``tenant.write``), reason required,\naudited ``tenant.pilot_ended``, one account event so the CRM's pilot marker follows at its next pull. Idempotent: a\ntenant that is not the pilot answers 200 with ``changed`` false and nothing is written\n(services/tenant_account/pilot.py).",
+        "operationId": "end_tenant_pilot_admin_tenants__tenant_id__pilot_end_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndPilotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndPilotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "End a tenant's pilot (clears the pilot marker; the Dev pilot slot is free again)",
         "tags": [
           "admin"
         ]

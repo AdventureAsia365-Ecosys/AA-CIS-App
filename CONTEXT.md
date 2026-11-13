@@ -2433,6 +2433,10 @@ the API task, DRY RUN until `--apply`): `register-crm-agency --key sen-vang` enq
 the CRM E2E agency's own id (a `create` may carry `tenant_id` on Dev, `demo` only: CIS, Booking `bk_tenant_pull` and
 the CRM then name one synthetic tenant); `subject-gate-flag` adds one attempt with an invented off-catalogue booking
 link to a synthetic tenant's latest request and runs the real subject gate, which opens the flag the spec releases.
+AA-1086 G1: `rehearsal-tenant --run <run>` enqueues the same saga for the pilot rehearsal agency `pilot-rehearsal-01`
+(`demo`, add-ons `crm.core` 3 seats + `tripplanner.hosted`) under the id AA-Partner's seed gives the agency key
+`pilot-rehearsal-01`, so the CRM seeder adds its E2E owner and agent under the tenant CIS holds; a tenant that exists is
+reported, never created twice (root `docs/ops/runbooks/pilot-rehearsal.md`).
 `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
@@ -3028,6 +3032,13 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
 - **Dev guard** (root ADR 0019 d16, `services/tenant_account/dev_guard.py`): on Dev (`ENVIRONMENT` exactly `dev`) a new
   tenant defaults to `demo` (synthetic) in `POST /admin/tenants` and the saga; an `agency` is refused unless the saga
   creates it as the one pilot (`pilot_weeks` 1-8). Existing rows keep their kind.
+- **Leaving pilot mode** (AA-1086 G2, root ADR 0019 d16): `POST /admin/tenants/{tenant_id}/pilot/end` (administrator
+  only, `tenant.write`; reason required) clears `is_pilot` and `pilot_ends_at` together, writes one
+  `account.status_changed` event with the status unchanged (so `crm_entitlement_pull` re-reads the snapshot and clears
+  `crm.tenant.is_pilot`) and one `tenant.pilot_ended` audit row, in one transaction (`services/tenant_account/pilot.py`).
+  A tenant that is not the pilot is a no-op 200 (`changed` false). Any status is accepted, so an offboarded pilot still
+  frees the slot (`tenants_one_pilot_key`). Tenant 360 › Subscription shows "End pilot" next to the pilot badge (confirm
+  dialog with the reason).
 - **Pilot protections** (AA-969 part 2, root ADR 0019 d16): clean-up never touches the pilot tenant. The retention
   kinds of tenant rows (`retention_llm_call_log`, `retention_tenant_api_usage`) leave its rows out
   (`services/retention/policy.py` `NOT_PILOT`; the rollups still count them), and the E2E identity's "synthetic
@@ -3063,7 +3074,7 @@ data erasure is a separate step after offboarding plus a retention window, with 
 `ERASURE_APPLY_ENABLED`; after an apply the tenant cannot be restored.
 
 Every admin write to a tenant (create, plan, status, key, brand identity, config, offboard,
-restore) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the
+restore, end pilot) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the
 backend re-checks `x-admin-role`. Each write leaves one `acp_shared.audit_log` row
 (`AdminTenantAuditAction`, actor `admin:{x-admin-user-id}`). `plan_id` (→ `shared.membership_plans`)
 is set on create and on every plan change. `GET /admin/tenants` lists only active tenants unless

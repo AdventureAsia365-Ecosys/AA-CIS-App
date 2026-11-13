@@ -238,3 +238,75 @@ def test_default_run_and_text():
     at = datetime(2026, 11, 12, 7, 5, tzinfo=timezone.utc)
     assert fx.default_run(at) == at.strftime("%Y%m%d%H%M") and fx.RUN_RE.match(fx.default_run(at))
     assert "https://booking.lantern-cove.invalid/tours/dawn-s278a" in fx.fixture_text("s278a")
+
+
+# ── AA-1086 G1: the pilot rehearsal agency ────────────────────────────────────────────────────────────────────────
+
+def test_rehearsal_agency_id_is_the_crm_seed_key():
+    # AA-Partner api/app/seed/catalogue.py agency_id("pilot-rehearsal-01"): the same namespace and name form
+    import uuid as _uuid
+
+    assert fx.REHEARSAL.tenant_id == str(_uuid.uuid5(fx.CRM_SYNTHETIC_NAMESPACE,
+                                                     "aa-crm-synthetic-agency:pilot-rehearsal-01"))
+    assert fx.REHEARSAL_SLUG == "pilot-rehearsal-01"
+    assert len(fx.rehearsal_request_key("a" * 31)) <= 64
+
+
+@pytest.mark.asyncio
+async def test_rehearsal_dry_run_then_apply(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    conn = FakeConn({})
+    dry = await fx.rehearsal_tenant(conn, None, "run-a", apply=False)
+    assert dry["state"] == "would_enqueue" and dry["tenant_id"] == fx.REHEARSAL.tenant_id
+    req = dry["request"]
+    assert (req["kind"], req["slug"], req["plan_tier"], req["posts_per_week"]) == ("demo", "pilot-rehearsal-01",
+                                                                                  "growth", 2)
+    assert req["tenant_id"] == fx.REHEARSAL.tenant_id and "pilot_weeks" not in req
+    assert {a["product"]: (a["plan_key"], a["seats"]) for a in req["add_ons"]} == {
+        "crm": ("crm.core", 3), "tripplanner": ("tripplanner.hosted", None)}
+    assert req["request_key"] == "aa1086-pilot-rehearsal-01-run-a"
+    enqueue = AsyncMock(return_value=("job-9", True))
+    monkeypatch.setattr(fx.tenant_provision_job, "enqueue_request", enqueue)
+    out = await fx.rehearsal_tenant(conn, "pool", "run-a", apply=True)
+    assert out["state"] == "enqueued" and out["job_id"] == "job-9"
+    assert enqueue.await_args.args[1].register_id == fx.REHEARSAL.tenant_id
+    assert {a.product for a in enqueue.await_args.args[1].add_ons} == {"crm", "tripplanner"}
+
+
+@pytest.mark.asyncio
+async def test_rehearsal_dry_run_reports_an_earlier_job(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    conn = FakeConn({"FROM shared.job WHERE kind": {"id": "job-1", "status": "failed"}})
+    assert (await fx.rehearsal_tenant(conn, None, "run-a", apply=False))["state"] == "job_failed"
+
+
+@pytest.mark.asyncio
+async def test_rehearsal_is_idempotent_when_the_tenant_exists(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    conn = FakeConn({"FROM shared.tenants WHERE tenant_id = $1::uuid": {"tenant_id": fx.REHEARSAL.tenant_id},
+                     "SELECT is_canary IS TRUE": True})
+    conn.fetch = AsyncMock(return_value=[{"product": "content", "plan_key": "content.growth", "status": "active"}])
+    enqueue = AsyncMock()
+    monkeypatch.setattr(fx.tenant_provision_job, "enqueue_request", enqueue)
+    out = await fx.rehearsal_tenant(conn, "pool", "run-b", apply=True)
+    assert out["state"] == "exists" and out["subscriptions"][0]["product"] == "content"
+    enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answers,match", [
+    ({"FROM shared.tenants WHERE tenant_id = $1::uuid": {"tenant_id": "x"}, "SELECT is_canary IS TRUE": False},
+     "not as a synthetic"),
+    ({"WHERE slug = $1": "1b2c3d4e-5f60-4718-8a9b-0c1d2e3f4a5b"}, "held by another tenant"),
+])
+async def test_rehearsal_refuses_a_real_or_clashing_tenant(monkeypatch, answers, match):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    with pytest.raises(fx.Refused, match=match):
+        await fx.rehearsal_tenant(FakeConn(answers), "pool", "run-c", apply=True)
+
+
+def test_rehearsal_cli_needs_a_run(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    with pytest.raises(SystemExit):
+        fx.main(["rehearsal-tenant"])
+    assert fx.main(["rehearsal-tenant", "--run", "run-a"]) == 2       # refused outside Dev before connecting
