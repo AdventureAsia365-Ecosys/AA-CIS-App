@@ -18,7 +18,7 @@ What is compiled, and who reads it:
 - **eval**: the classes the eval judge reports (the others are measured by code).
 - **rules_config**: claim_rules.RulesConfig (the F9 v2 rule table's open choices).
 - **route_rows**: one row per T10 gate (repair route, style-only) and the F9 class actions — quality_gates
-  CHEAP_REPAIR_GATES / STYLE_ONLY_GATES / OWNED_BY_FIX_STEP and f9_policy.HOLD_CLASSES.
+  CHEAP_REPAIR_GATES / STYLE_ONLY_GATES / OWNED_BY_FIX_STEP and f9_policy.hold_classes().
 - **fragments**: prompt lines rendered with `<<token>>` values.
 - **severities**: the class severities the policy owns (taxonomy.yaml must agree; the lint checks).
 
@@ -26,8 +26,17 @@ What is compiled, and who reads it:
 fixtures change no behaviour). It is part of the release fingerprint (writing_memory.config_fp component `policy`)
 and of the eval judge version.
 
-Pure: standard library + PyYAML (the CI Lint job runs the lint with only PyYAML installed). Accessors read the
-compiled JSON once per process and never raise on a request path for a known key.
+S279 lane L2 (AA-1096, CIS 412): the band and aim NUMBERS (D5) and the claim verdicts (`rules_config` values, the F9
+class actions) are settings of the platform settings registry (Platform › Settings: evidence-gated, maker-checker).
+The YAML keeps their structure; `effective(source, get)` lays the values in. Everything compiled (the compiled file,
+`policy_sha`, the prompt hashes of the prompt register) uses the SEEDED defaults, so it is byte for byte what it was;
+the run-time accessors (`band`, `slug_max`, `writer_aim`, `fill`, `rules_config`, `f9_hold_classes`,
+`policy_sha_in_force`) read the values IN FORCE at call time. `policy_sha_in_force()` = `policy_sha()` while every
+value is its default, else the sha of the effective policy (the release fingerprint and the prompt version then name
+the policy that ran).
+
+Pure: standard library + PyYAML (the CI Lint job runs the lint with only PyYAML installed; `shared.settings` and
+`settings_keys` are standard library). Accessors never raise on a request path for a known key.
 """
 from __future__ import annotations
 
@@ -39,9 +48,12 @@ import re
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 import yaml
+
+from services.quality import settings_keys as _keys
+from shared import settings as _settings
 
 _DIR = Path(__file__).resolve().parent
 POLICY_PATH = _DIR / "writing_policy.yaml"
@@ -69,12 +81,53 @@ class PolicyError(ValueError):
 
 # ------------------------------------------------------------------------------------------------------- loading
 
-def load_source(path: Path = POLICY_PATH) -> dict:
+def load_source(path: Path = POLICY_PATH, get: Optional[Callable[[str], Any]] = None) -> dict:
+    """The policy with its setting-held values laid in (``effective``): the seeded defaults unless ``get`` is given."""
     with open(path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     if not isinstance(data, dict):
         raise PolicyError(f"{path.name} is not a mapping")
-    return data
+    return effective(data, get)
+
+
+def _default_of(key: str) -> Any:
+    return _settings.definition(key).default_value
+
+
+def effective(source: dict, get: Optional[Callable[[str], Any]] = None) -> dict:
+    """``source`` (the YAML) with the S279 L2 setting values laid in, in the shape the policy had before the move:
+    bands meta / title {min, max}, slug {max}, writer_aims.meta.<writer> {min, max}, rules_config {key: verdict},
+    f9_class_rows [{class, action}]. ``get`` = a setting reader (default: the seeded defaults). A copy; pure."""
+    get = get or _default_of
+    out = copy.deepcopy(source)
+    bands = out.setdefault("bands", {})
+    for band in ("meta", "title"):
+        b = bands.setdefault(band, {}) or {}
+        b["min"], b["max"] = int(get(_keys.SEO[f"{band}_min"])), int(get(_keys.SEO[f"{band}_max"]))
+        bands[band] = b
+    slug = {k: v for k, v in (bands.get("slug") or {}).items() if k != "max"}
+    bands["slug"] = {"max": int(get(_keys.SEO["slug_max"])), **slug}      # the key order of the compiled file
+    aims = (out.setdefault("writer_aims", {}) or {}).setdefault("meta", {})
+    for writer, (lo, hi) in _keys.WRITER_AIMS.items():
+        rest = {k: v for k, v in (aims.get(writer) or {}).items() if k not in ("min", "max")}
+        aims[writer] = {"min": int(get(lo)), "max": int(get(hi)), **rest}
+    if isinstance(out.get("rules_config"), dict):
+        out["rules_config"] = {k: (get(_keys.RULES_CONFIG[k]) if k in _keys.RULES_CONFIG else v)
+                               for k, v in out["rules_config"].items()}
+    rows = []
+    for r in out.get("f9_class_rows") or []:
+        if isinstance(r, dict) and r.get("class") in _keys.F9_CLASS_ACTIONS:
+            r = {**r, "action": get(_keys.F9_CLASS_ACTIONS[r["class"]])}
+        rows.append(r)
+    if rows:
+        out["f9_class_rows"] = rows
+    return out
+
+
+def setting_keys() -> tuple[str, ...]:
+    """The settings the policy lays in (bands, aims, claim verdicts)."""
+    return tuple(sorted(list(_keys.SEO.values()) + [k for pair in _keys.WRITER_AIMS.values() for k in pair]
+                        + list(_keys.RULES_CONFIG.values()) + list(_keys.F9_CLASS_ACTIONS.values())))
 
 
 def _canon(value: Any) -> str:
@@ -276,11 +329,13 @@ def stale() -> bool:
 
 @lru_cache(maxsize=1)
 def compiled() -> dict:
+    """The compiled file (the SEEDED defaults). Run-time values: the accessors below."""
     with open(COMPILED_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def policy_sha() -> str:
+    """The compiled policy's sha (the defaults): what the prompt register and the change-control lock hash."""
     return compiled()["policy_sha"]
 
 
@@ -288,31 +343,62 @@ def policy_version() -> str:
     return compiled()["policy_version"]
 
 
+def _in_force() -> dict[str, Any]:
+    return {k: _settings.get(k) for k in setting_keys()}
+
+
+def at_defaults() -> bool:
+    """True while every setting the policy lays in is its seeded default."""
+    return all(v == _default_of(k) for k, v in _in_force().items())
+
+
+@lru_cache(maxsize=8)
+def _live(values_json: str) -> dict:
+    """The live policy parts for one set of values in force (cached per set): sha, tokens, fragments."""
+    values = json.loads(values_json)
+    source = load_source(get=values.__getitem__)
+    tok = tokens_of(source)
+    frags = {k: render(v["text"], tok) for k, v in (source.get("fragments") or {}).items()}
+    return {"sha": sha_of(source), "tokens": tok, "fragments": frags}
+
+
+def _live_parts() -> dict:
+    return _live(json.dumps(_in_force(), sort_keys=True))
+
+
+def policy_sha_in_force() -> str:
+    """``policy_sha()`` while the policy's settings are at their defaults, else the sha of the effective policy in
+    force (writing_memory.config_fp component ``policy``)."""
+    return policy_sha() if at_defaults() else _live_parts()["sha"]
+
+
 def band(name: str) -> tuple[int, int]:
-    """(min, max) of the meta or title band."""
-    b = compiled()["bands"][name]
-    return int(b["min"]), int(b["max"])
+    """(min, max) of the meta or title band in force (settings registry, call time)."""
+    return int(_settings.get(_keys.SEO[f"{name}_min"])), int(_settings.get(_keys.SEO[f"{name}_max"]))
 
 
 def slug_max() -> int:
-    return int(compiled()["bands"]["slug"]["max"])
+    return int(_settings.get(_keys.SEO["slug_max"]))
 
 
 def writer_aim(writer: str, field: str = "meta") -> tuple[int, int]:
-    a = compiled()["writer_aims"][field][writer]
-    return int(a["min"]), int(a["max"])
+    if field != "meta":
+        raise KeyError(f"no writer aim for {field!r}")
+    lo, hi = _keys.WRITER_AIMS[writer]
+    return int(_settings.get(lo)), int(_settings.get(hi))
 
 
 def fill(text: str) -> str:
-    """A consumer template with its `<<key>>` tokens rendered: a band / aim / FAQ token or a whole fragment
-    (`<<t9_repair.background>>`). An unknown key raises PolicyError at import time."""
-    c = compiled()
-    frags = {k: v for k, v in c["fragments"].items() if k != "policy_sha"}
-    return render(text, {**c["tokens"], **frags})
+    """A consumer template with its `<<key>>` tokens rendered from the values IN FORCE: a band / aim / FAQ token or a
+    whole fragment (`<<t9_repair.background>>`). An unknown key raises PolicyError. Call it where the prompt is built
+    (call time): a module constant built with it keeps the values of import time."""
+    live = _live_parts()
+    return render(text, {**live["tokens"], **live["fragments"]})
 
 
 def fragment(key: str) -> str:
-    return compiled()["fragments"][key]
+    """A fragment rendered with the values in force (a fragment without band tokens is the compiled text)."""
+    return _live_parts()["fragments"][key]
 
 
 def label_rubric() -> dict:
@@ -326,8 +412,8 @@ def judge_classes() -> tuple[str, ...]:
 
 
 def rules_config() -> dict:
-    rc = compiled()["rules_config"]
-    return {k: rc[k] for k in RULES_CONFIG_KEYS}
+    """The F9 v2 claim rules' open choices in force (settings registry, call time)."""
+    return {k: _settings.get(_keys.RULES_CONFIG[k]) for k in RULES_CONFIG_KEYS}
 
 
 def faq_pairs() -> dict:
@@ -355,7 +441,9 @@ def style_only_gates() -> frozenset:
 
 
 def f9_hold_classes() -> frozenset:
-    return frozenset(r["class"] for r in compiled()["route_rows"]["f9_classes"] if r["action"] == "hold")
+    """The F9 classes whose verdict in force is hold (settings registry, call time)."""
+    return frozenset(r["class"] for r in compiled()["route_rows"]["f9_classes"]
+                     if _settings.get(_keys.F9_CLASS_ACTIONS[r["class"]]) == "hold")
 
 
 def severities() -> dict[str, str]:

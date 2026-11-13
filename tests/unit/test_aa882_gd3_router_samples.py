@@ -32,6 +32,8 @@ SAMPLES = [
     ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
     ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),
     ("admin_tenant_addon_requests", "POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline", {}),
+    ("admin_tenant_erasure", "GET", "/admin/job-runner/erasure/requests", None),                # AA-1093 L2
+    ("admin_tenant_erasure", "POST", "/admin/job-runner/erasure/requests/{request_id}/approve", {}),  # AA-1093 L2
     ("admin_plans", "POST", "/admin/plans", {}),
     ("admin_pipeline", "POST", "/admin/review-queue/{review_id}/approve", {}),
     ("admin_pipeline", "POST", "/admin/run-tour-async", {}),
@@ -103,6 +105,7 @@ SAMPLES = [
     ("admin_reference_prices", "GET", "/admin/reference-prices", None),   # AA-1091 (content reads, admin writes)
     ("admin_reference_prices", "POST", "/admin/reference-prices/accept", {"source_keys": ["k"]}),
     ("admin_settings_registry", "POST", "/admin/settings/registry/{key}/proposals", {}),   # S279 thresholds L1
+    ("admin_quality_thresholds", "GET", "/admin/quality/thresholds", None),                # S279 thresholds L2
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
 ]

@@ -140,6 +140,15 @@ class AdminTenantAuditAction:
     # backup id, counts, the mismatched table names; never a row value). Written by
     # services/tenant_backup/restore_drill.py.
     RESTORE_DRILL = "tenant.restore_drill"
+    # AA-1093 lane L2 — the offboarding erasure saga (services/tenant_erasure; details: ids, hashes, counts, no data):
+    # a Cognito admin approved the combined fingerprint, a drill (window 0) was started on a synthetic tenant, a new
+    # DRY RUN round was started, the tech lead stopped a request (it stays failed), the saga finished (receipt;
+    # tenant_id NULL, the tenant row is gone).
+    ERASURE_APPROVED = "tenant.erasure_approved"
+    ERASURE_DRILL = "tenant.erasure_drill"
+    ERASURE_ROUND = "tenant.erasure_round"
+    ERASURE_STOPPED = "tenant.erasure_stopped"
+    ERASURE_DONE = "tenant.erasure_done"
     # AA-978 — Tenant 360 Members: a staff change of a CIS membership (the CIS 276 trigger also writes the
     # tenant.membership.v1 feed event the partner CRM applies). details: before/after role or status; no identity.
     MEMBER_ROLE_CHANGED = "tenant.member_role_changed"

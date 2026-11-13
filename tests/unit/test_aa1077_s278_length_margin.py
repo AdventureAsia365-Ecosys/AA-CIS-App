@@ -31,21 +31,21 @@ def _blog(chars: int) -> str:
 # ---------------------------------------------------------------- one target, from the registry
 
 def test_the_target_is_the_floor_plus_the_registry_margin_never_the_floor():
-    assert lc.TARGET_MARGIN == qr.threshold("t9.blog_length_target_margin") == 0.17
-    assert lc.BLOG_FLOOR_CHARS == 4700          # the floor is not lowered
+    assert lc.target_margin() == qr.threshold("t9.blog_length_target_margin") == 0.17
+    assert lc.floor_chars() == 4700          # the floor is not lowered
     assert lc.target_chars() == round(4700 * 1.17) == 5499
     assert lc.target_words() == 950             # 5,499 / 5.8 = 948.1, rounded up to ten
-    assert lc.target_chars() > lc.BLOG_FLOOR_CHARS
+    assert lc.target_chars() > lc.floor_chars()
 
 
 def test_the_writer_word_floor_is_the_target_in_words():
     """The prompt's hashed literal is pinned to the threshold: a new margin fails here until the prompt (and its
     t9_write version) follows."""
     lo, hi, most = lc.writer_words()
-    assert lo == prompts._BLOG_WORDS[0] == lc.target_words()
+    assert lo == prompts._blog_words()[0] == lc.target_words()
     assert lo * lc.CHARS_PER_WORD >= lc.target_chars()
-    assert lo < hi < most and most * lc.CHARS_PER_WORD <= lc.BLOG_CEILING_CHARS
-    assert f"never under {lo:,}" in prompts._BLOG_LENGTH_INSTRUCTIONS
+    assert lo < hi < most and most * lc.CHARS_PER_WORD <= lc.ceiling_chars()
+    assert f"never under {lo:,}" in prompts._blog_length_instructions()
 
 
 def test_the_extend_repair_aims_at_the_target():

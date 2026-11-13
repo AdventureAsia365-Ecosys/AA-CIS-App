@@ -15,7 +15,7 @@ import pytest
 from services.content_generation.graph import (
     build_revalidation_graph,
     human_edit_gate_node,
-    MIN_QUALITY,
+    min_quality,
 )
 
 
@@ -28,7 +28,7 @@ def _state(score, audit_status="", failure_codes=None):
 
 
 def test_gate_pass_when_score_clears_and_audit_clean():
-    out = human_edit_gate_node(_state(MIN_QUALITY, ""))
+    out = human_edit_gate_node(_state(min_quality(), ""))
     assert out["revalidate_passed"] is True
     assert out["revalidate_ran"] is True
 
@@ -39,7 +39,7 @@ def test_gate_pass_above_threshold():
 
 
 def test_gate_fail_when_score_below_min():
-    out = human_edit_gate_node(_state(MIN_QUALITY - 0.1, "pass"))
+    out = human_edit_gate_node(_state(min_quality() - 0.1, "pass"))
     assert out["revalidate_passed"] is False
     assert out["revalidate_ran"] is True
 
@@ -81,7 +81,7 @@ def test_revalidation_graph_has_no_flag_fix_or_generate():
 
 def test_gate_hard_block_code_fails_despite_high_score():
     # AA-234: a hard-block rule violation (meta under floor) must fail the gate even when
-    # the overall score clears MIN_QUALITY — the exact bug #1 the gate closes.
+    # the overall score clears min_quality() — the exact bug #1 the gate closes.
     out = human_edit_gate_node(_state(9.0, "pass", ["META_TOO_SHORT"]))
     assert out["revalidate_passed"] is False
 

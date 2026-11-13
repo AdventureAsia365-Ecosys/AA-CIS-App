@@ -84,6 +84,7 @@ from services.acp_contract.ranking_reference import (
     keyword_words,
     names_somewhere,
 )
+from services.quality.registry import setting_reader
 from shared.llm_client.decide import Decision, decide
 
 
@@ -482,19 +483,16 @@ def compute_contested(serp_domains: list[str], everywhere: set[str]) -> float:
 # 0.5 default already reflects the same measurement (see its docstring); this is the SEPARATE
 # decision of where `contested` itself should cut a Segment.
 #
-# At everywhere_domains(threshold=0.5) (2 domains found: en.wikipedia.org, www.tripadvisor.com
-# — exactly the "claims everything" global sites the standard is meant to catch, NOT the
-# region-specific travel blogs that dominated at lower thresholds, e.g. discoverlaos.today,
-# migrationology.com, travelfish.org, which are real but Laos-cluster-specific, not globally
-# "everywhere"), the sample's contested scores were: min=0.00, median=0.12, mean=0.16,
-# max=0.33 (histogram: 17 keywords in [0.0,0.2), 13 in [0.2,0.4), ZERO at or above 0.4). A
-# 30-keyword, single-region (Laos) sample is not enough evidence to set a number that could
-# cut real Segments on a still-thin platform history — 0.5 is chosen deliberately ABOVE the
-# entire observed range (nothing in this sample would be cut), a conservative floor rather than
-# a number fit to this one sample. Revisit once contested has accumulated real history across
-# more markets/regions (same "revisit later" precedent CHANNEL_BARS/DFS_LOCATION_MAP's own
-# additions already follow in this codebase).
-CONTESTED_CUT_THRESHOLD = 0.5
+# At everywhere_domains(threshold=0.5) (2 domains found: en.wikipedia.org, www.tripadvisor.com — exactly the "claims
+# everything" global sites the standard is meant to catch, NOT the region-specific travel blogs that dominated at lower
+# thresholds, e.g. discoverlaos.today, migrationology.com, travelfish.org, which are real but Laos-cluster-specific, not
+# globally "everywhere"), the sample's contested scores were: min=0.00, median=0.12, mean=0.16, max=0.33 (histogram: 17
+# keywords in [0.0,0.2), 13 in [0.2,0.4), ZERO at or above 0.4). A 30-keyword, single-region (Laos) sample is not enough
+# evidence to set a number that could cut real Segments on a still-thin platform history — 0.5 is chosen deliberately
+# ABOVE the entire observed range (nothing in this sample would be cut), a conservative floor rather than a number fit
+# to this one sample. Revisit once contested has accumulated real history across more markets/regions (same "revisit
+# later" precedent CHANNEL_BARS/DFS_LOCATION_MAP's own additions already follow in this codebase).
+contested_cut_threshold = setting_reader("cis.t7.debate_contested_cut")  # S279 L2: was the literal 0.5, read per call
 
 
 def _candidate_questions(

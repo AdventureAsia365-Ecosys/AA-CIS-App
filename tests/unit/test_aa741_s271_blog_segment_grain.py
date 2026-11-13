@@ -21,6 +21,7 @@ import pytest
 
 from services.acp_shared import slate
 from services.acp_shared.slate import CHANNEL_BARS, Candidate, HeldSubjects, _choose_slate
+from services.acp_shared.slate import bar as slate_bar
 from services.acp_shared.subject_seed import Member
 
 TOUR_A = "0a0a0a0a-0000-4000-8000-0000000000a1"
@@ -44,7 +45,8 @@ def _ids(pairs) -> list[str]:
 def test_blog_is_segment_grain_and_takes_its_route():
     spec = CHANNEL_BARS["blog"]
     assert spec["grain"] == "segment" and spec["takes_route"] is True and spec["one_piece_per_place"] is True
-    assert (spec["needs_demand"], spec["needs_questions"]) == (1000, 3)
+    bar = slate_bar("blog")          # S279 L2: the numbers are the setting cis.t7.channel_bar_blog
+    assert (bar["needs_demand"], bar["needs_questions"]) == (1000, 3)
     # no other Channel walks a Route or holds a place
     for channel, other in CHANNEL_BARS.items():
         if channel != "blog":

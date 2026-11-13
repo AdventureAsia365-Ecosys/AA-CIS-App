@@ -16,7 +16,9 @@ Two halves, one hash:
   say which versions were registered on this database.
 
 At run time ``version_for(stage)`` = the version of the stage's newest manifest entry when its hash still matches the
-deployed source AND the database holds the same (stage, version, hash); else None. The gateway writes it to
+deployed source AND the database holds the same (stage, version, hash); else None. S279 L2: a writer stage's version
+carries '.s<8 hex>' while a quality setting its prompt renders differs from its seed (``settings_suffix``). The gateway
+writes it to
 ``llm_call_log.prompt_version`` with every attempt (``client._scope_for``). With no rows (Dev today) every call gets
 None: nothing changes. The database rows are read once per ``CACHE_TTL_SECONDS`` per process; a missing table or a
 database error gives None for ``FAILURE_TTL_SECONDS``. Never raises.
@@ -346,10 +348,33 @@ def version_for(stage: Optional[str]) -> Optional[str]:
         if deployed is None:
             return None
         version, sha = deployed
-        return version if (stage, version, sha) in _registered() else None
+        if (stage, version, sha) not in _registered():
+            return None
+        return version + settings_suffix(stage)
     except Exception as e:  # noqa: BLE001
         logger.warning("llm_prompt_version_failed", stage=stage, error=str(e)[:200])
         return None
+
+
+# S279 lane L2 (AA-1096): the writer prompts render quality settings at call time (the blog length floor, the SEO bands,
+# the pass line). The registered version names the code; the suffix names the values: '' while every value a prompt
+# renders is its seed, else '.s<8 hex>' (quality_settings.prompt_fp), so llm_call_log.prompt_version tells a call that
+# ran with an approved change from one that did not ('v8.s1a2b3c4d' fits the ledger CHECK ^[A-Za-z0-9._-]{1,40}$).
+_WRITER_PREFIXES = ("s1_", "t2_", "t3_", "t8_", "t9_", "t10_")
+
+
+def settings_suffix(stage: str) -> str:
+    """'.s<fp>' for a writer stage while a prompt-rendered quality setting differs from its seed, else ''. Never
+    raises."""
+    if not stage.startswith(_WRITER_PREFIXES):
+        return ""
+    try:
+        from services.quality import quality_settings
+        fp = quality_settings.prompt_fp()
+    except Exception as e:  # noqa: BLE001 — the version stays the registered one
+        logger.warning("llm_prompt_settings_fp_failed", stage=stage, error=str(e)[:200])
+        return ""
+    return f".s{fp}" if fp else ""
 
 
 def invalidate() -> None:

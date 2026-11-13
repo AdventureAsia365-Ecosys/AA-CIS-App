@@ -41,6 +41,10 @@ def _res(bfit, distinct=9.0, mission=True, feedback=None, cost=0.001):
 def _flags(monkeypatch):
     monkeypatch.delenv("T2_JUDGE_REPEAT", raising=False)
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    # S279 L2: the T2 gate is the setting cis.quality_modes.t2_judge_gate (seeded brand_fit); these tests were
+    # written for main's code default brand_fit_mission and drive the gate by env
+    from tests.unit.settings_serve import serve_from_env
+    serve_from_env(monkeypatch, "cis.quality_modes.t2_judge_gate", "T2_JUDGE_GATE", "brand_fit_mission")
 
 
 # ── aggregation ───────────────────────────────────────────────────────────────────────────────

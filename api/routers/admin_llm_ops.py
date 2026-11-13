@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, model_validator
 from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
 from services.quality import edit_gate
-from services.quality.registry import threshold
+from services.quality.registry import threshold_reader
 from api.routers.admin import verify_admin_secret
 from shared.aws_client import accounts as aws_accounts
 from shared.aws_client.cost_explorer import (
@@ -790,7 +790,7 @@ _SHADOW_REPORT_SQL = """
 
 # The judge pass line judge_node._MIN_QUALITY reads (thresholds.yaml a1.judge_pass; AA-926). The registry
 # imports nothing from the LLM pipeline, so this router's import graph stays small.
-_JUDGE_PASS_LINE = threshold("a1.judge_pass")
+_judge_pass_line = threshold_reader("a1.judge_pass")   # S279 L2: a setting, read per call
 
 
 def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
@@ -845,7 +845,7 @@ def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
     # The A1 brand-fit judge returns only a 1-10 score; the pipeline's pass line is the judge gate
     # (`judge_node._MIN_QUALITY`, 7.0) — derive pass/fail from it so agreement is measurable.
     if passed is None and score is not None and stage.startswith(("s1_judge", "t2_judge")):
-        passed = score >= _JUDGE_PASS_LINE
+        passed = score >= _judge_pass_line()
 
     if score is None and passed is None:
         return None

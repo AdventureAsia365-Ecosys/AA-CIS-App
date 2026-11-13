@@ -102,7 +102,7 @@ def test_trial_piece_skips_without_a_seed():
 
 
 def test_floor_is_the_contract():
-    assert rm.summarize([])["floor_chars"] == lc.BLOG_FLOOR_CHARS
+    assert rm.summarize([])["floor_chars"] == lc.floor_chars()
 
 
 # ---------------------------------------------------------------- round 2 review: the F13_leak replay (leak_replay.py)

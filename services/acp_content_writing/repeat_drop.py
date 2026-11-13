@@ -13,7 +13,7 @@ The rule (a proposer; the existing invariants stay the arbiters):
   near-exact repeat of an earlier prose sentence: its copy words (`hygiene.copy_words`) match the earlier one's IN
   ORDER with a Dice share >= the setting `cis.t9.repeat_drop_near_exact` (0.9; 1.0 = exact). A paraphrase, a
   figure told twice in other words, an echo or a misplaced moment is not a near-exact copy and stays for F13.
-- **floor** — the piece after the delete still measures >= the F4 blog floor (`length_contract.BLOG_FLOOR_CHARS`,
+- **floor** — the piece after the delete still measures >= the F4 blog floor (`length_contract.floor_chars()`,
   tag-stripped). Otherwise the piece is held as today: a drop never trades F13 for a `length_short` hold.
 - **invariants** — the delete orphans no pronoun (`hygiene._dup_safe_delete`), keeps every fact token of the removed
   sentence somewhere in the piece (`hygiene._keeps_facts`, the fact-preservation invariant), and breaks nothing
@@ -69,12 +69,13 @@ def _cut(text: str, span: dict) -> str:
     return hygiene.tidy_after_cut(text[:span["start"]] + text[end:])
 
 
-def drop_repeats(text: str, hyg: hygiene.HygieneContext, *, floor: int = lc.BLOG_FLOOR_CHARS,
+def drop_repeats(text: str, hyg: hygiene.HygieneContext, *, floor: Optional[int] = None,
                  share: Optional[float] = None) -> tuple[str, list[str]]:
     """Delete the later copy of each exact / near-exact repeat the F13 gate would quote, while the piece stays at or
-    above `floor` and every invariant holds. Returns (text, log). Pure (no I/O)."""
+    above `floor` (default: the blog floor in force) and every invariant holds. Returns (text, log). Pure (no I/O)."""
     if not text or hyg is None:
         return text, []
+    floor = lc.floor_chars() if floor is None else floor
     share = near_exact_share() if share is None else share
     cta = hyg.cta
     ignore = hygiene.brand_words(hyg.brand_name)

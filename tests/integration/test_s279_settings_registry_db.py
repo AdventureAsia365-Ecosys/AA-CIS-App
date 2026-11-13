@@ -174,3 +174,43 @@ async def test_reject_needs_a_note_and_two_person_approval_refuses_the_proposer(
     with pytest.raises(reg.SettingsError) as e:
         await reg.decide(pool, "not-a-uuid", actor=B, approve=True)
     assert e.value.status == 404
+
+
+# ── S279 L2 review: the rules between quality keys are re-checked on approval (CIS 412 definitions) ─────────────
+EVIDENCE = "replay:zz-invented-run-0001"
+
+
+async def _needs_quality_keys(pool):
+    if not await pool.conn.fetchval("SELECT count(*) AS ok FROM shared.setting_definition "
+                                    "WHERE key = 'cis.quality.pass_line'"):
+        pytest.skip("CIS 412 (the quality definitions) is not on this branch yet")
+
+
+@pytest.mark.asyncio
+async def test_two_quality_proposals_that_pass_alone_cannot_both_be_approved(pool):
+    await _needs_quality_keys(pool)
+    cap = await reg.propose(pool, "cis.quality.a1_missing_field_cap", value=6.5, reason=REASON, actor=A,
+                            base_version=0, evidence_ref=EVIDENCE)
+    line = await reg.propose(pool, "cis.quality.pass_line", value=6.2, reason=REASON, actor=A, base_version=0,
+                             evidence_ref=EVIDENCE)
+    assert (cap["status"], line["status"]) == ("proposed", "proposed")       # each fits the values in force alone
+    assert (await reg.decide(pool, cap["id"], actor=B, approve=True))["status"] == "approved"
+    with pytest.raises(reg.SettingsError) as e:
+        await reg.decide(pool, line["id"], actor=B, approve=True)
+    assert e.value.status == 409 and e.value.code == "cross_check" and "pass line" in e.value.detail
+    assert await pool.conn.fetchval("SELECT status AS ok FROM shared.setting_value WHERE id = $1::uuid",
+                                    line["id"]) == "proposed"           # refused, still open: reject or re-propose
+
+
+@pytest.mark.asyncio
+async def test_a_future_dated_quality_approval_counts_when_the_next_one_is_approved(pool):
+    await _needs_quality_keys(pool)
+    top = await reg.propose(pool, "cis.quality.ui_score_band_top", value=7.5, reason=REASON, actor=A,
+                            base_version=0, evidence_ref=EVIDENCE,
+                            effective_from=await pool.conn.fetchval("SELECT now() + interval '7 days' AS ok"))
+    assert (await reg.decide(pool, top["id"], actor=B, approve=True))["status"] == "approved"
+    line = await reg.propose(pool, "cis.quality.pass_line", value=8.0, reason=REASON, actor=A, base_version=0,
+                             evidence_ref=EVIDENCE)
+    with pytest.raises(reg.SettingsError) as e:
+        await reg.decide(pool, line["id"], actor=B, approve=True)
+    assert e.value.code == "cross_check" and "future-dated" in e.value.detail

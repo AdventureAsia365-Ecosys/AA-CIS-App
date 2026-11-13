@@ -30,7 +30,7 @@ from shared.llm_client.call_log import BILLED_FIELD_KEYS, V2_BILLED_KEYS, billed
 from shared.llm_client.client import LLMClient
 from shared.llm_client.judge import call_judge
 from shared.llm_client.json_reply import first_json_value
-from services.quality.registry import threshold
+from services.quality.registry import threshold_reader
 
 logger = structlog.get_logger()
 
@@ -45,7 +45,7 @@ _JUDGE_SEED = 42
 # `supports_temperature`) is already reproducible, so it is scored once. Layer 1 = the single call;
 # layer 3 = the Jev tie-break in judge_node, which only fires when a score is still exactly on the
 # line after this.
-_REPEAT_BAND = threshold("brand_fit.repeat_band")  # inclusive (6.0, 8.0); the pass line sits in the middle
+_repeat_band = threshold_reader("brand_fit.repeat_band")  # inclusive (6.0, 8.0) read per call; pass line in the middle
 _REPEAT_EXTRA = 2                  # 2 more calls -> median of 3
 
 
@@ -623,7 +623,7 @@ def score_brand_fit(
     6.0 explicitly to keep its exact existing behavior unchanged by this extraction.
 
     AA-714 layer 2: when a reasoning judge's first score lands near MIN_QUALITY, re-score and keep
-    the median so one noisy call does not flip retry/HITL. See `_REPEAT_BAND`.
+    the median so one noisy call does not flip retry/HITL. See `_repeat_band()`.
 
     AA-792: `mission` — the T2 tenant's own core idea, named in the mission_present axis (see
     `_build_judge_prompt`). Prompt text only; scoring, cap and median are unchanged.
@@ -688,7 +688,7 @@ def score_brand_fit(
 
     first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage, **extra)
 
-    lo, hi = _REPEAT_BAND
+    lo, hi = _repeat_band()
     if not near_band_repeat or _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
         return first
 

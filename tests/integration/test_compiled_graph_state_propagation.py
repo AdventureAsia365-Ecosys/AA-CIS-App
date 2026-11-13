@@ -250,6 +250,10 @@ T2_BRAND_RULES = {**BRAND_RULES, "system_prompt": "", "brand_name": "WorldLux",
 async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm_client, monkeypatch):
     monkeypatch.setenv("T2_INTERIM", "off")   # S271 W0: pins the T2 judge gate (break-glass path)
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    # S279 L2: the gate is the setting cis.quality_modes.t2_judge_gate (seeded brand_fit, the worker's Terraform value);
+    # this test was written for main's code default brand_fit_mission and drives the gate by env
+    from tests.unit.settings_serve import serve_from_env
+    serve_from_env(monkeypatch, "cis.quality_modes.t2_judge_gate", "T2_JUDGE_GATE", "brand_fit_mission")
     client = patch_llm_client(
         [_generate_response(GOOD_GENERATED)],
         judge_response=_judge_response(brand_fit=9, cross_brand_distinct=3, mission_present=True),

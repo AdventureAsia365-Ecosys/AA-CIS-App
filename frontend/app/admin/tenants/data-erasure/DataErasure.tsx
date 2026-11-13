@@ -24,7 +24,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Badge, Button, DataTable, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, apiGet, mono, useFormat, useT,
+  Badge, Button, DataTable, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, Tabs, apiGet, mono, useFormat, useT,
   type ColumnDef,
 } from "../../../_kit";
 import {
@@ -39,6 +39,15 @@ import ErasurePlan from "./ErasurePlan";
 import SubjectForm from "./SubjectForm";
 import { Facts, Notice, Section, useErasureWords } from "./erasureUi";
 import { ER } from "./messages";
+import { TO } from "./offboarding.messages";
+import TenantOffboarding from "./TenantOffboarding";
+
+type Tab = "subjects" | "offboarding";
+
+function readTab(): Tab {
+  if (typeof window === "undefined") return "subjects";
+  return new URLSearchParams(window.location.search).get("tab") === "offboarding" ? "offboarding" : "subjects";
+}
 
 const JOB_POLL_MS = 3_000;
 const HISTORY_POLL_MS = 10_000;
@@ -104,6 +113,19 @@ function useJob(id: string | null) {
 
 export default function DataErasure() {
   const t = useT(ER);
+  const to = useT(TO);
+  // AA-1093 L2: the Tenant offboarding tab (the erasure saga across the apps); kept in the URL (?tab=offboarding)
+  const [tab, setTab] = useState<Tab>(() => readTab());
+  const pickTab = (k: string) => {
+    const next: Tab = k === "offboarding" ? "offboarding" : "subjects";
+    setTab(next);
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      if (next === "offboarding") p.set("tab", "offboarding"); else p.delete("tab");
+      const qs = p.toString();
+      window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+    }
+  };
   const w = useErasureWords();
   const { formatDateTime } = useFormat();
   const qc = useQueryClient();
@@ -329,6 +351,17 @@ export default function DataErasure() {
         }
       />
 
+      <div style={{ marginBottom: 16 }}>
+        <Tabs variant="underline" ariaLabel={t("title")} active={tab} onChange={pickTab} testId="data-erasure-tabs"
+          tabs={[{ key: "subjects", label: to("tabSubjects") }, { key: "offboarding", label: to("tabOffboarding") }]} />
+      </div>
+
+      <div hidden={tab !== "offboarding"} data-testid="data-erasure-offboarding-pane">
+        <TenantOffboarding active={tab === "offboarding"} />
+      </div>
+
+      <div hidden={tab !== "subjects"} data-testid="data-erasure-subjects-pane">
+
       <Section title={t("settingsTitle")} testId="erasure-settings">
         <Facts items={[
           {
@@ -435,6 +468,7 @@ export default function DataErasure() {
           emptyDescription={t("historyEmptyDesc")}
         />
       </Section>
+      </div>
     </div>
   );
 }

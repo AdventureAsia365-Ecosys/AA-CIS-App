@@ -24,16 +24,32 @@ def _pre_s271_w0_paths(monkeypatch):
 YEAR = 2026
 
 
+BACKGROUND_KEY = "cis.quality_modes.t3_background_facts"
+
+
 @pytest.fixture(autouse=True)
 def _clean_flags(monkeypatch):
-    for env in (t2_repair.T2_BEST_DRAFT_ENV, t2_repair.T2_TARGETED_REPAIR_ENV,
-                t2_repair.T3_BACKGROUND_FACTS_ENV):
+    """The two env switches unset; the T3 background allowance OFF (S279 L2: the setting
+    cis.quality_modes.t3_background_facts, seeded on = the worker's Terraform value; these tests were written for the
+    off side and turn it on per test through ``background``)."""
+    for env in (t2_repair.T2_BEST_DRAFT_ENV, t2_repair.T2_TARGETED_REPAIR_ENV):
         monkeypatch.delenv(env, raising=False)
+    from shared import settings
+    real = settings.READER.get
+    served = {BACKGROUND_KEY: False}
+    monkeypatch.setattr(settings.READER, "get", lambda k, t=None: served[k] if k in served else real(k, t))
+    return served
+
+
+@pytest.fixture
+def background(_clean_flags):
+    """Turn the T3 background allowance on (an approved setting value)."""
+    _clean_flags[BACKGROUND_KEY] = True
 
 
 # ── switches ──────────────────────────────────────────────────────────────────
 
-def test_defaults_best_draft_and_targeted_on_background_off():
+def test_defaults_best_draft_and_targeted_on_background_off(_clean_flags):
     assert t2_repair.best_draft_enabled() is True
     assert t2_repair.targeted_repair_enabled() is True
     assert t2_repair.background_facts_enabled() is False
@@ -47,11 +63,15 @@ def test_default_on_switch_parsing(monkeypatch, raw, expected):
     assert t2_repair.best_draft_enabled() is expected
 
 
-@pytest.mark.parametrize("raw,expected", [("on", True), ("true", True), ("yes", True), ("1", True),
-                                          ("off", False), ("junk", False), ("", False)])
-def test_background_switch_parsing(monkeypatch, raw, expected):
-    monkeypatch.setenv("T3_BACKGROUND_FACTS", raw)
-    assert t2_repair.background_facts_enabled() is expected
+@pytest.mark.parametrize("value", [True, False])
+def test_background_switch_reads_the_setting(_clean_flags, value):
+    _clean_flags[BACKGROUND_KEY] = value
+    assert t2_repair.background_facts_enabled() is value
+
+
+def test_background_env_var_is_no_longer_read(monkeypatch, _clean_flags):
+    monkeypatch.setenv("T3_BACKGROUND_FACTS", "on")       # S279 L2: the worker env var is inert
+    assert t2_repair.background_facts_enabled() is False
 
 
 def test_drafts_graph_off_only_when_both_switches_off(monkeypatch):
@@ -158,10 +178,10 @@ def test_grounding_check_keeps_only_the_promise_with_the_allowance_on():
                         "background_numbers": ["17", "1954"]}]
 
 
-def test_grounding_check_reads_the_env_switch(monkeypatch):
+def test_grounding_check_reads_the_setting(monkeypatch, _clean_flags):
     rewritten = {"summary": "Cross Dochula Pass (3,120 m) today."}
-    assert tp._t3_grounding_check(rewritten, ["Cross Dochula Pass."])          # default off: flagged
-    monkeypatch.setenv("T3_BACKGROUND_FACTS", "on")
+    assert tp._t3_grounding_check(rewritten, ["Cross Dochula Pass."])          # off: flagged
+    _clean_flags[BACKGROUND_KEY] = True
     assert tp._t3_grounding_check(rewritten, ["Cross Dochula Pass."]) == []
 
 
@@ -416,8 +436,8 @@ async def test_t3_clean_draft_returns_even_with_a_higher_scoring_unclean_one(mon
 
 
 @pytest.mark.asyncio
-async def test_t3_with_background_on_passes_the_s235_draft_without_any_repair(monkeypatch):
-    monkeypatch.setenv("T3_BACKGROUND_FACTS", "on")
+async def test_t3_with_background_on_passes_the_s235_draft_without_any_repair(monkeypatch, _clean_flags):
+    _clean_flags[BACKGROUND_KEY] = True
     draft = {"summary": "Stop at the 17th-century Punakha Dzong, then cross Dochula Pass (3,120 m).",
              "itineraries": "Day 2 — Walk to Dien Bien Phu, site of the 1954 battle."}
     rewrite, repair = AsyncMock(), MagicMock()

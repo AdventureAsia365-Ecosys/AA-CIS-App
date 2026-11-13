@@ -31,35 +31,42 @@ from services.content_generation.brand_fit import (
 from shared.llm_client.call_log import (
     ROUTE_KEYS, V2_BILLED_KEYS, billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
 )
+from services.quality import settings_keys as _keys
 from services.quality.registry import threshold
+from shared import settings as _settings
 
 logger = structlog.get_logger()
 
-# The judge pass line (thresholds.yaml a1.judge_pass, the same pass_line as graph.MIN_QUALITY; AA-926).
-_MIN_QUALITY = threshold("a1.judge_pass")
+# The judge pass line (thresholds.yaml a1.judge_pass, the same pass_line as graph.min_quality(); AA-926). S279 L2:
+# every value below is a setting (Platform › Settings), read at call time.
+def _min_quality() -> float:
+    return float(threshold("a1.judge_pass"))
+
+
 # A missing mission-hook caps the judge score just below the retry threshold so it forces at least
 # one Bedrock retry instead of failing outright. A1 never uses it (AA-698); T2 uses it under the
 # mission gates below, and only when the tenant has a mission (core idea) to look for.
-_MISSION_ABSENT_CAP = threshold("judge.mission_absent_cap")
+def _mission_absent_cap() -> float:
+    return float(threshold("judge.mission_absent_cap"))
 
 # AA-792 — what the T2 (tenant rewrite) judge gates on. Nghiệp chose option B (Gate 1, 14/10/2026):
 # keep the mission as a gate, but the mission is the TENANT's own — its brand-pack core_idea
 # (tenant_brand_rules.core_idea), named verbatim in the judge prompt — never Adventure Asia's.
-#   "brand_fit_mission"  (default) brand_fit, capped at _MISSION_ABSENT_CAP when the tenant's
+#   "brand_fit_mission"  brand_fit, capped at _mission_absent_cap() when the tenant's
 #                        mission is absent from the itineraries;
 #   "brand_fit"          brand_fit_score alone, the A1 rule (AA-698);
 #   "combined"           pre-AA-792 rule: min(brand_fit, cross_brand_distinct), mission-capped.
 # A tenant with no core_idea has no mission: the cap never applies (any gate) and quality_signal
 # logs mission_source="none". S234: mission was judged absent on 72/104 T2 calls (0 of those passed)
-# when the judge had to guess what "mission-hook" meant. Flip with the env var (worker task def).
-T2_JUDGE_GATE_ENV = "T2_JUDGE_GATE"
+# when the judge had to guess what "mission-hook" meant. S279 L2: the gate is the setting
+# cis.quality_modes.t2_judge_gate (Platform › Settings, evidence-gated), seeded brand_fit (the worker's Terraform value
+# AA-801 set; the worker env var T2_JUDGE_GATE is no longer read).
 T2_JUDGE_GATES = ("brand_fit_mission", "brand_fit", "combined")
-T2_JUDGE_GATE_DEFAULT = "brand_fit_mission"
 
 
 def t2_judge_gate() -> str:
-    mode = os.environ.get(T2_JUDGE_GATE_ENV, "").strip().lower()
-    return mode if mode in T2_JUDGE_GATES else T2_JUDGE_GATE_DEFAULT
+    mode = _settings.get(_keys.MODES["t2_judge_gate"])
+    return mode if mode in T2_JUDGE_GATES else "brand_fit"
 
 
 # AA-801 — how many judge calls make one T2 verdict. S235: the same draft scored brand_fit 4..8 across
@@ -68,7 +75,7 @@ def t2_judge_gate() -> str:
 #              before; stays the default until the AA-801 measurement (5 runs x 10 versions) is in;
 #   "median3"  three parallel calls on every draft: median brand_fit/distinct, majority mission;
 #              the three raw scores go into llm_call_log.quality_signal.judge_runs.
-# Flip with the env var (worker task def), like T2_JUDGE_GATE.
+# Flip with the env var (worker task def).
 T2_JUDGE_REPEAT_ENV = "T2_JUDGE_REPEAT"
 T2_JUDGE_REPEATS = {"single": 1, "median3": 3}
 T2_JUDGE_REPEAT_DEFAULT = "single"
@@ -107,7 +114,7 @@ def t2_judge_score(result, gate: str | None = None, *, has_mission: bool = True)
         return min(result.brand_fit_score, result.cross_brand_distinct)
     score = result.brand_fit_score
     if gate == "brand_fit_mission" and has_mission and not result.mission_present:
-        score = min(score, _MISSION_ABSENT_CAP)
+        score = min(score, _mission_absent_cap())
     return score
 
 # AA-631 — re-exported from brand_fit.py (the module that now actually uses them) so existing
@@ -131,7 +138,7 @@ def is_v2_draft(state: dict) -> bool:
 #   "auto" (default)  v2 on a writer-v2 draft, v1 on today's writer;
 #   "v1" / "v2"       that rubric on every A1 draft.
 # A draft without its source tour in state is always scored with v1 (v2 judges against the source). T2 and the T7
-# Debate never read this: they stay on v1. Flip with the env var (worker task def), like T2_JUDGE_GATE.
+# Debate never read this: they stay on v1. Flip with the env var (worker task def).
 A1_BRAND_FIT_RUBRIC_ENV = "A1_BRAND_FIT_RUBRIC"
 A1_BRAND_FIT_RUBRICS = ("auto", "v1", "v2")
 # AA-645 d02 — whether brand fit gates a writer-v2 draft. "report_only" (default) until the offline re-measure of
@@ -211,7 +218,7 @@ def a1_judge_score(result) -> float:
 
 
 # AA-692 A1-4 — Jev tie-break near the retry line. Luna scores A1 brand fit 7–8 (S204), right on
-# _MIN_QUALITY, so a one-point wobble decides retry/HITL. Inside ±_TIE_BAND of the line, and only when
+# the pass line, so a one-point wobble decides retry/HITL. Inside ± the tie band of the line, and only when
 # the judge (not validate) is what decides, the Noul a1_brand_fit settles it; enforce + confident only
 # (ADR 0007). The judge still writes the feedback.
 TIE_STAGE = "s1_judge_tiebreak"
@@ -219,20 +226,21 @@ TIE_STAGE = "s1_judge_tiebreak"
 # logged under its own stage and the tenant's id so the allow-list guard applies (design C2).
 T2_TIE_STAGE = "t2_judge_tiebreak"
 TIE_Q = "a1_brand_fit"
-_TIE_BAND = threshold("judge.tie_band")
-_BELOW_LINE = _MIN_QUALITY - 0.1
+def _tie_band() -> float:
+    return float(threshold("judge.tie_band"))
 
 
 def in_tie_band(judge_score: float, validate_score: float) -> bool:
-    return validate_score >= _MIN_QUALITY and abs(judge_score - _MIN_QUALITY) <= _TIE_BAND
+    line = _min_quality()
+    return validate_score >= line and abs(judge_score - line) <= _tie_band()
 
 
 def tie_break_score(judge_score: float, decision) -> float:
     """The judge score after Jev's verdict: accept lifts it to the line, reject drops it just below."""
     if decision.accepted(TIE_Q):
-        return max(judge_score, _MIN_QUALITY)
+        return max(judge_score, _min_quality())
     if decision.rejected(TIE_Q):
-        return min(judge_score, _BELOW_LINE)
+        return min(judge_score, _min_quality() - 0.1)   # just below the line
     return judge_score
 
 
@@ -361,7 +369,7 @@ def judge_node(state: dict) -> dict:
             # AA-801; S271 W0: the interim profile makes one call per draft (no median3, no near-band repeat)
             repeat_mode = T2_JUDGE_REPEAT_DEFAULT if t2_report_only else t2_judge_repeat()
             anchors = t2_judge_anchors()         # AA-801 option (b)
-            result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
+            result = score_brand_fit(state, generated, mission_absent_cap=_mission_absent_cap(),
                                      stage=stage_for(state, "s1_judge"), mission=mission or None,
                                      **({"repeat": T2_JUDGE_REPEATS[repeat_mode]}
                                         if repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),
@@ -375,7 +383,7 @@ def judge_node(state: dict) -> dict:
                             tenant_id=state.get("tenant_id"))
         else:
             rubric = a1_brand_fit_rubric(state)   # AA-645 (S249): v2 = white-label voice within the source
-            result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
+            result = score_brand_fit(state, generated, mission_absent_cap=_mission_absent_cap(),
                                      stage=stage_for(state, "s1_judge"),  # AA-763
                                      **({"rubric": "v2", "source": state.get("tour"),
                                          "tour_agency": state.get("tour_agency")} if rubric == "v2" else {}))
@@ -403,7 +411,7 @@ def judge_node(state: dict) -> dict:
         # Merge judge feedback into the retry feedback only when we're below threshold (a retry will
         # actually fire). Preserve validate's feedback so Bedrock sees both signals.
         feedback = state.get("feedback", "") or ""
-        if new_score < _MIN_QUALITY and result.feedback and not report_only:
+        if new_score < _min_quality() and result.feedback and not report_only:
             feedback = f"{feedback}; {result.feedback}".strip("; ") if feedback else result.feedback
 
         # AA-795: T2 only — the numbers behind this verdict and the axis that set the score (stored per version by
@@ -414,7 +422,7 @@ def judge_node(state: dict) -> dict:
                 t2_axes = t2_breakdown.axes(
                     gate=gate, brand_fit=result.brand_fit_score, distinct=result.cross_brand_distinct,
                     mission_present=result.mission_present, has_mission=mission_source == "tenant_core_idea",
-                    mission_cap=_MISSION_ABSENT_CAP, mission_source=mission_source, judge_score_raw=judge_score_raw,
+                    mission_cap=_mission_absent_cap(), mission_source=mission_source, judge_score_raw=judge_score_raw,
                     judge_score=judge_score, validate_score=validate_score, tiebreak=tiebreak)
             except Exception as axes_err:
                 logger.warning("judge_t2_axes_failed", error=str(axes_err)[:200])
@@ -429,7 +437,7 @@ def judge_node(state: dict) -> dict:
                 "judge_score": judge_score, "brand_fit_score": result.brand_fit_score,
                 "cross_brand_distinct": result.cross_brand_distinct,
                 "mission_present": result.mission_present,
-                "passed": new_score >= _MIN_QUALITY,
+                "passed": new_score >= _min_quality(),
                 "gate": gate,  # AA-792: what judge_score was gated on
                 # S271 W0: the verdict did not set the score (T2 interim profile)
                 **({"report_only": True} if t2_report_only else {}),

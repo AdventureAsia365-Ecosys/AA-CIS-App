@@ -260,7 +260,7 @@ def test_non_family_user_prompts_are_byte_identical_to_round_four(name, channel)
     assert bool(texture) == (name != "FAMRUN")
     assert p.count(texture) == 1 if texture else "BRAND TEXTURE" not in p
     # AA-741 (S271): the blog's LENGTH AND EFFORT block (t9_write v2) is a later, separate change: compare without it.
-    p = p.replace(prompts._BLOG_LENGTH_INSTRUCTIONS, "")
+    p = p.replace(prompts._blog_length_instructions(), "")
     assert _sha16(p.replace(texture, "") if texture else p) == _ROUND4_USER_PROMPTS[(name, channel)]
 
 

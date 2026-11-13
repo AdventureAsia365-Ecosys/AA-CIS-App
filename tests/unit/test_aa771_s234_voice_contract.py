@@ -483,7 +483,7 @@ class TestT9Prompt:
         sentence" (the writer copied the shape: '## A Single Sentence on …'); a thin moment is named in passing,
         with only what its source line states. Only `route` changes; SYSTEM_PROMPT and `single` do not.
         Updated AA-741 (S271 phase-1 audit, t9_write v2): both blog variants end with the LENGTH AND EFFORT block
-        (prompts._BLOG_LENGTH_INSTRUCTIONS: a word band, a section cap, one plan-then-write pass) before the JSON
+        (prompts._blog_length_instructions(): a word band, a section cap, one plan-then-write pass) before the JSON
         envelope, so `single` and `route` change; SYSTEM_PROMPT does not (other channels never see the block). Its
         floor is stated as a hard minimum (S271 review: F4 holds a body under 4,700 characters).
         Updated AA-1077 (S278, t9_write v6): the block's word floor is the length target (900 → 950 words,

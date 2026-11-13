@@ -436,8 +436,8 @@ def test_parse_judge_output_s1_judge_score_only_derives_pass_from_gate():
 
 
 def test_judge_pass_line_matches_pipeline_gate():
-    from services.content_generation.judge_node import _MIN_QUALITY
-    assert ops._JUDGE_PASS_LINE == _MIN_QUALITY
+    from services.content_generation.judge_node import _min_quality
+    assert ops._judge_pass_line() == _min_quality()
 
 
 def test_parse_judge_output_salvages_fenced_json():

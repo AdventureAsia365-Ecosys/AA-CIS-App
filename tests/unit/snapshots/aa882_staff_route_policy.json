@@ -403,6 +403,14 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_job_runner"
   },
+  "GET /admin/job-runner/erasure/requests": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant_erasure"
+  },
+  "GET /admin/job-runner/erasure/requests/{request_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant_erasure"
+  },
   "GET /admin/job-runner/jobs": {
     "capability": null,
     "module": "api.routers.admin_job_runner"
@@ -650,6 +658,10 @@
   "GET /admin/quality/lineage/{workflow}/{object_id}": {
     "capability": "ops.read|lab.read",
     "module": "api.routers.admin_quality_lineage"
+  },
+  "GET /admin/quality/thresholds": {
+    "capability": "content.read|tenant.book.read",
+    "module": "api.routers.admin_quality_thresholds"
   },
   "GET /admin/reference-prices": {
     "capability": "reference_price.read",
@@ -1314,6 +1326,26 @@
   "POST /admin/job-runner/embedding-reembed/run": {
     "capability": "ai.admin",
     "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/erasure/requests/drill": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_erasure"
+  },
+  "POST /admin/job-runner/erasure/requests/{request_id}/advance": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_erasure"
+  },
+  "POST /admin/job-runner/erasure/requests/{request_id}/approve": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_erasure"
+  },
+  "POST /admin/job-runner/erasure/requests/{request_id}/new-round": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_erasure"
+  },
+  "POST /admin/job-runner/erasure/requests/{request_id}/stop": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_erasure"
   },
   "POST /admin/job-runner/erasure/run": {
     "capability": "tenant.write",
