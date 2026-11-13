@@ -46,32 +46,13 @@ def _candidates(text: Optional[str]) -> list[tuple[str, str]]:
     return out
 
 
-LEDGER_SQL = ("SELECT COALESCE(SUM(cost_usd), 0)::float8 FROM shared.llm_call_log "
-              "WHERE stage = $1 AND created_at >= $2")
+# The ledger probe lives in services/ground_truth/r1.py (the image has no scripts/); this name stays for the tests.
+LEDGER_SQL = r1.LEDGER_SQL
 
 
 def ledger_probe(since: datetime) -> r1.SpendProbe:
-    """The ledger spend of stage r1.STAGE since `since` (every row: the replies, the gateway's cut-attempt and failed
-    rung rows; another adhoc_aa1048 run at the same time only makes it larger). None when the DB cannot be read: the
-    run then keeps its own charges, which already count every attempt at its worst case."""
-    def probe() -> Optional[float]:
-        import asyncio
-
-        async def _q() -> float:
-            import asyncpg
-
-            from shared.secrets import get_database_url
-
-            conn = await asyncpg.connect(get_database_url().strip(), ssl="require")
-            try:
-                return float(await conn.fetchval(LEDGER_SQL, r1.STAGE, since))
-            finally:
-                await conn.close()
-        try:
-            return asyncio.run(_q())
-        except Exception:                                    # noqa: BLE001 — the probe can only raise the spend
-            return None
-    return probe
+    """The ledger spend of stage r1.STAGE since `since` (r1.ledger_probe)."""
+    return r1.ledger_probe(since)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

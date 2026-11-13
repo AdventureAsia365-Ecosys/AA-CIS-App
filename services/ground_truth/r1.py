@@ -33,7 +33,8 @@ flag and a cap <= HARD_CAP_USD, and the cap is HARD (review S272):
     every call, and the budget's spend is the larger of the two; a non-finite reading stops the run.
 Every reply goes through the Model Gateway (LLMClient.generate) on stage STAGE, role judge, and writes one
 shared.llm_call_log row with **billed_fields(resp) (an unusable reply writes its billed_unusable row before the error
-is raised).
+is raised). The row names the instrument's prompt version and the hash of its texts (prompt_version column and
+quality_signal; services/ground_truth/prompts.py: v1 the S272-S278 prompt and the default, v2 the S279 panel's B1-B5).
 
 Measurement. Precision is the instrument's over EVERY fire on one writer surface (an entailment or extraction
 instrument does not know the class at run time: a hold acts on any fire; it does know the writer, and holds act per
@@ -60,9 +61,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
 from services.ground_truth import claims as cl
-from services.ground_truth import policy
 from services.ground_truth import pools as pl
+from services.ground_truth import prompts as pr
 from services.ground_truth import sample_size as ss
+from services.ground_truth.prompts import ENTAILMENT_SYSTEM, EXTRACTION_SYSTEM
 from shared.aa_llm import tokens as llm_tokens
 
 STAGE = "adhoc_aa1048"
@@ -108,51 +110,41 @@ EXTRACTION_SCHEMA = {"name": "claim_extraction", "schema": {
         "type": "object", "additionalProperties": False, "required": ["quote", "class", "why"],
         "properties": {"quote": {"type": "string"}, "class": {"type": "string"}, "why": {"type": "string"}}}}}}}
 
-_RULES = (
-    "A claim about THIS trip (an activity, a service, a meal, a time, a stay, a view, a number, a name, a day) must be "
-    "stated by the source; otherwise it is unsupported.",
-    "Background about a place the source names (history, geography, culture) is allowed, but it never promises the "
-    "trip's activities, services, times or views.",
-    "Reflection or general feeling that states no fact about the trip is voice, not a claim.",
-    "Hypothetical framing ('you might', 'imagine') that names a concrete trip activity, service, time or view is a "
-    "promise and needs the source.",
-    "Suitability, safety, pace, rarity or uniqueness of the trip only as the source states it.",
-)
-ENTAILMENT_SYSTEM = (
-    "You check ONE claim from a travel text against the SOURCE LINES the trip is built from.\n"
-    + "\n".join(f"- {r}" for r in _RULES)
-    + "\nAnswer 'supported' only when the source lines state what the claim says about the trip. Quote the source "
-      "line you relied on (empty when unsupported). Reply with the JSON object only.")
-EXTRACTION_SYSTEM = (
-    "You read a travel TEXT and the SOURCE it was written from, and list every claim in the TEXT that the SOURCE "
-    "does not support.\n" + "\n".join(f"- {r}" for r in _RULES)
-    + "\nQuote each claim exactly as it appears in the TEXT (a sentence or a clause), name its class from the list "
-      "given, and say why in one sentence. List nothing that the source supports. Reply with the JSON object only.")
-
-
 class R1Refused(ValueError):
     """The run cannot start (price unknown, cap over the hard cap, no items): no call is made."""
 
 
 @dataclass(frozen=True)
 class Instrument:
+    """(model, connection, mode, prompt version). A different prompt is a different instrument: its id carries the
+    version ("#v2") unless it is the default v1, whose ids stay those of the S272-S278 records."""
     model_key: str
     connection: str
     mode: str
+    prompt: str = pr.DEFAULT
 
     @property
     def id(self) -> str:
-        return f"{self.model_key}@{self.connection}:{self.mode}"
+        base = f"{self.model_key}@{self.connection}:{self.mode}"
+        return base if self.prompt == pr.DEFAULT else f"{base}#{self.prompt}"
+
+    @property
+    def prompt_version(self) -> pr.PromptVersion:
+        return pr.get(self.prompt)
 
 
 def instruments(candidates: Iterable[tuple[str, str]] = DEFAULT_CANDIDATES,
-                modes: Iterable[str] = MODES) -> list[Instrument]:
+                modes: Iterable[str] = MODES, prompt: str = pr.DEFAULT) -> list[Instrument]:
+    try:
+        pr.get(prompt)
+    except pr.UnknownPromptVersion as e:
+        raise R1Refused(str(e)) from e
     out = []
     for model, conn in candidates:
         for mode in modes:
             if mode not in MODES:
                 raise R1Refused(f"unknown mode {mode!r}")
-            out.append(Instrument(model, conn, mode))
+            out.append(Instrument(model, conn, mode, prompt))
     return out
 
 
@@ -214,25 +206,23 @@ def items_from(export_lines: list[dict], finals: dict[str, Any], *, split: str =
 
 
 def entailment_prompt(item: Item) -> str:
-    lines = "\n".join(f"- {ln}" for ln in item.evidence) or "- (no source line shares a word with the claim)"
-    return f"SOURCE LINES:\n{lines}\n\nCLAIM ({item.field}):\n{item.claim_text}"
+    """The v1 entailment user prompt (services/ground_truth/prompts.py has every version)."""
+    return pr.v1_entailment_user(item)
 
 
 def extraction_prompt(items: list[Item]) -> str:
-    first = items[0]
-    classes = sorted({c.id for c in policy.policy_classes().values() if first.writer in c.writers})
-    return (f"CLASSES: {', '.join(classes)}\n\nSOURCE:\n{first.source_text}\n\nTEXT ({first.field}):\n"
-            f"{first.field_text}")
+    return pr.extraction_user(items)
 
 
 def calls(items: list[Item], inst: Instrument) -> list[tuple[str, list[Item]]]:
-    """(user prompt, the items that prompt answers) per call of one vote."""
+    """(user prompt, the items that prompt answers) per call of one vote, in the instrument's prompt version."""
+    pv = inst.prompt_version
     if inst.mode == "entailment":
-        return [(entailment_prompt(i), [i]) for i in items]
+        return [(pv.entailment_user(i), [i]) for i in items]
     groups: dict[str, list[Item]] = defaultdict(list)
     for i in items:
         groups[i.object_key].append(i)
-    return [(extraction_prompt(g), g) for _k, g in sorted(groups.items())]
+    return [(pv.extraction_user(g), g) for _k, g in sorted(groups.items())]
 
 
 # ── plan / cost ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -246,7 +236,7 @@ def _price(model: str) -> tuple[float, float]:
 
 def call_cost(inst: Instrument, user_prompt: str, out_tokens: int) -> float:
     pin, pout = _price(inst.model_key)
-    system = ENTAILMENT_SYSTEM if inst.mode == "entailment" else EXTRACTION_SYSTEM
+    system = inst.prompt_version.system(inst.mode)
     tokens_in = (len(system) + len(user_prompt)) / CHARS_PER_TOKEN
     return (tokens_in * pin + out_tokens * pout) / 1e6
 
@@ -442,7 +432,8 @@ def _log(resp: Any, signal: dict, parsed: Optional[dict], error: Optional[Except
         tokens_out=getattr(resp, "output_tokens", None), cost_usd=getattr(resp, "cost_usd", None),
         quality_signal={**signal, "json_parsed": parsed is not None}, stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None), fallback_used=getattr(resp, "fallback_used", None),
-        provider=resp.provider if isinstance(getattr(resp, "provider", None), str) else None, **billed_fields(resp))
+        provider=resp.provider if isinstance(getattr(resp, "provider", None), str) else None,
+        **billed_fields(resp, prompt_version=signal.get("prompt_version")))
 
 
 def _overlaps(quote: str, claim: str) -> bool:
@@ -471,6 +462,34 @@ Caller = Callable[[Instrument, str, str, dict], Any]
 
 SpendProbe = Callable[[], Optional[float]]
 
+LEDGER_SQL = ("SELECT COALESCE(SUM(cost_usd), 0)::float8 FROM shared.llm_call_log "
+              "WHERE stage = $1 AND created_at >= $2")
+
+
+def ledger_probe(since: Any, stage: str = STAGE) -> SpendProbe:
+    """The ledger spend of `stage` since `since` (every row: the replies, the gateway's cut-attempt and failed rung
+    rows; another run on the stage at the same time only makes it larger). None when the DB cannot be read: the run
+    then keeps its own charges, which already count every attempt at its worst case. (Moved here from
+    scripts/aa1048/r1_calibrate.py in S279 so the image, which has no scripts/, can use it.)"""
+    def probe() -> Optional[float]:
+        import asyncio
+
+        async def _q() -> float:
+            import asyncpg
+
+            from shared.secrets import get_database_url
+
+            conn = await asyncpg.connect(get_database_url().strip(), ssl="require")
+            try:
+                return float(await conn.fetchval(LEDGER_SQL, stage, since))
+            finally:
+                await conn.close()
+        try:
+            return asyncio.run(_q())
+        except Exception:                                    # noqa: BLE001 — the probe can only raise the spend
+            return None
+    return probe
+
 
 def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = VOTES, run_id: str,
         caller: Optional[Caller] = None, log: Callable[[Any, dict, Optional[dict], Optional[Exception]], None] = _log,
@@ -493,7 +512,7 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
     errors: list[dict] = []
     worst_notes = Counter()
     for inst in insts:
-        system = ENTAILMENT_SYSTEM if inst.mode == "entailment" else EXTRACTION_SYSTEM
+        system = inst.prompt_version.system(inst.mode)
         schema = ENTAILMENT_SCHEMA if inst.mode == "entailment" else EXTRACTION_SCHEMA
         for vote in range(votes):
             for user, group in calls(items, inst):
@@ -531,7 +550,7 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
                     stopped = (f"reply attempt_no {attempt} passed the {reserved[inst.id]} reserved attempt(s) of "
                                f"{inst.id}, after {budget.calls} calls: stopped, report partial")
                 signal = {"app": "cis", "issue": "AA-1048", "run_id": run_id, "instrument": inst.id, "vote": vote,
-                          "claims": [i.claim_hash[:16] for i in group][:20]}
+                          "prompt_version": inst.prompt_version.tag, "claims": [i.claim_hash[:16] for i in group][:20]}
                 try:
                     parsed = json.loads(getattr(resp, "content", "") or "")
                     if not isinstance(parsed, dict):
@@ -717,6 +736,7 @@ def report(items: list[Item], run_result: dict, insts: list[Instrument], *,
 
 __all__ = ["DEFAULT_CANDIDATES", "ENTAILMENT_SYSTEM", "EXTRACTION_SYSTEM", "HARD_CAP_USD", "Instrument", "Item",
            "MAX_TOKENS", "MODES", "PRICES", "R1Refused", "SPLIT_CHOICES", "STAGE", "UNVERIFIED_MAX", "VOTES",
-           "billed_cost", "calls", "ceiling", "expected_out", "flags_from_reply", "instruments", "items_from",
+           "LEDGER_SQL", "billed_cost", "calls", "ceiling", "expected_out", "flags_from_reply", "instruments",
+           "items_from", "ledger_probe",
            "majority", "measure", "plan", "report", "retry_ceiling", "route_attempts", "run", "split_of_line",
            "worst_call_cost"]
