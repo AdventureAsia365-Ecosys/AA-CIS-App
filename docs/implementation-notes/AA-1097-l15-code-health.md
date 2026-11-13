@@ -10,13 +10,13 @@ repo); part 4 (splitting `api/routers/admin_pipeline.py`) is a separate lane aft
   `.github/code-health-baseline.json` holds today's offenders. The same script and test file are vendored in the four
   app repos, only the config and baseline differ.
 - **Complexity limit 10 for Python and TypeScript.** Measured on 13/11/2026 (product code, tests excluded):
-  - Python (ruff C901): 10,938 functions, p90=6, p95=9, p97=11, p99=16, max 71. 10 is just above p95 and is the
-    mccabe default. 343 functions over the limit go in the baseline.
-  - TypeScript / JavaScript under `frontend/` (ESLint `complexity`, classic variant): 10,356 functions, p90=4, p95=7,
-    p97=10, p99=19, max 82. 10 is p97 and keeps one number for both languages. 304 functions in the baseline.
+  - Python (ruff C901): 11,053 functions, p90=6, p95=9, p97=11, p99=16, max 71. 10 is just above p95 and is the
+    mccabe default. 346 functions over the limit go in the baseline.
+  - TypeScript / JavaScript under `frontend/` (ESLint `complexity`, classic variant): 10,463 functions, p90=4, p95=7,
+    p97=10, p99=20, max 82. 10 is p97 and keeps one number for both languages. 308 functions in the baseline.
 - **File size: 800 lines, tests included.** A 1,200-line test file is as hard to edit as a 1,200-line module, so test
   files count; fixtures, snapshots, generated files (`*.generated.ts`), migrations and vendored agent skills are exempt.
-  Extensions: `.py .ts .tsx .js .jsx .mjs .cjs`. 2,677 files measured, 78 over 800 in the baseline (largest:
+  Extensions: `.py .ts .tsx .js .jsx .mjs .cjs`. 2,694 files measured, 78 over 800 in the baseline (largest:
   `api/routers/admin_pipeline.py`, 5,813 lines).
 - **Complexity covers product code only** (tests, conftest and migrations excluded): the limit was chosen from product
   code, and a test's branching is usually a table of cases.
@@ -28,12 +28,17 @@ repo); part 4 (splitting `api/routers/admin_pipeline.py`) is a separate lane aft
 - **Function identity = `<path>::<qualified name>`.** Python: `Class.method`, `outer.inner` from `ast`.
   TypeScript: enclosing class / function names joined by "."; an anonymous function is named after its variable,
   property, assignment target, JSX attribute (`Page.onClick`) or the call it is an argument of (`Page.useEffect()`).
-  A repeated name in one file gets `#2`, `#3` in source order.
-- **The baseline only shrinks, and stays exact.** `check` fails on: a new over-limit function / file (NEW), a baseline
-  entry that got worse (WORSE), an entry that is gone or back under the limit (STALE), an entry that improved but still
-  sits over the limit (TIGHT). `update` fixes the last two by removing / lowering entries and never adds or raises.
-  Against the base commit (`--base`, CI passes the PR or merge-queue base) an added entry, a raised value or a raised
-  limit fails, so regenerating the baseline cannot hide new code.
+  A repeated name in one file gets `#2`, `#3` in source order. Entries are compared per family (the key without its
+  `#n`): inside one family the over-limit functions are paired with the baseline entries, each with an entry scoring
+  at least as much. Inserting a simple `.map()` or `useEffect()` above a baseline callback renumbers it; that is a
+  RENUM notice, not a failure, and `update` re-keys the entry.
+- **The baseline only shrinks.** `check` fails on: a new over-limit function / file (NEW), a baseline entry that got
+  worse (WORSE), an entry that is gone or back under the limit (STALE). An entry that improved but still sits over the
+  limit (TIGHT) is a printed notice: `update` lowers it, but nobody is forced to. `update` removes / lowers / re-keys
+  entries and never adds or raises. Against the base (`--base`, CI passes the PR or merge-queue base, pre-push
+  `origin/main`) an added entry, a raised value or a raised limit fails, so regenerating the baseline cannot hide new
+  code. The base is resolved to the merge-base with HEAD, so a baseline that another PR shrank on main after this
+  branch was cut is not read as this branch raising it.
 - **Moves and splits are allowed.** A function moved to another file keeps its entry under its new path (same
   qualified name, score not higher; one removed entry pays for one move). A baseline file split into parts may list
   parts still over 800 while their total stays within the removed file's lines. This keeps the coming
@@ -48,14 +53,19 @@ repo); part 4 (splitting `api/routers/admin_pipeline.py`) is a separate lane aft
 ## Changed
 
 - Nothing beyond the issue: no file was refactored in this lane (the split is part 4).
+- Review fixes (same lane): TIGHT is a notice instead of a failure; `--base` compares with the merge-base; ordinals
+  are paired per family (`check`, `update` and the base check). The branch was rebased on main after the settings
+  registry PR and the baseline regenerated (it must be regenerated again if another CIS PR lands before this one).
 
 ## Tradeoffs
 
-- Failing on an improvement (TIGHT / STALE) costs a one-line `update` but keeps the baseline equal to the code, like
-  the ESLint "suppressions file is pruned" step. Without it the baseline would drift and hide regressions up to the
-  old score.
-- Duplicate-name ordinals (`#2`) shift when a same-named function is inserted earlier in the file; that shows as one
-  STALE + one NEW pair. Rare, and the message says what to do.
+- TIGHT is not a failure. Failing on it would force every PR that touches one of the 78 baseline files to edit that
+  file's line in the baseline, and two parallel PRs on the same big file would always conflict on it in the merge
+  queue. The cost: a baseline entry can drift back up to its old value until someone runs `update`. STALE (gone or
+  under the limit) still fails, so the baseline never lists a function that no longer needs an entry.
+- Family pairing means a genuinely new over-limit callback can hide behind a sibling entry of the same family that
+  dropped under the limit or was deleted in the same change, as long as it scores no higher. The number of entries
+  and their scores still never grow, which is what the ratchet promises.
 - The limits are dev-tooling settings in a committed config, not app runtime settings: CI cannot read the admin
   settings table, and a limit change is a reviewed PR that the base check refuses to raise.
 - ESLint counts optional chaining (`a?.b`) and default parameters as branches, so React components score high; the

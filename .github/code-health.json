@@ -2,7 +2,7 @@
  "about": "AA-1097 code-health ratchets (.github/scripts/code_health.py). Limits only go down; the baseline .github/code-health-baseline.json only shrinks. Globs: fnmatch, '*' also crosses '/'.",
  "python": {
   "max_complexity": 10,
-  "measured": "ruff C901 on 13/11/2026: 10,848 functions, p90=6 p95=9 p97=11 p99=16 max=71; limit 10 (just above p95, the mccabe default)",
+  "measured": "ruff C901 on 13/11/2026: 11,053 functions, p90=6 p95=9 p97=11 p99=16 max=71; limit 10 (just above p95, the mccabe default)",
   "ruff_version": "0.16.9",
   "target_version": "py312",
   "include": ["*.py"],
@@ -14,7 +14,7 @@
  },
  "typescript": {
   "max_complexity": 10,
-  "measured": "ESLint complexity (classic) on 13/11/2026: 10,356 functions, p90=4 p95=7 p97=10 p99=19 max=82; limit 10 (p97, same number as Python)",
+  "measured": "ESLint complexity (classic) on 13/11/2026: 10,463 functions, p90=4 p95=7 p97=10 p99=20 max=82; limit 10 (p97, same number as Python)",
   "dirs": ["frontend"],
   "include": ["frontend/*.ts", "frontend/*.tsx", "frontend/*.js", "frontend/*.jsx", "frontend/*.mjs", "frontend/*.cjs"],
   "exclude": [
