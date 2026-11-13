@@ -214,6 +214,8 @@ async def test_a_key_a_newer_migration_added_is_ignored():
 def test_cis_binding_loads_the_compiled_defaults():
     keys = settings.READER.keys()
     assert keys and all(k.startswith(settings.KEY_PREFIX) for k in keys)
+    # CIS 414 (S279 L5): the TripPlanner keys live in the same table, so the binding reads every key of it
+    assert settings.KEY_PREFIX == "" and {settings.definition(k).app for k in keys} == {"cis", "tripplanner"}
     assert settings.get("cis.publish.daily_limit_default") == 20
     assert settings.definition("cis.content.trash_retention_days").enforced is False
 
