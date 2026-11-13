@@ -51,7 +51,8 @@ jobs:
 
       - name: Install lint deps
         # AA-926: PyYAML for the quality registry lint, pinned to the requirements.txt version.
-        run: pip install flake8 flake8-bugbear pyyaml==6.0.3
+        # AA-1097: ruff measures Python complexity (C901) for the code-health ratchet; same pin as requirements-dev.txt.
+        run: pip install flake8 flake8-bugbear pyyaml==6.0.3 ruff==0.16.9
 
       - name: Run flake8
         run: |
@@ -59,6 +60,22 @@ jobs:
             --max-line-length=120 \
             --extend-ignore=E203,W503,E302,E303,E305,E221,F401,E128,E124,E401,E127,E126,B008,E701,F821,F841,W291,E272,W293,E231 \
             --exclude=__pycache__,.venv,migrations
+
+      # AA-1097: code-health ratchets (.github/scripts/code_health.py, limits in .github/code-health.json). A new Python
+      # function over complexity 10 or a new source file over 800 lines fails; a function or file already in
+      # .github/code-health-baseline.json may not get worse, and the baseline only shrinks (also against the PR / queue
+      # base). Improved code: `python3 .github/scripts/code_health.py update`, commit the baseline. The TypeScript part
+      # runs in "Frontend Lint" (it needs node_modules).
+      - name: Code health ratchets (Python complexity, file size)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: |
+          BASE_ARGS=()
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000) echo "::notice::No base commit: the shrink-only check against the base is skipped." ;;
+            *) git fetch --no-tags --depth=1 origin "$BASE_SHA" && BASE_ARGS=(--base "$BASE_SHA") ;;
+          esac
+          python3 .github/scripts/code_health.py check --kind python,files "${BASE_ARGS[@]}"
 
       # AA-902: this repo is public — no AWS account ID, ARN with an account, VPC resource ID or API
       # Gateway host in any tracked file. Blocking; exceptions only in .github/resource-id-allowlist.txt
@@ -889,6 +906,21 @@ jobs:
       - name: No inline disable of a kit rule
         if: ${{ !cancelled() }}
         run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit
+
+      # AA-1097: the TypeScript half of the code-health ratchet (ESLint's complexity rule through
+      # .github/scripts/code_health_eslint.mjs, this job's node_modules); the Python half and file size run in "Lint".
+      - name: Code health (TypeScript complexity)
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        working-directory: .
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: |
+          BASE_ARGS=()
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000) echo "::notice::No base commit: the shrink-only check against the base is skipped." ;;
+            *) git fetch --no-tags --depth=1 origin "$BASE_SHA" && BASE_ARGS=(--base "$BASE_SHA") ;;
+          esac
+          python3 .github/scripts/code_health.py check --kind typescript "${BASE_ARGS[@]}"
 
       # S271: the fast part of "Frontend Build" (same commands), on pull requests only: the queue runs that job whole.
       - name: Kit core self-check and kit render tests (pull request)
