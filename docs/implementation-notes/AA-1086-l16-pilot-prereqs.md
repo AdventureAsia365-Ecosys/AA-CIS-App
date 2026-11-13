@@ -53,4 +53,9 @@ of G1 and G9 are in AA-Partner, the E2E user list in AA-CIS-Infra, the runbook s
 - `services/jobs/tenant_backup_job.py` (nightly pilot backup) and the retention `NOT_PILOT` filter read `is_pilot`, so
   both stop treating the tenant as the pilot at once.
 - Live: `rehearsal-tenant --run <run>` (DRY RUN) through ECS Exec on `aa-cis-dev-api`; the apply is the orchestrator's,
-  at the start of the rehearsal.
+  at the start of the rehearsal and **after** the Infra `e2e-users` run and the AA-Partner seed of
+  `pilot-rehearsal-01` (review fix): the CRM's `crm_entitlement_pull` skips feed events for an agency it does not hold
+  yet and would project it only at its hourly reconcile.
+- Review fix on the CRM side (AA-Partner): ending a pilot clears `is_pilot`, so the CRM now also sets its agency's
+  `is_synthetic` false for good when it first sees the marker; the end-pilot route here needs no change (CIS already
+  reads a former pilot as real: `is_canary` false). Ending before offboarding stays allowed.
