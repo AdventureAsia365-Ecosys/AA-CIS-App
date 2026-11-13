@@ -92,7 +92,7 @@ function DetailActions({ req, busy, act }: { req: SagaRequest; busy: boolean; ac
         </Button>
       )}
       {can.stop && (
-        <Button size="sm" variant="danger" disabled={busy} data-testid="tenant-erasure-stop"
+        <Button size="sm" variant="danger" disabled={busy} testId="tenant-erasure-stop"
           onClick={() => { if (window.confirm(t("stopConfirm"))) void act("/stop", {}, t("stopDone")); }}>
           <Ban size={13} /> {t("stop")}
         </Button>
