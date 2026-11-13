@@ -77,6 +77,25 @@ async def test_the_crm_tab_lists_the_crm_settings_in_the_page_shape(crm):
     assert (method, path, params, auth) == ("GET", "/settings", {"area": "rate_limit"}, f"Bearer {TOKEN}")
 
 
+# CIS 416 / #1486: the page explains a setting from its definition's guide; the CRM serves the guide of each CRM key
+# (AA-Partner app/platform_settings/guides.json) and the relay hands it on untouched, list and history alike.
+GUIDE = {lang: {p: f"zz {lang} {p} text" for p in ("what", "raise", "lower", "when", "example")} for lang in ("en", "vi")}
+
+
+@pytest.mark.asyncio
+async def test_the_crm_guide_reaches_the_page(crm):
+    setting = {"key": "crm.rate.ai_per_minute", "app": "crm", "area": "rate_limit", "guide": GUIDE, "pending": []}
+    crm["answers"][("GET", "/settings")] = (200, {"app": "crm", "areas": ["rate_limit"], "settings": [setting],
+                                                  "two_person_approval": False, "reader_error": None})
+    crm["answers"][("GET", "/settings/crm.rate.ai_per_minute/history")] = (
+        200, {"key": "crm.rate.ai_per_minute", "tenant_id": None, "history": [],
+              "definition": {"key": "crm.rate.ai_per_minute", "guide": GUIDE}})
+    out = await router.list_registry(_request(), app="crm", area=None)
+    assert out["settings"][0]["guide"] == GUIDE
+    hist = await router.key_history(_request(), "crm.rate.ai_per_minute", tenant_id=None)
+    assert hist["definition"]["guide"] == GUIDE
+
+
 @pytest.mark.asyncio
 async def test_history_and_a_crm_refusal_pass_through(crm):
     crm["answers"][("GET", "/settings/crm.rate.intake_form_per_hour/history")] = (

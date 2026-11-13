@@ -15,6 +15,8 @@
 //                                                           apply}
 //   POST /api/admin/settings/registry/proposals/{id}/approve | reject   {note?}
 // Pure helpers: lib/settingsRegistry.ts. Kit only.
+// AA-1096 l23: every row explains itself (SettingGuide.tsx): the one-line "what" under the label, an Explain toggle
+// with the whole guide, the same guide at the top of the change dialog; who changed a value is shown by name.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, History, Pencil, SlidersHorizontal } from "lucide-react";
@@ -27,11 +29,12 @@ import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import { staffErrorMessage } from "@/lib/rbac";
 import {
-  APPS, actorText, badgesOf, boundsText, decisionBody, decisionPath, draftProblem, draftText, formatValue, groupByArea,
-  historyPath, proposalBody, proposalPath, registryPath, type BadgeKey, type HistoryResp, type ProposalDraft,
-  type RegistryResp, type SettingApp, type SettingItem, type SettingRow,
+  APPS, badgesOf, boundsText, decisionBody, decisionPath, draftProblem, draftText, formatValue, groupByArea,
+  historyPath, proposalBody, proposalPath, registryPath, valuesInForce, type BadgeKey, type HistoryResp,
+  type ProposalDraft, type RegistryResp, type SettingApp, type SettingItem, type SettingRow, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
+import { ActorName, DraftNow, GuideDetails, SettingCell } from "./SettingGuide";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const APP_LABEL: Record<SettingApp, "appCis" | "appTripplanner" | "appCrm" | "appBooking"> = {
@@ -99,8 +102,8 @@ function sourceText(item: SettingItem, t: ST): string {
   return t("sourceDefault");
 }
 
-function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
-  item: SettingItem; twoPerson: boolean; canWrite: boolean; onClose: () => void; onDone: () => void;
+function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
+  item: SettingItem; twoPerson: boolean; canWrite: boolean; valueOf: ValueOf; onClose: () => void; onDone: () => void;
 }) {
   const t = useSettingsT();
   const toast = useToast();
@@ -135,7 +138,9 @@ function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
         </Button>
       </>}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
-        <div style={small}>{item.description}</div>
+        <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 10, background: K.bg }}>
+          <GuideDetails item={item} testId="settings-propose-guide" valueOf={valueOf} />
+        </div>
         <div style={small}>
           {t("current")}: <strong style={{ fontFamily: mono }}>{formatValue(item.value, item)}</strong>
           {bounds && <> · {t("colBounds")}: {bounds}</>}
@@ -161,6 +166,7 @@ function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
               data-testid="settings-propose-value" />
           </Field>
         )}
+        <DraftNow item={item} text={draft.text} valueOf={valueOf} />
         <Field label={t("reason")} required hint={t("reasonHint")}>
           <Textarea rows={3} value={draft.reason} onChange={(e) => set({ reason: e.target.value })}
             data-testid="settings-propose-reason" />
@@ -220,15 +226,16 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
       cell: ({ getValue }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{String(getValue())}</span> },
     { id: "now", header: t("colNow"), accessorFn: (r) => formatValue(r.value, item),
       cell: ({ getValue }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{String(getValue())}</span> },
-    { id: "who", header: t("colWho"), accessorFn: (r) => actorText(r.proposed_by),
-      cell: ({ row: { original: r } }) => <span style={small}>{actorText(r.proposed_by)}<br />
-        <DateText value={r.proposed_at} withTime /></span> },
+    { id: "who", header: t("colWho"), accessorFn: (r) => r.proposed_by_name ?? r.proposed_by,
+      cell: ({ row: { original: r } }) => <span style={small}><ActorName actor={r.proposed_by}
+        name={r.proposed_by_name} /><br /><DateText value={r.proposed_at} withTime /></span> },
     { id: "reason", header: t("colReason"), accessorKey: "reason",
       cell: ({ row: { original: r } }) => <span style={small}>{r.reason}{r.evidence_ref && <><br />{r.evidence_ref}</>}
       </span> },
     { id: "decided", header: t("colDecided"), accessorFn: (r) => r.decided_at ?? "",
       cell: ({ row: { original: r } }) => r.decided_at
-        ? <span style={small}>{actorText(r.decided_by)}<br /><DateText value={r.decided_at} withTime />
+        ? <span style={small}><ActorName actor={r.decided_by} name={r.decided_by_name} /><br />
+          <DateText value={r.decided_at} withTime />
           {r.decision_note && <><br />{r.decision_note}</>}</span>
         : <span style={small}>—</span> },
   ], [t, item]);
@@ -270,6 +277,7 @@ function AppSettings({ app }: { app: SettingApp }) {
   const { isAdmin } = useAdminIdentity();
   const q = useQuery({ queryKey: ["settings-registry", app], queryFn: () => apiGet<RegistryResp>(registryPath(app)) });
   const groups = useMemo(() => groupByArea(q.data?.settings ?? []), [q.data]);
+  const valueOf = useMemo(() => valuesInForce(q.data?.settings ?? []), [q.data]);
   const [area, setArea] = useState<string>("");
   const [editing, setEditing] = useState<SettingItem | null>(null);
   const [viewing, setViewing] = useState<SettingItem | null>(null);
@@ -282,12 +290,8 @@ function AppSettings({ app }: { app: SettingApp }) {
   const columns = useMemo<ColumnDef<SettingItem, unknown>[]>(() => [
     { id: "setting", header: t("colSetting"), accessorKey: "label",
       cell: ({ row: { original: s } }) => (
-        <div style={{ display: "grid", gap: 4, minWidth: 220 }}>
-          <strong style={{ fontSize: 13 }}>{s.label}</strong>
-          <span style={{ ...small, fontFamily: mono, fontSize: 11 }}>{s.key}</span>
-          <Badges item={s} />
-          {s.env_ignored && <span style={{ ...small, color: K.danger }}>{t("envIgnored", s.env_ignored)}</span>}
-        </div>
+        <SettingCell item={s} badges={<Badges item={s} />} valueOf={valueOf}
+          extra={s.env_ignored && <span style={{ ...small, color: K.danger }}>{t("envIgnored", s.env_ignored)}</span>} />
       ) },
     { id: "value", header: t("colValue"), accessorFn: (s) => formatValue(s.value, s),
       cell: ({ row: { original: s } }) => (
@@ -303,7 +307,8 @@ function AppSettings({ app }: { app: SettingApp }) {
       cell: ({ getValue }) => <span style={small}>{String(getValue()) || "—"}</span> },
     { id: "last", header: t("colLast"), accessorFn: (s) => s.last_change?.decided_at ?? "",
       cell: ({ row: { original: s } }) => s.last_change
-        ? <span style={small}>{actorText(s.last_change.decided_by)}, <DateText value={s.last_change.decided_at} withTime />
+        ? <span style={small}><ActorName actor={s.last_change.decided_by} name={s.last_change.decided_by_name} />,{" "}
+          <DateText value={s.last_change.decided_at} withTime />
           <br />{s.last_change.reason}</span>
         : <span style={small}>{t("never")}</span> },
     { id: "actions", header: t("colActions"), enableSorting: false,
@@ -315,7 +320,7 @@ function AppSettings({ app }: { app: SettingApp }) {
             <History size={12} /> {s.proposals.length ? t("review") : t("history")}</Button>
         </span>
       ) },
-  ], [t, isAdmin]);
+  ], [t, isAdmin, valueOf]);
 
   if (app === "booking") {
     return (
@@ -350,7 +355,7 @@ function AppSettings({ app }: { app: SettingApp }) {
           getRowId={(s) => s.key} searchable paginate={false} tableMinWidth={980} />
       )}
       {editing && (
-        <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={isAdmin}
+        <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={isAdmin} valueOf={valueOf}
           onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); }} />
       )}
       {viewing && (

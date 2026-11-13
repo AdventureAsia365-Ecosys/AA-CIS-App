@@ -65,6 +65,17 @@ def definition(key: str) -> Definition:
     return READER.definition(key)
 
 
+# AA-1096 l23 (CIS 416): the operator's guide of each key ({"en": {what, raise, lower, when, example}, "vi": ...}),
+# from the compiled defaults like the rest of the definition. Kept out of reader.Definition: reader.py is the byte copy
+# AA-Partner and AA-TripPlanner-Web vendor, and only the admin page needs the guide.
+GUIDES: dict[str, Optional[dict]] = {d["key"]: d.get("guide") for d in load_definitions()}
+
+
+def guide(key: str) -> Optional[dict]:
+    """The guide of ``key`` (None when the key has none yet: tests/unit/test_aa1096_settings_guides.py fails on it)."""
+    return GUIDES.get(key)
+
+
 def install(pool: Any) -> None:
     READER.install(pool)
 
@@ -101,5 +112,5 @@ async def stop_refresher(task: Optional[asyncio.Task]) -> None:
 
 
 __all__ = ["COMPILED_DEFAULTS", "Definition", "KEY_PREFIX", "READER", "Resolution", "aget", "coerce", "definition",
-           "ensure_fresh", "get", "install", "load_definitions", "parse_text", "resolve", "start_refresher",
+           "ensure_fresh", "get", "guide", "install", "load_definitions", "parse_text", "resolve", "start_refresher",
            "stop_refresher", "validate"]
