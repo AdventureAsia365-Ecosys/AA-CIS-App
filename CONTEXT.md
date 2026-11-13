@@ -1161,7 +1161,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
     `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `writing_memory_kpi_weekly` — AA-922, `kpi_snapshot_daily`, `report_generate`,
-    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003, `quality_funnel_watch` — AA-900 W0). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003, `quality_funnel_watch` — AA-900 W0, `tenant_backup` — AA-1093). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -1229,6 +1229,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`on_terminal`); `verify: true` on a traveller DRY RUN (after an apply) strips its own hash; Sentry events of
     this kind carry no frame locals (since AA-941 no Sentry event does, `shared/sentry_init.py`). Inventory and settings:
     `GET /admin/job-runner/erasure`.
+  - **Per-tenant backup and restore drill (AA-1093 part 3, gap M27; plan D11)**: background kind `tenant_backup`
+    (`services/jobs/tenant_backup_job.py`, payload `{"tenant_id", "trigger"}`, concurrency 1, $0) writes one tenant's
+    CIS rows to the gold bucket under `exports/tenants/<tenant>/cis/<backup id = job id>/` (`tables/*.jsonl.gz` of
+    `to_jsonb` rows, `manifest.json`, `SHA256SUMS`; SSE; the bucket's 7-day `exports/` rule is the retention). The
+    table catalogue is the erasure plan (`services/tenant_backup/catalogue.py` over `services/erasure/`), so a table
+    the erasure knows is backed up and an `unregistered` one makes the backup incomplete; rows are selected by the
+    erasure predicate of the tenant (never the AA catalogue; the AA internal tenant is refused). Left out with a
+    reason: the platform ledgers the erasure detaches / merges, `acp_shared.audit_log`, `shared.job`,
+    `shared.pipeline_jobs`, `shared.llm_cassette`, `shared.tenant_api_usage`. Size cap `TENANT_BACKUP_MAX_BYTES`
+    (512 MiB of JSON; tables smallest first, a table past the cap skipped whole and listed). On demand:
+    `python -m services.tenant_backup.enqueue --tenant <uuid>`; nightly for the pilot tenant only with
+    `TENANT_BACKUP_PILOT=on` on the api (default off; the ops sampler queues it from 20:00 UTC). Drill:
+    `python -m services.tenant_backup.restore_drill [--tenant <uuid>] [--backup <job id>]` in the API container:
+    checks every digest, loads each table into `pg_temp` (types of the live table, `jsonb_populate_recordset`),
+    compares manifest / restored / live counts and live identity, rolls its transaction back, writes one
+    `tenant.restore_drill` audit row (counts only), prints JSON (exit 0 complete, 3 incomplete backup, 1 failed).
   - **Report core (AA-1003 R1, root AA-1001 report catalog)**: the registry of every recurring report and KPI is
     root `docs/reports/catalog.yaml` + `kpis.yaml` (linted there by `tools/docs/report_registry.py`); this repo reads a
     byte copy in `services/reports/registry/` (`registry.py`, loaded once; change root first, then copy). Two expand

@@ -61,7 +61,8 @@ LATEST_SQL = """
      WHERE kind = 'tenant_backup' AND status = 'succeeded' AND payload ->> 'tenant_id' = $1::text
      ORDER BY finished_at DESC, id DESC LIMIT 1
 """
-ONE_SQL = "SELECT id::text AS id, status, payload, result, finished_at FROM shared.job WHERE id = $1::uuid AND kind = $2"
+ONE_SQL = ("SELECT id::text AS id, status, payload, result, finished_at FROM shared.job "
+           "WHERE id = $1::uuid AND kind = $2")
 LIVE_SQL = "SELECT to_regclass($1::text) IS NOT NULL AS ok"
 
 
@@ -188,7 +189,7 @@ async def drill(pool, store: ObjectStore, tenant_id: str, backup_id: Optional[st
             try:
                 with open(spath, encoding="ascii") as f:
                     sums = parse_sums(f.read())
-            except (ValueError, UnicodeDecodeError):
+            except ValueError:            # UnicodeDecodeError is one
                 raise DrillError("sums_shape") from None
             mpath = os.path.join(work, "manifest.json")
             await _fetch(store, prefix + "manifest.json", mpath)

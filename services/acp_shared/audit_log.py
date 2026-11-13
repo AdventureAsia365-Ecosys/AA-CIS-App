@@ -132,7 +132,8 @@ class AdminTenantAuditAction:
     # AA-839 — the data_erasure job erased an offboarded tenant (details: counts, approval, snapshot; no data)
     ERASED = "tenant.erased"
     # AA-1093 part 3 — the restore drill loaded a tenant backup into temporary tables and compared it (details: the
-    # backup id, counts, the mismatched table names; never a row value). Written by services/tenant_backup/restore_drill.
+    # backup id, counts, the mismatched table names; never a row value). Written by
+    # services/tenant_backup/restore_drill.py.
     RESTORE_DRILL = "tenant.restore_drill"
     # AA-978 — Tenant 360 Members: a staff change of a CIS membership (the CIS 276 trigger also writes the
     # tenant.membership.v1 feed event the partner CRM applies). details: before/after role or status; no identity.

@@ -45,8 +45,12 @@ class BackupRefused(Exception):
     """A backup that must not run (the code says why)."""
 
     def __init__(self, code: str, detail: str = ""):
-        super().__init__(f"{code}: {detail}" if detail else code)
+        super().__init__(code, detail)
         self.code = code
+        self.detail = detail
+
+    def __str__(self) -> str:
+        return f"{self.code}: {self.detail}" if self.detail else self.code
 
 
 @dataclass(frozen=True)

@@ -162,7 +162,8 @@ async def test_pilot_nightly(monkeypatch):
     monkeypatch.setattr(tbj, "enqueue", enq)
     early = datetime(2026, 11, 13, tbj.SCHEDULE_HOUR_UTC - 1, 59, tzinfo=timezone.utc)
     late = datetime(2026, 11, 13, tbj.SCHEDULE_HOUR_UTC, 1, tzinfo=timezone.utc)
-    assert await tbj.enqueue_pilot_nightly(_pool(pilot=TID), now=early) == (None, False, "tenant_backup:pilot:2026-11-13")
+    key = "tenant_backup:pilot:2026-11-13"
+    assert await tbj.enqueue_pilot_nightly(_pool(pilot=TID), now=early) == (None, False, key)
     assert (await tbj.enqueue_pilot_nightly(_pool(exists=True, pilot=TID), now=late))[:2] == (None, False)
     assert (await tbj.enqueue_pilot_nightly(_pool(pilot=None), now=late))[:2] == (None, False)
     enq.assert_not_called()
