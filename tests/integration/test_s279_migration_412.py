@@ -48,7 +48,7 @@ async def _refused(c, *args):
 
 
 @pytest.mark.asyncio
-async def test_409_registered_and_seeded_like_the_compiled_defaults(conn):
+async def test_412_registered_and_seeded_like_the_compiled_defaults(conn):
     assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '412'") == "412"
     rows = {r["key"]: r for r in await conn.fetch(
         "SELECT key, default_value::text AS d, evidence_required, approval, area FROM shared.setting_definition "
@@ -72,7 +72,7 @@ async def test_a_quality_proposal_needs_its_evidence_and_must_fit(conn):
 
 
 @pytest.mark.asyncio
-async def test_410_registers_t9_write_v8_with_the_manifest_hash(conn):
+async def test_413_registers_t9_write_v8_with_the_manifest_hash(conn):
     """CIS 413: prompt version t9_write v8 (the blog length values rendered at call time) is registered with the hash
     of the manifest's newest t9_write entry."""
     manifest = json.loads(open(os.path.join(os.path.dirname(__file__), "..", "..", "shared", "llm_client",

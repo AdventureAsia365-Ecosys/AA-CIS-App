@@ -10,28 +10,28 @@ from services.quality import registry
 from services.quality import settings_keys as sk
 
 
-def _seed_409() -> dict[str, dict]:
-    text = (gen.MIGRATIONS / "409_quality_settings_registry.sql").read_text(encoding="utf-8")
+def _seed_412() -> dict[str, dict]:
+    text = (gen.MIGRATIONS / "412_quality_settings_registry.sql").read_text(encoding="utf-8")
     import json
 
     rows = [r for block in gen.BLOCK_RE.findall(text) for r in json.loads(block)]
     return {r["key"]: r for r in rows}
 
 
-def test_the_index_names_exactly_the_409_seed():
-    assert set(sk.ALL_KEYS) == set(_seed_409())
+def test_the_index_names_exactly_the_412_seed():
+    assert set(sk.ALL_KEYS) == set(_seed_412())
     assert len(sk.ALL_KEYS) == len(set(sk.ALL_KEYS)) == 151
 
 
 def test_every_quality_key_needs_evidence_and_a_second_person():
-    for key, row in _seed_409().items():
+    for key, row in _seed_412().items():
         assert row["evidence_required"] is True, key
         assert row["approval"] == "maker_checker", key
         assert row["scope_kind"] == "platform" and row["enforced"] is True, key
 
 
 def test_every_taxonomy_detector_has_its_mode_setting_seeded_with_todays_mode():
-    seed = _seed_409()
+    seed = _seed_412()
     with open(registry.TAXONOMY_PATH, encoding="utf-8") as fh:
         tax = yaml.safe_load(fh)
     seen = set()
