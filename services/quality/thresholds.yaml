@@ -1,5 +1,5 @@
 # Quality System v1 — the thresholds file (AA-926, design §5.3): every score cut-off the writers, judges, gates, admin
-# views and the golden-set eval use, BY CONSUMER KEY. S279 lane L2 (AA-1096, CIS 409): the VALUES live in the platform
+# views and the golden-set eval use, BY CONSUMER KEY. S279 lane L2 (AA-1096, CIS 412): the VALUES live in the platform
 # settings registry (Platform › Settings, area quality: evidence-gated, maker-checker), named by `setting` (a band:
 # `settings`); this file keeps the structure only. Code reads them through services/quality/registry.py
 # (`threshold(key)`, at call time); `python -m services.quality.lint` fails on a 7.0 literal anywhere else. Each

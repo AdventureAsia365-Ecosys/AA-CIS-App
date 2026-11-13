@@ -110,7 +110,7 @@ def _writing_policy(root: Path) -> str:
 
 
 SETTINGS_DEFAULTS_FILE = "shared/settings/compiled_defaults.json"
-# S279 lane L2 (AA-1096, CIS 409): the gate VALUES (pass lines, caps, bands, detector modes, claim verdicts, the T2 /
+# S279 lane L2 (AA-1096, CIS 412): the gate VALUES (pass lines, caps, bands, detector modes, claim verdicts, the T2 /
 # T7 / T10 modes, the SEO bands, the Channel bars) are settings of the platform settings registry. A value change is an
 # approved proposal with its evidence (the API refuses one without an evidence_ref on an evidence_required key); the
 # lock no longer pins a YAML value. It pins what a migration can change: each key's governance and seed.

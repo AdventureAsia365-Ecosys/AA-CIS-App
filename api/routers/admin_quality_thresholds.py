@@ -3,7 +3,7 @@
   GET /admin/quality/thresholds   {pass_line, score_bands {top, pass, low}, seo_bands {meta {min, max},
                                    title {min, max}, slug {max}}, writing_policy_sha, settings_fp}
 
-The pass line, the score colour bands and the SEO bands are settings (CIS 409, Platform › Settings, evidence-gated,
+The pass line, the score colour bands and the SEO bands are settings (CIS 412, Platform › Settings, evidence-gated,
 maker-checker). The frontend used to carry a generated copy (frontend/lib/quality-registry.generated.ts SCORE_BANDS /
 SEO_BANDS / PASS_LINE); it now reads this route (frontend/lib/qualityThresholds.ts), so an approved change reaches the
 Review, Master content, tenant and compare views within one settings cache window (audit 5.4 check 3: no mirrors).

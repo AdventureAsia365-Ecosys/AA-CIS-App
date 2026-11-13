@@ -26,7 +26,7 @@ What is compiled, and who reads it:
 fixtures change no behaviour). It is part of the release fingerprint (writing_memory.config_fp component `policy`)
 and of the eval judge version.
 
-S279 lane L2 (AA-1096, CIS 409): the band and aim NUMBERS (D5) and the claim verdicts (`rules_config` values, the F9
+S279 lane L2 (AA-1096, CIS 412): the band and aim NUMBERS (D5) and the claim verdicts (`rules_config` values, the F9
 class actions) are settings of the platform settings registry (Platform › Settings: evidence-gated, maker-checker).
 The YAML keeps their structure; `effective(source, get)` lays the values in. Everything compiled (the compiled file,
 `policy_sha`, the prompt hashes of the prompt register) uses the SEEDED defaults, so it is byte for byte what it was;

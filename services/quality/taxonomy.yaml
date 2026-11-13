@@ -6,7 +6,7 @@
 #
 # Fields dropped by design v2 (§3.2) are derived by the loader, not stored:
 #   owner_gate = the detectors with mode enforce; metric/tolerance = default per severity (§4.2).
-# S279 lane L2 (AA-1096, CIS 409): a detector's MODE (enforce / shadow / warn, `detector_modes` below) is a setting of
+# S279 lane L2 (AA-1096, CIS 412): a detector's MODE (enforce / shadow / warn, `detector_modes` below) is a setting of
 # the platform settings registry (Platform › Settings, area quality_detectors: evidence-gated, maker-checker), one per
 # (class, ref) in services/quality/settings_keys.py DETECTOR_MODES; registry.classes() reads the modes in force.
 # Writers: A1 (S1 master rewrite), T2 (tenant rewrite + T3 QA), T9_blog, T9_social (T9 write + T10 gates).

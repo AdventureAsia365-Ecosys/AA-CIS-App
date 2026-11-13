@@ -42,7 +42,7 @@ decisions:
 # ---------------------------------------------------------------------------------------------------- bands (D5)
 # One meta band and one title band in code. A writer AIMS below the band (lesson S233: a model overshoots a character
 # target; aim 130-145 lands 139-154); code fits and trims into the band.
-# S279 lane L2 (AA-1096, CIS 409): every band and aim NUMBER is a setting of the platform settings registry
+# S279 lane L2 (AA-1096, CIS 412): every band and aim NUMBER is a setting of the platform settings registry
 # (Platform › Settings, area seo: cis.seo.meta_min / meta_max / title_min / title_max / slug_max and cis.seo.aim_<writer>
 # _meta_min / _max; evidence-gated, maker-checker). This file keeps the structure; writing_policy.py lays the numbers
 # in (the seeded defaults for the compiled file and policy_sha, the values in force for band() / fill() at call time).

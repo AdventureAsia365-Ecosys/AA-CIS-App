@@ -1,4 +1,4 @@
-"""S279 thresholds lane L2 (AA-1096, CIS 409) — the quality values on the settings registry: cross-key rules, the
+"""S279 thresholds lane L2 (AA-1096, CIS 412) — the quality values on the settings registry: cross-key rules, the
 admin UI's values and the fingerprint of the values in force.
 
 The values themselves are read where they are used, at call time, through ``registry.threshold`` /

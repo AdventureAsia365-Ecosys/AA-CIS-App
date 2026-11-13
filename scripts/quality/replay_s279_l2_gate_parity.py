@@ -1,5 +1,5 @@
 """S279 thresholds lane L2 (AA-1096) — $0 replay: the gate verdicts on stored rows are identical with the quality
-values in force (the settings registry, CIS 409) and with the values before the move (the YAML / env / literal values,
+values in force (the settings registry, CIS 412) and with the values before the move (the YAML / env / literal values,
 restated in ``BEFORE``).
 
 No LLM, no Jev, no write. It reads the approved values (``settings.ensure_fresh``), then recomputes, through the

@@ -3851,7 +3851,7 @@ needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_lengt
 AA-1077 S278 — **blog length target**: every length AIM is one number above the floor, never the floor itself:
 `length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`; S279 L2: the setting
 cis.quality.t9_blog_length_target_margin, 0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor
-(`prompts._blog_words()[0]`, t9_write v8, CIS 410) renders `target_words()` at call time (the F4 floor
+(`prompts._blog_words()[0]`, t9_write v8, CIS 413) renders `target_words()` at call time (the F4 floor
 cis.t9.blog_chars_min and the margin are settings); a value other than the seed puts `.s<8 hex>` on the ledger's
 prompt version; the extend repair
 aims at the target; a blog's F4-short rewrite feedback carries "lengthen the piece to at least 5,499 characters …"
@@ -3885,7 +3885,7 @@ Writing Memory hard stop 1 = every `fact.*` class with `severity: hard`). `code_
 (`repair_contract`, `degraded`, `day_oracle`) and `aliases` maps each Q0 corpus class id (`other.length`,
 `other.cta`, …) to its canonical class, so the Q0 cases are never relabelled to fit the taxonomy.
 `python -m scripts.quality.redundancy_census` lists enforcing detectors whose classes another code check already
-enforces (input for gate removals, AA-924). **Quality settings (S279 lane L2, CIS 409):** the 7.0 pass line and the
+enforces (input for gate removals, AA-924). **Quality settings (S279 lane L2, CIS 412):** the 7.0 pass line and the
 other score cut-offs, the detector modes, the claim verdicts, the T10 / seed-align / adjudicator / T9 brief / T7
 debate / T2 judge gate / T3 background modes, the T7 debate cut and Channel bars, the SEO bands and the blog length
 band are settings of the platform settings registry (Platform › Settings: evidence-gated, maker-checker,

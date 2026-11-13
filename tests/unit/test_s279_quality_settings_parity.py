@@ -1,4 +1,4 @@
-"""S279 thresholds lane L2 (AA-1096, CIS 409 / 410) — the quality registry on the platform settings registry.
+"""S279 thresholds lane L2 (AA-1096, CIS 412 / 413) — the quality registry on the platform settings registry.
 
 1. **Parity.** With no stored value every reader returns exactly the value it had before the move (the
    thresholds.yaml / writing_policy.yaml / taxonomy.yaml value, the worker's Terraform env value or the code literal),

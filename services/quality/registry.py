@@ -6,7 +6,7 @@
 - **Taxonomy** (`taxonomy.yaml`, qtax-v1): error classes, and the class every gate, Jev question key, admin
   chip and A1 validate code maps to. `owner_gates`, `metric` and `tolerance` are derived (design §3.2).
 - **Thresholds** (`thresholds.yaml`): every score cut-off by consumer key; its VALUE is a setting of the platform
-  settings registry (S279 lane L2, CIS 409: Platform › Settings, evidence-gated, maker-checker), named by the entry's
+  settings registry (S279 lane L2, CIS 412: Platform › Settings, evidence-gated, maker-checker), named by the entry's
   `setting` (or `settings` for a band). `threshold(key)` reads the value in force at CALL time (the settings reader's
   30 s snapshot, never the database): never copy it into a module constant.
 - **Detector modes**: a detector's mode (enforce / shadow / warn) is a setting too (`settings_keys.DETECTOR_MODES`);
