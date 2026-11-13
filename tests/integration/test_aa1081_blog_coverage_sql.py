@@ -11,6 +11,8 @@
 5. `propose_slate()` end to end (Debate and the market lookup patched): every adopted tour gets its topic count or a
    reason (seed_too_thin / low_search_interest / not_ready), and `T7_BLOG_MIN_SEED_WORDS` moves a short seed off Blog
    onto the shorter Channels.
+6. AA-1077 S279: the floor sized from the F4 blog floor skips a seed the flat floor lets through, and names each
+   skipped Subject; the $0 seed floor replay's piece query runs on the schema.
 
 Invented tours, places and ids; everything is rolled back.
 """
@@ -213,6 +215,7 @@ async def _proposed(conn, tenant, channel):
 @pytest.mark.asyncio
 async def test_propose_slate_reports_every_adopted_tour(conn, monkeypatch):
     monkeypatch.delenv(blog_seed.MIN_SEED_ENV, raising=False)
+    monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
     w = await _world(conn)
     result = await _propose_on(conn, w.tenant)
     cov = result["blog_coverage"]
@@ -238,9 +241,31 @@ async def test_propose_slate_min_seed_moves_a_short_seed_off_blog(conn, monkeypa
     assert await _proposed(conn, w.tenant, "blog") == []
     assert "zz1081_e_a1" in await _proposed(conn, w.tenant, "email")   # still offered on a shorter Channel
     monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5")
+    monkeypatch.setenv(blog_seed.RATIO_ENV, "0")                  # AA-1077 S279: the flat floor alone
     result = await _propose_on(conn, w.tenant)
     tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
     assert tour_a["topics"] == 2 and result["blog_coverage"]["short_seed"] == 0
+    assert [(r["segment_id"], r["reason"]) for r in result["blog_coverage"]["skipped"]] == [
+        ("zz1081_e_b1", "thin_walk")]                              # tour B's thin moment only
+
+
+@pytest.mark.asyncio
+async def test_propose_slate_length_sized_floor_skips_a_seed_the_flat_floor_lets_through(conn, monkeypatch):
+    """AA-1077 S279 — the flat floor (5 words) lets tour A's seeds through; the floor sized from the F4 blog floor
+    (4,700 chars at the default 5.8 chars per seed word = 811 words) does not, and each skipped Subject says why."""
+    w = await _world(conn)
+    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5")
+    monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
+    result = await _propose_on(conn, w.tenant)
+    cov = result["blog_coverage"]
+    assert cov["min_seed_words"] == 811 and cov["seed_floor"]["flat"] == 5 and cov["seed_floor"]["sized"] == 811
+    tour_a = next(t for t in cov["tours"] if t["tour_id"] == w.a)
+    assert (tour_a["topics"], tour_a["reason"]) == (0, "seed_too_thin")
+    short = [r for r in cov["skipped"] if r["reason"] == "seed_below_length_floor"]
+    assert sorted(r["segment_id"] for r in short) == ["zz1081_e_a1", "zz1081_e_a2"]
+    assert all(5 <= r["seed_words"] < 811 and r["min_seed_words"] == 811 and w.a in r["tour_ids"] for r in short)
+    assert await _proposed(conn, w.tenant, "blog") == []
+    assert "zz1081_e_a1" in await _proposed(conn, w.tenant, "email")   # still offered on a shorter Channel
 
 
 @pytest.mark.asyncio
@@ -265,3 +290,12 @@ async def test_the_replay_script_reads_every_arm_on_the_schema(conn):
     summary = script.summarize([row], ["before_rank", "after", "after_min_seed"])
     assert summary["pairs"] == 4 and summary["after"]["with_topic"] == 1
     assert summary["after_min_seed"]["reasons"] == {"low_search_interest": 1, "not_ready": 1, "seed_too_thin": 2}
+
+
+@pytest.mark.asyncio
+async def test_the_seed_floor_replay_query_runs_on_the_schema(conn):
+    """scripts/aa1077/seed_floor_replay.py PIECES_SQL: every column and join it names exists (no rows here)."""
+    from datetime import datetime, timezone
+    from scripts.aa1077 import seed_floor_replay as rp
+    rows = await conn.fetch(rp.PIECES_SQL, ["zz1081-no-such-tenant"], datetime(2026, 11, 1, tzinfo=timezone.utc))
+    assert rows == []

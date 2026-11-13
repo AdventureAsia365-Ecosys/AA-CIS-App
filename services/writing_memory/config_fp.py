@@ -119,7 +119,9 @@ MODE_FLAGS: dict[str, tuple[str, ...]] = {
                 "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
                 "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE", "T9_SEO_BUILDER",
                 # AA-1077: the extend repair of a short blog (length_extend; opt-in `on`, default = the full rewrite)
-                "T9_LENGTH_EXTEND"),
+                "T9_LENGTH_EXTEND",
+                # AA-1077 (S279): the deterministic near-exact repeat drop before F13 (repeat_drop; kill switch `off`)
+                "T9_REPEAT_DROP"),
     "t9_social": ("T9_BRIEF_GROUNDING_MODE", "T9_READER_CHECKLIST_MODE", "T10_F12_SCOPE_MODE",
                   "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
                   "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE"),
