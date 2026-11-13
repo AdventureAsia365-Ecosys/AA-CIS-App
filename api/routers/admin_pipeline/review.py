@@ -11,7 +11,7 @@ from shared.tour_liveness import live_source_exists_sql, live_source_sql
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 
 from api.routers.admin_pipeline._shared import (
-    _LOW_QUALITY_FLOOR, _as_list, _derive_field_failures, _is_uuid, _record_review_reason, _score_band_where, logger,
+    _as_list, _derive_field_failures, _is_uuid, _low_quality_floor, _record_review_reason, _score_band_where, logger,
     router,
 )
 
@@ -44,8 +44,8 @@ def _review_block(score, codes: list, failures: list, brand_audit_status) -> dic
     if hard:
         where = sorted({f"{f['code']} in {f['field']}" for f in (failures or []) if f.get("code") in hard})
         return {"kind": "hard", "label": "Blocked: " + (", ".join(where) or ", ".join(hard))}
-    if score is not None and score < _LOW_QUALITY_FLOOR:
-        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < {_LOW_QUALITY_FLOOR:.1f}"}
+    if score is not None and score < _low_quality_floor():
+        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < {_low_quality_floor():.1f}"}
     return {"kind": "other", "label": "Held for review"}
 
 
@@ -99,7 +99,7 @@ def _review_failure_class(score, codes: list, failures: list, brand_audit_status
         return {"failure_class": "hard", "retryable": True,
                 "hint": "Regenerate with Sonnet"}
 
-    if score is not None and score < _LOW_QUALITY_FLOOR:
+    if score is not None and score < _low_quality_floor():
         return {"failure_class": "low_quality", "retryable": True,
                 "hint": "Low quality — regenerate for a better draft"}
 

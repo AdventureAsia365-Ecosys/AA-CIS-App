@@ -45,6 +45,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services.quality import registry
+from services.quality import settings_keys
+from shared import settings as _settings
 
 ROOT = Path(__file__).resolve().parents[2]
 PY_SCOPE = ("api/", "services/", "shared/", "worker/", "scripts/aa729/")
@@ -239,7 +241,8 @@ def scan_ts(path: str, src: str, res: Result) -> None:
             if m:
                 res.allows.append(f"{path}:{ln}: pass-line literal — {m.group(1).strip() or '(no reason)'}")
             else:
-                res.errors.append(f"{path}:{ln}: (b) {h} — use PASS_LINE / SCORE_BANDS from {GENERATED_TS}")
+                res.errors.append(f"{path}:{ln}: (b) {h} — read the pass line and score bands at runtime "
+                                  f"(useQualityThresholds, lib/qualityThresholds.ts; S279 L2: they are settings)")
 
 
 # -------------------------------------------------------------------------------------- (c) Jev keys
@@ -390,12 +393,41 @@ def _mapped(entry: dict, where: str, class_ids: set[str], res: Result) -> None:
             res.errors.append(f"{where}: unknown class {c!r}")
 
 
+def _detector_problems(cid: str, d: dict, kinds: set, modes: set, known: set) -> list[str]:
+    """S279 L2: a known kind, no YAML mode, and a seeded mode setting that allows detector_modes."""
+    ref, out = d.get("ref"), []
+    if d.get("kind") not in kinds:
+        out.append(f"taxonomy {cid}: detector {ref!r} kind invalid")
+    key = registry.detector_mode_key(cid, ref)
+    if "mode" in d:   # the mode is a setting (Platform › Settings), never a YAML value
+        out.append(f"taxonomy {cid}: detector {ref!r} has a YAML mode; its mode is the setting {key!r}")
+    if key is None or key not in known:
+        out.append(f"taxonomy {cid}: detector {ref!r} has no mode setting (services/quality/settings_keys.py "
+                   f"DETECTOR_MODES + a migration seed row)")
+    elif set(_settings.definition(key).allowed_values or ()) != modes:
+        out.append(f"taxonomy {cid}: detector {ref!r} mode setting {key} allows "
+                   f"{_settings.definition(key).allowed_values}, not detector_modes")
+    return out
+
+
+def _threshold_entry_problems(k: str, e: dict, known: set) -> list[str]:
+    """S279 L2: a thresholds.yaml entry names exactly one of setting / settings / ref, and every setting is seeded."""
+    out = []
+    if sum(f in e for f in ("setting", "settings", "ref")) != 1 or "value" in e:
+        out.append(f"threshold {k}: give exactly one of setting / settings / ref (the value is a setting, S279 L2)")
+    names = [e["setting"]] if "setting" in e else list(e.get("settings") or [])
+    out += [f"threshold {k}: setting {n!r} is not in the compiled settings defaults" for n in names if n not in known]
+    return out
+
+
 def check_schema(res: Result, tracked: set[str]) -> None:
     tax = registry.taxonomy()
     if tax.get("version") != registry.TAXONOMY_VERSION:
         res.errors.append(f"taxonomy.yaml version {tax.get('version')!r} != registry.TAXONOMY_VERSION")
     sev, writers = set(tax.get("severities") or []), set(tax.get("writers") or [])
     kinds, modes = set(tax.get("detector_kinds") or []), set(tax.get("detector_modes") or [])
+    known_settings = set(_settings.READER.keys())
+    seen_detectors: set = set()
     ids = [c.get("id") for c in tax.get("classes") or []]
     class_ids = set(ids)
     for dup in sorted({i for i in ids if ids.count(i) > 1}):
@@ -420,8 +452,8 @@ def check_schema(res: Result, tracked: set[str]) -> None:
             if d.get("ref") not in detector_refs:
                 res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} is not a registered gate, Jev key "
                                   f"or A1 code")
-            if d.get("kind") not in kinds or d.get("mode") not in modes:
-                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} kind/mode invalid")
+            res.errors += _detector_problems(cid, d, kinds, modes, known_settings)
+            seen_detectors.add((cid, d.get("ref")))
             for w in d.get("writers") or []:
                 if w not in writers:
                     res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} unknown writer {w!r}")
@@ -432,6 +464,8 @@ def check_schema(res: Result, tracked: set[str]) -> None:
             if len(ex) < 2 or not {"positive", "negative"} <= truths:
                 res.errors.append(f"(g) taxonomy {cid}: a {c['severity']} class needs >= 2 labelled synthetic "
                                   f"examples (one positive, one negative)")
+    for pair in sorted(set(settings_keys.DETECTOR_MODES) - seen_detectors):
+        res.errors.append(f"settings_keys.DETECTOR_MODES names {pair}, which is no taxonomy.yaml detector")
     constants = set(registry.GATE_CONSTANTS.values())
     for n in sorted(set(gates) - constants):
         res.errors.append(f"registry: gate {n!r} is in taxonomy.yaml but has no constant in registry.py")
@@ -473,8 +507,7 @@ def check_schema(res: Result, tracked: set[str]) -> None:
     # thresholds
     th = registry.thresholds_doc().get("thresholds") or {}
     for k, e in th.items():
-        if ("value" in e) == ("ref" in e):
-            res.errors.append(f"threshold {k}: give exactly one of value / ref")
+        res.errors += _threshold_entry_problems(k, e, known_settings)
         try:
             registry.threshold(k)
         except (KeyError, ValueError) as err:

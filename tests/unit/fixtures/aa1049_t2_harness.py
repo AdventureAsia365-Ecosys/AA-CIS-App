@@ -248,8 +248,19 @@ def run(name: str, *, env: Optional[dict] = None, extra: Optional[Callable] = No
     conn = conn if conn is not None else Conn()
     tour_dict = job.source_tour_dict(row)
     clean_env = {k: v for k, v in os.environ.items() if k not in T2_SWITCHES}
+    run_env = {**clean_env, **(env or {})}
     with ExitStack() as st:
-        st.enter_context(patch.dict(os.environ, {**clean_env, **(env or {})}, clear=True))
+        st.enter_context(patch.dict(os.environ, run_env, clear=True))
+        # S279 L2: the T2 judge gate and the T3 background allowance are settings now (seeded with the worker's
+        # Terraform values brand_fit / on). The golden was recorded with both env vars unset, i.e. main's code
+        # defaults brand_fit_mission / off: serve those (or the run's env value, mapped) so the golden stays the record.
+        from shared import settings as _settings
+        served = {"cis.quality_modes.t2_judge_gate": (run_env.get("T2_JUDGE_GATE") or "brand_fit_mission").strip().lower(),
+                  "cis.quality_modes.t3_background_facts":
+                      (run_env.get("T3_BACKGROUND_FACTS") or "").strip().lower() in ("1", "true", "on", "yes")}
+        _real_get = _settings.READER.get
+        st.enter_context(patch.object(_settings.READER, "get",
+                                      lambda k, t=None: served[k] if k in served else _real_get(k, t)))
         st.enter_context(patch.object(LLMClient, "__init__", lambda self, *a, **k: None))
         st.enter_context(patch.object(LLMClient, "generate", lambda self, req: llm.generate(req)))
         st.enter_context(patch.object(call_log, "record_call", AsyncMock(return_value=None)))

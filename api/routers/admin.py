@@ -18,7 +18,7 @@ from api.core.tenant_scope import (
     tenant_scope_sql,
 )
 from pydantic import BaseModel, Field
-from api.core import view_as
+from api.core import e2e_tenant_writes, view_as
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
 
@@ -26,6 +26,7 @@ from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.tenant_account import dev_guard
 from services.tenant_account import plans as tenant_plans
+from services.tenant_erasure import store as erasure_store  # AA-1093 L2: the erasure saga's offboard / restore hooks
 from shared.ops_checks import EVENT_TYPE_PREFIX as OPS_CHECK_EVENT_PREFIX
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -1428,7 +1429,7 @@ class OffboardRequest(BaseModel):
 
 
 @router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant (soft)",
-             dependencies=TENANT_SCOPED)
+             dependencies=TENANT_SCOPED + e2e_tenant_writes.SYNTHETIC_PATH_TENANT)  # A10b-5: synthetic only for E2E
 async def offboard_tenant(
     tenant_id: str,
     body: OffboardRequest,
@@ -1438,16 +1439,14 @@ async def offboard_tenant(
     x_admin_role: Optional[str] = Header(None),
 ):
     """
-    Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.
-    Soft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or
-    overwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so
-    POST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.
-    AA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354
-    trigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant).
-    The tenant's QUEUED jobs are cancelled (running ones finish).
-    The Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can
-    put it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention
-    window, with explicit approval, per the data-erasure runbook), not automated here.
+    Tenant offboarding (PRD v1.0 §3.2): account_status offboarding + the audit row. Soft state only (AA-797, Nghiệp
+    14/10/2026): no tenant data or setting is deleted or overwritten (brand rules, planning config, T2 versions,
+    content, markets, plan_id, users), so POST /tenants/{id}/restore brings the tenant back whole; PATCH on an
+    offboarded tenant returns 409. AA-1036: account_status is the one offboarded marker (no API key any more; the 354
+    trigger keeps is_active / cancelled_at in step, the studio session exchange refuses the tenant). QUEUED jobs are
+    cancelled (running ones finish). The Jev allow-list row is removed (AA-741), snapshotted into the audit row for
+    restore. AA-1093 L2: T0 of the erasure saga (one erasure request, each app's earliest date, the event
+    account.erasure_requested); nothing is erased before the DRY RUNs and an administrator's approval (AA-839 window).
     """
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
@@ -1482,17 +1481,8 @@ async def offboard_tenant(
                 tenant_id,
             )
             await conn.execute(
-                """
-                UPDATE shared.tenants
-                SET account_status      = 'offboarding',
-                    cancelled_at        = NOW(),
-                    cancellation_reason = $2,
-                    is_active           = FALSE,
-                    updated_at          = NOW()
-                WHERE tenant_id = $1::uuid
-                """,
-                tenant_id, body.reason,
-            )
+                "UPDATE shared.tenants SET account_status = 'offboarding', cancelled_at = NOW(), is_active = FALSE, "
+                "cancellation_reason = $2, updated_at = NOW() WHERE tenant_id = $1::uuid", tenant_id, body.reason)
             # AA-797: the queued branch of shared.jobs.queue.request_cancel(), scoped to this
             # tenant. Tenant job kinds (t2_rewrite, t7_slate, t8_angles, t9_write) carry tenant_id
             # at the top of the payload. `status = 'queued'` is re-checked on the locked row, so a
@@ -1527,6 +1517,8 @@ async def offboard_tenant(
             # AA-741 (S229): an offboarded tenant's content must never reach Jev again.
             await conn.execute(
                 "DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid", tenant_id)
+            # AA-1093 L2, T0 of the erasure saga (savepoint: nothing scheduled before CIS 408 or for the pilot)
+            erasure = await erasure_store.on_offboard(conn, tenant_id, actor=_admin_actor(x_admin_user_id))
 
     # Same follow-up as POST /admin/job-runner/jobs/{id}/cancel: a cancelled job's domain row
     # (T2 version / T9 piece) is marked failed by its kind's on_terminal hook. Never raises.
@@ -1540,6 +1532,7 @@ async def offboard_tenant(
         "status": "offboarded",
         "cancelled_jobs": len(cancelled),
         "ended_view_as_sessions": len(closed_views),
+        "erasure_request": erasure,
         "note": "Tenant data and settings are kept; POST /admin/tenants/{id}/restore brings the tenant back.",
     }
 
@@ -1554,12 +1547,13 @@ class RestoreTenantResponse(BaseModel):
     previous_reason: Optional[str]
     jev_allowlist_restored: bool
     cancelled_jobs: list[dict]
+    erasure_request_cancelled: Optional[str] = None  # AA-1093 L2: the erasure request this restore cancelled
     message: str
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
              summary="Restore an offboarded tenant with its data and settings",
-             dependencies=TENANT_SCOPED)
+             dependencies=TENANT_SCOPED + e2e_tenant_writes.SYNTHETIC_PATH_TENANT)  # A10b-5: synthetic only for E2E
 async def restore_tenant(
     tenant_id: UUID,
     request: Request,
@@ -1567,13 +1561,12 @@ async def restore_tenant(
     x_admin_user_id: Optional[str] = Header(None),
     x_admin_role: Optional[str] = Header(None),
 ):
-    """Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.
-    Offboard deletes nothing, so restore only clears the offboard markers (cancelled_at,
-    cancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted
-    (AA-1036: no API key is issued; members sign in with the partner pool as before).
-    plan_tier / plan_id / rate limit and every
-    setting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are
-    listed so the admin can re-run them. 409 unless the tenant is offboarded."""
+    """Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings. Offboard deletes
+    nothing, so restore only clears the offboard markers (cancelled_at, cancellation_reason), sets account_status
+    active, re-adds the Jev allow-list row offboard snapshotted (AA-1036: no API key is issued; members sign in with
+    the partner pool as before). plan_tier / plan_id / rate limit and every setting are left exactly as they were.
+    Jobs offboard cancelled are NOT re-enqueued; they are listed so the admin can re-run them. AA-1093 L2: the open
+    erasure request is cancelled (409 once an app may have erased its part). 409 unless the tenant is offboarded."""
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
     tid = str(tenant_id)
@@ -1593,6 +1586,10 @@ async def restore_tenant(
             )
         offboarded_at = row["cancelled_at"]
 
+        try:  # AA-1093 L2: cancel the open erasure request; refused once an app may have erased its part
+            erasure_cancelled = await erasure_store.on_restore(conn, tid)
+        except erasure_store.ErasureInProgress as e:
+            raise HTTPException(status_code=409, detail=f"{e}; the tenant cannot be restored")
         # The jobs this offboard cancelled (same transaction set finished_at = cancelled_at).
         jobs = await conn.fetch("""
             SELECT id::text AS id, kind FROM shared.job
@@ -1634,6 +1631,7 @@ async def restore_tenant(
                 "restored": ["status:active"] + (["jev_allowlist"] if allow_restored else []),
                 "unchanged": "plan_tier, plan_id, rate limit, brand rules, planning config, content, users",
                 "cancelled_jobs_not_rerun": cancelled_jobs,
+                "erasure_request_cancelled": erasure_cancelled,
             },
         )
 
@@ -1646,6 +1644,7 @@ async def restore_tenant(
         previous_reason=row["cancellation_reason"],
         jev_allowlist_restored=allow_restored,
         cancelled_jobs=cancelled_jobs,
+        erasure_request_cancelled=erasure_cancelled,
         message=f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run.",
     )
 

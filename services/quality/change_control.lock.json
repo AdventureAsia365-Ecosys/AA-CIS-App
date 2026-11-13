@@ -7,14 +7,14 @@
       "refs": "AA-1052"
     },
     "gates": {
-      "sha": "04960a8c8c30d25e",
+      "sha": "04927ab27bddd819",
       "evidence": "parity:tests/unit/test_aa926_equivalence.py",
       "refs": "AA-1097"
     },
     "prompt_registry": {
-      "sha": "93942918915283fe",
-      "evidence": "break-glass:decided fix ahead of its measurement: S278 paid 3-piece blog trial on an audit tenant held 2 of 3 (first drafts 690-840 words under the 950-word floor; a repair round with 6 cut fixes shrank 3,957 -> 3,546 chars; a lengthen line naming its sources leaked 'source notes'); t9_write v7 adds a section plan and the never-mention rule; offline regression tests/unit/test_aa1077_s278_round2.py; live measure = the orchestrator's 3-piece trial",
-      "refs": "AA-1077"
+      "sha": "96c05aa7686c5f50",
+      "evidence": "parity:tests/unit/test_s279_quality_settings_parity.py",
+      "refs": "AA-1096"
     },
     "route_defaults": {
       "sha": "c7260792542e4027",

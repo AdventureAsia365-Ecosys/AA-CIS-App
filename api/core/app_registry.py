@@ -57,8 +57,9 @@ class AppInfo:
 
 # AA-TripPlanner-Web backend/shared/llm_gateway.py ONLINE_STAGES (mirrored, see module docstring).
 TP_ONLINE_STAGES: tuple[str, ...] = ("tp_compose", "tp_search_embed")
-# AA-TripPlanner-Web backend/config.py TP_DAILY_SPEND_CAP_USD default (mirrored; the live value may differ).
-TP_DEFAULT_DAILY_CAP_USD = 5.0
+# The TripPlanner daily AI cap is not mirrored here any more (S279 thresholds L5, CIS 414): its one source is the app
+# profile row shared.llm_app_profile 'tripplanner' (default_daily_budget_usd, AI gateway › App profiles), which the
+# Apps board and the TP-01 report read (api/services/platform_apps.tp_profile_cap).
 # AA-1015: AA-TripPlanner-Web backend/config.py TP_DAILY_SPEND_CAP_COMPOSE_USD / TP_DAILY_SPEND_CAP_SEARCH_USD (the
 # per-stage daily caps; unset there = no stage cap, only the combined cap applies) and SPEND_NEAR_CAP_RATIO (the share
 # of a cap at which TP prints its "near cap" alert and budget_status says near_cap). Mirrored: both stage caps are
@@ -90,7 +91,7 @@ APPS: dict[str, AppInfo] = {
     "tripplanner": AppInfo(
         id="tripplanner", label="TripPlanner", repo="AA-TripPlanner-Web", cost_tags=("tripplanner",),
         llm_app="tripplanner",
-        extra={"online_stages": TP_ONLINE_STAGES, "default_cap_usd": TP_DEFAULT_DAILY_CAP_USD},
+        extra={"online_stages": TP_ONLINE_STAGES},
     ),
     # AA-936 (card CRM-08 "CIS AppInfo('crm') + jobs tab"): the partner CRM. AWS resources carry App = crm.
     "crm": AppInfo(

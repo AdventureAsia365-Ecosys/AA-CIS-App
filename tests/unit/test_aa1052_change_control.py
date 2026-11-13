@@ -71,7 +71,8 @@ def test_older_route_migrations_are_grandfathered():
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
-    for rel in (cc.POLICY_FILE, *cc.GATE_FILES, cc.PROMPT_MANIFEST, cc.ROUTE_TABLE_FILE, cc.FINAL_CONTRACT_FILE):
+    for rel in (cc.POLICY_FILE, *cc.GATE_FILES, cc.PROMPT_MANIFEST, cc.ROUTE_TABLE_FILE, cc.FINAL_CONTRACT_FILE,
+                cc.SETTINGS_DEFAULTS_FILE):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(cc.REPO_ROOT / rel, tmp_path / rel)
     (tmp_path / "tests/unit").mkdir(parents=True)
@@ -102,7 +103,8 @@ def test_the_copied_tree_passes_its_own_lock(tree):
 
 
 @pytest.mark.parametrize("component,rel,old,new", [
-    ("writing_policy", cc.POLICY_FILE, "meta: {min: 140, max: 155}", "meta: {min: 140, max: 165}"),
+    # S279 L2: the band numbers are settings; a policy STRUCTURE change (a route row) still moves writing_policy
+    ("writing_policy", cc.POLICY_FILE, "{gate: F16_faq, repair: fix_step}", "{gate: F16_faq, repair: rewrite}"),
     ("route_table", cc.ROUTE_TABLE_FILE, "{gate: F2_lexicon, action: rewrite}",
      "{gate: F2_lexicon, action: repair_sentence, parse: quoted}"),
     ("gates", "services/quality/thresholds.yaml", "pass_line:", "pass_line_widened:"),
@@ -138,7 +140,7 @@ def test_a_prompt_version_bump_needs_evidence(tree):
 def test_accept_records_the_sha_with_its_evidence(tree):
     lock_path = tree / "lock.json"
     lock_path.write_text(json.dumps(_lock(tree)))
-    _sub(tree, cc.POLICY_FILE, "meta: {min: 140, max: 155}", "meta: {min: 140, max: 165}")
+    _sub(tree, cc.POLICY_FILE, "{gate: F16_faq, repair: fix_step}", "{gate: F16_faq, repair: rewrite}")
     with pytest.raises(ValueError, match="uuid"):
         cc.accept("writing_policy", "eval:not-a-run", "AA-1", root=tree, path=lock_path)
     with pytest.raises(ValueError, match="unknown component"):
@@ -147,6 +149,39 @@ def test_accept_records_the_sha_with_its_evidence(tree):
     lock = json.loads(lock_path.read_text())
     assert lock["components"]["writing_policy"]["evidence"] == f"eval:{RUN}"
     assert cc.check(tree, lock, FILE_COMPONENTS) == []
+
+
+def _edit_setting(root: Path, key: str, **fields) -> None:
+    path = root / cc.SETTINGS_DEFAULTS_FILE
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    for d in doc["definitions"]:
+        if d["key"] == key:
+            d.update(fields)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+@pytest.mark.parametrize("fields", [{"min_value": 1.0}, {"default_value": 7.5}, {"allowed_values": ["x"]}])
+def test_a_widened_bound_or_a_new_seed_of_a_gate_setting_moves_gates(tree, fields):
+    """S279 L2: a migration that widens a gate setting's bound or re-seeds it is a gates change (needs evidence); a
+    description edit is not."""
+    lock = _lock(tree)
+    _edit_setting(tree, "cis.quality.pass_line", description="reworded")
+    assert _changed(tree, lock) == []
+    _edit_setting(tree, "cis.quality.pass_line", **fields)
+    assert _changed(tree, lock) == ["gates"]
+
+
+def test_a_gate_setting_without_its_evidence_gate_is_reported(tree):
+    """S279 L2 (audit 5.4 check 5): the lock checks evidence_required on every quality-registry setting."""
+    _edit_setting(tree, "cis.quality.pass_line", evidence_required=False)
+    problems = cc.settings_problems(tree)
+    assert problems == ["gates: setting cis.quality.pass_line must be evidence_required=true and "
+                        "approval=maker_checker (is False / 'maker_checker')"]
+    assert any(p.startswith("gates: setting cis.quality.pass_line") for p in cc.check(tree, _lock(tree), ["gates"]))
+
+
+def test_every_gate_setting_on_the_tree_is_evidence_gated():
+    assert cc.settings_problems() == []
 
 
 def test_a_stale_or_broken_lock_is_reported(tree):

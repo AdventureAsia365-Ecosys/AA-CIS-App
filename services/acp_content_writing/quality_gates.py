@@ -523,9 +523,7 @@ def gate_cannibalization(match: Optional[dict]) -> GateResultLite:
 _MIN_CHARS = 20
 _MAX_CHARS = 6000
 # AA-1077 — the blog band's numbers live in length_contract (one owner for the writer target, F4, the extend repair
-# and the post-loop re-check); these names stay for their importers.
-_BLOG_MIN_CHARS = length_contract.BLOG_FLOOR_CHARS  # ~810 words
-_BLOG_MAX_CHARS = length_contract.BLOG_CEILING_CHARS  # ~2,240 words
+# and the post-loop re-check); S279 L2: they are settings (cis.t9.blog_chars_min / _max), read per call.
 
 
 def _length_bounds_for_channel(channel: Optional[str]) -> tuple[int, int]:
@@ -534,7 +532,7 @@ def _length_bounds_for_channel(channel: Optional[str]) -> tuple[int, int]:
     unexpected channel fails the SAME way it always has, not a new one) keeps the original
     shared _MIN_CHARS/_MAX_CHARS pair, byte-identical to pre-AA-531 behavior."""
     if channel == "blog":
-        return _BLOG_MIN_CHARS, _BLOG_MAX_CHARS
+        return length_contract.floor_chars(), length_contract.ceiling_chars()
     return _MIN_CHARS, _MAX_CHARS
 
 
@@ -2120,25 +2118,27 @@ F14_FLOOR_MODE_ENV = "T10_F14_FLOOR_MODE"
 PROMOTION_LOG_EVENT = "t10_promoted_check"
 
 
-def _check_mode(env: str, allowed: tuple[str, ...], default: str) -> str:
-    raw = (os.environ.get(env) or "").strip().lower()
+def _check_mode(mode_key: str, allowed: tuple[str, ...], default: str) -> str:
+    from services.quality import settings_keys  # S279 L2: a setting (the *_MODE_ENV var its override for one release)
+    from shared import settings
+    raw = str(settings.get(settings_keys.MODES[mode_key]) or "").strip().lower()
     return raw if raw in allowed else default
 
 
 def f12_scope_mode() -> str:
-    """AA-788 — F12_scope's mode: `block` or `warn` (env T10_F12_SCOPE_MODE, else F12_SCOPE_BLOCKING)."""
-    return _check_mode(F12_SCOPE_MODE_ENV, (WARN_MODE, BLOCK_MODE), BLOCK_MODE if F12_SCOPE_BLOCKING else WARN_MODE)
+    """AA-788 — F12_scope's mode: `block` or `warn` (setting t10_f12_scope, seeded warn = F12_SCOPE_BLOCKING off)."""
+    return _check_mode("t10_f12_scope", (WARN_MODE, BLOCK_MODE), BLOCK_MODE if F12_SCOPE_BLOCKING else WARN_MODE)
 
 
 def f9_brand_style_mode() -> str:
-    """AA-788 — F9_brand_style's mode: `repair` or `warn` (env T10_F9_BRAND_STYLE_MODE, default warn)."""
-    return _check_mode(F9_BRAND_STYLE_MODE_ENV, (WARN_MODE, REPAIR_MODE), WARN_MODE)
+    """AA-788 — F9_brand_style's mode: `repair` or `warn` (setting t10_f9_brand_style, seeded warn)."""
+    return _check_mode("t10_f9_brand_style", (WARN_MODE, REPAIR_MODE), WARN_MODE)
 
 
 def f14_floor_mode() -> str:
-    """AA-788 — the under-floor F14 block's mode: `repair` or `warn` (env T10_F14_FLOOR_MODE, else
+    """AA-788 — the under-floor F14 block's mode: `repair` or `warn` (setting t10_f14_floor, seeded repair =
     F14_FLOOR_BLOCKING)."""
-    return _check_mode(F14_FLOOR_MODE_ENV, (WARN_MODE, REPAIR_MODE), REPAIR_MODE if F14_FLOOR_BLOCKING else WARN_MODE)
+    return _check_mode("t10_f14_floor", (WARN_MODE, REPAIR_MODE), REPAIR_MODE if F14_FLOOR_BLOCKING else WARN_MODE)
 
 
 def _log_promotion(gate: str, mode: str, result: GateResultLite, why: str) -> None:

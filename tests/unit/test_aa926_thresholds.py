@@ -37,13 +37,29 @@ def test_consumers_read_the_registry_values():
     from services.acp_shared import debate
     from services.content_generation import brand_fit, graph, judge_node
 
-    assert graph.MIN_QUALITY == judge_node._MIN_QUALITY == admin_llm_ops._JUDGE_PASS_LINE == 7.0
-    assert tenant_pipeline._T3_PASS_LINE == debate.BRAND_FIT_CUT_THRESHOLD == 7.0
-    assert admin_settings.PIPELINE_GATES["brand_audit_threshold"] == graph.MIN_QUALITY
-    assert admin_pipeline._PUBLISH_FLOOR == admin_pipeline._LOW_QUALITY_FLOOR == 7.0
-    assert graph.MISSING_FIELD_CAP == 4.0 and judge_node._TIE_BAND == 0.5 and judge_node._MISSION_ABSENT_CAP == 6.0
-    assert brand_fit._REPEAT_BAND == (6.0, 8.0)
-    assert service._REUSE_SIMILARITY_THRESHOLD == 0.92
+    # S279 L2: the values are settings, read at call time (the seeded values = the former YAML values)
+    assert graph.min_quality() == judge_node._min_quality() == admin_llm_ops._judge_pass_line() == 7.0
+    assert tenant_pipeline._t3_pass_line() == debate.brand_fit_cut() == 7.0
+    assert admin_settings.pipeline_gates()["brand_audit_threshold"] == graph.min_quality()
+    assert admin_pipeline._publish_floor() == admin_pipeline._low_quality_floor() == 7.0
+    assert graph.missing_field_cap() == 4.0 and judge_node._tie_band() == 0.5 and judge_node._mission_absent_cap() == 6.0
+    assert brand_fit._repeat_band() == (6.0, 8.0)
+    assert service._reuse_similarity() == 0.92
+
+
+def test_consumers_follow_a_changed_pass_line():
+    """One approved value of cis.quality.pass_line reaches every consumer that refs it, at call time."""
+    from api.routers import admin_pipeline
+    from services.acp_produce import tenant_pipeline
+    from services.acp_shared import debate
+    from services.content_generation import graph, judge_node
+    from tests.unit.settings_serve import serve
+
+    with serve({"cis.quality.pass_line": 7.5}):
+        assert graph.min_quality() == judge_node._min_quality() == tenant_pipeline._t3_pass_line() == 7.5
+        assert debate.brand_fit_cut() == admin_pipeline._publish_floor() == registry.pass_line() == 7.5
+        assert graph.should_retry({"quality_score": 7.2, "retry_count": 0}) == "retry"
+    assert graph.should_retry({"quality_score": 7.2, "retry_count": 0}) == "done"
 
 
 def _errors_with(monkeypatch, entry: dict) -> list[str]:
@@ -57,15 +73,27 @@ def _errors_with(monkeypatch, entry: dict) -> list[str]:
 CAL_NULL = {"run_id": None, "precision": None, "recall": None, "n": None, "calibrated": False}
 
 
+SETTING = "cis.quality.judge_tie_band"     # any seeded setting: an entry names the setting that holds its value
+
+
 def test_uncalibrated_null_run_id_is_fine(monkeypatch):
-    assert _errors_with(monkeypatch, {"value": 1.0, "used_by": [], "calibration": dict(CAL_NULL)}) == []
+    assert _errors_with(monkeypatch, {"setting": SETTING, "used_by": [], "calibration": dict(CAL_NULL)}) == []
 
 
 def test_calibrated_needs_a_well_formed_run_id(monkeypatch):
-    assert _errors_with(monkeypatch, {"value": 1.0, "used_by": [], "calibration": {**CAL_NULL, "calibrated": True}})
+    assert _errors_with(monkeypatch, {"setting": SETTING, "used_by": [],
+                                      "calibration": {**CAL_NULL, "calibrated": True}})
     ok = {**CAL_NULL, "calibrated": True, "run_id": "qcal-20261101-a1-judge", "precision": 0.9, "recall": 0.8,
           "n": 120}
-    assert _errors_with(monkeypatch, {"value": 1.0, "used_by": [], "calibration": ok}) == []
+    assert _errors_with(monkeypatch, {"setting": SETTING, "used_by": [], "calibration": ok}) == []
+
+
+def test_a_yaml_value_or_an_unknown_setting_fails(monkeypatch):
+    """S279 L2: a threshold's value lives in the settings registry; a YAML value (or a setting no migration seeded)
+    fails the lint."""
+    assert _errors_with(monkeypatch, {"value": 1.0, "used_by": [], "calibration": dict(CAL_NULL)})
+    assert _errors_with(monkeypatch, {"setting": "cis.quality.no_such_key", "used_by": [],
+                                      "calibration": dict(CAL_NULL)})
 
 
 def test_value_and_ref_are_exclusive_and_calibration_is_required(monkeypatch):

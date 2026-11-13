@@ -93,7 +93,7 @@ from services.acp_shared.subject_seed import (
 
 logger = structlog.get_logger()
 
-# One row per Channel: the Bar (STEP0 Q3, literal reference/channels.toml numbers), which grain
+# One row per Channel: the Bar (S279 L2: its STEP0 Q3 numbers are settings, `bar(channel)` per call), which grain
 # it reads (every Channel is Segment grain since AA-741 S271; Blog was Route grain from AA-511 to
 # S271, AA-CIS's own extension, STEP0 Q2 — see "Blog is a Segment that walks its Route" in the
 # module docstring), and whether it is on-demand (no weekly rhythm, origin's derive_posting_rhythm() skips these
@@ -116,31 +116,27 @@ logger = structlog.get_logger()
 # candidate (`_choose_slate(cover=...)` seats those first); a tour that gets none is given a typed reason
 # (`blog_tour_coverage`, NO_TOPIC_REASONS) the tenant sees.
 CHANNEL_BARS: dict[str, dict] = {
-    "blog":          {"needs_demand": 1000, "needs_questions": 3, "needs_said": 0,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": True, "one_piece_per_place": True, "cover_each_tour": True},
-    "linkedin":      {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "facebook":      {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "instagram":     {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "tiktok":        {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "email":         {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
-                       "grain": "segment", "on_demand": True, "most_per_hub": None,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "landing_page":  {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
-                       "grain": "segment", "on_demand": True, "most_per_hub": None,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "ads":           {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
-                       "grain": "segment", "on_demand": True, "most_per_hub": None,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
+    "blog": {"grain": "segment", "on_demand": False, "takes_route": True, "one_piece_per_place": True,
+             "cover_each_tour": True},
+    **{c: {"grain": "segment", "on_demand": False, "takes_route": False, "one_piece_per_place": False,
+           "cover_each_tour": False} for c in ("linkedin", "facebook", "instagram", "tiktok")},
+    **{c: {"grain": "segment", "on_demand": True, "takes_route": False, "one_piece_per_place": False,
+           "cover_each_tour": False} for c in ("email", "landing_page", "ads")},
 }
+
+
+def bar(channel: str) -> dict:
+    """S279 L2: a Channel's Bar in force: the structure above + the setting cis.t7.channel_bar_<channel>, per call."""
+    from services.quality import settings_keys
+    from shared import settings
+    n = settings.get(settings_keys.CHANNEL_BARS[channel]) or {}
+    return {**CHANNEL_BARS[channel], **{k: int(n.get(k, 0)) for k in ("needs_demand", "needs_questions", "needs_said")},
+            "most_per_hub": None if n.get("most_per_hub") is None else int(n["most_per_hub"])}
+
+
+def bars() -> dict[str, dict]:
+    return {channel: bar(channel) for channel in CHANNEL_BARS}
+
 
 WEEKLY_RHYTHM_CHANNELS = tuple(c for c, s in CHANNEL_BARS.items() if not s["on_demand"])
 ON_DEMAND_CHANNELS = tuple(c for c, s in CHANNEL_BARS.items() if s["on_demand"])
@@ -208,7 +204,7 @@ def _clears_bar(channel: str, candidate: Candidate) -> tuple[bool, dict]:
     outcome — an unmet bar is as reportable as a cleared one, matching the origin's own
     "an exclusion is arguable rather than a silent absence" philosophy for transit/unnamed-place).
     """
-    spec = CHANNEL_BARS[channel]
+    spec = bar(channel)
     demand = candidate.demand or 0
     demand_ok = demand >= spec["needs_demand"]
     questions_ok = candidate.questions >= spec["needs_questions"]
@@ -239,7 +235,7 @@ def bar_misses(channel: str, candidate: Candidate) -> list[str]:
     """Every part of one Channel's Bar the candidate misses (the same `>=` tests as `_clears_bar`), demand first (no
     data before a low number), then questions, then said. Empty = cleared. Kept out of `cleared_bar_reason`, which
     the tenant Slate read returns: why a candidate missed is for the job result and the admin only."""
-    spec = CHANNEL_BARS[channel]
+    spec = bar(channel)
     misses = []
     if (candidate.demand or 0) < spec["needs_demand"]:
         misses.append(BAR_NO_DATA if candidate.demand is None else BAR_BELOW_BAR)
@@ -665,7 +661,7 @@ def _choose_slate(
                 return False
             if max_channels_per_place is not None and channels_per_place.get(place, 0) >= max_channels_per_place:
                 return False
-        most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
+        most_per_hub = bar(channel)["most_per_hub"]
         hub_key = _hub_key(candidate, hub_of)
         taken = hubs_in_channel[channel]
         if most_per_hub is not None and hub_key is not None:
@@ -1654,7 +1650,7 @@ async def _segment_walk(conn, tenant_id: UUID, segment_id: str, place: Optional[
 
 
 __all__ = [
-    "CHANNEL_BARS", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS", "MAX_CHANNELS_PER_PLACE",
+    "CHANNEL_BARS", "bar", "bars", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS", "MAX_CHANNELS_PER_PLACE",
     "Candidate", "HeldSubjects", "propose_slate", "fetch_slate", "fetch_slate_on", "enabled_channels", "pick_subject",
     "pick_subject_on", "write_pick_audit", "cut_subject", "cut_subject_on",
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",

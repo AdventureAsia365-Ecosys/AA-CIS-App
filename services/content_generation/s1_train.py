@@ -271,11 +271,11 @@ def route_after_judge(state: dict) -> str:
     ``rewrite`` row left among the enforced codes redrafts once while drafts remain (MAX_DRAFTS), then goes to the
     hitl exit; without one, the score decides as on main (it is saturated: in practice ``done``)."""
     from services.acp_content_writing import route_table as rt
-    from .graph import MIN_QUALITY
+    from .graph import min_quality
     rewrite = [c for c in enforced_codes(state) if rt.s1_route(c).action == rt.REWRITE]
     if rewrite:
         return "retry" if (state.get("retry_count", 0) + 1) < MAX_DRAFTS else "hitl"
-    return "done" if state.get("quality_score", 0) >= MIN_QUALITY else "hitl"
+    return "done" if state.get("quality_score", 0) >= min_quality() else "hitl"
 
 
 # ------------------------------------------------------------------------------------------------ (c) local fix

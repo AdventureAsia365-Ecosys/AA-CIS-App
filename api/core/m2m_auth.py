@@ -78,6 +78,9 @@ SCOPE_TENANT_ACTIVATE = "cis.tenant/activate"
 # AA-1036 R3 (contract tenant.addons.v1): the CRM reads an agency's add-ons and relays its CRM owner's add-on request
 # (GET /tenant/v1/tenants/{id}/add-ons, POST /tenant/v1/tenants/{id}/add-on-requests). CRM client only.
 SCOPE_TENANT_ADDONS = "cis.tenant/addons"
+# AA-1093 lane L2 (contract tenant.erasure.v1): the CRM reads the tenant erasure requests and reports its DRY RUN plan
+# hash, apply outcome and census (GET /tenant/v1/erasure-requests, POST .../{id}/reports). CRM client only.
+SCOPE_TENANT_ERASURE = "cis.tenant/erasure"
 
 # The shared verifier's message for a validly signed token of a client this route class does not accept.
 CLIENT_NOT_ALLOWED = "client not allowed"

@@ -15,7 +15,7 @@ from pydantic import BaseModel, model_validator
 from typing import Optional, List
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.tour_liveness import live_source_exists_sql
-from services.quality.registry import threshold
+from services.quality.registry import threshold_reader
 from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
 from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 from services.quality.day_oracle import enforced_codes as _day_enforced_codes  # AA-925
@@ -88,11 +88,10 @@ def _surviving_hard_codes(result: dict) -> set:
     return set(result.get("failure_codes", []) or []) & set(hard_block_codes(result))
 
 
-# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands).
-_PUBLISH_FLOOR = threshold("a1.publish_floor")
-_LOW_QUALITY_FLOOR = threshold("review.low_quality_floor")
-_SCORE_BAND_LOW = threshold("review.score_band_low")
-
+# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands); S279 L2: read per call.
+_publish_floor = threshold_reader("a1.publish_floor")
+_low_quality_floor = threshold_reader("review.low_quality_floor")
+_score_band_low = threshold_reader("review.score_band_low")
 
 def _is_publishable(result: dict) -> bool:
     """AA-211: audit-aware publish gate (mirror catalog readiness + v5 spec).
@@ -109,7 +108,7 @@ def _is_publishable(result: dict) -> bool:
     """
     audit = result.get("brand_audit_status")
     return (
-        result.get("quality_score", 0.0) >= _PUBLISH_FLOOR
+        result.get("quality_score", 0.0) >= _publish_floor()
         and audit != "manual_check"
         and not (audit == "flagged" and not result.get("fix_pass_applied"))
         and not _surviving_hard_codes(result)
@@ -118,18 +117,19 @@ def _is_publishable(result: dict) -> bool:
 
 def _tour_passed(result: dict) -> bool:
     """The run-log pass flag (score only; the publish gate is `_is_publishable`). AA-926 seam."""
-    return float(result.get("quality_score") or 0.0) >= _PUBLISH_FLOOR
+    return float(result.get("quality_score") or 0.0) >= _publish_floor()
 
 
 def _score_band_where(score: str):
     """Review Queue score filter → SQL WHERE fragment (None = no filter). AA-926 seam: the band edges
     are pinned byte for byte by the gate-outcome snapshot."""
+    low, floor = _score_band_low(), _low_quality_floor()
     if score == "critical":
-        return f"rq.score_overall < {_SCORE_BAND_LOW:g}"
+        return f"rq.score_overall < {low:g}"
     if score == "low":
-        return f"rq.score_overall >= {_SCORE_BAND_LOW:g} AND rq.score_overall < {_LOW_QUALITY_FLOOR:g}"
+        return f"rq.score_overall >= {low:g} AND rq.score_overall < {floor:g}"
     if score == "ok":
-        return f"rq.score_overall >= {_LOW_QUALITY_FLOOR:g}"
+        return f"rq.score_overall >= {floor:g}"
     return None
 
 
@@ -141,7 +141,7 @@ def _histogram_case(edges) -> str:
 
 
 # Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot.
-_SCORE_HISTOGRAM_CASE = _histogram_case(threshold("report.score_histogram_edges"))
+_SCORE_HISTOGRAM_CASE = _histogram_case((9, 8, 7))  # technical-constant: chart bucket edges (S279 L2), no gate
 
 
 def _build_failure_summary(result: dict) -> str:
@@ -161,8 +161,8 @@ def _build_failure_summary(result: dict) -> str:
         parts.append(f"brand_audit={audit}")
     if codes:
         parts.append("codes=" + ",".join(str(c) for c in codes))
-    if score < _LOW_QUALITY_FLOOR:
-        parts.append(f"low_quality(score={score:.1f}<{_LOW_QUALITY_FLOOR:.1f})")
+    if score < _low_quality_floor():
+        parts.append(f"low_quality(score={score:.1f}<{_low_quality_floor():.1f})")
 
     # AA-736: surface the surviving hard codes per field, noting the sonnet attempt.
     surviving = _surviving_hard_codes(result)

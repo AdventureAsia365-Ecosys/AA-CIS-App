@@ -225,6 +225,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # ── kept
     TenantTable("acp_shared.audit_log", "keep",
                 "append-only hash chain (triggers refuse UPDATE/DELETE); the erasure keeps the audit row"),
+    # AA-1093 (408): the offboarding erasure saga's request is the erasure record itself (ids, hashes, counts; no FK
+    # to shared.tenants, it outlives the tenant row). Its step rows have no tenant column and are not counted.
+    TenantTable("shared.tenant_erasure_request", "keep",
+                "the erasure saga's request: the erasure record (ids, hashes, counts), kept after the erasure"),
 )
 
 TENANT_TABLE_BY_NAME: dict[str, TenantTable] = {t.table: t for t in TENANT_TABLES}

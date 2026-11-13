@@ -94,14 +94,15 @@ def test_tp01_funnel_conversions_and_trend():
     facts = {"traffic": _traffic(MON), "searches": [{"day": MON, "n": 7}, {"day": MON - timedelta(days=7), "n": 3}],
              "spend": [{"day": MON, "stage": "tp_compose", "calls": 4, "cost_usd": 4.2},
                        {"day": MON, "stage": "tp_search_embed", "calls": 7, "cost_usd": 0.01},
-                       {"day": MON + timedelta(days=1), "stage": "tp_compose", "calls": 1, "cost_usd": 0.5}]}
+                       {"day": MON + timedelta(days=1), "stage": "tp_compose", "calls": 1, "cost_usd": 0.5}],
+             "cap": 5.0}                                 # S279 L5: the app profile's daily cap (CIS 414)
     out = planner.render_tp01(_reg(), _reg().report("TP-01"), MON, SUN, facts, NOW)
     _assert_lists_registry_kpis(out, "TP-01")
     k = _kpis(out)
     assert k["K-TP-SESSIONS"]["value"] == 80.0
     assert k["K-TP-S2T"]["value"] == pytest.approx(14 / 80, abs=1e-4)
     assert k["K-TP-T2I"]["value"] == pytest.approx(2 / 14, abs=1e-4)
-    # 4.21 USD on 26/10 = 84 % of the default 5 USD cap: red
+    # 4.21 USD on 26/10 = 84 % of the app profile's 5 USD cap: red
     assert k["K-TP-LLMCAP"]["value"] == pytest.approx(4.21) and k["K-TP-LLMCAP"]["status"] == "red"
     f = out.output["funnel"]
     assert len(f["weeks"]) == 5 and f["this"]["ai_search"] == 7 and f["previous"]["ai_search"] == 3
@@ -123,7 +124,7 @@ def test_tp01_inquiry_step_stays_historical_on_a_quiet_week():
 
 def test_tp01_missing_contract_view_and_quiet_week():
     facts = {"traffic": {"error": "contract view tripplanner.v_ops_traffic_daily not readable (X)"},
-             "searches": [], "spend": []}
+             "searches": [], "spend": [], "cap": 5.0}
     out = planner.render_tp01(_reg(), _reg().report("TP-01"), MON, SUN, facts, NOW)
     k = _kpis(out)
     assert {k[i]["status"] for i in ("K-TP-SESSIONS", "K-TP-S2T", "K-TP-T2I")} == {"no_data"}
@@ -135,6 +136,17 @@ def test_tp01_missing_contract_view_and_quiet_week():
                                                                           "spend": {"error": "boom"}}, NOW)
     ke = _kpis(empty)
     assert ke["K-TP-S2T"]["status"] == "no_data" and ke["K-TP-LLMCAP"]["status"] == "no_data"
+
+
+def test_tp01_without_an_app_profile_cap_says_so():
+    # S279 L5: no mirrored default any more; with no cap on the app profile the KPI has no share (no_data)
+    for cap in (None, {"error": "boom"}):
+        out = planner.render_tp01(_reg(), _reg().report("TP-01"), MON, SUN, {
+            "traffic": {"rows": []}, "searches": [], "cap": cap,
+            "spend": [{"day": MON, "stage": "tp_compose", "calls": 4, "cost_usd": 4.2}]}, NOW)
+        k = _kpis(out)
+        assert k["K-TP-LLMCAP"]["status"] == "no_data" and "no app-profile cap" in k["K-TP-LLMCAP"]["note"]
+        assert out.output["llm_spend"]["cap_usd"] is None
 
 
 def test_tp01_reads_the_contract_view_and_the_ledger_only():

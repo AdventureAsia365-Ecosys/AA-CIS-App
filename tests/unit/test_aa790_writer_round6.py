@@ -385,5 +385,5 @@ def test_family_and_no_signal_user_prompts_are_byte_identical_to_round_five(name
     p = _prompt(channel, _PACKS[name])
     assert "BRAND TEXTURE" not in p
     # AA-741 (S271): the blog's LENGTH AND EFFORT block (t9_write v2) is a later, separate change: compare without it.
-    assert _sha16(p.replace(prompts._BLOG_LENGTH_INSTRUCTIONS, "")) == _ROUND5_USER_PROMPTS[(name, channel)]
+    assert _sha16(p.replace(prompts._blog_length_instructions(), "")) == _ROUND5_USER_PROMPTS[(name, channel)]
     assert (FAMILY_RULE in p) == (name == "TERRA")

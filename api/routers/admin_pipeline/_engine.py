@@ -3,7 +3,6 @@
 
 import asyncio
 import json
-import os
 import asyncpg
 from fastapi import HTTPException
 from typing import Awaitable, Callable, Optional
@@ -13,6 +12,7 @@ from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
 from shared.tour_liveness import SourceNotLiveError
+from services.quality.registry import threshold
 from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
 from services.quality import lineage as _lineage  # AA-1052 W6 (writer-time lineage stamp)
 
@@ -228,7 +228,7 @@ async def _execute_run_tour(
                 **_resume_kw,                        # AA-993 G2
             )
 
-            _UPGRADE_THRESHOLD = float(os.environ.get("AUTO_UPGRADE_THRESHOLD", "8.5"))
+            _UPGRADE_THRESHOLD = float(threshold("a1.auto_upgrade"))  # S279 L2: a setting (was env, 8.5)
             _score = result.get("quality_score", 0.0)
             _model = result.get("model_used", "")
             _auto_upgraded = False  # AA-237/AA-736: did a sonnet re-run replace the haiku result?

@@ -364,13 +364,13 @@ def _headings(text):
 
 class TestTrimToBand:
     def test_fixture_is_over_the_band(self):
-        assert length_trim.measure(_bhutan_blog()) > qg._BLOG_MAX_CHARS
+        assert length_trim.measure(_bhutan_blog()) > qg.length_contract.ceiling_chars()
 
     def test_over_long_blog_is_trimmed_into_the_band(self):
         text = _bhutan_blog()
         out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA)
         n = length_trim.measure(out)
-        assert qg._BLOG_MIN_CHARS <= n <= length_trim.BLOG_TRIM_TARGET_CHARS
+        assert qg.length_contract.floor_chars() <= n <= length_trim.BLOG_TRIM_TARGET_CHARS
         assert qg.gate_extreme_length(qg.strip_citation_tags(out), "blog")["passed"]
         assert _headings(out) == _headings(text)  # every heading kept
         assert out[out.index("## FAQ"):] == text[text.index("## FAQ"):]  # the FAQ untouched
@@ -387,14 +387,14 @@ class TestTrimToBand:
 
     def test_inside_the_band_or_another_channel_is_a_no_op(self):
         short = _bhutan_blog(sections=4)
-        assert length_trim.measure(short) <= qg._BLOG_MAX_CHARS
+        assert length_trim.measure(short) <= qg.length_contract.ceiling_chars()
         assert length_trim.trim_to_band(short, channel="blog", cta=BHU_CTA) == (short, [])
         text = _bhutan_blog()
         assert length_trim.trim_to_band(text, channel="linkedin", cta=BHU_CTA) == (text, [])
 
     def test_unreachable_band_leaves_the_text_unchanged(self):
         text = _bhutan_blog(sections=26, paras=1)  # one paragraph per section: nothing is droppable
-        assert length_trim.measure(text) > qg._BLOG_MAX_CHARS
+        assert length_trim.measure(text) > qg.length_contract.ceiling_chars()
         assert length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA) == (text, [])
 
     def test_a_paragraph_before_a_pronoun_opener_stays(self):
@@ -455,9 +455,9 @@ class TestTrimToBand:
         pad_len = 12_750 + drop - length_trim.measure(base)
         pad = " ".join(_unique_sentences(pad_len // 60 + 1, seed=7000))[:pad_len].rsplit(" ", 1)[0] + "."
         text = self._shared_ids_blog(7, untagged, pad)
-        assert length_trim.measure(text) > qg._BLOG_MAX_CHARS
+        assert length_trim.measure(text) > qg.length_contract.ceiling_chars()
         out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA)
-        assert length_trim.BLOG_TRIM_TARGET_CHARS < length_trim.measure(out) <= qg._BLOG_MAX_CHARS
+        assert length_trim.BLOG_TRIM_TARGET_CHARS < length_trim.measure(out) <= qg.length_contract.ceiling_chars()
         dropped = [p for p in text.split("\n\n") if p not in out]
         assert len(dropped) == 2 and all("[R:" not in p for p in dropped) and log
         assert out.count("[R:") == text.count("[R:")
@@ -474,9 +474,9 @@ class TestTrimToBand:
                  + _para(zorig_seed, False))
         text = self._shared_ids_blog(8, set()).replace(
             _para(zorig_seed, True).replace(f"[R:b{zorig_seed}]", "[R:s7]"), zorig)
-        assert zorig in text and length_trim.measure(text) > qg._BLOG_MAX_CHARS
+        assert zorig in text and length_trim.measure(text) > qg.length_contract.ceiling_chars()
         out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA, moments=moments)
-        assert log and length_trim.measure(out) <= qg._BLOG_MAX_CHARS
+        assert log and length_trim.measure(out) <= qg.length_contract.ceiling_chars()
         assert zorig in out and "[R:zorig]" in out
         # every citation id the text had is still carried somewhere in the body
         assert set(re.findall(r"\[R:([^\]]+)\]", out)) == set(re.findall(r"\[R:([^\]]+)\]", text))
