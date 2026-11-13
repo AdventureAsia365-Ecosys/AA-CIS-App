@@ -289,7 +289,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Instrument evaluation: true positives kept",
-   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must still flag at least this percentage of the subset's true positives (stored violations, the approved relabels included). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must still flag at least this percentage of the subset's stored violations (out of sample; the approved relabels are in-sample for a prompt drawn from them, so they are reported apart and never count toward this bar). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
    "value_type": "pct",
    "unit": "%",
    "min_value": 0,
