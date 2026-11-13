@@ -3359,6 +3359,18 @@ conditions) and lists `passing_pools`; a passing pool calibrates only its member
 names a member that reaches the bar alone, which is then measured as its own class.
 _Avoid_: class group, family (a set family is a label set id family, `claims.SET_FAMILIES`).
 
+**Instrument prompt version (AA-1048, S279)**:
+The texts an R1 claim instrument sends (`services/ground_truth/prompts.py`): `v1` = the S272-S278 prompt (the default;
+`claim_shadow` and every R1 record use it), `v2` = the S279 panel's changes B1-B5 (whole sentences, paraphrase and
+one-step inference allowed, place background allowed until it becomes a trip promise, the seed's "Place background"
+lines as support, headings / FAQ questions judged with their answer, the confirmed promise patterns kept). A version
+other than v1 is part of the instrument id (`...:entailment#v2`), and every call records `aa1048-r1-<id>@<sha>` in
+`shared.llm_call_log.prompt_version`. A new version is measured first by the gated evaluation
+(`python -m services.ground_truth.instrument_eval`, DRY RUN default; a stratified subset of the claims R1 fired on;
+cap, claim limits and go / no-go bars in the settings registry, `cis.spend.instrument_eval_*`,
+`cis.quality.instrument_eval_*`, CIS 416); it never writes a label.
+_Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
+
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):
 `served` (live source version + live Master), `paused` (Master inactive, or a supersede waiting for the new
