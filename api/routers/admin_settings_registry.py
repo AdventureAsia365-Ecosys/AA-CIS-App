@@ -12,6 +12,10 @@
   POST /admin/settings/registry/proposals/{id}/approve    {note?}
   POST /admin/settings/registry/proposals/{id}/reject     {note}
 
+AA-1096 L4: the CRM tab (``app=crm``, a ``crm.*`` key, a decision with ``app: crm``) is relayed to the partner CRM's
+own registry (crm.ops.v1 1.13 ``/settings``; api/services/crm_settings_relay.py) with the staff member's own Cognito
+token: the CRM checks the group itself (crm-platform-admin writes) and CIS writes its audit row of each relayed change.
+
 Who may call (api/core/staff_authz.py POLICY): reads ops.read, proposals settings.write, decisions settings.approve —
 all three held by the admin role only (tech lead S279 Q1). The viewer is refused on every write. Every write also
 needs a verified company sign-in (Cognito): the proposer / approver identity (maker-checker, the self-approval e-mail)
@@ -22,13 +26,15 @@ holder of the admin secret can set (S279 review; the same rule as staff.write an
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import SETTINGS_APPROVE, SETTINGS_WRITE, has_perm, request_staff_identity, staff_policy
+from api.services import crm_settings_relay as crm
 from api.services import settings_registry as reg
+from api.services.platform_apps import relay_authorization
 
 router = APIRouter(prefix="/admin/settings/registry", tags=["admin-settings-registry"],
                    dependencies=[Depends(staff_policy)])
@@ -77,12 +83,18 @@ class DecisionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     note: Optional[str] = Field(None, max_length=2000)
+    # AA-1096 L4: a CRM change is decided in the CRM (the page names the app of the row); an agency's own CRM change
+    # names its agency (the CRM sees that row only in the agency's context).
+    app: Literal["cis", "crm"] = "cis"
+    tenant_id: Optional[str] = Field(None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 @router.get("", summary="Settings registry: every setting of an app with its value in force")
 async def list_registry(request: Request, app: str = Query("cis", max_length=20),
                         area: Optional[str] = Query(None, max_length=40)):
     try:
+        if app == "crm":  # AA-1096 L4: the CRM keeps its own registry (crm-064); relayed with the staff token
+            return await crm.list_settings(relay_authorization(request), area=area)
         return await reg.list_settings(_pool(request), app=app, area=area)
     except reg.SettingsError as e:
         raise _http(e) from None
@@ -93,6 +105,8 @@ async def key_history(request: Request, key: str,
                       tenant_id: Optional[str] = Query(
                           None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")):
     try:
+        if crm.is_crm_key(key):
+            return await crm.history(relay_authorization(request), key, tenant_id)
         return await reg.history(_pool(request), key, tenant_id)
     except reg.SettingsError as e:
         raise _http(e) from None
@@ -102,6 +116,13 @@ async def key_history(request: Request, key: str,
 async def propose(request: Request, key: str, body: ProposalBody = Body(...)):
     actor, role = _verified(request, SETTINGS_WRITE)
     try:
+        if crm.is_crm_key(key):
+            if body.apply and not has_perm(role, SETTINGS_APPROVE):
+                raise reg.SettingsError(403, "You may propose this change, not approve it", "approve_not_allowed")
+            return await crm.propose(
+                _pool(request), relay_authorization(request), key, actor=actor, value=body.value, reason=body.reason,
+                base_version=body.base_version, evidence_ref=body.evidence_ref, effective_from=body.effective_from,
+                tenant_id=body.tenant_id, apply=body.apply)
         return await reg.propose(
             _pool(request), key, value=body.value, reason=body.reason, actor=actor,
             base_version=body.base_version, evidence_ref=body.evidence_ref, effective_from=body.effective_from,
@@ -114,6 +135,9 @@ async def propose(request: Request, key: str, body: ProposalBody = Body(...)):
 async def approve(request: Request, value_id: str, body: DecisionBody = Body(default_factory=DecisionBody)):
     actor, _role = _verified(request, SETTINGS_APPROVE)
     try:
+        if body.app == "crm":
+            return await crm.decide(_pool(request), relay_authorization(request), value_id, actor=actor, approve=True,
+                                    note=body.note, tenant_id=body.tenant_id)
         return await reg.decide(_pool(request), value_id, actor=actor, approve=True, note=body.note)
     except reg.SettingsError as e:
         raise _http(e) from None
@@ -123,6 +147,9 @@ async def approve(request: Request, value_id: str, body: DecisionBody = Body(def
 async def reject(request: Request, value_id: str, body: DecisionBody = Body(...)):
     actor, _role = _verified(request, SETTINGS_APPROVE)
     try:
+        if body.app == "crm":
+            return await crm.decide(_pool(request), relay_authorization(request), value_id, actor=actor, approve=False,
+                                    note=body.note, tenant_id=body.tenant_id)
         return await reg.decide(_pool(request), value_id, actor=actor, approve=False, note=body.note)
     except reg.SettingsError as e:
         raise _http(e) from None

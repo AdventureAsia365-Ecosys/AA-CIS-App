@@ -59,7 +59,7 @@ export interface SettingDefinition {
   env_override: string | null;
   cache_s: number;
   enforced: boolean;
-  /** null = no guide yet (CI fails on it; a CRM / TripPlanner row may lack one until its registry has it). */
+  /** null = no guide yet (CI fails on it: CIS here, AA-Partner guides.json for CRM keys; TripPlanner may lack one). */
   guide?: SettingGuide | null;
 }
 
@@ -231,6 +231,17 @@ export function proposalBody(d: SettingDefinition, item: Pick<SettingItem, "vers
     base_version: item.version ?? 0,
     apply: draft.apply,
   };
+}
+
+/** The POST body of an approve / reject. A CRM row is decided in the CRM (AA-1096 L4: the CIS API relays it there),
+ *  an agency's own row names its agency (the CRM sees that row only in the agency's context). */
+export function decisionBody(item: Pick<SettingDefinition, "app">, row: Pick<SettingRow, "tenant_id">, note: string) {
+  const body: { note: string | null; app?: "crm"; tenant_id?: string } = { note: note.trim() || null };
+  if (item.app === "crm") {
+    body.app = "crm";
+    if (row.tenant_id) body.tenant_id = row.tenant_id;
+  }
+  return body;
 }
 
 /** The badges of one row, in display order. */
