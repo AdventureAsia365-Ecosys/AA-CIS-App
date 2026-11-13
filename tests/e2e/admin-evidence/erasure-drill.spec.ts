@@ -11,9 +11,11 @@
 //   2. reads the saga list (settings + requests) and screenshots the Tenant offboarding tab, 1440 light + dark;
 //   3. probes the saga writes: drill on that (not offboarded) tenant — 409 "not offboarded" when the route runs,
 //      nothing written — advance / stop on a random request id (404 when the route runs), restore on that (not
-//      offboarded) tenant (409 when the route runs). Each answers 403 e2e_read_only while the saga routes and
-//      offboard / restore are not on the A10b write allow-list (api/core/e2e_staff.E2E_ALLOWED_WRITES). The offboard
-//      itself is never probed (it would offboard the tenant if the guard let it through).
+//      offboarded) tenant (409 when the route runs). Since root ADR 0006a A10b-5 (AA-1093, S279) the five drill
+//      writes (offboard, restore, drill, advance, stop) are on the A10b write allow-list
+//      (api/core/e2e_staff.E2E_ERASURE_DRILL_WRITES) and each route refuses the session 403 e2e_read_only unless the
+//      tenant is synthetic (api/core/e2e_tenant_writes.py); a 403 here means that deploy is not live yet. Approve and
+//      new-round stay refused. The offboard itself is never probed (it would offboard the tenant).
 // E2E_DRILL_FULL=1, only when the probes show the routes run for this session: offboard the tenant, Start drill in
 // the UI, Run now, poll the request up to 10 min (per-app DRY RUN status / error_code / plan hash prefix), screenshot,
 // Stop for good in the UI (phase failed + blocker stopped_by_tech_lead), then ALWAYS restore the tenant (cancels the
@@ -154,6 +156,9 @@ test('AA-1093 erasure saga: DRY RUN drill of a synthetic tenant (never approve, 
       return;
     }
     expect(probes.drill.status, 'drill on an active tenant').toBe(409);
+    expect(probes.advance.status, 'advance of an unknown request').toBe(404);
+    expect(probes.stop.status, 'stop of an unknown request').toBe(404);
+    expect(probes.restore.status, 'restore of an active tenant').toBe(409);
     if (!FULL) {
       evidence.outcome = 'probes only (set E2E_DRILL_FULL=1 for the full drill)';
       return;
@@ -168,7 +173,7 @@ test('AA-1093 erasure saga: DRY RUN drill of a synthetic tenant (never approve, 
       await page.goto(PAGE, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('tenant-offboarding-ready')).toBeVisible({ timeout: 30000 });
       const drillBox = page.getByTestId('tenant-erasure-drill');
-      await drillBox.locator('select').first().selectOption(T.tenant_id);
+      await drillBox.getByTestId('tenant-erasure-drill-tenant').selectOption(T.tenant_id);
       const started = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`${API}/drill`));
       await drillBox.getByRole('button', { name: /start drill/i }).click();
       const sr = await started;
