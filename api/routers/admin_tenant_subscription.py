@@ -11,6 +11,8 @@
                                                                           audited). A webhook URL that is not https
                                                                           or names a private / internal host is a
                                                                           422 with the field (AA-1038 follow-up)
+- ``POST   /admin/tenants/{tenant_id}/pilot/end``                         leave pilot mode (reason required, audited;
+                                                                          AA-1086 G2, the "End pilot" button)
 
 Add-ons are attached / changed / cancelled through the ``tenant_provision`` saga (``admin_tenant_provision.py``).
 Reads: ``tenant.read``; writes: admin role (``tenant.write``, re-checked here). Rules:
@@ -28,6 +30,7 @@ from pydantic import BaseModel, Field
 from api.core.staff_authz import staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
+from services.tenant_account import pilot as tenant_pilot
 from services.tenant_account import subscription as sub
 from services.tenant_account import tripplanner_site as tp_site
 from services.tenant_account.plans import PlanError
@@ -132,3 +135,50 @@ async def put_lead_route(tenant_id: uuid.UUID, body: LeadRouteIn, request: Reque
                                                 actor=_admin_actor(x_admin_user_id))
     except tp_site.LeadRouteError as e:
         raise _refuse_route(e) from None
+
+
+# ── POST /admin/tenants/{id}/pilot/end — leave pilot mode (AA-1086 G2) ─────────
+
+class EndPilotRequest(BaseModel):
+    reason: str = Field(..., max_length=tenant_pilot.REASON_MAX,
+                        description="Why the pilot ends now (required, recorded in the audit trail)")
+
+
+class EndPilotResponse(BaseModel):
+    tenant_id: str
+    is_pilot: bool
+    changed: bool = Field(..., description="False when the tenant was not the pilot: nothing was written")
+    previous_pilot_ends_at: Optional[str] = None
+    ended_early: Optional[bool] = None
+
+
+@router.post("/tenants/{tenant_id}/pilot/end", response_model=EndPilotResponse,
+             summary="End a tenant's pilot (clears the pilot marker; the Dev pilot slot is free again)",
+             dependencies=TENANT_SCOPED)
+async def end_tenant_pilot(
+    tenant_id: str,
+    body: EndPilotRequest,
+    request: Request,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+    x_admin_role: Optional[str] = Header(None),
+):
+    """AA-1086 gap G2 (root ADR 0019 d16): clear ``shared.tenants.is_pilot`` and ``pilot_ends_at`` so the unique index
+    ``tenants_one_pilot_key`` frees Dev's one pilot slot. Administrator only (``tenant.write``), reason required,
+    audited ``tenant.pilot_ended``, one account event so the CRM's pilot marker follows at its next pull. Idempotent: a
+    tenant that is not the pilot answers 200 with ``changed`` false and nothing is written
+    (services/tenant_account/pilot.py)."""
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    try:
+        uuid.UUID(tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid tenant_id UUID")
+    async with request.app.state.pool.acquire() as conn:
+        try:
+            out = await tenant_pilot.end_pilot(conn, tenant_id, reason=body.reason,
+                                               actor=_admin_actor(x_admin_user_id))
+        except tenant_pilot.PilotError as e:
+            status = 404 if e.code == "tenant_not_found" else 422
+            raise HTTPException(status_code=status, detail={"detail": e.code, "message": e.message}) from None
+    return EndPilotResponse(**out)

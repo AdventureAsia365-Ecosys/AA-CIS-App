@@ -383,9 +383,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/job-runner/staff-reconcile/schedule"): OPS_WRITE,   # AA-816 C7, daily (MACHINE_ROUTES)
     # AA-839 data erasure + AA-1093 L2 offboarding saga: admin-only (an apply / saga approval also needs Cognito)
     **{("GET", "/admin/job-runner/erasure" + p): TENANT_READ for p in ("", "/requests", "/requests/{request_id}")},
-    **{("POST", "/admin/job-runner/erasure" + p): TENANT_WRITE for p in (
-        "/run", "/requests/drill", "/requests/{request_id}/advance", "/requests/{request_id}/approve",
-        "/requests/{request_id}/new-round", "/requests/{request_id}/stop")},
+    **{("POST", "/admin/job-runner/erasure" + p): TENANT_WRITE for p in ("/run", "/requests/drill", *(
+        "/requests/{request_id}/" + a for a in ("advance", "approve", "new-round", "stop")))},
     # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,
@@ -441,6 +440,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): _TENANT_BOOK_WRITE,   # AA-1035: + customer_success, scoped
     ("POST", "/admin/tenants/{tenant_id}/offboard"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/restore"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/pilot/end"): TENANT_WRITE,  # AA-1086 G2: leave pilot mode (root ADR 0019 d16)
     # AA-1035: GET /admin/tenants/{tenant_id}/details — Master Content (every content.read role) reads the aa_internal
     # catalog through it; require_tenant_scope keeps those roles on the aa_internal tenant (scope "internal"). finance
     # (billing.read) opens Tenant 360 on it too and gets the header only (no tours, runs or brand text: admin.py).
