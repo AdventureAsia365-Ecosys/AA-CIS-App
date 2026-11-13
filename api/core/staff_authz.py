@@ -385,7 +385,7 @@ POLICY: dict[tuple[str, str], Any] = {
     **{("GET", "/admin/job-runner/erasure" + p): TENANT_READ for p in ("", "/requests", "/requests/{request_id}")},
     **{("POST", "/admin/job-runner/erasure" + p): TENANT_WRITE for p in (
         "/run", "/requests/drill", "/requests/{request_id}/advance", "/requests/{request_id}/approve",
-        "/requests/{request_id}/new-round")},
+        "/requests/{request_id}/new-round", "/requests/{request_id}/stop")},
     # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,

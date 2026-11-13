@@ -1339,6 +1339,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_erasure"
   },
+  "POST /admin/job-runner/erasure/requests/{request_id}/stop": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_erasure"
+  },
   "POST /admin/job-runner/erasure/run": {
     "capability": "tenant.write",
     "module": "api.routers.admin_job_runner"

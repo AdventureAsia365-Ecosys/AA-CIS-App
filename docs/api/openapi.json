@@ -25031,7 +25031,7 @@
     },
     "/admin/job-runner/erasure/requests/{request_id}/new-round": {
       "post": {
-        "description": "A new round: phase dry_run, round + 1, no app active until the next pass picks the apps past their not_before\nthat are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record).\nAllowed while no CIS apply job has started: in dry_run (a stopped step), awaiting_approval, or apply (an expired\napproval, plan_changed, a failed step).",
+        "description": "A new round: phase dry_run, round + 1, no app active until the next pass picks the apps past their not_before\nthat are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record,\ntheir approved_plan_hash too: a restore stays refused). Allowed while no CIS apply job of the round has started:\nin dry_run, awaiting_approval, apply, or failed (the usual case: the saga stopped on an expired approval, a\nplan_changed, a failed step or a census above 0); never for the pilot or a request the tech lead stopped.",
         "operationId": "new_round_admin_job_runner_erasure_requests__request_id__new_round_post",
         "parameters": [
           {
@@ -25113,6 +25113,95 @@
           }
         },
         "summary": "Start a new DRY RUN round of this request",
+        "tags": [
+          "admin-tenant-erasure"
+        ]
+      }
+    },
+    "/admin/job-runner/erasure/requests/{request_id}/stop": {
+      "post": {
+        "description": "The contract's \"the tech lead decides (a new round, or stop)\": the request moves to (or stays in) failed with\nthe blocker stopped_by_tech_lead and never starts a new round. Only in dry_run, awaiting_approval or failed:\nnever while the apps may be erasing (apply, verify). Nothing is erased or restored here; what an app already\nerased is the runbook's manual follow-up.",
+        "operationId": "stop_admin_job_runner_erasure_requests__request_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop this request for good (it stays failed)",
         "tags": [
           "admin-tenant-erasure"
         ]
