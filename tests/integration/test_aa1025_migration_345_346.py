@@ -69,8 +69,11 @@ def test_seed_rows_are_the_t21_degrade_modes(cur):
                 "FROM shared.llm_app_profile")
     rows = {r["app"]: r for r in cur.fetchall()}
     assert {a: r["degrade_mode"] for a, r in rows.items()} == SEED
-    assert all(r["ai_enabled"] and not r["bulk_paused"] and r["default_daily_budget_usd"] is None
-               for r in rows.values())
+    assert all(r["ai_enabled"] and not r["bulk_paused"] for r in rows.values())
+    # 345 seeds no budget; CIS 414 (AA-1096) later sets TripPlanner's daily cap on its profile (5.0 USD).
+    assert {a: r["default_daily_budget_usd"] for a, r in rows.items() if a != "tripplanner"} == {
+        "cis": None, "crm": None, "booking": None}
+    assert rows["tripplanner"]["default_daily_budget_usd"] in (None, 5)
 
 
 def test_rerun_keeps_an_edited_row(cur):

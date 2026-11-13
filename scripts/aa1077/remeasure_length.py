@@ -116,7 +116,7 @@ def measure_piece(row: dict) -> dict:
 
 def summarize(rows: list[dict]) -> dict:
     from services.acp_content_writing import length_contract as lc
-    floor = lc.BLOG_FLOOR_CHARS
+    floor = lc.floor_chars()
     measured = [r for r in rows if r["verdict"] != "empty"]
     return {
         "pieces": len(rows), "floor_chars": floor,

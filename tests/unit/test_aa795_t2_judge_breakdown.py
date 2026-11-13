@@ -193,6 +193,8 @@ def test_a_restored_best_draft_restores_its_own_axes(monkeypatch):
 
 def test_the_t2_judge_returns_its_axes(monkeypatch):
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    from tests.unit.settings_serve import serve_from_env   # S279 L2: the gate is a setting; main's default drives it
+    serve_from_env(monkeypatch, "cis.quality_modes.t2_judge_gate", "T2_JUDGE_GATE", "brand_fit_mission")
     from tests.unit.test_aa792_t2_tenant_voice import _T2, _judge_resp, _run_judge
     out, _, _ = _run_judge(_T2, _judge_resp(fit=8, mission=False))
     assert out["judge_score"] == 6.0

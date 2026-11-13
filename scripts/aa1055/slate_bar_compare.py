@@ -145,7 +145,7 @@ async def compare_tenant(conn, tenant_id: str, slug: str, channels: list[str]) -
     for label, sql in (("before", BEFORE_SQL), ("after", AFTER_SQL)):
         rows = await conn.fetch(sql, tour_ids, markets)
         rows = await slate._segments_with_seed(UUID(tenant_id), conn, rows, {str(t) for t in tour_ids})
-        result[label] = count_statuses(rows, channels, slate.CHANNEL_BARS)
+        result[label] = count_statuses(rows, channels, slate.bars())
         out["candidates"] = len(rows)
     out["bar"] = result
     out["held_subjects"] = {f"{r['channel']}/{r['state']}": r["n"] for r in await conn.fetch(HELD_SQL, tenant_id)}

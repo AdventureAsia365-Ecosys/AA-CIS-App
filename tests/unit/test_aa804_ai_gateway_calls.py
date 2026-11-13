@@ -406,17 +406,20 @@ def test_trace_route_takes_exactly_one_of_job_or_tour():
 # ── AA-1015: TripPlanner stage caps on the Apps board card ─────────────────────────────────────────────────────────
 
 def test_tp_spend_today_without_stage_caps_shows_the_combined_cap():
-    s = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}])
+    s = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}], cap=5.0)
     assert s["cap_usd"] == 5.0 and s["pct_of_cap"] == 82.0 and s["level"] == "warn"
     assert s["near_cap"] is True and s["near_cap_pct"] == 80 and s["stage_caps_set"] is False
     assert [(x["stage"], x["cap_usd"], x["cost_usd"]) for x in s["stage_caps"]] == [
         ("tp_compose", None, 4.1), ("tp_search_embed", None, 0.0)]
-    assert platform_apps.tp_spend_today([])["near_cap"] is False
+    assert platform_apps.tp_spend_today([], cap=5.0)["near_cap"] is False
+    # S279 L5: no cap on the app profile = no combined cap, said in the label (no mirrored default any more)
+    none = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}], cap=None)
+    assert none["pct_of_cap"] is None and none["level"] == "ok" and "no app-profile cap" in none["cap_label"]
 
 
 def test_tp_spend_today_with_a_stage_cap_flags_that_stage():
     s = platform_apps.tp_spend_today([{"stage": "tp_search_embed", "calls": 9, "cost_usd": 0.9},
-                                      {"stage": "tp_compose", "calls": 1, "cost_usd": 0.1}],
+                                      {"stage": "tp_compose", "calls": 1, "cost_usd": 0.1}], cap=5.0,
                                      stage_caps={"tp_compose": 4.0, "tp_search_embed": 1.0})
     by = {x["stage"]: x for x in s["stage_caps"]}
     assert by["tp_search_embed"]["near_cap"] is True and by["tp_search_embed"]["pct_of_cap"] == 90.0

@@ -92,9 +92,14 @@ _THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}\b)")  # '1,283' is one number, '20
 
 
 def brief_grounding_mode(value: Optional[str] = None) -> str:
-    """The mode: `value` when given (the A/B harness), else the env switch. Only 'r9' turns round 9 on; every other
-    value, unset included, is 'off'."""
-    raw = os.environ.get(MODE_ENV, "") if value is None else value
+    """The mode: `value` when given (the A/B harness), else the setting cis.quality_modes.t9_brief_grounding (S279 L2;
+    the env var stays its emergency override for one release). Only 'r9' turns round 9 on; anything else is 'off'."""
+    if value is None:
+        from services.quality import settings_keys
+        from shared import settings
+
+        value = settings.get(settings_keys.MODES["t9_brief_grounding"])
+    raw = value
     return MODE_R9 if (raw or "").strip().lower() == MODE_R9 else MODE_OFF
 
 

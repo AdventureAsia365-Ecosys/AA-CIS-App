@@ -13,7 +13,8 @@ tests here either).
 """
 from unittest.mock import patch
 
-from services.acp_shared.slate import CHANNEL_BARS, ON_DEMAND_CHANNELS, WEEKLY_RHYTHM_CHANNELS
+from services.acp_shared.slate import CHANNEL_BARS, ON_DEMAND_CHANNELS, WEEKLY_RHYTHM_CHANNELS, bar
+from tests.unit.settings_serve import bar_with, serve
 from services.acp_shared.slate import Candidate, _choose, _choose_slate, _clears_bar
 
 
@@ -39,8 +40,8 @@ class TestChannelBarsShape:
         }
 
     def test_blog_thresholds_match_reference_channels_toml(self):
-        assert CHANNEL_BARS["blog"]["needs_demand"] == 1000
-        assert CHANNEL_BARS["blog"]["needs_questions"] == 3
+        assert bar("blog")["needs_demand"] == 1000          # S279 L2: the seeded setting cis.t7.channel_bar_blog
+        assert bar("blog")["needs_questions"] == 3
         # AA-741 S271: Blog is Segment grain again (the origin's own grain) and carries its Route as the walk.
         assert CHANNEL_BARS["blog"]["grain"] == "segment"
         assert CHANNEL_BARS["blog"]["takes_route"] is True
@@ -48,7 +49,7 @@ class TestChannelBarsShape:
 
     def test_attention_led_channels_share_needs_said_150(self):
         for channel in ("linkedin", "facebook", "instagram", "tiktok"):
-            spec = CHANNEL_BARS[channel]
+            spec = bar(channel)
             assert spec["needs_said"] == 150
             assert spec["needs_demand"] == 0
             assert spec["needs_questions"] == 0
@@ -56,7 +57,7 @@ class TestChannelBarsShape:
 
     def test_on_demand_channels_have_open_bar(self):
         for channel in ("email", "landing_page", "ads"):
-            spec = CHANNEL_BARS[channel]
+            spec = bar(channel)
             assert spec["on_demand"] is True
             assert spec["needs_demand"] == 0
             assert spec["needs_questions"] == 0
@@ -200,9 +201,7 @@ class TestChoosePlaceDedupAndHubCap:
 
     def test_hub_cap_limits_route_candidates_per_hub(self):
         # 3 Routes sharing one Hub (6-itinerary Nakasendo case), most_per_hub monkeypatched to 1.
-        original = CHANNEL_BARS["blog"]["most_per_hub"]
-        CHANNEL_BARS["blog"]["most_per_hub"] = 1
-        try:
+        with serve(bar_with("blog", most_per_hub=1)):
             routes = [
                 self._route("r1", score=5, hub_id="hub_nakasendo"),
                 self._route("r2", score=1, hub_id="hub_nakasendo"),  # strongest of the 3
@@ -210,49 +209,35 @@ class TestChoosePlaceDedupAndHubCap:
             ]
             chosen = _choose("blog", routes, hub_of={})
             assert [c.route_id for c, _ in chosen] == ["r2"]
-        finally:
-            CHANNEL_BARS["blog"]["most_per_hub"] = original
 
     def test_hub_cap_is_per_hub_not_global(self):
-        original = CHANNEL_BARS["blog"]["most_per_hub"]
-        CHANNEL_BARS["blog"]["most_per_hub"] = 1
-        try:
+        with serve(bar_with("blog", most_per_hub=1)):
             routes = [
                 self._route("r1", score=1, hub_id="hub_a"),
                 self._route("r2", score=2, hub_id="hub_b"),
             ]
             chosen = _choose("blog", routes, hub_of={})
             assert {c.route_id for c, _ in chosen} == {"r1", "r2"}
-        finally:
-            CHANNEL_BARS["blog"]["most_per_hub"] = original
 
     def test_standalone_route_falls_back_to_its_own_route_id_as_hub(self):
         # No hub_id (standalone Route) -- "a family of one is not a family": each is its own
         # singleton hub, so most_per_hub=1 never collides between two unrelated standalone Routes.
-        original = CHANNEL_BARS["blog"]["most_per_hub"]
-        CHANNEL_BARS["blog"]["most_per_hub"] = 1
-        try:
+        with serve(bar_with("blog", most_per_hub=1)):
             routes = [self._route("r1", score=1, hub_id=None), self._route("r2", score=2, hub_id=None)]
             chosen = _choose("blog", routes, hub_of={})
             assert {c.route_id for c, _ in chosen} == {"r1", "r2"}
-        finally:
-            CHANNEL_BARS["blog"]["most_per_hub"] = original
 
     def test_segment_grain_uses_hub_of_map_for_hub_cap(self):
-        original = CHANNEL_BARS["facebook"]["most_per_hub"]
-        CHANNEL_BARS["facebook"]["most_per_hub"] = 1
-        try:
+        with serve(bar_with("facebook", most_per_hub=1)):
             a = self._seg("seg_a", "Place A", score=1)
             b = self._seg("seg_b", "Place B", score=2)
             chosen = _choose("facebook", [a, b], hub_of={"seg_a": "hub_x", "seg_b": "hub_x"})
             assert [c.segment_id for c, _ in chosen] == ["seg_a"]
-        finally:
-            CHANNEL_BARS["facebook"]["most_per_hub"] = original
 
     def test_on_demand_channel_has_no_hub_cap(self):
         # email's most_per_hub is None (no origin number exists for on-demand channels) -- never
         # capped, however many candidates share a hub.
-        assert CHANNEL_BARS["email"]["most_per_hub"] is None
+        assert bar("email")["most_per_hub"] is None
         a = self._seg("seg_a", "Place A", score=1, said=0)
         b = self._seg("seg_b", "Place B", score=2, said=0)
         chosen = _choose("email", [a, b], hub_of={"seg_a": "hub_x", "seg_b": "hub_x"})

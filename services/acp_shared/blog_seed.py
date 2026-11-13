@@ -73,7 +73,7 @@ def sized_min_seed_words(ratio: Optional[float] = None) -> int:
     r = chars_per_seed_word() if ratio is None else ratio
     if not r or r <= 0:
         return 0
-    return int(math.ceil(length_contract.BLOG_FLOOR_CHARS / r))
+    return int(math.ceil(length_contract.floor_chars() / r))
 
 
 def seed_floor(flat: Optional[int] = None) -> dict:
@@ -85,7 +85,7 @@ def seed_floor(flat: Optional[int] = None) -> dict:
     ratio = chars_per_seed_word() if flat > 0 else 0.0
     sized = sized_min_seed_words(ratio) if flat > 0 else 0
     return {"min_seed_words": max(flat, sized), "flat": flat, "sized": sized,
-            "chars_per_seed_word": round(ratio, 3), "floor_chars": length_contract.BLOG_FLOOR_CHARS}
+            "chars_per_seed_word": round(ratio, 3), "floor_chars": length_contract.floor_chars()}
 
 
 def skip_reason(words: Optional[int], floor: dict) -> Optional[str]:

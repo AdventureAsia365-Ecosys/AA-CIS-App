@@ -1161,7 +1161,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
     `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `writing_memory_kpi_weekly` — AA-922, `kpi_snapshot_daily`, `report_generate`,
-    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003, `quality_funnel_watch` — AA-900 W0, `tenant_backup` — AA-1093). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003, `quality_funnel_watch` — AA-900 W0, `tenant_backup` — AA-1093, `tenant_erasure_saga` — AA-1093 L2). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -1245,6 +1245,38 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     checks every digest, loads each table into `pg_temp` (types of the live table, `jsonb_populate_recordset`),
     compares manifest / restored / live counts and live identity, rolls its transaction back, writes one
     `tenant.restore_drill` audit row (counts only), prints JSON (exit 0 complete, 3 incomplete backup, 1 failed).
+  - **Tenant offboarding erasure saga (AA-1093 lane L2, contract `tenant.erasure.v1`, decisions D1-D8)**: CIS is the
+    master of the tenant account (root ADR 0019 d1) and orchestrates the erasure of an offboarded tenant in CIS,
+    Booking, TripPlanner and the CRM. Tables `shared.tenant_erasure_request` (one per offboarded tenant, no FK to
+    `shared.tenants`: the erasure record outlives the tenant row; `is_pilot` / `is_synthetic` copied at T0) and
+    `shared.tenant_erasure_step` (the newest report per round, app and mode in the contract's ErasureReport shape),
+    CIS 408; feed event `account.erasure_requested` `{op, request_id}` on `tenant.entitlements.v1` 1.7 (CIS 409);
+    Booking / TripPlanner read `catalog.v_tenant_erasure_v1` (CIS 410) and answer through their own report views
+    (`booking.v_tenant_erasure_report_v1`, `tripplanner.v_tenant_erasure_report_v1`, read as JSON rows: a missing view
+    or grant = `app_not_ready`, a view without a contract column = `report_shape_unknown` read from the catalog even
+    with no row: blockers, never a skip); the CRM uses `GET /tenant/v1/erasure-requests` and
+    `POST /tenant/v1/erasure-requests/{id}/reports` (M2M scope `cis.tenant/erasure`). T0 = `POST
+    /admin/tenants/{id}/offboard` (request with `not_before` per app: the CRM T0 + setting
+    `cis.erasure.crm_window_days` (90 days), the others T0 + `cis.erasure.tenant_retention_days` (30); never for the
+    pilot); `POST /admin/tenants/{id}/restore` cancels it (and any failed request never approved) until a round is
+    approved (409 after, also after a new round). Stages: stage 1 CIS + Booking + TripPlanner, stage 2 the CRM alone (`saga.STAGES`); each stage
+    is a round: dry_run (each active app's plan hash; CIS = its own `data_erasure` DRY RUN, hashed without the tables
+    the saga writes) → awaiting_approval (combined fingerprint = sha256(request, tenant, round, app:hash)) → approval
+    by a **Cognito administrator** within `cis.erasure.saga_approval_valid_hours` (24 h; admin secret alone refused;
+    never the pilot; on Dev synthetic only; apply switch setting `cis.erasure.saga_apply_enabled`, default off; the
+    three keys come with CIS 411) → apply (the other apps in
+    parallel, CIS **last**: `tenant_backup`, a fresh DRY RUN matched to the approved hash, the `data_erasure` apply
+    with the approval's snapshot id and approver) → verify (each app's `pii:` census must be 0) → next stage or done
+    with a receipt. A refused / failed step, a census above 0, a changed plan or an expired approval moves the request
+    to **failed** (the contract's "the tech lead decides"): `.../new-round` starts a new round (never once the CIS
+    apply job of the round started), `.../stop` keeps it failed for good. The approval re-computes the fingerprint
+    from the step rows under the request lock (409 when a plan changed). Job kind `tenant_erasure_saga` (`services/jobs/tenant_erasure_saga_job.py`, payload `{request_id}`
+    only, background, polls with `Reschedule`; the ops sampler keeps one live job per request with work). Staff routes
+    `/admin/job-runner/erasure/requests[/{id}[/advance|/approve|/new-round|/stop]]`, `POST .../requests/drill` (window 0 for
+    an offboarded synthetic tenant); admin page Data erasure › Tenant offboarding. Code: `services/tenant_erasure/`
+    (`saga.py` rules, `policy.py` knobs, `store.py`, `reports.py`), `api/routers/admin_tenant_erasure.py`,
+    `api/routers/tenant_erasure.py`; contract copy `docs/contracts/tenant.erasure.v1.openapi.yaml` (test
+    `tests/unit/test_aa1093_tenant_erasure_contract.py`).
   - **Report core (AA-1003 R1, root AA-1001 report catalog)**: the registry of every recurring report and KPI is
     root `docs/reports/catalog.yaml` + `kpis.yaml` (linted there by `tools/docs/report_registry.py`); this repo reads a
     byte copy in `services/reports/registry/` (`registry.py`, loaded once; change root first, then copy). Two expand
@@ -2148,6 +2180,7 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 | AA-Partner (partner CRM) | **`catalog.http.v1` over HTTP** (AA-976, CRM-B4; root ADR 0010 decision 4: the CRM holds no grant on any CIS schema): `GET /catalog/v1/tours` (keyset cursor by `source_id`, `updated_since`, `country_code`, `limit` ≤ 50), `GET /catalog/v1/tours/cis/{source_id}` (days with per-day and per-place IANA `time_zone`, inclusions, exclusions classified for pay-on-arrival R25, facets for system tags R29, photos), `GET /catalog/v1/destinations/{id}`. Served from the `catalog` views read as `aa_app_user` on the tenant pool (one connection per api task at most, READ ONLY, `app.tenant_id` = ''), so it shows exactly what Booking / TripPlanner see. Liveness per root ADR 0015 decision 5: `retired` → 410 `gone` + `reason` (the CRM marks lines "no longer offered"), `paused` → 404 + `reason`, never served → 404. Strong `ETag` (a tour's `content_hash` = sha256 over the served body), `Cache-Control: private, max-age=60`, 304 on `If-None-Match`. Code: `api/routers/catalog_http.py`, `services/catalog_http/`; contract copy `docs/contracts/catalog.http.v1.openapi.yaml` (byte-identical to the root file, conformance test `tests/unit/test_aa976_catalog_http_contract.py`). **AI mark** (contract 1.3, AA-1040, EU AI Act Art. 50(2)): every served `Tour` carries `ai` = `ai_marking.tour_mark(v_tour.text_updated_at, published_at)` (`ai_generated`, `generator` "Adventure Asia catalog writer", `model` null, `generated_at` = the last Master publish of the text, `human_edited` null), inside the hashed body (the ETag moves with a Master publish). `text_updated_at` (CIS 359) is the Master row's `updated_at`, the value the tenant reads use; `v_tour.updated_at` also moves with a photo change, so it is used only while 359 is not applied (the reader probes `pg_attribute` once per process until the column is there and selects NULL in its place before). **AA-authored content** (AA-977, contract 1.2): `GET /catalog/v1/aa-content` (latest published version of each item that is not retired; `kind`, `locale`, keyset cursor by `content_id`, `limit` ≤ 50; ETag / 304) and `GET /catalog/v1/aa-content/{content_id}/versions/{version}` (any published version, also after a newer publish or retire; a draft / unknown version → 404), read from `gold_aa_internal.v_aa_content_published` on the main pool (cis_app); see "AA-authored content" below | — | M2M client-credentials token of the `aa-m2m-<env>` pool, CRM client + scope `cis.catalog/read` (root ADR 0006b decision 7, `api/core/m2m_auth.py`, same shared verifier as staff tokens); API Gateway route `/catalog/{proxy+}` (AA-CIS-Infra) |
 | AA-Partner (partner CRM) | **`tenant.membership.v1` over HTTP** (AA-978, CRM-P1; root ADR 0006b decision 4, ADR 0010 decision 5): `GET /tenant/membership/v1/tenants/{id}/members` (invited + active members and `tenant_state` active / locked / deleted; ETag over the body without `as_of`, 304), `GET /tenant/membership/v1/memberships?iss=&sub=` (keyed by iss AND sub), `GET /tenant/membership/v1/events?after=&limit=` (cursor feed, `limit` ≤ 500, ordered by `(txid, seq)` below the snapshot horizon so a late commit is never skipped). Ids, identity and the Content studio role only: no e-mail, name or CRM role. Read from `shared.tenant_members` / `shared.tenant_membership_event` (CIS 276) on the main pool (cis_app); see "Tenant membership directory" below. Code: `api/routers/tenant_membership.py`, `services/tenant_membership/`; contract copy `docs/contracts/tenant.membership.v1.openapi.yaml` (test `tests/unit/test_aa978_tenant_membership_contract.py`) | — | M2M token of the `aa-m2m-<env>` pool, CRM client + scope `cis.tenant/read` (`api/core/m2m_auth.require_m2m`, the same dependency factory as `/catalog/v1`); API Gateway route `/tenant/membership/{membership_proxy+}` (AA-CIS-Infra, AA-978 S1) |
 | AA-Partner (partner CRM), later AA-Booking and TripPlanner | **`tenant.entitlements.v1` over HTTP** (AA-1028 R1, root ADR 0019 d1 / d2): `GET /tenant/v1/tenants/{id}/account` (account status, `in_service`, kind, pilot marker, data region, time zone, every subscription, the resolved entitlements; ETag over the body without `as_of`, 304) and `GET /tenant/v1/account-events?after=&limit=` (cursor feed of `account.status_changed`, `subscription.changed`, `entitlement.changed`, the membership feed's horizon and cursor). Apps check feature keys, never plan names; no bill-to field, price, billing reference, reason or actor. Read from `shared.tenants`, `shared.tenant_subscription`, `shared.v_tenant_entitlement_v1` and `shared.tenant_account_event` (CIS 353-355) on the main pool (cis_app); see "Tenant control plane" below. Code: `api/routers/tenant_account.py`, `services/tenant_account/`; contract copy `docs/contracts/tenant.entitlements.v1.openapi.yaml` (test `tests/unit/test_aa1028_tenant_account_contract.py`) | — | M2M token, CRM client + scope `cis.tenant/read` (same dependency as `/tenant/membership/v1`; the Booking client joins with `bk_tenant_pull`); API Gateway route `/tenant/v1/{tenant_v1_proxy+}` (AA-CIS-Infra) |
+| AA-Partner (partner CRM) | **`tenant.erasure.v1` over HTTP** (AA-1093 lane L2): `GET /tenant/v1/erasure-requests?after=&limit=` (cursor feed of the erasure requests that changed, each with the CRM step only: status waiting / active / done / failed, its not_before, its approved plan hash; snapshot horizon on the row's txid) and `POST /tenant/v1/erasure-requests/{id}/reports` (the contract's ErasureReport; idempotent on `report_id`: 201 / 200, 409 `report_conflict` / `round_superseded` / `phase_mismatch`, 403 `wrong_app`). Booking and TripPlanner read the same requests from `catalog.v_tenant_erasure_v1` (CIS 410). See "Tenant offboarding erasure saga" in the job runner section. Code: `api/routers/tenant_erasure.py`; contract copy `docs/contracts/tenant.erasure.v1.openapi.yaml` | — | M2M token, CRM client + scope `cis.tenant/erasure` (AA-CIS-Infra `identity_m2m.tf` adds it); the same API Gateway route `/tenant/v1/{tenant_v1_proxy+}` |
 | AA-Partner (partner CRM) | **`tenant.addons.v1` over HTTP** (AA-1036 R3, root ADR 0019 d7): `GET /tenant/v1/tenants/{id}/add-ons` (the same list as the studio's `/v1/account/add-ons`: each add-on active / requested / available, the pending request, the last decision) and `POST /tenant/v1/tenants/{id}/add-on-requests` (`{product, note?, crm_member_id}`: 201 a new request, 200 the open one with `created` false). The CRM relays its **CRM owner's** request for an agency with no Content studio membership; the CRM checks the owner role, CIS records `requested_by` = `crm-member:<id>` (never a name or e-mail) and applies the studio's rules (`services/tenant_account/addon_requests.py`: 409 `already_subscribed` / `tenant_not_in_service`, one pending request per add-on, 10 a day, 500-character note). One store (`shared.tenant_addon_request`, CIS 374) and one staff decision path (Tenant 360 › Subscription). Code: `api/routers/tenant_addons.py`; contract copy `docs/contracts/tenant.addons.v1.openapi.yaml` (test `tests/unit/test_aa1036_tenant_addons_contract.py`) | — | M2M token, CRM client + scope `cis.tenant/addons` (`api/core/m2m_auth.require_m2m`; AA-CIS-Infra `identity_m2m.tf`); the same API Gateway route `/tenant/v1/{tenant_v1_proxy+}` |
 | AA-Booking | **Supply content read-back** (AA-835, root ADR 0004a): `catalog.v_supply_content` (CIS 278), one row per Booking hotel / service CIS knows, key `(source_system 'booking', source_id = the Booking id)`: `content_status`, `content_version`, and `description`, `highlights`, `good_to_know`, `photo_urls` **only while published** (an approved version of an active entity; draft, in_review, stale and unpublished rows carry NULL text), `edit_url` = `/admin/supply-content/<id>` (Booking prefixes the CIS admin origin). Booking's hotel / service pages show it read-only and proposals carry only published text (AA-Booking `app/supply/content.py`, feature-detected) | — | CIS 278 to role `booking` only, under the `catalog.*:booking` contract grant (catalog_owner view, security_barrier) |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
@@ -3860,9 +3893,11 @@ checked in code (plain prose, size, `repair_contract.new_specifics`, seam integr
 needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`
 (paid, capped, never writes a piece).
 AA-1077 S278 — **blog length target**: every length AIM is one number above the floor, never the floor itself:
-`length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`, services/quality/thresholds.yaml;
-0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor (`prompts._BLOG_WORDS[0]`, t9_write v6,
-registered by CIS 399) is pinned to `target_words()` by a test, so a new margin is a prompt bump; the extend repair
+`length_contract.target_chars()` = F4 floor × (1 + `t9.blog_length_target_margin`; S279 L2: the setting
+cis.quality.t9_blog_length_target_margin, 0.17 → 5,499 chars) and `target_words()` (950). The writer prompt's word floor
+(`prompts._blog_words()[0]`, t9_write v8, CIS 413) renders `target_words()` at call time (the F4 floor
+cis.t9.blog_chars_min and the margin are settings); a value other than the seed puts `.s<8 hex>` on the ledger's
+prompt version; the extend repair
 aims at the target; a blog's F4-short rewrite feedback carries "lengthen the piece to at least 5,499 characters …"
 (`service._f4_target`). The floor (4,700) is unchanged. The normalizer's optional steps
 (`length_contract.NORMALIZER_STEPS`: the FAQ answer fit; the stock-line cut guards itself) never make an edit that
@@ -3894,12 +3929,24 @@ Writing Memory hard stop 1 = every `fact.*` class with `severity: hard`). `code_
 (`repair_contract`, `degraded`, `day_oracle`) and `aliases` maps each Q0 corpus class id (`other.length`,
 `other.cta`, …) to its canonical class, so the Q0 cases are never relabelled to fit the taxonomy.
 `python -m scripts.quality.redundancy_census` lists enforcing detectors whose classes another code check already
-enforces (input for gate removals, AA-924). The 7.0 pass line and the other score cut-offs live only in
-`services/quality/thresholds.yaml` (one `pass_line`, one key per consumer: A1 retry, judge, T2 status, T3, T7,
-admin views, golden-set eval); Jev floors stay per question in `shared.decision_question`. Names are persisted
-(ledger, `repair_log`, `held_reason`, flags, `llm_call_log.quality_signal`): never rename one; a removed gate stays
-with `retired: true`. The admin UI reads labels, `PASS_LINE` and `SCORE_BANDS` from
-`frontend/lib/quality-registry.generated.ts` (`python -m services.quality.gen_frontend`).
+enforces (input for gate removals, AA-924). **Quality settings (S279 lane L2, CIS 412):** the 7.0 pass line and the
+other score cut-offs, the detector modes, the claim verdicts, the T10 / seed-align / adjudicator / T9 brief / T7
+debate / T2 judge gate / T3 background modes, the T7 debate cut and Channel bars, the SEO bands and the blog length
+band are settings of the platform settings registry (Platform › Settings: evidence-gated, maker-checker,
+`services/quality/settings_keys.py` names every key). `services/quality/thresholds.yaml` keeps one key per consumer
+(A1 retry, judge, T2 status, T3, T7, admin views, golden-set eval), each naming its `setting` (`registry.threshold`
+reads it at call time); taxonomy.yaml keeps the detectors without their mode; writing_policy.yaml keeps the structure
+(`writing_policy.effective` lays the values in; the compiled file and `policy_sha` stay the seeded policy). Rules
+between keys (a cap under the pass line, a band's minimum under its maximum, the blog length band inside the word
+band the t9_write prompt states, the Channel bar fields) are `quality_settings.cross_problem`, checked when a value is
+proposed and again when it is approved (against the approved rows read in the decision transaction, now and once
+future-dated approvals take effect: 409 `cross_check`); the SEO bands and meta aims are listed but not editable yet (the A1 / T2 writer
+prompts read them at process start). The change-control `gates` lock pins the governance and seed of every gate
+setting and requires evidence_required on each. Jev floors stay per question in `shared.decision_question`. Names
+are persisted (ledger, `repair_log`, `held_reason`, flags, `llm_call_log.quality_signal`): never rename one; a removed
+gate stays with `retired: true`. The admin UI reads gate labels from `frontend/lib/quality-registry.generated.ts`
+(`python -m services.quality.gen_frontend`) and the pass line, score bands and SEO bands at runtime
+(`useQualityThresholds`, GET /admin/quality/thresholds).
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:

@@ -28,14 +28,17 @@ STAGE = "tp_zz_check"
 async def pool(monkeypatch):
     monkeypatch.delenv("ALERTS_TOPIC_ARN", raising=False)        # bell only (no SNS)
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
+    # CIS 414 seeds TripPlanner's budget (5.0): put back what was there, so a later test still reads it.
+    kept = await p.fetchval("SELECT default_daily_budget_usd FROM shared.llm_app_profile WHERE app = 'tripplanner'")
 
-    async def clean():
+    async def clean(budget=None):
         await p.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", STAGE)
         await p.execute("DELETE FROM shared.notifications WHERE event_type LIKE 'platform.ops_check.llm_spend%'")
-        await p.execute("UPDATE shared.llm_app_profile SET default_daily_budget_usd = NULL WHERE app = 'tripplanner'")
+        await p.execute("UPDATE shared.llm_app_profile SET default_daily_budget_usd = $1 WHERE app = 'tripplanner'",
+                        budget)
     await clean()
     yield p
-    await clean()
+    await clean(kept)
     await p.close()
 
 

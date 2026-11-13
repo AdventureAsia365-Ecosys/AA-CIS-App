@@ -1,6 +1,6 @@
 """AA-216: empty/missing-field generation must not clear the 7.0 gate."""
 from services.content_generation.graph import (
-    validate_node, should_retry, MIN_QUALITY, MISSING_FIELD_CAP, MAX_RETRIES,
+    validate_node, should_retry, min_quality, missing_field_cap, MAX_RETRIES,
 )
 
 _FULL = {
@@ -20,8 +20,8 @@ def _state(generated):
 
 def test_empty_generation_capped_below_gate():
     out = validate_node(_state({}))
-    assert out["quality_score"] <= MISSING_FIELD_CAP
-    assert out["quality_score"] < MIN_QUALITY
+    assert out["quality_score"] <= missing_field_cap()
+    assert out["quality_score"] < min_quality()
 
 
 def test_empty_generation_not_done():
@@ -34,13 +34,13 @@ def test_partial_missing_field_capped():
     partial = dict(_FULL); partial["seo_meta"] = ""   # one missing field
     out = validate_node(_state(partial))
     assert "MISSING_FIELD" in out["failure_codes"]
-    assert out["quality_score"] <= MISSING_FIELD_CAP
+    assert out["quality_score"] <= missing_field_cap()
 
 
 def test_full_clean_generation_not_capped():
     out = validate_node(_state(_FULL))
     assert "MISSING_FIELD" not in out["failure_codes"]
-    assert out["quality_score"] >= MIN_QUALITY   # clean content still passes (no regress)
+    assert out["quality_score"] >= min_quality()   # clean content still passes (no regress)
 
 
 def test_structural_fail_flag_only_on_missing():

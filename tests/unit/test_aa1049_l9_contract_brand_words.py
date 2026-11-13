@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.content_generation import forbidden_words as fw
-from services.content_generation.graph import MISSING_FIELD_CAP, validate_node
+from services.content_generation.graph import missing_field_cap, validate_node
 from services.quality import final_contract as fc
 from services.quality import final_contract_store as store
 
@@ -179,7 +179,7 @@ def test_validate_reads_a_none_text_field_as_missing(field):
     gen = {**_FULL, field: None}
     out = validate_node(_state(gen))
     assert "MISSING_FIELD" in out["failure_codes"]
-    assert out["quality_score"] <= MISSING_FIELD_CAP
+    assert out["quality_score"] <= missing_field_cap()
     assert out["generated"][field] is None    # the stored value is not rewritten
 
 
@@ -193,7 +193,7 @@ def test_validate_none_text_field_scores_like_a_missing_key():
 
 def test_validate_every_text_field_none_and_no_generated_at_all():
     out = validate_node(_state({k: None for k in _FULL}))
-    assert "MISSING_FIELD" in out["failure_codes"] and out["quality_score"] <= MISSING_FIELD_CAP
+    assert "MISSING_FIELD" in out["failure_codes"] and out["quality_score"] <= missing_field_cap()
     out = validate_node({**_state(None), "tour": None})
     assert "MISSING_FIELD" in out["failure_codes"]
 

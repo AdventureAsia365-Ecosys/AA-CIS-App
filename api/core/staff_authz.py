@@ -381,9 +381,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/job-runner/retention/run"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/schedule"): OPS_WRITE,
     ("POST", "/admin/job-runner/staff-reconcile/schedule"): OPS_WRITE,   # AA-816 C7, daily (MACHINE_ROUTES)
-    # AA-839 — data erasure: tenant accounts and DSARs are admin-only (an apply also needs Cognito + the env flag)
-    ("GET", "/admin/job-runner/erasure"): TENANT_READ,
-    ("POST", "/admin/job-runner/erasure/run"): TENANT_WRITE,
+    # AA-839 data erasure + AA-1093 L2 offboarding saga: admin-only (an apply / saga approval also needs Cognito)
+    **{("GET", "/admin/job-runner/erasure" + p): TENANT_READ for p in ("", "/requests", "/requests/{request_id}")},
+    **{("POST", "/admin/job-runner/erasure" + p): TENANT_WRITE for p in ("/run", "/requests/drill", *(
+        "/requests/{request_id}/" + a for a in ("advance", "approve", "new-round", "stop")))},
     # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,
@@ -596,11 +597,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/reference-prices/parse"): REFERENCE_PRICE_WRITE,
     ("POST", "/admin/reference-prices/import"): REFERENCE_PRICE_WRITE,
     # S279 thresholds L1 — Platform › Settings (the settings registry, CIS 407): admin only
+    ("GET", "/admin/quality/thresholds"): any_of(CONTENT_READ, TENANT_BOOK_READ),   # S279 L2: every score view's bands
     ("GET", "/admin/settings/registry"): OPS_READ,
     ("GET", "/admin/settings/registry/{key}/history"): OPS_READ,
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
-    ("POST", "/admin/settings/registry/proposals/{value_id}/approve"): SETTINGS_APPROVE,
-    ("POST", "/admin/settings/registry/proposals/{value_id}/reject"): SETTINGS_APPROVE,
+    **{("POST", "/admin/settings/registry/proposals/{value_id}/" + a): SETTINGS_APPROVE for a in ("approve", "reject")},
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)
@@ -822,10 +823,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/supply-content/{entity_id}/unpublish"): REVIEW_ACT,
 }
 
-# POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The route-policy test
-# allows these to be missing from the app; once the route exists it must match the template exactly (every
-# /admin/platform/* route needs a POLICY entry, so a different parameter name fails CI there instead of leaving the
-# route open to every staff role). Empty since AA-883's two /admin/platform/staff routes landed.
+# POLICY entries whose route is not on main yet: (method, route) -> the change that adds it. The route-policy test
+# allows them to be missing from the app; once the route exists it must match the template exactly (a different
+# parameter name fails CI instead of leaving the route open to every staff role). Empty since AA-883's routes landed.
 AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 
 # Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope). /v1/social has no

@@ -747,6 +747,26 @@
         "_WALK_FOCUS_RULE"
       ],
       "prompt_sha256": "6b6705fced2e2ad57ba6f01f9101295db72518aae093bbab0df864e8923a2c88"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v8",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS_TOP",
+        "_blog_words",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_FAQ_PLAN",
+        "_BLOG_RICHEST_SHARE",
+        "_blog_length_plan",
+        "_blog_length_instructions",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE"
+      ],
+      "prompt_sha256": "e16183822e12d7ea7c232167da6c3520c5fd16b15eba4c0f8087af527a8966e7"
     }
   ]
 }
