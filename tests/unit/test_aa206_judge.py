@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.unit.settings_serve import serve_from_env
+
 from services.content_generation.batch_prompt import build_brand_diff_block as _build_brand_diff_block
 from services.content_generation.graph import build_graph
 from services.content_generation.judge_node import judge_node
@@ -213,3 +215,10 @@ def test_t2_low_brand_fit_retries_with_judge_feedback(monkeypatch):
         out = judge_node(state)
     assert out["quality_score"] == 6.0
     assert out["feedback"] == "META_TOO_SHORT; Use the brand's active verbs in every day."
+
+
+@pytest.fixture(autouse=True)
+def _t2_gate_from_env(monkeypatch):
+    """S279 L2: the T2 gate is the setting cis.quality_modes.t2_judge_gate (seeded brand_fit, the worker's Terraform
+    value); these tests were written for main's code default brand_fit_mission and drive the gate by env."""
+    serve_from_env(monkeypatch, "cis.quality_modes.t2_judge_gate", "T2_JUDGE_GATE", "brand_fit_mission")

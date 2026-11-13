@@ -173,6 +173,13 @@ def _check_value(d: Definition, value: Any) -> Any:
     problem = settings.validate(d, value)
     if problem:
         raise SettingsError(422, f"{d.label}: {problem}", "out_of_bounds")
+    # S279 L2: the rules between quality keys (a cap under the pass line, a band's minimum under its maximum, an aim
+    # inside the meta band, a Channel bar's fields), checked against the other values in force
+    from services.quality import quality_settings
+
+    problem = quality_settings.cross_problem(d.key, value)
+    if problem:
+        raise SettingsError(422, f"{d.label}: {problem}", "cross_check")
     return value
 
 

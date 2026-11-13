@@ -26,7 +26,8 @@ import { CompareModal } from "../_components/CompareModal";
 import { RetireTourDialog, type RetireAction } from "../_components/RetireTourDialog";
 import { Pagination } from "../_components/Pagination";
 import { shownRange } from "@/lib/pageRange";
-import { SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { scoreTone as bandTone, type ScoreBands } from "@/lib/qualityThresholds";
+import { useQualityThresholds } from "../_components/useQualityThresholds";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
 const PAGE_SIZE = 20;
@@ -165,19 +166,14 @@ interface VersionDetail {
   seed: string | null;
 }
 
-function scoreColor(s: number | null | undefined): string {
-  if (s == null) return K.muted2;
-  if (s >= SCORE_BANDS.top) return K.success;
-  if (s >= SCORE_BANDS.pass) return K.amber;
-  return K.danger;
+function scoreColor(s: number | null | undefined, bands: ScoreBands | null | undefined): string {
+  const tone = bandTone(s, bands);
+  return tone === "success" ? K.success : tone === "warning" ? K.amber : tone === "danger" ? K.danger : K.muted2;
 }
 
 /** The kit tone of a score (the KpiTile value colour), same bands as scoreColor. */
-function scoreTone(s: number | null | undefined): Tone | undefined {
-  if (s == null) return undefined;
-  if (s >= SCORE_BANDS.top) return "success";
-  if (s >= SCORE_BANDS.pass) return "warning";
-  return "danger";
+function scoreTone(s: number | null | undefined, bands: ScoreBands | null | undefined): Tone | undefined {
+  return bandTone(s, bands);
 }
 
 function statusBadge(status: string, t: T) {
@@ -221,8 +217,9 @@ function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | n
 // ── Score Bar ─────────────────────────────────────────────────────────────────
 
 function ScoreBar({ label, value, tooltip }: { label: string; value: number | null; tooltip?: string }) {
+  const bands = useQualityThresholds()?.score_bands;
   const pct = value != null ? Math.min(100, (value / 10) * 100) : 0;
-  const color = scoreColor(value);
+  const color = scoreColor(value, bands);
   return (
     <div style={{ marginBottom: 6 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
@@ -776,6 +773,7 @@ export default function MasterContentPage() {
 }
 
 function MasterContentPageInner() {
+  const bands = useQualityThresholds()?.score_bands;
   // AA-882 — the master lifecycle (activate / deactivate / trash / restore) is master.admin on the
   // backend; other roles see the catalog without those buttons.
   const role = useAdminIdentity().role;
@@ -967,7 +965,7 @@ function MasterContentPageInner() {
       ) },
     { id: "country", header: tr("colCountry"), accessorFn: (row) => row.country ?? "", cell: ({ row: { original: row } }) => row.country || "—" },
     { id: "quality_score", header: tr("colScore"), accessorFn: (row) => row.quality_score ?? -1, cell: ({ row: { original: row } }) => (
-      <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 15, color: scoreColor(row.quality_score) }}>
+      <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 15, color: scoreColor(row.quality_score, bands) }}>
         {row.quality_score != null ? row.quality_score.toFixed(1) : "—"}
       </span>
     ) },
@@ -1222,7 +1220,7 @@ function MasterContentPageInner() {
               hint={anyFilterActive ? t("matchingFilters") : t("wholeCatalog")} />
             <KpiTile icon={<Star size={16} />}          label={t("avgQuality")}
               value={summary?.avg_quality != null ? summary.avg_quality.toFixed(1) : "—"}
-              hint={t("avgFiltered")} valueTone={scoreTone(summary?.avg_quality ?? null)} />
+              hint={t("avgFiltered")} valueTone={scoreTone(summary?.avg_quality ?? null, bands)} />
             <KpiTile icon={<DollarSign size={16} />}   label={t("llmCost")}
               value={`$${(summary?.llm_cost_window_usd ?? summary?.total_llm_cost_usd ?? 0).toFixed(2)}`}
               hint={t("costSub", summary?.llm_cost_window_label ?? t("last30"), (summary?.total_llm_cost_usd ?? 0).toFixed(2))} />
@@ -1416,7 +1414,7 @@ function MasterContentPageInner() {
           const vLoading = versionLoading[tourId] ?? false;
           const vSel = compareVersionSel[tourId] ?? new Set<number>();
           const score = (v: number | null | undefined) => (
-            <span style={{ color: v != null ? scoreColor(v) : K.muted2 }}>{v != null ? v.toFixed(1) : "—"}</span>
+            <span style={{ color: v != null ? scoreColor(v, bands) : K.muted2 }}>{v != null ? v.toFixed(1) : "—"}</span>
           );
           return (
             <div>
@@ -1459,7 +1457,7 @@ function MasterContentPageInner() {
                       { id: "model", header: t("vModel"), enableSorting: false,
                         cell: ({ row: { original: v } }) => <span style={{ fontFamily: mono, fontSize: 11, color: K.muted2 }}>{modelLabel(v.model_id)}</span> },
                       { id: "overall", header: t("vOverall"), accessorFn: (v) => v.quality_score ?? -1,
-                        cell: ({ row: { original: v } }) => <span style={{ fontWeight: 700, color: scoreColor(v.quality_score) }}>{v.quality_score != null ? v.quality_score.toFixed(1) : "—"}</span> },
+                        cell: ({ row: { original: v } }) => <span style={{ fontWeight: 700, color: scoreColor(v.quality_score, bands) }}>{v.quality_score != null ? v.quality_score.toFixed(1) : "—"}</span> },
                       // AA-220 (H1): validate sub-scores + judge from the list endpoint.
                       { id: "brand", header: t("vBrand"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.score_brand) },
                       { id: "seo", header: t("vSeo"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.score_seo) },

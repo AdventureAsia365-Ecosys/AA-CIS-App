@@ -955,6 +955,24 @@
         "title": "BackfillRequest",
         "type": "object"
       },
+      "Band": {
+        "properties": {
+          "max": {
+            "title": "Max",
+            "type": "integer"
+          },
+          "min": {
+            "title": "Min",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min",
+          "max"
+        ],
+        "title": "Band",
+        "type": "object"
+      },
       "BatchSendBody": {
         "additionalProperties": false,
         "description": "One wave through the gateway batch lane (services/jobs/llm_batch_job.py). The cap is checked before anything is\nsent: the batch's worst-case estimate at the batch rate must stay at or under it (and under the central budgets).",
@@ -6444,6 +6462,41 @@
         "title": "PutBackResult",
         "type": "object"
       },
+      "QualityThresholds": {
+        "properties": {
+          "pass_line": {
+            "title": "Pass Line",
+            "type": "number"
+          },
+          "score_bands": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Score Bands",
+            "type": "object"
+          },
+          "seo_bands": {
+            "$ref": "#/components/schemas/SeoBands"
+          },
+          "settings_fp": {
+            "title": "Settings Fp",
+            "type": "string"
+          },
+          "writing_policy_sha": {
+            "title": "Writing Policy Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pass_line",
+          "score_bands",
+          "seo_bands",
+          "writing_policy_sha",
+          "settings_fp"
+        ],
+        "title": "QualityThresholds",
+        "type": "object"
+      },
       "QuestionUpdate": {
         "properties": {
           "accept_floor": {
@@ -8229,6 +8282,26 @@
         "title": "SentenceSuggestBody",
         "type": "object"
       },
+      "SeoBands": {
+        "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/Band"
+          },
+          "slug": {
+            "$ref": "#/components/schemas/SlugBand"
+          },
+          "title": {
+            "$ref": "#/components/schemas/Band"
+          }
+        },
+        "required": [
+          "meta",
+          "title",
+          "slug"
+        ],
+        "title": "SeoBands",
+        "type": "object"
+      },
       "SeoConfigPatch": {
         "properties": {
           "custom_keywords": {
@@ -8332,6 +8405,19 @@
           }
         },
         "title": "ShapeBackfillRequest",
+        "type": "object"
+      },
+      "SlugBand": {
+        "properties": {
+          "max": {
+            "title": "Max",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max"
+        ],
+        "title": "SlugBand",
         "type": "object"
       },
       "SnapshotRequest": {
@@ -35421,6 +35507,71 @@
           }
         },
         "summary": "Get Object Lineage",
+        "tags": [
+          "admin-quality"
+        ]
+      }
+    },
+    "/admin/quality/thresholds": {
+      "get": {
+        "operationId": "quality_thresholds_admin_quality_thresholds_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityThresholds"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Quality pass line, score bands and SEO bands in force (settings registry)",
         "tags": [
           "admin-quality"
         ]

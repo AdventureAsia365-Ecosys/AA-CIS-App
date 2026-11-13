@@ -133,8 +133,8 @@ def test_frontend_labels_are_a_superset_in_the_same_order():
 
 def test_generated_frontend_file_is_fresh():
     assert gen_frontend.OUT.read_text(encoding="utf-8") == gen_frontend.render()
-    assert "export const PASS_LINE = 7;" in gen_frontend.render()
-    assert "  top: 9,\n  pass: 7,\n  low: 5," in gen_frontend.render()
+    # S279 L2: the pass line and the score bands are settings read at runtime, never a generated copy
+    assert "PASS_LINE" not in gen_frontend.render() and "SCORE_BANDS" not in gen_frontend.render()
 
 
 def test_vietnamese_gate_labels_twin_is_fresh_with_the_same_keys():

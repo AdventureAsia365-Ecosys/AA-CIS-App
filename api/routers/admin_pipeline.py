@@ -117,10 +117,18 @@ def _surviving_hard_codes(result: dict) -> set:
     return set(result.get("failure_codes", []) or []) & set(hard_block_codes(result))
 
 
-# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands).
-_PUBLISH_FLOOR = threshold("a1.publish_floor")
-_LOW_QUALITY_FLOOR = threshold("review.low_quality_floor")
-_SCORE_BAND_LOW = threshold("review.score_band_low")
+# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands). S279 L2: the values are
+# settings (Platform › Settings), read at call time — never copied into a module constant.
+def _publish_floor() -> float:
+    return float(threshold("a1.publish_floor"))
+
+
+def _low_quality_floor() -> float:
+    return float(threshold("review.low_quality_floor"))
+
+
+def _score_band_low() -> float:
+    return float(threshold("review.score_band_low"))
 
 
 def _is_publishable(result: dict) -> bool:
@@ -138,7 +146,7 @@ def _is_publishable(result: dict) -> bool:
     """
     audit = result.get("brand_audit_status")
     return (
-        result.get("quality_score", 0.0) >= _PUBLISH_FLOOR
+        result.get("quality_score", 0.0) >= _publish_floor()
         and audit != "manual_check"
         and not (audit == "flagged" and not result.get("fix_pass_applied"))
         and not _surviving_hard_codes(result)
@@ -147,18 +155,19 @@ def _is_publishable(result: dict) -> bool:
 
 def _tour_passed(result: dict) -> bool:
     """The run-log pass flag (score only; the publish gate is `_is_publishable`). AA-926 seam."""
-    return float(result.get("quality_score") or 0.0) >= _PUBLISH_FLOOR
+    return float(result.get("quality_score") or 0.0) >= _publish_floor()
 
 
 def _score_band_where(score: str):
     """Review Queue score filter → SQL WHERE fragment (None = no filter). AA-926 seam: the band edges
     are pinned byte for byte by the gate-outcome snapshot."""
+    low, floor = _score_band_low(), _low_quality_floor()
     if score == "critical":
-        return f"rq.score_overall < {_SCORE_BAND_LOW:g}"
+        return f"rq.score_overall < {low:g}"
     if score == "low":
-        return f"rq.score_overall >= {_SCORE_BAND_LOW:g} AND rq.score_overall < {_LOW_QUALITY_FLOOR:g}"
+        return f"rq.score_overall >= {low:g} AND rq.score_overall < {floor:g}"
     if score == "ok":
-        return f"rq.score_overall >= {_LOW_QUALITY_FLOOR:g}"
+        return f"rq.score_overall >= {floor:g}"
     return None
 
 
@@ -169,8 +178,10 @@ def _histogram_case(edges) -> str:
     return "CASE" + "".join(pad + w for w in whens) + pad + f"ELSE '<{edges[-1]:g}'" + "\n" + " " * 16 + "END"
 
 
-# Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot.
-_SCORE_HISTOGRAM_CASE = _histogram_case(threshold("report.score_histogram_edges"))
+# Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot. S279 L2: a report layout
+# (bucket edges of a chart), not a threshold: it left thresholds.yaml and is no setting.
+_SCORE_HISTOGRAM_EDGES = (9, 8, 7)  # technical-constant: chart bucket edges of the library metrics, no gate reads them
+_SCORE_HISTOGRAM_CASE = _histogram_case(_SCORE_HISTOGRAM_EDGES)
 
 
 def _build_failure_summary(result: dict) -> str:
@@ -190,8 +201,8 @@ def _build_failure_summary(result: dict) -> str:
         parts.append(f"brand_audit={audit}")
     if codes:
         parts.append("codes=" + ",".join(str(c) for c in codes))
-    if score < _LOW_QUALITY_FLOOR:
-        parts.append(f"low_quality(score={score:.1f}<{_LOW_QUALITY_FLOOR:.1f})")
+    if score < _low_quality_floor():
+        parts.append(f"low_quality(score={score:.1f}<{_low_quality_floor():.1f})")
 
     # AA-736: surface the surviving hard codes per field, noting the sonnet attempt.
     surviving = _surviving_hard_codes(result)
@@ -863,7 +874,7 @@ async def _execute_run_tour(
                 **_resume_kw,                        # AA-993 G2
             )
 
-            _UPGRADE_THRESHOLD = float(os.environ.get("AUTO_UPGRADE_THRESHOLD", "8.5"))
+            _UPGRADE_THRESHOLD = float(threshold("a1.auto_upgrade"))  # S279 L2: a setting (was env, 8.5)
             _score = result.get("quality_score", 0.0)
             _model = result.get("model_used", "")
             _auto_upgraded = False  # AA-237/AA-736: did a sonnet re-run replace the haiku result?
@@ -2790,8 +2801,8 @@ def _review_block(score, codes: list, failures: list, brand_audit_status) -> dic
     if hard:
         where = sorted({f"{f['code']} in {f['field']}" for f in (failures or []) if f.get("code") in hard})
         return {"kind": "hard", "label": "Blocked: " + (", ".join(where) or ", ".join(hard))}
-    if score is not None and score < _LOW_QUALITY_FLOOR:
-        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < {_LOW_QUALITY_FLOOR:.1f}"}
+    if score is not None and score < _low_quality_floor():
+        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < {_low_quality_floor():.1f}"}
     return {"kind": "other", "label": "Held for review"}
 
 
@@ -2845,7 +2856,7 @@ def _review_failure_class(score, codes: list, failures: list, brand_audit_status
         return {"failure_class": "hard", "retryable": True,
                 "hint": "Regenerate with Sonnet"}
 
-    if score is not None and score < _LOW_QUALITY_FLOOR:
+    if score is not None and score < _low_quality_floor():
         return {"failure_class": "low_quality", "retryable": True,
                 "hint": "Low quality — regenerate for a better draft"}
 

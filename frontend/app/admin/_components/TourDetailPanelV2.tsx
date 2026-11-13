@@ -8,7 +8,8 @@ import {
 } from "../../_kit";
 import { tourTraceHref } from "@/lib/aiGateway";
 import { M } from "./tour.messages";
-import { SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
+import { useQualityThresholds } from "./useQualityThresholds";
 import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -107,11 +108,10 @@ interface VersionContent {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-export function scoreColor(s: number | null | undefined): string {
-  if (s == null) return K.muted2;
-  if (s >= SCORE_BANDS.top) return K.success;
-  if (s >= SCORE_BANDS.pass) return K.amber;
-  return K.danger;
+/** The colour of a score against the score bands in force (useQualityThresholds); neutral until they load. */
+export function scoreColor(s: number | null | undefined, bands: ScoreBands | null | undefined): string {
+  const tone = scoreTone(s, bands);
+  return tone === "success" ? K.success : tone === "warning" ? K.amber : tone === "danger" ? K.danger : K.muted2;
 }
 
 /** "just now" / "5m ago" / "3h ago", then the date — in the UI language. */
@@ -392,6 +392,7 @@ export function TourDetailPanelV2(props: PanelProps) {
 }
 
 function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelProps) {
+  const bands = useQualityThresholds()?.score_bands;
   const t = useT(M);
   const toast = useToast();
   const { isAdmin } = useAdminIdentity();
@@ -542,13 +543,13 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
         : <span style={{ fontSize: 11, color: K.muted2 }}>—</span>
     ) },
     { id: "overall", header: t("hOverall"), accessorFn: (h) => h.score_overall ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
-      <span style={{ fontWeight: 700, color: scoreColor(h.score_overall) }}>{h.score_overall != null ? h.score_overall.toFixed(1) : "—"}</span>
+      <span style={{ fontWeight: 700, color: scoreColor(h.score_overall, bands) }}>{h.score_overall != null ? h.score_overall.toFixed(1) : "—"}</span>
     ) },
     { id: "brand", header: t("hBrand"), accessorFn: (h) => h.score_brand ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
-      <span style={{ color: scoreColor(h.score_brand) }}>{h.score_brand != null ? h.score_brand.toFixed(1) : "—"}</span>
+      <span style={{ color: scoreColor(h.score_brand, bands) }}>{h.score_brand != null ? h.score_brand.toFixed(1) : "—"}</span>
     ) },
     { id: "seo", header: t("hSeo"), accessorFn: (h) => h.score_seo ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
-      <span style={{ color: scoreColor(h.score_seo) }}>{h.score_seo != null ? h.score_seo.toFixed(1) : "—"}</span>
+      <span style={{ color: scoreColor(h.score_seo, bands) }}>{h.score_seo != null ? h.score_seo.toFixed(1) : "—"}</span>
     ) },
     { id: "cost", header: t("hCost"), accessorFn: (h) => h.cost_usd ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
       <span style={{ color: K.accent }}>{h.cost_usd != null ? `$${h.cost_usd.toFixed(4)}` : "—"}</span>
@@ -606,7 +607,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                   </Badge>
                 )}
                 {gen?.score_overall != null && (
-                  <Badge tone={gen.score_overall >= SCORE_BANDS.top ? "success" : gen.score_overall >= SCORE_BANDS.pass ? "warning" : "danger"}>
+                  <Badge tone={scoreTone(gen.score_overall, bands) ?? "neutral"}>
                     ★ {gen.score_overall.toFixed(1)}
                   </Badge>
                 )}
@@ -694,7 +695,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                   background: K.bg, borderRadius: 8, marginBottom: 20, fontSize: 12, color: K.muted,
                 }}>
                   <span>{t("model")}: <strong>{modelShort(gen.model_editorial)}</strong></span>
-                  <span>{t("score")}: <strong style={{ color: scoreColor(gen.score_overall) }}>{gen.score_overall?.toFixed(1) ?? "—"}</strong></span>
+                  <span>{t("score")}: <strong style={{ color: scoreColor(gen.score_overall, bands) }}>{gen.score_overall?.toFixed(1) ?? "—"}</strong></span>
                   <span>{t("generatedWhen")}: <strong>{rel(gen.created_at)}</strong></span>
                   <span>{t("version")}: <strong>v{gen.version_num}</strong></span>
                 </div>
@@ -714,7 +715,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: capped ? 8 : 0 }}>
                         {rows.map(([label, sc]) => (
                           <span key={label} style={{ fontSize: 12, color: K.muted }}>
-                            {label}: <strong style={{ color: scoreColor(sc) }}>{fmt(sc)}</strong>
+                            {label}: <strong style={{ color: scoreColor(sc, bands) }}>{fmt(sc)}</strong>
                           </span>
                         ))}
                       </div>
@@ -809,7 +810,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                       <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                         v{selectedVersion.version_num} — {modelShort(selectedVersion.model_id)}
                         {selectedVersion.quality_score != null && (
-                          <span style={{ marginLeft: 10, color: scoreColor(selectedVersion.quality_score) }}>
+                          <span style={{ marginLeft: 10, color: scoreColor(selectedVersion.quality_score, bands) }}>
                             ★ {selectedVersion.quality_score.toFixed(1)}
                           </span>
                         )}
@@ -861,7 +862,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                 )}
                 <div>
                   <div style={{ fontSize: 11, color: K.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("qualityScore")}</div>
-                  <div style={{ fontFamily: mono, fontSize: 26, fontWeight: 700, color: scoreColor(pub.quality_score) }}>
+                  <div style={{ fontFamily: mono, fontSize: 26, fontWeight: 700, color: scoreColor(pub.quality_score, bands) }}>
                     {pub.quality_score?.toFixed(1) ?? "—"}
                   </div>
                 </div>

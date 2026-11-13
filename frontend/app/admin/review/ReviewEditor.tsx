@@ -9,11 +9,11 @@ import { useState } from "react";
 import { K, mono, sans, AiNotice, Button, useFormat, useT, Input, Textarea, Spinner, KX } from "../../_kit";
 import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
+import { inMetaBand } from "@/lib/qualityThresholds";
+import { useQualityThresholds } from "../_components/useQualityThresholds";
 import {
   AREA_FIELDS,
   LIST_FIELDS,
-  SEO_META_MAX,
-  SEO_META_MIN,
   TEXT_FIELDS,
   draftToPatchValue,
   failureMap,
@@ -155,6 +155,7 @@ export function ReviewEditor({
   /** AA-845 — may mark sentences unsupported in the Source check (review.act). */
   canLabel?: boolean;
 }) {
+  const seo = useQualityThresholds()?.seo_bands;
   const t = useT(M);
   const { formatDateTime } = useFormat();
   const [draft, setDraft] = useState<Record<string, string>>(() => toDraft(item.raw));
@@ -302,10 +303,11 @@ export function ReviewEditor({
             {f === "seo_meta" &&
               (() => {
                 const n = draft.seo_meta.length;
-                const inBand = n >= SEO_META_MIN && n <= SEO_META_MAX;
+                const inBand = inMetaBand(n, seo);
+                if (!seo || inBand == null) return null;   // the band in force has not loaded yet
                 return (
                   <div style={{ fontSize: 11, marginTop: 3, color: inBand ? K.success : K.danger, fontFamily: mono }}>
-                    {t("metaBand", n, SEO_META_MIN, SEO_META_MAX)}
+                    {t("metaBand", n, seo.meta.min, seo.meta.max)}
                   </div>
                 );
               })()}

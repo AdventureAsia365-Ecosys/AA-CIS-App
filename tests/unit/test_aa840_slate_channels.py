@@ -18,6 +18,7 @@ from uuid import uuid4
 import pytest
 
 from services.acp_shared import slate
+from tests.unit.settings_serve import bar_with, serve
 from services.acp_shared.slate import (CHANNEL_BARS, MAX_CHANNELS_PER_PLACE, Candidate, _choose_slate,
                                        _tenant_enabled_channels)
 
@@ -99,7 +100,7 @@ class TestChooseSlate:
     def test_hub_cap_still_per_channel(self):
         segments = [_seg(i) for i in range(1, 4)]
         hub_of = {s.segment_id: "hub_x" for s in segments}
-        with patch.dict(CHANNEL_BARS["facebook"], {"most_per_hub": 1}):
+        with serve(bar_with("facebook", most_per_hub=1)):
             chosen = _choose_slate(["facebook", "linkedin"], segments, [], hub_of=hub_of)
         assert _ids(chosen["facebook"]) == ["seg_1"]
         assert _ids(chosen["linkedin"]) == ["seg_1", "seg_2", "seg_3"]

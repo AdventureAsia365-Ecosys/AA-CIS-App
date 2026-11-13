@@ -790,7 +790,9 @@ _SHADOW_REPORT_SQL = """
 
 # The judge pass line judge_node._MIN_QUALITY reads (thresholds.yaml a1.judge_pass; AA-926). The registry
 # imports nothing from the LLM pipeline, so this router's import graph stays small.
-_JUDGE_PASS_LINE = threshold("a1.judge_pass")
+def _judge_pass_line() -> float:
+    """The judge pass line in force (S279 L2: a setting, read at call time)."""
+    return float(threshold("a1.judge_pass"))
 
 
 def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
@@ -845,7 +847,7 @@ def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
     # The A1 brand-fit judge returns only a 1-10 score; the pipeline's pass line is the judge gate
     # (`judge_node._MIN_QUALITY`, 7.0) — derive pass/fail from it so agreement is measurable.
     if passed is None and score is not None and stage.startswith(("s1_judge", "t2_judge")):
-        passed = score >= _JUDGE_PASS_LINE
+        passed = score >= _judge_pass_line()
 
     if score is None and passed is None:
         return None

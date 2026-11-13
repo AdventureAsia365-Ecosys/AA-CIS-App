@@ -10,7 +10,8 @@ Invented places only. Pure: no DB.
 import pytest
 
 from services.acp_shared import slate
-from services.acp_shared.slate import CHANNEL_BARS, Candidate, _clears_bar, bar_misses, bar_status, bar_status_counts
+from services.acp_shared.slate import (CHANNEL_BARS, Candidate, _clears_bar, bar_misses, bar_status, bar_status_counts,
+                                       bars)
 
 
 def _seg(sid, demand, questions=5, said=200, market="UK"):
@@ -98,7 +99,7 @@ def _sql_core(sql: str) -> str:
 def test_the_script_bar_status_equals_the_module(demand, questions, said):
     script = _compare_script()
     c = Candidate(segment_id="a", route_id=None, score=1.0, demand=demand, questions=questions, said=said)
-    for channel, spec in CHANNEL_BARS.items():
+    for channel, spec in bars().items():
         assert script.bar_status(spec, demand, questions, said) == bar_status(channel, c), channel
 
 
@@ -116,7 +117,7 @@ def test_the_script_after_rule_is_the_module_sql():
 def test_the_script_counts_per_channel_and_picks_bar_channels():
     script = _compare_script()
     rows = [{"demand_volume": 2400, "questions": 5, "said": 200}, {"demand_volume": None, "questions": 5, "said": 0}]
-    counts = script.count_statuses(rows, ["blog", "linkedin"], CHANNEL_BARS)
+    counts = script.count_statuses(rows, ["blog", "linkedin"], bars())
     assert counts["blog"] == {"cleared": 1, "no_data": 1, "below_bar": 0, "few_questions": 0, "few_said": 0}
     assert counts["linkedin"] == {"cleared": 1, "no_data": 0, "below_bar": 0, "few_questions": 0, "few_said": 1}
     assert script.bar_channels(CHANNEL_BARS, "") == ["blog", "linkedin", "facebook", "instagram", "tiktok"]

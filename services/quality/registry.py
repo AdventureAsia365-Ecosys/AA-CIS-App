@@ -5,11 +5,17 @@
   gate-name literal anywhere else. Names are persisted: never rename one; a removed gate stays (retired).
 - **Taxonomy** (`taxonomy.yaml`, qtax-v1): error classes, and the class every gate, Jev question key, admin
   chip and A1 validate code maps to. `owner_gates`, `metric` and `tolerance` are derived (design §3.2).
-- **Thresholds** (`thresholds.yaml`): the single source for the 7.0 pass line and the other cut-offs.
+- **Thresholds** (`thresholds.yaml`): every score cut-off by consumer key; its VALUE is a setting of the platform
+  settings registry (S279 lane L2, CIS 409: Platform › Settings, evidence-gated, maker-checker), named by the entry's
+  `setting` (or `settings` for a band). `threshold(key)` reads the value in force at CALL time (the settings reader's
+  30 s snapshot, never the database): never copy it into a module constant.
+- **Detector modes**: a detector's mode (enforce / shadow / warn) is a setting too (`settings_keys.DETECTOR_MODES`);
+  `classes()` derives `owner_gates` from the modes in force.
 
-This module imports nothing from `services` (the CI Lint job runs the lint with only PyYAML installed) and
-loads the YAML with `yaml.safe_load`. Lookups used on request paths (`gate`, `gate_label`, `class_info`) are
-total: an unknown or legacy name returns None, never raises.
+This module imports nothing from `services` but the stdlib-only `settings_keys` index (the CI Lint job runs the lint
+with only PyYAML installed; `shared.settings` is standard library too) and loads the YAML with `yaml.safe_load`.
+Lookups used on request paths (`gate`, `gate_label`, `class_info`) are total: an unknown or legacy name returns None,
+never raises.
 """
 from __future__ import annotations
 
@@ -18,6 +24,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+
+from services.quality import settings_keys as _keys
+from shared import settings as _settings
 
 _DIR = Path(__file__).resolve().parent
 TAXONOMY_PATH = _DIR / "taxonomy.yaml"
@@ -122,16 +131,28 @@ def paths_doc() -> dict:
 
 # ------------------------------------------------------------------------------------------ classes
 
-@lru_cache(maxsize=1)
+def detector_mode_key(class_id: str, ref: str) -> Optional[str]:
+    """The setting that holds the mode of detector ``ref`` of class ``class_id`` (None for an unknown pair)."""
+    return _keys.DETECTOR_MODES.get((class_id, ref))
+
+
+def detector_mode(class_id: str, ref: str) -> Optional[str]:
+    """The mode in force of one detector (enforce / shadow / warn), from the settings registry."""
+    key = detector_mode_key(class_id, ref)
+    return None if key is None else _settings.get(key)
+
+
 def classes() -> dict[str, dict]:
-    """class_id → class, with the derived fields: owner_gates (detector refs in mode enforce), metric and
-    tolerance (default per severity), covered_writers (writers with at least one detector)."""
+    """class_id → class, with each detector's mode in force (the settings registry) and the derived fields:
+    owner_gates (detector refs in mode enforce), metric and tolerance (default per severity), covered_writers
+    (writers with at least one detector). Built per call (cheap): a mode change reaches it within one cache window."""
     out: dict[str, dict] = {}
     for c in taxonomy().get("classes") or []:
-        dets = c.get("detectors") or []
+        dets = [{**d, "mode": detector_mode(c["id"], d["ref"])} for d in c.get("detectors") or []]
         metric, tol = SEVERITY_DEFAULTS.get(c.get("severity"), ("report_only", "report only"))
         out[c["id"]] = {
             **c,
+            "detectors": dets,
             "owner_gates": [d["ref"] for d in dets if d.get("mode") == "enforce"],
             "metric": c.get("metric", metric),
             "tolerance": c.get("tolerance", tol),
@@ -218,7 +239,8 @@ def detector_refs() -> set[str]:
 
 # --------------------------------------------------------------------------------------- thresholds
 
-def _resolve(key: str, seen: tuple = ()) -> Any:
+def threshold_setting(key: str, seen: tuple = ()) -> Any:
+    """The setting key (or the tuple of keys of a band) that holds a threshold's value, a `ref` followed."""
     entries = thresholds_doc().get("thresholds") or {}
     if key not in entries:
         raise KeyError(f"unknown quality threshold {key!r} (services/quality/thresholds.yaml)")
@@ -226,15 +248,19 @@ def _resolve(key: str, seen: tuple = ()) -> Any:
         raise ValueError(f"threshold ref cycle: {' -> '.join(seen + (key,))}")
     e = entries[key]
     if "ref" in e:
-        return _resolve(e["ref"], seen + (key,))
-    v = e["value"]
-    return tuple(v) if isinstance(v, list) else v
+        return threshold_setting(e["ref"], seen + (key,))
+    if isinstance(e.get("settings"), list):
+        return tuple(e["settings"])
+    return e["setting"]
 
 
 def threshold(key: str) -> Any:
-    """The resolved value of a threshold key (a `ref` is followed). Unknown key → KeyError: thresholds are
-    read at import time by the modules that use them, so a typo fails the build, not a request."""
-    return _resolve(key)
+    """The value in force of a threshold key (a `ref` is followed; a band is a tuple), read from the settings registry
+    at call time. Unknown key → KeyError (a typo fails the first test that reaches it)."""
+    setting = threshold_setting(key)
+    if isinstance(setting, tuple):
+        return tuple(_settings.get(s) for s in setting)
+    return _settings.get(setting)
 
 
 def pass_line() -> float:

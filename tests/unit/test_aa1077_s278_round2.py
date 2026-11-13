@@ -40,7 +40,7 @@ NEVER_MENTION = "never mention where a fact comes from"
 
 def test_the_plan_budgets_add_up_to_the_word_floor_and_stay_under_the_cap():
     plan = prompts._blog_length_plan()
-    lo, hi = prompts._BLOG_WORDS
+    lo, hi = prompts._blog_words()
     assert plan["total"] == plan["opening"] + plan["each"] * (plan["sections"] - 1) + plan["richest"] + plan["faq"]
     assert lo <= plan["total"] <= hi < prompts._BLOG_WORDS_MAX       # the 1,600 ceiling is kept
     assert plan["sections"] < prompts._BLOG_SECTIONS_MAX
@@ -59,7 +59,7 @@ def test_the_plan_restates_only_numbers_the_format_bullets_already_give():
 
 
 def test_the_block_carries_the_plan_and_the_no_source_rule():
-    block = prompts._BLOG_LENGTH_INSTRUCTIONS
+    block = prompts._blog_length_instructions()
     plan = prompts._blog_length_plan()
     assert f"the budgets add up to {plan['total']:,} words" in block
     assert f"the richest about {plan['richest']:,} words" in block and f"about {plan['each']:,};" in block
@@ -83,10 +83,13 @@ def test_every_rewrite_prompt_says_never_to_name_a_source():
 
 
 def test_the_manifest_v7_hashes_the_plan_symbols():
-    entry = newest(load_manifest(), "t9_write")
-    assert entry["version"] == "v7"
+    v7 = next(e for e in load_manifest()["t9_write"] if e["version"] == "v7")
     assert {"_BLOG_FAQ_PLAN", "_BLOG_RICHEST_SHARE", "_blog_length_plan", "_PLAN",
-            "_BLOG_LENGTH_INSTRUCTIONS", "build_user_prompt"} <= set(entry["symbols"])
+            "_BLOG_LENGTH_INSTRUCTIONS", "build_user_prompt"} <= set(v7["symbols"])
+    entry = newest(load_manifest(), "t9_write")
+    assert entry["version"] == "v8"       # S279 L2: the length values render at call time
+    assert {"_BLOG_FAQ_PLAN", "_BLOG_RICHEST_SHARE", "_blog_length_plan", "_blog_length_instructions",
+            "build_user_prompt"} <= set(entry["symbols"])
     assert prompt_hash_of(entry["source_path"], entry["symbols"]) == entry["prompt_sha256"]
 
 
@@ -98,7 +101,7 @@ def _instruction_texts() -> dict:
         "short_rewrite_target": lc.short_rewrite_target(),
         "replace_not_delete": lc.REPLACE_NOT_DELETE,
         "keep_not_cut": lc.KEEP_NOT_CUT,
-        "blog_length_block": prompts._BLOG_LENGTH_INSTRUCTIONS,
+        "blog_length_block": prompts._blog_length_instructions(),
         "extend_system": generate._EXTEND_SYSTEM,
         "f4_feedback": "\n".join(service._repair_feedback(ledger, "blog")),
     }
@@ -277,7 +280,7 @@ def _text() -> str:
 
 def test_the_fixture_reproduces_the_trial_shape():
     text = _text()
-    assert lc.measure(text) < lc.BLOG_FLOOR_CHARS
+    assert lc.measure(text) < lc.floor_chars()
     assert all(c in text for c in CUTS)
 
 
@@ -446,10 +449,10 @@ async def test_six_cuts_on_a_short_blog_are_followed_by_an_expand_that_clears_th
     entry = next(e for e in kw["repair_log"] if e.get("length_net"))
     net = entry["length_net"]
     assert entry["repair_mode"] == f"sentences+{le.EXTEND_MODE}"
-    assert net["after_repair"] < net["before"] < lc.BLOG_FLOOR_CHARS               # the cuts shrank it
-    assert net["after_expand"] >= lc.BLOG_FLOOR_CHARS and not net["shrank_under_floor"]
+    assert net["after_repair"] < net["before"] < lc.floor_chars()               # the cuts shrank it
+    assert net["after_expand"] >= lc.floor_chars() and not net["shrank_under_floor"]
     assert entry[le.EXTEND_MODE]["added"] == 3
-    assert kw["status"] == "approved" and lc.measure(calls[-1]) >= lc.BLOG_FLOOR_CHARS
+    assert kw["status"] == "approved" and lc.measure(calls[-1]) >= lc.floor_chars()
     assert not any(c in kw["content_text"] for c in CUTS)
 
 
@@ -536,7 +539,7 @@ def _at_floor_text() -> str:
 
 def test_the_last_attempt_puts_back_the_cuts_that_would_take_a_blog_under_the_floor():
     text = _at_floor_text()
-    assert lc.BLOG_FLOOR_CHARS <= lc.measure(text) < lc.BLOG_FLOOR_CHARS + sum(len(c) for c in CUTS)
+    assert lc.floor_chars() <= lc.measure(text) < lc.floor_chars() + sum(len(c) for c in CUTS)
     items = sentence_items(text)
     reps = [""] * len(items)
     reps[0] = "A boat ride across Lake Ombra can be added on request."     # a rewrite still splices
@@ -544,7 +547,7 @@ def test_the_last_attempt_puts_back_the_cuts_that_would_take_a_blog_under_the_fl
     assert [it.get("guard") for it in items[1:]] == [service.FLOOR_KEPT] * (len(CUTS) - 1)
     assert kept_items == items[:1] and kept_reps == reps[:1]
     out = service.sentence_repair.splice_checked(text, kept_items, kept_reps, cta=CTA)
-    assert lc.measure(out) >= lc.BLOG_FLOOR_CHARS and all(c in out for c in CUTS[1:])
+    assert lc.measure(out) >= lc.floor_chars() and all(c in out for c in CUTS[1:])
 
 
 def test_a_last_attempt_cut_that_stays_over_the_floor_stands():
@@ -633,14 +636,14 @@ async def test_attempt_three_cuts_never_take_a_just_expanded_blog_back_under_the
     # attempt 2: the repeat was cut with no keep hint, then the expand lifted the blog over the floor (CUTS still in)
     second = _repair.calls[0]
     assert all(lc.KEEP_NOT_CUT not in it["problem"] for it in second if it["gate"] == qr.F13_REPEAT)
-    assert lc.measure(calls[1]) >= lc.BLOG_FLOOR_CHARS
+    assert lc.measure(calls[1]) >= lc.floor_chars()
     # attempt 3: the F17 problems were told to keep their sentence (6 deletes would take it under the floor)
     third = _repair.calls[1]
     f17_items = [it for it in third if it["gate"] == qr.F17_TRIP_FACT]
     assert len(f17_items) == len(CUTS) and all(it["problem"].endswith(lc.KEEP_NOT_CUT) for it in f17_items)
     # the deletes were put back, the scope rewrite stood: held on F17 at full length, never on length
     kw = fin.call_args.kwargs
-    assert lc.measure(kw["content_text"]) >= lc.BLOG_FLOOR_CHARS and all(c in kw["content_text"] for c in CUTS)
+    assert lc.measure(kw["content_text"]) >= lc.floor_chars() and all(c in kw["content_text"] for c in CUTS)
     assert SCOPE_FIX in kw["content_text"] and SCOPE not in kw["content_text"]
     assert kw["status"] == "held" and kw["held_reason"].startswith(qr.F17_TRIP_FACT)
     entry = next(e for e in kw["repair_log"] if (e.get("length_net") or {}).get("expand") == "attempt_3_no_expand")

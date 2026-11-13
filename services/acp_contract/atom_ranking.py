@@ -494,7 +494,12 @@ def compute_contested(serp_domains: list[str], everywhere: set[str]) -> float:
 # a number fit to this one sample. Revisit once contested has accumulated real history across
 # more markets/regions (same "revisit later" precedent CHANNEL_BARS/DFS_LOCATION_MAP's own
 # additions already follow in this codebase).
-CONTESTED_CUT_THRESHOLD = 0.5
+# S279 L2: the 0.5 is the setting cis.t7.debate_contested_cut (Platform › Settings, evidence-gated), read at call time.
+def contested_cut_threshold() -> float:
+    from services.quality import settings_keys
+    from shared import settings
+
+    return float(settings.get(settings_keys.T7_DEBATE_CONTESTED_CUT))
 
 
 def _candidate_questions(

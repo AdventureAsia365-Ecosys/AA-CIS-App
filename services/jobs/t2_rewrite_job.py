@@ -50,7 +50,9 @@ _PT_SQL = """
 """
 
 
-_T2_STATUS_PASS = threshold("t2.status_pass")  # services/quality/thresholds.yaml (AA-926)
+def _t2_status_pass() -> float:
+    """thresholds.yaml t2.status_pass (AA-926); S279 L2: a setting, read at call time."""
+    return float(threshold("t2.status_pass"))
 
 
 def _t2_status(rewrite_score: float, hard_codes=()) -> str:
@@ -60,7 +62,7 @@ def _t2_status(rewrite_score: float, hard_codes=()) -> str:
     S271 W0 (T2 interim, t2_interim.py): the score is validate's alone (the judge is report-only) and a hard code T3
     left on the kept draft (``hard_codes``, qa structural_issues) is needs_review too. With the switch off the
     caller passes no codes: the pre-S271 rule."""
-    if rewrite_score >= _T2_STATUS_PASS and not hard_codes:
+    if rewrite_score >= _t2_status_pass() and not hard_codes:
         return "ai_generated"   # ready for tenant to review
     if rewrite_score > 0:
         return "needs_review"   # LLM finished but low quality, or a hard code survived T3
