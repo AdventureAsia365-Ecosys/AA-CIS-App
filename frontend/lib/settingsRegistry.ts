@@ -29,7 +29,16 @@ export interface SettingRow {
   decided_at: string | null;
   decision_note: string | null;
   previous_value?: SettingValue;
+  /** The staff member's name or e-mail (null = no staff row: a script or a migration), read by the API. */
+  proposed_by_name?: string | null;
+  decided_by_name?: string | null;
 }
+
+/** AA-1096 l23 (CIS 416): the operator's guide of a setting, one per language. */
+export const GUIDE_PARTS = ["what", "raise", "lower", "when", "example"] as const;
+export type GuidePart = (typeof GUIDE_PARTS)[number];
+export type GuideText = Record<GuidePart, string>;
+export type SettingGuide = Partial<Record<"en" | "vi", GuideText>>;
 
 export interface SettingDefinition {
   key: string;
@@ -50,6 +59,8 @@ export interface SettingDefinition {
   env_override: string | null;
   cache_s: number;
   enforced: boolean;
+  /** null = no guide yet (CI fails on it; a CRM / TripPlanner row may lack one until its registry has it). */
+  guide?: SettingGuide | null;
 }
 
 export interface SettingItem extends SettingDefinition {
@@ -133,15 +144,24 @@ function inBounds(d: SettingDefinition, n: number): string | null {
   return null;
 }
 
+/** A typed number: {value} or {error}. A decimal key takes "3.364" and "3,364" alike (one point or one comma as the
+ *  decimal mark); a whole-number key takes digits only, so "2,000" is refused, never read as 2. No thousands
+ *  separator. Pure. */
+export function parseNumber(text: string, whole: boolean): { value?: number; error?: string } {
+  const raw = text.trim();
+  if (whole && /^-?\d+[.,]\d+$/.test(raw)) return { error: "Enter a whole number, without separators" };
+  const ok = whole ? /^-?\d+$/.test(raw) : /^-?\d+([.,]\d+)?$/.test(raw);
+  return ok ? { value: Number(raw.replace(",", ".")) } : { error: whole ? "Enter a whole number" : "Enter a number" };
+}
+
 /** The value typed in the form, parsed and checked against the definition: {value} or {error}. Pure. */
 export function parseDraft(d: SettingDefinition, text: string): { value?: SettingValue; error?: string } {
   const raw = text.trim();
   if (NUMERIC.includes(d.value_type)) {
-    if (raw === "" || !/^-?\d+(\.\d+)?$/.test(raw)) return { error: "Enter a number" };
-    const n = Number(raw);
-    if (WHOLE.includes(d.value_type) && !Number.isInteger(n)) return { error: "Enter a whole number" };
-    const out = inBounds(d, n);
-    return out ? { error: `The value is ${out}` } : { value: n };
+    const num = parseNumber(raw, WHOLE.includes(d.value_type));
+    if (num.value === undefined) return { error: num.error };
+    const out = inBounds(d, num.value);
+    return out ? { error: `The value is ${out}` } : { value: num.value };
   }
   if (d.value_type === "bool") {
     if (raw === "true" || raw === "on") return { value: true };
@@ -238,4 +258,108 @@ export function groupByArea(items: SettingItem[]): { area: string; items: Settin
 export function actorText(actor: string | null | undefined): string {
   if (!actor) return "—";
   return actor.startsWith("admin:") ? actor.slice(6) : actor;
+}
+
+/** Who made a change, as people read it: the staff member's name or e-mail (the API's *_name), else the actor id;
+ *  the tooltip always carries the id. */
+export function actorLabel(actor: string | null | undefined, name: string | null | undefined):
+  { text: string; title: string } {
+  const id = actorText(actor);
+  return { text: name?.trim() || id, title: id };
+}
+
+/** The guide of a setting in the page's language, else English, else null when it has none. */
+export function guideFor(d: Pick<SettingDefinition, "guide">, lang: string): GuideText | null {
+  const g = d.guide;
+  if (!g) return null;
+  return (lang === "vi" ? g.vi : undefined) ?? g.en ?? g.vi ?? null;
+}
+
+/** How the page names the two directions of a value type: a number goes up or down, an on/off switch goes on or
+ *  off, a choice, list or table is made stricter or looser. */
+export type DirectionWords = "number" | "switch" | "choice";
+export function directionWords(t: ValueType): DirectionWords {
+  if (NUMERIC.includes(t)) return "number";
+  return t === "bool" ? "switch" : "choice";
+}
+
+/** AA-1096 l23 review: a guide's example names the default, because the value in force can change. For the keys
+ *  whose meaning is a sum of other values (the blog source words a topic needs, the repeat cleanup, the blog length
+ *  aim) the page adds a line computed from the values in force: valueOf(key) reads one of them (the app's items, or
+ *  the draft in the change dialog). The line is a message id and its numbers, formatted for the page's language (the
+ *  words live in the page's messages.ts). null = nothing to add (another key, or a value it needs is missing). Pure. */
+export type ValueOf = (key: string) => SettingValue | undefined;
+export type NowLine =
+  | { id: "nowSeedRatio"; ratio: string; words: string; floor: string; off: boolean }
+  | { id: "nowSeedRatioZero" }
+  | { id: "nowSeedMin"; flat: string; sized: string; need: string }
+  | { id: "nowSeedMinOff" }
+  | { id: "nowRepeat"; share: string; pct: string }
+  | { id: "nowLengthAim"; margin: string; aim: string; floor: string };
+
+const BLOG_FLOOR = "cis.t9.blog_chars_min";
+const BLOG_CEILING = "cis.t9.blog_chars_max";
+const SEED_RATIO = "cis.t7.blog_chars_per_seed_word";
+const SEED_MIN = "cis.t7.blog_min_seed_words";
+
+function numberOf(valueOf: ValueOf, key: string): number | null {
+  const v = valueOf(key);
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+type Fmt = (n: number, digits?: number) => string;
+
+function seedRatioNow(valueOf: ValueOf, f: Fmt): NowLine | null {
+  const r = numberOf(valueOf, SEED_RATIO);
+  const floor = numberOf(valueOf, BLOG_FLOOR);
+  if (r === null || floor === null) return null;
+  if (r <= 0) return { id: "nowSeedRatioZero" };
+  return { id: "nowSeedRatio", ratio: f(r), words: f(Math.ceil(floor / r), 0), floor: f(floor, 0),
+    off: numberOf(valueOf, SEED_MIN) === 0 };
+}
+
+function seedMinNow(valueOf: ValueOf, f: Fmt): NowLine | null {
+  const flat = numberOf(valueOf, SEED_MIN);
+  if (flat === null) return null;
+  if (flat <= 0) return { id: "nowSeedMinOff" };
+  const r = numberOf(valueOf, SEED_RATIO) ?? 0;
+  const sized = r > 0 ? Math.ceil((numberOf(valueOf, BLOG_FLOOR) ?? 0) / r) : 0;
+  return { id: "nowSeedMin", flat: f(flat, 0), sized: f(sized, 0), need: f(Math.max(flat, sized), 0) };
+}
+
+function repeatNow(valueOf: ValueOf, f: Fmt): NowLine | null {
+  const v = numberOf(valueOf, "cis.t9.repeat_drop_near_exact");
+  return v === null ? null : { id: "nowRepeat", share: f(v), pct: f(v * 100, 1) };
+}
+
+function lengthAimNow(valueOf: ValueOf, f: Fmt): NowLine | null {
+  const m = numberOf(valueOf, "cis.quality.t9_blog_length_target_margin");
+  const floor = numberOf(valueOf, BLOG_FLOOR);
+  if (m === null || floor === null) return null;
+  const aim = Math.min(Math.round(floor * (1 + m)), numberOf(valueOf, BLOG_CEILING) ?? Infinity);
+  return { id: "nowLengthAim", margin: f(m), aim: f(aim, 0), floor: f(floor, 0) };
+}
+
+const NOW_LINES: Record<string, (valueOf: ValueOf, f: Fmt) => NowLine | null> = {
+  [SEED_RATIO]: seedRatioNow,
+  [SEED_MIN]: seedMinNow,
+  "cis.t9.repeat_drop_near_exact": repeatNow,
+  "cis.quality.t9_blog_length_target_margin": lengthAimNow,
+};
+
+export function nowExample(key: string, valueOf: ValueOf, lang: string): NowLine | null {
+  const line = NOW_LINES[key];
+  const locale = lang === "vi" ? "vi-VN" : "en-US";
+  return line ? line(valueOf, (n, digits = 3) => n.toLocaleString(locale, { maximumFractionDigits: digits })) : null;
+}
+
+/** valueOf over a list of items (their values in force). Pure. */
+export function valuesInForce(items: Pick<SettingItem, "key" | "value">[]): ValueOf {
+  const m = new Map<string, SettingValue>(items.map((s) => [s.key, s.value]));
+  return (key) => m.get(key);
+}
+
+/** valueOf with one key replaced (the value typed in the change dialog). Pure. */
+export function withValue(valueOf: ValueOf, key: string, value: SettingValue): ValueOf {
+  return (k) => (k === key ? value : valueOf(k));
 }

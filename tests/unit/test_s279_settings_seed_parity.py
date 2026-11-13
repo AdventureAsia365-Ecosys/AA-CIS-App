@@ -105,12 +105,58 @@ def test_render_is_deterministic_and_a_later_row_replaces_an_earlier_one(tmp_pat
     (tmp_path / "002_b.sql").write_text(seed.format(json.dumps(later)), encoding="utf-8")
     (tmp_path / "003_none.sql").write_text("SELECT 1;\n", encoding="utf-8")
     rows, sources = gen.seed_rows(tmp_path)
-    assert sources == ["001_a.sql", "002_b.sql"] and rows == [later]
+    assert sources == ["001_a.sql", "002_b.sql"] and rows == [dict(later, guide=None)]
     assert gen.render(tmp_path) == gen.render(tmp_path)
 
 
 def test_a_row_missing_a_field_fails_the_generator(tmp_path):
     (tmp_path / "001_a.sql").write_text(
         '-- settings-seed:begin\nSELECT $seed$[{"key": "cis.zz.beta"}]$seed$;\n-- settings-seed:end\n', encoding="utf-8")
+    with pytest.raises(SystemExit):
+        gen.seed_rows(tmp_path)
+
+
+# AA-1096 l23 (CIS 416): the guide block sets a key's plain label and guide; a later re-seed keeps the guide.
+GUIDE = {"en": {"what": "w", "raise": "r", "lower": "l", "when": "n", "example": "e"}}
+
+
+def _files(tmp_path, *texts):
+    for i, text in enumerate(texts, 1):
+        (tmp_path / f"{i:03d}_x.sql").write_text(text, encoding="utf-8")
+
+
+def _seed_sql(row):
+    return f"-- settings-seed:begin\nSELECT $seed${json.dumps([row])}$seed$;\n-- settings-seed:end\n"
+
+
+def _guide_sql(rows):
+    return f"-- settings-guide:begin\nSELECT $guide${json.dumps(rows)}$guide$;\n-- settings-guide:end\n"
+
+
+def test_a_guide_block_sets_label_and_guide_and_a_reseed_keeps_the_guide(tmp_path):
+    row = {f: None for f in gen.FIELDS}
+    row.update(key="cis.zz.gamma", app="cis", label="Old code label", default_value=1)
+    _files(tmp_path, _seed_sql(row), _guide_sql([{"key": "cis.zz.gamma", "label": "Plain label", "guide": GUIDE}]),
+           _seed_sql(dict(row, label="Re-seeded label", default_value=2)))
+    rows, sources = gen.seed_rows(tmp_path)
+    assert sources == ["001_x.sql", "002_x.sql", "003_x.sql"]
+    assert rows[0]["label"] == "Re-seeded label" and rows[0]["default_value"] == 2 and rows[0]["guide"] == GUIDE
+
+
+def test_a_seed_row_may_carry_its_guide(tmp_path):
+    row = {f: None for f in gen.FIELDS}
+    row.update(key="cis.zz.delta", app="cis", label="Delta", default_value=1, guide=GUIDE)
+    _files(tmp_path, _seed_sql(row))
+    assert gen.seed_rows(tmp_path)[0][0]["guide"] == GUIDE
+
+
+def test_a_guide_of_an_unknown_key_or_without_label_fails_the_generator(tmp_path):
+    _files(tmp_path, _guide_sql([{"key": "cis.zz.nobody", "label": "X", "guide": GUIDE}]))
+    with pytest.raises(SystemExit):
+        gen.seed_rows(tmp_path)
+    row = {f: None for f in gen.FIELDS}
+    row.update(key="cis.zz.eps", app="cis", default_value=1)
+    (tmp_path / "001_x.sql").write_text(_seed_sql(row) + _guide_sql([{"key": "cis.zz.eps", "guide": GUIDE}]),
+                                        encoding="utf-8")
     with pytest.raises(SystemExit):
         gen.seed_rows(tmp_path)
