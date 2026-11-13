@@ -83,6 +83,19 @@ T2_SWITCHES = ("T2_JUDGE_GATE", "T2_JUDGE_REPEAT", "T2_JUDGE_ANCHORS", "T2_BRAND
                "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM", FLAG)
 
 
+def _serve_arm_settings(run_env: dict):
+    """S279 L2: T2_JUDGE_GATE and T3_BACKGROUND_FACTS are settings now (cis.quality_modes.t2_judge_gate /
+    t3_background_facts); the env vars are no longer read. Serve them from the arm's env so each arm still runs the
+    switch it names; an unset var serves the pre-move code default (brand_fit_mission / off), as before the move."""
+    from shared import settings
+
+    served = {"cis.quality_modes.t2_judge_gate": (run_env.get("T2_JUDGE_GATE") or "brand_fit_mission").strip().lower(),
+              "cis.quality_modes.t3_background_facts":
+                  (run_env.get("T3_BACKGROUND_FACTS") or "").strip().lower() in ("1", "true", "on", "yes")}
+    real = settings.READER.get
+    return patch.object(settings.READER, "get", lambda k, t=None: served[k] if k in served else real(k, t))
+
+
 def _sha(obj: Any) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
 
@@ -205,6 +218,7 @@ def replay_version(version: dict, env: dict) -> dict:
     out: dict = {"id": str(version.get("id")), "input": production_input(pt)}
     with ExitStack() as st:
         st.enter_context(patch.dict(os.environ, {**clean_env, **env}, clear=True))
+        st.enter_context(_serve_arm_settings({**clean_env, **env}))
         st.enter_context(patch.object(LLMClient, "__init__", lambda self, *a, **k: None))
         st.enter_context(patch.object(LLMClient, "generate", lambda self, req: tape.answer(req)))
         st.enter_context(patch.object(call_log, "record_call", AsyncMock(return_value=None)))

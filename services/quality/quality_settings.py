@@ -5,10 +5,13 @@ The values themselves are read where they are used, at call time, through ``regi
 ``registry.detector_mode`` / ``writing_policy.band`` / ``settings.get(settings_keys...)`` (the settings reader's 30 s
 snapshot, never the database). This module adds what a single definition cannot say:
 
-- ``cross_problem(key, value)``: the rules between keys (a cap stays under the pass line, a band's minimum under its
-  maximum, a writer's aim inside the meta band, a Channel bar names known fields only) and the keys not editable yet
-  (the SEO bands and meta aims, read at process start on the A1 / T2 path: ``START_TIME_REASON``). The settings API
-  calls it before a proposal is stored (422 with the reason), next to the per-definition bounds check.
+- ``cross_problem(key, value, get=None)``: the rules between keys (a cap stays under the pass line, a band's minimum
+  under its maximum, a writer's aim inside the meta band, the blog length band inside the word band the t9_write prompt
+  states, a Channel bar names known fields only) and the keys not editable yet (the SEO bands and meta aims, read at
+  process start on the A1 / T2 path: ``START_TIME_REASON``). The settings API calls it before a proposal is stored
+  (422, against the reader's snapshot) and again when a proposal is approved (409, ``get`` = the approved rows read
+  inside the decision transaction, now and once every future-dated approval is in force), so two proposals that
+  each pass alone cannot both be approved into a state the rules forbid.
 - ``ui_values()``: the pass line, the score colour bands and the SEO bands the admin pages show (GET
   /admin/quality/thresholds), so the frontend keeps no copy (audit 5.4 check 3).
 - ``settings_fp()`` / ``prompt_fp()``: '' while every quality value is its seeded default, else a short sha of the
@@ -21,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any, Callable, Optional
 
 from services.quality import settings_keys as K
@@ -40,9 +44,10 @@ _NOT_ABOVE: tuple[tuple[str, str], ...] = (
 _LABEL = {Q["pass_line"]: "the pass line", Q["ui.score_band_top"]: "the top colour band"}
 
 
-def _getter(key: str, value: Any) -> Callable[[str], Any]:
-    """settings.get, with the proposed value of ``key`` in place of its value in force."""
-    return lambda k: value if k == key else settings.get(k)
+def _getter(key: str, value: Any, base: Optional[Callable[[str], Any]] = None) -> Callable[[str], Any]:
+    """``base`` (default settings.get, the values in force), with the proposed value of ``key`` in its place."""
+    get = base or settings.get
+    return lambda k: value if k == key else get(k)
 
 
 def _name(key: str) -> str:
@@ -69,6 +74,32 @@ def _band_problems(key: str, get: Callable[[str], Any]) -> Optional[str]:
     for lo_name, lo, hi_name, hi in pairs:
         if key in (lo, hi) and not _num(get(lo)) < _num(get(hi)):
             return f"{lo_name} ({get(lo)}) must stay under {hi_name} ({get(hi)})"
+    return _blog_words_problem(key, get)
+
+
+_BLOG_LENGTH_KEYS = frozenset(K.T9_BLOG_CHARS + (Q["t9.blog_length_target_margin"],))
+
+
+def _blog_words_problem(key: str, get: Callable[[str], Any]) -> Optional[str]:
+    """The blog length settings against the word band the t9_write prompt states (prompts._BLOG_WORDS_TOP /
+    _BLOG_WORDS_MAX stay prompt text): the word floor rendered from the F4 floor plus the margin must stay at or under
+    the band's top, and the F4 ceiling must leave room for the most words the prompt allows and for the aim itself.
+    Same arithmetic as length_contract.target_chars() / target_words(), on the proposed values."""
+    if key not in _BLOG_LENGTH_KEYS:
+        return None
+    from services.acp_content_writing import length_contract, prompts  # lazy: prompts imports half the package
+
+    floor, ceiling = _num(get(K.T9_BLOG_CHARS[0])), _num(get(K.T9_BLOG_CHARS[1]))
+    aim_chars = round(floor * (1 + _num(get(Q["t9.blog_length_target_margin"]))))
+    aim_words = int(math.ceil(min(aim_chars, ceiling) / length_contract.CHARS_PER_WORD / 10.0) * 10)
+    if aim_words > prompts._BLOG_WORDS_TOP:
+        return (f"the blog length aim (floor {floor:,.0f} chars plus the margin = about {aim_words:,} words) must not "
+                f"be above the top of the word band the writer prompt states ({prompts._BLOG_WORDS_TOP:,} words)")
+    most_chars = math.ceil(prompts._BLOG_WORDS_MAX * length_contract.CHARS_PER_WORD)
+    if ceiling < max(most_chars, aim_chars):
+        return (f"the blog length ceiling ({ceiling:,.0f} chars) must leave room for the aim ({aim_chars:,} chars) and "
+                f"for the most words the writer prompt allows ({prompts._BLOG_WORDS_MAX:,} words, about "
+                f"{most_chars:,} chars)")
     return None
 
 
@@ -133,13 +164,20 @@ START_TIME_REASON = ("not editable yet: the A1 / T2 writer prompts and the meta 
                      "render the SEO bands at call time on the A1 / T2 path). Today's value stays in force")
 
 
-def cross_problem(key: str, value: Any) -> Optional[str]:
-    """Why ``value`` for ``key`` breaks a rule between quality keys (None = fine). Only keys of settings_keys."""
+def governs(key: str) -> bool:
+    """Is ``key`` a quality key with rules between keys (the settings API re-checks these on approval)?"""
+    return key in _ALL
+
+
+def cross_problem(key: str, value: Any, get: Optional[Callable[[str], Any]] = None) -> Optional[str]:
+    """Why ``value`` for ``key`` breaks a rule between quality keys (None = fine). Only keys of settings_keys.
+    ``get`` serves the OTHER keys' values (default: settings.get, the reader's snapshot); the approval passes the
+    approved rows it read inside its transaction."""
     if key not in _ALL:
         return None
     if key in _START_TIME_KEYS and value != settings.definition(key).default_value:
         return START_TIME_REASON
-    return _channel_bar_problem(key, value) or _order_problems(key, _getter(key, value))
+    return _channel_bar_problem(key, value) or _order_problems(key, _getter(key, value, get))
 
 
 _ALL = frozenset(K.ALL_KEYS)
@@ -179,4 +217,4 @@ def prompt_fp() -> str:
     return _fp(K.PROMPT_KEYS)
 
 
-__all__ = ["START_TIME_REASON", "cross_problem", "prompt_fp", "settings_fp", "ui_values"]
+__all__ = ["START_TIME_REASON", "cross_problem", "governs", "prompt_fp", "settings_fp", "ui_values"]

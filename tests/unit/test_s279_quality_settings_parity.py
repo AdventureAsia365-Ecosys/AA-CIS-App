@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 
 import pytest
 
@@ -314,6 +315,110 @@ def test_a_good_value_passes_every_rule():
         assert quality_settings.cross_problem(key, value) is None, key
 
 
+@pytest.mark.parametrize("key,value,why", [
+    ("cis.t9.blog_chars_min", 6500, "top of the word band"),           # aim 1,320 words > the prompt's 1,300
+    ("cis.t9.blog_chars_max", 5000, "most words the writer prompt allows"),
+    ("cis.t9.blog_chars_max", 9000, "most words the writer prompt allows"),  # under 1,600 words x 5.8
+])
+def test_the_blog_length_settings_stay_inside_the_prompt_word_band(key, value, why):
+    assert settings.validate(settings.definition(key), value) is None      # inside its own bounds ...
+    problem = quality_settings.cross_problem(key, value)
+    assert problem and why in problem                                      # ... but not with the prompt's band
+
+
+def test_the_blog_length_rule_reads_the_prompt_band_and_the_contract():
+    from services.acp_content_writing import length_contract, prompts
+    assert quality_settings.cross_problem("cis.t9.blog_chars_min", 4700) is None
+    assert quality_settings.cross_problem("cis.t9.blog_chars_max", 9300) is None
+    margin = "cis.quality.t9_blog_length_target_margin"
+    assert quality_settings.cross_problem(margin, 0.5) is None                 # 4,700 x 1.5 = about 1,220 words
+    with serve({"cis.t9.blog_chars_min": 6000}):                              # 6,000 x 1.5 = about 1,560 words
+        assert "top of the word band" in quality_settings.cross_problem(margin, 0.5)
+    # the highest floor the rule lets through renders a prompt whose floor is not above its top
+    with serve({"cis.t9.blog_chars_min": 6440}):
+        assert quality_settings.cross_problem("cis.t9.blog_chars_min", 6440) is None
+        lo, hi = prompts._blog_words()
+        assert lo <= hi == prompts._BLOG_WORDS_TOP
+        assert length_contract.ceiling_chars() >= prompts._BLOG_WORDS_MAX * length_contract.CHARS_PER_WORD
+
+
+def test_cross_problem_takes_the_other_values_from_the_given_getter():
+    approved = {"cis.quality.pass_line": 6.2}
+    get = lambda k: approved.get(k, settings.definition(k).default_value)  # noqa: E731
+    assert quality_settings.cross_problem("cis.quality.a1_missing_field_cap", 6.5) is None     # vs the seed 7.0
+    assert "under the pass line" in quality_settings.cross_problem("cis.quality.a1_missing_field_cap", 6.5, get=get)
+
+
+# ── the approval re-checks the rules between keys (S279 L2 review) ───────────────────────────────────────────────
+
+class _DecideConn:
+    """Enough of asyncpg for settings_registry._decide: the approved rows (now / eventually) and the UPDATE."""
+
+    def __init__(self, now: dict, eventual: dict | None = None):
+        self.now, self.eventual = now, eventual if eventual is not None else now
+        self.updated = False
+        self.locks = 0
+
+    async def execute(self, sql, *args):
+        if "pg_advisory_xact_lock" in sql:
+            self.locks += 1
+
+    async def fetch(self, sql, keys, value_id, eventual):
+        rows = self.eventual if eventual else self.now
+        return [{"key": k, "value_text": json.dumps(v)} for k, v in rows.items() if k in keys]
+
+    async def fetchrow(self, sql, *args):
+        if sql.lstrip().startswith("UPDATE"):
+            self.updated = True
+            return None                       # stop after the UPDATE: the test only asks whether it was reached
+        return None
+
+
+def _approve(conn, key, value):
+    from api.services import settings_registry as reg
+    proposal = {"id": "00000000-0000-4000-8000-0000000000aa", "key": key, "value": value, "proposed_by": "admin:a",
+                "tenant_id": None}
+    return asyncio.run(reg._decide(conn, settings.definition(key), proposal, actor="admin:b", approve=True, note=None))
+
+
+def test_two_proposals_that_pass_alone_cannot_both_be_approved():
+    from api.services import settings_registry as reg
+    cap, line = "cis.quality.a1_missing_field_cap", "cis.quality.pass_line"
+    # each passes alone against the seeds (cap 6.5 < 7.0; pass line 6.2 > cap 4.0 and mission cap 6.0)
+    assert quality_settings.cross_problem(cap, 6.5) is None
+    assert quality_settings.cross_problem(line, 6.2) is None
+    conn = _DecideConn(now={cap: 6.5})                 # the cap was approved first
+    with pytest.raises(reg.SettingsError) as e:
+        _approve(conn, line, 6.2)
+    assert e.value.status == 409 and e.value.code == "cross_check" and "under" in e.value.detail
+    assert conn.updated is False and conn.locks == 1
+
+
+def test_a_future_dated_approval_counts_on_approval():
+    from api.services import settings_registry as reg
+    top, line = "cis.quality.ui_score_band_top", "cis.quality.pass_line"
+    conn = _DecideConn(now={}, eventual={top: 7.5})    # top 7.5 approved for next week
+    with pytest.raises(reg.SettingsError) as e:
+        _approve(conn, line, 8.0)
+    assert e.value.code == "cross_check" and "future-dated" in e.value.detail
+
+
+def test_an_approval_that_fits_reaches_the_update():
+    conn = _DecideConn(now={"cis.quality.a1_missing_field_cap": 5.0})
+    from api.services import settings_registry as reg
+    with pytest.raises(reg.SettingsError) as e:        # the fake UPDATE returns no row: "decided meanwhile"
+        _approve(conn, "cis.quality.pass_line", 6.2)
+    assert e.value.code == "already_decided" and conn.updated is True
+
+
+def test_a_non_quality_key_is_not_cross_checked_on_approval():
+    conn = _DecideConn(now={})
+    from api.services import settings_registry as reg
+    with pytest.raises(reg.SettingsError):
+        _approve(conn, "cis.publish.daily_limit_default", 12)
+    assert conn.updated is True and conn.locks == 0
+
+
 # ── the $0 replay script (live step after deploy) ─────────────────────────────────────────────────────────────────
 
 def test_the_replay_before_values_are_the_seeds_and_agree_with_the_values_in_force():
@@ -324,3 +429,51 @@ def test_the_replay_before_values_are_the_seeds_and_agree_with_the_values_in_for
     assert all(len(set(rp._both(lambda s=s: t2._t2_status(s)))) == 1 for s in rp._SCORES)
     with serve({"cis.quality.pass_line": 8.0}):           # an approved change shows as a verdict difference
         assert rp._both(lambda: t2._t2_status(7.5)) == ("needs_review", "ai_generated")
+
+
+def _stored_rows():
+    """Invented rows as the pre-move code stored them (seeded values in force)."""
+    from services.acp_content_writing import f9_policy
+    from services.quality import registry as qr
+    claim = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): "The harbour town of Velmora sells '
+             'tin lanterns." (claims: x; source: the source is silent)')
+    f9 = f9_policy.apply_policy({"gate": qr.F9_CTA_FACT, "passed": False, "blocking": True, "repairable": True,
+                                 "violations": [claim]}, mode=f9_policy.INTERIM_MODE)
+    short = {"gate": "F4_extreme_length", "passed": False, "violations": ["length_short: content is only 4000 chars"]}
+    pieces = [{"id": "p-short", "channel": "blog", "content_text": "a" * 4000, "gate_ledger": [short]},
+              {"id": "p-ok", "channel": "blog", "content_text": "b" * 6000,
+               "gate_ledger": json.dumps([{"gate": "F4_extreme_length", "passed": True}, f9])}]
+    versions = [{"id": "v-pass", "score": 7.5, "status": "ai_generated", "edit_source": "ai_generated"},
+                {"id": "v-low", "score": 6.5, "status": "needs_review", "edit_source": "ai_generated"},
+                {"id": "v-hard", "score": 8.0, "status": "needs_review", "edit_source": "ai_generated"},
+                {"id": "v-tenant", "score": 9.0, "status": "approved", "edit_source": "tenant_edit"}]
+    review = [{"id": "r-low", "score": 6.5, "failure_summary": "brand_audit=pass; low_quality(score=6.5<7.0)"},
+              {"id": "r-ok", "score": 7.5, "failure_summary": "brand_audit=pass"},
+              {"id": "r-other", "score": 2.0, "failure_summary": "dead letter: worker gone"}]
+    return review, versions, pieces
+
+
+def test_the_replay_matches_the_stored_verdicts_at_the_seeds():
+    from scripts.quality import replay_s279_l2_gate_parity as rp
+    review, versions, pieces = _stored_rows()
+    mism, info = rp._stored(review, versions, pieces)
+    assert mism == {"pieces_length": [], "pieces_f9": [], "t2_versions": [], "review_queue": []}
+    assert info == {"t2_review_with_pass_score": ["v-hard"], "review_floor_moved": []}
+
+
+@pytest.mark.parametrize("values,check,ids", [
+    ({"cis.t9.blog_chars_min": 3000}, "pieces_length", ["p-short"]),           # a reader on the wrong floor
+    ({"cis.t9.blog_chars_max": 5000}, "pieces_length", ["p-ok"]),
+    ({"cis.quality_claims.f9_unsupported_other": "hold"}, "pieces_f9", ["p-ok"]),
+    ({"cis.quality.pass_line": 8.0}, "t2_versions", ["v-pass"]),
+    ({"cis.quality.pass_line": 8.0}, "review_queue", ["r-ok"]),
+])
+def test_the_replay_catches_a_reader_that_disagrees_with_the_stored_verdict(values, check, ids):
+    from scripts.quality import replay_s279_l2_gate_parity as rp
+    review, versions, pieces = _stored_rows()
+    with serve(values):
+        mism, _ = rp._stored(review, versions, pieces)
+        info = rp._stored(review, versions, pieces)[1]
+    assert mism[check] == ids
+    if check == "review_queue":                       # r-low names the floor of its day (7.0): listed as moved
+        assert info["review_floor_moved"] == ["r-low"]

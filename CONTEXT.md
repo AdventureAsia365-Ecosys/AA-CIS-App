@@ -3893,8 +3893,10 @@ band are settings of the platform settings registry (Platform › Settings: evid
 (A1 retry, judge, T2 status, T3, T7, admin views, golden-set eval), each naming its `setting` (`registry.threshold`
 reads it at call time); taxonomy.yaml keeps the detectors without their mode; writing_policy.yaml keeps the structure
 (`writing_policy.effective` lays the values in; the compiled file and `policy_sha` stay the seeded policy). Rules
-between keys (a cap under the pass line, a band's minimum under its maximum, the Channel bar fields) are
-`quality_settings.cross_problem`; the SEO bands and meta aims are listed but not editable yet (the A1 / T2 writer
+between keys (a cap under the pass line, a band's minimum under its maximum, the blog length band inside the word
+band the t9_write prompt states, the Channel bar fields) are `quality_settings.cross_problem`, checked when a value is
+proposed and again when it is approved (against the approved rows read in the decision transaction, now and once
+future-dated approvals take effect: 409 `cross_check`); the SEO bands and meta aims are listed but not editable yet (the A1 / T2 writer
 prompts read them at process start). The change-control `gates` lock pins the governance and seed of every gate
 setting and requires evidence_required on each. Jev floors stay per question in `shared.decision_question`. Names
 are persisted (ledger, `repair_log`, `held_reason`, flags, `llm_call_log.quality_signal`): never rename one; a removed
