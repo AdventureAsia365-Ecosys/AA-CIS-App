@@ -218,3 +218,75 @@ def test_failure_never_prints_an_error_message():
                                           ({"ok": False, "complete": False}, 1), ({}, 1)])
 def test_exit_code(report, code):
     assert restore_drill.exit_code(report) == code
+
+
+# ── store and the drill's batch reader ──────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_dir_store_round_trip(tmp_path):
+    from services.tenant_backup.store import DirStore, ObjectMissing
+
+    src = tmp_path / "src.txt"
+    src.write_text("one line\n")
+    store = DirStore(str(tmp_path / "bucket"))
+    await store.put_file("exports/tenants/t/cis/b/manifest.json", str(src), "application/json")
+    assert await store.list_keys("exports/tenants/t/") == ["exports/tenants/t/cis/b/manifest.json"]
+    out = tmp_path / "out.txt"
+    await store.get_file("exports/tenants/t/cis/b/manifest.json", str(out))
+    assert out.read_text() == "one line\n"
+    with pytest.raises(ObjectMissing):
+        await store.get_file("exports/tenants/t/cis/b/SHA256SUMS", str(out))
+
+
+class _FakeS3Client:
+    def __init__(self):
+        self.objects: dict[str, bytes] = {}
+        self.extra: dict[str, dict] = {}
+
+    def upload_file(self, path, bucket, key, ExtraArgs=None):
+        self.objects[key] = open(path, "rb").read()
+        self.extra[key] = ExtraArgs
+
+    def download_file(self, bucket, key, path):
+        if key not in self.objects:
+            err = Exception("missing")
+            err.response = {"Error": {"Code": "404"}}
+            raise err
+        open(path, "wb").write(self.objects[key])
+
+    def list_objects_v2(self, **kw):
+        keys = sorted(k for k in self.objects if k.startswith(kw["Prefix"]))
+        if "ContinuationToken" not in kw:
+            return {"Contents": [{"Key": k} for k in keys[:1]], "IsTruncated": len(keys) > 1,
+                    "NextContinuationToken": "n"}
+        return {"Contents": [{"Key": k} for k in keys[1:]], "IsTruncated": False}
+
+
+@pytest.mark.asyncio
+async def test_s3_store_asks_for_sse_and_maps_a_missing_object(tmp_path, monkeypatch):
+    from services.tenant_backup.store import ObjectMissing, S3Store, gold_bucket
+
+    monkeypatch.setenv("GOLD_BUCKET", "gold-test")
+    assert gold_bucket() == "gold-test"
+    client = _FakeS3Client()
+    store = S3Store(client=client)
+    assert store.bucket == "gold-test"
+    src = tmp_path / "a"
+    src.write_bytes(b"x")
+    await store.put_file("exports/k1", str(src), "text/plain")
+    await store.put_file("exports/k2", str(src), "text/plain")
+    assert client.extra["exports/k1"] == {"ServerSideEncryption": "AES256", "ContentType": "text/plain"}
+    assert await store.list_keys("exports/") == ["exports/k1", "exports/k2"]
+    await store.get_file("exports/k1", str(tmp_path / "b"))
+    with pytest.raises(ObjectMissing):
+        await store.get_file("exports/nope", str(tmp_path / "c"))
+
+
+def test_batches_split_by_rows_and_skip_blank_lines(tmp_path, monkeypatch):
+    import gzip
+
+    path = tmp_path / "t.jsonl.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        f.write("".join(f'{{"n": {i}}}\n' for i in range(5)) + "\n")
+    monkeypatch.setattr(restore_drill, "BATCH_ROWS", 2)
+    assert [len(b) for b in restore_drill._batches(str(path))] == [2, 2, 1]
