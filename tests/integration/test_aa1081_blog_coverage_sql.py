@@ -245,7 +245,8 @@ async def test_propose_slate_min_seed_moves_a_short_seed_off_blog(conn, monkeypa
     result = await _propose_on(conn, w.tenant)
     tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
     assert tour_a["topics"] == 2 and result["blog_coverage"]["short_seed"] == 0
-    assert result["blog_coverage"]["skipped"] == []
+    assert [(r["segment_id"], r["reason"]) for r in result["blog_coverage"]["skipped"]] == [
+        ("zz1081_e_b1", "thin_walk")]                              # tour B's thin moment only
 
 
 @pytest.mark.asyncio

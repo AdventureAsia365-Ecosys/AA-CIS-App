@@ -54,7 +54,7 @@ PIECES_SQL = """
     JOIN shared.tenants t ON t.tenant_id = cp.tenant_id
     JOIN acp_shared.angle_gate_request r ON r.request_id = cp.angle_gate_request_id
     LEFT JOIN acp_shared.subject s ON s.subject_id = r.subject_id
-    WHERE t.slug = ANY($1::text[]) AND cp.channel = 'blog' AND cp.created_at >= $2
+    WHERE t.slug = ANY($1::text[]) AND r.channel = 'blog' AND cp.created_at >= $2
       AND cp.status IN ('approved', 'held')
     ORDER BY t.slug, cp.created_at
 """
