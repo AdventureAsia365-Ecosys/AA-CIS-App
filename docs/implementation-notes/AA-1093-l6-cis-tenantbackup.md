@@ -56,6 +56,8 @@ copies the CRM model (`crm_pilot_backup` + `app.portability.restore_drill`) for 
 - New: `services/tenant_backup/` (`catalogue.py`, `export.py`, `store.py`, `restore_drill.py`, `enqueue.py`),
   `services/jobs/tenant_backup_job.py` (kind `tenant_backup`, background, concurrency 1, max_attempts 2).
 - `services/jobs/__init__.py` registers the kind; `api/core/ops_metrics_sampler.py` adds `_tenant_backup_part`.
+- `shared/llm_client/capacity.py`: `KIND_LINES["tenant_backup"] = None` (the kind makes no LLM call; the
+  capacity guard requires a line for every registered kind).
 - `services/acp_shared/audit_log.py`: `AdminTenantAuditAction.RESTORE_DRILL = "tenant.restore_drill"` (staff-only, not in
   the tenant activity allowlist).
 - Tests: `tests/unit/test_aa1093_tenant_backup.py`, `tests/integration/test_aa1093_tenant_backup.py`; the background
@@ -81,4 +83,6 @@ copies the CRM model (`crm_pilot_backup` + `app.portability.restore_drill`) for 
   "kept 7 days" of D11 needs the companion AA-CIS-Infra change (noncurrent versions expire after 1 day) in this wave.
 - The schedule stays off until `TENANT_BACKUP_PILOT=on` is set on the api task (AA-CIS-Infra `modules/ecs`).
 - The drill runs in the API container (it has the cis_app DSN and reads the bucket); the job runs on the worker.
+- The integration test reads the drill's audit row by key (`tenant_id` + `resource_id` = backup id), not by
+  `ORDER BY created_at` (the SQL order stability guard refuses a timestamp-only order in DB tests).
 - Root runbook section text (for the restore drill runbook, written by the root lane) is in the lane's return notes.
