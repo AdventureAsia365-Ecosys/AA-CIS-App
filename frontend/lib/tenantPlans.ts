@@ -220,6 +220,15 @@ export interface SubscriptionResp {
   override_rules?: OverrideRules;
 }
 
+// ── Leave pilot mode (AA-1086 G2): POST /admin/tenants/{id}/pilot/end, admin only, reason required ─────────────
+
+export const END_PILOT_REASON_MAX = 500;
+export const endPilotPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/pilot/end`;
+export interface EndPilotResp {
+  tenant_id: string; is_pilot: boolean; changed: boolean; previous_pilot_ends_at: string | null;
+  ended_early: boolean | null;
+}
+
 // ── Add-on requests (AA-1036 R3, root ADR 0019 d7): the agency asks from the agency app, staff decide here ────────
 
 export interface AddOnRequestRow {

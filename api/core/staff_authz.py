@@ -439,6 +439,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): _TENANT_BOOK_WRITE,   # AA-1035: + customer_success, scoped
     ("POST", "/admin/tenants/{tenant_id}/offboard"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/restore"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/pilot/end"): TENANT_WRITE,  # AA-1086 G2: leave pilot mode (root ADR 0019 d16)
     # AA-1035: GET /admin/tenants/{tenant_id}/details — Master Content (every content.read role) reads the aa_internal
     # catalog through it; require_tenant_scope keeps those roles on the aa_internal tenant (scope "internal"). finance
     # (billing.read) opens Tenant 360 on it too and gets the header only (no tours, runs or brand text: admin.py).
@@ -821,11 +822,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/supply-content/{entity_id}/unpublish"): REVIEW_ACT,
 }
 
-# POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The
-# route-policy test allows these to be missing from the app; once the route exists it must match the
-# template exactly (every /admin/platform/* route needs a POLICY entry, so a different parameter name
-# fails CI there instead of leaving the route open to every staff role). Empty since AA-883's two
-# /admin/platform/staff routes landed.
+# POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The route-policy test
+# allows these to be missing from the app; once the route exists it must match the template exactly (every
+# /admin/platform/* route needs a POLICY entry, so a different parameter name fails CI there instead of leaving the
+# route open to every staff role). Empty since AA-883's two /admin/platform/staff routes landed.
 AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 
 # Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope). /v1/social has no

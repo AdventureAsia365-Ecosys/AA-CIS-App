@@ -174,6 +174,9 @@ class AdminTenantAuditAction:
     # 374); an approval attaches the plan through the tenant_provision saga (its own tenant.subscription_changed rows)
     ADDON_REQUEST_APPROVED = "tenant.addon_request_approved"
     ADDON_REQUEST_DECLINED = "tenant.addon_request_declined"
+    # AA-1086 G2 (root ADR 0019 d16): an admin ended the tenant's pilot (is_pilot / pilot_ends_at cleared, the Dev pilot
+    # slot is free again; services/tenant_account/pilot.py). details: reason, the end date it had, ended_early.
+    PILOT_ENDED = "tenant.pilot_ended"
 
 
 async def write_audit_log(

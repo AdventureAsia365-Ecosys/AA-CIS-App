@@ -11,6 +11,7 @@ import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
+  END_PILOT_REASON_MAX, endPilotPath,
 } from "./tenantPlans.ts";
 
 const CATALOGUE = [
@@ -291,4 +292,19 @@ test("runSaga polls the given path (an add-on approval polls its request route)"
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+
+// AA-1086 G2: leave pilot mode
+test("the end-pilot route and reason bound match the backend", () => {
+  assert.equal(endPilotPath("t-1"), "/api/admin/tenants/t-1/pilot/end");
+  assert.equal(END_PILOT_REASON_MAX, 500);   // services/tenant_account/pilot.py REASON_MAX
+});
+
+test("the End pilot button is admin only and confirms with a required reason", () => {
+  const src = readFileSync(fileURLToPath(new URL("../app/admin/tenants/_components/Tenant360Subscription.tsx",
+    import.meta.url)), "utf8");
+  assert.match(src, /acct\.is_pilot && can\(role, "tenant\.write"\)/);
+  assert.match(src, /reason=\{\{ label: t\("endPilotReason"\), required: true/);
+  assert.match(src, /testId="end-pilot-confirm"/);
 });
