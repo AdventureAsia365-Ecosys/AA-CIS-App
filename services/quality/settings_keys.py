@@ -91,7 +91,7 @@ F9_CLASS_ACTIONS: dict[str, str] = {
 
 # taxonomy.yaml detector (class id, ref) -> its mode setting
 DETECTOR_MODES: dict[tuple[str, str], str] = {
-    ("fact.inclusion", "ITINERARY_MEAL_TIME_INVENTED"): "cis.quality_detectors.fact_inclusion.itinerary_meal_time_invented",
+    ("fact.inclusion", "ITINERARY_MEAL_TIME_INVENTED"): "cis.quality_detectors.fact_inclusion.itinerary_meal_time_invented",  # noqa: E501
     ("fact.inclusion", "UNSUPPORTED_CLAIM"): "cis.quality_detectors.fact_inclusion.unsupported_claim",
     ("fact.inclusion", "a1_promise_unsupported"): "cis.quality_detectors.fact_inclusion.a1_promise_unsupported",
     ("fact.inclusion", "F9_cta_fact"): "cis.quality_detectors.fact_inclusion.f9_cta_fact",
@@ -115,16 +115,16 @@ DETECTOR_MODES: dict[tuple[str, str], str] = {
     ("fact.embellish", "F2_superlatives"): "cis.quality_detectors.fact_embellish.f2_superlatives",
     ("fact.embellish", "F18_rarity"): "cis.quality_detectors.fact_embellish.f18_rarity",
     ("fact.embellish", "F19_authenticity"): "cis.quality_detectors.fact_embellish.f19_authenticity",
-    ("struct.day_structure", "ITINERARY_DAY_COUNT_MISMATCH"): "cis.quality_detectors.struct_day_structure.itinerary_day_count_mismatch",
-    ("struct.day_structure", "ITINERARY_STILL_COMPRESSED"): "cis.quality_detectors.struct_day_structure.itinerary_still_compressed",
-    ("struct.day_structure", "ITINERARY_STRUCTURE_WEAK"): "cis.quality_detectors.struct_day_structure.itinerary_structure_weak",
+    ("struct.day_structure", "ITINERARY_DAY_COUNT_MISMATCH"): "cis.quality_detectors.struct_day_structure.itinerary_day_count_mismatch",  # noqa: E501
+    ("struct.day_structure", "ITINERARY_STILL_COMPRESSED"): "cis.quality_detectors.struct_day_structure.itinerary_still_compressed",  # noqa: E501
+    ("struct.day_structure", "ITINERARY_STRUCTURE_WEAK"): "cis.quality_detectors.struct_day_structure.itinerary_structure_weak",  # noqa: E501
     ("struct.day_structure", "DAY_SUBDAY_SPLIT"): "cis.quality_detectors.struct_day_structure.day_subday_split",
     ("struct.day_structure", "DAY_OUTPUT_DUPLICATE"): "cis.quality_detectors.struct_day_structure.day_output_duplicate",
     ("struct.day_structure", "DAY_OUTPUT_ORDER"): "cis.quality_detectors.struct_day_structure.day_output_order",
     ("struct.day_structure", "DAY_OUTPUT_GAP"): "cis.quality_detectors.struct_day_structure.day_output_gap",
     ("struct.day_structure", "DAY_OUTPUT_EXTRA"): "cis.quality_detectors.struct_day_structure.day_output_extra",
-    ("struct.day_structure", "DAY_DEPARTURE_MIDTRIP"): "cis.quality_detectors.struct_day_structure.day_departure_midtrip",
-    ("struct.day_structure", "DAY_COUNT_VS_DURATION"): "cis.quality_detectors.struct_day_structure.day_count_vs_duration",
+    ("struct.day_structure", "DAY_DEPARTURE_MIDTRIP"): "cis.quality_detectors.struct_day_structure.day_departure_midtrip",  # noqa: E501
+    ("struct.day_structure", "DAY_COUNT_VS_DURATION"): "cis.quality_detectors.struct_day_structure.day_count_vs_duration",  # noqa: E501
     ("struct.day_structure", "DAY_PLACE_MISMATCH"): "cis.quality_detectors.struct_day_structure.day_place_mismatch",
     ("struct.day_structure", "repair_contract"): "cis.quality_detectors.struct_day_structure.repair_contract",
     ("struct.truncated", "META_INCOMPLETE_SENTENCE"): "cis.quality_detectors.struct_truncated.meta_incomplete_sentence",
@@ -140,11 +140,11 @@ DETECTOR_MODES: dict[tuple[str, str], str] = {
     ("scope.framing", "F4_seo_surface"): "cis.quality_detectors.scope_framing.f4_seo_surface",
     ("scope.persona_promise", "F13_leak"): "cis.quality_detectors.scope_persona_promise.f13_leak",
     ("scope.persona_promise", "F15_voice"): "cis.quality_detectors.scope_persona_promise.f15_voice",
-    ("scope.faq_question_offtopic", "a3_question_about_here"): "cis.quality_detectors.scope_faq_question_offtopic.a3_question_about_here",
-    ("scope.faq_question_offtopic", "a3_question_foreign"): "cis.quality_detectors.scope_faq_question_offtopic.a3_question_foreign",
+    ("scope.faq_question_offtopic", "a3_question_about_here"): "cis.quality_detectors.scope_faq_question_offtopic.a3_question_about_here",  # noqa: E501
+    ("scope.faq_question_offtopic", "a3_question_foreign"): "cis.quality_detectors.scope_faq_question_offtopic.a3_question_foreign",  # noqa: E501
     ("safety.tenant_isolation", "F11_brand_name"): "cis.quality_detectors.safety_tenant_isolation.f11_brand_name",
-    ("safety.tenant_isolation", "F10_cannibalization_cross_tenant"): "cis.quality_detectors.safety_tenant_isolation.f10_cannibalization_cross_tenant",
-    ("source.contradiction", "SOURCE_DAY_CONTRADICTION"): "cis.quality_detectors.source_contradiction.source_day_contradiction",
+    ("safety.tenant_isolation", "F10_cannibalization_cross_tenant"): "cis.quality_detectors.safety_tenant_isolation.f10_cannibalization_cross_tenant",  # noqa: E501
+    ("source.contradiction", "SOURCE_DAY_CONTRADICTION"): "cis.quality_detectors.source_contradiction.source_day_contradiction",  # noqa: E501
     ("other.f6", "F17_trip_fact"): "cis.quality_detectors.other_f6.f17_trip_fact",
     ("other.f6", "HIGHLIGHTS_OPTIONAL_LANGUAGE"): "cis.quality_detectors.other_f6.highlights_optional_language",
     ("other.f7", "F17_trip_fact"): "cis.quality_detectors.other_f7.f17_trip_fact",
