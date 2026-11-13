@@ -228,7 +228,8 @@ async def test_backup_holds_the_tenant_rows_only_and_the_drill_restores_them(poo
     assert await admin.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE action = 'tenant.restore_drill'") \
         == audits + 1
     row = await admin.fetchrow("SELECT tenant_id, resource_id, details FROM acp_shared.audit_log "
-                               "WHERE action = 'tenant.restore_drill' ORDER BY created_at DESC LIMIT 1")
+                               "WHERE action = 'tenant.restore_drill' AND tenant_id = $1 AND resource_id = $2",
+                               tid, str(job_id))
     details = json.loads(row["details"]) if isinstance(row["details"], str) else row["details"]
     assert row["tenant_id"] == tid and row["resource_id"] == job_id
     assert set(details) == {"backup_id", "reason", "ok", "complete", "tables", "manifest_rows", "restored_rows",
