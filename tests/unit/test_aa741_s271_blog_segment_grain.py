@@ -158,6 +158,14 @@ class _Pool:
         yield self.conn
 
 
+@pytest.fixture(autouse=True)
+def _blog_seed_floor_off(monkeypatch):
+    """S279 thresholds L1: the Blog minimum seed is the setting cis.t7.blog_min_seed_words, seeded 600 (the Dev value);
+    these tests predate it and run with the floor off."""
+    from tests.unit.test_aa1081_blog_topic_coverage import set_min_seed
+    set_min_seed(monkeypatch, 0)
+
+
 async def _propose(conn, segments, thin=None):
     with patch.object(slate, "_tenant_market_codes", AsyncMock(return_value=(["US"], []))), \
          patch.object(slate, "_fetch_thin_walk_segments", AsyncMock(return_value=thin or {})), \
