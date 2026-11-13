@@ -6,8 +6,9 @@ of G1 and G9 are in AA-Partner, the E2E user list in AA-CIS-Infra, the runbook s
 
 ## Decisions
 
-- **G2 route lives in `api/routers/admin.py`** next to offboard / restore (the tenant lifecycle routes), with the logic
-  in `services/tenant_account/pilot.py`. Path `POST /admin/tenants/{tenant_id}/pilot/end`, POLICY `tenant.write`
+- **G2 route lives in `api/routers/admin_tenant_subscription.py`** (Tenant 360 › Subscription, where the button is), with
+  the logic in `services/tenant_account/pilot.py`. It first sat in `admin.py` next to offboard / restore; the AA-1097
+  file-size ratchet (baseline only shrinks) moved it out after main merged in. Path `POST /admin/tenants/{tenant_id}/pilot/end`, POLICY `tenant.write`
   (administrator only), re-checked by `_require_tenant_admin` like every AA-797 tenant write. No E2E identity reaches
   it (not on the A10b allowlist).
 - **Idempotent by state, not by key:** a tenant that is not the pilot answers 200 `changed: false` and writes nothing
@@ -34,7 +35,8 @@ of G1 and G9 are in AA-Partner, the E2E user list in AA-CIS-Infra, the runbook s
   `tenant.pilot_ended` (staff-only: not in the tenant Activity allowlist, its details hold the staff reason).
 - `services/tenant_account/e2e_fixtures.py`: subcommand `rehearsal-tenant --run <run> [--apply]`.
 - Tenant 360 › Subscription: "End pilot" button next to the pilot badge (only `is_pilot` and `can(role, "tenant.write")`),
-  kit `ConfirmModal` with a required reason; toast on success / no change.
+  kit `ConfirmModal` with a required reason; toast on success / no change. It is its own component
+  (`Tenant360EndPilot.tsx`) so `SubscriptionTab` stays at its AA-1097 complexity baseline (16).
 - Snapshots regenerated with the pinned fastapi / pydantic: `docs/api/openapi.json`, `aa882_staff_route_policy.json`,
   `aa1035_role_route_matrix.json`. CONTEXT.md: "Leaving pilot mode" bullet and the fixture sentence.
 

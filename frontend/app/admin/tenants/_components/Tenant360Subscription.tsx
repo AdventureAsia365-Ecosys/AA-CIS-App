@@ -8,8 +8,8 @@
 // DELETE …/entitlement-overrides/{key} (reason required, audited). Kit only (Section, DataTable, Drawer, Field, Select,
 // Input, ConfirmModal, Badge, Toast). AA-1036 R3: the agency's add-on requests sit above the subscriptions
 // (Tenant360AddOnRequests: approve runs the same saga, decline needs a reason). AA-1038 follow-up: the TripPlanner
-// lead route sits below the overrides (Tenant360LeadRoute). AA-1086 G2: "End pilot" next to the pilot badge (admin
-// only, tenant.write) asks for a reason in a confirm dialog and calls POST …/pilot/end, which clears the pilot marker.
+// lead route sits below the overrides (Tenant360LeadRoute). AA-1086 G2: "End pilot" next to the pilot badge
+// (Tenant360EndPilot, admin only) asks for a reason and calls POST …/pilot/end, which clears the pilot marker.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,19 +19,18 @@ import {
 } from "../../../_kit";
 import type { Translator } from "../../../_kit/core/i18n";
 import {
-  DEFAULT_OVERRIDE_RULES, END_PILOT_REASON_MAX, FEATURES_API, LIVE_STATUSES, PLANS_KEY, defaultOverrideMode,
-  endPilotPath, limitText, newRequestKey, overrideBody, overrideDraftOf, overrideFeatures, overrideModes, overridePath,
-  runSaga, sagaFailed, sendJson, sourceTone, statusTone, subscriptionKey, subscriptionPath,
-  type EndPilotResp, type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow,
-  type OverrideRules, type Product, type SubscriptionResp, type SubscriptionRow,
+  DEFAULT_OVERRIDE_RULES, FEATURES_API, LIVE_STATUSES, PLANS_KEY, defaultOverrideMode, limitText, newRequestKey,
+  overrideBody, overrideDraftOf, overrideFeatures, overrideModes, overridePath, runSaga, sagaFailed, sendJson,
+  sourceTone, statusTone, subscriptionKey, subscriptionPath,
+  type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow, type OverrideRules,
+  type Product, type SubscriptionResp, type SubscriptionRow,
 } from "@/lib/tenantPlans";
 import { can } from "@/lib/rbac";
 import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { T360_SUB } from "./subscription.messages";
 import { Tenant360AddOnRequests } from "./Tenant360AddOnRequests";
+import { Tenant360EndPilot } from "./Tenant360EndPilot";
 import { Tenant360LeadRoute } from "./Tenant360LeadRoute";
-
-const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45, margin: 0 } as const;
 
@@ -230,7 +229,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
   const [addOn, setAddOn] = useState<{ start: SubscriptionRow | null } | null>(null);
   const [cancelling, setCancelling] = useState<SubscriptionRow | null>(null);
   const [override, setOverride] = useState<{ row: OverrideRow | null } | null>(null);
-  const [endingPilot, setEndingPilot] = useState(false);
   const w = useMemo(() => words(t), [t]);
   const { role } = useAdminIdentity();
 
@@ -245,15 +243,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
       else toast.error(t("jobFailed", job.error ?? job.status));
     },
     onError: (e) => { setCancelling(null); toast.error(t("failed", e instanceof Error ? e.message : String(e))); },
-  });
-
-  const endPilot = useMutation({
-    mutationFn: (reason: string) => sendJson<EndPilotResp>(endPilotPath(tenantId), "POST", { reason }),
-    onSuccess: (r) => {
-      setEndingPilot(false);
-      void qc.invalidateQueries({ queryKey: subscriptionKey(tenantId) });
-      toast.success(r.changed ? t("endPilotDone") : t("endPilotNoChange"));
-    },
   });
 
   const subCols = useMemo<ColumnDef<SubscriptionRow, unknown>[]>(() => [
@@ -342,10 +331,7 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         </Badge>
         <Badge tone="neutral" dot={false}>{t("kind", acct.kind)}</Badge>
         {acct.is_pilot && acct.pilot_ends_at && <Badge tone="purple">{t("pilot", acct.pilot_ends_at.slice(0, 10))}</Badge>}
-        {acct.is_pilot && can(role, "tenant.write") && (
-          <Button size="sm" variant="secondary" testId="end-pilot"
-            onClick={() => { endPilot.reset(); setEndingPilot(true); }}>{t("endPilot")}</Button>
-        )}
+        <Tenant360EndPilot tenantId={tenantId} tenantName={acct.name} isPilot={acct.is_pilot} />
       </div>
 
       <Tenant360AddOnRequests tenantId={tenantId} data={data}
@@ -383,13 +369,6 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         onConfirm={() => cancelling && cancel.mutate(cancelling)}
         title={cancelling ? t("cancelTitle", t(`product_${cancelling.product}`)) : ""} body={t("cancelBody")}
         confirmLabel={t("cancelAddOn")} destructive busy={cancel.isPending} testId="addon-cancel-confirm" />
-      <ConfirmModal open={endingPilot} onClose={() => setEndingPilot(false)}
-        onConfirm={(reason) => endPilot.mutate(reason)}
-        title={t("endPilotTitle", acct.name)} body={t("endPilotBody")} confirmLabel={t("endPilot")} destructive
-        reason={{ label: t("endPilotReason"), required: true, maxLength: END_PILOT_REASON_MAX }}
-        busy={endPilot.isPending}
-        error={endPilot.error ? t("failed", errText(endPilot.error)) : null}
-        testId="end-pilot-confirm" />
     </div>
   );
 }

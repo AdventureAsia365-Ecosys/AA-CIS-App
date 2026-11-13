@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from api.core.staff_authz import POLICY, TENANT_WRITE, denial_reason, principal_from_role
-from api.routers import admin
+from api.routers.admin_tenant_subscription import EndPilotRequest, end_tenant_pilot
 from services.acp_shared.audit_log import AdminTenantAuditAction
 from services.tenant_account import pilot
 
@@ -82,8 +82,8 @@ def test_only_the_administrator_passes_the_policy(role):
 async def test_the_route_refuses_every_other_role(role):
     conn = _conn(_row())
     with pytest.raises(HTTPException) as e:
-        await admin.end_tenant_pilot(TID, admin.EndPilotRequest(reason="pilot over"), _request(conn),
-                                     x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role=role)
+        await end_tenant_pilot(TID, EndPilotRequest(reason="pilot over"), _request(conn),
+                               x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role=role)
     assert e.value.status_code == 403
     conn.fetchrow.assert_not_awaited()
     conn.execute.assert_not_awaited()
@@ -149,13 +149,13 @@ def test_the_reason_is_required_and_bounded(reason, code):
 @pytest.mark.asyncio
 async def test_the_route_ends_the_pilot_then_a_second_call_is_a_no_op():
     conn = _conn(_row())
-    first = await admin.end_tenant_pilot(TID, admin.EndPilotRequest(reason="rehearsal teardown"), _request(conn),
-                                         x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
+    first = await end_tenant_pilot(TID, EndPilotRequest(reason="rehearsal teardown"), _request(conn),
+                                   x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
     assert first.changed is True and first.is_pilot is False
     conn.fetchrow = AsyncMock(return_value=_row(is_pilot=False))
     conn.execute.reset_mock()
-    second = await admin.end_tenant_pilot(TID, admin.EndPilotRequest(reason="rehearsal teardown"), _request(conn),
-                                          x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
+    second = await end_tenant_pilot(TID, EndPilotRequest(reason="rehearsal teardown"), _request(conn),
+                                    x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
     assert second.changed is False and second.is_pilot is False
     conn.execute.assert_not_awaited()
 
@@ -167,18 +167,18 @@ async def test_the_route_ends_the_pilot_then_a_second_call_is_a_no_op():
 ])
 async def test_the_route_maps_refusals(row, reason, status, code):
     with pytest.raises(HTTPException) as e:
-        await admin.end_tenant_pilot(TID, admin.EndPilotRequest(reason=reason), _request(_conn(row)),
-                                     x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
+        await end_tenant_pilot(TID, EndPilotRequest(reason=reason), _request(_conn(row)),
+                               x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
     assert e.value.status_code == status and e.value.detail["detail"] == code
 
 
 @pytest.mark.asyncio
 async def test_the_route_refuses_a_bad_id_and_a_bad_secret():
     with pytest.raises(HTTPException) as e:
-        await admin.end_tenant_pilot("not-a-uuid", admin.EndPilotRequest(reason="x"), _request(_conn(_row())),
-                                     x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
+        await end_tenant_pilot("not-a-uuid", EndPilotRequest(reason="x"), _request(_conn(_row())),
+                               x_admin_secret=SECRET, x_admin_user_id="u-1", x_admin_role="admin")
     assert e.value.status_code == 422
     with pytest.raises(HTTPException) as e:
-        await admin.end_tenant_pilot(TID, admin.EndPilotRequest(reason="x"), _request(_conn(_row())),
-                                     x_admin_secret="wrong", x_admin_user_id="u-1", x_admin_role="admin")
+        await end_tenant_pilot(TID, EndPilotRequest(reason="x"), _request(_conn(_row())),
+                               x_admin_secret="wrong", x_admin_user_id="u-1", x_admin_role="admin")
     assert e.value.status_code == 403
