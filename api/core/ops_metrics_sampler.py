@@ -84,6 +84,10 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   last hours re-rolled for late rows; idempotency key per quarter hour) and, once, its backfill of the raw window;
   only while the kind is registered, CIS 372 is applied and AI_USAGE_ROLLUP is not off. Field `ai_usage_rollup` (the
   jobs created) or `ai_usage_rollup_error`.
+- AA-1093 part 3 (plan D11): each tick also queues the nightly backup of the pilot tenant (`tenant_backup`, $0,
+  database and S3) once per UTC day from 20:00 UTC (idempotency key per day), only while the kind is registered,
+  TENANT_BACKUP_PILOT=on (default off) and a tenant is the pilot. Field `tenant_backup` (the job id, when created) or
+  `tenant_backup_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -411,6 +415,19 @@ async def _tenant_account_tick_part(pool, kinds: dict, ts: datetime, out: dict) 
         out["tenant_account_tick"] = {"job_id": job_id, "key": key}
 
 
+async def _tenant_backup_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1093 part 3 (plan D11): the nightly backup of the pilot tenant, once per UTC day from its hour (idempotency
+    key per day; one indexed EXISTS a tick after the first). Only while the kind is registered and
+    TENANT_BACKUP_PILOT=on (default off)."""
+    from services.jobs.tenant_backup_job import KIND, enqueue_pilot_nightly, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, key = await enqueue_pilot_nightly(pool, now=ts)
+    if created:
+        out["tenant_backup"] = {"job_id": job_id, "key": key}
+
+
 async def _tenant_billing_tick_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     """AA-1037 R4: the hourly billing tick (Booking's billing status -> the account state), once per UTC hour
     (idempotency key per hour). Only while the kind is registered; TENANT_BILLING_TICK=off stops it."""
@@ -567,6 +584,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tenant_account_tick_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["tenant_account_tick_error"] = _err(e)
+
+    # AA-1093 part 3: at most one idempotent INSERT a day, only with TENANT_BACKUP_PILOT=on, same short budget
+    try:
+        await asyncio.wait_for(_tenant_backup_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["tenant_backup_error"] = _err(e)
 
     # AA-1037 R4: one idempotent INSERT an hour (database only), same short budget
     try:
