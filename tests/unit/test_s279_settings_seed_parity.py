@@ -81,10 +81,13 @@ def test_the_trash_window_is_badged_not_enforced():
     by_key = {r["key"]: r for r in _rows()}
     assert by_key["cis.content.trash_retention_days"]["enforced"] is False
     # AA-1093 L2 (CIS 411): the erasure saga's three keys stay not enforced until the saga code is deployed; a later
-    # migration marks them enforced and removes them from this list.
+    # migration marks them enforced and removes them from this list. AA-1048 (CIS 416): the claim-instrument
+    # evaluation's five limits likewise, until the evaluation code is deployed.
     assert sorted(k for k, r in by_key.items() if not r["enforced"]) == [
         "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
-        "cis.erasure.saga_approval_valid_hours"]
+        "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",
+        "cis.quality.instrument_eval_tp_keep_min_pct", "cis.spend.instrument_eval_cap_usd",
+        "cis.spend.instrument_eval_max_claims", "cis.spend.instrument_eval_trial_claims"]
 
 
 def test_the_measured_ratio_needs_evidence():
