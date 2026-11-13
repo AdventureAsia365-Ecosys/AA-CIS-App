@@ -8,7 +8,7 @@
   are installed, the TypeScript names from code_health_eslint.mjs.
 - End to end in a throwaway git repository: init -> check ok; a grown file and a new over-limit function fail;
   a baseline entry added after the base fails `check --base`; a raised limit fails.
-The same file is vendored in every app repo (AA-CIS-App, AA-Booking, AA-Partner, AA-TripPlanner-Web); unittest only, so
+The same tests run in every app repo (AA-CIS-App, AA-Booking, AA-Partner, AA-TripPlanner-Web); unittest only, so
 it runs under pytest and under `python3 -m unittest`.
 """
 
@@ -34,6 +34,8 @@ def _repo_root() -> Path:
 
 
 REPO = _repo_root()
+GIT = shutil.which("git") or "git"
+NODE = shutil.which("node") or "node"
 _spec = importlib.util.spec_from_file_location("code_health", REPO / ".github" / "scripts" / "code_health.py")
 ch = importlib.util.module_from_spec(_spec)
 sys.modules["code_health"] = ch
@@ -51,7 +53,7 @@ def _ruff_available() -> bool:
 def _frontend_with_eslint() -> Path | None:
     config = json.loads((REPO / ch.CONFIG_PATH).read_text(encoding="utf-8"))
     for d in config.get("typescript", {}).get("dirs", []):
-        if (REPO / d / "node_modules" / "eslint").is_dir() and shutil.which("node"):
+        if (REPO / d / "node_modules" / "eslint").is_dir() and shutil.which(NODE):
             return REPO / d
     return None
 
@@ -164,8 +166,9 @@ class NamesTest(unittest.TestCase):
                 encoding="utf-8",
             )
             rel = Path(tmp).relative_to(frontend).as_posix() + "/sample.tsx"
-            run = subprocess.run(["node", str(REPO / ch.ESLINT_SCRIPT), str(frontend)], input=json.dumps([rel]),
-                                 capture_output=True, text=True, check=True)
+            run = subprocess.run(  # noqa: S603 (fixed node argv, the repo's own script)
+                [NODE, str(REPO / ch.ESLINT_SCRIPT), str(frontend)], input=json.dumps([rel]),
+                capture_output=True, text=True, check=True)
         out = json.loads(run.stdout)
         self.assertEqual(out["errors"], [])
         scores = {f["name"]: f["score"] for f in out["functions"]}
@@ -192,7 +195,7 @@ class EndToEndTest(unittest.TestCase):
     def git(self, *args):
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
-        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, env=env)
+        subprocess.run([GIT, *args], cwd=self.root, check=True, capture_output=True, env=env)  # noqa: S603 (temp repo)
 
     def write_config(self):
         (self.root / ch.CONFIG_PATH).write_text(json.dumps(self.config), encoding="utf-8")
