@@ -25,9 +25,11 @@ What each card reads (S241 constraints: no ECS / Lambda describe calls, no new I
   ``/jobs/summary`` called with the staff member's own Cognito access token (never cached: it is per person).
 - ``tripplanner``: no health endpoint yet, so its status comes from traffic alone (its two Lambdas: invocations,
   errors, throttles, alarms); plus today's customer-facing LLM spend (TP ONLINE_STAGES, rows with
-  ``coalesce(app, quality_signal->>'app', 'cis') = 'tripplanner'`` since UTC midnight, AA-804) against the mirrored
-  default daily cap, and (AA-804) ``ai`` = ``{paused, reason}``: paused with reason ``spend_unreadable`` when that
-  spend read fails (TripPlanner fails closed then, ADR 0009 d5). Read-only; CIS cannot read TripPlanner's own counter.
+  ``coalesce(app, quality_signal->>'app', 'cis') = 'tripplanner'`` since UTC midnight, AA-804) against the daily cap of
+  TripPlanner's app profile (``shared.llm_app_profile.default_daily_budget_usd``, the one source since S279 L5, CIS
+  414; NULL = no profile cap, TripPlanner then falls back to its Lambda env cap, which CIS cannot read), and (AA-804)
+  ``ai`` = ``{paused, reason}``: paused with reason ``spend_unreadable`` when that spend read fails (TripPlanner fails
+  closed then, ADR 0009 d5). Read-only; CIS cannot read TripPlanner's own counter.
 """
 from __future__ import annotations
 
@@ -41,8 +43,7 @@ import httpx
 import structlog
 
 from api.core import readiness
-from api.core.app_registry import (APPS, TP_DEFAULT_DAILY_CAP_USD, TP_NEAR_CAP_RATIO, TP_ONLINE_STAGES,
-                                   TP_STAGE_CAPS_USD)
+from api.core.app_registry import APPS, TP_NEAR_CAP_RATIO, TP_ONLINE_STAGES, TP_STAGE_CAPS_USD
 from api.services import app_health
 
 logger = structlog.get_logger()
@@ -63,6 +64,9 @@ TP_SPEND_TODAY_SQL = """
      GROUP BY stage
      ORDER BY stage
 """
+
+# S279 L5 (CIS 414): the TripPlanner daily AI cap, one source: its app profile row (AI gateway › App profiles).
+TP_PROFILE_CAP_SQL = "SELECT default_daily_budget_usd::float8 AS cap_usd FROM shared.llm_app_profile WHERE app = $1"
 
 _task_revision: dict[str, Any] = {}
 
@@ -321,12 +325,30 @@ def _cap_level(pct: Optional[float]) -> str:
     return "ok" if pct is None or pct < TP_WARN_PCT else ("warn" if pct < 100 else "cap_reached")
 
 
-def tp_spend_today(by_stage: list[dict], *, cap: float = TP_DEFAULT_DAILY_CAP_USD,
+async def tp_profile_cap(db: Any) -> Optional[float]:
+    """TripPlanner's daily AI cap from its app profile row (None: no cap set there, or the read failed: logged)."""
+    try:
+        row = await db.fetchrow(TP_PROFILE_CAP_SQL, "tripplanner")
+    except Exception as e:
+        logger.warning("platform_apps_tp_cap_failed", error=repr(e)[:200])
+        return None
+    cap = row["cap_usd"] if row else None
+    return float(cap) if cap is not None else None
+
+
+def _cap_label(cap: Optional[float]) -> str:
+    if cap is None:
+        return "no app-profile cap (TripPlanner uses its Lambda env cap, not readable from CIS)"
+    return f"app profile cap {cap:g} USD (AI gateway > App profiles)"
+
+
+def tp_spend_today(by_stage: list[dict], *, cap: Optional[float],
                    stage_caps: Optional[dict[str, Optional[float]]] = None,
                    near_ratio: float = TP_NEAR_CAP_RATIO) -> dict:
-    """The TripPlanner card's spend block: today's online-stage spend against the combined daily cap and, AA-1015,
-    each online stage against its own cap (None = no stage cap: only the combined cap applies, as in TP
-    ``budget_status``). ``near_cap`` follows TP's rule: at ``near_ratio`` of either cap. Pure (unit-tested)."""
+    """The TripPlanner card's spend block: today's online-stage spend against the daily cap of TripPlanner's app
+    profile (``cap``, None = none set there) and, AA-1015, each online stage against its own cap (None = no stage cap:
+    only the combined cap applies, as in TP ``budget_status``). ``near_cap`` follows TP's rule: at ``near_ratio`` of
+    either cap. Pure (unit-tested)."""
     stage_caps = TP_STAGE_CAPS_USD if stage_caps is None else stage_caps
     spent = {s["stage"]: s for s in by_stage}
     total = round(sum(s["cost_usd"] for s in by_stage), 6)
@@ -343,7 +365,7 @@ def tp_spend_today(by_stage: list[dict], *, cap: float = TP_DEFAULT_DAILY_CAP_US
     return {
         "cost_usd": total, "calls": sum(s["calls"] for s in by_stage), "by_stage": by_stage,
         "cap_usd": cap, "pct_of_cap": pct,
-        "cap_label": f"default cap {cap:g} USD (TP env may differ)",
+        "cap_label": _cap_label(cap),
         "level": _cap_level(pct),
         "since": "UTC midnight", "stages": list(TP_ONLINE_STAGES),
         # AA-1015: per-stage caps (mirrored TP env, unset today), the near-cap flag and its threshold.
@@ -372,7 +394,7 @@ async def _tripplanner_card(pool: Any) -> dict:
         return card
     by_stage = [{"stage": r["stage"], "calls": r["calls"], "cost_usd": round(float(r["cost_usd"]), 6)}
                 for r in rows]
-    card["spend_today"] = tp_spend_today(by_stage)
+    card["spend_today"] = tp_spend_today(by_stage, cap=await tp_profile_cap(pool))
     card["ai"] = {"paused": False, "reason": None}
     return card
 
