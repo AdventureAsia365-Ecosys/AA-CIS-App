@@ -1,13 +1,13 @@
 """AA-1093 lane L2 — the report views of AA-Booking and TripPlanner (contract tenant.erasure.v1).
 
-Each app owns its report view (booking.v_tenant_erasure_report_v1 from bk-056, tripplanner.v_tenant_erasure_report_v1
-from tp-030) and grants SELECT on it to cis_app. Expected columns (ids, codes, hashes, counts only):
-  request_id uuid, round smallint, mode text (dry_run | apply | verify), status text (done | failed | plan_changed |
-  refused), plan_hash text (hex), counts jsonb (per action), pii_left bigint (verify), detail text, reported_at
-  timestamptz.
+Each app owns its report view (booking.v_tenant_erasure_report_v1 from bk-057, tripplanner.v_tenant_erasure_report_v1
+from tp-030) and grants SELECT on it to cis_app. Expected columns: the contract's ErasureReportRow (ids, codes, hashes,
+counts only): report_id, request_id, round, mode (dry_run | apply | verify), status (ok | blocked | refused | failed),
+error_code, plan_hash (sha256 hex), tables, blockers, census (verify), job_id, reported_at.
 CIS reads every row of a request as JSON (``to_jsonb``), so a column an app adds later, or an optional one it lacks,
 never breaks the read; saga.normalise_report keeps only the keys above. A view that does not exist yet, a schema
-cis_app cannot use or a missing grant is ``app_not_ready``: a blocker of the request, never a skip.
+cis_app cannot use or a missing grant is ``app_not_ready``: a blocker of the request, never a skip. Rows of which none
+is contract-shaped (saga.report_shape_unknown) are ``app_not_ready`` with the code ``report_shape_unknown``.
 """
 from __future__ import annotations
 

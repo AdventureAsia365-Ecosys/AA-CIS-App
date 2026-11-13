@@ -199,6 +199,23 @@ def test_unusable_reports_are_dropped(over):
     assert saga.normalise_report({**REPORT, **over}, current_round=1) is None
 
 
+def test_report_rows_outside_the_contract_shape_are_flagged():
+    older_round = {**REPORT, "round": 2}
+    assert not saga.report_shape_unknown([])                       # no row yet: wait, no blocker
+    assert not saga.report_shape_unknown([older_round])            # well formed, only another round
+    off_contract = {"request_id": REPORT["request_id"], "mode": "apply", "status": "applied", "reason": None,
+                    "counts": {"deleted": 2}}                       # no round, own status words
+    assert saga.report_shape_unknown([off_contract])
+    assert not saga.report_shape_unknown([off_contract, REPORT])   # one contract row is enough
+
+
+def test_an_app_not_ready_blocker_names_its_code():
+    steps = {a: _ok(a) for a in ACTIVE}
+    steps["tripplanner"] = {"status": "app_not_ready", "error_code": "report_shape_unknown"}
+    st = saga.phase_state(steps, ACTIVE, need_hash=True)
+    assert not st.ready and st.blockers[0]["detail"] == "report_shape_unknown"
+
+
 def test_latest_report_per_mode_wins():
     rows = [{**REPORT, "status": "failed", "plan_hash": None, "reported_at": "2026-12-01T00:00:00Z"},
             {**REPORT, "reported_at": "2026-12-02T00:00:00Z"},

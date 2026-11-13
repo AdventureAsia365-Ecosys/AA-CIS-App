@@ -238,6 +238,30 @@ async def test_a_live_request_waits_for_the_first_not_before_then_stage_one(pool
     assert list((await _req(p, rid))["round_apps"]) == ["cis", "booking", "tripplanner"]     # the CRM waits
 
 
+@pytest.mark.asyncio
+async def test_a_report_view_outside_the_contract_shape_is_a_named_blocker(pool):
+    """A report view that answers rows without the contract's round / status words never leaves the step pending
+    silently: it is app_not_ready with the code report_shape_unknown."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    await _views(p)
+    await p.execute("CREATE SCHEMA IF NOT EXISTS tripplanner")
+    await p.execute(f"CREATE TABLE {SCRATCH}.tp_log (request_id uuid, tenant_id uuid, mode text, status text, "
+                    "plan_hash text, counts jsonb)")
+    await p.execute("DROP VIEW tripplanner.v_tenant_erasure_report_v1")
+    await p.execute(f"CREATE VIEW tripplanner.v_tenant_erasure_report_v1 AS SELECT * FROM {SCRATCH}.tp_log")
+    await p.execute(f"INSERT INTO {SCRATCH}.tp_log VALUES ($1::uuid, $2::uuid, 'dry_run', 'planned', $3, "
+                    "'{}'::jsonb)", rid, tid, PEER_HASH["tripplanner"])
+    await _report(p, "booking", rid, tid, "dry_run", plan_hash=PEER_HASH["booking"])
+    out = await sj.advance(p, rid, now=datetime.now(timezone.utc) + timedelta(seconds=1))
+    assert out["phase"] == "dry_run" and out["waiting"]
+    st = await _steps(p, rid)
+    assert st[("booking", "dry_run")]["status"] == "ok"
+    assert st[("tripplanner", "dry_run")]["status"] == "app_not_ready"
+    assert st[("tripplanner", "dry_run")]["error_code"] == "report_shape_unknown"
+
+
 # ── the full drill path: stage 1 then stage 2 ───────────────────────────────────────────────────────────────────────
 
 async def _stage1_to_approval(p, tid, rid, now):

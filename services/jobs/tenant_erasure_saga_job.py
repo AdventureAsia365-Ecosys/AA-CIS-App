@@ -104,14 +104,20 @@ async def _app_steps(conn, req: dict, mode: str) -> dict[str, Optional[dict]]:
     current = store.by_app_mode(await store.steps(conn, rid, rnd))
     for app in req["round_apps"]:
         if app in saga.VIEW_APPS:
+            prev = current.get((app, mode))
+            not_ready = None
             try:
-                rep = saga.latest_reports(await reports.read(conn, app, rid), current_round=rnd).get(mode)
-            except reports.AppNotReady as e:
-                prev = current.get((app, mode))
+                rows = await reports.read(conn, app, rid)
+            except reports.AppNotReady:
+                not_ready, rows = "app_not_ready", []
+            if not_ready is None and saga.report_shape_unknown(rows):
+                not_ready = "report_shape_unknown"     # rows exist but none in the contract's shape
+            if not_ready is not None:
                 if prev is None or prev["status"] in ("pending", "app_not_ready"):
-                    await store.upsert_step(conn, rid, rnd, app, mode, "app_not_ready", error_code="app_not_ready",
-                                            blockers=[{"code": "app_not_ready", "count": 1}])
+                    await store.upsert_step(conn, rid, rnd, app, mode, "app_not_ready", error_code=not_ready,
+                                            blockers=[{"code": not_ready, "count": 1}])
                 continue
+            rep = saga.latest_reports(rows, current_round=rnd).get(mode)
             if rep is not None:
                 await store.upsert_step(conn, rid, rnd, app, mode, rep["status"], plan_hash=rep["plan_hash"],
                                         tables=rep["tables"], blockers=rep["blockers"], census=rep["census"],

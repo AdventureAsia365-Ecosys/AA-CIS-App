@@ -188,7 +188,8 @@ def phase_state(steps: Mapping[str, Optional[Mapping[str, Any]]], apps: Iterable
                 stopped = True
             continue
         if status == "app_not_ready":
-            blockers.append({"app": app, "kind": "app_not_ready", "detail": str(s.get("detail") or "")[:200]})
+            blockers.append({"app": app, "kind": "app_not_ready",
+                             "detail": str(s.get("detail") or s.get("error_code") or "")[:200]})
             waiting.append(app)
         elif status in STOPPING:
             blockers.append({"app": app, "kind": str(s.get("error_code") or status), "detail": status})
@@ -270,6 +271,26 @@ def latest_reports(rows: Iterable[Mapping[str, Any]], *, current_round: int) -> 
         if prev is None or str(rep.get("reported_at") or "") >= str(prev.get("reported_at") or ""):
             out[rep["mode"]] = rep
     return out
+
+
+def contract_shaped(raw: Mapping[str, Any]) -> bool:
+    """True when a report-view row has the contract's ErasureReportRow core (round, a contract mode and status),
+    whatever its round: a row of an older round is still well formed."""
+    if str(raw.get("mode") or "") not in MODES or str(raw.get("status") or "") not in REPORT_STATUSES:
+        return False
+    try:
+        int(raw.get("round"))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def report_shape_unknown(rows: Iterable[Mapping[str, Any]]) -> bool:
+    """True when an app's report view returned rows for the request and none of them is contract-shaped (for example
+    a view without ``round`` or with its own status words): the saga then marks the app ``app_not_ready`` with the
+    code ``report_shape_unknown`` (a visible blocker), instead of waiting silently for a report it can never read."""
+    rows = list(rows)
+    return bool(rows) and not any(contract_shaped(r) for r in rows)
 
 
 def totals(tables: Iterable[Mapping[str, Any]]) -> dict[str, int]:
