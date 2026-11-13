@@ -45,7 +45,7 @@
 -- DEFINER, no role DDL, no dynamic SQL. The conftest replay skips this file (catalog recipe, 245's owners);
 -- tests/integration/test_aa1096_migration_415.py applies it the DB Migrate way and undoes it.
 --
--- Number. 414 is this lane's first file (412-413: the quality settings lane); if the owner main max + 1 differs at
+-- Number. 414 is this lane's first file (413 is the highest on main); if the owner main max + 1 differs at
 -- merge, renumber (git grep '415_' and '415' here, in the test and conftest).
 --
 -- Locks. Column GRANTs and two CREATE POLICY on two small tables (ACCESS EXCLUSIVE for a moment), one CREATE OR REPLACE

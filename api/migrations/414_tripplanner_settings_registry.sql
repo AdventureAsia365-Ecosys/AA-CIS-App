@@ -40,11 +40,11 @@
 -- source app_profile instead of env.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no '-- migrate:' directive): config rows INSERTed into an existing table
--- and an UPDATE of an existing row. MIG-4: one migration-only PR with 415 (batch cis 414-415, with the quality
--- registry files of the same wave); applied on Dev by Infra Migration Apply when the job tables are idle (ADR 0017a).
+-- and an UPDATE of an existing row. MIG-4: one migration-only PR with 415 (batch cis 414-415); applied on Dev by Infra
+-- Migration Apply when the job tables are idle (ADR 0017a).
 -- DM-7.1: no new table.
 --
--- Number. 412-413 are taken by the quality settings lane of this wave; if the owner main max + 1 differs at merge,
+-- Number. 413 is the highest on main (13/11/2026, the quality settings registry); if the owner main max + 1 differs,
 -- renumber (git grep '414_' and '414' here, in compiled_defaults.json, the 415 precondition and the tests).
 --
 -- Locks. One INSERT of 17 rows (the definition guard trigger allows the file's role, cis_owner) and a one-row UPDATE.
