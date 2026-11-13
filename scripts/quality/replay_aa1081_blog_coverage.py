@@ -106,15 +106,9 @@ async def replay_tenant(pool, tenant_id: UUID, min_seed: int = 0) -> dict:
         tours, held_topics_all = await slate._coverage_inputs(tenant_id, conn, channels)
         short: dict = {}
         if min_seed > 0:
-            old = os.environ.get(blog_seed.MIN_SEED_ENV)
-            os.environ[blog_seed.MIN_SEED_ENV] = str(min_seed)
-            try:
-                short = await slate._fetch_short_blog_seeds(tenant_id, conn, segments, channels, held, thin)
-            finally:
-                if old is None:
-                    os.environ.pop(blog_seed.MIN_SEED_ENV, None)
-                else:
-                    os.environ[blog_seed.MIN_SEED_ENV] = old
+            # S279: the Blog minimum seed is a setting (no env override): evaluate min_seed through the floor argument
+            short = await slate._fetch_short_blog_seeds(tenant_id, conn, segments, channels, held, thin,
+                                                        floor=blog_seed.seed_floor(flat=min_seed))
     held_topics = held_topics_all[CHANNEL]
     cover = {CHANNEL: frozenset(t for t in tours if not held_topics.get(t))}
     thin_blog = (thin or {}).get(CHANNEL, frozenset())

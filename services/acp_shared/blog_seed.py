@@ -76,11 +76,12 @@ def sized_min_seed_words(ratio: Optional[float] = None) -> int:
     return int(math.ceil(length_contract.BLOG_FLOOR_CHARS / r))
 
 
-def seed_floor() -> dict:
+def seed_floor(flat: Optional[int] = None) -> dict:
     """The Blog seed floor in force: {"min_seed_words": the effective floor (0 = off), "flat": the flat setting,
     "sized": the length-sized floor, "chars_per_seed_word", "floor_chars"}. Off (all 0) while the flat setting is off:
-    the sized floor supplements the Blog minimum seed, it never switches it on."""
-    flat = min_seed_words()
+    the sized floor supplements the Blog minimum seed, it never switches it on. ``flat``: evaluate another flat minimum
+    than the setting (a replay script), else the setting."""
+    flat = min_seed_words() if flat is None else max(int(flat), 0)
     ratio = chars_per_seed_word() if flat > 0 else 0.0
     sized = sized_min_seed_words(ratio) if flat > 0 else 0
     return {"min_seed_words": max(flat, sized), "flat": flat, "sized": sized,
