@@ -140,7 +140,7 @@ def _a1() -> dict:
             tie[f"in_band|{js}|{vs}"] = judge_node.in_tie_band(js, vs)
         for name, d in (("accept", _D(True, False)), ("reject", _D(False, True)), ("none", _D(False, False))):
             tie[f"break|{js}|{name}"] = judge_node.tie_break_score(js, d)
-    lo, hi = brand_fit._REPEAT_BAND
+    lo, hi = brand_fit._repeat_band()
     repeat = {str(s): lo <= s <= hi for s in _SCORES}
 
     mission = {}
@@ -182,11 +182,13 @@ def _a1() -> dict:
                                                   "failure_codes": codes})
                 gate[f"{s}|{audit}|{','.join(codes)}"] = out.get("revalidate_passed")
     return {
-        "MIN_QUALITY": graph.MIN_QUALITY, "MISSING_FIELD_CAP": graph.MISSING_FIELD_CAP,
-        "judge_node._MIN_QUALITY": judge_node._MIN_QUALITY, "judge_node._TIE_BAND": judge_node._TIE_BAND,
-        "judge_node._BELOW_LINE": judge_node._BELOW_LINE,
-        "judge_node._MISSION_ABSENT_CAP": judge_node._MISSION_ABSENT_CAP,
-        "brand_fit._REPEAT_BAND": list(brand_fit._REPEAT_BAND),
+        # S279 L2: the values are settings read at call time; the keys keep their AA-926 names so the fixture is the
+        # before / after parity record of the move.
+        "MIN_QUALITY": graph.min_quality(), "MISSING_FIELD_CAP": graph.missing_field_cap(),
+        "judge_node._MIN_QUALITY": judge_node._min_quality(), "judge_node._TIE_BAND": judge_node._tie_band(),
+        "judge_node._BELOW_LINE": judge_node._min_quality() - 0.1,
+        "judge_node._MISSION_ABSENT_CAP": judge_node._mission_absent_cap(),
+        "brand_fit._REPEAT_BAND": list(brand_fit._repeat_band()),
         "should_retry": retry, "tie_break": tie, "repeat_band": repeat, "mission_cap": mission,
         "validate": validate, "human_edit_gate": gate,
         "_HARD_BLOCK_CODES": graph._HARD_BLOCK_CODES, "HARD_CODE_REPAIR": sorted(graph.HARD_CODE_REPAIR),
@@ -205,21 +207,21 @@ def _t_series() -> dict:
 
     return {
         "t2_status": {str(s): t2_rewrite_job._t2_status(s) for s in _SCORES + [-1.0]},
-        "t3_pass_line": tenant_pipeline._T3_PASS_LINE,
-        "t3_below_line": {str(s): s < tenant_pipeline._T3_PASS_LINE for s in _SCORES},
-        "t7_cut": debate.BRAND_FIT_CUT_THRESHOLD,
-        "t7_jev_reject_score": debate._T7_JEV_REJECT_SCORE,
-        "t7_passes": {str(s): s >= debate.BRAND_FIT_CUT_THRESHOLD for s in _SCORES},
-        "t7_jev_reject_passes": debate._T7_JEV_REJECT_SCORE >= debate.BRAND_FIT_CUT_THRESHOLD,
-        "t10_reuse_similarity": service._REUSE_SIMILARITY_THRESHOLD,
-        "t10_reuse": {str(s): s >= service._REUSE_SIMILARITY_THRESHOLD for s in (0.9199, 0.92, 0.9201)},
+        "t3_pass_line": tenant_pipeline._t3_pass_line(),
+        "t3_below_line": {str(s): s < tenant_pipeline._t3_pass_line() for s in _SCORES},
+        "t7_cut": debate.brand_fit_cut(),
+        "t7_jev_reject_score": debate._t7_jev_reject_score(),
+        "t7_passes": {str(s): s >= debate.brand_fit_cut() for s in _SCORES},
+        "t7_jev_reject_passes": debate._t7_jev_reject_score() >= debate.brand_fit_cut(),
+        "t10_reuse_similarity": service._reuse_similarity(),
+        "t10_reuse": {str(s): s >= service._reuse_similarity() for s in (0.9199, 0.92, 0.9201)},
         "validation_route": {f"{s}|{rc}": list(handler._validation_route(s, rc)) for s in _SCORES for rc in (0, 1, 2)},
     }
 
 
 def _llm_ops() -> dict:
     from api.routers import admin_llm_ops as ops
-    return {"_JUDGE_PASS_LINE": ops._JUDGE_PASS_LINE}
+    return {"_JUDGE_PASS_LINE": ops._judge_pass_line()}
 
 
 # ------------------------------------------------------------------------------- admin_pipeline

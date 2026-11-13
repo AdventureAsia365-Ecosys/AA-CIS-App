@@ -21,9 +21,9 @@ Switches (env, read per call, worker task def — same pattern as T2_JUDGE_ANCHO
                           (``grounding.repair``, stage ``t2_flag_fix``) instead of a whole-tour
                           rewrite. Every output still goes through the same validate / judge / T3
                           checks, and best-draft keeps a worse revision from being saved.
-- ``T3_BACKGROUND_FACTS`` default OFF. Lets T3 accept past years, centuries and elevations of named
-                          places (``acp_produce.t3_background``). It relaxes a truth gate, so it is
-                          switched on deliberately (worker env) for the AA-793 rerun.
+- T3 background facts    lets T3 accept past years, centuries and elevations of named places
+                          (``acp_produce.t3_background``). It relaxes a truth gate. S279 L2: the setting
+                          cis.quality_modes.t3_background_facts (on, the worker's former env value), not an env var.
 
 "off" / "0" / "false" / "no" turns a default-on switch off; "on" / "1" / "true" / "yes" turns a
 default-off switch on. A1 (``is_tenant_rewrite`` false) is never affected by any of them.
@@ -40,7 +40,6 @@ logger = structlog.get_logger()
 
 T2_BEST_DRAFT_ENV = "T2_BEST_DRAFT"
 T2_TARGETED_REPAIR_ENV = "T2_TARGETED_REPAIR"
-T3_BACKGROUND_FACTS_ENV = "T3_BACKGROUND_FACTS"
 
 _ON = ("1", "true", "on", "yes")
 _OFF = ("0", "false", "off", "no")
@@ -64,7 +63,12 @@ def targeted_repair_enabled() -> bool:
 
 
 def background_facts_enabled() -> bool:
-    return _flag(T3_BACKGROUND_FACTS_ENV, False)
+    """S279 L2: the setting cis.quality_modes.t3_background_facts (Platform › Settings, evidence-gated), seeded on (the
+    worker's Terraform value; the worker env var T3_BACKGROUND_FACTS is no longer read)."""
+    from services.quality import settings_keys
+    from shared import settings
+
+    return bool(settings.get(settings_keys.MODES["t3_background_facts"]))
 
 
 def t2_drafts_graph_enabled() -> bool:

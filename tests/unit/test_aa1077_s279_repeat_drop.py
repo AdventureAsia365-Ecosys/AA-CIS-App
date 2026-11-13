@@ -87,7 +87,7 @@ def test_a_near_exact_repeat_dedupe_keeps_is_dropped_above_the_floor():
     out, log = repeat_drop.drop_repeats(text, hyg)
     assert twin not in out and first in out
     assert hygiene.find_issues(out, hyg)["repeat"] == []
-    assert lc.measure(out) >= lc.BLOG_FLOOR_CHARS
+    assert lc.measure(out) >= lc.floor_chars()
     assert len(log) == 1 and log[0].startswith("dropped a near-exact repeat")
 
 
@@ -108,7 +108,7 @@ def test_a_drop_that_leaves_the_blog_under_the_floor_is_not_made():
 def test_the_real_floor_holds_a_short_blog_as_today():
     paras = _blog(sections=5, per=6)              # ~3,800 chars: under the F4 floor already
     text, _first = _with_twin("{first} tovelin.", paras)
-    assert lc.measure(text) < lc.BLOG_FLOOR_CHARS
+    assert lc.measure(text) < lc.floor_chars()
     out, log = repeat_drop.drop_repeats(text, _hyg())
     assert out == text and log and log[0].startswith("kept a near-exact repeat")
 

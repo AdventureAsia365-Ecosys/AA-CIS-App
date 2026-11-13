@@ -105,7 +105,7 @@ def test_route_rows_rebuild_the_s271_gate_sets_unchanged():
                                                "F9_brand_style"})
     assert qg.STYLE_ONLY_GATES == frozenset({"F15_voice", "F2_superlatives", "F9_brand_style"})
     assert qg.OWNED_BY_FIX_STEP == frozenset({"F16_faq", "F14_first_line"})
-    assert f9_policy.HOLD_CLASSES == frozenset({f9_policy.TRIP_PROMISE})
+    assert f9_policy.hold_classes() == frozenset({f9_policy.TRIP_PROMISE})   # S279 L2: the seeded verdicts
     gates = [r["gate"] for r in wp.compiled()["route_rows"]["gates"]]
     assert len(gates) == len(set(gates))
 
@@ -246,11 +246,12 @@ def test_t10_judge_hashes_its_user_prompt():
     from shared.llm_client import prompt_registry as pr
     assert "f9_user_prompt" in pr.newest(pr.load_manifest(), "t10_judge")["symbols"]
 
-def test_generated_ts_carries_the_bands_and_the_sha():
+def test_generated_ts_carries_no_band_copy():
+    """S279 L2: the bands are settings; the pages read them at runtime (GET /admin/quality/thresholds), so the
+    generated file carries no copy of them (audit 5.4 check 3: no mirrors)."""
     from services.quality import gen_frontend
     ts = gen_frontend.render()
-    assert f'WRITING_POLICY_SHA = "{wp.policy_sha()}"' in ts
-    assert "meta: { min: 140, max: 155 }" in ts
+    assert "SEO_BANDS" not in ts and "WRITING_POLICY_SHA" not in ts and "140" not in ts
 
 
 def test_an_aim_under_the_band_names_a_short_fix_that_exists():

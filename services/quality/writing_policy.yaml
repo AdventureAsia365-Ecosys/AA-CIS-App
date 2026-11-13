@@ -42,19 +42,23 @@ decisions:
 # ---------------------------------------------------------------------------------------------------- bands (D5)
 # One meta band and one title band in code. A writer AIMS below the band (lesson S233: a model overshoots a character
 # target; aim 130-145 lands 139-154); code fits and trims into the band.
+# S279 lane L2 (AA-1096, CIS 412): every band and aim NUMBER is a setting of the platform settings registry
+# (Platform › Settings, area seo: cis.seo.meta_min / meta_max / title_min / title_max / slug_max and cis.seo.aim_<writer>
+# _meta_min / _max; evidence-gated, maker-checker). This file keeps the structure; writing_policy.py lays the numbers
+# in (the seeded defaults for the compiled file and policy_sha, the values in force for band() / fill() at call time).
 bands:
-  meta: {min: 140, max: 155}
-  title: {min: 45, max: 60}
-  slug: {max: 60, cut: word_boundary}
+  meta: {}
+  title: {}
+  slug: {cut: word_boundary}
 # An aim under the band floor is an exception the schema check only accepts with `short_fix`: the step that handles a
 # value the writer left under the floor (S1: a deterministic tail built from source fields, no LLM; T9: the SEO fit
 # call, and F4 holds what it leaves, as on main; S272: the T9 deterministic country tail was withdrawn, it kept naming
 # the wrong country on cross-border inputs).
 writer_aims:
   meta:
-    t9: {min: 130, max: 145, short_fix: "services.acp_content_writing.service:_fit_seo_meta"}  # T9 writer + SEO fit
-    s1: {min: 130, max: 148, short_fix: "services.content_generation.seo_meta_utils:fit_seo_meta_final"}  # S1 writer v2
-    t2: {min: 145, max: 152}        # S1 v1 / T2 rewrite prompt ("aim ..., hard band <meta band>")
+    t9: {short_fix: "services.acp_content_writing.service:_fit_seo_meta"}  # T9 writer + SEO fit
+    s1: {short_fix: "services.content_generation.seo_meta_utils:fit_seo_meta_final"}  # S1 writer v2
+    t2: {}        # S1 v1 / T2 rewrite prompt ("aim ..., hard band <meta band>")
 
 # ------------------------------------------------------------------------------------------------- contract fields
 cta: {count: 1, form: literal_line, owner: code}            # hygiene.ensure_cta puts the configured line in, word for word
@@ -121,7 +125,10 @@ claims:
 # claim_rules.RulesConfig (F9 v2 rule table) as on main until W2 (see `claims.background`): `uncited_background: warn`
 # = an uncited place_background sentence warns only when no place has a card and it carries no number, rule, scene or
 # trip word, else it fails; `hypothetical: warn` = an imagined scene with no concrete trip detail warns (D4).
-rules_config: {hypothetical: warn, uncited_background: warn}
+# S279 lane L2: the claim verdicts below (rules_config values, f9_class_rows actions) are settings of the platform
+# settings registry (area quality_claims: cis.quality_claims.rules_<key> / f9_<class>; evidence-gated, maker-checker);
+# this file keeps which keys and classes exist, writing_policy.py lays the verdicts in.
+rules_config: {hypothetical: null, uncited_background: null}
 
 # Class severities the policy owns (taxonomy.yaml must say the same; the lint checks). A detector in `warn` mode on a
 # block class is a gate waiting for its measurement record (ADR 0020: only measured gates hold), not a contradiction.
@@ -189,15 +196,15 @@ route_rows:
   - {gate: F16_faq, repair: fix_step}
 # The F9_cta_fact classes (services/acp_content_writing/f9_policy.py): which class may hold a piece today.
 f9_class_rows:
-  - {class: trip_promise, action: hold}
-  - {class: unsupported_other, action: warn}
-  - {class: fact_check_unquoted, action: warn}
-  - {class: seo_field_claim, action: warn}
-  - {class: cta_not_reflected, action: warn}
-  - {class: text_integrity, action: warn}
-  - {class: judge_unavailable, action: warn}
-  - {class: reasonless, action: warn}
-  - {class: other, action: warn}
+  - {class: trip_promise}
+  - {class: unsupported_other}
+  - {class: fact_check_unquoted}
+  - {class: seo_field_claim}
+  - {class: cta_not_reflected}
+  - {class: text_integrity}
+  - {class: judge_unavailable}
+  - {class: reasonless}
+  - {class: other}
 
 # ------------------------------------------------------------------------- registry entries (absorbed, no behaviour)
 # AA-788: the promoted T10 checks and their run-time mode switch (quality_gates; a test keeps these equal to code).

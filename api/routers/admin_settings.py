@@ -18,7 +18,7 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 PIPELINE_GATES = {
-    "brand_audit_threshold": threshold("a1.min_quality"),
+    # "brand_audit_threshold": the A1 pass line in force (S279 L2: a setting), added per request by pipeline_gates()
     "dedup_key": "lower(trim(src_name)) + lower(trim(provider))",
     # AA-454: was missing "llm_judge" (validate->llm_judge->brand_audit) and "revalidate"
     # (flag_fix->revalidate->END) — real edge order per services/content_generation/graph.py
@@ -26,6 +26,11 @@ PIPELINE_GATES = {
     # not part of the linear happy-path sequence this chip displays.
     "pipeline_flow": ["generate", "validate", "llm_judge", "brand_audit", "grounding", "flag_fix", "revalidate"],
 }
+
+
+def pipeline_gates() -> dict:
+    """PIPELINE_GATES with the A1 pass line in force (thresholds.yaml a1.min_quality -> the settings registry)."""
+    return {"brand_audit_threshold": threshold("a1.min_quality"), **PIPELINE_GATES}
 
 
 def verify_admin(x_admin_secret: str = Header(None)):
@@ -145,7 +150,7 @@ async def get_settings(
         },
         "brand_rules": brand,
         "seo_config":  seo,
-        "pipeline_gates": PIPELINE_GATES,
+        "pipeline_gates": pipeline_gates(),
     }
 
 

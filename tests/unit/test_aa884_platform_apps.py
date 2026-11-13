@@ -45,10 +45,11 @@ def _workers(*shas, alive=True):
                         for i, s in enumerate(shas)]}
 
 
-def _pool(tp_rows=(), schema=readiness.REQUIRED_CIS_SCHEMA):
+def _pool(tp_rows=(), schema=readiness.REQUIRED_CIS_SCHEMA, tp_cap=5.0):
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=list(tp_rows))
     pool.fetchval = AsyncMock(return_value=schema)
+    pool.fetchrow = AsyncMock(return_value={"cap_usd": tp_cap})      # S279 L5: TripPlanner's app profile cap
     return pool
 
 
@@ -131,9 +132,27 @@ async def test_tripplanner_spend_params_and_levels():
     assert "quality_signal ->> 'app'" in sql and "date_trunc('day', now() AT TIME ZONE 'UTC')" in sql
     spend = card["spend_today"]
     assert spend["cost_usd"] == 4.1 and spend["calls"] == 110 and spend["pct_of_cap"] == 82.0
-    assert spend["level"] == "warn" and "default cap 5 USD" in spend["cap_label"]
+    assert spend["level"] == "warn" and "app profile cap 5 USD" in spend["cap_label"]
+    assert pool.fetchrow.await_args.args == (pa.TP_PROFILE_CAP_SQL, "tripplanner")
     assert card["status"] == "unknown"
     assert card["ai"] == {"paused": False, "reason": None}   # AA-804: the spend was readable
+
+
+@pytest.mark.asyncio
+async def test_tripplanner_cap_comes_from_the_app_profile_only():
+    # S279 L5 (CIS 414): one source; no row / NULL budget / a failed read = no cap shown, never a mirrored default
+    for pool in (_pool(tp_cap=None), _pool(tp_cap=2.5)):
+        pool.fetch.return_value = [{"stage": "tp_compose", "calls": 1, "cost_usd": 2.0}]
+        card = await pa._tripplanner_card(pool)
+        cap = pool.fetchrow.return_value["cap_usd"]
+        assert card["spend_today"]["cap_usd"] == cap
+        assert card["spend_today"]["pct_of_cap"] == (None if cap is None else 80.0)
+    failing = _pool()
+    failing.fetchrow = AsyncMock(side_effect=OSError("db"))
+    assert (await pa.tp_profile_cap(failing)) is None
+    from api.core import app_registry
+    assert not hasattr(app_registry, "TP_DEFAULT_DAILY_CAP_USD")
+    assert "default_cap_usd" not in pa.APPS["tripplanner"].extra
 
 
 @pytest.mark.asyncio

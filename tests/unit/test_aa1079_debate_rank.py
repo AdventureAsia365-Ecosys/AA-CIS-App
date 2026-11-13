@@ -26,8 +26,10 @@ def _seg(i: int, place: str | None = None) -> Candidate:
 
 # ── the setting ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+# S279 L2: the mode is the setting cis.quality_modes.t7_debate; T7_DEBATE_MODE stays its emergency override, matched
+# exactly (spaces stripped): " CUT " is an unknown value now, ignored like "drop"
 @pytest.mark.parametrize("raw, mode", [(None, "rank"), ("", "rank"), ("rank", "rank"), ("cut", "cut"),
-                                       (" CUT ", "cut"), ("drop", "rank"), ("enforce", "rank")])
+                                       (" cut ", "cut"), (" CUT ", "rank"), ("drop", "rank"), ("enforce", "rank")])
 def test_debate_mode_defaults_to_rank_and_only_an_explicit_cut_cuts(monkeypatch, raw, mode):
     if raw is None:
         monkeypatch.delenv("T7_DEBATE_MODE", raising=False)

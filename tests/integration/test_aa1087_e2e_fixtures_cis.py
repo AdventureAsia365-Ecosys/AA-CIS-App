@@ -54,3 +54,31 @@ async def test_register_is_refused_when_the_job_runs_outside_dev(conn, monkeypat
     assert err.value.code == "register_id_dev_demo_only"
     assert await conn.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid",
                                AGENCY.tenant_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_rehearsal_tenant_request_provisions_a_synthetic_agency_with_both_add_ons(conn, monkeypatch):  # noqa: F811
+    """AA-1086 G1: the request rehearsal-tenant enqueues, run through the saga: demo, synthetic, CRM + TripPlanner."""
+    from services.tenant_account import e2e_fixtures as fx
+
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    await conn.execute("DELETE FROM shared.tenants WHERE slug = $1 AND tenant_id <> $2::uuid",
+                       fx.REHEARSAL_SLUG, fx.REHEARSAL.tenant_id)
+    dry = await fx.rehearsal_tenant(conn, None, "zz-run-1", apply=False)
+    if dry["state"] == "exists":   # a CI database that already holds it (never on a fresh replay)
+        return
+    assert dry["state"] == "would_enqueue"
+    out = await pv.provision(_Pool(conn), pv.parse(dry["request"]), job_id=str(uuid.uuid4()))
+    assert out["tenant_id"] == fx.REHEARSAL.tenant_id
+    row = await conn.fetchrow("SELECT kind AS kind, is_canary AS canary, is_pilot AS pilot, slug AS slug "
+                              "FROM shared.tenants WHERE tenant_id = $1::uuid", fx.REHEARSAL.tenant_id)
+    assert (row["kind"], row["canary"], row["pilot"], row["slug"]) == ("demo", True, False, "pilot-rehearsal-01")
+    subs = await conn.fetch("SELECT product AS product, plan_key AS plan_key, status AS status, seats AS seats "
+                            "FROM shared.tenant_subscription WHERE tenant_id = $1::uuid", fx.REHEARSAL.tenant_id)
+    assert {s["product"]: (s["plan_key"], s["status"], s["seats"]) for s in subs} == {
+        "content": ("content.growth", "active", None), "crm": ("crm.core", "active", 3),
+        "tripplanner": ("tripplanner.hosted", "active", None)}
+    # a second run: the tenant exists, nothing is enqueued
+    again = await fx.rehearsal_tenant(conn, None, "zz-run-2", apply=True)
+    assert again["state"] == "exists" and again["synthetic"] is True
+    assert {s["product"] for s in again["subscriptions"]} == {"content", "crm", "tripplanner"}

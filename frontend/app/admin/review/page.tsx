@@ -15,7 +15,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle, Filter, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   K, mono, sans,
   Button,
@@ -54,7 +54,8 @@ import {
   policyEvidenceText,
   type ReviewItem,
 } from "./reviewModel";
-import { PASS_LINE, SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { reviewLevel, scoreFilterNumbers } from "@/lib/qualityThresholds";
+import { usePassLine, useScoreBands } from "../_components/useQualityThresholds";
 
 // Reviewer identity prompt (temporary until AA-232). Called once on mount so the x-reviewer-id
 // header the BFF forwards is populated for the audit trail.
@@ -118,6 +119,9 @@ const selectStyle: React.CSSProperties = {
 };
 
 function ReviewQueueInner() {
+  const bands = useScoreBands();
+  const passLine = usePassLine();
+  const filterNums = scoreFilterNumbers(bands, passLine);
   const toast = useToast();
   const t = useT(M);
   const lang = useLang();
@@ -252,13 +256,15 @@ function ReviewQueueInner() {
   const filtered = items;
 
   // ── Columns ──
-  const canApprove = (item: ReviewItem) => {
+  const canApprove = useCallback((item: ReviewItem) => {
     // AA-1049: an elephant-riding policy review is approvable when the server says so (the held Master's own version,
     // or a version that passes the approve gate with the policy as its only hold).
     if (item.policyReview && !item.human_edited) return item.policyReview.approvable;
     const failCount = (item.raw.failures || []).length;
-    return item.human_edited ? item.revalidate_passed === true : item.score >= PASS_LINE && failCount === 0;
-  };
+    return item.human_edited
+      ? item.revalidate_passed === true
+      : passLine != null && item.score >= passLine && failCount === 0;
+  }, [passLine]);
 
   const columns = useMemo<ColumnDef<ReviewItem, unknown>[]>(
     () => [
@@ -314,7 +320,8 @@ function ReviewQueueInner() {
               </span>
             );
           }
-          const col = s >= SCORE_BANDS.pass ? K.success : s >= SCORE_BANDS.low ? K.amber : K.danger;
+          const level = reviewLevel(s, bands);
+          const col = level === "ok" ? K.success : level === "low" ? K.amber : level === "critical" ? K.danger : K.muted2;
           return (
             <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: col }}>
               {s.toFixed(1)}
@@ -412,7 +419,8 @@ function ReviewQueueInner() {
         },
       },
     ],
-    [approveM, canAct, t],
+    // bands / canApprove (the pass line): the score colour and the Approve rule follow the thresholds in force
+    [approveM, canAct, t, bands, canApprove, setRegenItems, setReasonAction],
   );
 
   // ── Non-blocking regenerate: mark rows regenerating, close modal, let the poll refresh ──
@@ -559,9 +567,9 @@ function ReviewQueueInner() {
             </Select>
             <Select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
               <option value="all">{t("allScores")}</option>
-              <option value="critical">{t("critical", SCORE_BANDS.low.toFixed(1))}</option>
-              <option value="low">{t("low", SCORE_BANDS.low.toFixed(1), (PASS_LINE - 0.1).toFixed(1))}</option>
-              <option value="ok">{t("ok", PASS_LINE.toFixed(1))}</option>
+              <option value="critical">{t("critical", filterNums.low)}</option>
+              <option value="low">{t("low", filterNums.low, filterNums.belowPass)}</option>
+              <option value="ok">{t("ok", filterNums.pass)}</option>
             </Select>
             <Select value={filterPolicy} onChange={(e) => setPolicy(e.target.value)} style={selectStyle}
               aria-label={t("policyBadge")}>

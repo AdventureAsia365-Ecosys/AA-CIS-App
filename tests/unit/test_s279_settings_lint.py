@@ -10,8 +10,10 @@ value is a setting, never a code literal or an env var alone).
    were there on 13/11/2026 (``snapshots/s279_settings_lint_baseline.json``, a list that only shrinks). A numeric
    ``os.environ`` / ``getenv`` read under a policy-looking name fails the same way. Fix: add a setting (a migration
    seed row + ``shared.settings.get``), or mark a true engineering constant.
-2. **No dead settings.** Every compiled key with ``enforced`` true is named by code outside shared/settings (a reader),
-   and every ``settings.get / aget / definition / resolve("cis....")`` literal is a compiled key.
+2. **No dead settings.** Every compiled CIS key (app ``cis``) with ``enforced`` true is named by code outside
+   shared/settings (a reader), and every ``settings.get / aget / definition / resolve("cis....")`` literal is a compiled
+   key. Another app's keys (TripPlanner, app ``tripplanner``, CIS 414) are read by that app through its catalog view
+   (CIS 415); its own repo checks its readers (AA-TripPlanner-Web backend/tests/test_s279_settings.py).
 3. **The baseline only shrinks.** A baseline entry whose constant is gone (or now reads a setting) fails until it is
    removed from the file.
 
@@ -116,7 +118,8 @@ def _code_text() -> str:
 
 def test_every_enforced_setting_has_a_reader_and_every_read_key_exists():
     code = _code_text()
-    dead = [k for k in settings.READER.keys() if settings.definition(k).enforced and f'"{k}"' not in code]
+    dead = [k for k in settings.READER.keys()
+            if settings.definition(k).app == "cis" and settings.definition(k).enforced and f'"{k}"' not in code]
     assert not dead, f"settings with no reader in code (wire them, or seed enforced=false with an issue): {dead}"
     unknown = sorted({k for k in READ_CALL.findall(code)} - set(settings.READER.keys()))
     assert not unknown, f"code reads settings that are not in the compiled defaults: {unknown}"

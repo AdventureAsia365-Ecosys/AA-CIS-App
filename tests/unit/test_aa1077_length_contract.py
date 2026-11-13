@@ -27,21 +27,21 @@ def _blog(chars: int) -> str:
 # ---------------------------------------------------------------- one owner
 
 def test_the_gate_the_trim_and_the_truth_cut_read_the_contract():
-    assert (qg._BLOG_MIN_CHARS, qg._BLOG_MAX_CHARS) == (lc.BLOG_FLOOR_CHARS, lc.BLOG_CEILING_CHARS)
-    assert qg._length_bounds_for_channel("blog") == (lc.BLOG_FLOOR_CHARS, lc.BLOG_CEILING_CHARS)
+    assert (qg.length_contract.floor_chars(), qg.length_contract.ceiling_chars()) == (lc.floor_chars(), lc.ceiling_chars())
+    assert qg._length_bounds_for_channel("blog") == (lc.floor_chars(), lc.ceiling_chars())
     assert length_trim._length_bounds_for_channel is qg._length_bounds_for_channel
 
 
 def test_the_writer_target_is_read_from_the_registered_prompt_symbols():
-    assert lc.writer_words() == (prompts._BLOG_WORDS[0], prompts._BLOG_WORDS[1], prompts._BLOG_WORDS_MAX)
+    assert lc.writer_words() == (prompts._blog_words()[0], prompts._blog_words()[1], prompts._BLOG_WORDS_MAX)
 
 
 def test_the_writer_floor_sits_above_the_f4_floor_and_its_max_under_the_ceiling():
     lo, _hi, most = lc.writer_words()
-    assert lo * lc.CHARS_PER_WORD >= lc.BLOG_FLOOR_CHARS * (1 + lc.TARGET_MARGIN)
-    assert most * lc.CHARS_PER_WORD <= lc.BLOG_CEILING_CHARS
+    assert lo * lc.CHARS_PER_WORD >= lc.floor_chars() * (1 + lc.target_margin())
+    assert most * lc.CHARS_PER_WORD <= lc.ceiling_chars()
     # the extend repair aims at the length target (S278), at or under the writer's floor, never past the ceiling
-    assert lc.BLOG_FLOOR_CHARS < lc.extend_target_chars() == lc.target_chars() <= lo * lc.CHARS_PER_WORD
+    assert lc.floor_chars() < lc.extend_target_chars() == lc.target_chars() <= lo * lc.CHARS_PER_WORD
 
 
 def test_the_prompt_comment_no_longer_says_tags_included():

@@ -30,7 +30,7 @@ SEED = ("Lake Aurel — walk the shore\nLocation: Lake Aurel, Valdoria\nDay 3 of
         "Source itinerary: Walk the shore path to the ferry pier. Boat to Tamsel Isle and visit the chapel.")
 SEED2 = ("Corvin Pass — cross on foot\nLocation: Corvin Pass, Valdoria\nDay 4 of the trip\n"
          "Source itinerary: Cross the pass on foot with a local guide. Lunch at the mountain hut.")
-BLOCK = prompts._BLOG_LENGTH_INSTRUCTIONS
+BLOCK = prompts._blog_length_instructions()
 ENVELOPE_KEYS = {"seo_title", "meta_description", "slug", "body", "summary"}
 
 
@@ -75,12 +75,12 @@ def test_block_asks_for_one_pass_and_one_article():
 
 
 def test_word_band_sits_inside_the_f4_character_band():
-    lo, hi = prompts._BLOG_WORDS
+    lo, hi = prompts._blog_words()
     assert lo < hi < prompts._BLOG_WORDS_MAX
     # ~5.3-6.5 characters a word with its space: the target floor clears F4's floor, the hard max stays well under
     # F4's ceiling (the model overshoots counts, lessons: "LLM counts poorly").
-    assert lo * 5.3 >= qg._BLOG_MIN_CHARS
-    assert prompts._BLOG_WORDS_MAX * 6.5 <= qg._BLOG_MAX_CHARS * 0.85
+    assert lo * 5.3 >= qg.length_contract.floor_chars()
+    assert prompts._BLOG_WORDS_MAX * 6.5 <= qg.length_contract.ceiling_chars() * 0.85
     numbers = re.findall(r"\d[\d,]*", BLOCK)
     assert f"{lo:,}" in numbers and f"{hi:,}" in numbers and f"{prompts._BLOG_WORDS_MAX:,}" in numbers
     assert f"At most {prompts._BLOG_SECTIONS_MAX} " in BLOCK
@@ -91,8 +91,8 @@ def test_the_stated_floor_is_the_f4_floor_and_nothing_licenses_a_shorter_article
     body under 4,700 characters, so an F4 rewrite got "content is only N chars" and "shorter is fine" at once. The
     block now states a hard minimum, and that minimum in characters clears F4's floor."""
     floors = [int(n.replace(",", "")) for n in re.findall(r"never under (\d[\d,]*)", BLOCK)]
-    assert floors == [prompts._BLOG_WORDS[0]]
-    assert floors[0] * 5.3 >= qg._BLOG_MIN_CHARS
+    assert floors == [prompts._blog_words()[0]]
+    assert floors[0] * 5.3 >= qg.length_contract.floor_chars()
     lowered = BLOCK.lower()
     for licence in ("shorter article", "shorter piece", "shorter is", "fewer words", "short article"):
         assert licence not in lowered
@@ -101,7 +101,7 @@ def test_the_stated_floor_is_the_f4_floor_and_nothing_licenses_a_shorter_article
 def test_an_f4_rewrite_prompt_carries_no_contradiction():
     p = _prompt(revision_feedback=["F4_extreme_length: content is only 2100 chars — effectively empty"])
     assert p.count(BLOCK) == 1
-    assert f"never under {prompts._BLOG_WORDS[0]:,}" in p
+    assert f"never under {prompts._blog_words()[0]:,}" in p
     assert "shorter article" not in p.lower()
 
 
@@ -128,7 +128,9 @@ def test_manifest_v2_covers_the_block():
     v2 = next(e for e in load_manifest()["t9_write"] if e["version"] == "v2")
     assert block_symbols <= set(v2["symbols"])
     entry = newest(load_manifest(), "t9_write")
-    assert block_symbols <= set(entry["symbols"])
+    # S279 L2 (v8): the block and the word floor render at call time (_blog_length_instructions, _blog_words)
+    assert {"_blog_length_instructions", "_blog_words", "_BLOG_WORDS_TOP", "_BLOG_WORDS_MAX",
+            "_BLOG_SECTIONS_MAX"} <= set(entry["symbols"])
     assert prompt_hash_of(entry["source_path"], entry["symbols"]) == entry["prompt_sha256"]
 
 

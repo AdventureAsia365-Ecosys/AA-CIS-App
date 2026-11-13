@@ -107,7 +107,7 @@ def needed_seed_words(line: dict) -> Optional[int]:
     from services.acp_content_writing import length_contract as lc
     if not line.get("chars") or not line.get("seed_words"):
         return None
-    return int(math.ceil(line["seed_words"] * lc.BLOG_FLOOR_CHARS / line["chars"]))
+    return int(math.ceil(line["seed_words"] * lc.floor_chars() / line["chars"]))
 
 
 def _floor3(value: float) -> float:
@@ -155,7 +155,7 @@ def floor_at(flat: int, ratio: Optional[float]) -> dict:
     from services.acp_shared import blog_seed
     sized = blog_seed.sized_min_seed_words(ratio) if (flat > 0 and ratio) else 0
     return {"min_seed_words": max(flat, sized), "flat": flat, "sized": sized,
-            "chars_per_seed_word": ratio or 0.0, "floor_chars": lc.BLOG_FLOOR_CHARS}
+            "chars_per_seed_word": ratio or 0.0, "floor_chars": lc.floor_chars()}
 
 
 def subjects(lines: list[dict]) -> list[dict]:

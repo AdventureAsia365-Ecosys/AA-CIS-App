@@ -24,7 +24,10 @@ from typing import Any, Optional
 from shared.settings.reader import Definition, Resolution, SettingsReader, coerce, parse_text, validate
 
 COMPILED_DEFAULTS = Path(__file__).with_name("compiled_defaults.json")
-KEY_PREFIX = "cis."
+# Every key of shared.setting_value: the CIS keys and the TripPlanner keys (CIS 414; TripPlanner reads them through
+# catalog.v_app_settings_v1, CIS 415), so Platform › Settings shows the TripPlanner values in force too. Booking and
+# the CRM keep their own tables.
+KEY_PREFIX = ""
 
 
 def load_definitions(path: Path = COMPILED_DEFAULTS) -> list[dict]:

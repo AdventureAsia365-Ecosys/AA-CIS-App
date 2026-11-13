@@ -7,8 +7,10 @@ Two checks, both run by the required "Unit Tests" job (``tests/unit/test_aa1052_
 
 1. **The lock.** ``change_control.lock.json`` records, per writing-path component, the sha in force and the
    evidence that let it change. A PR that moves a component (a meta band widened in the policy, a prompt version
-   bump, a route-table row, a gate threshold, the final contract's version or mode, a gated stage's code route
-   default) fails until the lock carries the new sha with its evidence:
+   bump, a route-table row, a gate's structure or a gate setting's bounds / seed / evidence gate, the final contract's
+   version or mode, a gated stage's code route default) fails until the lock carries the new sha with its evidence
+   (S279 lane L2: a gate VALUE is a setting; its change is an approved proposal with an evidence_ref, and the lock
+   checks that every gate setting is evidence_required, ``settings_problems``):
 
      python -m services.quality.change_control --accept writing_policy --evidence "eval:<run uuid>"
      python -m services.quality.change_control --accept route_table --evidence "parity:tests/unit/<replay test>.py"
@@ -107,8 +109,42 @@ def _writing_policy(root: Path) -> str:
     return writing_policy.sha_of(writing_policy.load_source(root / POLICY_FILE))
 
 
+SETTINGS_DEFAULTS_FILE = "shared/settings/compiled_defaults.json"
+# S279 lane L2 (AA-1096, CIS 412): the gate VALUES (pass lines, caps, bands, detector modes, claim verdicts, the T2 /
+# T7 / T10 modes, the SEO bands, the Channel bars) are settings of the platform settings registry. A value change is an
+# approved proposal with its evidence (the API refuses one without an evidence_ref on an evidence_required key); the
+# lock no longer pins a YAML value. It pins what a migration can change: each key's governance and seed.
+SETTING_GOVERNANCE = ("value_type", "min_value", "max_value", "allowed_values", "default_value", "approval",
+                      "evidence_required", "env_override")
+
+
+def _gate_settings(root: Path) -> dict[str, dict]:
+    """The quality registry's setting definitions (services/quality/settings_keys.ALL_KEYS) as compiled from the
+    migration seed, key -> governance fields. A missing key maps to {} (settings_problems reports it)."""
+    from services.quality import settings_keys
+    with open(root / SETTINGS_DEFAULTS_FILE, encoding="utf-8") as fh:
+        defs = {d["key"]: d for d in json.load(fh)["definitions"]}
+    return {k: {f: defs[k].get(f) for f in SETTING_GOVERNANCE} if k in defs else {}
+            for k in settings_keys.ALL_KEYS}
+
+
+def settings_problems(root: Path = REPO_ROOT) -> list[str]:
+    """Every quality-registry setting must be evidence-gated and maker-checker (audit 5.4 check 5: the lock checks
+    evidence_required on the moved keys instead of a YAML sha)."""
+    out = []
+    for key, g in sorted(_gate_settings(root).items()):
+        if not g:
+            out.append(f"gates: setting {key} is not in {SETTINGS_DEFAULTS_FILE} (a migration seed row is missing)")
+        elif g.get("evidence_required") is not True or g.get("approval") != "maker_checker":
+            out.append(f"gates: setting {key} must be evidence_required=true and approval=maker_checker "
+                       f"(is {g.get('evidence_required')!r} / {g.get('approval')!r})")
+    return out
+
+
 def _gates(root: Path) -> str:
-    return _sha({rel: _yaml(root, rel) for rel in GATE_FILES})
+    """The gate STRUCTURE (taxonomy classes and detectors, threshold consumers and the setting each reads) and the
+    governance + seed of every gate setting (a widened bound, a new default or a dropped evidence gate moves it)."""
+    return _sha({**{rel: _yaml(root, rel) for rel in GATE_FILES}, "settings": _gate_settings(root)})
 
 
 def _prompt_registry(root: Path) -> str:
@@ -162,7 +198,8 @@ COMPONENTS: dict[str, Callable[[Path], str]] = {
 }
 WHAT = {
     "writing_policy": POLICY_FILE + " (bands, claim policy, route rows, channel rules)",
-    "gates": " + ".join(GATE_FILES) + " (gate taxonomy, pass lines)",
+    "gates": " + ".join(GATE_FILES) + " (gate taxonomy, threshold consumers) + the governance and seed of the gate "
+             "settings (" + SETTINGS_DEFAULTS_FILE + ")",
     "prompt_registry": PROMPT_MANIFEST + " (a prompt version bump of any stage)",
     "route_table": ROUTE_TABLE_FILE + " (the T9 / T2 loop mechanics per gate)",
     "final_contract": FINAL_CONTRACT_FILE + " CONTRACT_VERSION / MODE (report -> enforce)",
@@ -206,6 +243,8 @@ def check(root: Path = REPO_ROOT, lock: Optional[dict] = None, names: Optional[I
     wanted = list(names or COMPONENTS)
     for n in sorted(set(entries) - set(COMPONENTS)):
         problems.append(f"lock names an unknown component {n!r}")
+    if "gates" in wanted:
+        problems += settings_problems(root)
     for n, sha in current(root, wanted).items():
         e = entries.get(n)
         if not isinstance(e, dict):
