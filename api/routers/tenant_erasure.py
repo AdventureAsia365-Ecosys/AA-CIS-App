@@ -1,33 +1,34 @@
 """tenant.erasure.v1 — the tenant erasure requests of the CIS offboarding saga, for the partner CRM (AA-1093 lane L2).
 
-AA-Booking and TripPlanner read the same requests through the catalog view catalog.v_tenant_erasure_v1 (CIS 410) and
-report through their own report views; the CRM has no database access to CIS, so it uses these two routes:
+Contract: root ``docs/contracts/tenant.erasure.v1.openapi.yaml`` (byte copy in ``docs/contracts/`` of this repo, checked
+by ``tests/unit/test_aa1093_tenant_erasure_contract.py``). AA-Booking and TripPlanner read the same requests through
+the catalog view catalog.v_tenant_erasure_v1 (CIS 410) and report through their own report views; the CRM has no
+database access to CIS, so it uses these two routes:
 
-  GET  /tenant/v1/erasure-requests?after=&limit=        cursor list of the requests as the CRM needs them, oldest
-                                                        change first; a request comes again after each change of its
-                                                        phase, round or approval (the row's writing transaction is the
-                                                        cursor; a late commit is never skipped)
-  POST /tenant/v1/erasure-requests/{request_id}/reports  the CRM's report for one phase: {"mode": dry_run | apply |
-                                                        verify, "status": done | failed | plan_changed | refused,
-                                                        "plan_hash"?, "counts"?, "pii_left"?, "detail"?, "round"?}
+  GET  /tenant/v1/erasure-requests?after=&limit=        cursor feed of the requests that changed, oldest change first,
+                                                        each with the CRM step only (status waiting / active / done /
+                                                        failed, its not_before, its approved plan hash); a request
+                                                        comes again after each change of its phase, round or CRM step
+                                                        (the row's writing transaction is the cursor; a late commit is
+                                                        never skipped)
+  POST /tenant/v1/erasure-requests/{request_id}/reports  the CRM's report (ErasureReport: dry_run, apply or verify of
+                                                        its step); idempotent on report_id: 201 recorded, 200 the same
+                                                        report again, 409 report_conflict / round_superseded /
+                                                        phase_mismatch, 403 wrong_app (the CRM reports its own step)
 
-What the CRM does per phase: scheduled = offer the owner a full export, nothing else; dry_run = compute the plan of the
-tenant and report its hash; awaiting_approval = nothing; apply = from its not_before and before approval_expires_at,
-recompute, match approved_plan_hash, erase (crypto-shred included) and report; verify = report the census of its
-personal-data columns for the tenant (pii_left). Decision D2: the CRM erases after its 90-day window without the
-owner's click.
-
-Ids, codes, hashes, counts and timestamps only: no name, e-mail, reason or actor in either direction.
+Decision D2: the CRM erases after its 90-day window (stage 2) without the owner's click. Ids, codes, hashes, counts and
+timestamps only: no name, e-mail, reason or actor in either direction.
 
 Auth: the M2M client-credentials token of the ``aa-m2m-<env>`` pool, client = AA-Partner (CRM), scope
 ``cis.tenant/erasure`` (``api/core/m2m_auth.require_m2m``; AA-CIS-Infra identity_m2m.tf adds the scope). 401 no / bad
 token, 403 another client or a token without the scope, 503 key set or configuration unavailable or CIS 408 not
 applied. The API Gateway route ``/tenant/v1/{tenant_v1_proxy+}`` already carries these paths. Errors use the contract
-Problem body ``{error, message[, reason]}``.
+Problem body ``{error, message}``.
 """
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -47,7 +48,7 @@ router = APIRouter(prefix="/tenant/v1", tags=["tenant-erasure"])
 
 NO_STORE = "no-store"
 DEFAULT_LIMIT = 100
-MAX_LIMIT = 500
+MAX_LIMIT = 200
 _PREFIX = "e1"
 _START = (0, uuid.UUID(int=0))
 
@@ -56,16 +57,24 @@ require_erasure = m2m_auth.require_m2m(
     refused="This client may not read or report tenant erasure requests.", log_prefix="tenant_erasure")
 
 
-class ErasureRequestItem(BaseModel):
-    """One request as the CRM sees it (contract tenant.erasure.v1 ErasureRequest)."""
-    request_id: str
-    tenant_id: str
-    phase: Literal["scheduled", "dry_run", "awaiting_approval", "apply", "verify", "done", "cancelled", "failed"]
-    request_mode: Literal["live", "drill"]
-    round: int
+class ErasureStep(BaseModel):
+    app: Literal["crm"]
+    status: Literal["waiting", "active", "done", "failed"]
     not_before: str
     approved_plan_hash: Optional[str] = None
+
+
+class ErasureRequestItem(BaseModel):
+    """One request as the CRM sees it (contract ErasureRequest)."""
+    request_id: str
+    tenant_id: str
+    phase: Literal["dry_run", "awaiting_approval", "apply", "verify", "done", "failed", "cancelled"]
+    round: int
+    opened_at: str
     approval_expires_at: Optional[str] = None
+    is_pilot: bool
+    is_synthetic: bool
+    steps: list[ErasureStep]
     updated_at: str
     cursor: str
 
@@ -75,25 +84,53 @@ class ErasureRequestPage(BaseModel):
     next_cursor: str
 
 
-class ErasureReportRecorded(BaseModel):
-    """The answer to a report (contract tenant.erasure.v1 ReportRecorded)."""
-    request_id: str
-    app: Literal["crm"]
-    mode: Literal["dry_run", "apply", "verify"]
-    round: int
-    status: Literal["done", "failed", "plan_changed", "refused"]
-    recorded: bool
+_SHA256 = r"^[0-9a-f]{64}$"
+_CODE = r"^[a-z][a-z0-9_]{1,63}$"
+
+
+class TableEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    table: str = Field(..., pattern=r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$", max_length=127)
+    action: Literal["delete", "cascade", "detach", "merge", "redact", "anonymise", "keep", "shred"]
+    rows: int = Field(..., ge=0)
+    digest: Optional[str] = Field(None, pattern=r"^[0-9a-f]{32}$")
+
+
+class ReportBlocker(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(..., pattern=_CODE)
+    count: int = Field(..., ge=1)
+
+
+class Census(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pii_columns_checked: int = Field(..., ge=0)
+    pii_rows_found: int = Field(..., ge=0)
 
 
 class ErasureReportIn(BaseModel):
+    """The contract's ErasureReport (every field required, nullable where the contract says so)."""
     model_config = ConfigDict(extra="forbid")
+    report_id: uuid.UUID
+    request_id: uuid.UUID
+    tenant_id: uuid.UUID
+    app: Literal["cis", "crm", "booking", "tripplanner"]
+    round: int = Field(..., ge=1)
     mode: Literal["dry_run", "apply", "verify"]
-    status: Literal["done", "failed", "plan_changed", "refused"]
-    plan_hash: Optional[str] = Field(None, pattern=r"^[0-9a-f]{32,128}$")
-    counts: dict[str, int] = Field(default_factory=dict, max_length=200)
-    pii_left: Optional[int] = Field(None, ge=0)
-    detail: Optional[str] = Field(None, max_length=500)
-    round: Optional[int] = Field(None, ge=1, le=100)
+    status: Literal["ok", "blocked", "refused", "failed"]
+    error_code: Optional[str] = Field(..., pattern=_CODE)
+    plan_hash: Optional[str] = Field(..., pattern=_SHA256)
+    tables: list[TableEntry] = Field(..., max_length=500)
+    blockers: list[ReportBlocker] = Field(..., max_length=50)
+    census: Optional[Census]
+    job_id: Optional[uuid.UUID]
+    reported_at: datetime
+
+
+class ReportAccepted(BaseModel):
+    report_id: str
+    created: bool
+    phase: Literal["dry_run", "awaiting_approval", "apply", "verify", "done", "failed", "cancelled"]
 
 
 def encode_cursor(txid: int, request_id: uuid.UUID) -> str:
@@ -137,10 +174,14 @@ def _iso(v) -> Optional[str]:
 
 
 def item_body(row) -> dict:
+    request = {"done_apps": list(row["done_apps"] or []), "round_apps": list(row["round_apps"] or [])}
     return {
         "request_id": str(row["request_id"]), "tenant_id": str(row["tenant_id"]), "phase": row["phase"],
-        "request_mode": row["mode"], "round": int(row["round"]), "not_before": _iso(row["not_before_crm"]),
-        "approved_plan_hash": row["approved_plan_hash"], "approval_expires_at": _iso(row["approval_expires_at"]),
+        "round": int(row["round"]), "opened_at": _iso(row["opened_at"]),
+        "approval_expires_at": _iso(row["approval_expires_at"]), "is_pilot": bool(row["is_pilot"]),
+        "is_synthetic": bool(row["is_synthetic"]),
+        "steps": [{"app": "crm", "status": saga.step_status(request, "crm", bool(row["crm_failed"])),
+                   "not_before": _iso(row["not_before_crm"]), "approved_plan_hash": row["approved_plan_hash"]}],
         "updated_at": _iso(row["updated_at"]),
         "cursor": encode_cursor(int(row["txid_text"]), uuid.UUID(str(row["request_id"]))),
     }
@@ -170,7 +211,19 @@ async def list_erasure_requests(request: Request, after: Optional[str] = None, l
     return JSONResponse(content={"items": items, "next_cursor": next_cursor}, headers={"Cache-Control": NO_STORE})
 
 
-@router.post("/erasure-requests/{request_id}/reports", responses={200: {"model": ErasureReportRecorded}})
+def _same(step: dict, body: ErasureReportIn) -> bool:
+    """The stored report equals this body (idempotency of report_id)."""
+    def plain(v):
+        return json.loads(json.dumps(v, default=str))
+    return (step["mode"] == body.mode and int(step["round"]) == body.round and step["status"] == body.status
+            and step.get("error_code") == body.error_code and step.get("plan_hash") == body.plan_hash
+            and plain(step.get("tables") or []) == plain([t.model_dump() for t in body.tables])
+            and plain(step.get("blockers") or []) == plain([b.model_dump() for b in body.blockers])
+            and plain(step.get("census")) == plain(body.census.model_dump() if body.census else None))
+
+
+@router.post("/erasure-requests/{request_id}/reports",
+             responses={200: {"model": ReportAccepted}, 201: {"model": ReportAccepted}})
 async def report_erasure_step(request_id: str, request: Request,
                               caller: m2m_auth.M2MCaller = Depends(require_erasure)) -> JSONResponse:
     try:
@@ -179,32 +232,49 @@ async def report_erasure_step(request_id: str, request: Request,
         raise M2MProblem(404, "not_found", "No erasure request has this id.") from None
     try:
         body = ErasureReportIn.model_validate(await request.json())
-    except (ValidationError, ValueError) as exc:
-        raise M2MProblem(400, "invalid", "The report body is not valid.", reason=type(exc).__name__[:40]) from None
-    if body.mode == "dry_run" and body.status == "done" and not body.plan_hash:
-        raise M2MProblem(400, "invalid", "A done dry_run report carries its plan_hash.", reason="plan_hash")
-    if body.mode == "verify" and body.status == "done" and body.pii_left is None:
-        raise M2MProblem(400, "invalid", "A done verify report carries pii_left.", reason="pii_left")
-    now = datetime.now(timezone.utc)
+    except (ValidationError, ValueError):
+        raise M2MProblem(422, "invalid", "The report body does not match tenant.erasure.v1 ErasureReport.") from None
+    if body.app != "crm":
+        raise M2MProblem(403, "wrong_app", "The CRM client may report only its own (crm) step.")
+    if str(body.request_id) != rid:
+        raise M2MProblem(422, "invalid", "request_id in the body differs from the path.")
+    if body.mode in ("dry_run", "apply") and body.status == "ok" and not body.plan_hash:
+        raise M2MProblem(422, "invalid", "An ok dry_run or apply report carries its plan_hash.")
+    if body.mode == "verify" and body.status == "ok" and body.census is None:
+        raise M2MProblem(422, "invalid", "An ok verify report carries its census.")
+    report_id = str(body.report_id)
     try:
         async with _pool(request).acquire(timeout=ACQUIRE_TIMEOUT_S) as conn, conn.transaction():
             req = await store.get_request(conn, rid, for_update=True)
             if req is None:
                 raise M2MProblem(404, "not_found", "No erasure request has this id.")
-            if body.round is not None and body.round != int(req["round"]):
-                raise M2MProblem(409, "conflict", "The report is for another round of this request.", reason="round")
-            crm_apply = await conn.fetchval(
-                "SELECT status FROM shared.tenant_erasure_step WHERE request_id = $1::uuid AND round = $2 "
-                "AND app = 'crm' AND mode = 'apply'", rid, int(req["round"]))
-            refusal = saga.report_refusal(req, mode=body.mode, now=now, crm_apply_done=crm_apply == "done")
+            if str(body.tenant_id) != req["tenant_id"]:
+                raise M2MProblem(422, "invalid", "tenant_id differs from the request's tenant.")
+            seen = await conn.fetchrow(
+                f"SELECT {store.STEP_COLUMNS} FROM shared.tenant_erasure_step WHERE app = 'crm' "
+                "AND report_id = $1::uuid", report_id)
+            if seen is not None:
+                if str(seen["request_id"]) == rid and _same(store._row(seen), body):
+                    return JSONResponse(status_code=200, headers={"Cache-Control": NO_STORE},
+                                        content={"report_id": report_id, "created": False, "phase": req["phase"]})
+                raise M2MProblem(409, "report_conflict", "This report_id was recorded with another body.")
+            apply_ok = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM shared.tenant_erasure_step WHERE request_id = $1::uuid AND round = $2 "
+                "AND app = 'crm' AND mode = 'apply' AND status = 'ok') AS ok", rid, body.round)
+            refusal = saga.report_refusal(req, app="crm", mode=body.mode, report_round=body.round,
+                                          apply_ok=bool(apply_ok))
             if refusal is not None:
-                raise M2MProblem(refusal.status, "conflict", refusal.message, reason=refusal.code)
-            await store.upsert_step(conn, rid, int(req["round"]), "crm", body.mode, body.status,
-                                    plan_hash=body.plan_hash, counts=body.counts, pii_left=body.pii_left,
-                                    detail=body.detail, reported_at=now)
+                raise M2MProblem(refusal.status, refusal.code, refusal.message)
+            await store.upsert_step(conn, rid, body.round, "crm", body.mode, body.status, plan_hash=body.plan_hash,
+                                    tables=[t.model_dump() for t in body.tables],
+                                    blockers=[b.model_dump() for b in body.blockers],
+                                    census=body.census.model_dump() if body.census else None,
+                                    error_code=body.error_code, report_id=report_id,
+                                    job_id=str(body.job_id) if body.job_id else None,
+                                    reported_at=body.reported_at)
     except store.NOT_MIGRATED as exc:
         raise _unavailable(exc) from exc
     logger.info("tenant_erasure_reported", client_id=caller.client_id, request_id=rid, mode=body.mode,
-                status=body.status)
-    return JSONResponse(content={"request_id": rid, "app": "crm", "mode": body.mode, "round": int(req["round"]),
-                                 "status": body.status, "recorded": True}, headers={"Cache-Control": NO_STORE})
+                status=body.status, round=body.round)
+    return JSONResponse(status_code=201, headers={"Cache-Control": NO_STORE},
+                        content={"report_id": report_id, "created": True, "phase": req["phase"]})

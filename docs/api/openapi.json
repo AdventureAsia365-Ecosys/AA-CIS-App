@@ -3358,59 +3358,8 @@
         "title": "EnqueueBody",
         "type": "object"
       },
-      "ErasureReportRecorded": {
-        "description": "The answer to a report (contract tenant.erasure.v1 ReportRecorded).",
-        "properties": {
-          "app": {
-            "const": "crm",
-            "title": "App",
-            "type": "string"
-          },
-          "mode": {
-            "enum": [
-              "dry_run",
-              "apply",
-              "verify"
-            ],
-            "title": "Mode",
-            "type": "string"
-          },
-          "recorded": {
-            "title": "Recorded",
-            "type": "boolean"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "round": {
-            "title": "Round",
-            "type": "integer"
-          },
-          "status": {
-            "enum": [
-              "done",
-              "failed",
-              "plan_changed",
-              "refused"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "app",
-          "mode",
-          "round",
-          "status",
-          "recorded"
-        ],
-        "title": "ErasureReportRecorded",
-        "type": "object"
-      },
       "ErasureRequestItem": {
-        "description": "One request as the CRM sees it (contract tenant.erasure.v1 ErasureRequest).",
+        "description": "One request as the CRM sees it (contract ErasureRequest).",
         "properties": {
           "approval_expires_at": {
             "anyOf": [
@@ -3423,35 +3372,31 @@
             ],
             "title": "Approval Expires At"
           },
-          "approved_plan_hash": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approved Plan Hash"
-          },
           "cursor": {
             "title": "Cursor",
             "type": "string"
           },
-          "not_before": {
-            "title": "Not Before",
+          "is_pilot": {
+            "title": "Is Pilot",
+            "type": "boolean"
+          },
+          "is_synthetic": {
+            "title": "Is Synthetic",
+            "type": "boolean"
+          },
+          "opened_at": {
+            "title": "Opened At",
             "type": "string"
           },
           "phase": {
             "enum": [
-              "scheduled",
               "dry_run",
               "awaiting_approval",
               "apply",
               "verify",
               "done",
-              "cancelled",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "title": "Phase",
             "type": "string"
@@ -3460,17 +3405,16 @@
             "title": "Request Id",
             "type": "string"
           },
-          "request_mode": {
-            "enum": [
-              "live",
-              "drill"
-            ],
-            "title": "Request Mode",
-            "type": "string"
-          },
           "round": {
             "title": "Round",
             "type": "integer"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureStep"
+            },
+            "title": "Steps",
+            "type": "array"
           },
           "tenant_id": {
             "title": "Tenant Id",
@@ -3485,9 +3429,11 @@
           "request_id",
           "tenant_id",
           "phase",
-          "request_mode",
           "round",
-          "not_before",
+          "opened_at",
+          "is_pilot",
+          "is_synthetic",
+          "steps",
           "updated_at",
           "cursor"
         ],
@@ -3611,6 +3557,47 @@
           "subject"
         ],
         "title": "ErasureRunRequest",
+        "type": "object"
+      },
+      "ErasureStep": {
+        "properties": {
+          "app": {
+            "const": "crm",
+            "title": "App",
+            "type": "string"
+          },
+          "approved_plan_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Plan Hash"
+          },
+          "not_before": {
+            "title": "Not Before",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "waiting",
+              "active",
+              "done",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "status",
+          "not_before"
+        ],
+        "title": "ErasureStep",
         "type": "object"
       },
       "EvidenceBody": {
@@ -7343,6 +7330,38 @@
           }
         },
         "title": "RelocateRequest",
+        "type": "object"
+      },
+      "ReportAccepted": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "dry_run",
+              "awaiting_approval",
+              "apply",
+              "verify",
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "created",
+          "phase"
+        ],
+        "title": "ReportAccepted",
         "type": "object"
       },
       "ResearchScope": {
@@ -24680,7 +24699,7 @@
     },
     "/admin/job-runner/erasure/requests/drill": {
       "post": {
-        "description": "Plan section 6: the exit window and the schedule are proven with window 0 on a synthetic tenant. The tenant\nmust be offboarded, synthetic (is_canary, never the pilot) and have no request past awaiting its DRY RUN. A\nscheduled request becomes a drill (every not_before = the offboard time); without one a drill request is created.\nNothing is approved or applied here.",
+        "description": "Plan section 6: the exit windows and the stages are proven with window 0 on a synthetic tenant. The tenant must\nbe offboarded, synthetic (is_canary, never the pilot) and have no round started yet. Its open request becomes a\ndrill (every not_before = T0), or a drill request is created. Nothing is approved or applied here.",
         "operationId": "start_drill_admin_job_runner_erasure_requests_drill_post",
         "parameters": [
           {
@@ -25012,7 +25031,7 @@
     },
     "/admin/job-runner/erasure/requests/{request_id}/new-round": {
       "post": {
-        "description": "A new round: phase dry_run, round + 1, the fingerprint and the approval cleared (the step rows of earlier rounds\nstay as the record). Allowed while no CIS apply job has started: in dry_run (a stopped step), awaiting_approval,\nor apply (an expired approval, plan_changed, a failed step).",
+        "description": "A new round: phase dry_run, round + 1, no app active until the next pass picks the apps past their not_before\nthat are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record).\nAllowed while no CIS apply job has started: in dry_run (a stopped step), awaiting_approval, or apply (an expired\napproval, plan_changed, a failed step).",
         "operationId": "new_round_admin_job_runner_erasure_requests__request_id__new_round_post",
         "parameters": [
           {
@@ -54490,11 +54509,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErasureReportRecorded"
+                  "$ref": "#/components/schemas/ReportAccepted"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportAccepted"
+                }
+              }
+            },
+            "description": "Created"
           },
           "422": {
             "content": {

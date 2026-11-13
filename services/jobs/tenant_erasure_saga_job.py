@@ -11,26 +11,32 @@ at most RESCHEDULE_MAX_COUNT times; then it fails and the ops sampler queues a n
 A pass that cannot go on (a step failed, the plan changed, the approval expired, the apply switch is off) records the
 blockers on the request and ends: a person starts a new DRY RUN round (admin Tenant offboarding tab).
 
-Who queues it: the ops metrics sampler (``ensure_jobs``: a request whose phase has work and no live saga job, a
-scheduled one only from its latest not_before), the approval route and the admin "Run now" button.
+Rounds: a round starts in dry_run when an app that is not done passes its not_before (stage 1 CIS, Booking,
+TripPlanner at T0 + 30 days; stage 2 the CRM at T0 + 90 days); the apps of the round are fixed then (round_apps).
+After verify those apps are done, and the request goes back to dry_run with the next round until every app is done.
+
+Who queues it: the ops metrics sampler (``ensure_jobs``: a request whose phase has work and no live saga job; in
+dry_run only once a round runs or the next not_before has passed), the approval route and the admin "Run now"
+button.
 
 CIS's own work goes through the jobs that already exist, under idempotency keys of this request and round:
   * dry_run: a data_erasure DRY RUN of the tenant (its saga plan hash is saga.cis_plan_hash of the DRY RUN rows);
-  * apply, after Booking, TripPlanner and the CRM all report done: a tenant_backup of the tenant, a fresh data_erasure
-    DRY RUN (its saga plan hash must equal the approved one: plan_changed otherwise), then the data_erasure apply with
-    that DRY RUN's own fingerprint, the approver (the Cognito admin of the combined approval) and the snapshot id given
-    at the approval. The data_erasure job keeps all of its own guards (ERASURE_APPLY_ENABLED, the retention window, the
-    recount inside its transaction, single use).
+  * apply, after the other active apps of the round report an ok apply: a tenant_backup of the tenant, a fresh
+    data_erasure DRY RUN (its saga plan hash must equal the approved one: plan_changed otherwise), then the
+    data_erasure apply with that DRY RUN's own fingerprint, the approver (the Cognito admin of the combined approval)
+    and the snapshot id given at the approval. The data_erasure job keeps all of its own guards
+    (ERASURE_APPLY_ENABLED, the retention window, the recount inside its transaction, single use).
 $0: database reads and writes only (the CIS jobs it queues are $0 too).
 """
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
 
-from api.core import e2e_staff
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.jobs import erasure_job as ej
 from services.jobs import tenant_backup_job as tb
@@ -50,12 +56,17 @@ APP_POLL_S = RESCHEDULE_MAX_DELAY_SECONDS
 ACTIVE_JOB_SQL = ("SELECT id::text AS id FROM shared.job WHERE kind = $1 AND status IN ('queued', 'running') "
                   "AND payload->>'request_id' = $2 ORDER BY created_at, id LIMIT 1")
 JOB_COUNT_SQL = "SELECT count(*) AS n FROM shared.job WHERE kind = $1 AND payload->>'request_id' = $2"
+# A request with work: dry_run (a round running, or the next not_before of an app that is not done has passed),
+# apply, verify. A handful of open requests at most.
 DUE_SQL = """
     SELECT request_id::text AS request_id, phase, round
-      FROM shared.tenant_erasure_request
+      FROM shared.tenant_erasure_request r
      WHERE phase = ANY($1::text[])
-       AND (phase <> 'scheduled'
-            OR greatest(not_before_cis, not_before_booking, not_before_tripplanner, not_before_crm) <= $2)
+       AND (phase <> 'dry_run' OR cardinality(round_apps) > 0
+            OR EXISTS (SELECT 1 FROM (VALUES ('cis', r.not_before_cis), ('booking', r.not_before_booking),
+                                             ('tripplanner', r.not_before_tripplanner), ('crm', r.not_before_crm))
+                                     AS a(app, nb)
+                        WHERE a.nb <= $2 AND NOT a.app = ANY (r.done_apps)))
      ORDER BY created_at, request_id
      LIMIT 50
 """
@@ -77,7 +88,6 @@ async def _cis_job(pool, kind: str, payload: dict, key: str) -> dict:
     row = await queue.get(pool, job_id) or {}
     result = row.get("result")
     if isinstance(result, str):
-        import json
         result = json.loads(result)
     return {"id": job_id, "status": row.get("status"), "result": result or {}, "error": row.get("error")}
 
@@ -86,36 +96,32 @@ def _key(req: dict, part: str) -> str:
     return f"{KIND}:{req['request_id']}:r{req['round']}:{part}"
 
 
-async def _synthetic(conn, tenant_id: str) -> bool:
-    return await e2e_staff.is_synthetic_tenant(conn, tenant_id)
-
-
-async def _peer_steps(conn, req: dict, mode: str, apps: tuple[str, ...]) -> dict[str, Optional[dict]]:
-    """The step row of ``mode`` per app, after copying the Booking / TripPlanner view reports into the step table (an
-    unreadable view = app_not_ready). The CRM's rows come from its POST route."""
+async def _app_steps(conn, req: dict, mode: str) -> dict[str, Optional[dict]]:
+    """The step row of ``mode`` per active app, after copying the Booking / TripPlanner view reports of this round into
+    the step table (an unreadable view = app_not_ready). The CRM's rows come from its POST route, CIS's from its
+    jobs."""
     rid, rnd = req["request_id"], int(req["round"])
     current = store.by_app_mode(await store.steps(conn, rid, rnd))
-    for app in apps:
-        if app not in saga.VIEW_APPS:
-            continue
-        try:
-            rep = saga.latest_reports(await reports.read(conn, app, rid), current_round=rnd).get(mode)
-        except reports.AppNotReady as e:
-            prev = current.get((app, mode))
-            if prev is None or prev["status"] in ("pending", "app_not_ready"):
-                await store.upsert_step(conn, rid, rnd, app, mode, "app_not_ready", detail=e.detail)
-            continue
-        if rep is not None:
-            await store.upsert_step(conn, rid, rnd, app, mode, rep["status"], plan_hash=rep["plan_hash"],
-                                    counts=rep["counts"], pii_left=rep["pii_left"], detail=rep["detail"],
-                                    reported_at=_ts(rep.get("reported_at")))
-        elif (app, mode) not in current or current[(app, mode)]["status"] == "app_not_ready":
-            await store.upsert_step(conn, rid, rnd, app, mode, "pending")
-    for app in apps:
-        if app not in saga.VIEW_APPS and (app, mode) not in current:
+    for app in req["round_apps"]:
+        if app in saga.VIEW_APPS:
+            try:
+                rep = saga.latest_reports(await reports.read(conn, app, rid), current_round=rnd).get(mode)
+            except reports.AppNotReady as e:
+                prev = current.get((app, mode))
+                if prev is None or prev["status"] in ("pending", "app_not_ready"):
+                    await store.upsert_step(conn, rid, rnd, app, mode, "app_not_ready", error_code="app_not_ready",
+                                            blockers=[{"code": "app_not_ready", "count": 1}])
+                continue
+            if rep is not None:
+                await store.upsert_step(conn, rid, rnd, app, mode, rep["status"], plan_hash=rep["plan_hash"],
+                                        tables=rep["tables"], blockers=rep["blockers"], census=rep["census"],
+                                        error_code=rep["error_code"], report_id=rep["report_id"],
+                                        job_id=rep["job_id"], reported_at=_ts(rep.get("reported_at")))
+                continue
+        if app != "cis" and ((app, mode) not in current or current[(app, mode)]["status"] == "app_not_ready"):
             await store.upsert_step(conn, rid, rnd, app, mode, "pending")
     after = store.by_app_mode(await store.steps(conn, rid, rnd))
-    return {app: after.get((app, mode)) for app in apps}
+    return {app: after.get((app, mode)) for app in req["round_apps"]}
 
 
 def _ts(v: Any) -> Optional[datetime]:
@@ -135,6 +141,23 @@ def _stop(phase: str, **progress) -> dict:
     return {"phase": phase, "waiting": False, **progress}
 
 
+def _code(kind: Any) -> str:
+    """A CIS blocker kind as a contract code (lowercase, letters / digits / underscores, starts with a letter)."""
+    code = re.sub(r"[^a-z0-9_]", "_", str(kind or "blocked").lower()).strip("_")[:63]
+    return code if len(code) >= 2 and code[0].isalpha() else "blocked"
+
+
+def _cis_tables(rows: list) -> list[dict]:
+    """The CIS DRY RUN rows in the contract's TableEntry shape (no row digest in the CIS plan)."""
+    return [{"table": str(r["table"]), "action": str(r["action"]).split(":", 1)[0], "rows": int(r["rows"]),
+             "digest": None} for r in rows if saga.TABLE_RE.match(str(r.get("table") or ""))]
+
+
+async def _stopped(conn, req: dict, blockers: list[dict]) -> dict:
+    await store.set_blockers(conn, req["request_id"], req["phase"], blockers)
+    return _stop(req["phase"], blockers=blockers)
+
+
 # ── the pass ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 async def advance(pool, request_id: str, *, now: Optional[datetime] = None, env: Optional[dict] = None) -> dict:
@@ -146,24 +169,26 @@ async def advance(pool, request_id: str, *, now: Optional[datetime] = None, env:
             raise NonRetryable(f"erasure request {request_id} does not exist")
         tenant_row = await conn.fetchrow(TENANT_SQL, req["tenant_id"])
         tenant = dict(tenant_row) if tenant_row else None
-        if tenant and tenant.get("is_pilot") and req["phase"] in saga.OPEN_PHASES:
+        if req["phase"] in saga.OPEN_PHASES and (req["is_pilot"] or (tenant and tenant.get("is_pilot"))):
             await store.move(conn, request_id, saga.OPEN_PHASES, "failed",
-                             blockers=[{"app": "cis", "kind": "pilot", "detail": "the pilot tenant is never erased "
-                                                                                 "by the saga (decision D8)"}])
-            return _stop("failed", reason="pilot")
+                             blockers=[{"app": "cis", "kind": "pilot_refused",
+                                        "detail": "the pilot tenant is never erased by the saga (decision D8)"}])
+            return _stop("failed", reason="pilot_refused")
         phase = req["phase"]
-        if phase == "scheduled":
-            if now < saga.due_at(req):
-                return _stop(phase, reason="not due", due_at=saga.due_at(req).isoformat())
-            if tenant is None or tenant.get("cancelled_at") is None:
-                await store.move(conn, request_id, ("scheduled",), "cancelled", cancelled_at=now,
-                                 blockers=[{"app": "cis", "kind": "not_offboarded",
-                                            "detail": "the tenant is no longer offboarded (restored before the hook)"}])
-                return _stop("cancelled", reason="not offboarded")
-            if not await store.move(conn, request_id, ("scheduled",), "dry_run"):
-                return _stop(phase, reason="moved meanwhile")
-            req["phase"] = phase = "dry_run"
         if phase == "dry_run":
+            if not req["round_apps"]:
+                due = saga.due_apps(req, now)
+                if not due:
+                    nxt = saga.next_due_at(req)
+                    return _stop(phase, reason="not_due", next_due_at=nxt.isoformat() if nxt else None)
+                if "cis" in due and (tenant is None or tenant.get("cancelled_at") is None):
+                    await store.move(conn, request_id, ("dry_run",), "cancelled", cancelled_at=now,
+                                     blockers=[{"app": "cis", "kind": "not_offboarded",
+                                                "detail": "the tenant is no longer offboarded (restored)"}])
+                    return _stop("cancelled", reason="not_offboarded")
+                if not await store.move(conn, request_id, ("dry_run",), "dry_run", round_apps=due, blockers=[]):
+                    return _stop(phase, reason="moved meanwhile")
+                req["round_apps"] = due
             return await _dry_run(pool, conn, req, now)
         if phase == "apply":
             return await _apply(pool, conn, req, tenant, now, env)
@@ -174,33 +199,35 @@ async def advance(pool, request_id: str, *, now: Optional[datetime] = None, env:
 
 async def _dry_run(pool, conn, req: dict, now: datetime) -> dict:
     rid, rnd, tid = req["request_id"], int(req["round"]), req["tenant_id"]
-    # CIS: its own data_erasure DRY RUN (read only)
-    job = await _cis_job(pool, ej.KIND, {"subject": "tenant", "tenant": tid, "mode": "dry_run"},
-                         _key(req, "cis:dry_run"))
-    if job["status"] == "succeeded":
-        res = job["result"]
-        if res.get("blocked"):
-            kinds = sorted({str(b.get("kind")) for b in res.get("blockers") or []})
-            await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "refused", job_id=job["id"], reported_at=now,
-                                    counts=res.get("totals") or {}, detail="DRY RUN blockers: " + ", ".join(kinds))
+    if "cis" in req["round_apps"]:
+        job = await _cis_job(pool, ej.KIND, {"subject": "tenant", "tenant": tid, "mode": "dry_run"},
+                             _key(req, "cis:dry_run"))
+        if job["status"] == "succeeded":
+            res = job["result"]
+            tables = _cis_tables(res.get("rows") or [])
+            if res.get("blocked"):
+                codes: dict[str, int] = {}
+                for b in res.get("blockers") or []:
+                    code = _code(b.get("kind"))
+                    codes[code] = codes.get(code, 0) + 1
+                await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "blocked", job_id=job["id"],
+                                        reported_at=now, tables=tables, error_code="blocked",
+                                        blockers=[{"code": c, "count": n} for c, n in sorted(codes.items())])
+            else:
+                await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "ok", job_id=job["id"], reported_at=now,
+                                        plan_hash=saga.cis_plan_hash(tid, rnd, res.get("rows") or []), tables=tables)
+        elif job["status"] in ("failed", "cancelled", "stopped_budget"):
+            await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "failed", job_id=job["id"],
+                                    error_code="internal_error")
         else:
-            await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "done", job_id=job["id"], reported_at=now,
-                                    plan_hash=saga.cis_plan_hash(tid, res.get("rows") or []),
-                                    counts=res.get("totals") or {})
-    elif job["status"] in ("failed", "cancelled", "stopped_budget"):
-        await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "failed", job_id=job["id"],
-                                detail=str(job.get("error") or job["status"])[:300])
-    else:
-        await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "pending", job_id=job["id"])
-    steps = await _peer_steps(conn, req, "dry_run", saga.PEER_APPS)
-    cis = store.by_app_mode(await store.steps(conn, rid, rnd)).get(("cis", "dry_run"))
-    steps["cis"] = cis
-    state = saga.phase_state(steps, saga.APPS, need_hash=True)
+            await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "pending", job_id=job["id"])
+    steps = await _app_steps(conn, req, "dry_run")
+    state = saga.phase_state(steps, req["round_apps"], need_hash=True)
     if state.ready:
-        fp = saga.combined_fingerprint(rid, tid, {app: steps[app]["plan_hash"] for app in saga.APPS})
+        fp = saga.combined_fingerprint(rid, tid, rnd, {app: steps[app]["plan_hash"] for app in req["round_apps"]})
         await store.move(conn, rid, ("dry_run",), "awaiting_approval", combined_fingerprint=fp, fingerprint_at=now,
                          blockers=[])
-        logger.info("tenant_erasure_awaiting_approval", request_id=rid, fingerprint=fp[:12])
+        logger.info("tenant_erasure_awaiting_approval", request_id=rid, round=rnd, fingerprint=fp[:12])
         return _stop("awaiting_approval", fingerprint=fp)
     await store.set_blockers(conn, rid, "dry_run", list(state.blockers))
     if state.stopped:
@@ -211,13 +238,15 @@ async def _dry_run(pool, conn, req: dict, now: datetime) -> dict:
 
 async def _apply(pool, conn, req: dict, tenant: Optional[dict], now: datetime, env: Optional[dict]) -> dict:
     rid, rnd, tid = req["request_id"], int(req["round"]), req["tenant_id"]
-    blockers: list[dict] = []
     if not policy.apply_enabled(env):
-        blockers.append({"app": "cis", "kind": "apply_off", "detail": f"{policy.APPLY_SWITCH_ENV} is off"})
-        await store.set_blockers(conn, rid, "apply", blockers)
-        return _stop("apply", blockers=blockers)
-    peers = await _peer_steps(conn, req, "apply", saga.PEER_APPS)
-    state = saga.phase_state(peers, saga.PEER_APPS)
+        return await _stopped(conn, req, [{"app": "cis", "kind": "apply_disabled",
+                                           "detail": f"{policy.APPLY_SWITCH_ENV} is off"}])
+    reasons = saga.request_guard(req, environment=policy.environment(env))
+    if reasons:
+        return await _stopped(conn, req, [{"app": "cis", "kind": "guard", "detail": "; ".join(reasons)}])
+    peers = [a for a in req["round_apps"] if a != "cis"]
+    steps = await _app_steps(conn, req, "apply")
+    state = saga.phase_state({a: steps.get(a) for a in peers}, peers)
     expired = req.get("approval_expires_at") is None or now > req["approval_expires_at"]
     current = store.by_app_mode(await store.steps(conn, rid, rnd))
     cis_apply = current.get(("cis", "apply"))
@@ -226,49 +255,45 @@ async def _apply(pool, conn, req: dict, tenant: Optional[dict], now: datetime, e
         if expired and not state.stopped:
             blockers.append({"app": "cis", "kind": "approval_expired",
                              "detail": "the approval expired before every app applied; start a new round"})
-        await store.set_blockers(conn, rid, "apply", blockers)
         if state.stopped or expired:
-            return _stop("apply", blockers=blockers)
+            return await _stopped(conn, req, blockers)
+        await store.set_blockers(conn, rid, "apply", blockers)
         return _wait("apply", APP_POLL_S, waiting_for=list(state.waiting), blockers=blockers)
-    # ── CIS last: every peer reported done ─────────────────────────────────────────────────────────────────────────
+    if "cis" not in req["round_apps"]:
+        await store.move(conn, rid, ("apply",), "verify", blockers=[])
+        return await _verify(conn, {**req, "phase": "verify"}, now)
+    # ── CIS last in its stage: every other active app reported an ok apply ───────────────────────────────────────
     if cis_apply is None or cis_apply.get("job_id") is None:
         if expired:
-            blockers = [{"app": "cis", "kind": "approval_expired",
-                         "detail": "the approval expired before the CIS apply started; start a new round"}]
-            await store.set_blockers(conn, rid, "apply", blockers)
-            return _stop("apply", blockers=blockers)
-        reasons = saga.tenant_guard(tenant, environment=policy.environment(env),
-                                    synthetic=bool(tenant) and await _synthetic(conn, tid),
-                                    drill=req["mode"] == "drill")
-        if reasons:
-            blockers = [{"app": "cis", "kind": "tenant", "detail": "; ".join(reasons)}]
-            await store.set_blockers(conn, rid, "apply", blockers)
-            return _stop("apply", blockers=blockers)
+            return await _stopped(conn, req, [{"app": "cis", "kind": "approval_expired",
+                                               "detail": "the approval expired before the CIS apply; new round"}])
+        why = saga.cis_tenant_guard(tenant)
+        if why:
+            return await _stopped(conn, req, [{"app": "cis", "kind": "guard", "detail": "; ".join(why)}])
         backup = await _cis_job(pool, tb.KIND, {"tenant_id": tid, "trigger": "manual"}, _key(req, "cis:backup"))
         if backup["status"] in ("failed", "cancelled", "stopped_budget"):
-            blockers = [{"app": "cis", "kind": "backup_failed", "detail": str(backup.get("error") or "")[:200]}]
-            await store.set_blockers(conn, rid, "apply", blockers)
-            return _stop("apply", blockers=blockers)
+            return await _stopped(conn, req, [{"app": "cis", "kind": "backup_failed",
+                                               "detail": str(backup.get("error") or "")[:200]}])
         if backup["status"] != "succeeded":
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending", detail="tenant backup running")
+            await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending")
             return _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:backup"])
         recheck = await _cis_job(pool, ej.KIND, {"subject": "tenant", "tenant": tid, "mode": "dry_run"},
                                  _key(req, "cis:recheck"))
         if recheck["status"] in ("failed", "cancelled", "stopped_budget"):
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "failed", detail="the CIS re-check DRY RUN failed")
-            return _stop("apply", blockers=[{"app": "cis", "kind": "failed", "detail": "re-check DRY RUN failed"}])
+            await store.upsert_step(conn, rid, rnd, "cis", "apply", "failed", error_code="internal_error")
+            return await _stopped(conn, req, [{"app": "cis", "kind": "internal_error",
+                                               "detail": "the CIS re-check DRY RUN failed"}])
         if recheck["status"] != "succeeded":
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending", detail="re-check DRY RUN running")
+            await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending")
             return _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:recheck"])
         res = recheck["result"]
         approved = (current.get(("cis", "dry_run")) or {}).get("approved_plan_hash")
-        now_hash = saga.cis_plan_hash(tid, res.get("rows") or [])
+        now_hash = saga.cis_plan_hash(tid, rnd, res.get("rows") or [])
         if res.get("blocked") or not approved or now_hash != approved:
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "plan_changed", plan_hash=now_hash,
-                                    detail="the CIS plan differs from the approved one (or has blockers)")
-            blockers = [{"app": "cis", "kind": "plan_changed", "detail": "the CIS plan differs from the approved one"}]
-            await store.set_blockers(conn, rid, "apply", blockers)
-            return _stop("apply", blockers=blockers)
+            await store.upsert_step(conn, rid, rnd, "cis", "apply", "refused", plan_hash=now_hash,
+                                    error_code="plan_changed", reported_at=now)
+            return await _stopped(conn, req, [{"app": "cis", "kind": "plan_changed",
+                                               "detail": "the CIS plan differs from the approved one"}])
         payload = ej.validate_payload({
             "subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": recheck["id"],
             "approved_fingerprint": res["fingerprint"], "approved_by": req["approved_by"],
@@ -280,46 +305,59 @@ async def _apply(pool, conn, req: dict, tenant: Optional[dict], now: datetime, e
     status = job.get("status")
     if status in ("failed", "cancelled", "stopped_budget"):
         await store.upsert_step(conn, rid, rnd, "cis", "apply", "failed", job_id=cis_apply["job_id"],
-                                detail=str(job.get("error") or status)[:300])
-        blockers = [{"app": "cis", "kind": "failed", "detail": "the CIS data_erasure apply failed"}]
-        await store.set_blockers(conn, rid, "apply", blockers)
-        return _stop("apply", blockers=blockers)
+                                error_code="internal_error", reported_at=now)
+        return await _stopped(conn, req, [{"app": "cis", "kind": "internal_error",
+                                           "detail": "the CIS data_erasure apply failed"}])
     if status != "succeeded":
         return _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:apply"])
     res = job.get("result") or {}
     if isinstance(res, str):
-        import json
         res = json.loads(res)
-    await store.upsert_step(conn, rid, rnd, "cis", "apply", "done", job_id=cis_apply["job_id"],
-                            counts=res.get("totals") or {}, reported_at=now)
-    left = sum(int(v or 0) for v in (res.get("verified_left") or {}).values())
-    await store.upsert_step(conn, rid, rnd, "cis", "verify", "done" if res.get("verified") else "failed",
-                            job_id=cis_apply["job_id"], pii_left=left, reported_at=now)
+    applied = [{"table": t["table"], "action": str(t["action"]).split(":", 1)[0], "rows": int(t["rows"]),
+                "digest": None} for t in res.get("applied") or [] if saga.TABLE_RE.match(str(t.get("table") or ""))]
+    await store.upsert_step(conn, rid, rnd, "cis", "apply", "ok", job_id=cis_apply["job_id"], tables=applied,
+                            plan_hash=(cis_apply.get("plan_hash") or None), reported_at=now)
+    left = res.get("verified_left") or {}
+    await store.upsert_step(
+        conn, rid, rnd, "cis", "verify", "ok" if res.get("verified") else "failed", job_id=cis_apply["job_id"],
+        census={"pii_columns_checked": len(res.get("applied") or []), "pii_rows_found": sum(int(v or 0)
+                                                                                            for v in left.values())},
+        tables=[{"table": t, "action": "delete", "rows": int(n or 0), "digest": None} for t, n in sorted(left.items())
+                if saga.TABLE_RE.match(str(t))],
+        error_code=None if res.get("verified") else "census_not_zero", reported_at=now)
     await store.move(conn, rid, ("apply",), "verify", blockers=[])
-    logger.info("tenant_erasure_cis_applied", request_id=rid, totals=res.get("totals"))
+    logger.info("tenant_erasure_cis_applied", request_id=rid, round=rnd)
     return await _verify(conn, {**req, "phase": "verify"}, now)
 
 
 async def _verify(conn, req: dict, now: datetime) -> dict:
     rid, rnd = req["request_id"], int(req["round"])
-    steps = await _peer_steps(conn, req, "verify", saga.PEER_APPS)
-    steps["cis"] = store.by_app_mode(await store.steps(conn, rid, rnd)).get(("cis", "verify"))
-    state = saga.phase_state(steps, saga.APPS, need_census=True)
+    steps = await _app_steps(conn, req, "verify")
+    state = saga.phase_state(steps, req["round_apps"], need_census=True)
     if not state.ready:
         await store.set_blockers(conn, rid, "verify", list(state.blockers))
         if state.stopped:
             return _stop("verify", blockers=list(state.blockers))
         return _wait("verify", APP_POLL_S, waiting_for=list(state.waiting))
-    rows = store.by_app_mode(await store.steps(conn, rid, rnd))
-    doc = saga.receipt(req, rows, done_at=now, checklist=ej.checklist("tenant", req["tenant_id"]))
+    done = [a for a in saga.APPS if a in set(req["done_apps"]) | set(req["round_apps"])]
+    clear = dict(combined_fingerprint=None, fingerprint_at=None, approved_fingerprint=None, approved_by=None,
+                 approved_at=None, approval_expires_at=None, blockers=[])
+    if len(done) < len(saga.APPS):
+        # the next stage (the CRM at T0 + 90 days): a new round, no app active until its not_before
+        await store.move(conn, rid, ("verify",), "dry_run", round=rnd + 1, round_apps=[], done_apps=done, **clear)
+        logger.info("tenant_erasure_stage_done", request_id=rid, round=rnd, done=done)
+        return _stop("dry_run", stage_done=list(req["round_apps"]), next_round=rnd + 1)
+    rows = await store.steps(conn, rid)
+    doc = saga.receipt({**req, "done_apps": done}, rows, done_at=now,
+                       checklist=ej.checklist("tenant", req["tenant_id"]))
     async with conn.transaction():
-        if await store.move(conn, rid, ("verify",), "done", receipt=doc, done_at=now, blockers=[]):
-            # the tenant row is gone: the record is platform-scoped and names the request
+        if await store.move(conn, rid, ("verify",), "done", receipt=doc, done_at=now, round_apps=[], done_apps=done,
+                            blockers=[]):
+            # the tenant row is gone (CIS erased in stage 1): the record is platform-scoped and names the request
             await write_audit_log(conn, tenant_id=None, actor=ACTOR, action=AdminTenantAuditAction.ERASURE_DONE,
                                   resource_type="tenant_erasure", resource_id=rid,
-                                  details={"tenant": req["tenant_id"], "round": rnd,
-                                           "fingerprint": req.get("approved_fingerprint"),
-                                           "apps": {a: doc["apps"][a]["pii_left"] for a in saga.APPS}})
+                                  details={"tenant": req["tenant_id"], "rounds": rnd,
+                                           "apps": {a: doc["apps"][a].get("pii_rows_found") for a in saga.APPS}})
     logger.info("tenant_erasure_done", request_id=rid)
     return _stop("done")
 

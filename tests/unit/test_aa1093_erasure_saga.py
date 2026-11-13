@@ -1,16 +1,18 @@
-"""AA-1093 lane L2 — the pure rules of the tenant offboarding erasure saga (services/tenant_erasure/saga.py, policy.py)
-and the saga job's payload and registration. No DB (the phases on real Postgres: tests/integration/
-test_aa1093_erasure_saga_db.py).
+"""AA-1093 lane L2 — the pure rules of the tenant offboarding erasure saga (services/tenant_erasure/saga.py, policy.py;
+contract tenant.erasure.v1) and the saga job's payload and registration. No DB (the phases on real Postgres:
+tests/integration/test_aa1093_erasure_saga_db.py).
 
-  * schedule: the CRM 90 days after T0, CIS / Booking / TripPlanner the retention window (30 days), a drill 0; the DRY
-    RUN round starts at the latest not_before;
-  * the combined fingerprint (order-free, bound to request and tenant, every app required) and the CIS saga plan hash
-    (without the tables the saga itself writes);
-  * phase state: app_not_ready is a blocker that waits (never a skip), failed / plan_changed stop, a census above 0
-    stops;
+  * schedule: the CRM 90 days after T0, CIS / Booking / TripPlanner the retention window (30 days), a drill 0; a round
+    makes active the apps past their not_before that are not done (stage 1, then the CRM alone);
+  * the contract's step status (waiting, active, failed, done);
+  * the combined fingerprint (order-free, bound to request, tenant and round) and the CIS saga plan hash (bound to
+    tenant and round, without the tables the saga itself writes);
+  * phase state: app_not_ready is a blocker that waits (never a skip), blocked / refused / failed stop, a census above
+    0 stops;
+  * report normalisation (the contract's ErasureReport: round, sha256, codes, no row values);
   * the approval: refused for a non-Cognito caller (the admin secret alone), the switch off, a wrong phase, a stale
     fingerprint, a fingerprint older than 24 h, the pilot / a non-synthetic tenant on Dev;
-  * the CRM report rules (its 90-day window, verify only after its own apply).
+  * the CRM report rules (round_superseded, phase_mismatch, verify after its own apply).
 """
 from __future__ import annotations
 
@@ -26,19 +28,19 @@ T0 = datetime(2026, 11, 13, 9, 0, tzinfo=timezone.utc)
 RID = "10930000-0000-4000-8000-0000000000a1"
 TID = "10930000-0000-4000-8000-0000000000b1"
 H = {app: (c * 64) for app, c in zip(saga.APPS, "abcd")}
-ENV = {"ENVIRONMENT": "dev"}
 
 
 def _request(**over) -> dict:
     nb = saga.schedule(T0, "live", {})
     req = {"request_id": RID, "tenant_id": TID, "mode": "live", "phase": "awaiting_approval", "round": 1,
-           "offboarded_at": T0, **{f"not_before_{a}": nb[a] for a in saga.APPS},
-           "combined_fingerprint": "e" * 64, "fingerprint_at": T0 + timedelta(days=90)}
+           "opened_at": T0, "is_pilot": False, "is_synthetic": True, **{f"not_before_{a}": nb[a] for a in saga.APPS},
+           "round_apps": ["cis", "booking", "tripplanner"], "done_apps": [],
+           "combined_fingerprint": "e" * 64, "fingerprint_at": T0 + timedelta(days=30)}
     req.update(over)
     return req
 
 
-# ── schedule ────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── schedule and stages ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_crm_gets_90_days_and_the_others_the_retention_window():
     nb = saga.schedule(T0, "live", {})
@@ -55,132 +57,176 @@ def test_a_drill_has_window_zero_for_every_app():
     assert set(saga.schedule(T0, "drill", {}).values()) == {T0}
 
 
-def test_the_round_starts_at_the_latest_not_before():
-    assert saga.due_at(_request()) == T0 + timedelta(days=90)
-    assert saga.due_at(_request(**{f"not_before_{a}": T0 for a in saga.APPS})) == T0
+def test_stage_one_then_the_crm_alone():
+    req = _request(round_apps=[], phase="dry_run")
+    assert saga.due_apps(req, T0 + timedelta(days=29)) == []
+    assert saga.next_due_at(req) == T0 + timedelta(days=30)
+    assert saga.due_apps(req, T0 + timedelta(days=30)) == ["cis", "booking", "tripplanner"]
+    after = _request(round_apps=[], done_apps=["cis", "booking", "tripplanner"], phase="dry_run", round=2)
+    assert saga.due_apps(after, T0 + timedelta(days=60)) == []
+    assert saga.next_due_at(after) == T0 + timedelta(days=90)
+    assert saga.due_apps(after, T0 + timedelta(days=90)) == ["crm"]
+    assert saga.next_due_at(_request(done_apps=list(saga.APPS), round_apps=[])) is None
+
+
+def test_a_drill_still_runs_the_two_stages():
+    drill = _request(round_apps=[], phase="dry_run", mode="drill", **{f"not_before_{a}": T0 for a in saga.APPS})
+    assert saga.due_apps(drill, T0) == ["cis", "booking", "tripplanner"]
+    assert saga.due_apps({**drill, "done_apps": ["cis", "booking", "tripplanner"]}, T0) == ["crm"]
+
+
+def test_step_status_follows_the_contract():
+    req = _request(round_apps=["crm"], done_apps=["cis", "booking", "tripplanner"])
+    assert saga.step_status(req, "cis", False) == "done"
+    assert saga.step_status(req, "crm", False) == "active"
+    assert saga.step_status(req, "crm", True) == "failed"
+    assert saga.step_status(_request(), "crm", False) == "waiting"
 
 
 # ── hashes ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_combined_fingerprint_is_order_free_and_bound_to_request_and_tenant():
-    fp = saga.combined_fingerprint(RID, TID, H)
-    assert len(fp) == 64 and fp == saga.combined_fingerprint(RID, TID, dict(reversed(list(H.items()))))
-    assert fp != saga.combined_fingerprint(RID, RID, H)
-    assert fp != saga.combined_fingerprint(TID, TID, H)
-    assert fp != saga.combined_fingerprint(RID, TID, {**H, "crm": "f" * 64})
+def test_combined_fingerprint_is_order_free_and_bound_to_request_tenant_and_round():
+    plans = {a: H[a] for a in ("cis", "booking", "tripplanner")}
+    fp = saga.combined_fingerprint(RID, TID, 1, plans)
+    assert len(fp) == 64 and fp == saga.combined_fingerprint(RID, TID, 1, dict(reversed(list(plans.items()))))
+    assert fp != saga.combined_fingerprint(RID, RID, 1, plans)
+    assert fp != saga.combined_fingerprint(TID, TID, 1, plans)
+    assert fp != saga.combined_fingerprint(RID, TID, 2, plans)
+    assert fp != saga.combined_fingerprint(RID, TID, 1, {**plans, "booking": "f" * 64})
 
 
-def test_combined_fingerprint_needs_every_app():
-    with pytest.raises(ValueError, match="crm"):
-        saga.combined_fingerprint(RID, TID, {k: v for k, v in H.items() if k != "crm"})
+def test_combined_fingerprint_needs_a_hash_for_every_active_app():
+    with pytest.raises(ValueError):
+        saga.combined_fingerprint(RID, TID, 1, {"cis": H["cis"], "booking": None})
+    with pytest.raises(ValueError):
+        saga.combined_fingerprint(RID, TID, 1, {})
 
 
-def test_cis_plan_hash_ignores_the_tables_the_saga_writes():
+def test_cis_plan_hash_ignores_the_tables_the_saga_writes_and_binds_the_round():
     rows = [{"table": "shared.tenants", "action": "delete", "rows": 1},
             {"table": "acp_shared.audit_log", "action": "keep", "rows": 7},
             {"table": "shared.job", "action": "delete", "rows": 3}]
     more = [dict(r, rows=r["rows"] + 2) if r["table"] in saga.SAGA_VOLATILE_TABLES else r for r in rows]
-    assert saga.cis_plan_hash(TID, rows) == saga.cis_plan_hash(TID, more)
-    assert saga.cis_plan_hash(TID, rows) != saga.cis_plan_hash(RID, rows)
+    assert saga.cis_plan_hash(TID, 1, rows) == saga.cis_plan_hash(TID, 1, more)
+    assert saga.cis_plan_hash(TID, 1, rows) != saga.cis_plan_hash(RID, 1, rows)
+    assert saga.cis_plan_hash(TID, 1, rows) != saga.cis_plan_hash(TID, 2, rows)
     changed = [dict(rows[0], rows=2)] + rows[1:]
-    assert saga.cis_plan_hash(TID, rows) != saga.cis_plan_hash(TID, changed)
+    assert saga.cis_plan_hash(TID, 1, rows) != saga.cis_plan_hash(TID, 1, changed)
 
 
 # ── phase state ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def _done(app, **kw):
-    return {"app": app, "status": "done", "plan_hash": H[app], **kw}
+ACTIVE = ("cis", "booking", "tripplanner")
 
 
-def test_every_app_done_with_a_hash_is_ready():
-    st = saga.phase_state({a: _done(a) for a in saga.APPS}, saga.APPS, need_hash=True)
+def _ok(app, **kw):
+    return {"app": app, "status": "ok", "plan_hash": H[app], **kw}
+
+
+def test_every_active_app_ok_with_a_hash_is_ready():
+    st = saga.phase_state({a: _ok(a) for a in ACTIVE}, ACTIVE, need_hash=True)
     assert st.ready and not st.blockers and not st.waiting
 
 
 def test_a_missing_report_view_is_a_blocker_never_a_skip():
-    steps = {a: _done(a) for a in saga.APPS}
+    steps = {a: _ok(a) for a in ACTIVE}
     steps["booking"] = {"status": "app_not_ready", "detail": "report view not readable"}
-    st = saga.phase_state(steps, saga.APPS, need_hash=True)
+    st = saga.phase_state(steps, ACTIVE, need_hash=True)
     assert not st.ready and not st.stopped and st.waiting == ("booking",)
     assert st.blockers[0]["kind"] == "app_not_ready" and st.blockers[0]["app"] == "booking"
 
 
 def test_no_report_yet_waits_without_a_blocker():
-    steps = {a: _done(a) for a in saga.APPS}
-    steps["crm"] = None
-    st = saga.phase_state(steps, saga.APPS, need_hash=True)
-    assert not st.ready and st.waiting == ("crm",) and not st.blockers
+    steps = {a: _ok(a) for a in ACTIVE}
+    steps["tripplanner"] = None
+    st = saga.phase_state(steps, ACTIVE, need_hash=True)
+    assert not st.ready and st.waiting == ("tripplanner",) and not st.blockers
 
 
-@pytest.mark.parametrize("status", ["failed", "plan_changed", "refused"])
-def test_a_failed_step_stops_the_phase(status):
-    steps = {a: _done(a) for a in saga.APPS}
-    steps["tripplanner"] = {"status": status, "detail": "x"}
-    st = saga.phase_state(steps, saga.APPS)
-    assert st.stopped and not st.ready and st.blockers[0]["kind"] == status
+@pytest.mark.parametrize("status", ["blocked", "refused", "failed"])
+def test_a_stopped_step_stops_the_phase(status):
+    steps = {a: _ok(a) for a in ACTIVE}
+    steps["tripplanner"] = {"status": status, "error_code": "plan_changed"}
+    st = saga.phase_state(steps, ACTIVE)
+    assert st.stopped and not st.ready and st.blockers[0]["kind"] == "plan_changed"
 
 
-def test_done_without_a_plan_hash_stops_the_dry_run():
-    steps = {a: _done(a) for a in saga.APPS}
-    steps["crm"] = {"status": "done", "plan_hash": None}
-    assert saga.phase_state(steps, saga.APPS, need_hash=True).stopped
+def test_ok_without_a_plan_hash_stops_the_dry_run():
+    steps = {a: _ok(a) for a in ACTIVE}
+    steps["booking"] = {"status": "ok", "plan_hash": None}
+    assert saga.phase_state(steps, ACTIVE, need_hash=True).stopped
 
 
 def test_the_census_must_be_zero_everywhere():
-    steps = {a: _done(a, pii_left=0) for a in saga.APPS}
-    assert saga.phase_state(steps, saga.APPS, need_census=True).ready
-    steps["crm"] = _done("crm", pii_left=3)
-    st = saga.phase_state(steps, saga.APPS, need_census=True)
-    assert st.stopped and st.blockers[0]["kind"] == "pii_left"
-    steps["crm"] = _done("crm", pii_left=None)
-    assert saga.phase_state(steps, saga.APPS, need_census=True).waiting == ("crm",)
+    def census(n):
+        return {"pii_columns_checked": 4, "pii_rows_found": n}
+    steps = {a: _ok(a, census=census(0)) for a in ACTIVE}
+    assert saga.phase_state(steps, ACTIVE, need_census=True).ready
+    steps["booking"] = _ok("booking", census=census(3))
+    st = saga.phase_state(steps, ACTIVE, need_census=True)
+    assert st.stopped and st.blockers[0]["kind"] == "census_not_zero"
+    steps["booking"] = _ok("booking", census=None)
+    assert saga.phase_state(steps, ACTIVE, need_census=True).waiting == ("booking",)
 
 
 # ── reports ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+REPORT = {"report_id": "10930000-0000-4000-8000-0000000000c1", "request_id": RID, "tenant_id": TID, "app": "booking",
+          "round": 1, "mode": "dry_run", "status": "ok", "error_code": None, "plan_hash": "A" * 64,
+          "tables": [{"table": "booking.trip_cases", "action": "anonymise", "rows": 4, "digest": "1" * 32},
+                     {"table": "Not A Table", "action": "delete", "rows": 1, "digest": None},
+                     {"table": "booking.notes", "action": "drop", "rows": 1, "digest": None}],
+          "blockers": [], "census": None, "job_id": None, "reported_at": "2026-12-01T00:00:00Z",
+          "agency_name": "Zed Trails"}
+
+
 def test_a_report_keeps_ids_codes_hashes_and_counts_only():
-    rep = saga.normalise_report({"request_id": RID, "round": 1, "mode": "dry_run", "status": "done",
-                                 "plan_hash": "A" * 64, "counts": {"delete": 4, "label": "x"}, "agency_name": "Zed",
-                                 "reported_at": "2026-12-01T00:00:00Z"}, current_round=1)
-    assert rep["plan_hash"] == "a" * 64 and rep["counts"] == {"delete": 4} and "agency_name" not in rep
+    rep = saga.normalise_report(REPORT, current_round=1)
+    assert rep["plan_hash"] == "a" * 64 and rep["report_id"] == REPORT["report_id"]
+    assert rep["tables"] == [{"table": "booking.trip_cases", "action": "anonymise", "rows": 4, "digest": "1" * 32}]
+    assert "agency_name" not in rep
 
 
-@pytest.mark.parametrize("raw", [
-    {"mode": "dry_run", "status": "done", "round": 2},          # another round
-    {"mode": "erase", "status": "done"},                         # unknown mode
-    {"mode": "dry_run", "status": "pending"},                    # not a report
-    {"mode": "dry_run", "status": "done", "plan_hash": "zz"},    # not a hash
-    {"mode": "verify", "status": "done", "pii_left": -1},        # negative census
+@pytest.mark.parametrize("over", [
+    {"round": 2},                     # another round
+    {"round": None},                  # a report always names its round
+    {"mode": "erase"},                # unknown mode
+    {"status": "done"},               # not a contract status
+    {"plan_hash": "a" * 32},          # not a sha256
+    {"error_code": "Plan Changed"},   # not a code
 ])
-def test_unusable_reports_are_dropped(raw):
-    assert saga.normalise_report(raw, current_round=1) is None
+def test_unusable_reports_are_dropped(over):
+    assert saga.normalise_report({**REPORT, **over}, current_round=1) is None
 
 
 def test_latest_report_per_mode_wins():
-    rows = [{"mode": "dry_run", "status": "failed", "reported_at": "2026-12-01T00:00:00Z"},
-            {"mode": "dry_run", "status": "done", "plan_hash": "b" * 64, "reported_at": "2026-12-02T00:00:00Z"},
-            {"mode": "apply", "status": "done", "reported_at": "2026-12-03T00:00:00Z"}]
+    rows = [{**REPORT, "status": "failed", "plan_hash": None, "reported_at": "2026-12-01T00:00:00Z"},
+            {**REPORT, "reported_at": "2026-12-02T00:00:00Z"},
+            {**REPORT, "mode": "apply", "reported_at": "2026-12-03T00:00:00Z"}]
     out = saga.latest_reports(rows, current_round=1)
-    assert out["dry_run"]["status"] == "done" and out["apply"]["status"] == "done"
+    assert out["dry_run"]["status"] == "ok" and out["apply"]["status"] == "ok"
 
 
 # ── guards and the approval ─────────────────────────────────────────────────────────────────────────────────────────
 
-def test_tenant_guard_refuses_the_pilot_and_non_synthetic_on_dev_and_in_a_drill():
-    off = {"is_pilot": False, "cancelled_at": T0}
-    assert saga.tenant_guard(off, environment="dev", synthetic=True) == []
-    assert saga.tenant_guard(off, environment="prod", synthetic=False) == []
-    assert any("synthetic" in r for r in saga.tenant_guard(off, environment="dev", synthetic=False))
-    assert any("synthetic" in r for r in saga.tenant_guard(off, environment="prod", synthetic=False, drill=True))
-    assert any("pilot" in r for r in saga.tenant_guard({**off, "is_pilot": True}, environment="prod",
-                                                        synthetic=False))
-    assert any("not offboarded" in r for r in saga.tenant_guard({**off, "cancelled_at": None}, environment="prod",
-                                                                 synthetic=True))
-    assert saga.tenant_guard(None, environment="prod", synthetic=False)
+def test_request_guard_refuses_the_pilot_and_non_synthetic_on_dev_and_in_a_drill():
+    assert saga.request_guard(_request(), environment="dev") == []
+    assert saga.request_guard(_request(is_synthetic=False), environment="prod") == []
+    assert any("synthetic" in r for r in saga.request_guard(_request(is_synthetic=False), environment="dev"))
+    assert any("synthetic" in r for r in saga.request_guard(_request(is_synthetic=False, mode="drill"),
+                                                             environment="prod"))
+    assert any("pilot" in r for r in saga.request_guard(_request(is_pilot=True), environment="prod"))
+
+
+def test_cis_tenant_guard_needs_an_offboarded_non_pilot_row():
+    assert saga.cis_tenant_guard({"is_pilot": False, "cancelled_at": T0}) == []
+    assert saga.cis_tenant_guard(None)
+    assert saga.cis_tenant_guard({"is_pilot": True, "cancelled_at": T0})
+    assert saga.cis_tenant_guard({"is_pilot": False, "cancelled_at": None})
 
 
 def _approve(req=None, **kw):
-    args = dict(fingerprint="e" * 64, now=T0 + timedelta(days=90, hours=1), cognito_admin=True, apply_on=True,
+    args = dict(fingerprint="e" * 64, now=T0 + timedelta(days=30, hours=1), cognito_admin=True, apply_on=True,
                 tenant_reasons=[], validity=timedelta(hours=24))
     args.update(kw)
     return saga.approval_refusal(req or _request(), **args)
@@ -196,7 +242,7 @@ def test_the_admin_secret_alone_is_refused():
 
 
 def test_approval_refused_while_the_switch_is_off():
-    assert _approve(apply_on=False).code == "apply_off"
+    assert _approve(apply_on=False).code == "apply_disabled"
 
 
 def test_approval_refused_for_a_stale_fingerprint():
@@ -205,7 +251,7 @@ def test_approval_refused_for_a_stale_fingerprint():
 
 
 def test_approval_refused_when_the_fingerprint_is_older_than_24_hours():
-    r = _approve(now=T0 + timedelta(days=91, minutes=1))
+    r = _approve(now=T0 + timedelta(days=31, minutes=1))
     assert r.status == 409 and r.code == "fingerprint_too_old"
 
 
@@ -214,17 +260,21 @@ def test_approval_refused_outside_awaiting_approval_and_for_a_refused_tenant():
     assert _approve(tenant_reasons=["the pilot tenant is never erased"]).code == "tenant"
 
 
-def test_crm_reports_follow_its_window_and_its_own_apply():
-    req = _request(phase="apply")
-    early = T0 + timedelta(days=60)
-    assert saga.report_refusal(req, mode="apply", now=early, crm_apply_done=False).code == "too_early"
-    late = T0 + timedelta(days=91)
-    assert saga.report_refusal(req, mode="apply", now=late, crm_apply_done=False) is None
-    assert saga.report_refusal(req, mode="verify", now=late, crm_apply_done=False).code == "phase"
-    assert saga.report_refusal(req, mode="verify", now=late, crm_apply_done=True) is None
-    assert saga.report_refusal(req, mode="dry_run", now=late, crm_apply_done=False).code == "phase"
-    assert saga.report_refusal(_request(phase="cancelled"), mode="dry_run", now=late,
-                               crm_apply_done=False).code == "closed"
+def test_crm_report_rules():
+    stage2 = _request(phase="dry_run", round=2, round_apps=["crm"], done_apps=["cis", "booking", "tripplanner"])
+    assert saga.report_refusal(stage2, app="crm", mode="dry_run", report_round=2, apply_ok=False) is None
+    assert saga.report_refusal(stage2, app="crm", mode="dry_run", report_round=1,
+                               apply_ok=False).code == "round_superseded"
+    assert saga.report_refusal(stage2, app="crm", mode="apply", report_round=2, apply_ok=False).code == \
+        "phase_mismatch"
+    applying = {**stage2, "phase": "apply"}
+    assert saga.report_refusal(applying, app="crm", mode="apply", report_round=2, apply_ok=False) is None
+    assert saga.report_refusal(applying, app="crm", mode="verify", report_round=2, apply_ok=False).code == \
+        "phase_mismatch"
+    assert saga.report_refusal(applying, app="crm", mode="verify", report_round=2, apply_ok=True) is None
+    # stage 1: the CRM is waiting, so it has nothing to report
+    assert saga.report_refusal(_request(phase="dry_run"), app="crm", mode="dry_run", report_round=1,
+                               apply_ok=False).code == "phase_mismatch"
 
 
 # ── policy and the job ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -251,11 +301,20 @@ def test_kind_is_registered_background():
     assert k is not None and k.background and k.concurrency == 1 and not k.deploy_blocking
 
 
-def test_receipt_holds_hashes_counts_and_the_manual_checklist():
-    req = _request(phase="verify", approved_fingerprint="e" * 64, approved_by="admin:x", approved_at=T0,
-                   snapshot_id="snap-1")
-    steps = {(a, "dry_run"): {"plan_hash": H[a]} for a in saga.APPS}
-    steps.update({(a, "verify"): {"pii_left": 0, "reported_at": T0} for a in saga.APPS})
-    doc = saga.receipt(req, steps, done_at=T0, checklist=[{"owner": "AWS", "item": "x", "how": "y"}])
-    assert doc["apps"]["crm"]["plan_hash"] == H["crm"] and doc["apps"]["cis"]["pii_left"] == 0
-    assert doc["combined_fingerprint"] == "e" * 64 and doc["outside_database"]
+def test_blocker_kinds_become_contract_codes():
+    assert sj._code("live_job") == "live_job" and sj._code("S3 refs!") == "s3_refs"
+    assert sj._code(None) == "blocked" and sj._code("9x") == "blocked"
+
+
+def test_receipt_holds_hashes_counts_census_and_the_manual_checklist():
+    steps = []
+    for app, rnd in (("cis", 1), ("booking", 1), ("tripplanner", 1), ("crm", 2)):
+        steps += [{"app": app, "round": rnd, "mode": "dry_run", "status": "ok", "plan_hash": H[app]},
+                  {"app": app, "round": rnd, "mode": "apply", "status": "ok",
+                   "tables": [{"table": "x.y", "action": "delete", "rows": 3, "digest": None}]},
+                  {"app": app, "round": rnd, "mode": "verify", "status": "ok", "reported_at": T0,
+                   "census": {"pii_columns_checked": 2, "pii_rows_found": 0}}]
+    doc = saga.receipt(_request(round=2), steps, done_at=T0, checklist=[{"owner": "AWS", "item": "x", "how": "y"}])
+    assert doc["apps"]["crm"] == {"round": 2, "plan_hash": H["crm"], "applied": {"delete": 3}, "pii_rows_found": 0,
+                                  "reported_at": T0.isoformat()}
+    assert doc["apps"]["cis"]["round"] == 1 and doc["outside_database"]

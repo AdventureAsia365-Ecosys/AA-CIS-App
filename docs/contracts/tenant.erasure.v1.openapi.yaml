@@ -1,0 +1,418 @@
+openapi: 3.1.0
+info:
+  title: tenant.erasure.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; the tenant offboarding erasure saga)
+  version: "1.0"
+  description: >-
+    CIS shared is the master of the tenant account (root ADR 0019 d1) and runs the offboarding erasure saga
+    (CIS job tenant_erasure_saga, tables shared.tenant_erasure_request and shared.tenant_erasure_step; AA-1093,
+    decisions D1-D11 of 13/11/2026). This contract carries the saga between the apps: CIS publishes one erasure
+    request per offboarded tenant, each app computes a DRY RUN plan of what it would erase, CIS combines the plans
+    into one fingerprint that the tech lead approves once, each app applies its own approved plan, and each app
+    reports back. Three parts: (a) the request view catalog.v_tenant_erasure_v1 (CIS migration, SELECT to roles
+    booking and tripplanner only; row shape ErasureRequestRow); (b) the report views
+    booking.v_tenant_erasure_report_v1 and tripplanner.v_tenant_erasure_report_v1 (each owner's own migration over
+    its booking.tenant_erasure_log / tripplanner.tenant_erasure_log, SELECT to cis_app only; row shape
+    ErasureReportRow); (c) for the CRM, which holds no grant on another schema (root ADR 0008a), the HTTP routes
+    below on the CIS API (GET /tenant/v1/erasure-requests, POST /tenant/v1/erasure-requests/{request_id}/reports),
+    M2M token of the aa-m2m pool with the new scope cis.tenant/erasure (the CRM client only).
+    Schedule. T0 = the soft offboard (POST /admin/tenants/{id}/offboard; account.status_changed to offboarding and
+    account.erasure_requested on tenant.entitlements.v1 1.7). Every app stops serving the tenant at T0. Each app has
+    its own not_before: T0 + 90 days for the CRM (D2: after that AA erases the agency's CRM data without the owner's
+    click; the CRM offers the owner a full export at T0, planned: its lock must leave the owner's export and download
+    open until the CRM not_before), T0 + 30 days for CIS, Booking and TripPlanner (D1). The
+    windows and the approval validity (24 hours) are CIS settings in the admin-editable settings registry, seeded
+    with those defaults; CIS computes not_before and approval_expires_at, so a consumer never computes a window. A
+    CIS restore of the tenant before the first not_before cancels the request (phase cancelled); after an app has
+    applied, the request can no longer be cancelled.
+    Phases (request level). dry_run: every app whose step is active (its not_before has passed and it is not done)
+    computes its plan and reports mode dry_run; before the first not_before no step is active and nothing happens.
+    awaiting_approval: every active step reported an ok dry run of the current round; CIS shows the combined
+    fingerprint to the tech lead (Cognito admin only). apply: approved; approved_plan_hash is set on every active
+    step and is valid until approval_expires_at; the active non-CIS apps apply in parallel (stage 1 at T0 + 30 days:
+    TripPlanner and Booking; stage 2 at T0 + 90 days: the CRM alone), each recomputes its plan first and refuses with
+    error_code plan_changed when the hash differs (nothing is erased), then CIS applies last within its stage; verify: every active step runs a census of its pii:-tagged columns for the tenant and reports mode
+    verify (pii_rows_found must be 0). When steps remain whose not_before is later (the CRM at T0 + 90 days), the
+    request goes back to dry_run with the next round and those steps become active at their not_before. done: every
+    step is done. failed: a step failed or refused; the tech lead decides (a new round, or stop). cancelled: stop.
+    A refused plan (plan_changed) or an expired approval starts a new round: a report always names the round it
+    answers and CIS ignores a report of an older round.
+    Hashes. A table digest is the md5 hex of the sorted lines '<primary key>|<row version>' of the rows the plan
+    touches (row version = updated_at in UTC ISO 8601, or empty when the table has none), joined by a newline; the
+    app's plan_hash is the sha256 hex of 'tenant.erasure.v1|<tenant_id>|<round>' followed by one line per table
+    entry '<schema.table>|<action>|<rows>|<digest>' sorted, so a plan binds the tenant and the round. The combined
+    fingerprint is CIS's own (sha256 over the request id, the tenant id, the round and every active app's plan hash)
+    and never crosses this contract except as approved_plan_hash per app. Ids, counts, codes and hashes only: no row
+    value, no tenant name, slug or trading name, no actor, no approver, no free text, no personal data (CI policy).
+    Guards every app also enforces on its own: refuse is_pilot (D8); on Dev apply only when is_synthetic is true
+    (D8); its own apply switch is off by default. The request keeps is_pilot and is_synthetic as copied at T0 and has no
+    foreign key to shared.tenants (nor does the request view join it), so every app still reads its request after CIS
+    has erased the tenant (CIS erases in stage 1, the CRM in stage 2). Per-app actions (D3-D5): CIS erases from its erasure inventory;
+    Booking anonymises (free text redacted, the agency name replaced, audit before / after fields redacted, money
+    rows and the bill-to snapshot kept under the accounting exception) and bk_tenant_pull skips an erased partner;
+    TripPlanner deletes the tenant's rows and merges its spend rows into the app scope; the CRM runs its erase with
+    crypto-shredding. Out of the database (S3 prefixes, per-tenant secrets, Cognito partner users whose only
+    membership was this tenant, error tracker events) is a manual checklist after verify (root
+    docs/legal/dsar-erasure-runbook.md section 4).
+  x-aa-contract: tenant.erasure.v1
+  x-aa-producer: AA-CIS-App
+  x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
+  x-aa-issues: [AA-1093]
+servers:
+  - url: /tenant/v1
+security:
+  - m2m: [cis.tenant/erasure]
+paths:
+  /erasure-requests:
+    get:
+      operationId: listErasureRequests
+      summary: Cursor feed of erasure requests that changed, oldest change first, each with the CRM step only
+      description: >-
+        Each item is the request's current state, with the steps list holding the crm step only. Cursor: opaque;
+        only changes whose writing transaction is older than every transaction still open are returned (a
+        transaction-id snapshot horizon, as tenant.entitlements.v1), so a change committed out of order is
+        delivered later, never skipped. A request appears again each time its phase, round or crm step changes;
+        the consumer acts on the newest state of a request and keeps its own record of what it did per request and
+        round.
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema: {type: string, maxLength: 200}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200, default: 100}
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErasureRequestPage"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /erasure-requests/{request_id}/reports:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: postErasureReport
+      summary: The CRM reports a dry run, an apply or a verification of its step
+      description: >-
+        Idempotent on report_id: the same report_id with the same body answers 200 with created false; the same
+        report_id with another body answers 409 report_conflict. A report of an older round answers 409
+        round_superseded; a mode the request's phase does not expect (an apply while the phase is dry_run) answers
+        409 phase_mismatch. app must be crm (the CRM client may report only its own step).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ErasureReport"}
+      responses:
+        "200":
+          description: Already recorded (same report_id and body)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReportAccepted"}
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReportAccepted"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+components:
+  securitySchemes:
+    m2m:
+      type: oauth2
+      description: Cognito M2M pool aa-m2m-<env>, client credentials.
+      flows:
+        clientCredentials:
+          tokenUrl: https://m2m-auth.example.invalid/oauth2/token
+          scopes:
+            cis.tenant/erasure: Read the tenant erasure requests and report the caller's own erasure step
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum: [unauthorized, forbidden, not_found, invalid, unavailable, round_superseded, phase_mismatch,
+                 report_conflict, wrong_app]
+        message: {type: string, maxLength: 500}
+    App:
+      type: string
+      enum: [cis, crm, booking, tripplanner]
+    Phase:
+      type: string
+      enum: [dry_run, awaiting_approval, apply, verify, done, failed, cancelled]
+    StepStatus:
+      type: string
+      enum: [waiting, active, done, failed]
+      description: >-
+        waiting = its not_before has not passed yet (or an earlier stage is still running); active = part of the
+        current round, it acts on the request phase; done = verified erased; failed = it refused or failed in the
+        current round.
+    Sha256:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    Md5:
+      type: string
+      pattern: "^[0-9a-f]{32}$"
+    ErrorCode:
+      type: [string, "null"]
+      pattern: "^[a-z][a-z0-9_]{1,63}$"
+      description: >-
+        A code, never a message: for example plan_changed, approval_expired, not_due, pilot_refused, not_synthetic,
+        apply_disabled, blocked, census_not_zero, internal_error. Null when the status is ok.
+    Step:
+      type: object
+      additionalProperties: false
+      required: [app, status, not_before, approved_plan_hash]
+      properties:
+        app: {$ref: "#/components/schemas/App"}
+        status: {$ref: "#/components/schemas/StepStatus"}
+        not_before:
+          type: string
+          format: date-time
+          description: T0 + the app's exit window (CRM 90 days, the others 30 days by default), computed by CIS.
+        approved_plan_hash:
+          oneOf:
+            - {$ref: "#/components/schemas/Sha256"}
+            - {type: "null"}
+          description: >-
+            The plan hash of this app that the tech lead approved for the current round; null until the
+            phase is apply. The app applies only when its recomputed plan hash equals it.
+    ErasureRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, tenant_id, phase, round, opened_at, approval_expires_at, is_pilot, is_synthetic,
+                 steps, updated_at, cursor]
+      properties:
+        request_id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        phase: {$ref: "#/components/schemas/Phase"}
+        round:
+          type: integer
+          minimum: 1
+          description: Starts at 1; a new round after a refused plan, an expired approval or a later stage.
+        opened_at:
+          type: string
+          format: date-time
+          description: T0, the soft offboard.
+        approval_expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Set while the phase is apply; an app does not start an apply after it.
+        is_pilot:
+          type: boolean
+          description: The Dev pilot agency (ADR 0019 d16). The saga refuses it; an app that sees true refuses too.
+        is_synthetic:
+          type: boolean
+          description: shared.tenants.is_canary true and not the pilot. On Dev an app applies only when true.
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items: {$ref: "#/components/schemas/Step"}
+          description: On the HTTP feed the crm step only; the full saga state stays in CIS.
+        updated_at: {type: string, format: date-time}
+        cursor: {type: string, maxLength: 200}
+    ErasureRequestPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/ErasureRequest"}
+        next_cursor: {type: string, maxLength: 200}
+    TableEntry:
+      type: object
+      additionalProperties: false
+      required: [table, action, rows, digest]
+      properties:
+        table:
+          type: string
+          pattern: "^[a-z_][a-z0-9_]*\\.[a-z_][a-z0-9_]*$"
+          maxLength: 127
+        action:
+          type: string
+          enum: [delete, cascade, detach, merge, redact, anonymise, keep, shred]
+          description: >-
+            shred = the CRM destroys the tenant's keys (crypto-shredding); keep = rows that stay by rule
+            (audit chain, accounting exception), counted so the receipt can say so.
+        rows: {type: integer, minimum: 0}
+        digest:
+          oneOf:
+            - {$ref: "#/components/schemas/Md5"}
+            - {type: "null"}
+          description: md5 of the sorted '<primary key>|<row version>' lines; null for action keep and shred.
+    Blocker:
+      type: object
+      additionalProperties: false
+      required: [code, count]
+      properties:
+        code: {type: string, pattern: "^[a-z][a-z0-9_]{1,63}$"}
+        count: {type: integer, minimum: 1}
+    Census:
+      type: object
+      additionalProperties: false
+      required: [pii_columns_checked, pii_rows_found]
+      properties:
+        pii_columns_checked:
+          type: integer
+          minimum: 0
+          description: >-
+            The app's columns whose comment starts with pii: (DM-6.1) that the census read for the
+            tenant.
+        pii_rows_found:
+          type: integer
+          minimum: 0
+          description: Rows of the tenant that still hold a value in one of them. Must be 0.
+    ErasureReport:
+      type: object
+      additionalProperties: false
+      required: [report_id, request_id, tenant_id, app, round, mode, status, error_code, plan_hash, tables,
+                 blockers, census, job_id, reported_at]
+      properties:
+        report_id:
+          type: string
+          format: uuid
+          description: The idempotency key of the report, unique per app.
+        request_id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        app: {$ref: "#/components/schemas/App"}
+        round: {type: integer, minimum: 1}
+        mode:
+          type: string
+          enum: [dry_run, apply, verify]
+        status:
+          type: string
+          enum: [ok, blocked, refused, failed]
+          description: >-
+            ok; blocked = a dry run found blockers (no hash to approve); refused = a guard or a
+            changed plan stopped it, nothing was erased; failed = an error, the transaction rolled back.
+        error_code: {$ref: "#/components/schemas/ErrorCode"}
+        plan_hash:
+          oneOf:
+            - {$ref: "#/components/schemas/Sha256"}
+            - {type: "null"}
+          description: >-
+            Dry run and apply - the plan hash computed (on apply, the recomputed one that matched or
+            not); null on verify.
+        tables:
+          type: array
+          maxItems: 500
+          items: {$ref: "#/components/schemas/TableEntry"}
+          description: >-
+            Dry run - the plan; apply - the rows each statement touched; verify - what is left (rows 0
+            except keep).
+        blockers:
+          type: array
+          maxItems: 50
+          items: {$ref: "#/components/schemas/Blocker"}
+        census:
+          oneOf:
+            - {$ref: "#/components/schemas/Census"}
+            - {type: "null"}
+          description: Verify only.
+        job_id:
+          type: [string, "null"]
+          format: uuid
+          description: The app's own job row that produced the report (crm.job, booking.job, tripplanner.job).
+        reported_at: {type: string, format: date-time}
+    ReportAccepted:
+      type: object
+      additionalProperties: false
+      required: [report_id, created, phase]
+      properties:
+        report_id: {type: string, format: uuid}
+        created: {type: boolean}
+        phase: {$ref: "#/components/schemas/Phase"}
+    ErasureRequestRow:
+      type: object
+      additionalProperties: false
+      description: >-
+        One row of catalog.v_tenant_erasure_v1 per request and step of booking or tripplanner (the CRM reads the
+        HTTP feed, CIS its own tables); a consumer reads WHERE app = its own name and acts on the newest updated_at
+        of each request. Columns are only appended.
+      required: [request_id, tenant_id, phase, round, opened_at, approval_expires_at, is_pilot, is_synthetic, app,
+                 step_status, not_before, approved_plan_hash, updated_at]
+      properties:
+        request_id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        phase: {$ref: "#/components/schemas/Phase"}
+        round: {type: integer, minimum: 1}
+        opened_at: {type: string, format: date-time}
+        approval_expires_at: {type: [string, "null"], format: date-time}
+        is_pilot: {type: boolean}
+        is_synthetic: {type: boolean}
+        app:
+          type: string
+          enum: [booking, tripplanner]
+        step_status: {$ref: "#/components/schemas/StepStatus"}
+        not_before: {type: string, format: date-time}
+        approved_plan_hash:
+          oneOf:
+            - {$ref: "#/components/schemas/Sha256"}
+            - {type: "null"}
+        updated_at: {type: string, format: date-time}
+    ErasureReportRow:
+      type: object
+      additionalProperties: false
+      description: >-
+        One row of booking.v_tenant_erasure_report_v1 or tripplanner.v_tenant_erasure_report_v1 per report (the
+        owner's tenant_erasure_log is append-only); the same fields as ErasureReport, tables / blockers / census as
+        jsonb. CIS reads the rows of its open requests by request_id and keeps the newest of each (app, round,
+        mode). Columns are only appended.
+      required: [report_id, request_id, tenant_id, app, round, mode, status, error_code, plan_hash, tables,
+                 blockers, census, job_id, reported_at]
+      properties:
+        report_id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        app:
+          type: string
+          enum: [booking, tripplanner]
+        round: {type: integer, minimum: 1}
+        mode:
+          type: string
+          enum: [dry_run, apply, verify]
+        status:
+          type: string
+          enum: [ok, blocked, refused, failed]
+        error_code: {$ref: "#/components/schemas/ErrorCode"}
+        plan_hash:
+          oneOf:
+            - {$ref: "#/components/schemas/Sha256"}
+            - {type: "null"}
+        tables:
+          type: array
+          maxItems: 500
+          items: {$ref: "#/components/schemas/TableEntry"}
+        blockers:
+          type: array
+          maxItems: 50
+          items: {$ref: "#/components/schemas/Blocker"}
+        census:
+          oneOf:
+            - {$ref: "#/components/schemas/Census"}
+            - {type: "null"}
+        job_id: {type: [string, "null"], format: uuid}
+        reported_at: {type: string, format: date-time}

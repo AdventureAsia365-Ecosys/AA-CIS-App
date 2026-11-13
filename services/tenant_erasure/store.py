@@ -20,12 +20,12 @@ logger = structlog.get_logger()
 
 EVENT = "account.erasure_requested"
 REQUEST_COLUMNS = (
-    "request_id, tenant_id, mode, phase, round, offboarded_at, not_before_cis, not_before_booking, "
-    "not_before_tripplanner, not_before_crm, combined_fingerprint, fingerprint_at, approved_fingerprint, approved_by, "
-    "approved_at, approval_expires_at, snapshot_id, blockers, receipt, created_by, created_at, updated_at, "
-    "cancelled_at, done_at")
-STEP_COLUMNS = ("request_id, round, app, mode, status, plan_hash, approved_plan_hash, counts, pii_left, detail, "
-                "job_id, reported_at, updated_at")
+    "request_id, tenant_id, mode, phase, round, opened_at, is_pilot, is_synthetic, not_before_cis, not_before_booking, "
+    "not_before_tripplanner, not_before_crm, round_apps, done_apps, combined_fingerprint, fingerprint_at, "
+    "approved_fingerprint, approved_by, approved_at, approval_expires_at, snapshot_id, blockers, receipt, created_by, "
+    "created_at, updated_at, cancelled_at, done_at")
+STEP_COLUMNS = ("request_id, round, app, mode, status, report_id, error_code, plan_hash, approved_plan_hash, tables, "
+                "blockers, census, job_id, reported_at, updated_at")
 # Not applied yet: the hooks skip, the routes answer 503.
 NOT_MIGRATED = (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError)
 
@@ -38,10 +38,13 @@ def _row(r: Any) -> Optional[dict]:
     if r is None:
         return None
     d = dict(r)
-    for k in ("blockers", "receipt", "counts"):
+    for k in ("blockers", "receipt", "tables", "census"):
         if isinstance(d.get(k), str):
             d[k] = json.loads(d[k])
-    for k in ("request_id", "tenant_id", "job_id"):
+    for k in ("round_apps", "done_apps"):
+        if k in d:
+            d[k] = list(d[k] or [])
+    for k in ("request_id", "tenant_id", "job_id", "report_id"):
         if d.get(k) is not None:
             d[k] = str(d[k])
     return d
@@ -60,22 +63,30 @@ async def emit(conn, tenant_id: str, change: dict) -> bool:
         return False
 
 
-def event_change(request: dict, status: str) -> dict:
-    return {"request_id": str(request["request_id"]), "status": status, "mode": request["mode"],
-            "not_before": {app: saga._iso(v) for app, v in saga.not_before(request).items()}}
+def event_change(request: dict, op: str) -> dict:
+    """tenant.entitlements.v1 1.7 ErasureRequestChange: {op: requested | cancelled, request_id}."""
+    return {"op": op, "request_id": str(request["request_id"])}
 
 
-async def create_request(conn, tenant_id: str, *, offboarded_at: datetime, mode: str, actor: str,
+# is_pilot / is_synthetic copied at T0 (the request outlives the tenant row; the apps' guards read the copy).
+_TENANT_FLAGS_SQL = ("SELECT coalesce(is_pilot, false) AS is_pilot, (is_canary IS TRUE AND NOT is_pilot) "
+                     "AS is_synthetic FROM shared.tenants WHERE tenant_id = $1::uuid")
+
+
+async def create_request(conn, tenant_id: str, *, opened_at: datetime, mode: str, actor: str,
                          env: Optional[dict] = None) -> dict:
-    """INSERT one request (phase scheduled) and emit the event. Raises UniqueViolation when an open one exists."""
-    nb = saga.schedule(offboarded_at, mode, env)
+    """INSERT one request (phase dry_run, no app active until its not_before) and emit the event. Raises
+    UniqueViolation when an open one exists."""
+    nb = saga.schedule(opened_at, mode, env)
+    flags = await conn.fetchrow(_TENANT_FLAGS_SQL, tenant_id)
     row = await conn.fetchrow(
-        f"INSERT INTO shared.tenant_erasure_request (tenant_id, mode, offboarded_at, not_before_cis, "
-        f"not_before_booking, not_before_tripplanner, not_before_crm, created_by) "
-        f"VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8) RETURNING {REQUEST_COLUMNS}",
-        tenant_id, mode, offboarded_at, nb["cis"], nb["booking"], nb["tripplanner"], nb["crm"], str(actor)[:64])
+        f"INSERT INTO shared.tenant_erasure_request (tenant_id, mode, opened_at, is_pilot, is_synthetic, "
+        f"not_before_cis, not_before_booking, not_before_tripplanner, not_before_crm, created_by) "
+        f"VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {REQUEST_COLUMNS}",
+        tenant_id, mode, opened_at, bool(flags and flags["is_pilot"]), bool(flags and flags["is_synthetic"]),
+        nb["cis"], nb["booking"], nb["tripplanner"], nb["crm"], str(actor)[:64])
     req = _row(row)
-    await emit(conn, tenant_id, event_change(req, "scheduled"))
+    await emit(conn, tenant_id, event_change(req, "requested"))
     return req
 
 
@@ -87,7 +98,7 @@ async def on_offboard(conn, tenant_id: str, *, offboarded_at: datetime, actor: s
         return {"status": "skipped", "reason": "pilot tenant: never scheduled by the saga (decision D8)"}
     try:
         async with conn.transaction():
-            req = await create_request(conn, tenant_id, offboarded_at=offboarded_at, mode="live", actor=actor, env=env)
+            req = await create_request(conn, tenant_id, opened_at=offboarded_at, mode="live", actor=actor, env=env)
     except NOT_MIGRATED:
         return {"status": "skipped", "reason": "erasure saga tables not migrated (CIS 408)"}
     except asyncpg.exceptions.UniqueViolationError:
@@ -111,8 +122,12 @@ async def on_restore(conn, tenant_id: str) -> Optional[str]:
             req = await open_request(conn, tenant_id, for_update=True)
             if req is None:
                 return None
-            if req["phase"] not in saga.CANCELLABLE_PHASES:
-                raise ErasureInProgress(f"the erasure of this tenant is in phase {req['phase']}: the apply started")
+            applied = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM shared.tenant_erasure_step WHERE request_id = $1::uuid "
+                "AND mode = 'apply' AND status = 'ok') AS ok", req["request_id"])
+            if req["phase"] not in saga.CANCELLABLE_PHASES or applied or req["done_apps"]:
+                raise ErasureInProgress(f"the erasure of this tenant is in phase {req['phase']} and an app may already "
+                                        "have erased its part")
             await conn.execute(
                 "UPDATE shared.tenant_erasure_request SET phase = 'cancelled', cancelled_at = now() "
                 "WHERE request_id = $1::uuid AND phase = ANY($2::text[])", req["request_id"],
@@ -149,19 +164,21 @@ def by_app_mode(rows: Iterable[dict]) -> dict[tuple[str, str], dict]:
 
 
 async def upsert_step(conn, request_id: str, round_: int, app: str, mode: str, status: str, *,
-                      plan_hash: Optional[str] = None, counts: Optional[dict] = None, pii_left: Optional[int] = None,
-                      detail: Optional[str] = None, job_id: Optional[str] = None,
-                      reported_at: Optional[datetime] = None) -> None:
-    """Writes the step row of (request, round, app, mode). approved_plan_hash is kept (set only by approve)."""
+                      plan_hash: Optional[str] = None, tables: Optional[list] = None, blockers: Optional[list] = None,
+                      census: Optional[dict] = None, error_code: Optional[str] = None, report_id: Optional[str] = None,
+                      job_id: Optional[str] = None, reported_at: Optional[datetime] = None) -> None:
+    """Writes the newest report of (request, round, app, mode). approved_plan_hash is kept (set only by approve)."""
     await conn.execute(
-        "INSERT INTO shared.tenant_erasure_step (request_id, round, app, mode, status, plan_hash, counts, pii_left, "
-        "detail, job_id, reported_at) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::uuid, $11) "
+        "INSERT INTO shared.tenant_erasure_step (request_id, round, app, mode, status, plan_hash, tables, blockers, "
+        "census, error_code, report_id, job_id, reported_at) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, "
+        "$8::jsonb, $9::jsonb, $10, $11::uuid, $12::uuid, $13) "
         "ON CONFLICT (request_id, round, app, mode) DO UPDATE SET status = EXCLUDED.status, "
-        "plan_hash = EXCLUDED.plan_hash, counts = EXCLUDED.counts, pii_left = EXCLUDED.pii_left, "
-        "detail = EXCLUDED.detail, job_id = coalesce(EXCLUDED.job_id, shared.tenant_erasure_step.job_id), "
+        "plan_hash = EXCLUDED.plan_hash, tables = EXCLUDED.tables, blockers = EXCLUDED.blockers, "
+        "census = EXCLUDED.census, error_code = EXCLUDED.error_code, report_id = EXCLUDED.report_id, "
+        "job_id = coalesce(EXCLUDED.job_id, shared.tenant_erasure_step.job_id), "
         "reported_at = EXCLUDED.reported_at, updated_at = now()",
-        request_id, int(round_), app, mode, status, plan_hash, json.dumps(counts or {}), pii_left,
-        (str(detail)[:500] if detail else None), job_id, reported_at)
+        request_id, int(round_), app, mode, status, plan_hash, json.dumps(tables or []), json.dumps(blockers or []),
+        json.dumps(census) if census is not None else None, error_code, report_id, job_id, reported_at)
 
 
 async def move(conn, request_id: str, from_phases: Iterable[str], to_phase: str, **cols: Any) -> bool:
@@ -181,6 +198,7 @@ async def move(conn, request_id: str, from_phases: Iterable[str], to_phase: str,
 
 _MOVABLE = frozenset({"blockers", "receipt", "combined_fingerprint", "fingerprint_at", "approved_fingerprint",
                       "approved_by", "approved_at", "approval_expires_at", "snapshot_id", "round", "mode",
+                      "round_apps", "done_apps",
                       "not_before_cis", "not_before_booking", "not_before_tripplanner", "not_before_crm",
                       "cancelled_at", "done_at"})
 
@@ -196,10 +214,16 @@ async def set_blockers(conn, request_id: str, phase: str, blockers: list[dict]) 
 
 # Rows whose writing transaction is older than every open one (txid kept by the CIS 408 trigger), ordered by
 # (txid, request_id): a late commit is never skipped. Every column the WHERE / ORDER BY use is qualified (the
-# membership feed's S256 lesson: an unqualified ORDER BY txid next to txid::text sorts by the text).
+# membership feed's S256 lesson: an unqualified ORDER BY txid next to txid::text sorts by the text). Every change of
+# the CRM step (round start, approval, done) is a write of the request row, so it moves the row's txid.
 CRM_FEED_SQL = """
-    SELECT r.request_id, r.tenant_id, r.phase, r.mode, r.round, r.not_before_crm, s.approved_plan_hash,
-           r.approval_expires_at, r.updated_at, r.txid::text AS txid_text
+    SELECT r.request_id, r.tenant_id, r.phase, r.round, r.opened_at, r.approval_expires_at, r.is_pilot,
+           r.is_synthetic, r.round_apps, r.done_apps, r.not_before_crm, r.updated_at,
+           CASE WHEN r.phase IN ('apply', 'verify') THEN s.approved_plan_hash END AS approved_plan_hash,
+           EXISTS (SELECT 1 FROM shared.tenant_erasure_step f
+                    WHERE f.request_id = r.request_id AND f.round = r.round AND f.app = 'crm'
+                      AND f.status IN ('blocked', 'refused', 'failed')) AS crm_failed,
+           r.txid::text AS txid_text
       FROM shared.tenant_erasure_request r
       LEFT JOIN shared.tenant_erasure_step s
              ON s.request_id = r.request_id AND s.round = r.round AND s.app = 'crm' AND s.mode = 'dry_run'

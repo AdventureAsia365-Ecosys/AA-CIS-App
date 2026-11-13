@@ -10,27 +10,30 @@ export type App = (typeof APPS)[number];
 export const MODES = ["dry_run", "apply", "verify"] as const;
 export type StepMode = (typeof MODES)[number];
 
-export type Phase =
-  | "scheduled" | "dry_run" | "awaiting_approval" | "apply" | "verify" | "done" | "cancelled" | "failed";
+export type Phase = "dry_run" | "awaiting_approval" | "apply" | "verify" | "done" | "cancelled" | "failed";
 
 /** Phases in which the saga job has work to do ("Run now" is offered). */
-export const WORKING_PHASES: readonly Phase[] = ["scheduled", "dry_run", "apply", "verify"];
+export const WORKING_PHASES: readonly Phase[] = ["dry_run", "apply", "verify"];
 /** Phases in which a new DRY RUN round may start (the backend also refuses once the CIS apply started). */
 export const NEW_ROUND_PHASES: readonly Phase[] = ["dry_run", "awaiting_approval", "apply"];
 
 export interface SagaBlocker { app: string; kind: string; detail: string }
 
+/** The newest report of one app for one round and mode (tenant.erasure.v1 ErasureReport). */
 export interface SagaStep {
   request_id: string;
   round: number;
   app: App;
   mode: StepMode;
+  /** ok | blocked | refused | failed, plus pending (a CIS job running) and app_not_ready (no report view yet). */
   status: string;
+  report_id: string | null;
+  error_code: string | null;
   plan_hash: string | null;
   approved_plan_hash: string | null;
-  counts: Record<string, number>;
-  pii_left: number | null;
-  detail: string | null;
+  tables: { table: string; action: string; rows: number; digest: string | null }[];
+  blockers: { code: string; count: number }[];
+  census: { pii_columns_checked: number; pii_rows_found: number } | null;
   job_id: string | null;
   reported_at: string | null;
   updated_at: string;
@@ -43,12 +46,18 @@ export interface SagaRequest {
   mode: "live" | "drill";
   phase: Phase;
   round: number;
-  offboarded_at: string;
+  opened_at: string;
+  is_pilot: boolean;
+  is_synthetic: boolean;
+  /** The apps active in the current round (stage 1: CIS, Booking, TripPlanner; stage 2: the CRM). */
+  round_apps: App[];
+  /** The apps whose erasure is verified. */
+  done_apps: App[];
   not_before_cis: string;
   not_before_booking: string;
   not_before_tripplanner: string;
   not_before_crm: string;
-  due_at?: string;
+  next_due_at?: string | null;
   combined_fingerprint: string | null;
   fingerprint_at: string | null;
   approved_fingerprint: string | null;
@@ -78,12 +87,21 @@ export interface SagaSettings {
 export interface SagaList { requests: SagaRequest[]; settings: SagaSettings }
 export interface SagaDetail { request: SagaRequest; settings: SagaSettings }
 
+/** The contract's step status of one app: done, failed, active (in the current round) or waiting. */
+export function stepStatus(req: SagaRequest, app: App): "done" | "failed" | "active" | "waiting" {
+  if (req.done_apps.includes(app)) return "done";
+  if (!req.round_apps.includes(app)) return "waiting";
+  const stopped = (req.steps ?? []).some((s) => s.round === req.round && s.app === app
+    && ["blocked", "refused", "failed"].includes(s.status));
+  return stopped ? "failed" : "active";
+}
+
 /** Badge tone of a phase. */
 export function phaseTone(phase: Phase): "neutral" | "info" | "warning" | "success" | "danger" {
   if (phase === "done") return "success";
   if (phase === "failed") return "danger";
   if (phase === "awaiting_approval") return "warning";
-  if (phase === "cancelled" || phase === "scheduled") return "neutral";
+  if (phase === "cancelled") return "neutral";
   return "info";
 }
 

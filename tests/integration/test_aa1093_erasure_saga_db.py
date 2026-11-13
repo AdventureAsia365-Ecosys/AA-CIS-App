@@ -2,18 +2,18 @@
 
 No worker runs: the test calls the saga pass (tenant_erasure_saga_job.advance) and plays the CIS jobs it queues by
 setting their status and result, as a worker would. Booking and TripPlanner report through stand-in report views
-(over a scratch table, dropped at teardown); the CRM through the real route function. Invented ids only.
+(contract ErasureReportRow, over a scratch table dropped at teardown); the CRM through the real route function with the
+contract's ErasureReport body. Invented ids only.
 
-  * T0: the offboard hook records the request (CRM T0 + 90 days, the others T0 + 30 days) and emits
-    account.erasure_requested; the pilot is never scheduled; a restore cancels it (event status cancelled) and is
-    refused once the apply started;
-  * dry_run: a missing report view is app_not_ready (a blocker, never a skip); once every app reported, the combined
-    fingerprint is sha256(request, tenant, sorted app:hash) and the request waits for the approval;
-  * the approval route: the admin secret alone, the switch off, a stale fingerprint and a fingerprint older than 24 h
-    are refused; a Cognito admin moves it to apply and pins every app's approved plan hash;
-  * apply: CIS waits until Booking, TripPlanner and the CRM all report done (CIS last), then a tenant backup, a fresh
-    DRY RUN matched against the approved CIS hash, the data_erasure apply; verify: every census 0 -> done + receipt;
-  * the CRM feed lists the request with the CRM's own not_before and serves a change again after the cursor.
+  * T0: the offboard hook records the request (CRM T0 + 90 days, the others T0 + 30 days, is_pilot / is_synthetic
+    copied) and emits account.erasure_requested {op requested}; the pilot is never scheduled; a restore cancels it
+    ({op cancelled}) and is refused once an app applied;
+  * stage 1 (CIS, Booking, TripPlanner): a missing report view is app_not_ready (a blocker, never a skip); the combined
+    fingerprint covers the active apps and the round; the approval route refuses the admin secret alone, the switch
+    off, a stale fingerprint and one older than 24 h; CIS applies last (backup, fresh DRY RUN, data_erasure apply);
+  * stage 2 (the CRM alone, round 2): its own DRY RUN, approval, apply and census, then done with a receipt;
+  * the CRM routes: idempotent report_id (201 / 200 / 409 report_conflict), wrong_app, round_superseded,
+    phase_mismatch; the feed lists the CRM step (waiting in stage 1) and serves a change again after the cursor.
 """
 import json
 import os
@@ -56,9 +56,10 @@ CRM = M2MCaller(client_id="crmclient", scopes=frozenset({"cis.tenant/erasure"}))
 async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
     await p.execute(f"CREATE SCHEMA IF NOT EXISTS {SCRATCH}")
-    await p.execute(f"CREATE TABLE IF NOT EXISTS {SCRATCH}.reports (app text, request_id uuid, round smallint, "
-                    "mode text, status text, plan_hash text, counts jsonb, pii_left bigint, detail text, "
-                    "reported_at timestamptz DEFAULT now())")
+    await p.execute(f"CREATE TABLE IF NOT EXISTS {SCRATCH}.reports (report_id uuid DEFAULT gen_random_uuid(), "
+                    "request_id uuid, tenant_id uuid, app text, round smallint, mode text, status text, error_code text, "
+                    "plan_hash text, tables jsonb DEFAULT '[]', blockers jsonb DEFAULT '[]', census jsonb, job_id uuid, "
+                    "reported_at timestamptz DEFAULT clock_timestamp())")
     tenants: list[str] = []
     yield p, tenants
     for app in ("booking", "tripplanner"):
@@ -93,22 +94,26 @@ async def _offboard(p, tid, *, mode="live", is_pilot=False) -> dict:
     async with p.acquire() as conn, conn.transaction():
         t0 = await conn.fetchval("SELECT cancelled_at FROM shared.tenants WHERE tenant_id = $1::uuid", tid)
         if mode == "drill":
-            return await store.create_request(conn, tid, offboarded_at=t0, mode="drill", actor="admin:pytest")
+            return await store.create_request(conn, tid, opened_at=t0, mode="drill", actor="admin:pytest")
         return await store.on_offboard(conn, tid, offboarded_at=t0, actor="admin:pytest", is_pilot=is_pilot)
 
 
 async def _views(p):
     for app in ("booking", "tripplanner"):
         await p.execute(f"CREATE SCHEMA IF NOT EXISTS {app}")
-        await p.execute(f"CREATE OR REPLACE VIEW {app}.v_tenant_erasure_report_v1 AS SELECT request_id, round, mode, "
-                        f"status, plan_hash, counts, pii_left, detail, reported_at FROM {SCRATCH}.reports "
-                        f"WHERE app = '{app}'")
+        await p.execute(f"CREATE OR REPLACE VIEW {app}.v_tenant_erasure_report_v1 AS SELECT report_id, request_id, "
+                        f"tenant_id, app, round, mode, status, error_code, plan_hash, tables, blockers, census, "
+                        f"job_id, reported_at FROM {SCRATCH}.reports WHERE app = '{app}'")
 
 
-async def _report(p, app, rid, mode, status="done", *, plan_hash=None, pii_left=None, round_=1):
-    await p.execute(f"INSERT INTO {SCRATCH}.reports (app, request_id, round, mode, status, plan_hash, counts, "
-                    "pii_left) VALUES ($1, $2::uuid, $3, $4, $5, $6, '{\"delete\": 2}'::jsonb, $7)",
-                    app, rid, round_, mode, status, plan_hash, pii_left)
+TABLES = '[{"table": "x_app.rows_of_tenant", "action": "delete", "rows": 2, "digest": null}]'
+
+
+async def _report(p, app, rid, tid, mode, status="ok", *, plan_hash=None, census=None, round_=1):
+    await p.execute(f"INSERT INTO {SCRATCH}.reports (request_id, tenant_id, app, round, mode, status, plan_hash, "
+                    "tables, census) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)",
+                    rid, tid, app, round_, mode, status, plan_hash, TABLES,
+                    json.dumps(census) if census is not None else None)
 
 
 def _body(**kw):
@@ -117,15 +122,24 @@ def _body(**kw):
     return SimpleNamespace(json=_json, app=SimpleNamespace(state=SimpleNamespace(pool=None)))
 
 
-async def _crm(p, rid, **kw):
-    req = _body(**kw)
+def _crm_report(rid, tid, mode, *, round_, status="ok", plan_hash=None, census=None, report_id=None, app="crm"):
+    return {"report_id": report_id or str(uuid.uuid4()), "request_id": rid, "tenant_id": tid, "app": app,
+            "round": round_, "mode": mode, "status": status, "error_code": None, "plan_hash": plan_hash,
+            "tables": [{"table": "crm.agency_rows", "action": "shred", "rows": 3, "digest": None}],
+            "blockers": [], "census": census, "job_id": None, "reported_at": "2027-02-01T00:00:00Z"}
+
+
+async def _crm(p, rid, body):
+    req = _body(**body)
     req.app.state.pool = p
-    return await tr.report_erasure_step(rid, req, caller=CRM)
+    out = await tr.report_erasure_step(rid, req, caller=CRM)
+    return out.status_code, json.loads(out.body)
 
 
-async def _play(p, key_part, rid, *, result, status="succeeded"):
+async def _play(p, key_part, rid, *, result, status="succeeded", round_=1):
     """Act as the worker for the CIS job of this request whose idempotency key ends with ``key_part``."""
-    job = await p.fetchrow("SELECT id FROM shared.job WHERE idempotency_key LIKE $1", f"%{rid}:r1:{key_part}")
+    job = await p.fetchrow("SELECT id FROM shared.job WHERE idempotency_key LIKE $1",
+                           f"%{rid}:r{round_}:{key_part}")
     assert job is not None, key_part
     await p.execute("UPDATE shared.job SET status = $2, result = $3::jsonb, finished_at = now() WHERE id = $1",
                     job["id"], status, json.dumps(result))
@@ -140,10 +154,10 @@ def _staff(p, identity=None, role="admin"):
 COGNITO = SimpleNamespace(auth="cognito", admin_id="0f0f0f0f-1093-4000-8000-000000000001")
 
 
-async def _steps(p, rid):
+async def _steps(p, rid, round_=1):
     return {(r["app"], r["mode"]): r for r in await p.fetch(
-        "SELECT app, mode, status, plan_hash, approved_plan_hash, pii_left, job_id FROM shared.tenant_erasure_step "
-        "WHERE request_id = $1::uuid", rid)}
+        "SELECT app, mode, status, error_code, plan_hash, approved_plan_hash, census, job_id "
+        "FROM shared.tenant_erasure_step WHERE request_id = $1::uuid AND round = $2", rid, round_)}
 
 
 async def _req(p, rid):
@@ -152,6 +166,11 @@ async def _req(p, rid):
 
 # ── T0 and restore ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+async def _last_event(p, tid):
+    return json.loads(await p.fetchval("SELECT change FROM shared.tenant_account_event WHERE tenant_id = $1::uuid "
+                                       "AND type = 'account.erasure_requested' ORDER BY seq DESC LIMIT 1", tid))
+
+
 @pytest.mark.asyncio
 async def test_offboard_schedules_crm_90_days_others_30_and_emits_the_event(pool):
     p, tenants = pool
@@ -159,15 +178,12 @@ async def test_offboard_schedules_crm_90_days_others_30_and_emits_the_event(pool
     out = await _offboard(p, tid)
     assert out["status"] == "scheduled"
     req = await _req(p, out["request_id"])
-    assert req["phase"] == "scheduled" and req["mode"] == "live"
-    assert req["not_before_crm"] - req["offboarded_at"] == timedelta(days=90)
+    assert req["phase"] == "dry_run" and req["mode"] == "live" and list(req["round_apps"]) == []
+    assert req["is_synthetic"] is True and req["is_pilot"] is False
+    assert req["not_before_crm"] - req["opened_at"] == timedelta(days=90)
     for app in ("cis", "booking", "tripplanner"):
-        assert req[f"not_before_{app}"] - req["offboarded_at"] == timedelta(days=30)
-    ev = await p.fetchval("SELECT change FROM shared.tenant_account_event WHERE tenant_id = $1::uuid "
-                          "AND type = 'account.erasure_requested' ORDER BY seq DESC LIMIT 1", tid)
-    ev = json.loads(ev)
-    assert ev["request_id"] == out["request_id"] and ev["status"] == "scheduled" and set(ev["not_before"]) == set(
-        saga.APPS)
+        assert req[f"not_before_{app}"] - req["opened_at"] == timedelta(days=30)
+    assert await _last_event(p, tid) == {"op": "requested", "request_id": out["request_id"]}
     again = await _offboard(p, tid)
     assert again["status"] == "skipped"          # one open request per tenant
 
@@ -183,72 +199,70 @@ async def test_the_pilot_is_never_scheduled(pool):
 
 
 @pytest.mark.asyncio
-async def test_restore_cancels_the_request_and_is_refused_once_the_apply_started(pool):
+async def test_restore_cancels_the_request_and_is_refused_once_an_app_applied(pool):
     p, tenants = pool
     tid = await _tenant(p, tenants)
     rid = (await _offboard(p, tid))["request_id"]
     async with p.acquire() as conn, conn.transaction():
         assert await store.on_restore(conn, tid) == rid
     assert (await _req(p, rid))["phase"] == "cancelled"
-    ev = json.loads(await p.fetchval("SELECT change FROM shared.tenant_account_event WHERE tenant_id = $1::uuid AND "
-                                     "type = 'account.erasure_requested' ORDER BY seq DESC LIMIT 1", tid))
-    assert ev["status"] == "cancelled"
+    assert await _last_event(p, tid) == {"op": "cancelled", "request_id": rid}
     second = (await _offboard(p, tid))["request_id"]
-    await p.execute("UPDATE shared.tenant_erasure_request SET phase = 'apply' WHERE request_id = $1::uuid", second)
+    await p.execute("INSERT INTO shared.tenant_erasure_step (request_id, round, app, mode, status) "
+                    "VALUES ($1::uuid, 1, 'booking', 'apply', 'ok')", second)
     with pytest.raises(store.ErasureInProgress):
         async with p.acquire() as conn, conn.transaction():
             await store.on_restore(conn, tid)
-    assert (await _req(p, second))["phase"] == "apply"
+    assert (await _req(p, second))["phase"] == "dry_run"
 
 
 @pytest.mark.asyncio
-async def test_a_live_request_does_not_start_before_its_latest_not_before(pool):
+async def test_a_live_request_waits_for_the_first_not_before_then_stage_one(pool):
     p, tenants = pool
     tid = await _tenant(p, tenants)
     rid = (await _offboard(p, tid))["request_id"]
+    soon = datetime.now(timezone.utc) + timedelta(days=29)
+    out = await sj.advance(p, rid, now=soon)
+    assert out["phase"] == "dry_run" and out["reason"] == "not_due"
+    assert rid not in [r for r in await sj.ensure_jobs(p, now=soon)]
     out = await sj.advance(p, rid, now=datetime.now(timezone.utc) + timedelta(days=31))
-    assert out["phase"] == "scheduled" and out["reason"] == "not due"       # the CRM's 90 days still run
-    assert await sj.ensure_jobs(p, now=datetime.now(timezone.utc) + timedelta(days=31)) == []
-    out = await sj.advance(p, rid, now=datetime.now(timezone.utc) + timedelta(days=91))
-    assert out["phase"] == "dry_run"
+    assert out["phase"] == "dry_run" and out["waiting"]
+    assert list((await _req(p, rid))["round_apps"]) == ["cis", "booking", "tripplanner"]     # the CRM waits
 
 
-# ── the full drill path ─────────────────────────────────────────────────────────────────────────────────────────────
+# ── the full drill path: stage 1 then stage 2 ───────────────────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_drill_dry_run_approval_apply_cis_last_verify(pool, monkeypatch):
-    p, tenants = pool
-    tid = await _tenant(p, tenants)
-    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
-    now = datetime.now(timezone.utc) + timedelta(seconds=1)
-
-    # dry_run, no report view yet: Booking / TripPlanner app_not_ready, the CRM pending, CIS's DRY RUN queued
+async def _stage1_to_approval(p, tid, rid, now):
     out = await sj.advance(p, rid, now=now)
     assert out["phase"] == "dry_run" and out["waiting"]
     st = await _steps(p, rid)
     assert st[("booking", "dry_run")]["status"] == "app_not_ready"
     assert st[("tripplanner", "dry_run")]["status"] == "app_not_ready"
-    assert st[("crm", "dry_run")]["status"] == "pending" and st[("cis", "dry_run")]["status"] == "pending"
-    kinds = {b["kind"] for b in json.loads((await _req(p, rid))["blockers"])}
-    assert kinds == {"app_not_ready"}
+    assert st[("cis", "dry_run")]["status"] == "pending" and ("crm", "dry_run") not in st
+    assert {b["kind"] for b in json.loads((await _req(p, rid))["blockers"])} == {"app_not_ready"}
     await _play(p, "cis:dry_run", rid, result={"mode": "dry_run", "rows": CIS_ROWS, "blocked": False,
-                                               "fingerprint": "1" * 64, "totals": {"delete": 5}})
-    # the apps report
+                                               "fingerprint": "1" * 64})
     await _views(p)
-    await _report(p, "booking", rid, "dry_run", plan_hash=PEER_HASH["booking"])
-    await _report(p, "tripplanner", rid, "dry_run", plan_hash=PEER_HASH["tripplanner"])
-    with pytest.raises(M2MProblem) as e:                                  # a done dry run carries its hash
-        await _crm(p, rid, mode="dry_run", status="done")
-    assert e.value.status == 400
-    await _crm(p, rid, mode="dry_run", status="done", plan_hash=PEER_HASH["crm"])
+    await _report(p, "booking", rid, tid, "dry_run", plan_hash=PEER_HASH["booking"])
+    await _report(p, "tripplanner", rid, tid, "dry_run", plan_hash=PEER_HASH["tripplanner"])
     out = await sj.advance(p, rid, now=now)
     assert out["phase"] == "awaiting_approval"
     req = await _req(p, rid)
-    cis_hash = saga.cis_plan_hash(tid, CIS_ROWS)
-    assert req["combined_fingerprint"] == saga.combined_fingerprint(rid, tid, {**PEER_HASH, "cis": cis_hash})
+    plans = {"cis": saga.cis_plan_hash(tid, 1, CIS_ROWS), "booking": PEER_HASH["booking"],
+             "tripplanner": PEER_HASH["tripplanner"]}
+    assert req["combined_fingerprint"] == saga.combined_fingerprint(rid, tid, 1, plans)
+    return req["combined_fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_drill_stage_one_cis_last_then_stage_two_crm(pool, monkeypatch):
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    now = datetime.now(timezone.utc) + timedelta(seconds=1)
+    fp = await _stage1_to_approval(p, tid, rid, now)
 
     # the approval
-    fp = req["combined_fingerprint"]
     monkeypatch.delenv(policy.APPLY_SWITCH_ENV, raising=False)
     for ident, why in ((None, 403), (COGNITO, 403)):                       # admin secret alone; switch off
         with pytest.raises(HTTPException) as e:
@@ -268,51 +282,83 @@ async def test_drill_dry_run_approval_apply_cis_last_verify(pool, monkeypatch):
     ok = await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-drill-1"), _staff(p, COGNITO))
     assert ok["phase"] == "apply" and ok["approved_by"].startswith("admin:")
     st = await _steps(p, rid)
-    assert all(st[(a, "dry_run")]["approved_plan_hash"] == st[(a, "dry_run")]["plan_hash"] for a in saga.APPS)
-    # the views serve the approved hash to Booking / TripPlanner only through the catalog view (CIS 410, its own test)
+    assert all(st[(a, "dry_run")]["approved_plan_hash"] == st[(a, "dry_run")]["plan_hash"]
+               for a in ("cis", "booking", "tripplanner"))
 
-    # apply: CIS waits for every peer (CIS last)
+    # apply: CIS waits for Booking and TripPlanner (CIS last in its stage)
     later = datetime.now(timezone.utc) + timedelta(seconds=2)
-    await _report(p, "booking", rid, "apply")
+    await _report(p, "booking", rid, tid, "apply", plan_hash=PEER_HASH["booking"])
     out = await sj.advance(p, rid, now=later)
-    assert out["phase"] == "apply" and out["waiting"] and set(out["waiting_for"]) == {"tripplanner", "crm"}
+    assert out["phase"] == "apply" and out["waiting"] and out["waiting_for"] == ["tripplanner"]
     assert ("cis", "apply") not in await _steps(p, rid)
-    assert await p.fetchval("SELECT count(*) AS n FROM shared.job WHERE idempotency_key LIKE $1",
-                            f"%{rid}:r1:cis:%") == 1                         # only the DRY RUN so far
-    await _report(p, "tripplanner", rid, "apply")
-    await _crm(p, rid, mode="apply", status="done", counts={"delete": 9})
+    await _report(p, "tripplanner", rid, tid, "apply", plan_hash=PEER_HASH["tripplanner"])
     out = await sj.advance(p, rid, now=later)
     assert out["waiting_for"] == ["cis:backup"]
     await _play(p, "cis:backup", rid, result={"rows": 5})
     out = await sj.advance(p, rid, now=later)
     assert out["waiting_for"] == ["cis:recheck"]
+    rows = [dict(r, rows=r["rows"] + 1) if r["action"] == "keep" else r for r in CIS_ROWS]   # the saga's audit row
     recheck = await _play(p, "cis:recheck", rid, result={"mode": "dry_run", "fingerprint": "2" * 64, "blocked": False,
-                                                         "rows": [dict(r, rows=r["rows"] + (1 if r["action"] == "keep"
-                                                                                            else 0))
-                                                                  for r in CIS_ROWS]})
+                                                         "rows": rows})
     out = await sj.advance(p, rid, now=later)
     assert out["waiting_for"] == ["cis:apply"]
-    apply_job = await p.fetchrow("SELECT payload FROM shared.job WHERE idempotency_key LIKE $1", f"%{rid}:r1:cis:apply")
-    payload = json.loads(apply_job["payload"])
+    payload = json.loads(await p.fetchval("SELECT payload FROM shared.job WHERE idempotency_key LIKE $1",
+                                          f"%{rid}:r1:cis:apply"))
     assert payload["mode"] == "apply" and payload["dry_run_job_id"] == recheck
     assert payload["approved_fingerprint"] == "2" * 64 and payload["snapshot_id"] == "snap-drill-1"
     assert payload["approved_by"] == ok["approved_by"]
-    await _play(p, "cis:apply", rid, result={"mode": "apply", "totals": {"delete": 5}, "verified": True,
-                                             "verified_left": {}})
+    await _play(p, "cis:apply", rid, result={"mode": "apply", "verified": True, "verified_left": {},
+                                             "applied": [{"table": "shared.tenants", "action": "delete", "rows": 1}]})
     out = await sj.advance(p, rid, now=later)
     assert out["phase"] == "verify" and out["waiting"]
-    # verify: every census 0 -> done
-    await _report(p, "booking", rid, "verify", pii_left=0)
-    await _report(p, "tripplanner", rid, "verify", pii_left=0)
+    zero = {"pii_columns_checked": 3, "pii_rows_found": 0}
+    await _report(p, "booking", rid, tid, "verify", census=zero)
+    await _report(p, "tripplanner", rid, tid, "verify", census=zero)
+    out = await sj.advance(p, rid, now=later)
+    assert out["phase"] == "dry_run" and out["next_round"] == 2                # stage 1 done, the CRM next
+    req = await _req(p, rid)
+    assert list(req["done_apps"]) == ["cis", "booking", "tripplanner"] and list(req["round_apps"]) == []
+    assert req["approved_fingerprint"] is None and req["round"] == 2
+
+    # stage 2: the CRM alone (drill: its not_before is T0 too)
+    out = await sj.advance(p, rid, now=later)
+    assert out["phase"] == "dry_run" and out["waiting_for"] == ["crm"]
+    assert list((await _req(p, rid))["round_apps"]) == ["crm"]
+    crm_hash = "d" * 64
+    dry = _crm_report(rid, tid, "dry_run", round_=2, plan_hash=crm_hash)
+    assert (await _crm(p, rid, dry))[0] == 201
+    assert await _crm(p, rid, dry) == (200, {"report_id": dry["report_id"], "created": False, "phase": "dry_run"})
+    with pytest.raises(M2MProblem) as e:
+        await _crm(p, rid, {**dry, "plan_hash": "e" * 64})
+    assert e.value.status == 409 and e.value.error == "report_conflict"
+    with pytest.raises(M2MProblem) as e:
+        await _crm(p, rid, _crm_report(rid, tid, "dry_run", round_=1, plan_hash=crm_hash))
+    assert e.value.error == "round_superseded"
+    with pytest.raises(M2MProblem) as e:
+        await _crm(p, rid, _crm_report(rid, tid, "dry_run", round_=2, plan_hash=crm_hash, app="booking"))
+    assert e.value.status == 403 and e.value.error == "wrong_app"
+    with pytest.raises(M2MProblem) as e:
+        await _crm(p, rid, _crm_report(rid, tid, "apply", round_=2, plan_hash=crm_hash))
+    assert e.value.error == "phase_mismatch"
+    out = await sj.advance(p, rid, now=later)
+    assert out["phase"] == "awaiting_approval"
+    fp2 = (await _req(p, rid))["combined_fingerprint"]
+    assert fp2 == saga.combined_fingerprint(rid, tid, 2, {"crm": crm_hash})
+    await ar.approve(rid, ar.ApproveRequest(fingerprint=fp2, snapshot_id="snap-drill-2"), _staff(p, COGNITO))
+    assert (await _steps(p, rid, 2))[("crm", "dry_run")]["approved_plan_hash"] == crm_hash
+    assert (await _crm(p, rid, _crm_report(rid, tid, "apply", round_=2, plan_hash=crm_hash)))[0] == 201
+    out = await sj.advance(p, rid, now=later)
+    assert out["phase"] == "verify" and out["waiting_for"] == ["crm"]
     with pytest.raises(M2MProblem):
-        await _crm(p, rid, mode="verify", status="done")                  # a done census carries pii_left
-    await _crm(p, rid, mode="verify", status="done", pii_left=0)
+        await _crm(p, rid, _crm_report(rid, tid, "verify", round_=2))       # an ok census report carries the census
+    assert (await _crm(p, rid, _crm_report(rid, tid, "verify", round_=2, census=zero)))[0] == 201
     out = await sj.advance(p, rid, now=later)
     assert out["phase"] == "done"
     req = await _req(p, rid)
     receipt = json.loads(req["receipt"])
-    assert req["done_at"] is not None and receipt["apps"]["cis"]["pii_left"] == 0
-    assert receipt["combined_fingerprint"] == fp and receipt["outside_database"]
+    assert req["done_at"] is not None and list(req["done_apps"]) == list(saga.APPS)
+    assert receipt["apps"]["crm"]["round"] == 2 and receipt["apps"]["cis"]["round"] == 1
+    assert all(receipt["apps"][a]["pii_rows_found"] == 0 for a in saga.APPS) and receipt["outside_database"]
 
 
 @pytest.mark.asyncio
@@ -321,19 +367,11 @@ async def test_a_changed_cis_plan_stops_the_apply(pool, monkeypatch):
     tid = await _tenant(p, tenants)
     rid = (await _offboard(p, tid, mode="drill"))["request_id"]
     now = datetime.now(timezone.utc) + timedelta(seconds=1)
-    await sj.advance(p, rid, now=now)
-    await _play(p, "cis:dry_run", rid, result={"mode": "dry_run", "rows": CIS_ROWS, "blocked": False})
-    await _views(p)
-    for app in ("booking", "tripplanner"):
-        await _report(p, app, rid, "dry_run", plan_hash=PEER_HASH[app])
-    await _crm(p, rid, mode="dry_run", status="done", plan_hash=PEER_HASH["crm"])
-    await sj.advance(p, rid, now=now)
-    fp = (await _req(p, rid))["combined_fingerprint"]
+    fp = await _stage1_to_approval(p, tid, rid, now)
     monkeypatch.setenv(policy.APPLY_SWITCH_ENV, "on")
     await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-2"), _staff(p, COGNITO))
     for app in ("booking", "tripplanner"):
-        await _report(p, app, rid, "apply")
-    await _crm(p, rid, mode="apply", status="done")
+        await _report(p, app, rid, tid, "apply", plan_hash=PEER_HASH[app])
     later = datetime.now(timezone.utc) + timedelta(seconds=2)
     await sj.advance(p, rid, now=later)
     await _play(p, "cis:backup", rid, result={})
@@ -342,13 +380,14 @@ async def test_a_changed_cis_plan_stops_the_apply(pool, monkeypatch):
                                                "rows": [dict(CIS_ROWS[0], rows=2)] + CIS_ROWS[1:]})
     out = await sj.advance(p, rid, now=later)
     assert not out["waiting"] and out["blockers"][0]["kind"] == "plan_changed"
-    assert (await _steps(p, rid))[("cis", "apply")]["status"] == "plan_changed"
+    cis = (await _steps(p, rid))[("cis", "apply")]
+    assert cis["status"] == "refused" and cis["error_code"] == "plan_changed"
     assert await p.fetchval("SELECT count(*) AS n FROM shared.job WHERE idempotency_key LIKE $1",
                             f"%{rid}:r1:cis:apply") == 0
-    # a new round clears the approval and starts the DRY RUN again
     out = await ar.new_round(rid, _staff(p), "pytest")
     req = await _req(p, rid)
     assert out["round"] == 2 and req["phase"] == "dry_run" and req["approved_fingerprint"] is None
+    assert list(req["round_apps"]) == []
 
 
 @pytest.mark.asyncio
@@ -367,9 +406,9 @@ async def test_drill_route_needs_a_synthetic_offboarded_tenant(pool):
     out = await ar.start_drill(ar.DrillRequest(tenant_id=tid), _staff(p), "pytest")
     req = await _req(p, rid)
     assert out["request"]["request_id"] == rid and req["mode"] == "drill"
-    assert all(req[f"not_before_{a}"] == req["offboarded_at"] for a in saga.APPS)
-    job_id, created = await sj.ensure_job(p, rid, "scheduled", 1)
-    assert created and (await sj.ensure_job(p, rid, "scheduled", 1)) == (job_id, False)
+    assert all(req[f"not_before_{a}"] == req["opened_at"] for a in saga.APPS)
+    job_id, created = await sj.ensure_job(p, rid, "dry_run", 1)
+    assert created and (await sj.ensure_job(p, rid, "dry_run", 1)) == (job_id, False)
 
 
 @pytest.mark.asyncio
@@ -385,25 +424,30 @@ async def test_a_pilot_request_fails(pool):
 
 
 @pytest.mark.asyncio
-async def test_crm_feed_serves_its_not_before_and_changes_after_the_cursor(pool):
+async def test_crm_feed_serves_its_step_and_changes_after_the_cursor(pool):
     p, tenants = pool
     tid = await _tenant(p, tenants)
     rid = (await _offboard(p, tid))["request_id"]
     req = _body()
     req.app.state.pool = p
-    page = json.loads((await tr.list_erasure_requests(req, None, "500", caller=CRM)).body)
+    page = json.loads((await tr.list_erasure_requests(req, None, "200", caller=CRM)).body)
     mine = [i for i in page["items"] if i["request_id"] == rid]
-    assert len(mine) == 1 and mine[0]["phase"] == "scheduled" and mine[0]["approved_plan_hash"] is None
+    assert len(mine) == 1 and mine[0]["phase"] == "dry_run" and mine[0]["is_synthetic"] is True
+    step = mine[0]["steps"]
     row = await _req(p, rid)
-    assert mine[0]["not_before"].startswith(row["not_before_crm"].astimezone(timezone.utc).date().isoformat())
+    assert len(step) == 1 and step[0]["app"] == "crm" and step[0]["status"] == "waiting"
+    assert step[0]["approved_plan_hash"] is None
+    assert step[0]["not_before"].startswith(row["not_before_crm"].astimezone(timezone.utc).date().isoformat())
     cursor = page["next_cursor"]
     after = json.loads((await tr.list_erasure_requests(req, cursor, None, caller=CRM)).body)
     assert rid not in {i["request_id"] for i in after["items"]}
-    await p.execute("UPDATE shared.tenant_erasure_request SET phase = 'dry_run' WHERE request_id = $1::uuid", rid)
+    await p.execute("UPDATE shared.tenant_erasure_request SET round_apps = '{crm}' WHERE request_id = $1::uuid", rid)
     again = json.loads((await tr.list_erasure_requests(req, cursor, None, caller=CRM)).body)
-    assert [i["phase"] for i in again["items"] if i["request_id"] == rid] == ["dry_run"]
+    assert [i["steps"][0]["status"] for i in again["items"] if i["request_id"] == rid] == ["active"]
     with pytest.raises(M2MProblem):
         await tr.list_erasure_requests(req, "not-a-cursor", None, caller=CRM)
-    with pytest.raises(M2MProblem) as e:                                    # dry_run report outside dry_run
-        await _crm(p, str(uuid.uuid4()), mode="dry_run", status="done", plan_hash="a" * 64)
-    assert e.value.status == 404
+    with pytest.raises(M2MProblem):
+        await tr.list_erasure_requests(req, None, "500", caller=CRM)        # the contract caps limit at 200
+    with pytest.raises(M2MProblem) as e:
+        await _crm(p, str(uuid.uuid4()), _crm_report(str(uuid.uuid4()), tid, "dry_run", round_=1))
+    assert e.value.status == 422                                            # body request_id differs from the path

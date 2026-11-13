@@ -20,7 +20,7 @@ import {
 } from "../../../_kit";
 import {
   APPS, ERASURE_REQUESTS_API, FINGERPRINT_PREFIX, NEW_ROUND_PHASES, WORKING_PHASES, approvalBlockers, notBefore,
-  phaseTone, prefixMatches, shortHash, stepOf,
+  phaseTone, prefixMatches, shortHash, stepOf, stepStatus,
   type App, type SagaDetail, type SagaList, type SagaRequest, type StepMode,
 } from "@/lib/tenantErasure";
 import { TenantName, TenantSelect } from "../../_components/TenantSelect";
@@ -29,6 +29,10 @@ import { TO } from "./offboardingMessages";
 
 const LIST_POLL_MS = 15_000;
 const APP_LABEL: Record<App, string> = { cis: "CIS", booking: "Booking", tripplanner: "TripPlanner", crm: "CRM" };
+
+function stepTone(s: string): "neutral" | "info" | "success" | "danger" {
+  return s === "done" ? "success" : s === "failed" ? "danger" : s === "active" ? "info" : "neutral";
+}
 
 type Sent = { ok: true; data: Record<string, unknown> } | { ok: false; status: number; message: string };
 
@@ -58,11 +62,11 @@ function StepCell({ req, app, mode }: { req: SagaRequest; app: App; mode: StepMo
   if (!s) return <span style={{ color: K.muted }}>—</span>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12 }}>
-      <StatusBadge status={s.status} label={s.status} />
+      <StatusBadge status={s.status === "ok" ? "succeeded" : s.status} label={s.status} />
       {s.plan_hash && <span style={{ fontFamily: mono }}>{t("planHash")} {shortHash(s.plan_hash)}</span>}
       {s.approved_plan_hash && <span style={{ fontFamily: mono }}>{t("approvedHash")} {shortHash(s.approved_plan_hash)}</span>}
-      {s.pii_left !== null && <span>{t("piiLeft", s.pii_left)}</span>}
-      {s.detail && <span style={{ color: K.muted, overflowWrap: "anywhere" }}>{s.detail}</span>}
+      {s.census && <span>{t("piiLeft", s.census.pii_rows_found)}</span>}
+      {s.error_code && <span style={{ color: K.muted, fontFamily: mono }}>{s.error_code}</span>}
     </div>
   );
 }
@@ -112,7 +116,15 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
 
   const rows = APPS.map((app) => ({ app }));
   const stepColumns: ColumnDef<{ app: App }, unknown>[] = [
-    { accessorKey: "app", header: t("colApp"), cell: (c) => <strong>{APP_LABEL[c.row.original.app]}</strong> },
+    {
+      accessorKey: "app", header: t("colApp"),
+      cell: (c) => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <strong>{APP_LABEL[c.row.original.app]}</strong>
+          <Badge tone={stepTone(stepStatus(req, c.row.original.app))} dot={false}>{stepStatus(req, c.row.original.app)}</Badge>
+        </div>
+      ),
+    },
     { id: "dry", header: t("colDryRun"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="dry_run" /> },
     { id: "apply", header: t("colApply"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="apply" /> },
     { id: "verify", header: t("colVerify"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="verify" /> },
@@ -144,7 +156,7 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
           { label: t("colPhase"), value: <Badge tone={phaseTone(req.phase)}>{req.phase}</Badge> },
           { label: t("colMode"), value: req.mode === "drill" ? t("drill") : t("live") },
           { label: t("colRound"), value: req.round },
-          { label: t("factOffboarded"), value: <DateText value={req.offboarded_at} withTime /> },
+          { label: t("factOffboarded"), value: <DateText value={req.opened_at} withTime /> },
           ...APPS.map((app) => ({
             label: t("factNotBefore", APP_LABEL[app]), value: <DateText value={notBefore(req, app)} withTime />,
           })),
@@ -256,7 +268,10 @@ export default function TenantOffboarding() {
     },
     { accessorKey: "phase", header: t("colPhase"), cell: (c) => <Badge tone={phaseTone(c.row.original.phase)}>{c.row.original.phase}</Badge> },
     { accessorKey: "round", header: t("colRound") },
-    { id: "due", accessorFn: (r) => r.due_at ?? "", header: t("colDue"), cell: (c) => <DateText value={c.row.original.due_at} /> },
+    {
+      id: "due", accessorFn: (r) => r.next_due_at ?? "", header: t("colDue"),
+      cell: (c) => <DateText value={c.row.original.next_due_at} />,
+    },
     {
       id: "blockers", accessorFn: (r) => r.blockers.length, header: t("colBlockers"),
       cell: (c) => (c.row.original.blockers.length

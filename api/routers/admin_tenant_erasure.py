@@ -90,7 +90,7 @@ async def list_requests(request: Request, tenant_id: Optional[UUID] = None,
     for r in rows:
         item = _public(r)
         item["tenant_name"] = names.get(r["tenant_id"])        # None once the tenant row is erased
-        item["due_at"] = _iso(saga.due_at(r))
+        item["next_due_at"] = _iso(saga.next_due_at(r))
         items.append(item)
     return {"requests": items, "settings": settings_view()}
 
@@ -102,32 +102,34 @@ class DrillRequest(BaseModel):
 
 @router.post("/drill", summary="Start a drill (window 0) for an offboarded synthetic tenant")
 async def start_drill(body: DrillRequest, request: Request, x_admin_user_id: Optional[str] = Header(None)):
-    """Plan section 6: the exit window and the schedule are proven with window 0 on a synthetic tenant. The tenant
-    must be offboarded, synthetic (is_canary, never the pilot) and have no request past awaiting its DRY RUN. A
-    scheduled request becomes a drill (every not_before = the offboard time); without one a drill request is created.
-    Nothing is approved or applied here."""
+    """Plan section 6: the exit windows and the stages are proven with window 0 on a synthetic tenant. The tenant must
+    be offboarded, synthetic (is_canary, never the pilot) and have no round started yet. Its open request becomes a
+    drill (every not_before = T0), or a drill request is created. Nothing is approved or applied here."""
     tid = str(body.tenant_id)
     actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
     try:
         async with request.app.state.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(TENANT_SQL, tid)
             tenant = dict(row) if row else None
-            reasons = saga.tenant_guard(tenant, environment="dev", drill=True,
-                                        synthetic=bool(tenant) and await e2e_staff.is_synthetic_tenant(conn, tid))
+            reasons = saga.cis_tenant_guard(tenant)
+            if tenant is not None and not await e2e_staff.is_synthetic_tenant(conn, tid):
+                reasons.append("only a synthetic tenant may be drilled")
             if reasons:
                 raise HTTPException(status_code=409, detail="; ".join(reasons))
             req = await store.open_request(conn, tid, for_update=True)
-            if req is not None and req["phase"] != "scheduled":
-                raise HTTPException(status_code=409, detail=f"the tenant's request is already in phase {req['phase']}")
-            t0 = tenant["cancelled_at"]
+            started = req is not None and (req["phase"] != "dry_run" or req["round_apps"] or req["round"] > 1)
+            if started:
+                raise HTTPException(status_code=409,
+                                    detail=f"the tenant's request has started (phase {req['phase']}, round "
+                                           f"{req['round']})")
             if req is None:
-                req = await store.create_request(conn, tid, offboarded_at=t0, mode="drill", actor=actor)
+                req = await store.create_request(conn, tid, opened_at=tenant["cancelled_at"], mode="drill",
+                                                 actor=actor)
             else:
-                nb = saga.schedule(req["offboarded_at"], "drill")
-                await store.move(conn, req["request_id"], ("scheduled",), "scheduled", mode="drill",
+                nb = saga.schedule(req["opened_at"], "drill")
+                await store.move(conn, req["request_id"], ("dry_run",), "dry_run", mode="drill",
                                  **{f"not_before_{a}": nb[a] for a in saga.APPS})
                 req = await store.get_request(conn, req["request_id"])
-                await store.emit(conn, tid, store.event_change(req, "scheduled"))
             await write_audit_log(conn, tenant_id=tid, actor=actor, action=AdminTenantAuditAction.ERASURE_DRILL,
                                   resource_type="tenant_erasure", resource_id=req["request_id"],
                                   details={"mode": "drill", "note": "window 0; synthetic tenant; no approval here"})
@@ -154,7 +156,7 @@ async def get_request(request_id: str, request: Request):
     except store.NOT_MIGRATED as e:
         raise _unavailable(e)
     out = _public(req)
-    out.update({"tenant_name": name, "due_at": _iso(saga.due_at(req)),
+    out.update({"tenant_name": name, "next_due_at": _iso(saga.next_due_at(req)),
                 "steps": [_public(s) for s in steps],
                 "job": _public(dict(job)) if job else None})
     return {"request": out, "settings": settings_view()}
@@ -203,11 +205,10 @@ async def approve(request_id: str, body: ApproveRequest, request: Request):
             req = await store.get_request(conn, rid, for_update=True)
             if req is None:
                 raise HTTPException(status_code=404, detail="No erasure request has this id")
-            row = await conn.fetchrow(TENANT_SQL, req["tenant_id"])
-            tenant = dict(row) if row else None
-            synthetic = bool(tenant) and await e2e_staff.is_synthetic_tenant(conn, req["tenant_id"])
-            reasons = saga.tenant_guard(tenant, environment=policy.environment(), synthetic=synthetic,
-                                        drill=req["mode"] == "drill")
+            reasons = saga.request_guard(req, environment=policy.environment())
+            if "cis" in req["round_apps"]:            # stage 1: CIS still erases, its tenant row must be right
+                row = await conn.fetchrow(TENANT_SQL, req["tenant_id"])
+                reasons += saga.cis_tenant_guard(dict(row) if row else None)
             refusal = saga.approval_refusal(req, fingerprint=body.fingerprint, now=now, cognito_admin=cognito_admin,
                                             apply_on=policy.apply_enabled(), tenant_reasons=reasons,
                                             validity=validity)
@@ -239,9 +240,10 @@ async def approve(request_id: str, body: ApproveRequest, request: Request):
 
 @router.post("/{request_id}/new-round", summary="Start a new DRY RUN round of this request")
 async def new_round(request_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
-    """A new round: phase dry_run, round + 1, the fingerprint and the approval cleared (the step rows of earlier rounds
-    stay as the record). Allowed while no CIS apply job has started: in dry_run (a stopped step), awaiting_approval,
-    or apply (an expired approval, plan_changed, a failed step)."""
+    """A new round: phase dry_run, round + 1, no app active until the next pass picks the apps past their not_before
+    that are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record).
+    Allowed while no CIS apply job has started: in dry_run (a stopped step), awaiting_approval, or apply (an expired
+    approval, plan_changed, a failed step)."""
     rid = _rid(request_id)
     actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
     try:
@@ -257,7 +259,7 @@ async def new_round(request_id: str, request: Request, x_admin_user_id: Optional
             if cis_apply is not None:
                 raise HTTPException(status_code=409, detail="the CIS apply has started; finish or fix it first")
             await store.move(conn, rid, ("dry_run", "awaiting_approval", "apply"), "dry_run",
-                             round=int(req["round"]) + 1, combined_fingerprint=None, fingerprint_at=None,
+                             round=int(req["round"]) + 1, round_apps=[], combined_fingerprint=None, fingerprint_at=None,
                              approved_fingerprint=None, approved_by=None, approved_at=None,
                              approval_expires_at=None, blockers=[])
             await write_audit_log(conn, tenant_id=req["tenant_id"], actor=actor,
