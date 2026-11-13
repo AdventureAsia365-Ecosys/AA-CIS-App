@@ -213,6 +213,17 @@ export function proposalBody(d: SettingDefinition, item: Pick<SettingItem, "vers
   };
 }
 
+/** The POST body of an approve / reject. A CRM row is decided in the CRM (AA-1096 L4: the CIS API relays it there),
+ *  an agency's own row names its agency (the CRM sees that row only in the agency's context). */
+export function decisionBody(item: Pick<SettingDefinition, "app">, row: Pick<SettingRow, "tenant_id">, note: string) {
+  const body: { note: string | null; app?: "crm"; tenant_id?: string } = { note: note.trim() || null };
+  if (item.app === "crm") {
+    body.app = "crm";
+    if (row.tenant_id) body.tenant_id = row.tenant_id;
+  }
+  return body;
+}
+
 /** The badges of one row, in display order. */
 export type BadgeKey = "env" | "notEnforced" | "pending" | "refused" | "evidence" | "changed";
 export function badgesOf(item: SettingItem): BadgeKey[] {

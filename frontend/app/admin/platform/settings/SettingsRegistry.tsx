@@ -27,7 +27,7 @@ import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import { staffErrorMessage } from "@/lib/rbac";
 import {
-  APPS, actorText, badgesOf, boundsText, decisionPath, draftProblem, draftText, formatValue, groupByArea,
+  APPS, actorText, badgesOf, boundsText, decisionBody, decisionPath, draftProblem, draftText, formatValue, groupByArea,
   historyPath, proposalBody, proposalPath, registryPath, type BadgeKey, type HistoryResp, type ProposalDraft,
   type RegistryResp, type SettingApp, type SettingItem, type SettingRow,
 } from "@/lib/settingsRegistry";
@@ -198,7 +198,7 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
     if (!open || busy) return;
     setBusy(true);
     setError(null);
-    const out = await post(decisionPath(open.id, approve), { note: note.trim() || null }, t);
+    const out = await post(decisionPath(open.id, approve), decisionBody(item, open, note), t);
     setBusy(false);
     if (!out.ok) {
       setError(out.message);
