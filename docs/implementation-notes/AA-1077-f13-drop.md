@@ -31,7 +31,9 @@ code says about that premise.
 - `scripts/aa1077/repeat_feed_replay.py` (new, $0, read only): per stored blog piece, the deterministic gates before
   and after the drop (old arm vs new arm) and per candidate the outcome; SUMMARY counts the pieces whose hygiene
   repeat warnings disappear and lists every gate verdict other than the two F13 gates that changes (expected none).
-- Tests: `tests/unit/test_aa1077_s279_repeat_feed.py`.
+- Tests: `tests/unit/test_aa1077_s279_repeat_feed.py` (the feed) and `tests/unit/test_aa1077_s279_repeat_feed_replay.py`
+  (the replay's pure parts and one stored-shape row through the real `PieceReplay`).
+- `scripts/` is git-ignored in this repo: the replay is force-added like the other `scripts/aa1077` files.
 
 ## Tradeoffs
 
@@ -43,8 +45,9 @@ code says about that premise.
 
 ## Should know
 
-- **The premise does not hold in code, and the replay is the check.** An exact or near-exact repeat (Dice >= 0.8,
-  the setting's minimum) is always a `copies` match, so `hygiene.near_duplicates` reports it as `F13_repeat` ("says
+- **The premise does not hold in code, and the replay is the check.** An exact or near-exact repeat (Dice >= 0.9,
+  the default; between the setting's minimum 0.8 and 0.9 only a sentence that wraps a 4-5 word earlier one can escape
+  `copies`, and such a short earlier line is under the hygiene rule's 6 content words too) is a `copies` match, so `hygiene.near_duplicates` reports it as `F13_repeat` ("says
   again what an earlier sentence says"), and `find_issues` then leaves it out of the hygiene warnings. The hygiene
   repeat warning is only the "two shared trigrams, not a strict repeat" arm, which is never near-exact. A unit test
   pins this (exact and one-word-changed repeats are quoted by `F13_repeat`, not `F13_hygiene`). So on today's

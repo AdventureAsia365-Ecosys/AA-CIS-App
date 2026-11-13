@@ -21,8 +21,9 @@ The rule (a proposer; the existing invariants stay the arbiters):
 
 Both F13 gates feed it (S279 lane f13-drop): every `F13_repeat` finding and every `F13_hygiene` repeat warning
 ("repeats an earlier sentence: '…'") is a candidate under the same rule; a candidate the rule refuses stays for its
-gate, which remains the backstop. On today's detectors a near-exact repeat is always an `F13_repeat` copy (a Dice share
->= 0.8 implies `hygiene.copies`), so the hygiene feed is a backstop for a detector change, not a second source of drops.
+gate, which remains the backstop. On today's detectors a near-exact repeat is an `F13_repeat` copy (an ordered Dice
+share >= 0.9 implies `hygiene.copies`, which `near_duplicates` reports first, and `find_issues` then leaves the sentence
+out of the hygiene warnings), so the hygiene feed is a backstop for a detector change, not a second source of drops.
 
 Blog only (the floor is the blog band). Switch: env `T9_REPEAT_DROP` (`off` / `0` / `false` = off; anything else, or
 unset, = on). Every drop is logged for the admin F13_autofix flag; a candidate refused by the floor is logged too.
