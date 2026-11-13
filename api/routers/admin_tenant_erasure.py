@@ -19,6 +19,11 @@
 Under /admin/job-runner/erasure like the data_erasure routes, so the admin BFF rule (frontend lib/rbac.ts
 `job-runner/erasure`: admin only) and POLICY (tenant.read / tenant.write) cover them. Reads hold ids, phases, hashes,
 counts and staff actor ids only. 503 before CIS 408 is applied.
+
+AA-1093 S279 (root ADR 0006a A10b-5): drill, advance and stop are on the A10b write allow-list for the live DRY RUN
+drill; each refuses the Dev-only E2E session (403 e2e_read_only, before any write, job or audit row) unless the tenant
+(the body's for drill, the request's for advance / stop) is synthetic (api/core/e2e_tenant_writes.py). Approve and
+new-round refuse every Dev-only E2E identity.
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.core import e2e_staff
+from api.core import e2e_staff, e2e_tenant_writes
 from api.core.staff_authz import request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
@@ -42,6 +47,8 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/admin/job-runner/erasure/requests", tags=["admin-tenant-erasure"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
 
+# the log event of a write refused to a Dev-only E2E session (A10b-5)
+E2E_REFUSED = "tenant_erasure_e2e_refused"
 TENANT_SQL = "SELECT tenant_id, is_pilot, cancelled_at FROM shared.tenants WHERE tenant_id = $1::uuid"
 
 
@@ -112,6 +119,7 @@ async def start_drill(body: DrillRequest, request: Request, x_admin_user_id: Opt
     actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
     try:
         async with request.app.state.pool.acquire() as conn, conn.transaction():
+            await e2e_tenant_writes.refuse_unless_synthetic(request, conn, tid, event=E2E_REFUSED)
             row = await conn.fetchrow(TENANT_SQL, tid)
             tenant = dict(row) if row else None
             reasons = saga.cis_tenant_guard(tenant)
@@ -177,6 +185,7 @@ async def advance_now(request_id: str, request: Request, x_admin_user_id: Option
         raise _unavailable(e)
     if req is None:
         raise HTTPException(status_code=404, detail="No erasure request has this id")
+    await e2e_tenant_writes.refuse_unless_synthetic(request, pool, req["tenant_id"], event=E2E_REFUSED)
     if req["phase"] not in saga.WORKING_PHASES:
         raise HTTPException(status_code=409, detail=f"nothing to run in phase {req['phase']}")
     actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
@@ -196,6 +205,7 @@ async def approve(request_id: str, body: ApproveRequest, request: Request):
     from services.jobs import tenant_erasure_saga_job as sj
 
     rid = _rid(request_id)
+    e2e_tenant_writes.refuse_any_e2e(request, event=E2E_REFUSED)   # A10b-5: only a person approves an erasure
     identity = request_staff_identity(request)
     cognito_admin = (identity is not None and getattr(identity, "auth", None) == "cognito"
                      and bool(getattr(identity, "admin_id", None))
@@ -252,6 +262,7 @@ async def new_round(request_id: str, request: Request, x_admin_user_id: Optional
     in dry_run, awaiting_approval, apply, or failed (the usual case: the saga stopped on an expired approval, a
     plan_changed, a failed step or a census above 0); never for the pilot or a request the tech lead stopped."""
     rid = _rid(request_id)
+    e2e_tenant_writes.refuse_any_e2e(request, event=E2E_REFUSED)   # A10b-5: never an E2E write
     actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
     try:
         async with request.app.state.pool.acquire() as conn, conn.transaction():
@@ -295,6 +306,7 @@ async def stop(request_id: str, request: Request, x_admin_user_id: Optional[str]
             req = await store.get_request(conn, rid, for_update=True)
             if req is None:
                 raise HTTPException(status_code=404, detail="No erasure request has this id")
+            await e2e_tenant_writes.refuse_unless_synthetic(request, conn, req["tenant_id"], event=E2E_REFUSED)
             refusal = saga.stop_refusal(req)
             if refusal is not None:
                 raise HTTPException(status_code=refusal.status, detail=refusal.message)
