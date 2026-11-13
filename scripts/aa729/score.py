@@ -247,13 +247,15 @@ async def s1_score_only(sample: dict, fixture: dict) -> tuple[dict, Any]:
     return s1_verdict(await run_revalidation(state)), None
 
 
-_GOLDEN_PASS = threshold("eval.golden_pass")  # services/quality/thresholds.yaml (AA-926)
+def _golden_pass() -> float:
+    """thresholds.yaml eval.golden_pass (AA-926); S279 L2: a setting, read at call time."""
+    return float(threshold("eval.golden_pass"))
 
 
 def t2_verdict(result: dict, qa: Optional[dict]) -> dict:
     score = float(result.get("quality_score") or 0.0)
     return {**degraded_block(list(result.get("degraded") or []) + list((qa or {}).get("degraded") or [])),
-            "passed": bool(score >= _GOLDEN_PASS and qa is not None and qa.get("passed")), "quality_score": score,
+            "passed": bool(score >= _golden_pass() and qa is not None and qa.get("passed")), "quality_score": score,
             "qa_passed": None if qa is None else bool(qa.get("passed")),
             "qa_attempts": None if qa is None else qa.get("attempts"),
             "structural_issues": (qa or {}).get("structural_issues", [])[:10],

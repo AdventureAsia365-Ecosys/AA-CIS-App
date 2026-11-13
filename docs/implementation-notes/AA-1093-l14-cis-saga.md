@@ -1,0 +1,123 @@
+# AA-1093 lane L2 (S279 l14) — CIS tenant offboarding erasure saga
+
+Plan: root `docs/audits/2026-11-13-S279-session/aa1093-plan.md` (Part 2, lane L2), decisions D1, D2, D5-D8.
+Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747, lane l11), byte copy in
+`docs/contracts/`. Migrations CIS 408 (expand: tables), 409 (contract: the feed event type and exact grants), 410
+(contract: `catalog.v_tenant_erasure_v1`), 411 (contract: the three settings) ship first in one migration-only PR
+(MIG-4); this code PR needs 408, 409 and 411 (readiness raised to them).
+
+## Decisions
+
+- **Follow the merged contract, not the first plan.** The lane started from the plan (one combined approval at the
+  latest `not_before`); the contract that landed meanwhile defines two stages (stage 1 CIS + Booking + TripPlanner at
+  T0 + 30 days, stage 2 the CRM alone at T0 + 90 days), the step status (waiting / active / done / failed), the
+  ErasureReport shape (report_id, status ok / blocked / refused / failed, error_code, tables, blockers, census) and the
+  409 codes. The tables, the view and the routes use those names. One approval per stage (round), as the contract
+  says; the DPA keeps the 30-day promise for the three apps of stage 1.
+- **Stages are fixed (`saga.STAGES`)**, not derived from the window lengths: a later stage never starts before the
+  earlier one is done. A drill (window 0 everywhere) therefore still rehearses both stages.
+- **Internal phase list = the contract's** (no `scheduled`): before the first `not_before` a request sits in `dry_run`
+  with no active app (`round_apps` empty).
+- **CIS plan hash** = the contract's plan-hash form over the `data_erasure` DRY RUN rows, bound to tenant and round,
+  **without `acp_shared.audit_log` and `shared.job`**: the saga itself writes those for the tenant between the DRY RUN
+  and the apply (its approval audit row, the tenant backup job), so with them the approval could never match. The
+  `data_erasure` apply still binds the full fingerprint of its own fresh DRY RUN.
+- **CIS applies through the existing jobs**, not new SQL: `tenant_backup` (cheap, wired before every CIS apply),
+  then a fresh `data_erasure` DRY RUN, then the `data_erasure` apply (all its guards stay: `ERASURE_APPLY_ENABLED`,
+  the retention window, the recount inside its transaction, single use). The approver is the Cognito admin of the
+  combined approval; the snapshot id is typed at the approval (D7: one RDS snapshot).
+- **Saga job payload = `{request_id}` only**: a payload with the tenant id would count as a live job of the tenant
+  (the erasure plan blocks on those) and the CIS apply would delete the row it runs from.
+- **Step rows have no tenant column**, so the CIS erasure plan does not count them; the request table is registered
+  as `keep` in `services/erasure/inventory.py` (it is the erasure record).
+- **Report views read as JSON** (`to_jsonb(v)`), so an optional or new column of a Booking / TripPlanner view never
+  breaks the read; a missing view, schema or grant is `app_not_ready` (a blocker on the request, never a skip).
+- **The pilot is never scheduled** at the offboard (the route reports `skipped`); a request whose tenant became the
+  pilot fails at the next pass. Dev: approve / apply only when `is_synthetic` (copied at T0).
+- **A report view outside the contract shape is a named blocker.** When an app's report view answers rows for the
+  request and none has the contract's core (`round`, a contract `mode` and `status`), the step is `app_not_ready` with
+  the code `report_shape_unknown` instead of a silent `pending` (S279 resume: the TripPlanner tp-030 view had no
+  `round` and its own status words).
+- **Restore** cancels the open request until any app reported an ok apply (or one is done); afterwards it answers 409.
+- **Event** `account.erasure_requested` is emitted from code through `shared.tenant_account_emit()` under a
+  savepoint: before 409 the CHECK refuses the type and the offboard still succeeds (no event).
+
+- **Code-health ratchets (AA-1097, on main during the lane).** New functions stay at complexity <= 10 and the big
+  baseline files do not grow: the saga apply phase is split (`_apply_refused`, `_peers_not_applied`,
+  `_cis_apply_start`, `_cis_apply_finish`), the CRM report route checks its body in `_report_body`, the sampler runs
+  the erasure part through `_guarded_part`, the Tenant offboarding tab is split into small components, and the Data
+  erasure page shows its two tabs as `hidden` panes (no new branch in the baseline `DataErasure`). `staff_authz.py`
+  lists the erasure routes as two comprehensions and `admin.py` stays under its baseline: the offboard hook reads T0
+  and the pilot flag from the tenant row itself (`store.on_offboard(conn, tenant_id, actor=...)`), and the two
+  touched docstrings plus the offboard UPDATE were reflowed (same SQL).
+- **The approval validity has no local default in the UI** (`approvalBlockers`): it is the setting's value, or the
+  form stays closed (switch unknown).
+
+## Changed (vs the plan / the lane brief)
+
+- Admin routes live under `/admin/job-runner/erasure/requests` (not `/admin/tenants/...`): the BFF rule
+  `job-runner/erasure` (admin only) already covers them and `/admin/tenants/{tenant_id}` would shadow a literal path.
+- Added `POST .../requests/{id}/new-round` (after an expired approval, plan_changed or a failed step) and
+  `POST .../requests/{id}/advance` (Run now: queue the job or pull the queued one forward).
+- Review fix pass (S279): a stopped pass now moves the request to **failed** (before: it stayed in dry_run / apply /
+  verify with blockers, a dead end in verify that kept the one-open-request index and a no-op sampler job). New
+  `POST .../requests/{id}/stop` (dry_run, awaiting_approval or failed; blocker `stopped_by_tech_lead`, audit
+  `tenant.erasure_stopped`); `new-round` also from failed (refused for the pilot, a stopped request, or once the CIS
+  apply job of the round started; 409 when the tenant has another open request meanwhile).
+- The contract copies in this repo move to `tenant.entitlements.v1` 1.7 and add `tenant.erasure.v1` 1.0 (pins updated).
+
+## Tradeoffs
+
+- Thresholds (tech lead S279: settings, not literals): the settings registry reader landed on main during the lane
+  (#1472), so every knob is a registry setting. Stage 1 window = the existing `cis.erasure.tenant_retention_days`
+  (CIS 407, read through `erasure_job.tenant_retention_days`, so the saga and the `data_erasure` job agree); CIS 411
+  adds `cis.erasure.crm_window_days` (90), `cis.erasure.saga_approval_valid_hours` (24) and
+  `cis.erasure.saga_apply_enabled` (false), seeded **enforced = false**: the settings-lint guard refuses an enforced
+  key no code reads, and the migration-only PR ships before this code (MIG-4). **Follow-up:** one forward migration
+  that sets `enforced = true` on the three keys after this PR is deployed (and drops them from the not-enforced list in
+  `tests/unit/test_s279_settings_seed_parity.py`). `policy._SEED` holds the same decided values only for a build whose
+  compiled defaults lack the keys (this branch before main has 411).
+- Polling: a waiting pass reschedules itself (`Reschedule`, 30 s while a CIS job runs, 10 min while another app has
+  not reported). After the registry's reschedule cap the job fails and the ops sampler queues a new one.
+- The CIS census is the `data_erasure` verification (rows left per table), not a `pii:` comment census.
+
+- Failed leaves the open-request partial index (`phase NOT IN ('done', 'cancelled', 'failed')`, CIS 408), so the
+  restore hook reads failed requests too: a restore is refused when any round of the tenant's open or failed requests
+  was approved (`approved_plan_hash` stays on the earlier rounds' step rows, so a new round never clears it), an app
+  reported an ok apply or one is done; a failed request never approved is cancelled with the restore (event
+  `{op: cancelled}`), so no new round can bring it back. Conservative on purpose: Booking / TripPlanner apply reports
+  reach the step table only through a saga pass.
+- Stage 1 verify failure after the CIS apply (a census above 0): only a stop (new-round refused, the CIS apply job of
+  the round ran and the tenant row is gone). The remaining rows are the runbook's manual follow-up. Stage 2 (the CRM
+  alone) may start a new round from failed.
+- Approval vs a late report: `_dry_run` fingerprints and moves under the request row lock from the step rows read
+  inside it (the CRM POST takes the same lock and accepts dry_run reports only in phase dry_run), and `approve`
+  recomputes `saga.fingerprint_of_steps` under its lock and refuses with 409 stale_fingerprint when it differs.
+- Report view shape: `reports.read` checks the view's columns in `pg_attribute` (via `to_regclass`) against the 14
+  required ErasureReportRow columns before any row (an empty off-contract view, like tp-030 today, is
+  `report_shape_unknown` at once); the row check stays as a second line. `UndefinedFunctionError` /
+  `DatatypeMismatchError` (a request_id that is not uuid) are `app_not_ready`.
+
+## Should know
+
+- **View shape = the merged contract, not the first lane brief.** The brief of this lane described
+  `catalog.v_tenant_erasure_v1` as one row per request with `phase 'plan'|'apply'` and an `approved_plans` jsonb; the
+  contract `tenant.erasure.v1` 1.0 merged on root master (and Booking bk-057 / `bk_tenant_erase`) uses one row per
+  request and app (`app`, `step_status`, `not_before`, `approved_plan_hash`, `round`). CIS 410 serves the contract
+  shape. The TripPlanner lane (tp-030 view and `tp_tenant_erase` feed reader: `mode`, `tripplanner_plan_hash`, statuses
+  planned / applied) must align with the contract before its reports count; until then the saga shows its step as
+  `app_not_ready` / `report_shape_unknown` (or its feed reader answers `feed_shape_unknown`).
+
+- Apply order on Dev: CIS 408 (expand) and 409 / 410 (contract) before this PR's deploy (readiness raised to 408 / 409).
+- A drill never applies in this lane. Applying a drill on Dev also needs `ERASURE_APPLY_ENABLED=true`, the setting
+  `cis.erasure.saga_apply_enabled` on and `cis.erasure.tenant_retention_days` 0 (or its env override
+  `ERASURE_TENANT_RETENTION_DAYS=0`: the `data_erasure` job's own window check).
+- Until the Booking (bk-057), TripPlanner (tp-030) and CRM lanes ship, their steps show `app_not_ready` / `pending`:
+  expected, and the request never reaches `awaiting_approval`.
+- AA-CIS-Infra must add the scope `cis.tenant/erasure` to the M2M resource server and the CRM client
+  (`identity_m2m.tf`) before the CRM can call the routes (403 until then).
+- `tests/integration/rls_catalogue_rules.py` changed in the migration PR: the Infra copy must follow (Copy Guard).
+- The migration PR also carries the byte copy of `docs/contracts/tenant.erasure.v1.openapi.yaml` (identical to the
+  code PR's), so `test_aa1093_migration_410` validates every view row, read as JSON, as the contract's
+  ErasureRequestRow. The two identical adds merge cleanly; once the migration PR is on main the code PR's diff no
+  longer shows the file.

@@ -118,6 +118,8 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
         # AA-1091: the Reference prices page has its own read capability (customer_success holds no content.read)
         ("GET", "/admin/reference-prices"), ("GET", "/admin/reference-prices/export"),
         ("GET", "/admin/reference-prices/{source_key}/history"),
+        # S279 thresholds L2: the pass line and score / SEO bands the score views colour by (no secret, no tenant data)
+        ("GET", "/admin/quality/thresholds"),
     }
     for open_read in ["/admin/llm-config", "/admin/job-runner/jobs/{job_id}", "/admin/review-queue",
                       "/admin/search"]:
@@ -192,6 +194,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
         "/admin/notifications", "/admin/notifications/count",           # AA-1035 slice 2: notifications.read
         "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
+        "/admin/quality/thresholds",                                      # S279 L2: the score views' bands
         "/v1/pipeline/review-queue/{review_id}/approve",
         "/v1/pipeline/review-queue/{review_id}/reject",
         # AA-835 — the supply content review (edit, regenerate, publish, reject, unpublish)

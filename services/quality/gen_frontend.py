@@ -1,8 +1,10 @@
 """Generate frontend/lib/quality-registry.generated.ts from the registry (AA-926):
 `python -m services.quality.gen_frontend` (writes the files) or `--check` (exit 1 when one is stale).
 
-The admin pages read gate labels, the retired set, the pass line and the score colour bands from that file,
-so the UI and the backend share one source. The lint and a unit test fail when the file drifts.
+The admin pages read gate labels and the retired set from that file, so the UI and the backend share one source. The
+lint and a unit test fail when the file drifts. S279 lane L2: the pass line, the score colour bands and the SEO bands
+are settings (Platform › Settings); the file no longer carries them (frontend/lib/qualityThresholds.ts reads them at
+runtime from GET /admin/quality/thresholds).
 
 AA-994: the Vietnamese gate labels (`label_vi` in taxonomy.yaml) go to the twin file
 frontend/lib/quality-registry.generated.vi.ts (GATE_LABELS_VI, same keys, same order), the one place the
@@ -14,14 +16,9 @@ import sys
 from pathlib import Path
 
 from services.quality import registry
-from services.quality import writing_policy
 
 OUT = Path(__file__).resolve().parents[2] / "frontend" / "lib" / "quality-registry.generated.ts"
 OUT_VI = OUT.with_name("quality-registry.generated.vi.ts")
-
-
-def _num(v) -> str:
-    return f"{v:g}" if isinstance(v, float) else str(v)
 
 
 def render() -> str:
@@ -46,25 +43,9 @@ def render() -> str:
         "  " + ", ".join(json.dumps(n) for n in retired) + ",",
         "]);",
         "",
-        "/** The quality pass line (thresholds.yaml review.approve_floor → pass_line). */",
-        f"export const PASS_LINE = {_num(registry.threshold('review.approve_floor'))};",
-        "",
-        "/** Score colour bands: top and above = green; pass line and above = amber/gold; low and above = amber",
-        " *  on the review page; below = red. */",
-        "export const SCORE_BANDS = {",
-        f"  top: {_num(registry.threshold('ui.score_band_top'))},",
-        f"  pass: {_num(registry.threshold('review.approve_floor'))},",
-        f"  low: {_num(registry.threshold('review.score_band_low'))},",
-        "} as const;",
-        "",
-        "/** AA-1047 — the writing policy's SEO bands (services/quality/writing_policy.yaml, decision D5): one meta",
-        " *  band and one title band for every workflow; the slug cap. */",
-        f"export const WRITING_POLICY_SHA = {json.dumps(writing_policy.policy_sha())};",
-        "export const SEO_BANDS = {",
-        f"  meta: {{ min: {writing_policy.band('meta')[0]}, max: {writing_policy.band('meta')[1]} }},",
-        f"  title: {{ min: {writing_policy.band('title')[0]}, max: {writing_policy.band('title')[1]} }},",
-        f"  slug: {{ max: {writing_policy.slug_max()} }},",
-        "} as const;",
+        "// S279 lane L2: the pass line, the score colour bands and the SEO bands are settings of the platform",
+        "// settings registry; the pages read them at runtime (lib/qualityThresholds.ts,",
+        "// GET /admin/quality/thresholds).",
         "",
     ]
     return "\n".join(lines)

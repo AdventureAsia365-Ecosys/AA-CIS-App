@@ -95,7 +95,7 @@ def _t3_grounding_check(rewritten: dict, source_texts: list[str], *, background:
     measurement absent from source_texts (T2's INPUT: the pre-rewrite
     published_tours fields)? Returns a list of {field, sentence, novel_numbers}.
 
-    AA-793: `background` (default: env T3_BACKGROUND_FACTS, off) applies the background-fact
+    AA-793: `background` (default: the setting cis.quality_modes.t3_background_facts) applies the background-fact
     allowance; each sentence whose numbers were accepted that way is appended to `cleared`
     ({field, sentence, background_numbers}) so the run can log what was let through."""
     if background is None:
@@ -282,7 +282,9 @@ unsupported service-level claim (a "luxury" lodge, a "tailored" itinerary), keep
 replace it with another invented one. If nothing in the sentence is supported, return an empty string.
 Return strict JSON only."""
 
-_T3_PASS_LINE = threshold("t3.pass_line")  # a draft below it gets the judge's feedback on a revision
+def _t3_pass_line() -> float:
+    """A draft below it gets the judge's feedback on a revision (thresholds.yaml t3.pass_line; S279 L2: a setting)."""
+    return float(threshold("t3.pass_line"))
 
 
 def _result_score(result: dict) -> float:
@@ -313,7 +315,7 @@ def _revision_feedback(base: dict) -> str:
     if t2_interim.enabled():   # S271 W0: the judge is report-only, it does not steer a revision either
         return fb
     judge_fb = str(base["result"].get("judge_feedback") or "").strip()
-    if judge_fb and base["score"] < _T3_PASS_LINE:
+    if judge_fb and base["score"] < _t3_pass_line():
         fb = f"{fb}\nBRAND VOICE FEEDBACK: {judge_fb[:1500]}" if fb else f"BRAND VOICE FEEDBACK: {judge_fb[:1500]}"
     return fb
 

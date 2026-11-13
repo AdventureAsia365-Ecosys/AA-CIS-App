@@ -7,7 +7,8 @@
          inquiries sent and K-TP-T2I carry status historical, never red or amber; services/reports/b2b_only.py); AI
          searches (shared.llm_call_log stage tp_search_embed: cache misses only, the ops overview's
          rule); the customer-facing LLM spend per UTC day (TripPlanner's online stages in shared.llm_call_log,
-         quality_signal.app = tripplanner) against the mirrored default daily cap (K-TP-LLMCAP).
+         quality_signal.app = tripplanner) against the daily cap of TripPlanner's app profile (K-TP-LLMCAP; the one
+         source since S279 L5, CIS 414: shared.llm_app_profile.default_daily_budget_usd, AI gateway > App profiles).
 
 The keyword-fallback share and the top pinned components live in TripPlanner tables that are not granted to cis_app
 (no contract view): the report names them "not readable from CIS". TripPlanner's spend is the CIS ledger rows it
@@ -20,10 +21,11 @@ LLM, no paid API.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 
-from api.core.app_registry import TP_DEFAULT_DAILY_CAP_USD, TP_ONLINE_STAGES
+from api.core.app_registry import TP_ONLINE_STAGES
 from api.services.ops_overview import activity
+from api.services.platform_apps import tp_profile_cap
 from services.reports import b2b_only
 from services.reports import money_sources as src
 from services.reports.generate import Rendered
@@ -75,6 +77,7 @@ async def collect(conn, first: date, last: date) -> dict:
         "traffic": lambda: traffic(conn, back, last),
         "searches": lambda: searches(conn, back, last),
         "spend": lambda: spend(conn, first, last),
+        "cap": lambda: tp_profile_cap(conn),
     })
 
 
@@ -104,8 +107,8 @@ def funnel(facts: dict, first: date) -> dict:
     return {"weeks": out, "this": out[-1], "previous": out[-2]}
 
 
-def spend_days(rows: Any, first: date, last: date, cap: float = TP_DEFAULT_DAILY_CAP_USD) -> dict:
-    """Per UTC day of the week: USD, calls, share of the cap; the worst day."""
+def spend_days(rows: Any, first: date, last: date, cap: Optional[float]) -> dict:
+    """Per UTC day of the week: USD, calls, share of the cap (None: no app-profile cap); the worst day."""
     if rows is None or failed(rows):
         return {"error": failed(rows) or "not read"}
     by_day: dict[date, dict] = {first + timedelta(days=i): {"cost_usd": 0.0, "calls": 0}
@@ -148,15 +151,17 @@ def tp01_kpis(f: dict, sp: dict) -> list[dict]:
         share = w.get("cap_share")
         cap_line = _kpi_line("K-TP-LLMCAP", w.get("cost_usd"), "no_data" if share is None else
                              "red" if share >= CAP_SHARE_FLAG else "ok",
-                             f"worst UTC day {w.get('day')}: {pct(share)} of the default {usd(sp['cap_usd'])} cap "
-                             "(the live cap is a TripPlanner Lambda setting CIS cannot read)")
+                             f"worst UTC day {w.get('day')}: {pct(share)} of the app profile cap "
+                             f"{usd(sp['cap_usd'])}" if sp["cap_usd"] is not None else
+                             "no app-profile cap set (TripPlanner then uses its Lambda env cap, not readable from CIS)")
     return head + [cap_line]
 
 
 def render_tp01(reg: Registry, report: Report, first: date, last: date, facts: dict,
                 generated_at: datetime) -> Rendered:
     f = funnel(facts, first)
-    sp = spend_days(facts.get("spend"), first, last)
+    cap = facts.get("cap")
+    sp = spend_days(facts.get("spend"), first, last, cap if isinstance(cap, (int, float)) else None)
     kpis = tp01_kpis(f, sp)
     if "error" in f:
         headline = f"TripPlanner funnel {first.isoformat()} to {last.isoformat()}: not readable ({f['error']})"
@@ -191,7 +196,7 @@ def render_tp01(reg: Registry, report: Report, first: date, last: date, facts: d
     if "error" in sp:
         body += [f"- Not readable: {sp['error']}", ""]
     else:
-        body += table(["UTC day", "Calls", "Spend", "Share of the default cap"],
+        body += table(["UTC day", "Calls", "Spend", "Share of the cap"],
                       [[d["day"], d["calls"], usd(d["cost_usd"]), pct(d["cap_share"])] for d in sp["days"]])
         body += ["", f"- Week total {usd(sp['total_usd'])}; by stage: "
                  + (", ".join(f"{k} {usd(v)}" for k, v in sorted(sp["by_stage"].items())) or "no call") + ".", ""]

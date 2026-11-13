@@ -43,6 +43,13 @@ TEMPORARY, removed at the end of project code with A10 / A10a (AA-816):
   and the tenant is synthetic (:func:`is_synthetic_tenant`). The create route (``POST /admin/tenants/provision``) stays
   refused: a new tenant is never an E2E write.
 
+- AA-1093 (S279, root ADR 0006a A10b-5): five more allow-listed writes, the live DRY RUN drill of the tenant offboarding
+  erasure saga (:data:`E2E_ERASURE_DRILL_WRITES`): offboard and restore the tenant, start the drill, run the saga job
+  now (advance), stop the request. Each route refuses the A10b session (403 ``e2e_read_only``, before any write, job or
+  audit row) unless the tenant is synthetic (:func:`is_synthetic_tenant`; for advance / stop the request's tenant):
+  :mod:`api.core.e2e_tenant_writes`. Approve and new-round stay off the list (only a person approves an erasure) and
+  refuse every Dev-only E2E identity inside the route as well.
+
 A10d (AA-1035, S270, root ADR 0006a A10d): a second Dev-only CIS E2E identity, :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`,
 role ``customer_success``, so the agent can prove the AA-1035 tenant-book scoping with a real Cognito session. Same
 directory rules as A10b (not an owner, no password, no Booking grant, no CRM role; CIS migration 378), same Dev-only
@@ -62,6 +69,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
@@ -136,10 +144,21 @@ E2E_TRIPPLANNER_ADDON_WRITES: frozenset[tuple[str, str]] = frozenset({
 })
 # The add-on products an A10b session may attach or cancel (never crm: seats are a CRM licence count).
 E2E_ADDON_PRODUCTS: frozenset[str] = frozenset({"tripplanner"})
+# AA-1093 (S279, root ADR 0006a A10b-5): the DRY RUN drill of the tenant offboarding erasure saga, synthetic tenants
+# only (checked by api/core/e2e_tenant_writes.py inside each route). Approve and new-round are never E2E writes.
+_SAGA = "/admin/job-runner/erasure/requests"
+E2E_ERASURE_DRILL_WRITES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/admin/tenants/{tenant_id}/offboard"),
+    ("POST", "/admin/tenants/{tenant_id}/restore"),
+    ("POST", f"{_SAGA}/drill"),
+    ("POST", f"{_SAGA}/{{request_id}}/advance"),
+    ("POST", f"{_SAGA}/{{request_id}}/stop"),
+})
 E2E_ALLOWED_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"),
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
-}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES | E2E_COMPLIANCE_RELEASE_WRITES | E2E_TRIPPLANNER_ADDON_WRITES
+}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES | E2E_COMPLIANCE_RELEASE_WRITES | E2E_TRIPPLANNER_ADDON_WRITES \
+    | E2E_ERASURE_DRILL_WRITES
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/content-quality/pieces/{_UUID}/sentences/apply")),
@@ -151,6 +170,11 @@ E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/tenant-qa/compliance/{_UUID}/release")),
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/provision")),
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/provision/cancel")),
+    ("POST", re.compile(rf"/admin/tenants/{_UUID}/offboard")),
+    ("POST", re.compile(rf"/admin/tenants/{_UUID}/restore")),
+    ("POST", re.compile(rf"{_SAGA}/drill")),
+    ("POST", re.compile(rf"{_SAGA}/{_UUID}/advance")),
+    ("POST", re.compile(rf"{_SAGA}/{_UUID}/stop")),
 )
 # The sentence-apply modes an A10b session may use (Cut, manual Edit). Not "rewrite".
 E2E_SENTENCE_MODES: frozenset[str] = frozenset({"cut", "manual"})
@@ -222,3 +246,20 @@ async def is_synthetic_tenant(conn: Any, tenant_id: Any) -> bool:
     """True only when ``shared.tenants.is_canary`` is TRUE for ``tenant_id`` and it is not the pilot tenant (NULL,
     FALSE, the pilot or no row: False)."""
     return (await conn.fetchval(SYNTHETIC_TENANT_SQL, tenant_id)) is True
+
+
+async def synthetic_write_refusal(identity: Any, conn: Any, tenant_id: Any) -> str | None:
+    """A10b-5 (AA-1093): why a write keyed on ``tenant_id`` is refused to this identity, or None when it may go on.
+
+    None, without a DB read, for every identity that is not a Dev-only E2E session. ``not_allowlisted`` for any
+    Dev-only E2E identity without the A10b allow-list (A10d). ``tenant_not_synthetic`` when ``tenant_id`` is not a
+    uuid, has no row, is not ``is_canary`` or is the pilot (:func:`is_synthetic_tenant`). ``conn`` may be a pool."""
+    if not getattr(identity, "e2e_read_only", False):
+        return None
+    if not has_allowlisted_writes(identity):
+        return "not_allowlisted"
+    try:
+        tid = uuid.UUID(str(tenant_id))
+    except ValueError:
+        return "tenant_not_synthetic"
+    return None if await is_synthetic_tenant(conn, tid) else "tenant_not_synthetic"

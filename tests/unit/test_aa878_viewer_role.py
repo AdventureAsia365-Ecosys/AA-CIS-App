@@ -53,7 +53,8 @@ _WRITE_KEYS = sorted(k for k in POLICY if k[0] != "GET")
 # aa_internal tenant), so it is not an admin-only GET.
 # AA-1035 slice 2: the bell reads (notifications.read, every role) are POLICY GETs the viewer passes too.
 _VIEWER_POLICY_GETS = {("GET", "/admin/tenants/{tenant_id}/details"), ("GET", "/admin/notifications"),
-                       ("GET", "/admin/notifications/count")}
+                       ("GET", "/admin/notifications/count"),
+                       ("GET", "/admin/quality/thresholds")}   # S279 L2: the score views' bands (content.read among them)
 _ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k not in _VIEWER_POLICY_GETS)
 
 

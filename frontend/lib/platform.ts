@@ -134,7 +134,9 @@ export interface TpSpendToday {
   cost_usd: number;
   calls: number;
   by_stage: { stage: string; calls: number; cost_usd: number }[];
-  cap_usd: number;
+  /** The daily cap of TripPlanner's app profile (AI gateway > App profiles, the one source since CIS 414); null = no
+   *  cap set there (TripPlanner then uses its Lambda env cap, which CIS cannot read). */
+  cap_usd: number | null;
   pct_of_cap: number | null;
   cap_label: string;
   level: "ok" | "warn" | "cap_reached";

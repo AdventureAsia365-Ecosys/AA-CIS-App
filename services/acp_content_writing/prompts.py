@@ -142,7 +142,7 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
 # draft the whole article, check every sentence and copy it out again. This block bounds both: a word band inside the
 # F4 band (models overshoot counts, so the target sits low in it), a section cap, and one plan-then-write pass whose
 # reread is a quick check of the finished text, never a second draft. The band's floor sits above F4's floor (F4
-# holds a blog body under length_contract.BLOG_FLOOR_CHARS = 4,700 TAG-STRIPPED characters, about 810 words; AA-1077
+# holds a blog body under length_contract.floor_chars() = 4,700 TAG-STRIPPED characters, about 810 words; AA-1077
 # corrected "tags included" and pins the margin in tests/unit/test_aa1077_length_contract.py; length_contract reads
 # these symbols, so the numbers live here only; AA-1077 S278: the low end is length_contract.target_words(), the F4
 # floor plus the registry margin t9.blog_length_target_margin, pinned by tests/unit/test_aa1077_s278_length_margin.py;
@@ -150,8 +150,12 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
 # a shorter article is fine, which would contradict an F4 rewrite's own feedback; a thin seed reaches the floor with
 # depth from its own seed / Place background / FACTS lines and the FAQ, never with invented facts (S271 review). The
 # other channels never see it. Its four symbols are in the t9_write prompt manifest (v2; the 950 floor is v6).
-_BLOG_WORDS = (950, 1300)        # target words, body including the FAQ; the low end is the length target (floor + 17 %)
-_BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,240: length_contract.BLOG_CEILING_CHARS)
+# S279 lane L2 (AA-1096, t9_write v8): the word floor is length_contract.target_words() rendered at CALL time (the F4
+# floor and the margin are settings: cis.t9.blog_chars_min, cis.quality.t9_blog_length_target_margin); at the seeded
+# values the block is byte for byte v7's (tests/unit/test_s279_quality_settings_parity.py). A value other than the
+# seeded one puts the settings fingerprint on the ledger's prompt version (prompt_registry.version_for).
+_BLOG_WORDS_TOP = 1300           # the top of the target band (words, body including the FAQ)
+_BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,240: length_contract.ceiling_chars())
 _BLOG_SECTIONS_MAX = 6           # "## " sections before the FAQ
 # AA-1077 round 2 (S278 paid trial, t9_write v7): with only the word band, 3 first drafts landed at 690-840 words under
 # a 950-word floor (the target alone is not obeyed). The block now hands the writer a section plan whose budgets add
@@ -164,39 +168,50 @@ _BLOG_FAQ_PLAN = (3, 40)         # (pairs, words per answer) the plan counts for
 _BLOG_RICHEST_SHARE = 1.5        # the richest section's size against any other ("half as long again")
 
 
+def _blog_words() -> tuple[int, int]:
+    """(floor, top) target words of the blog body including the FAQ, in force at call time: the floor is the length
+    target (length_contract.target_words(): the F4 floor plus the margin, 950 at the seeded 4,700 chars and 0.17)."""
+    from services.acp_content_writing import length_contract  # lazy: length_contract reads this module lazily too
+    return length_contract.target_words(), _BLOG_WORDS_TOP
+
+
 def _blog_length_plan() -> dict:
     """The writer's section plan: {"sections", "opening", "each", "richest", "faq", "total"} in words. Shares are
-    rounded UP to ten, so the total is never under the word floor `_BLOG_WORDS[0]`."""
+    rounded UP to ten, so the total is never under the word floor `_blog_words()[0]`."""
     faq = _BLOG_FAQ_PLAN[0] * _BLOG_FAQ_PLAN[1]
     sections = _BLOG_SECTIONS_MAX - 1
     shares = 1 + (sections - 1) + _BLOG_RICHEST_SHARE      # the opening, the other sections, the richest
-    each = int(math.ceil((_BLOG_WORDS[0] - faq) / shares / 10.0) * 10)
+    each = int(math.ceil((_blog_words()[0] - faq) / shares / 10.0) * 10)
     richest = int(math.ceil(each * _BLOG_RICHEST_SHARE / 10.0) * 10)
     return {"sections": sections, "opening": each, "each": each, "richest": richest, "faq": faq,
             "total": each + each * (sections - 1) + richest + faq}
 
 
-_PLAN = _blog_length_plan()
-_BLOG_LENGTH_INSTRUCTIONS = (
-    "\n\nLENGTH AND EFFORT FOR THIS BLOG (required):\n"
-    f"- The body is {_BLOG_WORDS[0]:,}-{_BLOG_WORDS[1]:,} words including the FAQ: never under {_BLOG_WORDS[0]:,}, "
-    f"never more than {_BLOG_WORDS_MAX:,}. When the seed is thin, reach the length with depth from the facts you are "
-    "given for each moment, its place background and the FAQ; never with invented facts or filler. "
-    f'At most {_BLOG_SECTIONS_MAX} "## " sections before the "## FAQ" heading; depth goes to the richest moment, '
-    "not to more sections.\n"
-    f"- PLAN THE LENGTH BEFORE WRITING (the budgets add up to {_PLAN['total']:,} words): an opening of about "
-    f"{_PLAN['opening']:,} words before the first heading; {_PLAN['sections']} \"## \" sections, the richest about "
-    f"{_PLAN['richest']:,} words and each of the other {_PLAN['sections'] - 1} about {_PLAN['each']:,}; then the FAQ, "
-    f"at least {_BLOG_FAQ_PLAN[0]} pairs of {_BLOG_FAQ_PLAN[1]} or more words each (about {_PLAN['faq']:,} words). "
-    "With fewer sections, their words go to the richest section and the opening, never away. A section short of its "
-    "budget gets more depth from the facts given for it, never a fact you were not given. Never mention where a fact "
-    "comes from: no \"the source\", \"the notes\", \"the seed\" or \"the itinerary says\".\n"
-    "- Write the article once. Before writing, decide only the section headings, which seed facts go in each and "
-    "its word budget; "
-    "then write the final text directly. Never write a full draft and then copy it out again: the silent reread is "
-    "one quick pass over the finished text that fixes a sentence in place.\n"
-    "- Return one article only: no alternative versions, no notes, no outline, no list of the facts you used."
-)
+def _blog_length_instructions() -> str:
+    """The blog's LENGTH AND EFFORT block, rendered with the length values in force (call time)."""
+    lo, hi = _blog_words()
+    plan = _blog_length_plan()
+    return (
+        "\n\nLENGTH AND EFFORT FOR THIS BLOG (required):\n"
+        f"- The body is {lo:,}-{hi:,} words including the FAQ: never under {lo:,}, "
+        f"never more than {_BLOG_WORDS_MAX:,}. When the seed is thin, reach the length with depth from the facts "
+        "you are given for each moment, its place background and the FAQ; never with invented facts or filler. "
+        f'At most {_BLOG_SECTIONS_MAX} "## " sections before the "## FAQ" heading; depth goes to the richest moment, '
+        "not to more sections.\n"
+        f"- PLAN THE LENGTH BEFORE WRITING (the budgets add up to {plan['total']:,} words): an opening of about "
+        f"{plan['opening']:,} words before the first heading; {plan['sections']} \"## \" sections, the richest about "
+        f"{plan['richest']:,} words and each of the other {plan['sections'] - 1} about {plan['each']:,}; then the FAQ, "
+        f"at least {_BLOG_FAQ_PLAN[0]} pairs of {_BLOG_FAQ_PLAN[1]} or more words each (about {plan['faq']:,} words). "
+        "With fewer sections, their words go to the richest section and the opening, never away. A section short of "
+        "its budget gets more depth from the facts given for it, never a fact you were not given. Never mention where "
+        "a fact comes from: no \"the source\", \"the notes\", \"the seed\" or \"the itinerary says\".\n"
+        "- Write the article once. Before writing, decide only the section headings, which seed facts go in each and "
+        "its word budget; "
+        "then write the final text directly. Never write a full draft and then copy it out again: the silent reread is "
+        "one quick pass over the finished text that fixes a sentence in place.\n"
+        "- Return one article only: no alternative versions, no notes, no outline, no list of the facts you used."
+    )
+
 
 # AA-741 (S271 review) — the focus of a Segment-grain Blog walk. Since S271 every Bar-clearing place on a Route is its
 # own Blog Subject and each pick carries the same walk; without a focus, sibling Subjects of one Route were written
@@ -569,7 +584,7 @@ def build_user_prompt(
         if focus_on_walk:
             prompt += _WALK_FOCUS_RULE  # AA-741 (S271 review) — a Segment-grain walk is about its own moment
         # AA-741 (S271) — the blog's length and one-pass budget, write and rewrite alike.
-        prompt += _BLOG_LENGTH_INSTRUCTIONS
+        prompt += _blog_length_instructions()
         # AA-514 — every blog response is the JSON envelope, revision or not.
         prompt += _SEO_ENVELOPE_INSTRUCTIONS.format(keyword_line=_keyword_line(keyword))
     return prompt

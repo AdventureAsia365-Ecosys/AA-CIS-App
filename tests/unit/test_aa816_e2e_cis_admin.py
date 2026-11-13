@@ -80,6 +80,13 @@ def test_the_write_allow_list_is_exactly_the_reviewed_routes():
         # (test_aa1094_a10b_tp_addon.py)
         ("POST", "/admin/tenants/{tenant_id}/provision"),
         ("POST", "/admin/tenants/{tenant_id}/provision/cancel"),
+        # AA-1093 (S279, root ADR 0006a A10b-5): the erasure saga DRY RUN drill, synthetic tenants only; approve and
+        # new-round stay off (test_aa1093_a10b5_erasure_drill.py)
+        ("POST", "/admin/tenants/{tenant_id}/offboard"),
+        ("POST", "/admin/tenants/{tenant_id}/restore"),
+        ("POST", "/admin/job-runner/erasure/requests/drill"),
+        ("POST", "/admin/job-runner/erasure/requests/{request_id}/advance"),
+        ("POST", "/admin/job-runner/erasure/requests/{request_id}/stop"),
     }
     # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
     # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.

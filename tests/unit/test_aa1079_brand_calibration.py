@@ -176,7 +176,7 @@ def test_overlap_report_leaves_policy_hold_tours_out_of_the_means():
 def test_the_warn_line_comes_from_the_thresholds_file():
     from services.quality.registry import threshold
 
-    assert bo.WARN_LINE == float(threshold("t2.cross_brand_overlap_warn"))
+    assert bo.default_warn_line() == float(threshold("t2.cross_brand_overlap_warn")) == 0.35   # S279 L2: a setting
 
 
 # ── agreement and the decision rule ─────────────────────────────────────────────────────────────────────────────

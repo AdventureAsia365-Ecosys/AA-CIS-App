@@ -13,6 +13,15 @@ The S278 live verify could not prove two things on Dev:
    latest piece request of a SYNTHETIC tenant, whose text carries a booking link to an invented host, and runs the
    real subject gate on it (``services.acp_shared.subject_gate.run``): the gate opens the ``subject_gate`` flag.
 
+3. **The pilot rehearsal agency** (AA-1086 gap G1, root ``docs/ops/runbooks/pilot-rehearsal.md``). ``rehearsal-tenant``
+   enqueues the provisioning saga for ``pilot-rehearsal-01`` ("E2E Pilot Rehearsal Travel"): ``kind`` demo (synthetic,
+   never the pilot), plan tier growth, 2 posts a week, add-ons CRM (``crm.core``, 3 seats) and TripPlanner
+   (``tripplanner.hosted``). Its id is the CRM seed's id for the agency key ``pilot-rehearsal-01`` (the same UUIDv5 as
+   ``register-crm-agency``), so AA-Partner's seeder creates the CRM agency and its E2E owner and agent under the
+   tenant id CIS holds, and ``crm_entitlement_pull`` projects the CRM add-on onto it. ``--run`` names the request key
+   (``aa1086-pilot-rehearsal-01-<run>``): a failed job is retried with a new run. A tenant that already exists (by id
+   or slug) is never created twice: the output is its id and live subscriptions.
+
 Rules: ``ENVIRONMENT`` exactly ``dev`` (else exit 2 before connecting); DRY RUN by default (``--apply`` writes);
 synthetic tenants only (``is_canary`` and not the pilot, ``api.core.e2e_staff.is_synthetic_tenant``; a real tenant is
 exit 3); idempotent (the saga's request key; the piece carries ``E2E fixture (synthetic) run <run>``). No LLM call.
@@ -21,6 +30,7 @@ Run in the CIS API container (``DATABASE_URL`` = role ``cis_app``) through ECS E
 
     python -m services.tenant_account.e2e_fixtures register-crm-agency --key sen-vang [--apply]
     python -m services.tenant_account.e2e_fixtures subject-gate-flag [--tenant <uuid>] [--run <run>] [--apply]
+    python -m services.tenant_account.e2e_fixtures rehearsal-tenant --run <run> [--apply]
 
 Output: one JSON object (ids, codes, the piece's content sha256 the release needs; no tenant content).
 TEMPORARY like A10b / A10e: removed with the A10 family at go-live (AA-1054).
@@ -81,8 +91,19 @@ CRM_AGENCIES = {
     )
 }
 
+# AA-1086 G1: the pilot rehearsal agency (root docs/ops/runbooks/pilot-rehearsal.md, Fixtures). Its CRM agency key is
+# AA-Partner api/app/seed/catalogue.py "pilot-rehearsal-01"; the add-ons are the runbook's.
+REHEARSAL = CrmAgency("pilot-rehearsal-01", "E2E Pilot Rehearsal Travel")
+REHEARSAL_SLUG = "pilot-rehearsal-01"
+REHEARSAL_POSTS_PER_WEEK = 2
+REHEARSAL_ADD_ONS = ({"product": "crm", "plan_key": "crm.core", "seats": 3},
+                     {"product": "tripplanner", "plan_key": "tripplanner.hosted", "seats": None})
+
 TENANT_SQL = "SELECT tenant_id::text AS tenant_id, name, is_canary, is_pilot, kind FROM shared.tenants " \
              "WHERE tenant_id = $1::uuid"
+SLUG_TENANT_SQL = "SELECT tenant_id::text AS tenant_id FROM shared.tenants WHERE slug = $1"
+SUBS_SQL = ("SELECT product, plan_key, status FROM shared.tenant_subscription WHERE tenant_id = $1::uuid "
+            "ORDER BY product")
 JOB_SQL = ("SELECT id::text AS id, status FROM shared.job WHERE kind = $1 AND idempotency_key = $2 "
            "ORDER BY created_at DESC LIMIT 1")
 # A synthetic tenant with a finished piece to copy the request from (the newest first).
@@ -160,6 +181,37 @@ async def register_crm_agency(conn, pool, key: str, *, apply: bool) -> dict[str,
     return {**out, "state": "enqueued" if created else "job_exists", "job_id": job_id}
 
 
+def rehearsal_request_key(run: str) -> str:
+    return f"aa1086-{REHEARSAL_SLUG}-{run}"
+
+
+async def rehearsal_tenant(conn, pool, run: str, *, apply: bool) -> dict[str, Any]:
+    """AA-1086 G1: DRY RUN-first enqueue of the provisioning saga for the pilot rehearsal agency (module docstring)."""
+    tenant_id = REHEARSAL.tenant_id
+    out: dict[str, Any] = {"slug": REHEARSAL_SLUG, "tenant_id": tenant_id, "run": run}
+    existing = await conn.fetchrow(TENANT_SQL, tenant_id)
+    if existing is None:
+        by_slug = await conn.fetchval(SLUG_TENANT_SQL, REHEARSAL_SLUG)
+        if by_slug is not None:
+            raise Refused(f"slug {REHEARSAL_SLUG!r} is held by another tenant ({by_slug}): fix it by hand, not here")
+    else:
+        if not await e2e_staff.is_synthetic_tenant(conn, tenant_id):
+            raise Refused(f"CIS holds {tenant_id} but not as a synthetic tenant: fix it by hand, not here")
+        subs = [dict(r) for r in await conn.fetch(SUBS_SQL, tenant_id)]
+        return {**out, "state": "exists", "synthetic": True, "subscriptions": subs}
+    req = provision.parse({
+        "request_key": rehearsal_request_key(run), "mode": "create", "name": REHEARSAL.name, "slug": REHEARSAL_SLUG,
+        "plan_tier": PLAN_TIER, "posts_per_week": REHEARSAL_POSTS_PER_WEEK, "kind": "demo", "tenant_id": tenant_id,
+        "add_ons": [dict(a) for a in REHEARSAL_ADD_ONS], "requested_by": "e2e-fixture",
+    })
+    job = await conn.fetchrow(JOB_SQL, provision.KIND, req.idempotency_key)
+    if not apply:
+        return {**out, "state": "job_" + job["status"] if job else "would_enqueue", "request": req.to_payload()}
+    job_id, created = await tenant_provision_job.enqueue_request(pool, req)
+    return {**out, "state": "enqueued" if created else "job_exists", "job_id": job_id,
+            "poll": f"GET /admin/tenants/provision/{job_id}"}
+
+
 async def subject_gate_flag(conn, *, tenant: Optional[str], run: str, apply: bool) -> dict[str, Any]:
     tenant_id = tenant or await conn.fetchval(SYNTHETIC_WITH_PIECE_SQL)
     if tenant_id is None:
@@ -208,6 +260,8 @@ async def _main(args: argparse.Namespace) -> int:
         async with pool.acquire() as conn:
             if args.command == "register-crm-agency":
                 result = await register_crm_agency(conn, pool, args.key, apply=args.apply)
+            elif args.command == "rehearsal-tenant":
+                result = await rehearsal_tenant(conn, pool, args.run, apply=args.apply)
             else:
                 result = await subject_gate_flag(conn, tenant=args.tenant, run=args.run, apply=args.apply)
     except (Refused, provision.ProvisionError) as exc:
@@ -227,7 +281,8 @@ def _run_arg(value: str) -> str:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Dev-only fixtures for the CIS / Booking E2E write identities.")
+    parser = argparse.ArgumentParser(
+        description="Dev-only fixtures for the CIS / Booking E2E write identities and the pilot rehearsal.")
     sub = parser.add_subparsers(dest="command", required=True)
     reg = sub.add_parser("register-crm-agency", help="make CIS hold a CRM E2E agency as a synthetic tenant")
     reg.add_argument("--key", required=True, choices=sorted(CRM_AGENCIES))
@@ -236,6 +291,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     flag.add_argument("--tenant", default=None, type=lambda v: str(uuid.UUID(v)))
     flag.add_argument("--run", type=_run_arg, default=default_run())
     flag.add_argument("--apply", action="store_true")
+    reh = sub.add_parser("rehearsal-tenant", help="enqueue the pilot rehearsal agency pilot-rehearsal-01 (AA-1086)")
+    reh.add_argument("--run", type=_run_arg, required=True)
+    reh.add_argument("--apply", action="store_true")
     return asyncio.run(_main(parser.parse_args(argv)))
 
 

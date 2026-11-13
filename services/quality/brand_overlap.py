@@ -24,7 +24,9 @@ from services.quality.registry import threshold
 
 SHINGLE_N = 5
 IDENTICAL = 0.95
-WARN_LINE = float(threshold("t2.cross_brand_overlap_warn"))
+def default_warn_line() -> float:
+    """thresholds.yaml t2.cross_brand_overlap_warn; S279 L2: a setting, read at call time."""
+    return float(threshold("t2.cross_brand_overlap_warn"))
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _SKIP_KEYS = frozenset({"status", "trip_type"})
 
@@ -69,7 +71,7 @@ def cross_brand_overlap(texts: dict[str, str], source: Optional[str] = None, *, 
                         warn_line: Optional[float] = None) -> dict:
     """The overlap check for one tour written by several brands (pure). ``texts``: brand -> text; ``source``: the
     text they all rewrote (optional). Brands with no words are listed under ``empty`` and left out of the pairs."""
-    line = WARN_LINE if warn_line is None else float(warn_line)
+    line = default_warn_line() if warn_line is None else float(warn_line)
     sh = {b: shingles(t, n) for b, t in sorted(texts.items())}
     empty = sorted(b for b, s in sh.items() if not s)
     sh = {b: s for b, s in sh.items() if s}
@@ -106,7 +108,7 @@ def overlap_report(tours: dict[str, dict], sources: Optional[dict[str, str]] = N
                 per_pair.setdefault(p["pair"], []).append(p["jaccard"])
     rewritten = [p["jaccard"] for rec in per_tour.values() if not rec["identical_pairs"] for p in rec["pairs"]
                  if p["jaccard"] is not None]
-    return {"shingle": n, "warn_line": WARN_LINE, "tours": per_tour,
+    return {"shingle": n, "warn_line": default_warn_line(), "tours": per_tour,
             "per_pair_mean": {k: _r(mean(v)) for k, v in sorted(per_pair.items())},
             "rewritten": {"tours": sum(1 for r in per_tour.values() if not r["identical_pairs"] and r["pairs"]),
                           "pairs": len(rewritten), "jaccard_mean": _r(mean(rewritten)) if rewritten else None,

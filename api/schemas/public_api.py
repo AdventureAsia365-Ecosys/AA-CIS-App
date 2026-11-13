@@ -378,7 +378,8 @@ class TenantAccountBody(_CatalogModel):
 class TenantAccountEvent(_CatalogModel):
     event_id: str
     cursor: str
-    type: Literal["account.status_changed", "subscription.changed", "entitlement.changed"]
+    # account.erasure_requested: contract 1.7 (AA-1093, CIS 409)
+    type: Literal["account.status_changed", "subscription.changed", "entitlement.changed", "account.erasure_requested"]
     occurred_at: str
     tenant_id: str
     change: dict

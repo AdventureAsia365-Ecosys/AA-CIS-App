@@ -112,7 +112,7 @@ async def test_the_aa1055_compare_script_reads_both_rules(tx):
     await _rank(tx, [("DE", a, "zz1055_bay", 1, None, 0, 90), ("UK", a, "zz1055_bay", 5, 1800, 3, 95)])
     before = await tx.fetch(script.BEFORE_SQL, [a], ["US", "UK", "DE"])
     after = await tx.fetch(script.AFTER_SQL, [a], ["US", "UK", "DE"])
-    blog = {"blog": slate.CHANNEL_BARS["blog"]}
+    blog = {"blog": slate.bar("blog")}   # S279 L2: the Bar in force (numbers from the settings registry)
     assert script.count_statuses(before, ["blog"], blog)["blog"]["no_data"] == 1   # DE (no number) won on rank
     assert script.count_statuses(after, ["blog"], blog)["blog"]["cleared"] == 1    # UK's 1800 / 3 questions
 

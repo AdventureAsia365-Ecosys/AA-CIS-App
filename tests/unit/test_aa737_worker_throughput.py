@@ -101,7 +101,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-900 W0: the nightly quality funnel watchdog alerts ($0, after each CIS-08 run)
                           "quality_funnel_watch",
                           # AA-1093 part 3: one tenant's CIS rows to the gold bucket ($0, on demand + pilot nightly)
-                          "tenant_backup"}
+                          "tenant_backup",
+                          # AA-1093 L2: the tenant offboarding erasure saga ($0, polls the apps' reports)
+                          "tenant_erasure_saga"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

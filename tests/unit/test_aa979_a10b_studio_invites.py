@@ -106,7 +106,8 @@ def test_invitation_paths_are_allowed_writes(method, path):
     ("PATCH", f"/admin/tenants/{SYNTHETIC}/members/{REAL}"),
     ("POST", "/admin/tenants"),
     ("PATCH", f"/admin/tenants/{SYNTHETIC}"),
-    ("POST", f"/admin/tenants/{SYNTHETIC}/offboard"),
+    # offboard / restore joined the allow-list with A10b-5 (AA-1093, test_aa1093_a10b5_erasure_drill.py)
+    ("POST", f"/admin/tenants/{SYNTHETIC}/addon-requests/{REAL}/approve"),
     ("PUT", f"/admin/tenants/{SYNTHETIC}/config"),
 ])
 def test_other_tenant_writes_are_not_allowed_writes(method, path):
@@ -334,7 +335,7 @@ def test_send_again_to_another_address_is_refused(real, issuer):  # noqa: F811
     ("POST", f"/admin/tenants/{SYNTHETIC}/members/{REAL}/remove", None),
     ("PATCH", f"/admin/tenants/{SYNTHETIC}/members/{REAL}", {"content_studio_role": "owner"}),
     ("PATCH", f"/admin/tenants/{SYNTHETIC}", {"is_active": False}),
-    ("POST", f"/admin/tenants/{SYNTHETIC}/offboard", {}),
+    ("POST", f"/admin/tenants/{SYNTHETIC}/addon-requests/{REAL}/approve", {}),   # offboard: A10b-5 (AA-1093)
     ("PUT", f"/admin/tenants/{SYNTHETIC}/config", {}),
     ("POST", "/admin/tenants", {"name": "x"}),
 ])

@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.unit.settings_serve import serve_from_env
+
 from services.content_generation import batch_prompt, graph, itinerary_utils
 from shared.llm_client.models import LLMResponse
 
@@ -51,6 +53,9 @@ def _flags(monkeypatch):
     monkeypatch.delenv("S1_PER_DAY_TARGETS", raising=False)
     monkeypatch.delenv("S1_STRUCTURED_FACTS", raising=False)
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    # S279 L2: the gate is the setting cis.quality_modes.t2_judge_gate (seeded brand_fit, the worker's Terraform
+    # value); these tests were written for main's code default brand_fit_mission and drive the gate by env
+    serve_from_env(monkeypatch, "cis.quality_modes.t2_judge_gate", "T2_JUDGE_GATE", "brand_fit_mission")
 
 
 # ── writer system prompt ────────────────────────────────────────────────────────────────────

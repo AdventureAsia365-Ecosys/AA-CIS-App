@@ -87,7 +87,11 @@ REQUIRED_CIS_SCHEMA = 322
 # 'policy_hold' (the elephant-riding policy hold, the publish / set-active guard); without 398 the CHECK refuses it).
 # 402 (AA-1091 — the Reference prices routes read and write silver_aa_internal.tour_reference_price; each answers 503
 # without it). 403 (the Booking contract view, contract class) is not needed by this code.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402)
+# 408 / 409 / 411 (AA-1093 lane L2 — the tenant erasure saga reads and writes shared.tenant_erasure_request / _step
+# (408); the offboard / restore hooks emit account.erasure_requested, which the feed's CHECK allows only from 409; the
+# saga reads its three settings (411; without it the reader serves the compiled defaults); each path skips or answers
+# 503 without 408). 410 (the Booking / TripPlanner contract view) is not needed by this code.
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

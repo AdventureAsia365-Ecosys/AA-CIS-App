@@ -99,7 +99,7 @@ def test_unknown_values_read_as_off(no_sa_env, value):
 
 @pytest.mark.parametrize("cls", sa.BUILT_CLASSES)
 def test_hold_reads_as_repair_until_a_promotion_pr(no_sa_env, cls):
-    no_sa_env.setenv(modes.MODE_ENV, " HOLD ")
+    no_sa_env.setenv(modes.MODE_ENV, " hold ")   # S279 L2: the env override of the setting matches exactly
     assert modes.HOLD_PROMOTED == frozenset()  # nothing may hold before the S246 freeze ends (~18/11) and G3 is met
     assert modes.class_mode(cls) == modes.REPAIR
 
