@@ -24,8 +24,8 @@ EXPR = "LLMRequest(model_tier=<expr>)"
 # (file, site) -> count. "model_tier='x'" = a fixed tier; EXPR = an override passed through.
 ALLOWED = {
     # App code: the six fixed tiers of the S262 audit (map "LLM call sites", AA-642 S11).
-    ("api/routers/admin_pipeline.py", "model_tier='sonnet'"): 1,          # _sonnet_upgrade (AA-237 opt-in)
-    ("api/routers/admin_pipeline.py", "model_tier='haiku'"): 1,           # revalidation graph state
+    ("api/routers/admin_pipeline/_engine.py", "model_tier='sonnet'"): 1,  # _sonnet_upgrade (AA-237 opt-in)
+    ("api/routers/admin_pipeline/_revalidate.py", "model_tier='haiku'"): 1,  # revalidation graph state
     ("services/eval/regression.py", "model_tier='haiku'"): 1,
     # App code: the caller's optional override, passed through (None = the stage route).
     ("services/acp_angle_gate/generate.py", EXPR): 1,                     # T8 A/B harness

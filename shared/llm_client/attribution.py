@@ -52,8 +52,8 @@ RULES: tuple[tuple[str, str], ...] = (
 BINDERS: dict[str, tuple[str, ...]] = {
     TOUR: (
         "shared/jobs/worker.py::Worker._execute_job",                       # every job whose payload names a tour
-        "api/routers/admin_pipeline.py::_execute_run_tour",         # S1 rewrite (job, sync endpoint, batch ingest)
-        "api/routers/admin_pipeline.py::_revalidate_tour",          # S1 re-validation of an edited version
+        "api/routers/admin_pipeline/_engine.py::_execute_run_tour",     # S1 rewrite (job, sync endpoint, batch ingest)
+        "api/routers/admin_pipeline/_revalidate.py::_revalidate_tour",  # S1 re-validation of an edited version
         "services/acp_contract/a3_atomize.py::run_a3_atomize",      # A3 atomize (job and inline callers)
         "services/seo_intelligence/s1_prefetch.py::jev_review",     # a1_seo Jev of one tour (a job covers many)
     ),
