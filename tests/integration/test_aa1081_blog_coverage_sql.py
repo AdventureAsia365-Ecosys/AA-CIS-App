@@ -9,7 +9,7 @@
 4. `blog_seed._WALK_ATOMS_SQL`: one live member atom per walk Segment on the tour, with A3's exclusion flag; a
    deleted atom and another tour's atom are not read.
 5. `propose_slate()` end to end (Debate and the market lookup patched): every adopted tour gets its topic count or a
-   reason (seed_too_thin / low_search_interest / not_ready), and `T7_BLOG_MIN_SEED_WORDS` moves a short seed off Blog
+   reason (seed_too_thin / low_search_interest / not_ready), and the Blog minimum seed setting moves a short seed off Blog
    onto the shorter Channels.
 6. AA-1077 S279: the floor sized from the F4 blog floor skips a seed the flat floor lets through, and names each
    skipped Subject; the $0 seed floor replay's piece query runs on the schema.
@@ -29,6 +29,16 @@ sys.path.insert(0, os.path.dirname(__file__))
 import test_aa986_l2_tour_lifecycle as l2  # noqa: E402  (seed helpers)
 
 from services.acp_shared import blog_seed, slate  # noqa: E402
+from shared import settings  # noqa: E402
+
+
+def set_min_seed(monkeypatch, words) -> None:
+    """Serve the Blog minimum seed as an approved settings row would (S279 review: it has no env override any more)."""
+    real = settings.READER.get
+
+    def fake(key, tenant_id=None):
+        return int(words) if key == blog_seed.MIN_SEED_SETTING else real(key, tenant_id)
+    monkeypatch.setattr(settings.READER, "get", fake)
 
 
 @pytest_asyncio.fixture
@@ -214,9 +224,9 @@ async def _proposed(conn, tenant, channel):
 
 @pytest.mark.asyncio
 async def test_propose_slate_reports_every_adopted_tour(conn, monkeypatch):
-    # S279 thresholds L1: the Blog minimum seed is the setting cis.t7.blog_min_seed_words (600); its env override 0
-    # runs this test with the floor off, as before
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "0")
+    # S279 thresholds L1: the Blog minimum seed is the setting cis.t7.blog_min_seed_words (600); served 0 here runs
+    # this test with the floor off, as before (no env override since the S279 review)
+    set_min_seed(monkeypatch, 0)
     monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
     w = await _world(conn)
     result = await _propose_on(conn, w.tenant)
@@ -235,14 +245,14 @@ async def test_propose_slate_reports_every_adopted_tour(conn, monkeypatch):
 @pytest.mark.asyncio
 async def test_propose_slate_min_seed_moves_a_short_seed_off_blog(conn, monkeypatch):
     w = await _world(conn)
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5000")           # every seed here is far shorter
+    set_min_seed(monkeypatch, 5000)           # every seed here is far shorter
     result = await _propose_on(conn, w.tenant)
     tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
     assert (tour_a["topics"], tour_a["reason"]) == (0, "seed_too_thin")
     assert result["blog_coverage"]["short_seed"] == 2
     assert await _proposed(conn, w.tenant, "blog") == []
     assert "zz1081_e_a1" in await _proposed(conn, w.tenant, "email")   # still offered on a shorter Channel
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5")
+    set_min_seed(monkeypatch, 5)
     monkeypatch.setenv(blog_seed.RATIO_ENV, "0")                  # AA-1077 S279: the flat floor alone
     result = await _propose_on(conn, w.tenant)
     tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
@@ -256,7 +266,7 @@ async def test_propose_slate_length_sized_floor_skips_a_seed_the_flat_floor_lets
     """AA-1077 S279 — the flat floor (5 words) lets tour A's seeds through; the floor sized from the F4 blog floor
     (4,700 chars at the default 5.8 chars per seed word = 811 words) does not, and each skipped Subject says why."""
     w = await _world(conn)
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "5")
+    set_min_seed(monkeypatch, 5)
     monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
     result = await _propose_on(conn, w.tenant)
     cov = result["blog_coverage"]

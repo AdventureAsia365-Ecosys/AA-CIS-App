@@ -1,4 +1,4 @@
-"""AA-1081 — the T7 minimum seed for Blog (the AA-1077 memo, option C), behind `T7_BLOG_MIN_SEED_WORDS`.
+"""AA-1081 — the T7 minimum seed for Blog (the AA-1077 memo, option C), behind the setting `cis.t7.blog_min_seed_words`.
 
 The AA-741 phase 3 audit (`o1 PIECE SEED`, root `docs/audits/2026-11-10-S276-aa741-phase3/` §9.3): a Blog piece's
 length follows its seed (r = 0.424), and a seed of <= 991 words gave 9 F4 (too short) holds in 12 pieces. The AA-1077
@@ -6,8 +6,9 @@ memo recommends that a Subject whose seed cannot carry a ~900-word article is no
 shorter Channels). This module holds the setting and the estimate; `slate._fetch_short_blog_seeds()` applies it.
 
 **Setting** (S279 thresholds L1): `cis.t7.blog_min_seed_words` in the settings registry (Platform › Settings, CIS 407;
-seeded 600, the Terraform value in force), read per call through `shared.settings`; 0 = off. The env var
-`T7_BLOG_MIN_SEED_WORDS` stays an emergency override for one release (the reader logs a warning, the page shows it).
+seeded 600, the Terraform value in force), read per call through `shared.settings`; 0 = off. No env override (S279
+review): the old env var was set on the worker only, where the admin page (served by the api) could not see it, so it
+would have hidden an approved change; the worker's leftover `T7_BLOG_MIN_SEED_WORDS` is no longer read.
 
 **Blog seed words** (the audit's measure: the writer's seed words + its route moment words) estimated at T7 from what
 the pick would hand T9: the seed atom's `atom_seed_text()` (label, evidence, hook, season, siblings, place card) plus
@@ -38,7 +39,6 @@ from services.acp_content_writing import length_contract
 from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
 from shared import settings
 
-MIN_SEED_ENV = "T7_BLOG_MIN_SEED_WORDS"          # the setting's emergency env override (one release)
 RATIO_ENV = "T7_BLOG_CHARS_PER_SEED_WORD"        # the setting's emergency env override (one release)
 MIN_SEED_SETTING = "cis.t7.blog_min_seed_words"
 RATIO_SETTING = "cis.t7.blog_chars_per_seed_word"
@@ -148,7 +148,7 @@ async def blog_seed_words(conn, tenant_id, atom_id: str, tour_id: Optional[str],
     return words
 
 
-__all__ = ["DEFAULT_CHARS_PER_SEED_WORD", "MIN_SEED_ENV", "MIN_SEED_SETTING", "RATIO_ENV", "RATIO_SETTING",
+__all__ = ["DEFAULT_CHARS_PER_SEED_WORD", "MIN_SEED_SETTING", "RATIO_ENV", "RATIO_SETTING",
            "SKIP_BELOW_LENGTH_FLOOR", "SKIP_BELOW_MIN_SEED", "SKIP_REASONS", "SKIP_THIN_WALK", "WORD_RE",
            "blog_seed_words", "chars_per_seed_word", "min_seed_words", "seed_floor", "seed_words",
            "sized_min_seed_words", "skip_reason", "walk_atoms"]

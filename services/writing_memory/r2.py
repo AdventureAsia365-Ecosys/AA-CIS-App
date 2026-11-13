@@ -116,6 +116,7 @@ import structlog
 
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
+from shared import settings
 from shared.llm_client import family_rule
 
 logger = structlog.get_logger()
@@ -677,6 +678,10 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     shared_inputs = gs.get("shared_inputs") or {}
     fp = await store.fingerprint(writer)
     month_start = await store.month_spend()
+    # S279 review: an R2 run started from a script has no background settings refresher; read the approved month cap
+    # now (the worker's refresher keeps it fresh anyway) and hold it for the run.
+    await settings.ensure_fresh(pool if pool is not None else getattr(store, "pool", None))
+    month_cap = cfg.month_cap_usd()
     started = datetime.now(timezone.utc)
     t0 = time.monotonic()
     writer_prompt = _release_prompt(release)
@@ -732,7 +737,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         s = await spent()
         if s + estimate > conf.cap_usd:
             raise _Stop("budget_cap", phase)
-        if month_start + s + estimate > cfg.month_cap_usd():
+        if month_start + s + estimate > month_cap:
             details["month_cap_hit"] = True
             raise _Stop("budget_cap", phase)
 
@@ -1351,6 +1356,7 @@ async def run_with_pool(pool, conf: R2Config, *, progress=None) -> Outcome:
 async def estimate(pool, conf: R2Config) -> dict:
     """The DRY RUN: the plan and its estimated cost, $0 (reads only)."""
     conf.validate()
+    await settings.ensure_fresh(pool)           # S279 review: the month cap in force, also from a script
     try:                                        # AA-1024 A4: what the run would refuse, reported ($0, read only)
         await check_judge_family(conf.writer, conf.judge_model)
         family_check = "ok"

@@ -96,3 +96,165 @@ async def test_ai_ops_may_not_remove_a_tenant_budget():
         await gw.delete_tenant_budget(_request(_Conn()), tenant_id="00000000-0000-4000-8000-00000000a279",
                                       x_admin_user_id="u", x_admin_role="ai_ops")
     assert e.value.status_code == 403
+
+
+# ── S279 review: the other caps the audit names (app profile, capacity, connection limits, posts per week) ──────────
+
+def test_loosened_down_is_looser():
+    kinds = {"down_is_looser": ("low_balance_usd",)}
+    assert loosened({"low_balance_usd": 10}, {"low_balance_usd": 5}, **kinds) == ["low_balance_usd"]
+    assert loosened({"low_balance_usd": 10}, {"low_balance_usd": None}, **kinds) == ["low_balance_usd"]
+    assert loosened({"low_balance_usd": 10}, {"low_balance_usd": 20}, **kinds) == []
+    assert loosened({"low_balance_usd": None}, {"low_balance_usd": 1}, **kinds) == []
+
+
+def _profile_request(monkeypatch, profile):
+    from api.routers import admin_ai_gateway as gw
+    from shared.llm_client import app_profile
+
+    async def read_all(conn):
+        return {profile.app: profile}
+
+    async def update(pool, app, fields, *, actor):
+        return {"app": app, **fields}
+    monkeypatch.setattr(app_profile, "read_all", read_all)
+    monkeypatch.setattr(app_profile, "update", update)
+    return gw, _request(_Conn())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fields,ok", [
+    ({"ai_enabled": False, "reason": "zz incident"}, True),        # turn AI off: a stop
+    ({"bulk_paused": True}, True),
+    ({"default_daily_budget_usd": 2.0}, True),                      # lower the default budget
+    ({"ai_enabled": True}, False),                                  # switch AI back on
+    ({"bulk_paused": False}, False),                                # un-pause bulk work
+    ({"default_daily_budget_usd": 9.0}, False),                     # raise the budget
+    ({"default_daily_budget_usd": None}, False),                    # clear the budget
+])
+async def test_ai_ops_on_the_app_profile_only_tightens(monkeypatch, fields, ok):
+    from shared.llm_client import app_profile
+
+    gw, request = _profile_request(monkeypatch, app_profile.AppProfile(
+        app="cis", ai_enabled=False if fields.get("ai_enabled") is True else True,
+        bulk_paused=fields.get("bulk_paused") is False, default_daily_budget_usd=5.0, disabled_reason="zz earlier"))
+    body = gw.AppProfilePatch(**fields)
+    if ok:
+        assert (await gw.patch_app_profile(body, request, app="cis", x_admin_user_id="u", x_admin_role="ai_ops"))
+    else:
+        with pytest.raises(HTTPException) as e:
+            await gw.patch_app_profile(body, request, app="cis", x_admin_user_id="u", x_admin_role="ai_ops")
+        assert e.value.status_code == 403
+    # the administrator may do both
+    assert await gw.patch_app_profile(body, request, app="cis", x_admin_user_id="u", x_admin_role="admin")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body,ok", [
+    ({"tpm_limit": 50000, "bulk_pct": 40, "prod_guard": True}, True),        # lower the limit and a share
+    ({"tpm_limit": 200000, "bulk_pct": 50, "prod_guard": True}, False),      # raise the limit
+    ({"tpm_limit": None, "bulk_pct": 50, "prod_guard": True}, False),        # drop the limit
+    ({"tpm_limit": 100000, "bulk_pct": 80, "prod_guard": True}, False),      # widen the bulk share
+    ({"tpm_limit": 100000, "bulk_pct": 50, "prod_guard": False}, False),     # switch the prod guard off
+])
+async def test_ai_ops_on_capacity_only_tightens(monkeypatch, body, ok):
+    from api.routers import admin_ai_gateway as gw
+    from shared.llm_client import capacity
+
+    old = capacity.Limit(connection_key="zz-conn", model_key="*", tpm_limit=100000, bulk_pct=50, prod_guard=True)
+
+    async def read_all(conn):
+        return [old]
+
+    async def put(pool, connection_key, model_key, fields, *, actor):
+        return {"connection_key": connection_key, **fields}
+    monkeypatch.setattr(capacity, "read_all", read_all)
+    monkeypatch.setattr(capacity, "put", put)
+    req = _request(_Conn())
+    b = gw.CapacityLimitBody(**body)
+    if ok:
+        assert await gw.put_capacity(b, req, connection_key="zz-conn", model_key="*", x_admin_user_id="u",
+                                     x_admin_role="ai_ops")
+    else:
+        with pytest.raises(HTTPException) as e:
+            await gw.put_capacity(b, req, connection_key="zz-conn", model_key="*", x_admin_user_id="u",
+                                  x_admin_role="ai_ops")
+        assert e.value.status_code == 403
+    assert await gw.put_capacity(b, req, connection_key="zz-conn", model_key="*", x_admin_user_id="u",
+                                 x_admin_role="admin")
+    # a new row (another model) only adds a limit
+    assert await gw.put_capacity(b, req, connection_key="zz-conn", model_key="zz-model", x_admin_user_id="u",
+                                 x_admin_role="ai_ops")
+    with pytest.raises(HTTPException) as e:
+        await gw.delete_capacity(req, connection_key="zz-conn", model_key="*", x_admin_user_id="u",
+                                 x_admin_role="ai_ops")
+    assert e.value.status_code == 403
+
+
+class _ConnRow(SimpleNamespace):
+    pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changes,policy,ok", [
+    ({"rpm_limit": 30}, {}, True),
+    ({"rpm_limit": 120}, {}, False),
+    ({"monthly_budget_usd": None}, {}, False),
+    ({"daily_credit_limit": 500}, {}, True),
+    ({"max_retries": 4}, {}, False),
+    ({"low_balance_usd": 1.0}, {}, False),
+    ({"timeout_s": 300, "enabled": True}, {}, True),                         # not limits
+    ({}, {"budget_hard_stop": False}, False),
+    ({}, {"budget_alert_pct": 95}, False),
+    ({}, {"budget_alert_pct": 60}, True),
+])
+async def test_ai_ops_on_connection_limits_only_tightens(changes, policy, ok):
+    from api.services import llm_connections
+
+    c = _ConnRow(rpm_limit=60, max_concurrency=4, monthly_budget_usd=100.0, daily_credit_limit=1000, max_retries=2,
+                 low_balance_usd=5.0)
+
+    class _Db:
+        async def fetchrow(self, sql, *a):
+            return {"alert_pct": 80, "hard_stop": True}
+    if ok:
+        await llm_connections._refuse_loosening(_Db(), c, "zz-conn", changes, policy, "ai_ops")
+    else:
+        with pytest.raises(PermissionError):
+            await llm_connections._refuse_loosening(_Db(), c, "zz-conn", changes, policy, "ai_ops")
+    await llm_connections._refuse_loosening(_Db(), c, "zz-conn", changes, policy, "admin")
+
+
+@pytest.mark.asyncio
+async def test_customer_success_may_not_raise_posts_per_week(monkeypatch):
+    from uuid import UUID
+
+    from api.routers import admin as admin_module
+
+    saved = []
+
+    async def fetch(tenant_id, pool):
+        return SimpleNamespace(markets=["US"], channels=["blog"], capacity_posts_per_week=3)
+
+    async def save(tenant_id, markets, channels, posts, pool):
+        saved.append(posts)
+
+    async def audit(*a, **k):
+        return None
+    monkeypatch.setattr(admin_module, "ADMIN_SECRET", "s")
+    monkeypatch.setattr(admin_module, "fetch_tenant_planning_config", fetch)
+    monkeypatch.setattr(admin_module, "save_tenant_planning_config", save)
+    monkeypatch.setattr(admin_module, "write_audit_log", audit)
+    tid = UUID("00000000-0000-4000-8000-00000000a279")
+
+    def body(n):
+        return admin_module.TenantConfigRequest(markets=["US"], channels=["blog"], posts_per_week=n)
+    await admin_module.update_tenant_config(tid, body(2), _request(_Conn()), x_admin_secret="s",
+                                            x_admin_user_id="u", x_admin_role="customer_success")
+    with pytest.raises(HTTPException) as e:
+        await admin_module.update_tenant_config(tid, body(5), _request(_Conn()), x_admin_secret="s",
+                                                x_admin_user_id="u", x_admin_role="customer_success")
+    assert e.value.status_code == 403
+    await admin_module.update_tenant_config(tid, body(5), _request(_Conn()), x_admin_secret="s",
+                                            x_admin_user_id="u", x_admin_role="admin")
+    assert saved == [2, 5]

@@ -74,6 +74,22 @@ def start_refresher(pool: Any) -> Optional[asyncio.Task]:
     return asyncio.create_task(READER.run_refresher(), name="settings-refresher")
 
 
+async def ensure_fresh(pool: Any) -> bool:
+    """Re-read the approved values through ``pool`` now; call it at the start of every paid-run entry point that gets
+    a pool (S279 review). A process that never ran ``start_refresher`` (an ECS exec script with its own asyncpg pool:
+    the question top-up, an R2 / shadow replay) would otherwise serve the compiled defaults for good, so a cap the
+    administrator lowered would be ignored. True when the snapshot is fresh; False when the defaults / last good
+    snapshot stay in force (no pool, DB error, the 407 tables missing). A no-op under ENVIRONMENT=test, like the
+    refresher (unit tests read the defaults or monkeypatch ``get``)."""
+    if pool is None or os.environ.get("ENVIRONMENT") == "test":
+        return False
+    try:
+        return await READER.refresh(force=True, pool=pool)
+    except Exception as exc:  # a malformed row never breaks the run: the defaults / last good stay in force
+        READER.last_error = f"{type(exc).__name__}: {exc}"[:300]
+        return False
+
+
 async def stop_refresher(task: Optional[asyncio.Task]) -> None:
     if task is None:
         return
@@ -82,5 +98,5 @@ async def stop_refresher(task: Optional[asyncio.Task]) -> None:
 
 
 __all__ = ["COMPILED_DEFAULTS", "Definition", "KEY_PREFIX", "READER", "Resolution", "aget", "coerce", "definition",
-           "get", "install", "load_definitions", "parse_text", "resolve", "start_refresher", "stop_refresher",
-           "validate"]
+           "ensure_fresh", "get", "install", "load_definitions", "parse_text", "resolve", "start_refresher",
+           "stop_refresher", "validate"]

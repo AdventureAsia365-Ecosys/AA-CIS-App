@@ -1580,6 +1580,7 @@ async def patch_llm_connection(
     body: LlmConnectionPatch,
     x_admin_secret: str = Header(None),
     x_admin_user_id: Optional[str] = Header(None),
+    x_admin_role: Optional[str] = Header(None),
 ):
     from api.services import llm_connections
 
@@ -1589,7 +1590,9 @@ async def patch_llm_connection(
     try:
         async with request.app.state.pool.acquire() as conn:
             result = await llm_connections.update_connection(conn, connection_key, changes,
-                                                             actor=f"admin:{admin_actor}")
+                                                             actor=f"admin:{admin_actor}", role=x_admin_role)
+    except PermissionError as e:              # S279 thresholds L1: tighten-only (ai_ops)
+        raise HTTPException(status_code=403, detail=str(e))
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except llm_connections.ConnectionToggleRefused as e:

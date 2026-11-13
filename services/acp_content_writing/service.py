@@ -131,6 +131,22 @@ MAX_ATTEMPTS = int(settings.definition(MAX_ATTEMPTS_SETTING).max_value)
 def max_attempts() -> int:
     """The T9 attempts per piece in force (setting `cis.t9.max_attempts`, never above MAX_ATTEMPTS)."""
     return max(2, min(int(settings.get(MAX_ATTEMPTS_SETTING)), MAX_ATTEMPTS))
+
+
+def paid_attempts_for(stop_label: bool, attempts: int) -> int:
+    """The last paid attempt of the loop. The attempt numbers keep their structural meaning (1 = write, 2 = repair,
+    3 = the legacy sentence repair of attempt 2); the setting only stops the loop earlier. Stop-and-label mode: attempt
+    2 is the last paid one whatever the setting (2 and 3 cost the same there, the third step is the $0 label); legacy
+    mode: the setting itself (2 = no paid sentence repair at attempt 3). S279 review: ``attempts - 1`` in stop-and-label
+    mode made the setting at 2 skip the repair."""
+    return min(attempts, MAX_ATTEMPTS - 1) if stop_label else attempts
+
+
+def is_last_try(attempt: int, paid_attempts: int, repairable_again: bool) -> bool:
+    """True when ``attempt`` is the loop's last: the last paid attempt, or attempt 2 whose failures are not
+    sentence-repairable (AA-770: attempt 3 exists only as a sentence repair of attempt 2). ``repairable_again`` is
+    computed by the caller against MAX_ATTEMPTS - 1 (the structural attempt 2), never against the setting."""
+    return attempt >= paid_attempts or (attempt == MAX_ATTEMPTS - 1 and not repairable_again)
 # AA-900 W0 (root ADR 0020 D6, audit critic F5) — attempt 3 is "stop and label" at $0: a piece still failing after
 # attempt 2 keeps the better of attempts 1 and 2 (the AA-528 guard) and is labelled with a typed reason
 # (`_stop_label`), with no paid writer or repair call and no code truth_cut (a cut needs a passing measurement record
@@ -2376,11 +2392,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # AA-900 W0 — in stop-and-label mode the last paid attempt is attempt 2; `stopped_for_label` marks a piece
         # the legacy loop would have sent to a paid attempt 3.
         stop_label = last_attempt_mode() == STOP_AND_LABEL
-        attempts = max_attempts()   # S279 thresholds L1 (setting cis.t9.max_attempts)
-        paid_attempts = attempts - 1 if stop_label else attempts
+        # S279 thresholds L1 (setting cis.t9.max_attempts): an earlier stop only; attempt numbers keep their meaning.
+        paid_attempts = paid_attempts_for(stop_label, max_attempts())
         stopped_for_label = False
 
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()
             extend_plan: Optional[dict] = None  # AA-1077 — set on attempt 2 of a short blog (length_extend)
             if attempt == 1:
@@ -2896,9 +2912,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
 
             # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.
             # AA-900 W0 — in stop-and-label mode attempt 2 is the last paid one: attempt 3 is the $0 label below.
-            repairable_again = (attempt == attempts - 1
+            repairable_again = (attempt == MAX_ATTEMPTS - 1
                                 and sentence_repair.plan(content_text, gate_ledger) is not None)
-            last_try = attempt >= paid_attempts or (attempt == attempts - 1 and not repairable_again)
+            last_try = is_last_try(attempt, paid_attempts, repairable_again)
             if first_failure is None or not first_failure["repairable"] or last_try:
                 # AA-613 — under the 3-tier severity model, `first_failure` is now ONLY ever a
                 # BLOCKING (product-truth) gate: grounding/banned/CTA/FACT_CHECK/cannibalization/

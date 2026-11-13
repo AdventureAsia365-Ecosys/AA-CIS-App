@@ -100,6 +100,13 @@ _CURRENT_VERSION_SQL = """
 _MAX_VERSION_SQL = "SELECT coalesce(max(version), 0) FROM shared.setting_value " \
                    "WHERE key = $1 AND tenant_id IS NOT DISTINCT FROM $2::uuid"
 _LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended($1, 407))"
+# The two-person flag in force, read inside the decision transaction (never the 30 s process cache): the latest
+# approved platform row in force, else the definition's default.
+_TWO_PERSON_SQL = """
+    SELECT value::text AS value_text FROM shared.setting_value
+     WHERE key = $1 AND tenant_id IS NULL AND status = 'approved' AND effective_from <= now()
+     ORDER BY effective_from DESC, version DESC LIMIT 1
+"""
 
 
 def _app_definitions(app: Optional[str], area: Optional[str]) -> list[Definition]:
@@ -255,6 +262,27 @@ async def decide(pool: Any, value_id: str, *, actor: str, approve: bool, note: O
     return out
 
 
+async def two_person_on(conn: Any) -> bool:
+    """Is two-person approval on, read in the caller's transaction (S279 review: the process cache could be empty or
+    up to one cache window old, which failed open). Fails closed: an unreadable row or a value that is not a boolean
+    counts as on."""
+    try:
+        async with conn.transaction():          # a savepoint: a failed read leaves the decision transaction usable
+            row = await conn.fetchrow(_TWO_PERSON_SQL, TWO_PERSON_KEY)
+    except asyncpg.exceptions.UndefinedTableError:
+        raise
+    except Exception as exc:  # fail closed
+        logger.warning("settings_two_person_read_failed", error=repr(exc)[:200])
+        return True
+    if row is None:
+        return settings.definition(TWO_PERSON_KEY).default_value is not False
+    try:
+        value = json.loads(row["value_text"])
+    except (TypeError, ValueError):
+        return True
+    return value is not False
+
+
 async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, approve: bool,
                   note: Optional[str]) -> tuple[dict, tuple[str, dict]]:
     """Decide ``proposal`` inside the caller's transaction; returns the row and the audit row (action, details) the
@@ -264,7 +292,8 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
         raise SettingsError(422, "Say why the proposal is rejected", "note_required")
     self_approved = False
     if approve and actor == proposal["proposed_by"] and d.approval == "maker_checker":
-        if settings.get(TWO_PERSON_KEY):
+        # The flag itself is maker_checker (CIS 407): while it is on, the one person it checks cannot turn it off.
+        if await two_person_on(conn):
             raise SettingsError(409, f"{d.label} needs a second person to approve (two-person approval is on)",
                                 "second_person_required")
         self_approved = True
@@ -323,11 +352,12 @@ def tighten_only(role: Optional[str]) -> bool:
 
 
 def loosened(before: Optional[dict], after: dict, *, caps: tuple = (), stops: tuple = (),
-             up_is_looser: tuple = ()) -> list[str]:
+             up_is_looser: tuple = (), down_is_looser: tuple = ()) -> list[str]:
     """The fields ``after`` loosens against ``before`` (a row or None = no row yet). ``caps``: a money / count cap
     where None = no cap (None after a value, or a higher value, loosens); ``stops``: booleans where True is the strict
     side (True -> False loosens); ``up_is_looser``: thresholds where a higher number acts later (alert / approval
-    percentages). No row before: only a missing stop flag counts (a new cap can only tighten). Pure."""
+    percentages, a retry count); ``down_is_looser``: alert floors where a lower number (or None = no alert) acts later
+    (a low-balance alert). No row before: only a missing stop flag counts (a new cap can only tighten). Pure."""
     if before is None:
         return [f for f in stops if after.get(f) is False]
     out = []
@@ -342,8 +372,22 @@ def loosened(before: Optional[dict], after: dict, *, caps: tuple = (), stops: tu
         old, new = before.get(f), after.get(f)
         if old is not None and new is not None and float(new) > float(old):
             out.append(f)
+    for f in down_is_looser:
+        old, new = before.get(f), after.get(f)
+        if old is not None and (new is None or float(new) < float(old)):
+            out.append(f)
     return out
 
 
+def refuse_loosening(role: Optional[str], before: Optional[dict], after: dict, **kinds: tuple) -> None:
+    """Raise PermissionError (the routes answer 403) when ``role`` is tighten-only and ``after`` loosens ``before``
+    (``kinds``: the ``loosened`` field groups). The administrator and the machine pass."""
+    if not tighten_only(role):
+        return
+    worse = loosened(before, after, **kinds)
+    if worse:
+        raise PermissionError(f"{TIGHTEN_ONLY}: {', '.join(worse)}")
+
+
 __all__ = ["APPS", "NOT_MIGRATED", "RESOURCE", "SettingsError", "TIGHTEN_ONLY", "TWO_PERSON_KEY", "decide",
-           "history", "list_settings", "loosened", "propose", "tighten_only"]
+           "history", "list_settings", "loosened", "propose", "refuse_loosening", "tighten_only", "two_person_on"]

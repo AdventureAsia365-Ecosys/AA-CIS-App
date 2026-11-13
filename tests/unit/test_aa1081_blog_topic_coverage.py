@@ -5,7 +5,7 @@
 2. `blog_tour_coverage` / `_no_topic_reason`: each code of `NO_TOPIC_REASONS`, in order.
 3. `tenant_blog_topics`: the tenant view keeps id, name, topic count and a known code only.
 4. `propose_slate`: the job result carries `blog_coverage`; the coverage reads failing leaves the Slate as before.
-5. The Blog minimum seed (`T7_BLOG_MIN_SEED_WORDS`): off by default (no read), on = a short seed is not proposed on
+5. The Blog minimum seed (setting `cis.t7.blog_min_seed_words`): off by default (no read), on = a short seed is not proposed on
    Blog but stays on the social Channels, and the tour's reason is `seed_too_thin`.
 6. `GET /v1/slate` returns `blog_topics`.
 7. The $0 replay script's pure parts (summary, arguments, demand check).
@@ -22,6 +22,18 @@ import pytest
 from services.acp_shared import blog_seed, slate
 from services.acp_shared.slate import (CHANNEL_BARS, NO_TOPIC_REASONS, Candidate, HeldSubjects, _choose_slate,
                                        blog_tour_coverage, tenant_blog_topics)
+
+
+def set_min_seed(monkeypatch, words) -> None:
+    """Serve the Blog minimum seed as an approved settings row would (S279 review: it has no env override any more)."""
+    from shared import settings
+
+    real = settings.READER.get
+
+    def fake(key, tenant_id=None):
+        return int(words) if key == blog_seed.MIN_SEED_SETTING else real(key, tenant_id)
+    monkeypatch.setattr(settings.READER, "get", fake)
+
 
 TOUR_A, TOUR_B, TOUR_C = "aaaaaaaa-0000-0000-0000-00000000000a", "bbbbbbbb-0000-0000-0000-00000000000b", \
     "cccccccc-0000-0000-0000-00000000000c"
@@ -255,7 +267,7 @@ TOURS = {TOUR_A: "Valdoria lakes", TOUR_B: "Corvin passes", TOUR_C: "Aurel coast
 
 @pytest.mark.asyncio
 async def test_propose_covers_the_starved_tour_and_reports_the_others(monkeypatch):
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "0")       # S279: the setting is 600; this test runs with the floor off
+    set_min_seed(monkeypatch, 0)        # S279: the setting is 600; this test runs with the floor off
     conn = _Conn(TOURS)
     unseeded = [_seg("u1", "Selva Bay", 4, [TOUR_C])]
     result = await _propose(conn, _starved(), unseeded=unseeded)
@@ -304,21 +316,19 @@ async def test_a_short_blog_seed_stays_on_social_and_names_the_reason():
 
 # ── 5. the Blog minimum seed ─────────────────────────────────────────────────────────────────────────────────────
 
-# S279 thresholds L1: the value is the setting cis.t7.blog_min_seed_words (seeded 600, the Terraform value in force);
-# the env var is its emergency override: a valid value wins, an invalid one is ignored (the setting stays in force).
-@pytest.mark.parametrize("raw,expected", [(None, 600), ("", 600), ("0", 0), ("-5", 600), ("abc", 600), ("600", 600),
-                                          (" 1000 ", 1000), ("6.5", 600)])
-def test_min_seed_setting(monkeypatch, raw, expected):
-    if raw is None:
-        monkeypatch.delenv(blog_seed.MIN_SEED_ENV, raising=False)
-    else:
-        monkeypatch.setenv(blog_seed.MIN_SEED_ENV, raw)
+# S279 thresholds L1: the value is the setting cis.t7.blog_min_seed_words (seeded 600, the Terraform value in force).
+# S279 review: no env override (the worker-only env var hid an approved change from the admin page); 0 = off.
+@pytest.mark.parametrize("served,expected", [(None, 600), (0, 0), (1000, 1000), (-5, 0)])
+def test_min_seed_setting(monkeypatch, served, expected):
+    monkeypatch.setenv("T7_BLOG_MIN_SEED_WORDS", "9")        # the worker's leftover env var is not read
+    if served is not None:
+        set_min_seed(monkeypatch, served)
     assert blog_seed.min_seed_words() == expected
 
 
 @pytest.mark.asyncio
 async def test_min_seed_off_reads_nothing(monkeypatch):
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "0")
+    set_min_seed(monkeypatch, 0)
     conn = MagicMock()
     conn.fetch = AsyncMock()
     out = await slate._fetch_short_blog_seeds(uuid4(), conn, _starved(), ["blog", "linkedin"], {}, {})
@@ -329,7 +339,7 @@ async def test_min_seed_off_reads_nothing(monkeypatch):
 @pytest.mark.asyncio
 async def test_min_seed_on_measures_free_blog_candidates_only(monkeypatch):
     from services.acp_shared.subject_seed import Member
-    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "600")
+    set_min_seed(monkeypatch, 600)
     segs = [_seg("s1", "Lake Aurel", 1, [TOUR_A]), _seg("s2", "Mirsa Gorge", 2, [TOUR_A]),
             _seg("s3", "Corvin Pass", 3, [TOUR_A]), _seg("s4", "Selva Bay", 4, [TOUR_A]),
             _seg("s5", "Brenn Moor", 5, [TOUR_A], demand=10)]                 # misses the Bar: not measured

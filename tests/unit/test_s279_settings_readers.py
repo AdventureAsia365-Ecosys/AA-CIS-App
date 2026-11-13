@@ -183,3 +183,74 @@ def test_wave_size_follows_the_setting(served):
 def test_tenant_ai_budget_defaults_fail_closed():
     from api.services import tenant_ai_budget
     assert tenant_ai_budget.DEFAULTS["hard_stop"] is True
+
+
+@pytest.mark.parametrize("stop_label,setting,paid", [(True, 3, 2), (True, 2, 2), (False, 3, 3), (False, 2, 2)])
+def test_t9_attempts_setting_only_stops_the_loop_earlier(served, stop_label, setting, paid):
+    """S279 review: the setting at 2 must still give the first write and one repair in both modes; the attempt numbers
+    keep their meaning (attempt 2 = the repair, attempt 3 = the legacy sentence repair of attempt 2)."""
+    from services.acp_content_writing import service as t9
+
+    served["cis.t9.max_attempts"] = setting
+
+    def last_attempt(repairable: bool) -> int:
+        p = t9.paid_attempts_for(stop_label, t9.max_attempts())
+        for attempt in range(1, t9.MAX_ATTEMPTS + 1):
+            if t9.is_last_try(attempt, p, attempt == t9.MAX_ATTEMPTS - 1 and repairable):
+                return attempt
+        raise AssertionError("the loop never stopped")
+
+    assert last_attempt(True) == paid              # attempt-2 failures are sentence-repairable
+    assert last_attempt(False) == 2                # not repairable: attempt 2 is the last, whatever the setting
+
+
+def test_dfs_price_table_keeps_the_seeded_price_of_a_missing_or_zero_label(served):
+    """S279 review: an admin edit that drops a label or sets it to 0 must not turn the DataForSEO spend guard off; the
+    stored table is laid over the compiled default."""
+    from shared import cost_guard
+
+    served["cis.spend.dfs_call_estimate_usd"] = {"serp_advanced": 0.003, "search_volume": 0}
+    prices = cost_guard.dfs_call_estimate_usd()
+    assert prices["serp_advanced"] == 0.003                                  # an edited price is in force
+    assert prices["search_volume"] == cost_guard.DFS_CALL_ESTIMATE_USD["search_volume"] == 0.09   # 0 ignored
+    assert prices["keywords_for_keywords"] == 0.09                           # a missing label keeps its seed
+    assert set(cost_guard.DFS_CALL_ESTIMATE_USD) <= set(prices)
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_reads_the_approved_values_outside_the_api_and_worker(monkeypatch):
+    """S279 review: a script with its own pool (the question top-up, an R2 / shadow replay) never runs the background
+    refresher; ``ensure_fresh`` reads the approved values through that pool, and a read error keeps the defaults."""
+    import json as _json
+    from contextlib import asynccontextmanager
+
+    from services.acp_shared import question_topup
+
+    class _Conn:
+        async def fetch(self, sql, *args):
+            return [{"key": "cis.spend.question_topup_cap_usd", "tenant_id": None, "value_text": _json.dumps(1.5),
+                     "version": 2, "effective_from": None}]
+
+    class _Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield _Conn()
+
+    class _Broken:
+        def acquire(self):
+            raise OSError("zz no database")
+
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    snapshot = (settings.READER._snapshot, settings.READER._refused, settings.READER.last_error)
+    try:
+        assert await settings.ensure_fresh(None) is False
+        assert await settings.ensure_fresh(_Pool()) is True
+        assert question_topup.topup_cap_usd() == 1.5
+        settings.READER._snapshot = None
+        assert await settings.ensure_fresh(_Broken()) is False
+        assert question_topup.topup_cap_usd() == question_topup.TOPUP_CAP_USD == 3.0
+        monkeypatch.setenv("ENVIRONMENT", "test")
+        assert await settings.ensure_fresh(_Pool()) is False                # tests read the defaults
+    finally:
+        settings.READER._snapshot, settings.READER._refused, settings.READER.last_error = snapshot
+        settings.READER.invalidate()

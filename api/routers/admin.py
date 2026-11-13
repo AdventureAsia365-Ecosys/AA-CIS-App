@@ -1712,6 +1712,11 @@ async def update_tenant_config(
     pool = request.app.state.pool
     try:
         before = await fetch_tenant_planning_config(tenant_id, pool)
+        if _tighten_only(x_admin_role):
+            # S279 thresholds L1 (tech lead Q1): customer_success may lower a tenant's posts per week, never raise it
+            now = before.capacity_posts_per_week
+            if now is not None and body.posts_per_week is not None and body.posts_per_week > now:
+                raise HTTPException(status_code=403, detail=f"{TIGHTEN_ONLY} (posts_per_week now {now})")
         await save_tenant_planning_config(
             tenant_id, body.markets, body.channels, body.posts_per_week, pool,
         )

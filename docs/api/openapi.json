@@ -12101,22 +12101,6 @@
           },
           {
             "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
             "name": "x-admin-role",
             "required": false,
             "schema": {
@@ -12129,6 +12113,22 @@
                 }
               ],
               "title": "X-Admin-Role"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
             }
           }
         ],
@@ -13056,22 +13056,6 @@
           },
           {
             "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
             "name": "x-admin-role",
             "required": false,
             "schema": {
@@ -13084,6 +13068,22 @@
                 }
               ],
               "title": "X-Admin-Role"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
             }
           }
         ],
@@ -13157,22 +13157,6 @@
           },
           {
             "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
             "name": "x-admin-role",
             "required": false,
             "schema": {
@@ -13185,6 +13169,22 @@
                 }
               ],
               "title": "X-Admin-Role"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
             }
           }
         ],
@@ -38501,22 +38501,6 @@
           },
           {
             "in": "header",
-            "name": "x-admin-user-id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-User-Id"
-            }
-          },
-          {
-            "in": "header",
             "name": "x-admin-secret",
             "required": false,
             "schema": {
@@ -38594,22 +38578,6 @@
             "schema": {
               "title": "Value Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-user-id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-User-Id"
             }
           },
           {
@@ -38785,7 +38753,7 @@
           },
           {
             "in": "header",
-            "name": "x-admin-user-id",
+            "name": "x-admin-secret",
             "required": false,
             "schema": {
               "anyOf": [
@@ -38796,7 +38764,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Admin-User-Id"
+              "title": "X-Admin-Secret"
             }
           },
           {
@@ -38813,22 +38781,6 @@
                 }
               ],
               "title": "X-Admin-Role"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
             }
           }
         ],

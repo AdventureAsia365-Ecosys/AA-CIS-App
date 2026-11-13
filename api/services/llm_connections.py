@@ -310,7 +310,39 @@ async def _apply_policy(db, connection_key: str, changes: dict, actor: str) -> t
     return diff, {f: before[f] for f in diff}, {f: after[f] for f in diff}
 
 
-async def update_connection(db, connection_key: str, changes: dict, *, actor: str) -> dict:
+# S279 thresholds L1 (tech lead Q1): the limit fields a tighten-only role (ai_ops) may lower but never raise / clear.
+TIGHTEN_CAPS = ("rpm_limit", "max_concurrency", "monthly_budget_usd", "daily_credit_limit")
+TIGHTEN_UP_IS_LOOSER = ("max_retries", "budget_alert_pct")
+TIGHTEN_DOWN_IS_LOOSER = ("low_balance_usd",)
+TIGHTEN_STOPS = ("budget_hard_stop",)
+
+
+async def _refuse_loosening(db, c, connection_key: str, changes: dict, policy_changes: dict,
+                            role: Optional[str]) -> None:
+    """PermissionError when a tighten-only ``role`` loosens a limit or the cost policy of connection ``c`` (S279).
+    ``enabled`` (routing), ``timeout_s`` and the notes / usage key are not limits and stay editable."""
+    from api.services import settings_registry
+
+    if not settings_registry.tighten_only(role):
+        return
+    policy = dict(_POLICY_DEFAULTS)
+    if policy_changes:
+        try:
+            prow = await db.fetchrow("SELECT alert_pct, hard_stop FROM shared.llm_connection_cost_policy "
+                                     "WHERE connection_key = $1", connection_key)
+        except asyncpg.exceptions.UndefinedTableError:
+            prow = None
+        if prow is not None:
+            policy.update({"budget_alert_pct": prow["alert_pct"], "budget_hard_stop": prow["hard_stop"]})
+    before = {f: _json_value(getattr(c, f, None)) for f in TIGHTEN_CAPS + ("max_retries", "low_balance_usd")}
+    before.update({f: policy[f] for f in ("budget_alert_pct", "budget_hard_stop")})
+    after = {**before, **{f: v for f, v in {**changes, **policy_changes}.items() if f in before}}
+    settings_registry.refuse_loosening(role, before, after, caps=TIGHTEN_CAPS, stops=TIGHTEN_STOPS,
+                                       up_is_looser=TIGHTEN_UP_IS_LOOSER, down_is_looser=TIGHTEN_DOWN_IS_LOOSER)
+
+
+async def update_connection(db, connection_key: str, changes: dict, *, actor: str,
+                            role: Optional[str] = None) -> dict:
     """AA-1002 (S4): change the editable fields of one connection (``EDITABLE``) and audit it. Raises LookupError
     (unknown key, 404), ConnectionToggleRefused (422) and ConnectionEditUnavailable (503, migration 310 missing). A
     request that changes nothing writes no audit row (``changed: false``).
@@ -322,7 +354,10 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
 
     AA-1002 (S10): the budget policy fields (``POLICY_EDITABLE``) go to shared.llm_connection_cost_policy (upsert) in
     the same transaction and audit row; a new usage key NAME is read once before the transaction (fail closed, never
-    returned). 503 before migration 317."""
+    returned). 503 before migration 317.
+
+    S279 thresholds L1: ``role`` = the caller's staff role; a tighten-only role (ai_ops) may lower a limit or harden
+    the cost policy, never loosen one (PermissionError, 403)."""
     if not changes:
         raise ConnectionToggleRefused("nothing to change")
     policy_changes = {f: v for f, v in changes.items() if f in POLICY_EDITABLE}
@@ -354,6 +389,7 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
             raise LookupError(f"unknown connection: {connection_key!r}")
         c = conn_registry._row_to_connection(row)
         merged = _validate(c, changes) if changes else c
+        await _refuse_loosening(db, c, connection_key, changes, policy_changes, role)
         if checked is not None and tuple(getattr(c, f) for f in _CREDENTIAL_FIELDS) != checked:
             raise ConnectionToggleRefused(
                 f"connection {connection_key!r} changed while its secret was checked; send the request again")

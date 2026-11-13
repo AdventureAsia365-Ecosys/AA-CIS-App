@@ -242,6 +242,9 @@ async def run_topup(pool, *, dry_run: bool = True, cap_usd: Optional[float] = No
     """The top-up. `dry_run` (default): the plan only, no paid call, no write. A real run buys one
     SERP per planned place under a hard budget of min(cap_usd, $3 − what earlier runs spent) and
     stores what comes back (an empty marker row for a place with no question)."""
+    # S279 review: the script that runs the top-up has its own pool and no background refresher; read the approved
+    # cap now, so a cap the administrator lowered on Platform › Settings is the one enforced.
+    await settings.ensure_fresh(pool)
     hard_cap = topup_cap_usd()
     cap_usd = hard_cap if cap_usd is None else cap_usd
     if cap_usd > hard_cap:

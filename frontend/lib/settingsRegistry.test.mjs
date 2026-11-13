@@ -25,7 +25,7 @@ const MODE = { ...INT, key: "cis.billing.rewrite_over_quota_mode", value_type: "
 const TABLE = { ...INT, key: "cis.spend.dfs_call_estimate_usd", value_type: "json", unit: "USD/call", min_value: 0,
   max_value: 1, default_value: { serp_advanced: 0.002 } };
 const FLAG = { ...INT, key: "cis.settings.two_person_approval", value_type: "bool", unit: null, min_value: null,
-  max_value: null, default_value: false, approval: "single" };
+  max_value: null, default_value: false, approval: "maker_checker" };
 
 function item(d, over = {}) {
   return { ...d, value: d.default_value, source: "default", version: null, overridden_by_env: false, env_ignored: null,

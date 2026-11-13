@@ -150,17 +150,27 @@ async def test_reject_needs_a_note_and_two_person_approval_refuses_the_proposer(
     with pytest.raises(reg.SettingsError) as e:
         await reg.decide(pool, p["id"], actor=B, approve=True)
     assert e.value.code == "already_decided"
-    # switch two-person approval on (a single-approval setting: the admin applies it)
+    # switch two-person approval on: the flag is maker_checker (S279 review); while it is off the admin may apply it
     on = await reg.propose(pool, reg.TWO_PERSON_KEY, value=True, reason=REASON, actor=A, base_version=0, apply=True,
                            can_approve=True)
-    assert on["status"] == "approved" and on["self_approved"] is False
-    await settings.READER.refresh(force=True, pool=pool)
-    assert settings.get(reg.TWO_PERSON_KEY) is True
+    assert on["status"] == "approved" and on["self_approved"] is True
+    # the flag is read in the decision transaction, not from the (stale) process cache: no refresh here
+    assert settings.get(reg.TWO_PERSON_KEY) is False and await reg.two_person_on(pool.conn) is True
     p2 = await reg.propose(pool, KEY, value=25, reason=REASON, actor=A, base_version=0)
     with pytest.raises(reg.SettingsError) as e:
         await reg.decide(pool, p2["id"], actor=A, approve=True)
     assert e.value.code == "second_person_required"
     assert (await reg.decide(pool, p2["id"], actor=B, approve=True))["status"] == "approved"
+    # the person it checks cannot switch it off alone; a second person can
+    off = await reg.propose(pool, reg.TWO_PERSON_KEY, value=False, reason=REASON, actor=A, base_version=1)
+    with pytest.raises(reg.SettingsError) as e:
+        await reg.decide(pool, off["id"], actor=A, approve=True)
+    assert e.value.code == "second_person_required"
+    with pytest.raises(reg.SettingsError) as e:
+        await reg.propose(pool, KEY, value=26, reason=REASON, actor=A, base_version=2, apply=True, can_approve=True)
+    assert e.value.code == "second_person_required"
+    assert (await reg.decide(pool, off["id"], actor=B, approve=True))["status"] == "approved"
+    assert await reg.two_person_on(pool.conn) is False
     with pytest.raises(reg.SettingsError) as e:
         await reg.decide(pool, "not-a-uuid", actor=B, approve=True)
     assert e.value.status == 404

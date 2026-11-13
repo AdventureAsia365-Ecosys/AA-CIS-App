@@ -55,8 +55,20 @@ DFS_CALL_ESTIMATE_USD = dict(_settings.definition(DFS_ESTIMATE_SETTING).default_
 
 
 def dfs_call_estimate_usd() -> dict:
-    """The worst-case price per DataForSEO call label in force (an unknown label is not in it)."""
-    return {str(k): float(v) for k, v in dict(_settings.get(DFS_ESTIMATE_SETTING)).items()}
+    """The worst-case price per DataForSEO call label in force: the stored table laid over the compiled default
+    (S279 review), so a label an admin edit left out keeps its seeded price instead of being charged $0, and a
+    non-positive entry (the definition's minimum is above 0; this is the backstop) keeps the seeded price too. A label
+    neither table knows is not in it."""
+    stored = _settings.get(DFS_ESTIMATE_SETTING)
+    out = dict(DFS_CALL_ESTIMATE_USD)
+    for k, v in (dict(stored) if isinstance(stored, dict) else {}).items():
+        try:
+            price = float(v)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            out[str(k)] = price
+    return {str(k): float(v) for k, v in out.items()}
 
 # AA-1055 — the endpoint labels research buys through, per `dfs_queue` mode: (volume task, SERP). The same labels the
 # buying code checks and charges the run budget with (DataForSEOClient.fetch_volumes_bulk / the live advanced SERP, and
@@ -76,7 +88,7 @@ def dfs_research_prices(queue: str) -> tuple[float, float]:
     except KeyError:
         raise ValueError(f"unknown DataForSEO queue mode {queue!r}; one of {sorted(DFS_RESEARCH_ENDPOINTS)}") from None
     prices = dfs_call_estimate_usd()
-    return prices.get(volume, DFS_CALL_ESTIMATE_USD[volume]), prices.get(serp, DFS_CALL_ESTIMATE_USD[serp])
+    return prices[volume], prices[serp]
 
 
 _DAY_SPEND_SQL = {
