@@ -1253,12 +1253,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     CIS 408; feed event `account.erasure_requested` `{op, request_id}` on `tenant.entitlements.v1` 1.7 (CIS 409);
     Booking / TripPlanner read `catalog.v_tenant_erasure_v1` (CIS 410) and answer through their own report views
     (`booking.v_tenant_erasure_report_v1`, `tripplanner.v_tenant_erasure_report_v1`, read as JSON rows: a missing view
-    or grant = `app_not_ready`, a blocker, never a skip); the CRM uses `GET /tenant/v1/erasure-requests` and
+    or grant = `app_not_ready`, a view without a contract column = `report_shape_unknown` read from the catalog even
+    with no row: blockers, never a skip); the CRM uses `GET /tenant/v1/erasure-requests` and
     `POST /tenant/v1/erasure-requests/{id}/reports` (M2M scope `cis.tenant/erasure`). T0 = `POST
     /admin/tenants/{id}/offboard` (request with `not_before` per app: the CRM T0 + setting
     `cis.erasure.crm_window_days` (90 days), the others T0 + `cis.erasure.tenant_retention_days` (30); never for the
-    pilot); `POST /admin/tenants/{id}/restore` cancels it until an app
-    applied (409 after). Stages: stage 1 CIS + Booking + TripPlanner, stage 2 the CRM alone (`saga.STAGES`); each stage
+    pilot); `POST /admin/tenants/{id}/restore` cancels it (and any failed request never approved) until a round is
+    approved (409 after, also after a new round). Stages: stage 1 CIS + Booking + TripPlanner, stage 2 the CRM alone (`saga.STAGES`); each stage
     is a round: dry_run (each active app's plan hash; CIS = its own `data_erasure` DRY RUN, hashed without the tables
     the saga writes) → awaiting_approval (combined fingerprint = sha256(request, tenant, round, app:hash)) → approval
     by a **Cognito administrator** within `cis.erasure.saga_approval_valid_hours` (24 h; admin secret alone refused;
@@ -1266,9 +1267,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     three keys come with CIS 411) → apply (the other apps in
     parallel, CIS **last**: `tenant_backup`, a fresh DRY RUN matched to the approved hash, the `data_erasure` apply
     with the approval's snapshot id and approver) → verify (each app's `pii:` census must be 0) → next stage or done
-    with a receipt. Job kind `tenant_erasure_saga` (`services/jobs/tenant_erasure_saga_job.py`, payload `{request_id}`
+    with a receipt. A refused / failed step, a census above 0, a changed plan or an expired approval moves the request
+    to **failed** (the contract's "the tech lead decides"): `.../new-round` starts a new round (never once the CIS
+    apply job of the round started), `.../stop` keeps it failed for good. The approval re-computes the fingerprint
+    from the step rows under the request lock (409 when a plan changed). Job kind `tenant_erasure_saga` (`services/jobs/tenant_erasure_saga_job.py`, payload `{request_id}`
     only, background, polls with `Reschedule`; the ops sampler keeps one live job per request with work). Staff routes
-    `/admin/job-runner/erasure/requests[/{id}[/advance|/approve|/new-round]]`, `POST .../requests/drill` (window 0 for
+    `/admin/job-runner/erasure/requests[/{id}[/advance|/approve|/new-round|/stop]]`, `POST .../requests/drill` (window 0 for
     an offboarded synthetic tenant); admin page Data erasure › Tenant offboarding. Code: `services/tenant_erasure/`
     (`saga.py` rules, `policy.py` knobs, `store.py`, `reports.py`), `api/routers/admin_tenant_erasure.py`,
     `api/routers/tenant_erasure.py`; contract copy `docs/contracts/tenant.erasure.v1.openapi.yaml` (test

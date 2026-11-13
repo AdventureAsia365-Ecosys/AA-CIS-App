@@ -59,6 +59,11 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
   `job-runner/erasure` (admin only) already covers them and `/admin/tenants/{tenant_id}` would shadow a literal path.
 - Added `POST .../requests/{id}/new-round` (after an expired approval, plan_changed or a failed step) and
   `POST .../requests/{id}/advance` (Run now: queue the job or pull the queued one forward).
+- Review fix pass (S279): a stopped pass now moves the request to **failed** (before: it stayed in dry_run / apply /
+  verify with blockers, a dead end in verify that kept the one-open-request index and a no-op sampler job). New
+  `POST .../requests/{id}/stop` (dry_run, awaiting_approval or failed; blocker `stopped_by_tech_lead`, audit
+  `tenant.erasure_stopped`); `new-round` also from failed (refused for the pilot, a stopped request, or once the CIS
+  apply job of the round started; 409 when the tenant has another open request meanwhile).
 - The contract copies in this repo move to `tenant.entitlements.v1` 1.7 and add `tenant.erasure.v1` 1.0 (pins updated).
 
 ## Tradeoffs
@@ -75,6 +80,23 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
 - Polling: a waiting pass reschedules itself (`Reschedule`, 30 s while a CIS job runs, 10 min while another app has
   not reported). After the registry's reschedule cap the job fails and the ops sampler queues a new one.
 - The CIS census is the `data_erasure` verification (rows left per table), not a `pii:` comment census.
+
+- Failed leaves the open-request partial index (`phase NOT IN ('done', 'cancelled', 'failed')`, CIS 408), so the
+  restore hook reads failed requests too: a restore is refused when any round of the tenant's open or failed requests
+  was approved (`approved_plan_hash` stays on the earlier rounds' step rows, so a new round never clears it), an app
+  reported an ok apply or one is done; a failed request never approved is cancelled with the restore (event
+  `{op: cancelled}`), so no new round can bring it back. Conservative on purpose: Booking / TripPlanner apply reports
+  reach the step table only through a saga pass.
+- Stage 1 verify failure after the CIS apply (a census above 0): only a stop (new-round refused, the CIS apply job of
+  the round ran and the tenant row is gone). The remaining rows are the runbook's manual follow-up. Stage 2 (the CRM
+  alone) may start a new round from failed.
+- Approval vs a late report: `_dry_run` fingerprints and moves under the request row lock from the step rows read
+  inside it (the CRM POST takes the same lock and accepts dry_run reports only in phase dry_run), and `approve`
+  recomputes `saga.fingerprint_of_steps` under its lock and refuses with 409 stale_fingerprint when it differs.
+- Report view shape: `reports.read` checks the view's columns in `pg_attribute` (via `to_regclass`) against the 14
+  required ErasureReportRow columns before any row (an empty off-contract view, like tp-030 today, is
+  `report_shape_unknown` at once); the row check stays as a second line. `UndefinedFunctionError` /
+  `DatatypeMismatchError` (a request_id that is not uuid) are `app_not_ready`.
 
 ## Should know
 
