@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -469,6 +469,78 @@
      "lower": "Khoảng rộng hơn: nhiều điểm được chấm lại hơn (thêm hai lượt chấm có phí mỗi bài), kết quả đạt hay trượt sát ngưỡng ổn định hơn.",
      "when": "Giảm khi bài ngay dưới ngưỡng lúc đạt lúc trượt khi chạy lại; tăng khi chi phí chấm thêm lớn hơn lợi ích. Không được vượt đầu cao. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
      "example": "Với mặc định 6,0 (khoảng 6,0 đến 8,0): điểm lần đầu 6,4 được chấm lại hai lần và lấy điểm giữa của ba lần."
+    }
+   }
+  },
+  {
+   "key": "cis.quality.instrument_eval_fp_drop_min_pct",
+   "app": "cis",
+   "area": "quality",
+   "label": "Claim checker test run: false alarms it must clear",
+   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must clear at least this percentage of the subset's false positives (claims the panel judged ok that R1 fired on). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 60,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": true,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "The share of false alarms (statements the review panel judged fine but the claim checker (the AI check that flags statements in written content that the source material does not back up) flagged) that a new prompt must stop flagging to pass its test run. Together with the bar for real problems kept, it decides whether the new prompt may replace the current one.",
+     "raise": "Only a prompt that clears most false alarms passes, so fewer good texts are held for review, but fewer new prompts will pass at all.",
+     "lower": "A prompt passes with a smaller gain: an improvement ships sooner, but reviewers keep seeing more wrong flags.",
+     "when": "Raise it when reviewers still report many wrong flags after a prompt passed; lower it when several prompts fail by a small margin and each would still be a clear gain.",
+     "example": "With the default of 60%, a new prompt must stop at least 60 of every 100 false alarms in the test set to pass."
+    },
+    "vi": {
+     "what": "Tỷ lệ báo động nhầm (câu hội đồng duyệt đã xác nhận là đúng nhưng bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được) vẫn đánh dấu) mà prompt mới phải hết đánh dấu thì mới đạt lần chạy thử. Cùng với ngưỡng giữ lại lỗi thật, ngưỡng này quyết định prompt mới có được thay prompt hiện tại hay không.",
+     "raise": "Chỉ prompt loại được phần lớn báo động nhầm mới đạt, nên ít bài tốt bị giữ lại chờ duyệt hơn, nhưng sẽ ít prompt mới đạt hơn.",
+     "lower": "Prompt chỉ cần cải thiện ít hơn là đạt: cải tiến được đưa vào dùng sớm hơn, nhưng người duyệt vẫn gặp nhiều cảnh báo sai hơn.",
+     "when": "Tăng khi người duyệt vẫn báo nhiều cảnh báo sai sau khi một prompt đã đạt; giảm khi nhiều prompt trượt chỉ trong gang tấc mà mỗi cái vẫn là một bước tiến rõ.",
+     "example": "Với mặc định 60%, prompt mới phải loại được ít nhất 60 trên mỗi 100 báo động nhầm trong bộ thử thì mới đạt."
+    }
+   }
+  },
+  {
+   "key": "cis.quality.instrument_eval_tp_keep_min_pct",
+   "app": "cis",
+   "area": "quality",
+   "label": "Claim checker test run: real problems it must keep",
+   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must still flag at least this percentage of the subset's stored violations (out of sample; the approved relabels are in-sample for a prompt drawn from them, so they are reported apart and never count toward this bar). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 90,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": true,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "The share of real problems (statements stored as confirmed violations) that a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up) must still flag to pass its test run. It stops a prompt that looks better only because it flags less.",
+     "raise": "Almost every real problem stays caught, but it gets harder for any new prompt to pass.",
+     "lower": "A prompt can pass even if it misses more real problems, so more unsupported statements can reach published content.",
+     "when": "Raise it when published content turns out to hold a problem the checker should have caught; lower it only with evidence that the missed cases are minor.",
+     "example": "With the default of 90%, a new prompt must still flag at least 90 of every 100 real problems in the test set to pass."
+    },
+    "vi": {
+     "what": "Tỷ lệ lỗi thật (câu đã được lưu là vi phạm đã xác nhận) mà prompt mới cho bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được) vẫn phải đánh dấu thì mới đạt lần chạy thử. Ngưỡng này chặn một prompt trông có vẻ tốt hơn chỉ vì nó đánh dấu ít đi.",
+     "raise": "Gần như mọi lỗi thật vẫn bị bắt, nhưng prompt mới nào cũng khó đạt hơn.",
+     "lower": "Prompt có thể đạt dù bỏ sót nhiều lỗi thật hơn, nên nhiều câu không có căn cứ có thể lọt vào nội dung đã đăng.",
+     "when": "Tăng khi phát hiện nội dung đã đăng còn lỗi mà bộ kiểm tra lẽ ra phải bắt; chỉ giảm khi có bằng chứng rằng những trường hợp bị bỏ sót là nhỏ.",
+     "example": "Với mặc định 90%, prompt mới vẫn phải đánh dấu ít nhất 90 trên mỗi 100 lỗi thật trong bộ thử thì mới đạt."
     }
    }
   },
@@ -6023,6 +6095,114 @@
      "lower": "Lần chạy được đi xa hơn; nếu giá thấp hơn giá DataForSEO, lần chạy có thể vượt ngân sách trước khi bước kiểm tra phát hiện.",
      "when": "Đổi khi DataForSEO đổi giá, hoặc khi báo cáo chi tiêu cho thấy giá thật cao hơn các giá này.",
      "example": "Với giá mặc định, ví dụ 0,09 USD mỗi lần gọi lấy lượng tìm kiếm và 0,002 USD mỗi lần gọi lấy kết quả tìm kiếm."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.instrument_eval_cap_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "Claim checker test run: spending cap",
+   "description": "Hard cap in USD of one claim-instrument evaluation run (a new prompt version measured on claims the R1 instrument fired on). Every call is gated on the spend so far plus its worst case; the run stops before it would pass the cap. Never above the R1 harness hard cap of 2 USD. Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "value_type": "usd",
+   "unit": "USD",
+   "min_value": 0.01,
+   "max_value": 2,
+   "allowed_values": null,
+   "default_value": 1.5,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "The most money, in US dollars, that one test run of a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up) may spend on AI calls. Before each call the run adds up what it has spent and stops before it would go over this cap. It can never be set above 2 USD.",
+     "raise": "A test run with more statements can finish, but a run that goes wrong (a broken prompt, a retry loop) spends more before it stops.",
+     "lower": "Test runs stay cheap, but a run may stop before it has checked every statement, so the pass / fail result rests on fewer statements.",
+     "when": "Raise it when the trial run's cost per statement shows the full run cannot fit under the cap; lower it when the month's AI budget is tight.",
+     "example": "With the default of 1.5 USD, a full test run of about 50 statements fits with room to spare, and the run stops on its own before it reaches 1.5 USD."
+    },
+    "vi": {
+     "what": "Số tiền tối đa (đô la Mỹ) mà một lần chạy thử prompt mới cho bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được) được tiêu vào các lượt gọi AI. Trước mỗi lượt gọi, hệ thống cộng số tiền đã tiêu và tự dừng trước khi vượt mức này. Không thể đặt cao hơn 2 USD.",
+     "raise": "Lần chạy thử với nhiều câu hơn có thể chạy hết, nhưng nếu lần chạy gặp lỗi (prompt hỏng, lặp lại liên tục) thì sẽ tốn nhiều tiền hơn trước khi dừng.",
+     "lower": "Mỗi lần chạy thử rẻ hơn, nhưng lần chạy có thể dừng trước khi kiểm hết các câu, nên kết luận đạt hay không đạt dựa trên ít câu hơn.",
+     "when": "Tăng khi chi phí mỗi câu của lần chạy thử nhỏ cho thấy lần chạy đầy đủ không vừa mức này; giảm khi ngân sách AI của tháng đang eo hẹp.",
+     "example": "Với mặc định 1.5 USD, một lần chạy đầy đủ khoảng 50 câu vẫn còn dư, và lần chạy tự dừng trước khi chạm 1.5 USD."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.instrument_eval_max_claims",
+   "app": "cis",
+   "area": "spend",
+   "label": "Claim checker test run: statements checked",
+   "description": "The most claims one claim-instrument evaluation run may take (half false positives, half true positives of the claims the R1 instrument fired on). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "claims",
+   "min_value": 1,
+   "max_value": 200,
+   "allowed_values": null,
+   "default_value": 50,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many statements one test run of a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up) checks. They are picked from the statements the current checker flagged: half that the review panel judged fine (false alarms), half real problems.",
+     "raise": "The pass / fail result is firmer, but the run costs more and takes longer; the spending cap still stops it.",
+     "lower": "The run is cheaper and faster, but a few unusual statements can swing the result, so a weak prompt may pass or a good one may fail.",
+     "when": "Raise it when two runs of the same prompt give results far apart; lower it when the trial run shows a cost per statement higher than expected.",
+     "example": "With the default of 50, a run checks 25 false alarms and 25 real problems, enough to tell a clear improvement from chance."
+    },
+    "vi": {
+     "what": "Số câu mà một lần chạy thử prompt mới cho bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được) sẽ kiểm. Các câu được chọn từ những câu bộ kiểm tra hiện tại đã đánh dấu: một nửa là câu hội đồng duyệt đã xác nhận là đúng (báo động nhầm), một nửa là lỗi thật.",
+     "raise": "Kết luận đạt hay không đạt chắc chắn hơn, nhưng lần chạy tốn tiền và lâu hơn; mức trần chi phí vẫn sẽ dừng nó lại.",
+     "lower": "Lần chạy rẻ và nhanh hơn, nhưng chỉ vài câu khác thường cũng làm lệch kết quả, nên prompt kém có thể đạt còn prompt tốt có thể trượt.",
+     "when": "Tăng khi hai lần chạy cùng một prompt cho kết quả chênh nhau nhiều; giảm khi lần chạy thử nhỏ cho thấy chi phí mỗi câu cao hơn dự kiến.",
+     "example": "Với mặc định 50, mỗi lần chạy kiểm 25 câu báo động nhầm và 25 lỗi thật, đủ để phân biệt một cải thiện rõ ràng với may rủi."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.instrument_eval_trial_claims",
+   "app": "cis",
+   "area": "spend",
+   "label": "Claim checker test run: trial size",
+   "description": "The most claims the paid trial of a claim-instrument evaluation may take before the full subset run (check the cost per call in the ledger first). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "claims",
+   "min_value": 1,
+   "max_value": 10,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many statements the small paid trial checks before the full test run of a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up). The trial shows the real cost per statement in the AI cost log, so the full run can be sized before money is spent on it.",
+     "raise": "The cost estimate is more reliable, but more is spent before anyone has looked at the numbers.",
+     "lower": "The trial costs almost nothing, but one unusual statement can make the cost estimate wrong.",
+     "when": "Raise it when the trial's cost per statement changes a lot from one trial to the next; lower it when the prompt changed only slightly since a trial that went well.",
+     "example": "With the default of 3, the trial checks three statements, usually a few cents, then stops so the cost can be read before the full run starts."
+    },
+    "vi": {
+     "what": "Số câu mà lần chạy thử nhỏ (có tính phí) kiểm trước khi chạy đầy đủ một prompt mới cho bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được). Lần chạy thử cho biết chi phí thật của mỗi câu trong nhật ký chi phí AI, để ước lượng lần chạy đầy đủ trước khi bỏ tiền ra.",
+     "raise": "Ước tính chi phí đáng tin hơn, nhưng tốn nhiều tiền hơn trước khi có người xem số liệu.",
+     "lower": "Lần chạy thử gần như không tốn gì, nhưng chỉ một câu khác thường cũng làm ước tính chi phí sai lệch.",
+     "when": "Tăng khi chi phí mỗi câu thay đổi nhiều giữa các lần chạy thử; giảm khi prompt chỉ sửa nhẹ so với một lần chạy thử trước đó đã ổn.",
+     "example": "Với mặc định 3, lần chạy thử kiểm ba câu, thường chỉ tốn vài xu, rồi dừng lại để xem chi phí trước khi chạy đầy đủ."
     }
    }
   },

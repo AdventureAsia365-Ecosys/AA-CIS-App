@@ -197,7 +197,7 @@ def test_the_sql_reads_where_the_writers_write():
 
 # Every writer store step of S1 / T2 / T9 (the function that writes the writer's text with its contract record).
 WRITER_STORE_STEPS = {
-    "api/routers/admin_pipeline.py": "_execute_run_tour",
+    "api/routers/admin_pipeline/_engine.py": "_execute_run_tour",
     "services/jobs/t2_rewrite_job.py": ("_rewrite_and_save", "_save_policy_hold"),
     "services/content_generation/t2_orchestrator.py": "save_version",
     "services/acp_content_writing/service.py": "_finalize_piece",

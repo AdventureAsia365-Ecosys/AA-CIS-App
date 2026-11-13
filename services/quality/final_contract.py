@@ -79,15 +79,15 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "services/content_generation/graph.py::final_contract_node":
             ("done", "hitl", "resumed", "resumed_hitl", "batch", "batch_hitl", "revalidation"),
         # the version INSERT of an S1 run (records the graph's contract with the stored sha)
-        "api/routers/admin_pipeline.py::_execute_run_tour": ("done", "hitl", "resumed", "batch"),
+        "api/routers/admin_pipeline/_engine.py::_execute_run_tour": ("done", "hitl", "resumed", "batch"),
         # the re-validation of a human edit (stores the graph's revalidation record)
-        "api/routers/admin_pipeline.py::_revalidate_tour": ("revalidation",),
+        "api/routers/admin_pipeline/_revalidate.py::_revalidate_tour": ("revalidation",),
         # a reviewer's edit of a version's text
-        "api/routers/admin_pipeline.py::update_generated_content_fields": ("human_edit",),
+        "api/routers/admin_pipeline/tour_detail.py::update_generated_content_fields": ("human_edit",),
         # every publish of a Master (auto publish after a run, review approve, promote, the legacy Lambda); each
         # caller names its exit (contract_exit=)
         "services/export/handler.py::process_export": ("auto_publish", "approve", "promote", "lambda", "recompose"),
-        "api/routers/admin_pipeline.py::promote_tour_version": ("promote",),
+        "api/routers/admin_pipeline/versions.py::promote_tour_version": ("promote",),
         "services/export/handler.py::lambda_handler": ("lambda",),
         # AA-1049 path A-new: the fixed-field recompose of a served Master (s1_recompose_store): the new version's
         # insert (no model call) and its publish through process_export

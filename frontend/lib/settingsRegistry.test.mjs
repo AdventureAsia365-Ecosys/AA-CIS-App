@@ -8,9 +8,9 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  actorLabel, actorText, badgesOf, boundsText, decisionPath, directionWords, draftProblem, draftText, formatValue,
-  groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath, registryPath,
-  valuesInForce, withValue,
+  actorLabel, actorText, badgesOf, boundsText, decisionBody, decisionPath, directionWords, draftProblem, draftText,
+  formatValue, groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath,
+  registryPath, valuesInForce, withValue,
 } from "./settingsRegistry.ts";
 import { canReadAdminPath, canWriteAdminPath } from "./rbac.ts";
 import { ADMIN_IA } from "./adminIa.ts";
@@ -111,6 +111,16 @@ test("the nav lists Platform › Settings and the page shows no issue id", () =>
     const strings = text.match(/"[^"\n]*"|`[^`\n]*`/g) ?? [];
     assert.ok(!strings.some((s) => /AA-\d+/.test(s)), f);
   }
+});
+
+test("a CRM row is decided in the CRM; an agency's own row names its agency", () => {
+  const crm = { ...INT, key: "crm.rate.intake_form_per_hour", app: "crm" };
+  assert.deepEqual(decisionBody(INT, { tenant_id: null }, "  "), { note: null });
+  assert.deepEqual(decisionBody(crm, { tenant_id: null }, "ok"), { note: "ok", app: "crm" });
+  const agency = "00000000-0000-4000-8000-0000000000a1";
+  assert.deepEqual(decisionBody(crm, { tenant_id: agency }, ""), { note: null, app: "crm", tenant_id: agency });
+  assert.equal(historyPath("crm.rate.intake_form_per_hour", agency),
+    `/api/admin/settings/registry/crm.rate.intake_form_per_hour/history?tenant_id=${agency}`);
 });
 
 // AA-1096 l23: the tech lead typed "3,364" and got "Enter a number"; both decimal marks are one number now. A

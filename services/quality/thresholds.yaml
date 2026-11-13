@@ -35,7 +35,7 @@ thresholds:
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
   a1.publish_floor:
     ref: pass_line
-    used_by: [api/routers/admin_pipeline.py]
+    used_by: [api/routers/admin_pipeline/_shared.py]
     description: "_is_publishable score floor and the run-log pass flag."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
   a1.missing_field_cap:
@@ -61,7 +61,7 @@ thresholds:
 
   a1.auto_upgrade:
     setting: cis.quality.auto_upgrade_threshold
-    used_by: [api/routers/admin_pipeline.py]
+    used_by: [api/routers/admin_pipeline/_engine.py]
     description: "An opted-in A1 rewrite on the cheap model scoring under it is re-run once on the stronger model (AA-237; was env AUTO_UPGRADE_THRESHOLD)."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
 
@@ -104,12 +104,12 @@ thresholds:
   # --------------------------------------------------------------------------- admin views and eval
   review.low_quality_floor:
     ref: pass_line
-    used_by: [api/routers/admin_pipeline.py]
+    used_by: [api/routers/admin_pipeline/_shared.py]
     description: "Review Queue low_quality reason, failure summary and the score filter ok/low boundary."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
   review.score_band_low:
     setting: cis.quality.review_score_band_low
-    used_by: [api/routers/admin_pipeline.py, frontend/app/admin/review/page.tsx]
+    used_by: [api/routers/admin_pipeline/_shared.py, frontend/app/admin/review/page.tsx]
     description: "Review Queue critical/low boundary (score filter and colour)."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
   review.approve_floor:

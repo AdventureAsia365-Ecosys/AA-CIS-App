@@ -152,8 +152,10 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
 
 # (path, enclosing function) -> why no llm_call_log row is written there.
 EXCLUDED: dict[tuple[str, str], str] = {
-    ("api/routers/admin_pipeline.py", "get_tour_version_detail"): "`_judge` is a local variable (stored judge JSON)",
-    ("api/routers/admin_pipeline.py", "get_tour_detail"): "`_judge` is a local variable (stored judge JSON)",
+    ("api/routers/admin_pipeline/tour_detail.py", "get_tour_version_detail"):
+        "`_judge` is a local variable (stored judge JSON)",
+    ("api/routers/admin_pipeline/tour_detail.py", "get_tour_detail"):
+        "`_judge` is a local variable (stored judge JSON)",
     ("scripts/aa729/evalpatch.py", "install"): "the AA-729 harness wraps LLMClient.generate to count calls; the "
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "

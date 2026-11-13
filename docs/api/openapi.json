@@ -3035,6 +3035,15 @@
       "DecisionBody": {
         "additionalProperties": false,
         "properties": {
+          "app": {
+            "default": "cis",
+            "enum": [
+              "cis",
+              "crm"
+            ],
+            "title": "App",
+            "type": "string"
+          },
           "note": {
             "anyOf": [
               {
@@ -3046,6 +3055,18 @@
               }
             ],
             "title": "Note"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
           }
         },
         "title": "DecisionBody",

@@ -327,7 +327,7 @@ def test_a_master_publish_enqueues_the_fan_out_and_never_raises():
 
 def test_every_hook_is_wired_on_its_write_path():
     """A text guard: each source write path names its typed reason (the hook cannot be dropped silently)."""
-    wired = {"api/routers/admin_pipeline.py": ["raw_tour_edited"],
+    wired = {"api/routers/admin_pipeline/tour_detail.py": ["raw_tour_edited"],
              "services/export/handler.py": ["master_published"],
              "api/routers/admin_atoms.py": ["atom_deleted", "atom_edited"],
              "api/routers/admin_content_quality.py": ["place_card_facts_edited", "place_card_status_changed",
