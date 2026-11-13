@@ -1845,6 +1845,29 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   TripPlanner rows are reported, never written; `store.known_destinations` / `upsert_destination` answer a merged
   key with its keeper, so a rebuild does not recreate the duplicate.
 
+### Settings registry: every key ships its guide (AA-1096, CIS 407 / 416)
+
+Platform › Settings (`/admin/platform/settings`, API `/admin/settings/registry`) lists every admin-editable threshold,
+limit, cap and policy value (`shared.setting_definition` + `shared.setting_value`, reader `shared/settings`). The page
+serves the definitions from `shared/settings/compiled_defaults.json`, generated from the migration blocks by
+`scripts/settings/gen_compiled_defaults.py` (`settings-seed` = the definition rows, `settings-guide` = plain label +
+guide; `tests/unit/test_s279_settings_seed_parity.py` keeps them equal).
+
+**Rule (tech lead S279, guard `tests/unit/test_aa1096_settings_guides.py`):** a migration that adds a key also gives it
+an operator's guide in English and Vietnamese, `guide = {"en": {what, raise, lower, when, example}, "vi": {...}}`
+(a `guide` field on the seed row once CIS 416 is applied, or a `settings-guide` block), and a plain label without stage
+codes or issue ids (the key, shown small on the page, keeps the code). `what` = what it controls and where the effect
+shows in the product; `raise` / `lower` = the effect and risk of each direction (an on/off key: turn on / off; a
+choice: the stricter / the looser choice, and the text agrees with that heading); `when` = the signal to change it
+("many blogs held for being too short"); `example` = the default in plain terms, worded "With the default of ..." and
+never "Today ..." (the value in force changes; the page computes it where it matters, `nowExample` in
+`frontend/lib/settingsRegistry.ts`). A setting that a running path ignores says so in its guide (a quality-check mode
+changes the reports, not the piece; the tour rewrite attempts count only on the older scoring path). The technical
+`description` stays as the page's collapsed "Engineering note". The same shape applies to the CRM registry (`crm.setting_definition`,
+relayed to the CRM tab), the TripPlanner keys and Booking's policy parameters (`app/pricing/policy_guides.py`). The
+shrink-only baseline `tests/unit/snapshots/aa1096_settings_guide_baseline.json` is empty; adding a key to it needs the
+tech lead's OK in review.
+
 ## Deploy & CI
 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
