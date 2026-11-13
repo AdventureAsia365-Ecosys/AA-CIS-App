@@ -1862,7 +1862,7 @@ choice: the stricter / the looser choice, and the text agrees with that heading)
 ("many blogs held for being too short"); `example` = the default in plain terms, worded "With the default of ..." and
 never "Today ..." (the value in force changes; the page computes it where it matters, `nowExample` in
 `frontend/lib/settingsRegistry.ts`). A setting that a running path ignores says so in its guide (a quality-check mode
-changes the reports, not the piece; the tour rewrite attempts count only on the older scoring path). The technical
+only marks the main checks of an error type, read by the quality lint alone; the tour rewrite attempts count only on the older scoring path). The technical
 `description` stays as the page's collapsed "Engineering note". The same shape applies to the CRM registry (`crm.setting_definition`,
 relayed to the CRM tab), the TripPlanner keys and Booking's policy parameters (`app/pricing/policy_guides.py`). The
 shrink-only baseline `tests/unit/snapshots/aa1096_settings_guide_baseline.json` is empty; adding a key to it needs the
