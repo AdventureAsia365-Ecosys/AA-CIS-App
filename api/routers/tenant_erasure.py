@@ -75,6 +75,16 @@ class ErasureRequestPage(BaseModel):
     next_cursor: str
 
 
+class ErasureReportRecorded(BaseModel):
+    """The answer to a report (contract tenant.erasure.v1 ReportRecorded)."""
+    request_id: str
+    app: Literal["crm"]
+    mode: Literal["dry_run", "apply", "verify"]
+    round: int
+    status: Literal["done", "failed", "plan_changed", "refused"]
+    recorded: bool
+
+
 class ErasureReportIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["dry_run", "apply", "verify"]
@@ -160,7 +170,7 @@ async def list_erasure_requests(request: Request, after: Optional[str] = None, l
     return JSONResponse(content={"items": items, "next_cursor": next_cursor}, headers={"Cache-Control": NO_STORE})
 
 
-@router.post("/erasure-requests/{request_id}/reports")
+@router.post("/erasure-requests/{request_id}/reports", responses={200: {"model": ErasureReportRecorded}})
 async def report_erasure_step(request_id: str, request: Request,
                               caller: m2m_auth.M2MCaller = Depends(require_erasure)) -> JSONResponse:
     try:

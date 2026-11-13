@@ -609,7 +609,7 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
 
     # AA-1093 L2: one SELECT of the open erasure requests, an INSERT only when one has no live saga job
     try:
-        await asyncio.wait_for(_tenant_erasure_part(pool, kinds, ts, out), timeout=5.0)
+        await asyncio.wait_for(_tenant_erasure_part(pool, kinds, ts, out), timeout=min(5.0, part_timeout_s))
     except Exception as e:
         out["tenant_erasure_error"] = _err(e)
 
