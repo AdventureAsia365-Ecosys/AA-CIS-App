@@ -1,4 +1,3 @@
--- migrate: expand
 -- Migration 408: AA-1093 lane L2 (plan Part 2, decisions D1 / D2 / D7 / D8) — the tenant offboarding erasure saga:
 -- shared.tenant_erasure_request (one request per offboarded tenant) and shared.tenant_erasure_step (what each app
 -- reported for each phase of a request).

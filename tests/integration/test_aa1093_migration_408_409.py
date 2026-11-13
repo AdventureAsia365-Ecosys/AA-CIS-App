@@ -4,7 +4,7 @@ account.erasure_requested) on real Postgres (conftest replays both).
   * 408: registered; the CHECKs (mode, phase, window, the active / done app sets, fingerprint and approval shapes, step
     app / mode / status / error code, sha256 hash, JSON shapes); a report id once per app; one open request per tenant (a cancelled one does not count); no FK to shared.tenants (the request outlives
     the tenant row); the touch trigger moves txid and updated_at on every update; the grants (cis_app SELECT, INSERT,
-    UPDATE, no DELETE, set by 409; nothing for PUBLIC / aa_app_user). 408 is an expand file (plain CREATE FUNCTION /
+    UPDATE, no DELETE, set by 409; nothing for PUBLIC / aa_app_user). 408 is a contract file (plain CREATE FUNCTION /
     TRIGGER): it is applied once, never re-run.
   * 409: registered; shared.tenant_account_emit() accepts account.erasure_requested and still refuses an unknown type;
     a re-run is a no-op.
