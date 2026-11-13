@@ -1,5 +1,6 @@
 // app/admin/platform/settings/messages.ts — S279 thresholds L1: Platform › Settings in English and Vietnamese.
 // Setting labels and descriptions come from the API (the definition rows, English); refusals from the server as sent.
+// AA-1096 l23: each setting's guide comes from the API in both languages (CIS 415); the part names are here.
 
 import { defineMessages } from "../../../_kit/core/i18n";
 
@@ -13,7 +14,7 @@ export const SETTINGS = defineMessages(
     appCrm: "CRM",
     appBooking: "Booking",
     bookingNote:
-      "Booking keeps its commercial policy on its own page (Pricing › Policy), with maker-checker approval and an event log. Change Booking values there.",
+      "Booking keeps its commercial policy on its own page (Pricing › Policy), with maker-checker approval and an event log. Change Booking values there; each value is explained on that page the same way (what it controls, raising or lowering it, when to change it).",
     openBooking: "Open Booking Pricing › Policy",
     noneYet: "No settings of this app are in the registry yet. They move here in a later step; until then they are changed where they live today.",
     loadError: "Could not load the settings.",
@@ -94,6 +95,22 @@ export const SETTINGS = defineMessages(
     keyLabel: "Key",
     envLabel: (name: string) => `Emergency env override: ${name}`,
     envIgnored: (why: string) => `The env override is set but ignored: ${why}`,
+    explain: "Explain",
+    hideExplain: "Hide",
+    guideWhat: "What it controls",
+    guideRaise_number: "If you raise it",
+    guideLower_number: "If you lower it",
+    guideRaise_switch: "If you turn it on",
+    guideLower_switch: "If you turn it off",
+    guideRaise_choice: "The stricter choice",
+    guideLower_choice: "The looser choice",
+    guideWhen: "When to change it",
+    guideExample: "Example (at the default)",
+    noGuide: "No explanation for this setting yet.",
+    engineeringNote: "Engineering note",
+    showNote: "Show the engineering note",
+    hideNote: "Hide the engineering note",
+    staffId: (id: string) => `Staff id: ${id}`,
   },
   {
     title: "Cài đặt",
@@ -104,7 +121,7 @@ export const SETTINGS = defineMessages(
     appCrm: "CRM",
     appBooking: "Booking",
     bookingNote:
-      "Booking giữ chính sách thương mại trên trang riêng (Pricing › Policy), có duyệt hai bước và nhật ký sự kiện. Hãy đổi giá trị của Booking ở đó.",
+      "Booking giữ chính sách thương mại trên trang riêng (Pricing › Policy), có duyệt hai bước và nhật ký sự kiện. Hãy đổi giá trị của Booking ở đó; mỗi giá trị được giải thích ngay trên trang đó theo cùng cách (điều chỉnh gì, tăng hay giảm thì sao, khi nào nên đổi).",
     openBooking: "Mở Booking Pricing › Policy",
     noneYet: "Chưa có cài đặt nào của ứng dụng này trong danh mục. Chúng sẽ được chuyển sang ở bước sau; trong lúc chờ, hãy đổi ở nơi chúng đang nằm.",
     loadError: "Không tải được các cài đặt.",
@@ -185,5 +202,21 @@ export const SETTINGS = defineMessages(
     keyLabel: "Khoá",
     envLabel: (name: string) => `Biến môi trường khẩn cấp: ${name}`,
     envIgnored: (why: string) => `Biến môi trường đã đặt nhưng bị bỏ qua: ${why}`,
+    explain: "Giải thích",
+    hideExplain: "Ẩn",
+    guideWhat: "Điều chỉnh gì",
+    guideRaise_number: "Nếu tăng",
+    guideLower_number: "Nếu giảm",
+    guideRaise_switch: "Nếu bật",
+    guideLower_switch: "Nếu tắt",
+    guideRaise_choice: "Lựa chọn chặt hơn",
+    guideLower_choice: "Lựa chọn nới hơn",
+    guideWhen: "Khi nào nên đổi",
+    guideExample: "Ví dụ (ở giá trị mặc định)",
+    noGuide: "Cài đặt này chưa có phần giải thích.",
+    engineeringNote: "Ghi chú kỹ thuật",
+    showNote: "Xem ghi chú kỹ thuật",
+    hideNote: "Ẩn ghi chú kỹ thuật",
+    staffId: (id: string) => `Mã nhân viên: ${id}`,
   },
 );

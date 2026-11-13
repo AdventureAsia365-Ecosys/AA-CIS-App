@@ -29,7 +29,16 @@ export interface SettingRow {
   decided_at: string | null;
   decision_note: string | null;
   previous_value?: SettingValue;
+  /** The staff member's name or e-mail (null = no staff row: a script or a migration), read by the API. */
+  proposed_by_name?: string | null;
+  decided_by_name?: string | null;
 }
+
+/** AA-1096 l23 (CIS 415): the operator's guide of a setting, one per language. */
+export const GUIDE_PARTS = ["what", "raise", "lower", "when", "example"] as const;
+export type GuidePart = (typeof GUIDE_PARTS)[number];
+export type GuideText = Record<GuidePart, string>;
+export type SettingGuide = Partial<Record<"en" | "vi", GuideText>>;
 
 export interface SettingDefinition {
   key: string;
@@ -50,6 +59,8 @@ export interface SettingDefinition {
   env_override: string | null;
   cache_s: number;
   enforced: boolean;
+  /** null = no guide yet (CI fails on it; a CRM / TripPlanner row may lack one until its registry has it). */
+  guide?: SettingGuide | null;
 }
 
 export interface SettingItem extends SettingDefinition {
@@ -133,15 +144,24 @@ function inBounds(d: SettingDefinition, n: number): string | null {
   return null;
 }
 
+/** A typed number: {value} or {error}. A decimal key takes "3.364" and "3,364" alike (one point or one comma as the
+ *  decimal mark); a whole-number key takes digits only, so "2,000" is refused, never read as 2. No thousands
+ *  separator. Pure. */
+export function parseNumber(text: string, whole: boolean): { value?: number; error?: string } {
+  const raw = text.trim();
+  if (whole && /^-?\d+[.,]\d+$/.test(raw)) return { error: "Enter a whole number, without separators" };
+  const ok = whole ? /^-?\d+$/.test(raw) : /^-?\d+([.,]\d+)?$/.test(raw);
+  return ok ? { value: Number(raw.replace(",", ".")) } : { error: whole ? "Enter a whole number" : "Enter a number" };
+}
+
 /** The value typed in the form, parsed and checked against the definition: {value} or {error}. Pure. */
 export function parseDraft(d: SettingDefinition, text: string): { value?: SettingValue; error?: string } {
   const raw = text.trim();
   if (NUMERIC.includes(d.value_type)) {
-    if (raw === "" || !/^-?\d+(\.\d+)?$/.test(raw)) return { error: "Enter a number" };
-    const n = Number(raw);
-    if (WHOLE.includes(d.value_type) && !Number.isInteger(n)) return { error: "Enter a whole number" };
-    const out = inBounds(d, n);
-    return out ? { error: `The value is ${out}` } : { value: n };
+    const num = parseNumber(raw, WHOLE.includes(d.value_type));
+    if (num.value === undefined) return { error: num.error };
+    const out = inBounds(d, num.value);
+    return out ? { error: `The value is ${out}` } : { value: num.value };
   }
   if (d.value_type === "bool") {
     if (raw === "true" || raw === "on") return { value: true };
@@ -238,4 +258,27 @@ export function groupByArea(items: SettingItem[]): { area: string; items: Settin
 export function actorText(actor: string | null | undefined): string {
   if (!actor) return "—";
   return actor.startsWith("admin:") ? actor.slice(6) : actor;
+}
+
+/** Who made a change, as people read it: the staff member's name or e-mail (the API's *_name), else the actor id;
+ *  the tooltip always carries the id. */
+export function actorLabel(actor: string | null | undefined, name: string | null | undefined):
+  { text: string; title: string } {
+  const id = actorText(actor);
+  return { text: name?.trim() || id, title: id };
+}
+
+/** The guide of a setting in the page's language, else English, else null when it has none. */
+export function guideFor(d: Pick<SettingDefinition, "guide">, lang: string): GuideText | null {
+  const g = d.guide;
+  if (!g) return null;
+  return (lang === "vi" ? g.vi : undefined) ?? g.en ?? g.vi ?? null;
+}
+
+/** How the page names the two directions of a value type: a number goes up or down, an on/off switch goes on or
+ *  off, a choice, list or table is made stricter or looser. */
+export type DirectionWords = "number" | "switch" | "choice";
+export function directionWords(t: ValueType): DirectionWords {
+  if (NUMERIC.includes(t)) return "number";
+  return t === "bool" ? "switch" : "choice";
 }

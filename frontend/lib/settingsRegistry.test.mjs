@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  actorText, badgesOf, boundsText, decisionPath, draftProblem, draftText, formatValue, groupByArea, historyPath,
-  parseDraft, proposalBody, proposalPath, registryPath,
+  actorLabel, actorText, badgesOf, boundsText, decisionPath, directionWords, draftProblem, draftText, formatValue,
+  groupByArea, guideFor, historyPath, parseDraft, parseNumber, proposalBody, proposalPath, registryPath,
 } from "./settingsRegistry.ts";
 import { canReadAdminPath, canWriteAdminPath } from "./rbac.ts";
 import { ADMIN_IA } from "./adminIa.ts";
@@ -110,4 +110,49 @@ test("the nav lists Platform › Settings and the page shows no issue id", () =>
     const strings = text.match(/"[^"\n]*"|`[^`\n]*`/g) ?? [];
     assert.ok(!strings.some((s) => /AA-\d+/.test(s)), f);
   }
+});
+
+// AA-1096 l23: the tech lead typed "3,364" and got "Enter a number"; both decimal marks are one number now. A
+// whole-number key refuses a separator, so "2,000" never becomes 2.
+test("a decimal key takes a decimal comma or point; a whole-number key takes digits only", () => {
+  assert.deepEqual(parseDraft(RATIO, "3,364"), { value: 3.364 });
+  assert.deepEqual(parseDraft(RATIO, " 3.364 "), { value: 3.364 });
+  assert.deepEqual(parseDraft(RATIO, "0,5"), { value: 0.5 });
+  assert.match(parseDraft(RATIO, "3,364,1").error, /number/);
+  assert.match(parseDraft(RATIO, "1.000,5").error, /number/);
+  assert.match(parseDraft(RATIO, "21,5").error, /maximum/);
+  assert.deepEqual(parseDraft({ ...RATIO, value_type: "usd", min_value: 0 }, "0,25"), { value: 0.25 });
+  assert.match(parseDraft(INT, "2,000").error, /whole number, without separators/);
+  assert.match(parseDraft(INT, "2.5").error, /whole/);
+  assert.deepEqual(parseDraft(INT, "-0"), { error: "The value is below the minimum 1" });
+  assert.deepEqual(parseNumber("3,364", false), { value: 3.364 });
+  assert.deepEqual(parseNumber("12", true), { value: 12 });
+  assert.deepEqual(parseNumber("", false), { error: "Enter a number" });
+  const ok = { text: "3,364", reason: "the replay of stored blogs measured it", evidence: "replay:zz-1",
+    effectiveFrom: "", apply: true };
+  assert.equal(draftProblem(RATIO, ok), null);
+  assert.equal(proposalBody(RATIO, { version: 0 }, ok).value, 3.364);
+});
+
+test("the last change names the staff member, the id stays in the tooltip", () => {
+  const id = "00000000-0000-4000-8000-0000000000aa";
+  assert.deepEqual(actorLabel(`admin:${id}`, "Zz Admin"), { text: "Zz Admin", title: id });
+  assert.deepEqual(actorLabel(`admin:${id}`, null), { text: id, title: id });
+  assert.deepEqual(actorLabel(`admin:${id}`, "  "), { text: id, title: id });
+  assert.deepEqual(actorLabel(null, undefined), { text: "—", title: "—" });
+});
+
+test("the guide in the page's language, else English; the directions are named by value type", () => {
+  const en = { what: "w", raise: "r", lower: "l", when: "n", example: "e" };
+  const vi = { what: "vw", raise: "vr", lower: "vl", when: "vn", example: "ve" };
+  assert.equal(guideFor({ guide: { en, vi } }, "vi"), vi);
+  assert.equal(guideFor({ guide: { en, vi } }, "en"), en);
+  assert.equal(guideFor({ guide: { en } }, "vi"), en);
+  assert.equal(guideFor({ guide: null }, "en"), null);
+  assert.equal(guideFor({}, "en"), null);
+  assert.equal(directionWords("numeric"), "number");
+  assert.equal(directionWords("usd"), "number");
+  assert.equal(directionWords("bool"), "switch");
+  assert.equal(directionWords("enum"), "choice");
+  assert.equal(directionWords("json"), "choice");
 });
