@@ -690,3 +690,82 @@ def render_provider_credit_low(payload: dict, *, to: Recipients, base_url: Optio
             f"<p><a href=\"{html.escape(link)}\">Open AI providers / Credit</a></p>"
             f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
     return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── S279 thresholds L1 — the settings registry (shared/settings, CIS 407) ────────────────────────────────────────────
+# ``setting_self_approved``: the administrator approved their own change of a high-impact setting (dev-phase rule,
+# tech lead S279 Q2): the tech lead hears about it; one e-mail per change (the value row id is the key).
+# ``setting_out_of_bounds``: the reader refused a stored value that breaks its definition and serves the default; at
+# most one e-mail per key and UTC day.
+
+TEMPLATE_SETTING_SELF_APPROVED = "setting_self_approved"
+TEMPLATE_SETTING_OUT_OF_BOUNDS = "setting_out_of_bounds"
+SETTINGS_PAGE_PATH = "/admin/platform/settings"
+
+
+async def enqueue_setting_self_approved_email(conn, *, details: dict) -> Optional[str]:
+    """Queue the tech-lead e-mail for a self-approved high-impact setting change (``details``: key, label, value_id,
+    before, after, reason, actor, effective_from). None when e-mail is not configured or already queued."""
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_SETTING_SELF_APPROVED)
+        return None
+    from shared.jobs import queue
+
+    payload = {"template": TEMPLATE_SETTING_SELF_APPROVED, "period": utc_day(), **details}
+    job_id, created = await queue.enqueue(
+        conn, KIND, payload, max_attempts=MAX_ATTEMPTS, created_by="settings_registry",
+        idempotency_key=f"{KIND}:{TEMPLATE_SETTING_SELF_APPROVED}:{details.get('value_id')}")
+    return job_id if created else None
+
+
+async def enqueue_setting_alert_email(conn, *, details: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """Queue the operator e-mail for a refused stored setting value (``details``: key, problem, version, value)."""
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_SETTING_OUT_OF_BOUNDS)
+        return None
+    from shared.jobs import queue
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_SETTING_OUT_OF_BOUNDS, "period": day, **details}
+    job_id, created = await queue.enqueue(
+        conn, KIND, payload, max_attempts=MAX_ATTEMPTS, created_by="settings_reader",
+        idempotency_key=f"{KIND}:{TEMPLATE_SETTING_OUT_OF_BOUNDS}:{details.get('key')}:{day}")
+    return job_id if created else None
+
+
+def _setting_message(to: Recipients, subject: str, intro: str, rows: list, action: str, link: str) -> Message:
+    text = "\n".join([intro, ""] + [f"{k}: {v}" for k, v in rows] + ["", action, "", f"Settings: {link}"])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            f"<p><strong>{html.escape(intro)}</strong></p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            f"<p>{html.escape(action)}</p>"
+            f"<p><a href=\"{html.escape(link)}\">Open Platform / Settings</a></p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)
+
+
+def render_setting_self_approved(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                                 environment: Optional[str] = None) -> Message:
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{SETTINGS_PAGE_PATH}"
+    key = str(payload.get("key") or "?")
+    rows = [("Setting", f"{payload.get('label') or key} ({key})"),
+            ("Before", str(payload.get("before"))), ("After", str(payload.get("after"))),
+            ("Effective from", str(payload.get("effective_from") or "-")),
+            ("Changed by", str(payload.get("actor") or "-")), ("Reason", str(payload.get("reason") or "-"))]
+    return _setting_message(
+        to, f"[AA-CIS {env}] Setting self-approved: {key}", "A high-impact setting was changed and self-approved.",
+        rows, "Dev-phase rule: the administrator may approve their own change with a reason; this e-mail is the "
+              "second pair of eyes. Every change is in the page history and the audit log.", link)
+
+
+def render_setting_out_of_bounds(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                                 environment: Optional[str] = None) -> Message:
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{SETTINGS_PAGE_PATH}"
+    key = str(payload.get("key") or "?")
+    rows = [("Setting", key), ("Problem", str(payload.get("problem") or "-")),
+            ("Stored value", str(payload.get("value") or "-")), ("Version", str(payload.get("version") or "-")),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    return _setting_message(
+        to, f"[AA-CIS {env}] Setting value refused: {key}", "A stored setting value breaks its definition.", rows,
+        "The reader serves the default value instead. Propose a valid value on the Settings page.", link)

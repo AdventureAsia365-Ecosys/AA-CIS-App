@@ -356,8 +356,8 @@ async def writer_kpis(conn, start: datetime, end: datetime) -> dict:
         spent = await month_spend(conn)
     except Exception:  # noqa: BLE001 — a spend read failure leaves the number out, never the report
         spent = None
-    out["learning_spend"] = {"month_spent_usd": spent, "month_cap_usd": cfg.MONTH_CAP_USD,
-                             "share": round(spent / cfg.MONTH_CAP_USD, 4) if spent is not None else None}
+    out["learning_spend"] = {"month_spent_usd": spent, "month_cap_usd": cfg.month_cap_usd(),
+                             "share": round(spent / cfg.month_cap_usd(), 4) if spent is not None else None}
     return out
 
 

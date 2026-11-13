@@ -73,11 +73,6 @@ thresholds:
     used_by: [services/acp_shared/debate.py]
     description: "T7 debate brand-fit cut (the Jev reject score is derived as cut - 0.5 in debate.py)."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
-  t7.blog_chars_per_seed_word:
-    value: 5.8
-    used_by: [services/acp_shared/blog_seed.py]
-    description: "AA-1077 S279: tag-stripped blog characters the T9 writer produces per grounded seed word (the T7 Blog seed estimate). The T7 Blog minimum seed is sized from it: ceil(F4 blog floor 4,700 / ratio) = 811 words at 5.8, applied as max(flat T7_BLOG_MIN_SEED_WORDS, sized) while the flat floor is on. Default = one written word per seed word at the measured 5.8 chars/word (AA-741 phase 3 cpw median): the t9_write v7 writer does not invent, and S278 showed a seed that cleared 600 words stop at 748 words / 4,425 chars with no material left. Env T7_BLOG_CHARS_PER_SEED_WORD overrides it (0 = no sizing); scripts/aa1077/seed_floor_replay.py measures it on stored pieces."
-    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
   t2.cross_brand_overlap_warn:
     value: 0.35
     used_by: [services/quality/brand_overlap.py]
@@ -89,11 +84,6 @@ thresholds:
     value: 0.17
     used_by: [services/acp_content_writing/length_contract.py]
     description: "AA-1077 S278: the blog length target sits this fraction above the F4 floor (4,700 chars -> 5,499 chars, the writer's 950-word floor, the extend repair's and the F4 rewrite's aim); never the floor itself. The prompt's hashed word floor (prompts._BLOG_WORDS) is pinned to it by tests/unit/test_aa1077_s278_length_margin.py, so a change here needs a t9_write prompt bump. S278: with 0.11 (900 words) 3 of 9 pieces came in 1-4 chars under the floor and the normalizer cut up to 241 more."
-    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
-  t9.repeat_drop_near_exact:
-    value: 0.9
-    used_by: [services/acp_content_writing/repeat_drop.py]
-    description: "AA-1077 S279: the blog repeat drop deletes the later copy of a sentence the F13 gate quotes when its copy words match an earlier sentence's in order with at least this Dice share (1.0 = exact), the piece stays at or above the F4 floor and the fact / pronoun / integrity invariants hold. Stricter than hygiene.copies (0.8, one direction): a paraphrase or a figure retold stays for F13. S278 trial 2: one piece held F13_repeat at 5,724 chars for one repeated sentence."
     calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
 
   # --------------------------------------------------------------------------------------------- T10

@@ -50,7 +50,7 @@ from services.acp_contract.segment_research import (
 from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs_error
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
-from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded, RunBudget, dfs_research_prices
+from shared.cost_guard import BudgetExceeded, RunBudget, dfs_call_estimate_usd, dfs_research_prices
 from shared.dfs_client.call_log import record_dfs_call_with_pool
 from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
@@ -280,7 +280,7 @@ def estimate_plan(places: list[_Place], use_suggestions: bool = False, queue: st
     proposing = sum(1 for p in places if not p.has_map)
     llm_calls = math.ceil(proposing / PROPOSE_CHUNK)
     idea_tasks = math.ceil(len(places) / IDEAS_SEEDS_PER_TASK) if use_suggestions else 0
-    ideas = idea_tasks * DFS_CALL_ESTIMATE_USD["keywords_for_keywords"]
+    ideas = idea_tasks * dfs_call_estimate_usd().get("keywords_for_keywords", 0.1)
     return {
         "places": len(places), "llm_calls": llm_calls,
         "volume_tasks": volume_tasks, "volume_tasks_cap": volume_tasks_cap,

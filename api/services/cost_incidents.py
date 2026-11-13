@@ -29,10 +29,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from shared import settings as _settings
+
 UTC = timezone.utc
 
 # Raw llm_call_log window (services/retention/policy.py SPECS["retention_llm_call_log"], pinned by a unit test).
-LLM_RAW_RETENTION_DAYS = 180
+# S279 thresholds L1: the window is the setting cis.retention.llm_call_log_days; LLM_RAW_RETENTION_DAYS is its compiled
+# default, `llm_raw_retention_days()` the window in force.
+LLM_RETENTION_SETTING = "cis.retention.llm_call_log_days"
+LLM_RAW_RETENTION_DAYS = int(_settings.definition(LLM_RETENTION_SETTING).default_value)
+
+
+def llm_raw_retention_days() -> int:
+    return int(_settings.get(LLM_RETENTION_SETTING))
 
 
 @dataclass(frozen=True)
@@ -164,7 +173,7 @@ async def incident_view(pool: Any, incident: CostIncident, now: Optional[datetim
         stages = list(incident.llm_stages)
         llm_rows = await pool.fetch(INCIDENT_LLM_SQL, a, b, stages)
         llm_source = "raw"
-        raw_pruned = a < (now or datetime.now(UTC)) - timedelta(days=LLM_RAW_RETENTION_DAYS)
+        raw_pruned = a < (now or datetime.now(UTC)) - timedelta(days=llm_raw_retention_days())
         if not llm_rows and raw_pruned:
             llm_rows = await pool.fetch(INCIDENT_LLM_DAILY_SQL, a.date(), b.date(), stages)
             llm_source = "daily" if llm_rows else None

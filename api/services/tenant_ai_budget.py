@@ -40,7 +40,8 @@ AUDIT_RESOURCE = "shared.tenant_ai_budget"
 
 # The fields a PUT sets (every one, a PUT replaces the row's values).
 FIELDS = ("monthly_usd", "alert_pct", "approval_pct", "hard_stop", "notes")
-DEFAULTS = {"monthly_usd": None, "alert_pct": 100, "approval_pct": 150, "hard_stop": False, "notes": None}
+# S279 thresholds L1 (audit 3.3, tech lead Q8): hard_stop defaults to true (fail closed on money), as the PUT body does.
+DEFAULTS = {"monthly_usd": None, "alert_pct": 100, "approval_pct": 150, "hard_stop": True, "notes": None}
 
 
 class TenantBudgetUnavailable(Exception):
@@ -259,7 +260,7 @@ def _audit_details(before: Optional[dict], after: Optional[dict]) -> str:
     return json.dumps({"before": clean(before), "after": clean(after)}, default=str)
 
 
-async def upsert(pool, tenant_id: str, values: dict, *, actor: str) -> dict:
+async def upsert(pool, tenant_id: str, values: dict, *, actor: str, tighten_only: bool = False) -> dict:
     """Create or replace the tenant's budget (every field of ``values``; the router validated them) and write one
     audit row, in one transaction. LookupError: no such tenant. TenantBudgetUnavailable: table missing / no grant."""
     after = {k: values.get(k, DEFAULTS[k]) for k in FIELDS}
@@ -270,6 +271,13 @@ async def upsert(pool, tenant_id: str, values: dict, *, actor: str) -> dict:
                     raise LookupError(f"no tenant {tenant_id}")
                 prev = await conn.fetchrow(LOCK_SQL, tenant_id)
                 before = dict(prev) if prev is not None else None
+                if tighten_only:   # S279 thresholds L1 (tech lead Q1): ai_ops may only tighten a tenant's budget
+                    from api.services.settings_registry import TIGHTEN_ONLY, loosened
+
+                    worse = loosened(before, after, caps=("monthly_usd",), stops=("hard_stop",),
+                                     up_is_looser=("alert_pct", "approval_pct"))
+                    if worse:
+                        raise PermissionError(f"{TIGHTEN_ONLY}: {', '.join(worse)}")
                 await conn.execute(UPSERT_SQL, tenant_id, after["monthly_usd"], after["alert_pct"],
                                    after["approval_pct"], after["hard_stop"], after["notes"], actor[:200])
                 await conn.execute(AUDIT_SQL, tenant_id, actor[:64], AUDIT_SET, AUDIT_RESOURCE, tenant_id,

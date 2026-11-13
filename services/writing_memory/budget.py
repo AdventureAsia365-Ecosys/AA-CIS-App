@@ -10,7 +10,7 @@ One helper shared by the mine / eval / shadow stages: `MonthBudget.check(estimat
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from shared.cost_guard import BudgetExceeded
@@ -32,7 +32,7 @@ async def month_spend(conn, stages: Iterable[str] = cfg.MEMORY_STAGES) -> float:
 @dataclass
 class MonthBudget:
     spent_at_start: float
-    cap_usd: float = cfg.MONTH_CAP_USD
+    cap_usd: float = field(default_factory=cfg.month_cap_usd)   # S279: the setting in force
     run_spent: float = 0.0
 
     @property
@@ -58,8 +58,9 @@ class MonthBudget:
         return {"cap_usd": self.cap_usd, "spent_usd": round(self.spent, 4), "remaining_usd": round(self.remaining(), 4)}
 
 
-async def load_month_budget(conn, cap_usd: float = cfg.MONTH_CAP_USD) -> MonthBudget:
-    return MonthBudget(spent_at_start=await month_spend(conn), cap_usd=cap_usd)
+async def load_month_budget(conn, cap_usd: Optional[float] = None) -> MonthBudget:
+    return MonthBudget(spent_at_start=await month_spend(conn),
+                       cap_usd=cfg.month_cap_usd() if cap_usd is None else cap_usd)
 
 
 __all__ = ["MonthBudget", "load_month_budget", "month_spend"]

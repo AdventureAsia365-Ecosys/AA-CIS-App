@@ -202,6 +202,14 @@ def _deleted_channels(conn: _FakeConn) -> set[str]:
     return {args[1] for sql, args in conn.executed if sql.lstrip().startswith("DELETE FROM acp_shared.subject")}
 
 
+@pytest.fixture(autouse=True)
+def _blog_seed_floor_off(monkeypatch):
+    """S279 thresholds L1: the Blog minimum seed is the setting cis.t7.blog_min_seed_words, seeded 600 (the Dev value);
+    these tests predate it and run with the floor off."""
+    from tests.unit.test_aa1081_blog_topic_coverage import set_min_seed
+    set_min_seed(monkeypatch, 0)
+
+
 async def _propose(channels_config, segments, routes):
     conn = _FakeConn(channels_config)
     seg_fetch = AsyncMock(return_value=segments)

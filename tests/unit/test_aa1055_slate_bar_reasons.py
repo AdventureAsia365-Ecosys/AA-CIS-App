@@ -63,8 +63,10 @@ def test_every_reason_is_exported():
 
 
 @pytest.mark.asyncio
-async def test_the_t7_slate_job_result_carries_the_bar_counts():
+async def test_the_t7_slate_job_result_carries_the_bar_counts(monkeypatch):
     from tests.unit.test_aa741_s271_blog_segment_grain import _HeldConn, _propose
+    from tests.unit.test_aa1081_blog_topic_coverage import set_min_seed
+    set_min_seed(monkeypatch, 0)        # S279: the Blog minimum seed setting is 600; this test runs with it off
     segments = [_seg("a", 2400), _seg("b", None), _seg("c", 300), _seg("d", 3000, questions=1)]
     result, _routes = await _propose(_HeldConn(), segments)      # tenant Channels: blog + linkedin
     assert result["bar_status"]["blog"] == {"cleared": 1, "no_data": 1, "below_bar": 1, "few_questions": 1,

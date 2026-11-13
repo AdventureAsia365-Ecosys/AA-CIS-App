@@ -115,7 +115,21 @@ async def test_policy_reads_the_agency_opt_in():
     conn = _Conn({"auto_draft": {"notice_days": 3, "auto_draft": True}})
     assert await fanout.policy(conn, TENANT_ID) == (3, True)
     sql = conn.calls[0][0]
-    assert "tenant_id IS NOT NULL AND auto_draft" in sql, "the platform row can never opt an agency in"
+    # S279 thresholds L1: only the agency's own row is read (the platform row can never opt an agency in; the platform
+    # notice is the setting cis.lifecycle.tour_retirement_notice_days)
+    assert "WHERE tenant_id = $1::uuid" in sql and "tenant_id IS NULL" not in sql
+
+
+@pytest.mark.asyncio
+async def test_policy_without_an_agency_row_reads_the_plan_then_the_platform_setting(monkeypatch):
+    # S279 thresholds L1 (audit 3.3): the plan entitlement policy.notice_days is read, then the platform setting
+    conn = _Conn({"v_tenant_entitlement_resolved": 12})
+    assert await fanout.policy(conn, TENANT_ID) == (12, False)
+    assert any("policy.notice_days" in c[0] for c in conn.calls)
+    monkeypatch.setattr(fanout._platform_settings, "get", lambda key, tenant_id=None: 9)
+    assert await fanout.policy(_Conn(), TENANT_ID) == (9, False)
+    missing = _Conn(errors={"v_tenant_entitlement_resolved": asyncpg.UndefinedTableError("x")})
+    assert await fanout.plan_notice_days(missing, TENANT_ID) is None
 
 
 @pytest.mark.asyncio
@@ -363,10 +377,16 @@ def test_actor_is_the_membership_else_the_tenant():
 # ── /v1/account/tour-retirement ────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_settings_default_is_off_with_the_platform_notice_period():
-    conn = _Conn({"ORDER BY (tenant_id IS NULL)": [{"own": False, "notice_days": 10, "auto_draft": False}]})
+async def test_settings_default_is_off_with_the_plan_or_platform_notice_period(monkeypatch):
+    # S279 thresholds L1: no agency row -> the plan's policy.notice_days, else the platform setting (never the platform
+    # row of the table, which had no writer)
+    conn = _Conn({"v_tenant_entitlement_resolved": 10})
     out = await settings_mod.get_tour_retirement_settings(_request(conn), tenant=TENANT)
-    assert out == {"auto_draft": False, "notice_days": 10, "min_days": 1, "max_days": 30, "default_notice_days": 7}
+    assert out == {"auto_draft": False, "notice_days": 10, "min_days": 1, "max_days": 30, "default_notice_days": 10}
+    assert all("tenant_id IS NULL" not in c[0] for c in conn.calls)
+    monkeypatch.setattr(settings_mod.fanout._platform_settings, "get", lambda key, tenant_id=None: 12)
+    out = await settings_mod.get_tour_retirement_settings(_request(_Conn()), tenant=TENANT)
+    assert (out["notice_days"], out["default_notice_days"]) == (12, 12)
 
 
 @pytest.mark.asyncio
@@ -377,8 +397,7 @@ async def test_settings_default_without_any_row():
 
 @pytest.mark.asyncio
 async def test_settings_read_the_agency_row():
-    conn = _Conn({"ORDER BY (tenant_id IS NULL)": [{"own": True, "notice_days": 3, "auto_draft": True},
-                                                    {"own": False, "notice_days": 10, "auto_draft": False}]})
+    conn = _Conn({"AS own": [{"own": True, "notice_days": 3, "auto_draft": True}]})
     out = await settings_mod.get_tour_retirement_settings(_request(conn), tenant=TENANT)
     assert out["auto_draft"] is True and out["notice_days"] == 3
 
@@ -413,7 +432,7 @@ async def test_settings_patch_upserts_and_audits(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_settings_patch_keeps_the_days_when_only_turning_off(monkeypatch):
-    conn = _Conn({"ORDER BY (tenant_id IS NULL)": [{"own": True, "notice_days": 4, "auto_draft": True}],
+    conn = _Conn({"AS own": [{"own": True, "notice_days": 4, "auto_draft": True}],
                   "INSERT INTO acp_shared.tour_retirement_policy": lambda *a: {"notice_days": a[1],
                                                                                "auto_draft": a[2]}})
     monkeypatch.setattr(settings_mod, "write_audit_log", lambda *a, **k: _noop())

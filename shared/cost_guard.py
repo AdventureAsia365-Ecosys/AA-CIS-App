@@ -24,6 +24,8 @@ from typing import Optional
 
 import structlog
 
+from shared import settings as _settings
+
 logger = structlog.get_logger()
 
 # AA-712: 'geocoder' = the external geocoder of the place pipeline (Mapbox Permanent / Amazon
@@ -38,27 +40,35 @@ SAFE_DEFAULTS: dict[tuple[str, str], tuple[Optional[float], Optional[float]]] = 
     ("dfs", "global"): (None, 10.0),
     ("dfs", "job:segment_research"): (5.0, None),
     ("bedrock", "job:segment_research"): (2.0, None),
+    # S279 thresholds L1: the place backfill batch reads its geocoder cap from this row (migration 226 seed, $50/run);
+    # unreadable table = the seed value, never no cap.
+    ("geocoder", "job:place_geocode"): (50.0, None),
 }
 
-# Worst-case price of one call, used for the pre-call check when the exact price is not known yet.
-# Observed: search_volume task $0.057-0.059 with <=13 keywords (25/09/2026) but $0.09 with ~150
-# keywords (Bhutan pilot, 28/09/2026 — the task price rises with keyword count), keywords_for_keywords
-# $0.09, serp advanced $0.002. Use the highest observed price.
-DFS_CALL_ESTIMATE_USD = {
-    "search_volume": 0.09,
-    "search_volume_bulk": 0.09,
-    "keywords_for_keywords": 0.09,
-    "serp_advanced": 0.002,
-    # AA-779 (B) — the admin SERP top-up's own log label: a live advanced SERP with the PAA box
-    # expanded 2 levels (billed per extra click). Deliberately high so the $3 cap is never overshot.
-    "serp_advanced_paa_deep": 0.01,
-    # AA-1055 — the Standard queue (task_post; tasks_ready / task_get are free), the price DataForSEO charged on Dev
-    # (09/11/2026, the first queued research run, US / UK / AU): 0.06 USD per search volume task of up to 1,000
-    # keywords, 0.0006 USD per SERP. Until then these held the live price, so that run's estimate (and the places its
-    # USD cap selected) was about 2.4 times too high.
-    "search_volume_bulk_queue": 0.06,
-    "serp_advanced_queue": 0.0006,
-}
+# Worst-case price of one call, used for the pre-call check when the exact price is not known yet. S279 thresholds L1:
+# the table is the setting `cis.spend.dfs_call_estimate_usd` (Platform › Settings; each entry 0..1 USD), seeded with
+# the prices below as they stood (AA-1055: search_volume task $0.057-0.090 by keyword count, keywords_for_keywords
+# $0.09, live advanced SERP $0.002, the PAA-deep top-up label 0.01, the Standard queue 0.06 per volume task and 0.0006
+# per SERP). DFS_CALL_ESTIMATE_USD is the compiled default; `dfs_call_estimate_usd()` the table in force.
+DFS_ESTIMATE_SETTING = "cis.spend.dfs_call_estimate_usd"
+DFS_CALL_ESTIMATE_USD = dict(_settings.definition(DFS_ESTIMATE_SETTING).default_value)
+
+
+def dfs_call_estimate_usd() -> dict:
+    """The worst-case price per DataForSEO call label in force: the stored table laid over the compiled default
+    (S279 review), so a label an admin edit left out keeps its seeded price instead of being charged $0, and a
+    non-positive entry (the definition's minimum is above 0; this is the backstop) keeps the seeded price too. A label
+    neither table knows is not in it."""
+    stored = _settings.get(DFS_ESTIMATE_SETTING)
+    out = dict(DFS_CALL_ESTIMATE_USD)
+    for k, v in (dict(stored) if isinstance(stored, dict) else {}).items():
+        try:
+            price = float(v)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            out[str(k)] = price
+    return {str(k): float(v) for k, v in out.items()}
 
 # AA-1055 — the endpoint labels research buys through, per `dfs_queue` mode: (volume task, SERP). The same labels the
 # buying code checks and charges the run budget with (DataForSEOClient.fetch_volumes_bulk / the live advanced SERP, and
@@ -77,7 +87,9 @@ def dfs_research_prices(queue: str) -> tuple[float, float]:
         volume, serp = DFS_RESEARCH_ENDPOINTS[queue]
     except KeyError:
         raise ValueError(f"unknown DataForSEO queue mode {queue!r}; one of {sorted(DFS_RESEARCH_ENDPOINTS)}") from None
-    return DFS_CALL_ESTIMATE_USD[volume], DFS_CALL_ESTIMATE_USD[serp]
+    prices = dfs_call_estimate_usd()
+    return prices[volume], prices[serp]
+
 
 _DAY_SPEND_SQL = {
     "dfs": "SELECT coalesce(sum(cost_usd), 0) FROM shared.dfs_call_log "

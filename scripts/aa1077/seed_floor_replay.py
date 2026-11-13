@@ -35,7 +35,8 @@ ECS exec (`scripts/` is not in the image; it imports services.* only):
 Env
   SINCE     (required) ISO start; blog pieces created at or after it.
   TENANTS   (optional) comma-separated tenant slugs; default the four AA-741 audit tenants.
-  MIN_SEED  (optional) the flat Blog minimum seed to evaluate (default T7_BLOG_MIN_SEED_WORDS, else 600).
+  MIN_SEED  (optional) the flat Blog minimum seed to evaluate (default the setting cis.t7.blog_min_seed_words, else
+            600).
   RATIO     (optional) chars per seed word for the "configured" floor (default T7_BLOG_CHARS_PER_SEED_WORD, else the
             registry value).
   TARGET_TOURS   (optional) comma-separated tour id prefixes to print a verdict for (default ac574bfe).

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""AA-779 (B) — admin-only SERP top-up of real search questions for blog places. Hard cap $3 across all runs.
+"""AA-779 (B) — admin-only SERP top-up of real search questions for blog places. Hard cap across all runs:
+the setting cis.spend.question_topup_cap_usd (seeded $3).
 
 What it does (services/acp_shared/question_topup.py): for every place of blog work (Subjects a tenant
 can still write + blog angle-gate requests) it counts the real questions the chain already has
@@ -10,8 +11,10 @@ the Segment research cache). A place that returned no question gets an empty row
 Blogs then read them as the `serp_topup` tier.
 
 Default = DRY RUN: SELECTs only, prints the place list and the estimated cost, buys nothing, writes
-nothing; it also prints what earlier runs spent (`prior_spent_usd`) and what is left of the $3. `--run`
-buys, under a budget of min(--cap, $3 − earlier spend) (a cap above $3 is refused; nothing left = refused)
+nothing; it also prints what earlier runs spent (`prior_spent_usd`) and what is left of the cap. `--run`
+buys, under a budget of min(--cap, cap − earlier spend), where the cap is the setting
+`cis.spend.question_topup_cap_usd` (Platform › Settings, seeded $3; S279 thresholds L1) read from the database at the
+start of the run (a --cap above it is refused; nothing left = refused; no --cap = the whole setting)
 checked before every call; each call is logged in shared.dfs_call_log as endpoint 'serp_advanced_paa_deep'.
 Never wired to a tenant action, a router or a job (AA-646).
 
@@ -22,7 +25,7 @@ skill/aa-cis-schema/references/ecs-exec.md). The image must carry this change:
   URL=$(aws s3 presign s3://$BRONZE/scripts/aa779_topup.py --profile aa365-admin --region us-west-1 --expires-in 300)
   TASK_ARN=$(aws ecs list-tasks --cluster aa-cis-dev-cluster --service-name aa-cis-dev-api --profile aa365-admin --region us-west-1 --query 'taskArns[0]' --output text)
   dry run:  aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container api --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/t.py && cd /app && python3 /tmp/t.py'" --profile aa365-admin --region us-west-1
-  real run: same command with 'python3 /tmp/t.py --run --cap 3'
+  real run: same command with 'python3 /tmp/t.py --run' (or '--run --cap 1' for a smaller run)
   aws s3 cp s3://$BRONZE/scripts/aa779-serp-topup.json .tmp-session/aa779-serp-topup.json --profile aa365-admin --region us-west-1
 """
 from __future__ import annotations
@@ -32,7 +35,7 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any
+from typing import Any, Optional
 
 sys.path.insert(0, os.getcwd())
 
@@ -50,7 +53,7 @@ async def _pool():
                                      database=u.path.lstrip("/"), ssl="require", min_size=1, max_size=4)
 
 
-async def main(run: bool, cap: float) -> dict[str, Any]:
+async def main(run: bool, cap: Optional[float]) -> dict[str, Any]:
     from services.acp_shared.question_topup import run_topup
 
     pool = await _pool()
@@ -83,8 +86,14 @@ def _write(result: dict[str, Any], name: str = "aa779-serp-topup.json") -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--run", action="store_true", help="buy the SERPs (default: dry run, $0)")
-    parser.add_argument("--cap", type=float, default=3.0, help="spend cap in USD for this run (at most 3)")
+    parser.add_argument("--cap", type=float, default=None,
+                        help="spend cap in USD for this run (default and maximum: the setting "
+                             "cis.spend.question_topup_cap_usd, read from the database)")
     args = parser.parse_args()
-    if args.cap > 3.0 or args.cap <= 0:
-        parser.error("--cap must be > 0 and at most 3 (AA-779 hard cap)")
-    _write(asyncio.run(main(args.run, args.cap)))
+    if args.cap is not None and args.cap <= 0:
+        parser.error("--cap must be > 0")
+    try:
+        result = asyncio.run(main(args.run, args.cap))
+    except ValueError as e:     # run_topup refuses a --cap above the setting in force
+        parser.error(str(e))
+    _write(result)

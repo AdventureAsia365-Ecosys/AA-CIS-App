@@ -30,8 +30,12 @@ from services.places import components as comp_mod
 from services.places import days as days_mod
 from services.places import store
 from services.places.names import country_norm, locality_key, name_norm
+from shared import settings
 
-MAX_TOURS = 50
+# S279 thresholds L1: tours per run are the setting `cis.spend.place_backfill_max_tours` (Platform › Settings);
+# MAX_TOURS is its compiled default, `max_tours()` the number in force.
+MAX_TOURS_SETTING = "cis.spend.place_backfill_max_tours"
+MAX_TOURS = int(settings.definition(MAX_TOURS_SETTING).default_value)
 MAX_TOUR_IDS = 100
 WAVE_KINDS = ("s1_rewrite", "a3_atomize", "recompute")
 # design §8 token envelope per call (input, output); the price per call comes from the stage's live route.
@@ -39,7 +43,6 @@ TOKENS = {"days": (3200, 1200), "locate": (1000, 800)}
 STAGES = {"days": "a3_place_days", "locate": "a3_place_locate"}
 EMBED_PER_TOUR_USD = 0.0005
 _SONNET_RATES = (3.0, 15.0)          # $/MTok: the pricing.py rule for a model with no known price
-GEOCODER_BACKFILL_CAP_USD = 50.0   # = spend_budget geocoder/job:place_geocode per run (migration 226)
 
 ROUTE_PRICE_SQL = """
     SELECT rc.stage, rc.model_id, rc.shadow_model_id, rc.shadow_sample_pct,
@@ -173,8 +176,20 @@ async def plan_ids(conn, tour_ids: list[str], *, only_stale: bool) -> tuple[list
     return picked, {"not_live": not_live, "fresh": fresh}
 
 
+def max_tours() -> int:
+    return int(settings.get(MAX_TOURS_SETTING))
+
+
+async def geocoder_batch_cap(pool) -> Optional[float]:
+    """The geocoder USD cap of one backfill batch: the per-run value of the spend_budget row geocoder /
+    job:place_geocode (else its global row); None when no row sets one."""
+    from shared.cost_guard import load_run_budget
+
+    return (await load_run_budget(pool, "geocoder", "place_geocode")).per_run_usd
+
+
 async def plan(conn, *, country: Optional[str], limit: int, only_stale: bool) -> list[dict]:
-    limit = max(1, min(int(limit), MAX_TOURS))
+    limit = max(1, min(int(limit), max_tours()))
     tours = sorted(await store.live_tours(conn, country), key=lambda t: t["source_id"])
     builds = {r["source_id"]: dict(r) for r in await conn.fetch(
         "SELECT source_id, tour_id::text AS tour_id, status, rule_version, days_hash, components_hash "

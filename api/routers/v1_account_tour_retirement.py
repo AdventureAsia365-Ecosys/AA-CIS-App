@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from api.routers.v1_tours import get_tenant
 from services.acp_publish.retired_pages import actor_of
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from services.tour_lifecycle import fanout
 from services.tour_lifecycle.fanout import DEFAULT_NOTICE_DAYS, POLICY_MIGRATION
 
 logger = structlog.get_logger()
@@ -41,12 +42,13 @@ MIN_DAYS = 1
 MAX_DAYS = 30
 UNAVAILABLE = "This setting is not available yet."
 
-# The agency's own row and the platform row (its notice period is the default shown when the agency has no row).
+# The agency's own row. S279 thresholds L1: without one, the default shown is the agency's plan value (entitlement
+# policy.notice_days), else the platform setting cis.lifecycle.tour_retirement_notice_days (Platform › Settings); the
+# platform row of the table is no longer read (fanout.policy reads the same order).
 _READ_SQL = """
     SELECT tenant_id IS NOT NULL AS own, notice_days, auto_draft
       FROM acp_shared.tour_retirement_policy
-     WHERE tenant_id = $1::uuid OR tenant_id IS NULL
-     ORDER BY (tenant_id IS NULL)
+     WHERE tenant_id = $1::uuid
 """
 
 # The unique index tour_retirement_policy_scope_key is on COALESCE(tenant_id, zero uuid): the conflict target names it.
@@ -82,19 +84,20 @@ def _tenant_id(tenant: dict) -> str:
         raise HTTPException(status_code=403, detail="Tenant token required")
 
 
-def _shape(auto_draft: bool, notice_days: Optional[int]) -> dict:
-    days = int(notice_days) if notice_days else DEFAULT_NOTICE_DAYS
+def _shape(auto_draft: bool, notice_days: Optional[int], default_days: Optional[int] = None) -> dict:
+    default = int(default_days) if default_days else fanout.platform_notice_days()
+    days = int(notice_days) if notice_days else default
     return {"auto_draft": bool(auto_draft), "notice_days": min(max(days, MIN_DAYS), MAX_DAYS),
-            "min_days": MIN_DAYS, "max_days": MAX_DAYS, "default_notice_days": DEFAULT_NOTICE_DAYS}
+            "min_days": MIN_DAYS, "max_days": MAX_DAYS, "default_notice_days": min(max(default, MIN_DAYS), MAX_DAYS)}
 
 
 async def _current(conn, tenant_id: str) -> dict:
     rows = await conn.fetch(_READ_SQL, tenant_id)
     own = next((r for r in rows if r["own"]), None)
-    platform = next((r for r in rows if not r["own"]), None)
+    default = await fanout.plan_notice_days(conn, tenant_id)
     if own is not None:
-        return _shape(own["auto_draft"], own["notice_days"])
-    return _shape(False, platform["notice_days"] if platform else None)
+        return _shape(own["auto_draft"], own["notice_days"], default)
+    return _shape(False, None, default)
 
 
 def _unavailable(exc: Exception) -> HTTPException:
@@ -128,7 +131,7 @@ async def set_tour_retirement_settings(body: TourRetirementSettingsIn, request: 
                 row = await conn.fetchrow(_UPSERT_SQL, tenant_id, days, body.auto_draft, actor)
     except (asyncpg.UndefinedTableError, asyncpg.UndefinedColumnError) as exc:
         raise _unavailable(exc) from exc
-    after = _shape(row["auto_draft"], row["notice_days"])
+    after = _shape(row["auto_draft"], row["notice_days"], before["default_notice_days"])
     logger.info("tour_retirement_settings_changed", tenant_id=tenant_id, auto_draft=after["auto_draft"],
                 notice_days=after["notice_days"])
     if (before["auto_draft"], before["notice_days"]) != (after["auto_draft"], after["notice_days"]):

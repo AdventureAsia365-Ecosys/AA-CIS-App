@@ -60,6 +60,7 @@ import structlog
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
 from services.writing_memory import insertion
+from shared import settings
 
 logger = structlog.get_logger()
 
@@ -359,6 +360,10 @@ async def run_shadow(pool, conf: ShadowConfig, *, writer_fn=None, flush=None, se
     packs = await packs_fn(pool, {i.get("tenant_id") for i in inputs} | {release.get("tenant_id")})
     fp = await store.fingerprint(writer)
     month_start = await store.month_spend()
+    # S279 review: a shadow run started from a script has no background settings refresher; read the approved month
+    # cap now and hold it for the run.
+    await settings.ensure_fresh(pool)
+    month_cap = cfg.month_cap_usd()
     started = datetime.now(timezone.utc)
     t0 = time.monotonic()
     details: dict[str, Any] = {"size_rule": ec.shadow_size(writer, release["content_class"], channel=conf.channel),
@@ -384,7 +389,7 @@ async def run_shadow(pool, conf: ShadowConfig, *, writer_fn=None, flush=None, se
             for i, inp in enumerate(inputs):
                 s = await spent()
                 est = cfg.SHADOW_INPUT_ESTIMATE_USD[writer]
-                if s + est > conf.cap_usd or month_start + s + est > cfg.MONTH_CAP_USD:
+                if s + est > conf.cap_usd or month_start + s + est > month_cap:
                     stop_reason = "budget_cap"
                     break
                 owner = inp.get("tenant_id")

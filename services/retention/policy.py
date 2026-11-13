@@ -8,12 +8,17 @@ acp_shared.content_piece, gold_aa_internal.tenant_tour_versions and its own pare
 
 Changing a window is a DM-7.5 decision (Nghiệp approves) and makes the next scheduled run a DRY RUN
 again (the job compares windows with the last live run).
+
+S279 thresholds L1: the windows of llm_call_log, tenant_api_usage and shared.job are settings (Platform › Settings,
+cis.retention.*; WINDOW_SETTINGS). SPECS holds their compiled defaults (the migration seed); `current()` /
+`current_specs()` apply the values in force, and the job and the status page read those.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
+from shared import settings
 from shared.llm_client.decide import CACHE_MAX_AGE_DAYS
 
 # The archive bucket is the bronze bucket: shared.aws_client.bronze.bronze_bucket() (AA-902).
@@ -55,26 +60,40 @@ DECISION_LOG_WINDOW_DAYS = max(180, CACHE_MAX_AGE_DAYS)
 # this only matters for a manual_override run (21 days); after the pilot (the marker cleared) the rows age out as usual.
 NOT_PILOT = "NOT EXISTS (SELECT 1 FROM shared.tenants p WHERE p.tenant_id = t.tenant_id AND p.is_pilot)"
 
+# (kind, part) -> the setting that holds the part's window (days).
+WINDOW_SETTINGS: dict[tuple[str, str], str] = {
+    ("retention_llm_call_log", "raw"): "cis.retention.llm_call_log_days",
+    ("retention_tenant_api_usage", "raw"): "cis.retention.tenant_api_usage_days",
+    ("retention_job", "succeeded"): "cis.retention.job_succeeded_days",
+    ("retention_job", "failed"): "cis.retention.job_failed_days",
+}
+
+
+def _seed(kind: str, part: str) -> int:
+    """The compiled default of a window setting (the migration seed)."""
+    return int(settings.definition(WINDOW_SETTINGS[(kind, part)]).default_value)
+
+
 SPECS: dict[str, TableSpec] = {s.kind: s for s in (
     TableSpec(
         kind="retention_llm_call_log", table="shared.llm_call_log", archive_name="llm_call_log",
         ts_col="created_at", id_type="uuid",
-        parts=(Part("raw", 180, archive=True, where=NOT_PILOT),),
+        parts=(Part("raw", _seed("retention_llm_call_log", "raw"), archive=True, where=NOT_PILOT),),
         rollup=ROLLUP_LLM_DAILY,
     ),
     TableSpec(
         kind="retention_tenant_api_usage", table="shared.tenant_api_usage",
         archive_name="tenant_api_usage", ts_col="called_at", id_type="uuid",
-        parts=(Part("raw", 90, archive=True, where=NOT_PILOT),),
+        parts=(Part("raw", _seed("retention_tenant_api_usage", "raw"), archive=True, where=NOT_PILOT),),
         rollup=ROLLUP_TENANT_USAGE_MONTHLY,
     ),
     TableSpec(
         kind="retention_job", table="shared.job", archive_name="job",
         ts_col="finished_at", id_type="uuid",
         parts=(
-            Part("succeeded", 30, archive=False, where="t.status = 'succeeded'"),
+            Part("succeeded", _seed("retention_job", "succeeded"), archive=False, where="t.status = 'succeeded'"),
             # stopped_budget is a failure for retention purposes (it did not finish its work).
-            Part("failed", 90, archive=True,
+            Part("failed", _seed("retention_job", "failed"), archive=True,
                  where="t.status IN ('failed', 'cancelled', 'stopped_budget')"),
         ),
     ),
@@ -97,8 +116,19 @@ SPECS: dict[str, TableSpec] = {s.kind: s for s in (
 )}
 
 
+def current(spec: TableSpec) -> TableSpec:
+    """``spec`` with the windows in force (the settings of WINDOW_SETTINGS; other parts unchanged)."""
+    parts = tuple(replace(p, window_days=int(settings.get(WINDOW_SETTINGS[(spec.kind, p.name)])))
+                  if (spec.kind, p.name) in WINDOW_SETTINGS else p for p in spec.parts)
+    return replace(spec, parts=parts)
+
+
+def current_specs() -> dict[str, TableSpec]:
+    return {kind: current(s) for kind, s in SPECS.items()}
+
+
 def spec_for(kind: str) -> TableSpec:
     try:
-        return SPECS[kind]
+        return current(SPECS[kind])
     except KeyError:
         raise ValueError(f"unknown retention kind {kind!r}; one of {sorted(SPECS)}")

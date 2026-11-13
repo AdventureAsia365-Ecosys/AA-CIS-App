@@ -7,9 +7,9 @@
       "refs": "AA-1052"
     },
     "gates": {
-      "sha": "fef1d5d19c31ffd8",
-      "evidence": "break-glass:decided fix ahead of its measurement: S278 v7 trial held a blog at 4,425 chars from a seed that cleared the flat 600-word floor (no grounded material left) and one at 5,724 chars for one repeated sentence; adds t7.blog_chars_per_seed_word (T7 Blog seed floor sized from the F4 floor, applied only while the flat floor is on) and t9.repeat_drop_near_exact (deterministic blog repeat drop above the floor); offline tests tests/unit/test_aa1077_s279_blog_seed_floor.py and tests/unit/test_aa1077_s279_repeat_drop.py; live measure = the orchestrator's 0 USD replay and one 3-piece trial",
-      "refs": "AA-1077"
+      "sha": "8280a86bda5fe76b",
+      "evidence": "parity:tests/unit/test_s279_settings_readers.py",
+      "refs": "AA-1096"
     },
     "prompt_registry": {
       "sha": "93942918915283fe",

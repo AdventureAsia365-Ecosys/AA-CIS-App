@@ -703,6 +703,14 @@
     "capability": null,
     "module": "api.routers.admin_settings"
   },
+  "GET /admin/settings/registry": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_settings_registry"
+  },
+  "GET /admin/settings/registry/{key}/history": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_settings_registry"
+  },
   "GET /admin/spend/daily": {
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
@@ -1574,6 +1582,18 @@
   "POST /admin/segment-research/run": {
     "capability": "ops.write",
     "module": "api.routers.admin_segment_research"
+  },
+  "POST /admin/settings/registry/proposals/{value_id}/approve": {
+    "capability": "settings.approve",
+    "module": "api.routers.admin_settings_registry"
+  },
+  "POST /admin/settings/registry/proposals/{value_id}/reject": {
+    "capability": "settings.approve",
+    "module": "api.routers.admin_settings_registry"
+  },
+  "POST /admin/settings/registry/{key}/proposals": {
+    "capability": "settings.write",
+    "module": "api.routers.admin_settings_registry"
   },
   "POST /admin/supply-content/{entity_id}/draft": {
     "capability": "content.write",

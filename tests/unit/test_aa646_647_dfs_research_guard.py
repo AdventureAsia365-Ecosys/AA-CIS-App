@@ -242,7 +242,8 @@ async def test_country_scope_uses_scoped_query():
 def test_admin_scope_rejects_unknown_market_and_bounds_the_usd_cap():
     from pydantic import ValidationError
 
-    from api.routers.admin_segment_research import MAX_USD_PER_RUN, ResearchScope
+    from api.routers.admin_segment_research import ResearchScope
+    from services.jobs.segment_research_job import max_usd_per_run   # S279 thresholds L1: a setting (seeded 50)
 
     scope = ResearchScope(markets=["us"])
     assert scope.markets == ["US"]
@@ -253,7 +254,7 @@ def test_admin_scope_rejects_unknown_market_and_bounds_the_usd_cap():
     with pytest.raises(ValidationError):
         ResearchScope(markets=["XX"])
     with pytest.raises(ValidationError):
-        ResearchScope(markets=["US"], max_usd=MAX_USD_PER_RUN + 1)
+        ResearchScope(markets=["US"], max_usd=max_usd_per_run() + 1)
     with pytest.raises(ValidationError):
         ResearchScope(markets=["US"], tiers=["paa"])
     with pytest.raises(ValidationError):

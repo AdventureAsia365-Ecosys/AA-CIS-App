@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 
+from shared import settings as _settings
+
 # ── cluster thresholds (D9; counted in code, $0, before any model call) ────────────────────────────────────────────
 TENANT_MIN_SIGNALS = 2           # a tenant rule: >= 2 edits ...
 TENANT_MIN_PIECES = 2            # ... on >= 2 pieces of that tenant
@@ -37,7 +39,17 @@ MIN_CLUSTER_FOR_DRAFT = 1 + PREDICT_MIN_EXPLAINED   # 1 shown + 2 held out: smal
 EXCERPT_CHARS = 400              # per side of an example (around the change)
 
 # ── budget (E4) ─────────────────────────────────────────────────────────────────────────────────────────────────────
-MONTH_CAP_USD = 25.0             # learning-loop LLM spend on Dev per calendar month (UTC)
+# S279 thresholds L1: the learning-loop month cap is the setting `cis.writing_memory.month_cap_usd` (Platform ›
+# Settings); MONTH_CAP_USD is its compiled default (the migration seed). Read `month_cap_usd()` for the cap in force.
+MONTH_CAP_SETTING = "cis.writing_memory.month_cap_usd"
+MONTH_CAP_USD = float(_settings.definition(MONTH_CAP_SETTING).default_value)
+
+
+def month_cap_usd() -> float:
+    """Learning-loop LLM spend allowed per calendar month (UTC), in force."""
+    return float(_settings.get(MONTH_CAP_SETTING))
+
+
 RUN_CAP_USD = 1.0                # one mining run (also the spend_budget row of CIS 280)
 # Every learning-loop stage counts against the month (mine now; eval / shadow with AA-919; the WM-13 one-off).
 # AA-900: `adhoc_aa900` is the llm_call_log label of an R2 run started for a prompt / model / route change (the eval

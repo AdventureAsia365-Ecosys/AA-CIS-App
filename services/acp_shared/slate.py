@@ -898,7 +898,7 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         held = await _fetch_held_subjects(
             tenant_id, conn, [c for c in enabled_channels if CHANNEL_BARS[c]["one_piece_per_place"]])
         thin = await _fetch_thin_walk_segments(tenant_id, conn, segments, enabled_channels)
-        # AA-1081 — the Blog minimum seed (off unless T7_BLOG_MIN_SEED_WORDS is set): a short seed is skipped like a
+        # AA-1081 — the Blog minimum seed (setting cis.t7.blog_min_seed_words; 0 = off): a short seed is skipped like a
         # thin one on that Channel and stays on the other Channels' queues.
         seed_floor = blog_seed.seed_floor()
         seed_words_of: dict[str, int] = {}
@@ -1098,10 +1098,10 @@ async def _fetch_short_blog_seeds(tenant_id: UUID, conn, segments: list[Candidat
     """AA-1081 (AA-1077 memo, option C) — {channel: Segment ids} for the `takes_route` Channels (Blog) among
     `channels`: the Bar-clearing, not held, not thin candidates whose Blog seed (`blog_seed.blog_seed_words`: the seed
     atom's seed + the walk the pick would resolve) is under the Blog seed floor (`blog_seed.seed_floor()`: the flat
-    `T7_BLOG_MIN_SEED_WORDS`, and since S279 at least the floor sized from the F4 blog floor and the measured chars per
-    seed word). Off (the flat setting unset or 0) -> {} and no read. A candidate whose seed cannot be measured is kept
-    (logged), like Debate's errors. `measured_out` receives {segment_id: seed words} of every measured candidate (the
-    per-Subject skip report); `floor` is the floor to apply (default the setting)."""
+    setting `cis.t7.blog_min_seed_words`, and since S279 at least the floor sized from the F4 blog floor and the
+    chars per seed word). Off (the flat setting 0) -> {} and no read. A candidate whose seed cannot be measured is
+    kept (logged), like Debate's errors. `measured_out` receives {segment_id: seed words} of every measured candidate
+    (the per-Subject skip report); `floor` is the floor to apply (default the setting)."""
     floor = floor if floor is not None else blog_seed.seed_floor()
     minimum = int(floor.get("min_seed_words") or 0)
     walk_channels = [c for c in channels if CHANNEL_BARS[c]["takes_route"]]

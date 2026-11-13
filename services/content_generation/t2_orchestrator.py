@@ -58,6 +58,7 @@ from typing import Any, Optional
 import structlog
 
 from services.quality import trial_flags
+from shared import settings
 
 logger = structlog.get_logger()
 
@@ -100,10 +101,12 @@ class VersionBudget:
     ``writer`` = t2_generate calls (first write + field regen), ``repair`` = t2_flag_fix calls (a sentence repair is
     one, a meta regenerate its real attempts: up to ``META_ATTEMPTS``), ``voice`` = the report-only judge call,
     ``usd`` = the billed cost the calls reported."""
-    writer_max: int = 2
-    repair_max: int = 3
-    voice_max: int = 1
-    usd_max: float = 0.25
+    # S279 thresholds L1: the caps are settings (Platform › Settings), read when a budget is made (a new version or a
+    # checkpoint resumed by a job retry): cis.t2.version_writer_max / _repair_max / _voice_max / _usd_max.
+    writer_max: int = field(default_factory=lambda: int(settings.get("cis.t2.version_writer_max")))
+    repair_max: int = field(default_factory=lambda: int(settings.get("cis.t2.version_repair_max")))
+    voice_max: int = field(default_factory=lambda: int(settings.get("cis.t2.version_voice_max")))
+    usd_max: float = field(default_factory=lambda: float(settings.get("cis.t2.version_usd_max")))
     writer: int = 0
     repair: int = 0
     voice: int = 0

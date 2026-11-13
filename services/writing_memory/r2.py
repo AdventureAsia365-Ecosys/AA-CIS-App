@@ -116,6 +116,7 @@ import structlog
 
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
+from shared import settings
 from shared.llm_client import family_rule
 
 logger = structlog.get_logger()
@@ -677,6 +678,10 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     shared_inputs = gs.get("shared_inputs") or {}
     fp = await store.fingerprint(writer)
     month_start = await store.month_spend()
+    # S279 review: an R2 run started from a script has no background settings refresher; read the approved month cap
+    # now (the worker's refresher keeps it fresh anyway) and hold it for the run.
+    await settings.ensure_fresh(pool if pool is not None else getattr(store, "pool", None))
+    month_cap = cfg.month_cap_usd()
     started = datetime.now(timezone.utc)
     t0 = time.monotonic()
     writer_prompt = _release_prompt(release)
@@ -732,7 +737,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         s = await spent()
         if s + estimate > conf.cap_usd:
             raise _Stop("budget_cap", phase)
-        if month_start + s + estimate > cfg.MONTH_CAP_USD:
+        if month_start + s + estimate > month_cap:
             details["month_cap_hit"] = True
             raise _Stop("budget_cap", phase)
 
@@ -1351,6 +1356,7 @@ async def run_with_pool(pool, conf: R2Config, *, progress=None) -> Outcome:
 async def estimate(pool, conf: R2Config) -> dict:
     """The DRY RUN: the plan and its estimated cost, $0 (reads only)."""
     conf.validate()
+    await settings.ensure_fresh(pool)           # S279 review: the month cap in force, also from a script
     try:                                        # AA-1024 A4: what the run would refuse, reported ($0, read only)
         await check_judge_family(conf.writer, conf.judge_model)
         family_check = "ok"
@@ -1411,8 +1417,8 @@ async def estimate(pool, conf: R2Config) -> dict:
     if est_max > conf.cap_usd:
         refusals.append(f"estimated {est_max} > cap {conf.cap_usd}: size --cap-usd from estimated_usd_max "
                         f"(at most {cfg.R2_RUN_CAP_USD}) or plan fewer items")
-    if month + est_max > cfg.MONTH_CAP_USD:
-        refusals.append(f"month cap: spent {round(month, 4)} + estimated {est_max} > {cfg.MONTH_CAP_USD}")
+    if month + est_max > cfg.month_cap_usd():
+        refusals.append(f"month cap: spent {round(month, 4)} + estimated {est_max} > {cfg.month_cap_usd()}")
     return {"writer": conf.writer, "release": conf.release_id, "items": len(items), "plan": n,
             "calibration_items": len(calib), "calibration_labels": calib_labels,
             "calibrated_possible": (len(calib) >= cfg.MIN_KAPPA_PAIRS
@@ -1423,8 +1429,8 @@ async def estimate(pool, conf: R2Config) -> dict:
             "calibrate_only": conf.calibrate_only, "require_calibrated": conf.require_calibrated,
             "judge_model": conf.judge_model, "judge_connection": conf.judge_connection,
             "item_estimate": est, "estimated_usd_max": est_max, "cap_usd": conf.cap_usd,
-            "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.MONTH_CAP_USD,
-            "month_after_cap_ok": month + conf.cap_usd <= cfg.MONTH_CAP_USD,
+            "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.month_cap_usd(),
+            "month_after_cap_ok": month + conf.cap_usd <= cfg.month_cap_usd(),
             "judge_family_check": family_check, "would_refuse": refusals,
             # AA-1051
             "eval_split": conf.eval_split, "sample_ids": len(conf.sample_ids or []),

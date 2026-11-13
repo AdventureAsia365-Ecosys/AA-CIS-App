@@ -54,6 +54,8 @@ _RENDERERS = {
     ops_alerts.TEMPLATE_LLM_COST_MISMATCH: ops_alerts.render_llm_cost_mismatch,       # AA-642 (S263 L2, B4)
     ops_alerts.TEMPLATE_PROVIDER_CIRCUIT_OPEN: ops_alerts.render_provider_circuit_open,   # AA-1025 B3
     ops_alerts.TEMPLATE_PROVIDER_CREDIT_LOW: ops_alerts.render_provider_credit_low,       # AA-1025 B5
+    ops_alerts.TEMPLATE_SETTING_SELF_APPROVED: ops_alerts.render_setting_self_approved,   # S279 thresholds L1
+    ops_alerts.TEMPLATE_SETTING_OUT_OF_BOUNDS: ops_alerts.render_setting_out_of_bounds,   # S279 thresholds L1
 }
 WORKER_ACTOR = f"job:{ops_alerts.KIND}"
 

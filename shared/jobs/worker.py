@@ -663,6 +663,10 @@ async def _main() -> None:
         from shared.cache.redis_conn import redis_conn_args  # AA-874: TLS + AUTH from env
         redis_url, redis_kwargs = redis_conn_args()
         redis = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True, **redis_kwargs)
+    # S279 thresholds L1 — the settings registry reader (shared/settings): the job handlers read their caps and limits
+    # from it; a background refresh every 30 s (off under ENVIRONMENT=test).
+    from shared import settings as platform_settings
+    settings_refresh_task = platform_settings.start_refresher(pool)
     worker = Worker(pool, max_parallel=max_parallel, grace_seconds=grace_seconds, resources={"redis": redis})
     logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel,
                 grace_seconds=grace_seconds)
@@ -675,6 +679,7 @@ async def _main() -> None:
     from services.writing_memory.releases import reverify_scan_safe
     await reverify_scan_safe(pool, actor="system:worker_start")
     await serve(worker)
+    await platform_settings.stop_refresher(settings_refresh_task)
     await pool.close()
 
 

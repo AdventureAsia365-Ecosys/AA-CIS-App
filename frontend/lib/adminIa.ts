@@ -138,6 +138,8 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/platform/audit", label: "Audit log", icon: "audit" },
     { href: "/admin/jobs", label: "Jobs", icon: "jobs" },
     { href: "/admin/platform/alerts", label: "Alert recipients", icon: "alerts" },
+    // S279 thresholds L1: every threshold, limit and cap, editable by the administrator (the settings registry).
+    { href: "/admin/platform/settings", label: "Settings", icon: "settings" },
     { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
     { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
     { href: "/admin/docs", label: "Docs", icon: "docs" },

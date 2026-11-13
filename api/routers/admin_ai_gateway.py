@@ -99,7 +99,7 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
 from api.services import (ai_gateway, ai_gateway_batches, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide,
-                          crm_console, docs_reader, platform_apps, tenant_ai_budget)
+                          crm_console, docs_reader, platform_apps, settings_registry, tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
@@ -314,10 +314,14 @@ async def get_tenant_budget(request: Request, tenant_id: str = _TENANT_ID) -> di
 @router.put("/tenant-budgets/{tenant_id}", summary="Set one tenant's monthly AI budget (audited)",
             dependencies=TENANT_SCOPED)
 async def put_tenant_budget(body: TenantBudgetBody, request: Request, tenant_id: str = _TENANT_ID,
-                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                            x_admin_user_id: Optional[str] = Header(None),
+                            x_admin_role: Optional[str] = Header(None)) -> dict:
     try:
         return await tenant_ai_budget.upsert(request.app.state.pool, tenant_id.lower(), body.model_dump(),
-                                             actor=_actor(x_admin_user_id))
+                                             actor=_actor(x_admin_user_id),
+                                             tighten_only=settings_registry.tighten_only(x_admin_role))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except LookupError:
         raise HTTPException(status_code=404, detail="no such tenant")
     except tenant_ai_budget.TenantBudgetUnavailable as e:
@@ -327,7 +331,10 @@ async def put_tenant_budget(body: TenantBudgetBody, request: Request, tenant_id:
 @router.delete("/tenant-budgets/{tenant_id}", summary="Remove one tenant's monthly AI budget (audited)",
                dependencies=TENANT_SCOPED)
 async def delete_tenant_budget(request: Request, tenant_id: str = _TENANT_ID,
-                               x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                               x_admin_user_id: Optional[str] = Header(None),
+                               x_admin_role: Optional[str] = Header(None)) -> dict:
+    if settings_registry.tighten_only(x_admin_role):       # S279: removing a budget loosens it
+        raise HTTPException(status_code=403, detail=f"{settings_registry.TIGHTEN_ONLY}: removing the budget")
     try:
         return await tenant_ai_budget.clear(request.app.state.pool, tenant_id.lower(), actor=_actor(x_admin_user_id))
     except LookupError:
@@ -538,10 +545,40 @@ async def _relay_crm_profile(request: Request, fields: dict) -> None:
                             detail=f"the partner CRM did not take the profile: {detail}")
 
 
+def _profile_limits(p: app_profile.AppProfile) -> dict:
+    """The tighten-only view of a profile: AI off and the bulk pause are the strict sides, the daily budget a cap
+    (degrade_mode is how a failure is handled, not a limit)."""
+    return {"ai_off": not p.ai_enabled, "bulk_paused": bool(p.bulk_paused),
+            "default_daily_budget_usd": p.default_daily_budget_usd}
+
+
+async def _check_profile_tighten_only(request: Request, app: str, fields: dict, role: Optional[str]) -> None:
+    """S279 thresholds L1 (tech lead Q1): ai_ops may turn AI off, pause bulk work or lower the default budget, never
+    switch AI back on, un-pause or raise / clear the budget (403)."""
+    if not settings_registry.tighten_only(role):
+        return
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            before = (await app_profile.read_all(conn)).get(app) or app_profile.AppProfile(app=app)
+    except app_profile.AppProfileUnavailable:
+        raise HTTPException(status_code=503, detail=_PROFILE_MISSING)
+    try:
+        after = app_profile.merged(before, fields)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    try:
+        settings_registry.refuse_loosening(role, _profile_limits(before), _profile_limits(after),
+                                           caps=("default_daily_budget_usd",), stops=("ai_off", "bulk_paused"))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
 @router.patch("/app-profiles/{app}", summary="Edit one app's profile: AI on / off, bulk paused, default budget, "
                                             "degrade mode (audited)")
 async def patch_app_profile(body: AppProfilePatch, request: Request, app: str = _APP,
-                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                            x_admin_user_id: Optional[str] = Header(None),
+                            x_admin_role: Optional[str] = Header(None)) -> dict:
+    await _check_profile_tighten_only(request, app, body.fields(), x_admin_role)
     if app == "crm":
         await _relay_crm_profile(request, body.fields())
     try:
@@ -605,7 +642,25 @@ async def get_capacity(request: Request) -> dict:
 
 @router.put("/capacity/{connection_key}/{model_key}", summary="Set one TPM limit / prod guard (audited)")
 async def put_capacity(body: CapacityLimitBody, request: Request, connection_key: str = _CONNECTION_KEY,
-                       model_key: str = _MODEL_KEY, x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                       model_key: str = _MODEL_KEY, x_admin_user_id: Optional[str] = Header(None),
+                       x_admin_role: Optional[str] = Header(None)) -> dict:
+    if settings_registry.tighten_only(x_admin_role):
+        # S279 thresholds L1 (tech lead Q1): ai_ops may add a limit or lower one, never raise or drop the TPM limit,
+        # widen a line's share or switch the prod guard off. A new row only adds a limit.
+        try:
+            async with request.app.state.pool.acquire() as conn:
+                rows = await capacity.read_all(conn)
+        except capacity.CapacityUnavailable:
+            raise HTTPException(status_code=503, detail=_CAPACITY_MISSING)
+        old = next((r for r in rows if r.connection_key == connection_key and r.model_key == model_key), None)
+        if old is not None:
+            fields = ("tpm_limit", "bulk_pct", "dev_pct", "prod_guard")
+            try:
+                settings_registry.refuse_loosening(
+                    x_admin_role, {f: getattr(old, f) for f in fields}, {f: getattr(body, f) for f in fields},
+                    caps=("tpm_limit", "dev_pct"), stops=("prod_guard",), up_is_looser=("bulk_pct",))
+            except PermissionError as e:
+                raise HTTPException(status_code=403, detail=str(e))
     try:
         return await capacity.put(request.app.state.pool, connection_key, model_key, body.model_dump(),
                                   actor=_actor(x_admin_user_id))
@@ -619,7 +674,10 @@ async def put_capacity(body: CapacityLimitBody, request: Request, connection_key
 
 @router.delete("/capacity/{connection_key}/{model_key}", summary="Remove one TPM limit / prod guard (audited)")
 async def delete_capacity(request: Request, connection_key: str = _CONNECTION_KEY, model_key: str = _MODEL_KEY,
-                          x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                          x_admin_user_id: Optional[str] = Header(None),
+                          x_admin_role: Optional[str] = Header(None)) -> dict:
+    if settings_registry.tighten_only(x_admin_role):       # S279: removing a limit loosens it
+        raise HTTPException(status_code=403, detail=f"{settings_registry.TIGHTEN_ONLY}: removing the limit")
     try:
         gone = await capacity.delete(request.app.state.pool, connection_key, model_key,
                                      actor=_actor(x_admin_user_id))

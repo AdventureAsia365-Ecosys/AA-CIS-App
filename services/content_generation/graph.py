@@ -39,9 +39,19 @@ from .itinerary_utils import (
 )
 from .day_parse import CANONICAL_HEAD_NC, day_range, written_day_word_counts
 
+from shared import settings as platform_settings
+
 logger = structlog.get_logger()
 
-MAX_RETRIES = 3
+# S279 thresholds L1: the A1 attempts before human review are the setting `cis.a1.attempts_before_review` (Platform ›
+# Settings); MAX_RETRIES is its compiled default (the migration seed), kept for callers that show it.
+MAX_RETRIES_SETTING = "cis.a1.attempts_before_review"
+MAX_RETRIES = int(platform_settings.definition(MAX_RETRIES_SETTING).default_value)
+
+
+def max_retries() -> int:
+    """The A1 attempts in force (setting `cis.a1.attempts_before_review`)."""
+    return int(platform_settings.get(MAX_RETRIES_SETTING))
 # AA-639: the tour writer's output ceiling. The LLMRequest default (4096) truncated long tours —
 # live, an 18-day tour stopped at exactly 4096 output tokens (stop_reason=max_tokens) three times in
 # a row, the cut JSON lost its trailing fields (MISSING_FIELD) and every truncation cost a full
@@ -1314,7 +1324,7 @@ def should_retry(state: ContentState) -> str:
 
     if score >= MIN_QUALITY:
         return "done"
-    if retry_count < MAX_RETRIES - 1:
+    if retry_count < max_retries() - 1:
         return "retry"
     return "hitl"
 

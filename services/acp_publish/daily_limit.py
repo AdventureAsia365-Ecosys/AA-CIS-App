@@ -30,12 +30,18 @@ from typing import Optional
 import asyncpg
 import structlog
 
+from shared import settings
+
 logger = structlog.get_logger()
 
-DEFAULT_DAILY_PUBLISH_LIMIT = 20
-# Upper bound for an admin override — a guard against typos (50x the default), not a commercial limit.
-DAILY_PUBLISH_LIMIT_MAX = 1000
-COLUMN_RECHECK_SECONDS = 300
+# S279 thresholds L1: the platform default is the setting `cis.publish.daily_limit_default` (Platform › Settings);
+# DEFAULT_DAILY_PUBLISH_LIMIT is its compiled default (the migration seed), kept for the callers that show it.
+DEFAULT_LIMIT_SETTING = "cis.publish.daily_limit_default"
+DEFAULT_DAILY_PUBLISH_LIMIT = int(settings.definition(DEFAULT_LIMIT_SETTING).default_value)
+# Upper bound for an admin override — a guard against typos (50x the default), not a commercial limit; the bound of
+# the setting above (its definition's max_value).
+DAILY_PUBLISH_LIMIT_MAX = int(settings.definition(DEFAULT_LIMIT_SETTING).max_value)
+COLUMN_RECHECK_SECONDS = 300  # technical-constant: schema probe cache
 
 COUNT_TODAY_SQL = """
     SELECT count(*)
@@ -88,9 +94,14 @@ async def tenant_override(conn, tenant_id) -> Optional[int]:
         return None
 
 
+def platform_default_limit() -> int:
+    """The platform default in force (setting `cis.publish.daily_limit_default`)."""
+    return int(settings.get(DEFAULT_LIMIT_SETTING))
+
+
 async def effective_limit(conn, tenant_id) -> int:
     override = await tenant_override(conn, tenant_id)
-    return override if override is not None else DEFAULT_DAILY_PUBLISH_LIMIT
+    return override if override is not None else platform_default_limit()
 
 
 async def count_today(conn, tenant_id) -> int:
@@ -119,4 +130,4 @@ def limit_message(used: int, limit: int, now: Optional[datetime] = None) -> str:
 
 __all__ = ["COUNT_TODAY_SQL", "COLUMN_RECHECK_SECONDS", "DAILY_PUBLISH_LIMIT_MAX", "DEFAULT_DAILY_PUBLISH_LIMIT",
            "count_today", "effective_limit", "limit_message", "lock_tenant", "override_column_exists",
-           "seconds_until_reset", "tenant_override"]
+           "platform_default_limit", "seconds_until_reset", "tenant_override"]

@@ -83,6 +83,8 @@ import uuid
 from typing import Optional
 
 import structlog
+
+from shared import settings as platform_settings
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -102,7 +104,8 @@ router = APIRouter(prefix="/admin/places", tags=["admin-places"], dependencies=[
 
 class BackfillRequest(BaseModel):
     country: Optional[str] = None
-    limit: int = Field(20, ge=1, le=50)
+    # S279: le = the bound of the setting cis.spend.place_backfill_max_tours; the plan caps at the value in force
+    limit: int = Field(20, ge=1, le=int(platform_settings.definition("cis.spend.place_backfill_max_tours").max_value))
     tour_ids: Optional[list[str]] = Field(None, min_length=1, max_length=100)
     only_stale: bool = True
     dry_run: bool = True
@@ -150,15 +153,20 @@ async def backfill(body: BackfillRequest, request: Request, x_admin_secret: str 
            **({"requested": len(body.tour_ids), "skipped": skipped} if body.tour_ids else {}),
            "tours": [{"tour_id": t["tour_id"], "source_id": t["source_id"], "country": t.get("country"),
                       "name": t.get("aa_name"), "built": t.get("build") is not None} for t in tours]}
+    # S279 thresholds L1: one geocoder cap, the spend_budget row geocoder / job:place_geocode per run (AI gateway ›
+    # Budgets; was a code copy of it). No per-run value on the row = no batch cap here (the daily caps still stop jobs).
+    cap = await bf.geocoder_batch_cap(pool)
+    over_cap = cap is not None and est["geocoder_cost_usd"] > cap
+    out["geocoder_cap_usd"] = cap
     if body.dry_run:
-        out["would_refuse"] = bool(busy) or est["geocoder_cost_usd"] > bf.GEOCODER_BACKFILL_CAP_USD
+        out["would_refuse"] = bool(busy) or over_cap
         return out
     if busy:
         raise HTTPException(status_code=409, detail={"error": "a wave or a previous backfill batch is running",
                                                      "busy": busy})
-    if est["geocoder_cost_usd"] > bf.GEOCODER_BACKFILL_CAP_USD:
+    if over_cap:
         raise HTTPException(status_code=409, detail={"error": "expected geocoder cost above the backfill cap",
-                                                     "cap_usd": bf.GEOCODER_BACKFILL_CAP_USD, "estimate": est})
+                                                     "cap_usd": cap, "estimate": est})
     if not tours:
         return {**out, "enqueued": 0, "jobs": []}
     batch = uuid.uuid4().hex[:8]

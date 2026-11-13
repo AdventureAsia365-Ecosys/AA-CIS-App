@@ -56,6 +56,7 @@ from typing import Any, Optional
 import asyncpg
 import structlog
 
+from shared import settings as _platform_settings
 from shared import tour_liveness as _tl
 
 from . import derivatives as _d
@@ -65,7 +66,12 @@ logger = structlog.get_logger()
 # The CIS migration that creates the flag, notice and policy tables (named in errors and in the admin 503).
 MIGRATION = "360"
 SCHEMA_MISSING = f"fanout_schema_missing: CIS {MIGRATION} (acp_shared.content_compliance_flag) is not applied"
-DEFAULT_NOTICE_DAYS = 7
+# S279 thresholds L1: the platform default is the setting `cis.lifecycle.tour_retirement_notice_days` (Platform ›
+# Settings; the platform row of tour_retirement_policy had no writer and is no longer read). DEFAULT_NOTICE_DAYS is
+# its compiled default, `platform_notice_days()` the value in force.
+NOTICE_DAYS_SETTING = "cis.lifecycle.tour_retirement_notice_days"
+DEFAULT_NOTICE_DAYS = int(_platform_settings.definition(NOTICE_DAYS_SETTING).default_value)
+PLAN_NOTICE_FEATURE = "policy.notice_days"   # the plan entitlement (CIS 355), per tenant
 STALE_REQUESTED_SECONDS = 900      # a publish claim this old without an answer is abandoned (idempotency.py: 300 s)
 ACTOR = "system:tour_retirement"
 FLAG_KIND = "tour_retired"
@@ -137,8 +143,7 @@ RETURNING pl.publish_id::text AS publish_id, pl.tenant_id::text AS tenant_id
 
 NOTICE_DAYS_SQL = """
     SELECT notice_days FROM acp_shared.tour_retirement_policy
-     WHERE tenant_id = $1::uuid OR tenant_id IS NULL
-     ORDER BY (tenant_id IS NULL) LIMIT 1
+     WHERE tenant_id = $1::uuid
 """
 
 # The migration that adds the agency opt-in (tour_retirement_policy.auto_draft). Before it: everyone is notice only.
@@ -146,10 +151,14 @@ POLICY_MIGRATION = "395"
 # The agency's notice period (its row, else the platform row) and its own opt-in: auto_draft counts only on the agency's
 # row (the platform row can never opt everyone in; CIS 395 CHECK).
 POLICY_SQL = """
-    SELECT notice_days, (tenant_id IS NOT NULL AND auto_draft) AS auto_draft
+    SELECT notice_days, auto_draft
       FROM acp_shared.tour_retirement_policy
-     WHERE tenant_id = $1::uuid OR tenant_id IS NULL
-     ORDER BY (tenant_id IS NULL) LIMIT 1
+     WHERE tenant_id = $1::uuid
+"""
+# S279 thresholds L1 (audit 3.3: policy.notice_days was editable on the Plans page but unread): the tenant's plan value.
+PLAN_NOTICE_SQL = """
+    SELECT limit_value FROM shared.v_tenant_entitlement_resolved
+     WHERE tenant_id = $1::uuid AND feature_key = 'policy.notice_days'
 """
 
 INSERT_FLAG_SQL = f"""
@@ -307,7 +316,24 @@ async def policy(conn, tenant_id: str) -> tuple[int, bool]:
             days, auto = None, False
     except asyncpg.UndefinedTableError:
         days, auto = None, False
-    return (int(days) if days else DEFAULT_NOTICE_DAYS), auto
+    if not days:
+        days = await plan_notice_days(conn, tenant_id)
+    return (int(days) if days else platform_notice_days()), auto
+
+
+def platform_notice_days() -> int:
+    """The platform default notice in force (setting `cis.lifecycle.tour_retirement_notice_days`)."""
+    return int(_platform_settings.get(NOTICE_DAYS_SETTING))
+
+
+async def plan_notice_days(conn, tenant_id: str) -> Optional[int]:
+    """The notice days of the tenant's plan (entitlement policy.notice_days), or None (no plan value, no view)."""
+    try:
+        async with conn.transaction():      # a savepoint: a missing view never aborts the caller's transaction
+            value = await conn.fetchval(PLAN_NOTICE_SQL, tenant_id)
+    except (asyncpg.UndefinedTableError, asyncpg.UndefinedColumnError):
+        return None
+    return int(value) if value else None
 
 
 async def _tour_name(conn, tour_id: str) -> str:
@@ -619,6 +645,7 @@ def immediate_ids(result: dict[str, Any]) -> list[str]:
     return list(result.get("immediate_notices") or [])
 
 
-__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "POLICY_MIGRATION", "SchemaMissing",
+__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "NOTICE_DAYS_SETTING", "POLICY_MIGRATION",
+           "SchemaMissing", "plan_notice_days", "platform_notice_days",
            "enqueue_due_drafts", "fan_out", "immediate_ids", "move_to_draft", "notice_days", "page_message",
            "page_notice_message", "policy", "post_message"]

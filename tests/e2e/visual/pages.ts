@@ -57,6 +57,7 @@ export const PAGES: VisualPage[] = [
   { slug: "platform-alerts", route: "/admin/platform/alerts", path: "/admin/platform/alerts", auth: "staff" },
   { slug: "platform-apps", route: "/admin/platform/apps", path: "/admin/platform/apps", auth: "staff" },
   { slug: "platform-audit", route: "/admin/platform/audit", path: "/admin/platform/audit", auth: "staff" },
+  { slug: "platform-settings", route: "/admin/platform/settings", path: "/admin/platform/settings", auth: "staff" },
   { slug: "platform-staff", route: "/admin/platform/staff", path: "/admin/platform/staff", auth: "staff" },
   { slug: "platform-ui-kit", route: "/admin/platform/ui-kit", path: "/admin/platform/ui-kit", auth: "staff" },
   { slug: "reports", route: "/admin/reports", path: "/admin/reports", auth: "staff" },

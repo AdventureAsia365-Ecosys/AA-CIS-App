@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
+from api.services import settings_registry
 from shared.cost_guard import CENTRAL_PROVIDER, PROVIDERS, day_spend
 from shared.llm_client import central_budget
 
@@ -105,7 +106,8 @@ async def list_budgets(request: Request):
 
 @router.put("/{provider}/{scope}", summary="Create or update one spend budget")
 async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: Request,
-                        x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None)):
+                        x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+                        x_admin_role: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
     _valid(provider, scope, body)
     pool = request.app.state.pool
@@ -113,6 +115,16 @@ async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: 
     hard_stop = body.hard_stop if body.hard_stop is not None else not central
     try:
         async with pool.acquire() as conn:
+            if settings_registry.tighten_only(x_admin_role):
+                # S279 thresholds L1 (tech lead Q1): ai_ops may lower a cap or harden it, never raise or remove one
+                raw = await conn.fetchval("SELECT to_jsonb(b) FROM shared.spend_budget b "
+                                          "WHERE provider = $1 AND scope = $2", provider, scope)
+                before = budget_row(json.loads(raw) if isinstance(raw, str) else dict(raw)) if raw else None
+                after = {**body.model_dump(), "hard_stop": hard_stop}
+                worse = settings_registry.loosened(before, after, caps=("per_run_usd", "per_day_usd", "per_month_usd"),
+                                                   stops=("hard_stop",), up_is_looser=("alert_pct",))
+                if worse:
+                    raise HTTPException(status_code=403, detail=f"{settings_registry.TIGHTEN_ONLY}: {', '.join(worse)}")
             if central:
                 await conn.execute(UPSERT_CENTRAL_SQL, provider, scope, body.per_run_usd, body.per_day_usd,
                                    body.per_month_usd, hard_stop, body.alert_pct, x_admin_user_id or "admin")
@@ -136,10 +148,14 @@ async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: 
 
 
 @router.delete("/llm/{scope}", summary="Remove one central LLM cap")
-async def delete_central_budget(scope: str, request: Request, x_admin_user_id: str = Header(None)):
+async def delete_central_budget(scope: str, request: Request, x_admin_user_id: str = Header(None),
+                                x_admin_role: Optional[str] = Header(None)):
     """AA-1025 A7: drop one ``llm`` row (the gateway stops checking that scope within a minute). Provider rows are
-    never deleted here (their absence means "no cap" for the jobs' RunBudget, set them with PUT instead)."""
+    never deleted here (their absence means "no cap" for the jobs' RunBudget, set them with PUT instead). S279: removing
+    a cap loosens it, so a tighten-only role (ai_ops) is refused."""
     _valid(CENTRAL_PROVIDER, scope)
+    if settings_registry.tighten_only(x_admin_role):
+        raise HTTPException(status_code=403, detail=f"{settings_registry.TIGHTEN_ONLY}: removing the cap")
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         status = await conn.execute("DELETE FROM shared.spend_budget WHERE provider = $1 AND scope = $2",
