@@ -1,5 +1,5 @@
 """AA-1096 l23 — Platform › Settings explains each setting: the API item carries the operator's guide (from the
-compiled defaults, CIS 415) and the rows of the last change / history carry the staff member's name next to the actor
+compiled defaults, CIS 417) and the rows of the last change / history carry the staff member's name next to the actor
 id (the rows keep admin:<uuid>, CIS 407). No DB: a fake connection answers the staff-name read."""
 import pytest
 

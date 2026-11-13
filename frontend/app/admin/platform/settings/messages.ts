@@ -1,6 +1,6 @@
 // app/admin/platform/settings/messages.ts — S279 thresholds L1: Platform › Settings in English and Vietnamese.
 // Setting labels and descriptions come from the API (the definition rows, English); refusals from the server as sent.
-// AA-1096 l23: each setting's guide comes from the API in both languages (CIS 415); the part names are here.
+// AA-1096 l23: each setting's guide comes from the API in both languages (CIS 417); the part names are here.
 
 import { defineMessages } from "../../../_kit/core/i18n";
 
@@ -106,6 +106,8 @@ export const SETTINGS = defineMessages(
     guideLower_choice: "The looser choice",
     guideWhen: "When to change it",
     guideExample: "Example (at the default)",
+    guideNow: "In force now",
+    guideIfApplied: "With the value you enter",
     noGuide: "No explanation for this setting yet.",
     engineeringNote: "Engineering note",
     showNote: "Show the engineering note",
@@ -213,6 +215,8 @@ export const SETTINGS = defineMessages(
     guideLower_choice: "Lựa chọn nới hơn",
     guideWhen: "Khi nào nên đổi",
     guideExample: "Ví dụ (ở giá trị mặc định)",
+    guideNow: "Đang áp dụng",
+    guideIfApplied: "Với giá trị bạn nhập",
     noGuide: "Cài đặt này chưa có phần giải thích.",
     engineeringNote: "Ghi chú kỹ thuật",
     showNote: "Xem ghi chú kỹ thuật",

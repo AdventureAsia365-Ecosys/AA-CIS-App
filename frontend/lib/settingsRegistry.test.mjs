@@ -9,7 +9,8 @@ import { test } from "node:test";
 
 import {
   actorLabel, actorText, badgesOf, boundsText, decisionPath, directionWords, draftProblem, draftText, formatValue,
-  groupByArea, guideFor, historyPath, parseDraft, parseNumber, proposalBody, proposalPath, registryPath,
+  groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath, registryPath,
+  valuesInForce, withValue,
 } from "./settingsRegistry.ts";
 import { canReadAdminPath, canWriteAdminPath } from "./rbac.ts";
 import { ADMIN_IA } from "./adminIa.ts";
@@ -155,4 +156,38 @@ test("the guide in the page's language, else English; the directions are named b
   assert.equal(directionWords("bool"), "switch");
   assert.equal(directionWords("enum"), "choice");
   assert.equal(directionWords("json"), "choice");
+});
+
+// AA-1096 l23 review: the example names the default; the page computes the value in force for the derived keys.
+const IN_FORCE = valuesInForce([
+  { key: "cis.t9.blog_chars_min", value: 4700 }, { key: "cis.t9.blog_chars_max", value: 13000 },
+  { key: "cis.t7.blog_chars_per_seed_word", value: 3.364 }, { key: "cis.t7.blog_min_seed_words", value: 600 },
+  { key: "cis.t9.repeat_drop_near_exact", value: 0.9 }, { key: "cis.quality.t9_blog_length_target_margin", value: 0.17 },
+]);
+
+test("the in-force line computes the blog source words from the values in force, not the default", () => {
+  const ratio = nowExample("cis.t7.blog_chars_per_seed_word", IN_FORCE, "en");
+  assert.match(ratio, /^Now 3\.364 characters per word: a topic needs about 1,398 source words/);
+  assert.match(nowExample("cis.t7.blog_chars_per_seed_word", IN_FORCE, "vi"), /^Đang là 3,364 ký tự mỗi từ: .*1\.398 từ/);
+  assert.match(nowExample("cis.t7.blog_min_seed_words", IN_FORCE, "en"),
+    /^Now 600 words; with the length-based minimum \(1,398 words\) a topic needs at least 1,398 source words/);
+  const off = withValue(IN_FORCE, "cis.t7.blog_min_seed_words", 0);
+  assert.match(nowExample("cis.t7.blog_min_seed_words", off, "en"), /^Now 0: the blog minimum is off/);
+  assert.match(nowExample("cis.t7.blog_chars_per_seed_word", off, "en"), /Not applied while the blog minimum/);
+  const noSizing = withValue(IN_FORCE, "cis.t7.blog_chars_per_seed_word", 0);
+  assert.match(nowExample("cis.t7.blog_chars_per_seed_word", noSizing, "en"), /^Now 0: no length-based minimum/);
+  assert.match(nowExample("cis.t7.blog_min_seed_words", noSizing, "en"), /at least 600 source words/);
+});
+
+test("the in-force line of the repeat cleanup and the blog length aim; other keys get none", () => {
+  assert.equal(nowExample("cis.t9.repeat_drop_near_exact", IN_FORCE, "en"),
+    "Now 0.9: the later sentence is deleted when 90 % of its words match the earlier one in the same order.");
+  assert.match(nowExample("cis.quality.t9_blog_length_target_margin", IN_FORCE, "en"),
+    /^Now 0\.17: the writer aims for at least about 5,499 characters \(minimum 4,700\)/);
+  const capped = withValue(IN_FORCE, "cis.quality.t9_blog_length_target_margin", 5);
+  assert.match(nowExample("cis.quality.t9_blog_length_target_margin", capped, "en"), /about 13,000 characters/);
+  assert.equal(nowExample("cis.publish.daily_limit_default", IN_FORCE, "en"), null);
+  assert.equal(nowExample("cis.t9.repeat_drop_near_exact", valuesInForce([]), "en"), null);
+  assert.equal(nowExample("cis.t7.blog_chars_per_seed_word", withValue(IN_FORCE, "cis.t9.blog_chars_min", "x"), "en"),
+    null);
 });

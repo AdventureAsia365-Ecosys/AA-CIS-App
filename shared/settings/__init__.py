@@ -65,7 +65,7 @@ def definition(key: str) -> Definition:
     return READER.definition(key)
 
 
-# AA-1096 l23 (CIS 415): the operator's guide of each key ({"en": {what, raise, lower, when, example}, "vi": ...}),
+# AA-1096 l23 (CIS 417): the operator's guide of each key ({"en": {what, raise, lower, when, example}, "vi": ...}),
 # from the compiled defaults like the rest of the definition. Kept out of reader.Definition: reader.py is the byte copy
 # AA-Partner and AA-TripPlanner-Web vendor, and only the admin page needs the guide.
 GUIDES: dict[str, Optional[dict]] = {d["key"]: d.get("guide") for d in load_definitions()}

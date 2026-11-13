@@ -30,11 +30,11 @@ import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import { staffErrorMessage } from "@/lib/rbac";
 import {
   APPS, badgesOf, boundsText, decisionPath, draftProblem, draftText, formatValue, groupByArea,
-  historyPath, proposalBody, proposalPath, registryPath, type BadgeKey, type HistoryResp, type ProposalDraft,
-  type RegistryResp, type SettingApp, type SettingItem, type SettingRow,
+  historyPath, proposalBody, proposalPath, registryPath, valuesInForce, type BadgeKey, type HistoryResp,
+  type ProposalDraft, type RegistryResp, type SettingApp, type SettingItem, type SettingRow, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
-import { ActorName, GuideDetails, SettingCell } from "./SettingGuide";
+import { ActorName, DraftNow, GuideDetails, SettingCell } from "./SettingGuide";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const APP_LABEL: Record<SettingApp, "appCis" | "appTripplanner" | "appCrm" | "appBooking"> = {
@@ -102,8 +102,8 @@ function sourceText(item: SettingItem, t: ST): string {
   return t("sourceDefault");
 }
 
-function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
-  item: SettingItem; twoPerson: boolean; canWrite: boolean; onClose: () => void; onDone: () => void;
+function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
+  item: SettingItem; twoPerson: boolean; canWrite: boolean; valueOf: ValueOf; onClose: () => void; onDone: () => void;
 }) {
   const t = useSettingsT();
   const toast = useToast();
@@ -139,7 +139,7 @@ function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
       </>}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
         <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 10, background: K.bg }}>
-          <GuideDetails item={item} testId="settings-propose-guide" />
+          <GuideDetails item={item} testId="settings-propose-guide" valueOf={valueOf} />
         </div>
         <div style={small}>
           {t("current")}: <strong style={{ fontFamily: mono }}>{formatValue(item.value, item)}</strong>
@@ -166,6 +166,7 @@ function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
               data-testid="settings-propose-value" />
           </Field>
         )}
+        <DraftNow item={item} text={draft.text} valueOf={valueOf} />
         <Field label={t("reason")} required hint={t("reasonHint")}>
           <Textarea rows={3} value={draft.reason} onChange={(e) => set({ reason: e.target.value })}
             data-testid="settings-propose-reason" />
@@ -276,6 +277,7 @@ function AppSettings({ app }: { app: SettingApp }) {
   const { isAdmin } = useAdminIdentity();
   const q = useQuery({ queryKey: ["settings-registry", app], queryFn: () => apiGet<RegistryResp>(registryPath(app)) });
   const groups = useMemo(() => groupByArea(q.data?.settings ?? []), [q.data]);
+  const valueOf = useMemo(() => valuesInForce(q.data?.settings ?? []), [q.data]);
   const [area, setArea] = useState<string>("");
   const [editing, setEditing] = useState<SettingItem | null>(null);
   const [viewing, setViewing] = useState<SettingItem | null>(null);
@@ -288,7 +290,7 @@ function AppSettings({ app }: { app: SettingApp }) {
   const columns = useMemo<ColumnDef<SettingItem, unknown>[]>(() => [
     { id: "setting", header: t("colSetting"), accessorKey: "label",
       cell: ({ row: { original: s } }) => (
-        <SettingCell item={s} badges={<Badges item={s} />}
+        <SettingCell item={s} badges={<Badges item={s} />} valueOf={valueOf}
           extra={s.env_ignored && <span style={{ ...small, color: K.danger }}>{t("envIgnored", s.env_ignored)}</span>} />
       ) },
     { id: "value", header: t("colValue"), accessorFn: (s) => formatValue(s.value, s),
@@ -318,7 +320,7 @@ function AppSettings({ app }: { app: SettingApp }) {
             <History size={12} /> {s.proposals.length ? t("review") : t("history")}</Button>
         </span>
       ) },
-  ], [t, isAdmin]);
+  ], [t, isAdmin, valueOf]);
 
   if (app === "booking") {
     return (
@@ -353,7 +355,7 @@ function AppSettings({ app }: { app: SettingApp }) {
           getRowId={(s) => s.key} searchable paginate={false} tableMinWidth={980} />
       )}
       {editing && (
-        <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={isAdmin}
+        <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={isAdmin} valueOf={valueOf}
           onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); }} />
       )}
       {viewing && (

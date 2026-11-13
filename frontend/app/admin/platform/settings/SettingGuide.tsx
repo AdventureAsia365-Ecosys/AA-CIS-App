@@ -6,16 +6,18 @@
 //   badges and an Explain toggle that opens the guide in place (in the flow of the cell, never a floating popover in
 //   the scrolling table: lesson S239).
 // - GuideDetails: what it controls / if you raise it / if you lower it (an on/off switch: turn on / off; a choice:
-//   the stricter / looser choice) / when to change it / example (at the default), then the technical description as a
-//   collapsed "Engineering note". The change dialog shows it above the inputs.
+//   the stricter / looser choice) / when to change it / example (at the default), for a few keys an "In force now"
+//   line computed from the values in force, then the technical description as a collapsed "Engineering note". The
+//   change dialog shows it above the inputs, and under the input the same line for the value being typed.
 // - ActorName: the staff member's name or e-mail, the actor id in the tooltip.
-// The guide comes from the API in English and Vietnamese (CIS 415, lib/settingsRegistry guideFor); kit only.
+// The guide comes from the API in English and Vietnamese (CIS 417, lib/settingsRegistry guideFor); kit only.
 
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { K, LinkButton, mono, useLang, useT } from "../../../_kit";
 import {
-  actorLabel, directionWords, guideFor, type GuidePart, type SettingDefinition,
+  actorLabel, directionWords, guideFor, nowExample, parseDraft, withValue, type GuidePart, type SettingDefinition,
+  type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
 
@@ -63,10 +65,13 @@ function EngineeringNote({ text }: { text: string }) {
   );
 }
 
-/** The whole guide of one setting, then its engineering note (collapsed). */
-export function GuideDetails({ item, testId }: { item: GuideItem; testId?: string }) {
+/** The whole guide of one setting, then its engineering note (collapsed). With ``valueOf`` (the values in force) a
+ *  key whose meaning follows other values gets an "In force now" line computed from them (lib nowExample). */
+export function GuideDetails({ item, testId, valueOf }: { item: GuideItem; testId?: string; valueOf?: ValueOf }) {
   const t = useT(SETTINGS);
-  const guide = guideFor(item, useLang());
+  const lang = useLang();
+  const guide = guideFor(item, lang);
+  const now = valueOf ? nowExample(item.key, valueOf, lang) : null;
   const parts: GuidePart[] = ["what", "raise", "lower", "when", "example"];
   return (
     <div data-testid={testId} style={{ display: "grid", gap: 8, minWidth: 0 }}>
@@ -78,6 +83,12 @@ export function GuideDetails({ item, testId }: { item: GuideItem; testId?: strin
               <dd style={{ ...small, color: K.body, margin: 0 }}>{guide[part]}</dd>
             </div>
           ))}
+          {now && (
+            <div style={{ display: "grid", gap: 1 }}>
+              <dt style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>{t("guideNow")}</dt>
+              <dd style={{ ...small, color: K.body, margin: 0 }} data-testid={`settings-now-${item.key}`}>{now}</dd>
+            </div>
+          )}
         </dl>
       ) : <div style={small}>{t("noGuide")}</div>}
       <EngineeringNote text={item.description} />
@@ -86,7 +97,9 @@ export function GuideDetails({ item, testId }: { item: GuideItem; testId?: strin
 }
 
 /** The Setting column of the registry table: label, what, key, badges, the Explain toggle and, open, the guide. */
-export function SettingCell({ item, badges, extra }: { item: GuideItem; badges: ReactNode; extra?: ReactNode }) {
+export function SettingCell({ item, badges, extra, valueOf }: {
+  item: GuideItem; badges: ReactNode; extra?: ReactNode; valueOf?: ValueOf;
+}) {
   const t = useT(SETTINGS);
   const [open, setOpen] = useState(false);
   return (
@@ -103,9 +116,24 @@ export function SettingCell({ item, badges, extra }: { item: GuideItem; badges: 
       </span>
       {open && (
         <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 10, background: K.bg }}>
-          <GuideDetails item={item} testId={`settings-guide-${item.key}`} />
+          <GuideDetails item={item} testId={`settings-guide-${item.key}`} valueOf={valueOf} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Under the value input of the change dialog: the "In force now" line recomputed with the value being typed (only
+ *  for the keys lib nowExample knows, and only while the text parses). */
+export function DraftNow({ item, text, valueOf }: { item: SettingDefinition; text: string; valueOf: ValueOf }) {
+  const t = useT(SETTINGS);
+  const lang = useLang();
+  const parsed = parseDraft(item, text);
+  const line = parsed.value === undefined ? null : nowExample(item.key, withValue(valueOf, item.key, parsed.value), lang);
+  if (!line) return null;
+  return (
+    <div style={small} data-testid="settings-propose-now">
+      <strong>{t("guideIfApplied")}:</strong> {line}
     </div>
   );
 }

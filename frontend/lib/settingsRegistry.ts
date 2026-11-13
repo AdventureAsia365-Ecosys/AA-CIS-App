@@ -34,7 +34,7 @@ export interface SettingRow {
   decided_by_name?: string | null;
 }
 
-/** AA-1096 l23 (CIS 415): the operator's guide of a setting, one per language. */
+/** AA-1096 l23 (CIS 417): the operator's guide of a setting, one per language. */
 export const GUIDE_PARTS = ["what", "raise", "lower", "when", "example"] as const;
 export type GuidePart = (typeof GUIDE_PARTS)[number];
 export type GuideText = Record<GuidePart, string>;
@@ -281,4 +281,101 @@ export type DirectionWords = "number" | "switch" | "choice";
 export function directionWords(t: ValueType): DirectionWords {
   if (NUMERIC.includes(t)) return "number";
   return t === "bool" ? "switch" : "choice";
+}
+
+/** AA-1096 l23 review: a guide's example names the default, because the value in force can change. For the keys
+ *  whose meaning is a sum of other values (the blog source words a topic needs, the repeat cleanup, the blog length
+ *  aim) the page adds a line computed from the values in force: valueOf(key) reads one of them (the app's items, or
+ *  the draft in the change dialog). null = nothing to add (another key, or a value it needs is missing). Pure. */
+export type ValueOf = (key: string) => SettingValue | undefined;
+
+const BLOG_FLOOR = "cis.t9.blog_chars_min";
+const BLOG_CEILING = "cis.t9.blog_chars_max";
+const SEED_RATIO = "cis.t7.blog_chars_per_seed_word";
+const SEED_MIN = "cis.t7.blog_min_seed_words";
+
+function numberOf(valueOf: ValueOf, key: string): number | null {
+  const v = valueOf(key);
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function fmt(n: number, vi: boolean, digits = 3): string {
+  return n.toLocaleString(vi ? "vi-VN" : "en-US", { maximumFractionDigits: digits });
+}
+
+function seedRatioNow(valueOf: ValueOf, vi: boolean): string | null {
+  const r = numberOf(valueOf, SEED_RATIO);
+  const floor = numberOf(valueOf, BLOG_FLOOR);
+  if (r === null || floor === null) return null;
+  if (r <= 0) {
+    return vi ? "Đang là 0: không có ngưỡng theo độ dài; chỉ áp dụng mức từ nguồn tối thiểu của Blog."
+      : "Now 0: no length-based minimum; only the blog minimum source words applies.";
+  }
+  const words = Math.ceil(floor / r);
+  const off = numberOf(valueOf, SEED_MIN) === 0;
+  return vi
+    ? `Đang là ${fmt(r, vi)} ký tự mỗi từ: chủ đề cần khoảng ${fmt(words, vi, 0)} từ nguồn để có bài Blog `
+      + `(${fmt(floor, vi, 0)} / ${fmt(r, vi)}).${off ? " Chưa áp dụng vì mức từ nguồn tối thiểu của Blog đang là 0." : ""}`
+    : `Now ${fmt(r, vi)} characters per word: a topic needs about ${fmt(words, vi, 0)} source words for a blog `
+      + `(${fmt(floor, vi, 0)} / ${fmt(r, vi)}).${off ? " Not applied while the blog minimum source words is 0." : ""}`;
+}
+
+function seedMinNow(valueOf: ValueOf, vi: boolean): string | null {
+  const flat = numberOf(valueOf, SEED_MIN);
+  if (flat === null) return null;
+  if (flat <= 0) {
+    return vi ? "Đang là 0: tắt mức tối thiểu; chủ đề nào cũng có thể được đề xuất viết Blog."
+      : "Now 0: the blog minimum is off; every topic may be offered as a blog.";
+  }
+  const r = numberOf(valueOf, SEED_RATIO) ?? 0;
+  const floor = numberOf(valueOf, BLOG_FLOOR) ?? 0;
+  const sized = r > 0 ? Math.ceil(floor / r) : 0;
+  const need = Math.max(flat, sized);
+  return vi
+    ? `Đang là ${fmt(flat, vi, 0)} từ; cùng ngưỡng theo độ dài (${fmt(sized, vi, 0)} từ), chủ đề cần ít nhất `
+      + `${fmt(need, vi, 0)} từ nguồn để được đề xuất viết Blog.`
+    : `Now ${fmt(flat, vi, 0)} words; with the length-based minimum (${fmt(sized, vi, 0)} words) a topic needs at least `
+      + `${fmt(need, vi, 0)} source words to be offered as a blog.`;
+}
+
+function repeatNow(valueOf: ValueOf, vi: boolean): string | null {
+  const v = numberOf(valueOf, "cis.t9.repeat_drop_near_exact");
+  if (v === null) return null;
+  return vi
+    ? `Đang là ${fmt(v, vi)}: câu sau bị xoá khi ${fmt(v * 100, vi, 1)} % số từ khớp với câu trước theo đúng thứ tự.`
+    : `Now ${fmt(v, vi)}: the later sentence is deleted when ${fmt(v * 100, vi, 1)} % of its words match the earlier `
+      + "one in the same order.";
+}
+
+function lengthAimNow(valueOf: ValueOf, vi: boolean): string | null {
+  const m = numberOf(valueOf, "cis.quality.t9_blog_length_target_margin");
+  const floor = numberOf(valueOf, BLOG_FLOOR);
+  if (m === null || floor === null) return null;
+  const aim = Math.min(Math.round(floor * (1 + m)), numberOf(valueOf, BLOG_CEILING) ?? Infinity);
+  return vi
+    ? `Đang là ${fmt(m, vi)}: bộ viết nhắm ít nhất khoảng ${fmt(aim, vi, 0)} ký tự (mức tối thiểu ${fmt(floor, vi, 0)}).`
+    : `Now ${fmt(m, vi)}: the writer aims for at least about ${fmt(aim, vi, 0)} characters (minimum ${fmt(floor, vi, 0)}).`;
+}
+
+const NOW_EXAMPLES: Record<string, (valueOf: ValueOf, vi: boolean) => string | null> = {
+  [SEED_RATIO]: seedRatioNow,
+  [SEED_MIN]: seedMinNow,
+  "cis.t9.repeat_drop_near_exact": repeatNow,
+  "cis.quality.t9_blog_length_target_margin": lengthAimNow,
+};
+
+export function nowExample(key: string, valueOf: ValueOf, lang: string): string | null {
+  const f = NOW_EXAMPLES[key];
+  return f ? f(valueOf, lang === "vi") : null;
+}
+
+/** valueOf over a list of items (their values in force). Pure. */
+export function valuesInForce(items: Pick<SettingItem, "key" | "value">[]): ValueOf {
+  const m = new Map<string, SettingValue>(items.map((s) => [s.key, s.value]));
+  return (key) => m.get(key);
+}
+
+/** valueOf with one key replaced (the value typed in the change dialog). Pure. */
+export function withValue(valueOf: ValueOf, key: string, value: SettingValue): ValueOf {
+  return (k) => (k === key ? value : valueOf(k));
 }
