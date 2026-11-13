@@ -255,7 +255,7 @@ class TestOffboard:
     async def test_no_stale_acc1_bucket_note_and_queued_only_cancel(self, monkeypatch, erasure_hooks):
         conn = _conn()
         conn.fetchrow.side_effect = [
-            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None, "is_pilot": False},
+            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None},
             {"reason": "AA test tenant", "added_at": CANCELLED, "added_by": "migration-181"},
         ]
         view = {"session_id": "s-1", "tenant_id": str(TENANT_ID), "session_staff": "u-9", "end_reason": "revoked"}
@@ -283,10 +283,11 @@ class TestOffboard:
         assert details["jev_allowlist"] == {"reason": "AA test tenant", "added_at": CANCELLED.isoformat(),
                                             "added_by": "migration-181"}
         hook.assert_awaited_once()
-        # AA-1093 lane L2: T0 of the erasure saga, in the offboard transaction (the pilot flag passed on)
+        # AA-1093 lane L2: T0 of the erasure saga, in the offboard transaction (the hook reads cancelled_at and the
+        # pilot flag from the row the UPDATE just wrote)
         on_offboard, _ = erasure_hooks
-        kw = on_offboard.await_args.kwargs
-        assert kw["is_pilot"] is False and kw["actor"] == "admin:u-2"
+        assert on_offboard.await_args.args[1] == str(TENANT_ID)
+        assert on_offboard.await_args.kwargs == {"actor": "admin:u-2"}
         assert out["erasure_request"] == {"status": "scheduled", "request_id": "r-1"}
 
     @pytest.mark.asyncio
@@ -294,8 +295,7 @@ class TestOffboard:
         """Nghiệp 14/10: restore must bring data + settings back, so offboard deletes nothing but
         the Jev allow-list row (snapshotted in the audit row) and only UPDATEs shared.tenants."""
         conn = _conn()
-        conn.fetchrow.side_effect = [
-            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None, "is_pilot": False}, None]
+        conn.fetchrow.side_effect = [{"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None}, None]
         conn.fetch.return_value = []
         monkeypatch.setattr("shared.jobs.registry.run_terminal_hook", AsyncMock())
         await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="left"), _request(conn),
@@ -311,7 +311,7 @@ class TestOffboard:
         for kept in ("plan_id", "plan_tier", "posts_per_week", "rate_limit_rpm"):
             assert kept not in tenant_upd
         # AA-1036: account_status is the offboarded marker; no key column is written
-        assert "account_status      = 'offboarding'" in tenant_upd and "api_key" not in tenant_upd
+        assert "account_status = 'offboarding'" in tenant_upd and "api_key" not in tenant_upd
         for table in ("brand_rules", "tenant_config", "tenant_tour_versions", "content_piece", "users"):
             assert not any(table in q for q in sqls)
 

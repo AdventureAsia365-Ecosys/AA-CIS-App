@@ -222,10 +222,8 @@ def _same(step: dict, body: ErasureReportIn) -> bool:
             and plain(step.get("census")) == plain(body.census.model_dump() if body.census else None))
 
 
-@router.post("/erasure-requests/{request_id}/reports",
-             responses={200: {"model": ReportAccepted}, 201: {"model": ReportAccepted}})
-async def report_erasure_step(request_id: str, request: Request,
-                              caller: m2m_auth.M2MCaller = Depends(require_erasure)) -> JSONResponse:
+async def _report_body(request_id: str, request: Request) -> tuple[str, ErasureReportIn]:
+    """The request id and the CRM report body, checked against the contract (404 / 403 / 422 problems)."""
     try:
         rid = str(uuid.UUID(request_id))
     except ValueError:
@@ -242,6 +240,14 @@ async def report_erasure_step(request_id: str, request: Request,
         raise M2MProblem(422, "invalid", "An ok dry_run or apply report carries its plan_hash.")
     if body.mode == "verify" and body.status == "ok" and body.census is None:
         raise M2MProblem(422, "invalid", "An ok verify report carries its census.")
+    return rid, body
+
+
+@router.post("/erasure-requests/{request_id}/reports",
+             responses={200: {"model": ReportAccepted}, 201: {"model": ReportAccepted}})
+async def report_erasure_step(request_id: str, request: Request,
+                              caller: m2m_auth.M2MCaller = Depends(require_erasure)) -> JSONResponse:
+    rid, body = await _report_body(request_id, request)
     report_id = str(body.report_id)
     try:
         async with _pool(request).acquire(timeout=ACQUIRE_TIMEOUT_S) as conn, conn.transaction():

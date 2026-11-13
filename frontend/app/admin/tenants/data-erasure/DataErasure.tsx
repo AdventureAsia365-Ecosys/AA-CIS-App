@@ -356,7 +356,11 @@ export default function DataErasure() {
           tabs={[{ key: "subjects", label: to("tabSubjects") }, { key: "offboarding", label: to("tabOffboarding") }]} />
       </div>
 
-      {tab === "offboarding" ? <TenantOffboarding /> : (<>
+      <div hidden={tab !== "offboarding"} data-testid="data-erasure-offboarding-pane">
+        <TenantOffboarding active={tab === "offboarding"} />
+      </div>
+
+      <div hidden={tab !== "subjects"} data-testid="data-erasure-subjects-pane">
 
       <Section title={t("settingsTitle")} testId="erasure-settings">
         <Facts items={[
@@ -464,7 +468,7 @@ export default function DataErasure() {
           emptyDescription={t("historyEmptyDesc")}
         />
       </Section>
-      </>)}
+      </div>
     </div>
   );
 }

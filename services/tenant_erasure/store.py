@@ -90,10 +90,16 @@ async def create_request(conn, tenant_id: str, *, opened_at: datetime, mode: str
     return req
 
 
-async def on_offboard(conn, tenant_id: str, *, offboarded_at: datetime, actor: str, is_pilot: bool,
-                      env: Optional[dict] = None) -> dict:
-    """The T0 hook of POST /admin/tenants/{id}/offboard, inside its transaction. Returns what the route reports:
+async def on_offboard(conn, tenant_id: str, *, actor: str, offboarded_at: Optional[datetime] = None,
+                      is_pilot: Optional[bool] = None, env: Optional[dict] = None) -> dict:
+    """The T0 hook of POST /admin/tenants/{id}/offboard, inside its transaction (after the UPDATE that set
+    cancelled_at; offboarded_at / is_pilot default to the tenant row). Returns what the route reports:
     {"status": "scheduled", ...} | {"status": "skipped", "reason": ...}. Never raises for a missing migration."""
+    if offboarded_at is None or is_pilot is None:
+        row = await conn.fetchrow(
+            "SELECT cancelled_at, is_pilot FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id)
+        offboarded_at = offboarded_at or row["cancelled_at"]
+        is_pilot = bool(row["is_pilot"]) if is_pilot is None else is_pilot
     if is_pilot:
         return {"status": "skipped", "reason": "pilot tenant: never scheduled by the saga (decision D8)"}
     try:

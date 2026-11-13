@@ -13,7 +13,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, DateText, ErrorState, Input, K, StatusBadge, TableSkeleton, apiGet, mono, useT,
   type ColumnDef,
@@ -71,23 +71,156 @@ function StepCell({ req, app, mode }: { req: SagaRequest; app: App; mode: StepMo
   );
 }
 
-function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
+type Note = { tone: "success" | "danger"; text: string } | null;
+type Act = (path: string, body: Record<string, unknown>, done: string) => Promise<void>;
+
+function DetailActions({ req, busy, act }: { req: SagaRequest; busy: boolean; act: Act }) {
   const t = useT(TO);
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {WORKING_PHASES.includes(req.phase) && (
+        <Button size="sm" variant="secondary" disabled={busy}
+          onClick={() => void act("/advance", {}, t("runQueued"))}>
+          <Play size={13} /> {t("runNow")}
+        </Button>
+      )}
+      {NEW_ROUND_PHASES.includes(req.phase) && (
+        <Button size="sm" variant="ghost" disabled={busy}
+          onClick={() => void act("/new-round", {}, t("newRoundDone"))}>
+          <RotateCcw size={13} /> {t("newRound")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function DetailFacts({ req }: { req: SagaRequest }) {
+  const t = useT(TO);
+  const approval = req.approved_by ? [
+    { label: t("factApproved"), value: <span style={{ fontSize: 13 }}>{req.approved_by}</span> },
+    { label: t("factExpires"), value: <DateText value={req.approval_expires_at} withTime /> },
+    { label: t("factSnapshot"), value: <span style={{ fontFamily: mono, fontSize: 13 }}>{req.snapshot_id}</span> },
+  ] : [];
+  const job = req.job ? [{ label: t("factJob"), value: <StatusBadge status={req.job.status} /> }] : [];
+  return (
+    <Facts items={[
+      { label: t("colPhase"), value: <Badge tone={phaseTone(req.phase)}>{req.phase}</Badge> },
+      { label: t("colMode"), value: req.mode === "drill" ? t("drill") : t("live") },
+      { label: t("colRound"), value: req.round },
+      { label: t("factOffboarded"), value: <DateText value={req.opened_at} withTime /> },
+      ...APPS.map((app) => ({
+        label: t("factNotBefore", APP_LABEL[app]), value: <DateText value={notBefore(req, app)} withTime />,
+      })),
+      { label: t("factFingerprint"), value: <span style={{ fontFamily: mono }}>{shortHash(req.combined_fingerprint)}</span> },
+      ...approval,
+      ...job,
+    ]} />
+  );
+}
+
+function BlockerList({ req }: { req: SagaRequest }) {
+  const t = useT(TO);
+  if (req.blockers.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12 }} data-testid="tenant-erasure-blockers">
+      <Notice tone="warning">
+        <strong>{t("blockersTitle")}</strong>
+        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+          {req.blockers.map((b) => (
+            <li key={`${b.app}:${b.kind}`}>
+              <strong>{APP_LABEL[b.app as App] ?? b.app}</strong> · {b.kind}{b.detail ? ` — ${b.detail}` : ""}
+            </li>
+          ))}
+        </ul>
+      </Notice>
+    </div>
+  );
+}
+
+function ApprovalForm({ req, closed, busy, act }: { req: SagaRequest; closed: string[]; busy: boolean; act: Act }) {
+  const t = useT(TO);
+  const [prefix, setPrefix] = useState("");
+  const [snapshot, setSnapshot] = useState("");
+  const canApprove = closed.length === 0 && prefixMatches(req.combined_fingerprint, prefix) && snapshot.trim() !== "";
+  if (closed.length > 0) {
+    return (
+      <Notice tone="warning">
+        <strong>{t("approveClosed")}</strong>
+        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>{closed.map((r) => <li key={r}>{r}</li>)}</ul>
+      </Notice>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Notice tone="danger">{t("approveLead")}</Notice>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <label style={labelStyle}>
+          {t("fingerprintPrefix", FINGERPRINT_PREFIX)}
+          <Input value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={FINGERPRINT_PREFIX}
+            autoComplete="off" spellCheck={false} style={{ ...inputStyle, fontFamily: mono }}
+            data-testid="tenant-erasure-fp" />
+        </label>
+        <label style={labelStyle}>
+          {t("snapshotId")}
+          <Input value={snapshot} onChange={(e) => setSnapshot(e.target.value)} maxLength={255}
+            autoComplete="off" spellCheck={false} style={{ ...inputStyle, fontFamily: mono }}
+            data-testid="tenant-erasure-snapshot" />
+        </label>
+      </div>
+      <span style={hintStyle}>{t("cognitoNote")}</span>
+      <div>
+        <Button variant="danger" disabled={!canApprove || busy}
+          onClick={() => void act("/approve", { fingerprint: req.combined_fingerprint, snapshot_id: snapshot.trim() },
+            t("approved"))}>
+          {t("approve")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function useStepColumns(req: SagaRequest | undefined): ColumnDef<{ app: App }, unknown>[] {
+  const t = useT(TO);
+  return useMemo(() => {
+    if (!req) return [];
+    return [
+      {
+        accessorKey: "app", header: t("colApp"),
+        cell: (c) => (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <strong>{APP_LABEL[c.row.original.app]}</strong>
+            <Badge tone={stepTone(stepStatus(req, c.row.original.app))} dot={false}>{stepStatus(req, c.row.original.app)}</Badge>
+          </div>
+        ),
+      },
+      { id: "dry", header: t("colDryRun"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="dry_run" /> },
+      { id: "apply", header: t("colApply"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="apply" /> },
+      { id: "verify", header: t("colVerify"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="verify" /> },
+    ];
+  }, [req, t]);
+}
+
+function useNow(everyMs: number): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const h = window.setInterval(() => setNow(Date.now()), 60_000);
+    const h = window.setInterval(() => setNow(Date.now()), everyMs);
     return () => window.clearInterval(h);
-  }, []);
+  }, [everyMs]);
+  return now;
+}
+
+function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
+  const t = useT(TO);
+  const now = useNow(60_000);
   const q = useQuery({
     queryKey: ["tenant-erasure-request", id],
     queryFn: () => apiGet<SagaDetail>(`${ERASURE_REQUESTS_API}/${encodeURIComponent(id)}`),
     refetchInterval: (s) => (s.state.data && WORKING_PHASES.includes(s.state.data.request.phase) ? LIST_POLL_MS : false),
     refetchIntervalInBackground: false,
   });
-  const [prefix, setPrefix] = useState("");
-  const [snapshot, setSnapshot] = useState("");
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+  const [note, setNote] = useState<Note>(null);
+  const stepColumns = useStepColumns(q.data?.request);
 
   if (q.isLoading) return <Section title={t("detailTitle")}><TableSkeleton rows={4} cols={4} /></Section>;
   if (q.error || !q.data) {
@@ -98,13 +231,11 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
     );
   }
   const req = q.data.request;
-  const settings = q.data.settings;
-  const closed = approvalBlockers(req, settings, now, {
+  const closed = approvalBlockers(req, q.data.settings, now, {
     notAwaiting: t("notAwaiting"), switchOff: t("switchOff"), tooOld: (h: number) => t("tooOld", h),
   });
-  const canApprove = closed.length === 0 && prefixMatches(req.combined_fingerprint, prefix) && snapshot.trim() !== "";
 
-  const act = async (path: string, body: Record<string, unknown>, done: string) => {
+  const act: Act = async (path, body, done) => {
     setBusy(true);
     setNote(null);
     const out = await post(`/${encodeURIComponent(req.request_id)}${path}`, body, t("noAnswer"));
@@ -114,116 +245,24 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
     onChanged();
   };
 
-  const rows = APPS.map((app) => ({ app }));
-  const stepColumns: ColumnDef<{ app: App }, unknown>[] = [
-    {
-      accessorKey: "app", header: t("colApp"),
-      cell: (c) => (
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          <strong>{APP_LABEL[c.row.original.app]}</strong>
-          <Badge tone={stepTone(stepStatus(req, c.row.original.app))} dot={false}>{stepStatus(req, c.row.original.app)}</Badge>
-        </div>
-      ),
-    },
-    { id: "dry", header: t("colDryRun"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="dry_run" /> },
-    { id: "apply", header: t("colApply"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="apply" /> },
-    { id: "verify", header: t("colVerify"), cell: (c) => <StepCell req={req} app={c.row.original.app} mode="verify" /> },
-  ];
-
   return (
     <div data-testid="tenant-erasure-detail">
-      <Section
-        title={<>{t("detailTitle")} · <TenantName id={req.tenant_id} /></>}
-        right={
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {WORKING_PHASES.includes(req.phase) && (
-              <Button size="sm" variant="secondary" disabled={busy}
-                onClick={() => void act("/advance", {}, t("runQueued"))}>
-                <Play size={13} /> {t("runNow")}
-              </Button>
-            )}
-            {NEW_ROUND_PHASES.includes(req.phase) && (
-              <Button size="sm" variant="ghost" disabled={busy}
-                onClick={() => void act("/new-round", {}, t("newRoundDone"))}>
-                <RotateCcw size={13} /> {t("newRound")}
-              </Button>
-            )}
-          </div>
-        }
-      >
+      <Section title={<>{t("detailTitle")} · <TenantName id={req.tenant_id} /></>}
+        right={<DetailActions req={req} busy={busy} act={act} />}>
         {note && <Notice tone={note.tone}>{note.text}</Notice>}
-        <Facts items={[
-          { label: t("colPhase"), value: <Badge tone={phaseTone(req.phase)}>{req.phase}</Badge> },
-          { label: t("colMode"), value: req.mode === "drill" ? t("drill") : t("live") },
-          { label: t("colRound"), value: req.round },
-          { label: t("factOffboarded"), value: <DateText value={req.opened_at} withTime /> },
-          ...APPS.map((app) => ({
-            label: t("factNotBefore", APP_LABEL[app]), value: <DateText value={notBefore(req, app)} withTime />,
-          })),
-          { label: t("factFingerprint"), value: <span style={{ fontFamily: mono }}>{shortHash(req.combined_fingerprint)}</span> },
-          ...(req.approved_by ? [
-            { label: t("factApproved"), value: <span style={{ fontSize: 13 }}>{req.approved_by}</span> },
-            { label: t("factExpires"), value: <DateText value={req.approval_expires_at} withTime /> },
-            { label: t("factSnapshot"), value: <span style={{ fontFamily: mono, fontSize: 13 }}>{req.snapshot_id}</span> },
-          ] : []),
-          ...(req.job ? [{ label: t("factJob"), value: <StatusBadge status={req.job.status} /> }] : []),
-        ]} />
-        {req.blockers.length > 0 && (
-          <div style={{ marginTop: 12 }} data-testid="tenant-erasure-blockers">
-            <Notice tone="warning">
-              <strong>{t("blockersTitle")}</strong>
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-                {req.blockers.map((b) => (
-                  <li key={`${b.app}:${b.kind}`}>
-                    <strong>{APP_LABEL[b.app as App] ?? b.app}</strong> · {b.kind}{b.detail ? ` — ${b.detail}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </Notice>
-          </div>
-        )}
+        <DetailFacts req={req} />
+        <BlockerList req={req} />
       </Section>
 
       <Section title={t("stepsTitle", req.round)} testId="tenant-erasure-steps">
-        <DataTable tableId="tenant-erasure-steps" data={rows} columns={stepColumns} getRowId={(r) => r.app}
-          paginate={false} tableMinWidth={720} emptyTitle="—" />
+        <DataTable tableId="tenant-erasure-steps" data={APPS.map((app) => ({ app }))} columns={stepColumns}
+          getRowId={(r) => r.app} paginate={false} tableMinWidth={720} emptyTitle="—" />
       </Section>
 
       {req.phase === "awaiting_approval" && (
         <Section title={<span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><ShieldCheck size={15} /> {t("approveTitle")}</span>}
           testId="tenant-erasure-approve">
-          {closed.length > 0 ? (
-            <Notice tone="warning">
-              <strong>{t("approveClosed")}</strong>
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>{closed.map((r) => <li key={r}>{r}</li>)}</ul>
-            </Notice>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Notice tone="danger">{t("approveLead")}</Notice>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-                <label style={labelStyle}>
-                  {t("fingerprintPrefix", FINGERPRINT_PREFIX)}
-                  <Input value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={FINGERPRINT_PREFIX}
-                    autoComplete="off" spellCheck={false} style={{ ...inputStyle, fontFamily: mono }}
-                    data-testid="tenant-erasure-fp" />
-                </label>
-                <label style={labelStyle}>
-                  {t("snapshotId")}
-                  <Input value={snapshot} onChange={(e) => setSnapshot(e.target.value)} maxLength={255}
-                    autoComplete="off" spellCheck={false} style={{ ...inputStyle, fontFamily: mono }}
-                    data-testid="tenant-erasure-snapshot" />
-                </label>
-              </div>
-              <span style={hintStyle}>{t("cognitoNote")}</span>
-              <div>
-                <Button variant="danger" disabled={!canApprove || busy}
-                  onClick={() => void act("/approve", { fingerprint: req.combined_fingerprint, snapshot_id: snapshot.trim() },
-                    t("approved"))}>
-                  {t("approve")}
-                </Button>
-              </div>
-            </div>
-          )}
+          <ApprovalForm req={req} closed={closed} busy={busy} act={act} />
         </Section>
       )}
 
@@ -238,23 +277,9 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
   );
 }
 
-export default function TenantOffboarding() {
+function useRequestColumns(onOpen: (requestId: string) => void): ColumnDef<SagaRequest, unknown>[] {
   const t = useT(TO);
-  const qc = useQueryClient();
-  const [selected, setSelected] = useState<string | null>(null);
-  const [drillTenant, setDrillTenant] = useState("");
-  const [drillNote, setDrillNote] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
-  const list = useQuery({
-    queryKey: ["tenant-erasure-requests"],
-    queryFn: () => apiGet<SagaList>(ERASURE_REQUESTS_API),
-    refetchInterval: (s) => ((s.state.data?.requests ?? []).some((r) => WORKING_PHASES.includes(r.phase))
-      ? LIST_POLL_MS : false),
-    refetchIntervalInBackground: false,
-  });
-  const refresh = () => void qc.invalidateQueries({ queryKey: ["tenant-erasure-requests"] });
-  const s = list.data?.settings;
-
-  const columns = useMemo<ColumnDef<SagaRequest, unknown>[]>(() => [
+  return useMemo<ColumnDef<SagaRequest, unknown>[]>(() => [
     {
       id: "tenant", accessorFn: (r) => r.tenant_name ?? r.tenant_id, header: t("colTenant"),
       cell: (c) => (c.row.original.tenant_name
@@ -280,21 +305,73 @@ export default function TenantOffboarding() {
     { accessorKey: "created_at", header: t("colCreated"), cell: (c) => <DateText value={c.row.original.created_at} withTime /> },
     {
       id: "open", header: "", enableSorting: false,
-      cell: (c) => <Button size="sm" variant="secondary" onClick={() => setSelected(c.row.original.request_id)}>{t("open")}</Button>,
+      cell: (c) => <Button size="sm" variant="secondary" onClick={() => onOpen(c.row.original.request_id)}>{t("open")}</Button>,
     },
-  ], [t]);
+  ], [t, onOpen]);
+}
 
+function SettingsSection({ s, onRefresh }: { s: SagaList["settings"] | undefined; onRefresh: () => void }) {
+  const t = useT(TO);
+  const dash = (v: number | undefined) => String(v ?? "—");
+  return (
+    <Section title={t("settingsTitle")} testId="tenant-erasure-settings"
+      right={<Button variant="ghost" size="sm" onClick={onRefresh}><RefreshCw size={13} /> {t("refresh")}</Button>}>
+      <Facts items={[
+        { label: t("factApply"), value: s?.apply_enabled ? <Badge tone="danger">{t("applyOn")}</Badge> : <Badge tone="neutral">{t("applyOff")}</Badge> },
+        { label: t("factWindowOthers"), value: t("days", dash(s?.window_days.cis)) },
+        { label: t("factWindowCrm"), value: t("days", dash(s?.window_days.crm)) },
+        { label: t("factValid"), value: t("hours", dash(s?.approval_valid_hours)) },
+      ]} />
+    </Section>
+  );
+}
+
+function DrillSection({ onStarted }: { onStarted: (requestId: string | undefined) => void }) {
+  const t = useT(TO);
+  const [drillTenant, setDrillTenant] = useState("");
+  const [drillNote, setDrillNote] = useState<Note>(null);
   const startDrill = async () => {
     setDrillNote(null);
     const out = await post("/drill", { tenant_id: drillTenant }, t("noAnswer"));
-    if (out.ok) {
-      const req = (out.data.request ?? {}) as { request_id?: string };
-      setDrillNote({ tone: "success", text: t("drillStarted") });
-      if (req.request_id) setSelected(req.request_id);
-      refresh();
-    } else {
+    if (!out.ok) {
       setDrillNote({ tone: "danger", text: out.message });
+      return;
     }
+    setDrillNote({ tone: "success", text: t("drillStarted") });
+    onStarted(((out.data.request ?? {}) as { request_id?: string }).request_id);
+  };
+  return (
+    <Section title={t("drillTitle")} testId="tenant-erasure-drill">
+      <p style={{ ...hintStyle, margin: "0 0 10px" }}>{t("drillHelp")}</p>
+      {drillNote && <Notice tone={drillNote.tone}>{drillNote.text}</Notice>}
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 260, flex: "1 1 260px" }}>
+          <TenantSelect value={drillTenant} onChange={(id) => setDrillTenant(id)} includeInactive
+            offer={(tn) => tn.status === "offboarded"} testId="tenant-erasure-drill-tenant" />
+        </div>
+        <Button variant="secondary" disabled={!drillTenant} onClick={() => void startDrill()}>{t("drillButton")}</Button>
+      </div>
+    </Section>
+  );
+}
+
+export default function TenantOffboarding({ active = true }: { active?: boolean }) {
+  const t = useT(TO);
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<string | null>(null);
+  const list = useQuery({
+    queryKey: ["tenant-erasure-requests"],
+    queryFn: () => apiGet<SagaList>(ERASURE_REQUESTS_API),
+    enabled: active,
+    refetchInterval: (s) => ((s.state.data?.requests ?? []).some((r) => WORKING_PHASES.includes(r.phase))
+      ? LIST_POLL_MS : false),
+    refetchIntervalInBackground: false,
+  });
+  const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: ["tenant-erasure-requests"] }), [qc]);
+  const columns = useRequestColumns(setSelected);
+  const onDrillStarted = (requestId: string | undefined) => {
+    if (requestId) setSelected(requestId);
+    refresh();
   };
 
   if (list.isLoading) return <TableSkeleton rows={4} cols={5} />;
@@ -303,15 +380,7 @@ export default function TenantOffboarding() {
   return (
     <div data-testid="tenant-offboarding-ready" style={{ minWidth: 0 }}>
       <p style={{ margin: "0 0 14px", fontSize: 13, color: K.body, lineHeight: 1.55 }}>{t("intro")}</p>
-      <Section title={t("settingsTitle")} testId="tenant-erasure-settings"
-        right={<Button variant="ghost" size="sm" onClick={refresh}><RefreshCw size={13} /> {t("refresh")}</Button>}>
-        <Facts items={[
-          { label: t("factApply"), value: s?.apply_enabled ? <Badge tone="danger">{t("applyOn")}</Badge> : <Badge tone="neutral">{t("applyOff")}</Badge> },
-          { label: t("factWindowOthers"), value: t("days", String(s?.window_days.cis ?? "—")) },
-          { label: t("factWindowCrm"), value: t("days", String(s?.window_days.crm ?? "—")) },
-          { label: t("factValid"), value: t("hours", String(s?.approval_valid_hours ?? "—")) },
-        ]} />
-      </Section>
+      <SettingsSection s={list.data?.settings} onRefresh={refresh} />
 
       <Section title={t("requestsTitle")} testId="tenant-erasure-requests">
         <DataTable tableId="tenant-erasure-requests" data={list.data?.requests ?? []} columns={columns}
@@ -321,17 +390,7 @@ export default function TenantOffboarding() {
 
       {selected && <RequestDetail key={selected} id={selected} onChanged={refresh} />}
 
-      <Section title={t("drillTitle")} testId="tenant-erasure-drill">
-        <p style={{ ...hintStyle, margin: "0 0 10px" }}>{t("drillHelp")}</p>
-        {drillNote && <Notice tone={drillNote.tone}>{drillNote.text}</Notice>}
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div style={{ minWidth: 260, flex: "1 1 260px" }}>
-            <TenantSelect value={drillTenant} onChange={(id) => setDrillTenant(id)} includeInactive
-              offer={(tn) => tn.status === "offboarded"} testId="tenant-erasure-drill-tenant" />
-          </div>
-          <Button variant="secondary" disabled={!drillTenant} onClick={() => void startDrill()}>{t("drillButton")}</Button>
-        </div>
-      </Section>
+      <DrillSection onStarted={onDrillStarted} />
     </div>
   );
 }

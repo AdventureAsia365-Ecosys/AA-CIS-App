@@ -52,6 +52,8 @@ ACTOR = "job:tenant_erasure_saga"
 # reported yet (its own pull runs on its schedule). Polling intervals, not policy values.
 CIS_JOB_POLL_S = 30
 APP_POLL_S = RESCHEDULE_MAX_DELAY_SECONDS
+# A CIS job of the saga that ended without a result.
+TERMINAL_BAD = ("failed", "cancelled", "stopped_budget")
 
 ACTIVE_JOB_SQL = ("SELECT id::text AS id FROM shared.job WHERE kind = $1 AND status IN ('queued', 'running') "
                   "AND payload->>'request_id' = $2 ORDER BY created_at, id LIMIT 1")
@@ -222,7 +224,7 @@ async def _dry_run(pool, conn, req: dict, now: datetime) -> dict:
             else:
                 await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "ok", job_id=job["id"], reported_at=now,
                                         plan_hash=saga.cis_plan_hash(tid, rnd, res.get("rows") or []), tables=tables)
-        elif job["status"] in ("failed", "cancelled", "stopped_budget"):
+        elif job["status"] in TERMINAL_BAD:
             await store.upsert_step(conn, rid, rnd, "cis", "dry_run", "failed", job_id=job["id"],
                                     error_code="internal_error")
         else:
@@ -243,73 +245,102 @@ async def _dry_run(pool, conn, req: dict, now: datetime) -> dict:
 
 
 async def _apply(pool, conn, req: dict, tenant: Optional[dict], now: datetime, env: Optional[dict]) -> dict:
-    rid, rnd, tid = req["request_id"], int(req["round"]), req["tenant_id"]
+    refused = await _apply_refused(conn, req, env)
+    if refused is not None:
+        return refused
+    rid, rnd = req["request_id"], int(req["round"])
+    peers = [a for a in req["round_apps"] if a != "cis"]
+    steps = await _app_steps(conn, req, "apply")
+    state = saga.phase_state({a: steps.get(a) for a in peers}, peers)
+    expired = req.get("approval_expires_at") is None or now > req["approval_expires_at"]
+    if not state.ready:
+        return await _peers_not_applied(conn, req, state, expired)
+    if "cis" not in req["round_apps"]:
+        await store.move(conn, rid, ("apply",), "verify", blockers=[])
+        return await _verify(conn, {**req, "phase": "verify"}, now)
+    # ── CIS last in its stage: every other active app reported an ok apply ───────────────────────────────────────
+    current = store.by_app_mode(await store.steps(conn, rid, rnd))
+    cis_apply = current.get(("cis", "apply"))
+    if cis_apply is None or cis_apply.get("job_id") is None:
+        cis_apply, outcome = await _cis_apply_start(pool, conn, req, tenant, current, expired, now)
+        if outcome is not None:
+            return outcome
+    return await _cis_apply_finish(pool, conn, req, cis_apply, now)
+
+
+async def _apply_refused(conn, req: dict, env: Optional[dict]) -> Optional[dict]:
+    """The apply switch (settings registry) and the request guards (pilot, Dev synthetic only)."""
     if not policy.apply_enabled():
         return await _stopped(conn, req, [{"app": "cis", "kind": "apply_disabled",
                                            "detail": f"the setting {policy.APPLY_SETTING} is off"}])
     reasons = saga.request_guard(req, environment=policy.environment(env))
     if reasons:
         return await _stopped(conn, req, [{"app": "cis", "kind": "guard", "detail": "; ".join(reasons)}])
-    peers = [a for a in req["round_apps"] if a != "cis"]
-    steps = await _app_steps(conn, req, "apply")
-    state = saga.phase_state({a: steps.get(a) for a in peers}, peers)
-    expired = req.get("approval_expires_at") is None or now > req["approval_expires_at"]
-    current = store.by_app_mode(await store.steps(conn, rid, rnd))
-    cis_apply = current.get(("cis", "apply"))
-    if not state.ready:
-        blockers = list(state.blockers)
-        if expired and not state.stopped:
-            blockers.append({"app": "cis", "kind": "approval_expired",
-                             "detail": "the approval expired before every app applied; start a new round"})
-        if state.stopped or expired:
-            return await _stopped(conn, req, blockers)
-        await store.set_blockers(conn, rid, "apply", blockers)
-        return _wait("apply", APP_POLL_S, waiting_for=list(state.waiting), blockers=blockers)
-    if "cis" not in req["round_apps"]:
-        await store.move(conn, rid, ("apply",), "verify", blockers=[])
-        return await _verify(conn, {**req, "phase": "verify"}, now)
-    # ── CIS last in its stage: every other active app reported an ok apply ───────────────────────────────────────
-    if cis_apply is None or cis_apply.get("job_id") is None:
-        if expired:
-            return await _stopped(conn, req, [{"app": "cis", "kind": "approval_expired",
-                                               "detail": "the approval expired before the CIS apply; new round"}])
-        why = saga.cis_tenant_guard(tenant)
-        if why:
-            return await _stopped(conn, req, [{"app": "cis", "kind": "guard", "detail": "; ".join(why)}])
-        backup = await _cis_job(pool, tb.KIND, {"tenant_id": tid, "trigger": "manual"}, _key(req, "cis:backup"))
-        if backup["status"] in ("failed", "cancelled", "stopped_budget"):
-            return await _stopped(conn, req, [{"app": "cis", "kind": "backup_failed",
-                                               "detail": str(backup.get("error") or "")[:200]}])
-        if backup["status"] != "succeeded":
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending")
-            return _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:backup"])
-        recheck = await _cis_job(pool, ej.KIND, {"subject": "tenant", "tenant": tid, "mode": "dry_run"},
-                                 _key(req, "cis:recheck"))
-        if recheck["status"] in ("failed", "cancelled", "stopped_budget"):
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "failed", error_code="internal_error")
-            return await _stopped(conn, req, [{"app": "cis", "kind": "internal_error",
-                                               "detail": "the CIS re-check DRY RUN failed"}])
-        if recheck["status"] != "succeeded":
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending")
-            return _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:recheck"])
-        res = recheck["result"]
-        approved = (current.get(("cis", "dry_run")) or {}).get("approved_plan_hash")
-        now_hash = saga.cis_plan_hash(tid, rnd, res.get("rows") or [])
-        if res.get("blocked") or not approved or now_hash != approved:
-            await store.upsert_step(conn, rid, rnd, "cis", "apply", "refused", plan_hash=now_hash,
-                                    error_code="plan_changed", reported_at=now)
-            return await _stopped(conn, req, [{"app": "cis", "kind": "plan_changed",
-                                               "detail": "the CIS plan differs from the approved one"}])
-        payload = ej.validate_payload({
-            "subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": recheck["id"],
-            "approved_fingerprint": res["fingerprint"], "approved_by": req["approved_by"],
-            "snapshot_id": req["snapshot_id"], "actor": req["approved_by"]})
-        job = await _cis_job(pool, ej.KIND, payload, _key(req, "cis:apply"))
-        await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending", job_id=job["id"], plan_hash=now_hash)
-        cis_apply = {"job_id": job["id"]}
+    return None
+
+
+async def _peers_not_applied(conn, req: dict, state, expired: bool) -> dict:
+    """Another app of the stage has not reported an ok apply: wait, or stop on a failure / an expired approval."""
+    blockers = list(state.blockers)
+    if expired and not state.stopped:
+        blockers.append({"app": "cis", "kind": "approval_expired",
+                         "detail": "the approval expired before every app applied; start a new round"})
+    if state.stopped or expired:
+        return await _stopped(conn, req, blockers)
+    await store.set_blockers(conn, req["request_id"], "apply", blockers)
+    return _wait("apply", APP_POLL_S, waiting_for=list(state.waiting), blockers=blockers)
+
+
+async def _cis_apply_start(pool, conn, req: dict, tenant: Optional[dict], current: dict, expired: bool,
+                           now: datetime) -> tuple[Optional[dict], Optional[dict]]:
+    """Backup, fresh DRY RUN, plan check, then the data_erasure apply job. Returns (the CIS apply step, None) once
+    the apply job is queued, else (None, the pass outcome: wait or stop)."""
+    rid, rnd, tid = req["request_id"], int(req["round"]), req["tenant_id"]
+    if expired:
+        return None, await _stopped(conn, req, [{"app": "cis", "kind": "approval_expired",
+                                                 "detail": "the approval expired before the CIS apply; new round"}])
+    why = saga.cis_tenant_guard(tenant)
+    if why:
+        return None, await _stopped(conn, req, [{"app": "cis", "kind": "guard", "detail": "; ".join(why)}])
+    backup = await _cis_job(pool, tb.KIND, {"tenant_id": tid, "trigger": "manual"}, _key(req, "cis:backup"))
+    if backup["status"] in TERMINAL_BAD:
+        return None, await _stopped(conn, req, [{"app": "cis", "kind": "backup_failed",
+                                                 "detail": str(backup.get("error") or "")[:200]}])
+    if backup["status"] != "succeeded":
+        await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending")
+        return None, _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:backup"])
+    recheck = await _cis_job(pool, ej.KIND, {"subject": "tenant", "tenant": tid, "mode": "dry_run"},
+                             _key(req, "cis:recheck"))
+    if recheck["status"] in TERMINAL_BAD:
+        await store.upsert_step(conn, rid, rnd, "cis", "apply", "failed", error_code="internal_error")
+        return None, await _stopped(conn, req, [{"app": "cis", "kind": "internal_error",
+                                                 "detail": "the CIS re-check DRY RUN failed"}])
+    if recheck["status"] != "succeeded":
+        await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending")
+        return None, _wait("apply", CIS_JOB_POLL_S, waiting_for=["cis:recheck"])
+    res = recheck["result"]
+    approved = (current.get(("cis", "dry_run")) or {}).get("approved_plan_hash")
+    now_hash = saga.cis_plan_hash(tid, rnd, res.get("rows") or [])
+    if res.get("blocked") or not approved or now_hash != approved:
+        await store.upsert_step(conn, rid, rnd, "cis", "apply", "refused", plan_hash=now_hash,
+                                error_code="plan_changed", reported_at=now)
+        return None, await _stopped(conn, req, [{"app": "cis", "kind": "plan_changed",
+                                                 "detail": "the CIS plan differs from the approved one"}])
+    payload = ej.validate_payload({
+        "subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": recheck["id"],
+        "approved_fingerprint": res["fingerprint"], "approved_by": req["approved_by"],
+        "snapshot_id": req["snapshot_id"], "actor": req["approved_by"]})
+    job = await _cis_job(pool, ej.KIND, payload, _key(req, "cis:apply"))
+    await store.upsert_step(conn, rid, rnd, "cis", "apply", "pending", job_id=job["id"], plan_hash=now_hash)
+    return {"job_id": job["id"]}, None
+
+
+async def _cis_apply_finish(pool, conn, req: dict, cis_apply: dict, now: datetime) -> dict:
+    """The data_erasure apply job ended: record its tables and its verification (rows left), then move to verify."""
+    rid, rnd = req["request_id"], int(req["round"])
     job = await queue.get(pool, cis_apply["job_id"]) or {}
     status = job.get("status")
-    if status in ("failed", "cancelled", "stopped_budget"):
+    if status in TERMINAL_BAD:
         await store.upsert_step(conn, rid, rnd, "cis", "apply", "failed", job_id=cis_apply["job_id"],
                                 error_code="internal_error", reported_at=now)
         return await _stopped(conn, req, [{"app": "cis", "kind": "internal_error",

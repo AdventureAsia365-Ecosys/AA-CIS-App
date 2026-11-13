@@ -207,6 +207,27 @@ async def test_the_pilot_is_never_scheduled(pool):
 
 
 @pytest.mark.asyncio
+async def test_the_route_hook_reads_t0_and_the_pilot_flag_from_the_tenant_row(pool):
+    """POST /admin/tenants/{id}/offboard passes only the actor: T0 is the cancelled_at its UPDATE just wrote and the
+    pilot flag is the row's."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    async with p.acquire() as conn, conn.transaction():
+        out = await store.on_offboard(conn, tid, actor="admin:pytest")
+    assert out["status"] == "scheduled"
+    req = await _req(p, out["request_id"])
+    assert req["opened_at"] == await p.fetchval("SELECT cancelled_at FROM shared.tenants WHERE tenant_id = $1::uuid",
+                                                tid)
+    pilot = await _tenant(p, tenants)
+    await p.execute("UPDATE shared.tenants SET is_pilot = false, pilot_ends_at = NULL WHERE is_pilot")
+    await p.execute("UPDATE shared.tenants SET kind = 'agency', is_pilot = true, pilot_ends_at = now() + "
+                    "interval '8 weeks' WHERE tenant_id = $1::uuid", pilot)
+    async with p.acquire() as conn, conn.transaction():
+        skipped = await store.on_offboard(conn, pilot, actor="admin:pytest")
+    assert skipped["status"] == "skipped" and "pilot" in skipped["reason"]
+
+
+@pytest.mark.asyncio
 async def test_restore_cancels_the_request_and_is_refused_once_an_app_applied(pool):
     p, tenants = pool
     tid = await _tenant(p, tenants)

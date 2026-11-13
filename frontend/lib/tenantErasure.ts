@@ -120,8 +120,11 @@ export function approvalBlockers(req: SagaRequest, settings: SagaSettings | unde
   const out: string[] = [];
   if (req.phase !== "awaiting_approval" || !req.combined_fingerprint) out.push(words.notAwaiting);
   if (!settings?.apply_enabled) out.push(words.switchOff);
-  const hours = settings?.approval_valid_hours ?? 24;
-  if (req.fingerprint_at && nowMs - Date.parse(req.fingerprint_at) > hours * 3_600_000) out.push(words.tooOld(hours));
+  // The validity comes from the settings registry (cis.erasure.saga_approval_valid_hours); no local default.
+  const hours = settings?.approval_valid_hours;
+  if (hours !== undefined && req.fingerprint_at && nowMs - Date.parse(req.fingerprint_at) > hours * 3_600_000) {
+    out.push(words.tooOld(hours));
+  }
   return out;
 }
 

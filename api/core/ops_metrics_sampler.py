@@ -481,6 +481,14 @@ async def _alert_recipients_part(pool, redis, out: dict) -> None:
                                "unsubscribed": len(result.unsubscribed)}
 
 
+async def _guarded_part(part, out: dict, error_key: str, *, timeout: float) -> None:
+    """Run one part of the tick under its own budget; its failure is a field of the tick line, never a raise."""
+    try:
+        await asyncio.wait_for(part, timeout=timeout)
+    except Exception as e:
+        out[error_key] = _err(e)
+
+
 def _err(e: BaseException) -> str:
     return f"{type(e).__name__}: {str(e)[:300]}"
 
@@ -608,10 +616,8 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         out["tenant_backup_error"] = _err(e)
 
     # AA-1093 L2: one SELECT of the open erasure requests, an INSERT only when one has no live saga job
-    try:
-        await asyncio.wait_for(_tenant_erasure_part(pool, kinds, ts, out), timeout=min(5.0, part_timeout_s))
-    except Exception as e:
-        out["tenant_erasure_error"] = _err(e)
+    await _guarded_part(_tenant_erasure_part(pool, kinds, ts, out), out, "tenant_erasure_error",
+                        timeout=min(5.0, part_timeout_s))
 
     # AA-1037 R4: one idempotent INSERT an hour (database only), same short budget
     try:

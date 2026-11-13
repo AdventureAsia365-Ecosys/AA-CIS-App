@@ -42,6 +42,17 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
 - **Event** `account.erasure_requested` is emitted from code through `shared.tenant_account_emit()` under a
   savepoint: before 409 the CHECK refuses the type and the offboard still succeeds (no event).
 
+- **Code-health ratchets (AA-1097, on main during the lane).** New functions stay at complexity <= 10 and the big
+  baseline files do not grow: the saga apply phase is split (`_apply_refused`, `_peers_not_applied`,
+  `_cis_apply_start`, `_cis_apply_finish`), the CRM report route checks its body in `_report_body`, the sampler runs
+  the erasure part through `_guarded_part`, the Tenant offboarding tab is split into small components, and the Data
+  erasure page shows its two tabs as `hidden` panes (no new branch in the baseline `DataErasure`). `staff_authz.py`
+  lists the erasure routes as two comprehensions and `admin.py` stays under its baseline: the offboard hook reads T0
+  and the pilot flag from the tenant row itself (`store.on_offboard(conn, tenant_id, actor=...)`), and the two
+  touched docstrings plus the offboard UPDATE were reflowed (same SQL).
+- **The approval validity has no local default in the UI** (`approvalBlockers`): it is the setting's value, or the
+  form stays closed (switch unknown).
+
 ## Changed (vs the plan / the lane brief)
 
 - Admin routes live under `/admin/job-runner/erasure/requests` (not `/admin/tenants/...`): the BFF rule
@@ -84,3 +95,7 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
 - AA-CIS-Infra must add the scope `cis.tenant/erasure` to the M2M resource server and the CRM client
   (`identity_m2m.tf`) before the CRM can call the routes (403 until then).
 - `tests/integration/rls_catalogue_rules.py` changed in the migration PR: the Infra copy must follow (Copy Guard).
+- The migration PR also carries the byte copy of `docs/contracts/tenant.erasure.v1.openapi.yaml` (identical to the
+  code PR's), so `test_aa1093_migration_410` validates every view row, read as JSON, as the contract's
+  ErasureRequestRow. The two identical adds merge cleanly; once the migration PR is on main the code PR's diff no
+  longer shows the file.
