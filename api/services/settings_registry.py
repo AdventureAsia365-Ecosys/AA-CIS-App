@@ -22,6 +22,7 @@ invalidated after an approval; other processes see it within one cache window (3
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -65,7 +66,7 @@ def _definition_out(d: Definition) -> dict:
             "allowed_values": list(d.allowed_values) if d.allowed_values is not None else None,
             "default_value": d.default_value, "scope_kind": d.scope_kind, "impact": d.impact, "approval": d.approval,
             "evidence_required": d.evidence_required, "env_override": d.env_override, "cache_s": d.cache_s,
-            "enforced": d.enforced}
+            "enforced": d.enforced, "guide": settings.guide(d.key)}
 
 
 def _row_out(r: Any) -> dict:
@@ -111,6 +112,26 @@ _TWO_PERSON_SQL = """
 """
 
 
+# AA-1096 l23: the page shows who proposed / decided a value by name (the rows keep admin:<uuid>, CIS 407). One read of
+# the staff rows the page shows; an actor that is not an admin uuid (a migration, a script) keeps its id.
+ADMIN_ACTOR = re.compile(r"^admin:([0-9a-fA-F-]{36})$")
+_NAMES_SQL = """
+    SELECT id::text AS id, coalesce(nullif(btrim(display_name), ''), email, username) AS name
+      FROM shared.admin_users WHERE id = ANY($1::uuid[])
+"""
+
+
+async def _actor_names(conn: Any, rows: list[dict]) -> None:
+    """Add ``proposed_by_name`` / ``decided_by_name`` (None = no staff row) to each row, in place."""
+    ids = {m.group(1).lower() for r in rows for a in (r.get("proposed_by"), r.get("decided_by"))
+           if a and (m := ADMIN_ACTOR.match(a))}
+    names = {r["id"]: r["name"] for r in await conn.fetch(_NAMES_SQL, sorted(ids))} if ids else {}
+    for r in rows:
+        for field in ("proposed_by", "decided_by"):
+            m = ADMIN_ACTOR.match(r.get(field) or "")
+            r[f"{field}_name"] = names.get(m.group(1).lower()) if m else None
+
+
 def _app_definitions(app: Optional[str], area: Optional[str]) -> list[Definition]:
     out = []
     for key in settings.READER.keys():
@@ -131,6 +152,7 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
             open_rows: dict[str, list] = {}
             for r in await conn.fetch(_OPEN_SQL, "%"):
                 open_rows.setdefault(r["key"], []).append(_row_out(r))
+            await _actor_names(conn, [*latest.values(), *(r for rs in open_rows.values() for r in rs)])
     except asyncpg.exceptions.UndefinedTableError:
         raise SettingsError(503, NOT_MIGRATED, "not_migrated") from None
     rows = []
@@ -153,6 +175,7 @@ async def history(pool: Any, key: str, tenant_id: Optional[str] = None) -> dict:
     try:
         async with pool.acquire() as conn:
             rows = [_row_out(r) for r in await conn.fetch(_HISTORY_SQL, key, tenant_id)]
+            await _actor_names(conn, rows)
     except asyncpg.exceptions.UndefinedTableError:
         raise SettingsError(503, NOT_MIGRATED, "not_migrated") from None
     # the page's diff: each row against the approved value in force before it (oldest first walk)
