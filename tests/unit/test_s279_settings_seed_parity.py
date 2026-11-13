@@ -80,7 +80,11 @@ def test_seeded_from_todays_effective_values(key, value):
 def test_the_trash_window_is_badged_not_enforced():
     by_key = {r["key"]: r for r in _rows()}
     assert by_key["cis.content.trash_retention_days"]["enforced"] is False
-    assert [k for k, r in by_key.items() if not r["enforced"]] == ["cis.content.trash_retention_days"]
+    # AA-1093 L2 (CIS 411): the erasure saga's three keys stay not enforced until the saga code is deployed; a later
+    # migration marks them enforced and removes them from this list.
+    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == [
+        "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
+        "cis.erasure.saga_approval_valid_hours"]
 
 
 def test_the_measured_ratio_needs_evidence():
