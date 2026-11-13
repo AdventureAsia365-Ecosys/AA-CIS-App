@@ -16,8 +16,8 @@ import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { K, LinkButton, mono, useLang, useT } from "../../../_kit";
 import {
-  actorLabel, directionWords, guideFor, nowExample, parseDraft, withValue, type GuidePart, type SettingDefinition,
-  type ValueOf,
+  actorLabel, directionWords, guideFor, nowExample, parseDraft, withValue, type GuidePart, type NowLine,
+  type SettingDefinition, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
 
@@ -31,6 +31,20 @@ function partKey(part: GuidePart, item: GuideItem): PartKey {
   if (part === "raise") return `guideRaise_${directionWords(item.value_type)}`;
   if (part === "lower") return `guideLower_${directionWords(item.value_type)}`;
   return part === "what" ? "guideWhat" : part === "when" ? "guideWhen" : "guideExample";
+}
+
+type ST = ReturnType<typeof useT<typeof SETTINGS.en>>;
+
+/** The words of a computed "In force now" line (lib nowExample gives the id and the formatted numbers). */
+function nowText(t: ST, n: NowLine | null): string | null {
+  if (!n) return null;
+  switch (n.id) {
+    case "nowSeedRatio": return t("nowSeedRatio", n.ratio, n.words, n.floor, n.off);
+    case "nowSeedMin": return t("nowSeedMin", n.flat, n.sized, n.need);
+    case "nowRepeat": return t("nowRepeat", n.share, n.pct);
+    case "nowLengthAim": return t("nowLengthAim", n.margin, n.aim, n.floor);
+    default: return t(n.id);
+  }
 }
 
 // Two lines at most under the label; the whole text is in the tooltip and in the open guide.
@@ -71,7 +85,7 @@ export function GuideDetails({ item, testId, valueOf }: { item: GuideItem; testI
   const t = useT(SETTINGS);
   const lang = useLang();
   const guide = guideFor(item, lang);
-  const now = valueOf ? nowExample(item.key, valueOf, lang) : null;
+  const now = valueOf ? nowText(t, nowExample(item.key, valueOf, lang)) : null;
   const parts: GuidePart[] = ["what", "raise", "lower", "when", "example"];
   return (
     <div data-testid={testId} style={{ display: "grid", gap: 8, minWidth: 0 }}>
@@ -129,7 +143,8 @@ export function DraftNow({ item, text, valueOf }: { item: SettingDefinition; tex
   const t = useT(SETTINGS);
   const lang = useLang();
   const parsed = parseDraft(item, text);
-  const line = parsed.value === undefined ? null : nowExample(item.key, withValue(valueOf, item.key, parsed.value), lang);
+  const line = parsed.value === undefined ? null
+    : nowText(t, nowExample(item.key, withValue(valueOf, item.key, parsed.value), lang));
   if (!line) return null;
   return (
     <div style={small} data-testid="settings-propose-now">

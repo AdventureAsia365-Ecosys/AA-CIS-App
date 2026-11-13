@@ -286,8 +286,16 @@ export function directionWords(t: ValueType): DirectionWords {
 /** AA-1096 l23 review: a guide's example names the default, because the value in force can change. For the keys
  *  whose meaning is a sum of other values (the blog source words a topic needs, the repeat cleanup, the blog length
  *  aim) the page adds a line computed from the values in force: valueOf(key) reads one of them (the app's items, or
- *  the draft in the change dialog). null = nothing to add (another key, or a value it needs is missing). Pure. */
+ *  the draft in the change dialog). The line is a message id and its numbers, formatted for the page's language (the
+ *  words live in the page's messages.ts). null = nothing to add (another key, or a value it needs is missing). Pure. */
 export type ValueOf = (key: string) => SettingValue | undefined;
+export type NowLine =
+  | { id: "nowSeedRatio"; ratio: string; words: string; floor: string; off: boolean }
+  | { id: "nowSeedRatioZero" }
+  | { id: "nowSeedMin"; flat: string; sized: string; need: string }
+  | { id: "nowSeedMinOff" }
+  | { id: "nowRepeat"; share: string; pct: string }
+  | { id: "nowLengthAim"; margin: string; aim: string; floor: string };
 
 const BLOG_FLOOR = "cis.t9.blog_chars_min";
 const BLOG_CEILING = "cis.t9.blog_chars_max";
@@ -299,74 +307,50 @@ function numberOf(valueOf: ValueOf, key: string): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function fmt(n: number, vi: boolean, digits = 3): string {
-  return n.toLocaleString(vi ? "vi-VN" : "en-US", { maximumFractionDigits: digits });
-}
+type Fmt = (n: number, digits?: number) => string;
 
-function seedRatioNow(valueOf: ValueOf, vi: boolean): string | null {
+function seedRatioNow(valueOf: ValueOf, f: Fmt): NowLine | null {
   const r = numberOf(valueOf, SEED_RATIO);
   const floor = numberOf(valueOf, BLOG_FLOOR);
   if (r === null || floor === null) return null;
-  if (r <= 0) {
-    return vi ? "Đang là 0: không có ngưỡng theo độ dài; chỉ áp dụng mức từ nguồn tối thiểu của Blog."
-      : "Now 0: no length-based minimum; only the blog minimum source words applies.";
-  }
-  const words = Math.ceil(floor / r);
-  const off = numberOf(valueOf, SEED_MIN) === 0;
-  return vi
-    ? `Đang là ${fmt(r, vi)} ký tự mỗi từ: chủ đề cần khoảng ${fmt(words, vi, 0)} từ nguồn để có bài Blog `
-      + `(${fmt(floor, vi, 0)} / ${fmt(r, vi)}).${off ? " Chưa áp dụng vì mức từ nguồn tối thiểu của Blog đang là 0." : ""}`
-    : `Now ${fmt(r, vi)} characters per word: a topic needs about ${fmt(words, vi, 0)} source words for a blog `
-      + `(${fmt(floor, vi, 0)} / ${fmt(r, vi)}).${off ? " Not applied while the blog minimum source words is 0." : ""}`;
+  if (r <= 0) return { id: "nowSeedRatioZero" };
+  return { id: "nowSeedRatio", ratio: f(r), words: f(Math.ceil(floor / r), 0), floor: f(floor, 0),
+    off: numberOf(valueOf, SEED_MIN) === 0 };
 }
 
-function seedMinNow(valueOf: ValueOf, vi: boolean): string | null {
+function seedMinNow(valueOf: ValueOf, f: Fmt): NowLine | null {
   const flat = numberOf(valueOf, SEED_MIN);
   if (flat === null) return null;
-  if (flat <= 0) {
-    return vi ? "Đang là 0: tắt mức tối thiểu; chủ đề nào cũng có thể được đề xuất viết Blog."
-      : "Now 0: the blog minimum is off; every topic may be offered as a blog.";
-  }
+  if (flat <= 0) return { id: "nowSeedMinOff" };
   const r = numberOf(valueOf, SEED_RATIO) ?? 0;
-  const floor = numberOf(valueOf, BLOG_FLOOR) ?? 0;
-  const sized = r > 0 ? Math.ceil(floor / r) : 0;
-  const need = Math.max(flat, sized);
-  return vi
-    ? `Đang là ${fmt(flat, vi, 0)} từ; cùng ngưỡng theo độ dài (${fmt(sized, vi, 0)} từ), chủ đề cần ít nhất `
-      + `${fmt(need, vi, 0)} từ nguồn để được đề xuất viết Blog.`
-    : `Now ${fmt(flat, vi, 0)} words; with the length-based minimum (${fmt(sized, vi, 0)} words) a topic needs at least `
-      + `${fmt(need, vi, 0)} source words to be offered as a blog.`;
+  const sized = r > 0 ? Math.ceil((numberOf(valueOf, BLOG_FLOOR) ?? 0) / r) : 0;
+  return { id: "nowSeedMin", flat: f(flat, 0), sized: f(sized, 0), need: f(Math.max(flat, sized), 0) };
 }
 
-function repeatNow(valueOf: ValueOf, vi: boolean): string | null {
+function repeatNow(valueOf: ValueOf, f: Fmt): NowLine | null {
   const v = numberOf(valueOf, "cis.t9.repeat_drop_near_exact");
-  if (v === null) return null;
-  return vi
-    ? `Đang là ${fmt(v, vi)}: câu sau bị xoá khi ${fmt(v * 100, vi, 1)} % số từ khớp với câu trước theo đúng thứ tự.`
-    : `Now ${fmt(v, vi)}: the later sentence is deleted when ${fmt(v * 100, vi, 1)} % of its words match the earlier `
-      + "one in the same order.";
+  return v === null ? null : { id: "nowRepeat", share: f(v), pct: f(v * 100, 1) };
 }
 
-function lengthAimNow(valueOf: ValueOf, vi: boolean): string | null {
+function lengthAimNow(valueOf: ValueOf, f: Fmt): NowLine | null {
   const m = numberOf(valueOf, "cis.quality.t9_blog_length_target_margin");
   const floor = numberOf(valueOf, BLOG_FLOOR);
   if (m === null || floor === null) return null;
   const aim = Math.min(Math.round(floor * (1 + m)), numberOf(valueOf, BLOG_CEILING) ?? Infinity);
-  return vi
-    ? `Đang là ${fmt(m, vi)}: bộ viết nhắm ít nhất khoảng ${fmt(aim, vi, 0)} ký tự (mức tối thiểu ${fmt(floor, vi, 0)}).`
-    : `Now ${fmt(m, vi)}: the writer aims for at least about ${fmt(aim, vi, 0)} characters (minimum ${fmt(floor, vi, 0)}).`;
+  return { id: "nowLengthAim", margin: f(m), aim: f(aim, 0), floor: f(floor, 0) };
 }
 
-const NOW_EXAMPLES: Record<string, (valueOf: ValueOf, vi: boolean) => string | null> = {
+const NOW_LINES: Record<string, (valueOf: ValueOf, f: Fmt) => NowLine | null> = {
   [SEED_RATIO]: seedRatioNow,
   [SEED_MIN]: seedMinNow,
   "cis.t9.repeat_drop_near_exact": repeatNow,
   "cis.quality.t9_blog_length_target_margin": lengthAimNow,
 };
 
-export function nowExample(key: string, valueOf: ValueOf, lang: string): string | null {
-  const f = NOW_EXAMPLES[key];
-  return f ? f(valueOf, lang === "vi") : null;
+export function nowExample(key: string, valueOf: ValueOf, lang: string): NowLine | null {
+  const line = NOW_LINES[key];
+  const locale = lang === "vi" ? "vi-VN" : "en-US";
+  return line ? line(valueOf, (n, digits = 3) => n.toLocaleString(locale, { maximumFractionDigits: digits })) : null;
 }
 
 /** valueOf over a list of items (their values in force). Pure. */

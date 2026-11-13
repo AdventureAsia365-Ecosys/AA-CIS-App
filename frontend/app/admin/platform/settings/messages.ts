@@ -108,6 +108,18 @@ export const SETTINGS = defineMessages(
     guideExample: "Example (at the default)",
     guideNow: "In force now",
     guideIfApplied: "With the value you enter",
+    nowSeedRatio: (r: string, words: string, floor: string, off: boolean) =>
+      `Now ${r} characters per word: a topic needs about ${words} source words for a blog (${floor} / ${r}).`
+      + (off ? " Not applied while the blog minimum source words is 0." : ""),
+    nowSeedRatioZero: "Now 0: no length-based minimum; only the blog minimum source words applies.",
+    nowSeedMin: (flat: string, sized: string, need: string) =>
+      `Now ${flat} words; with the length-based minimum (${sized} words) a topic needs at least ${need} source words `
+      + "to be offered as a blog.",
+    nowSeedMinOff: "Now 0: the blog minimum is off; every topic may be offered as a blog.",
+    nowRepeat: (share: string, pct: string) =>
+      `Now ${share}: the later sentence is deleted when ${pct} % of its words match the earlier one in the same order.`,
+    nowLengthAim: (margin: string, aim: string, floor: string) =>
+      `Now ${margin}: the writer aims for at least about ${aim} characters (minimum ${floor}).`,
     noGuide: "No explanation for this setting yet.",
     engineeringNote: "Engineering note",
     showNote: "Show the engineering note",
@@ -217,6 +229,18 @@ export const SETTINGS = defineMessages(
     guideExample: "Ví dụ (ở giá trị mặc định)",
     guideNow: "Đang áp dụng",
     guideIfApplied: "Với giá trị bạn nhập",
+    nowSeedRatio: (r: string, words: string, floor: string, off: boolean) =>
+      `Đang là ${r} ký tự mỗi từ: chủ đề cần khoảng ${words} từ nguồn để có bài Blog (${floor} / ${r}).`
+      + (off ? " Chưa áp dụng vì mức từ nguồn tối thiểu của Blog đang là 0." : ""),
+    nowSeedRatioZero: "Đang là 0: không có ngưỡng theo độ dài; chỉ áp dụng mức từ nguồn tối thiểu của Blog.",
+    nowSeedMin: (flat: string, sized: string, need: string) =>
+      `Đang là ${flat} từ; cùng ngưỡng theo độ dài (${sized} từ), chủ đề cần ít nhất ${need} từ nguồn để được đề xuất `
+      + "viết Blog.",
+    nowSeedMinOff: "Đang là 0: tắt mức tối thiểu; chủ đề nào cũng có thể được đề xuất viết Blog.",
+    nowRepeat: (share: string, pct: string) =>
+      `Đang là ${share}: câu sau bị xoá khi ${pct} % số từ khớp với câu trước theo đúng thứ tự.`,
+    nowLengthAim: (margin: string, aim: string, floor: string) =>
+      `Đang là ${margin}: bộ viết nhắm ít nhất khoảng ${aim} ký tự (mức tối thiểu ${floor}).`,
     noGuide: "Cài đặt này chưa có phần giải thích.",
     engineeringNote: "Ghi chú kỹ thuật",
     showNote: "Xem ghi chú kỹ thuật",
