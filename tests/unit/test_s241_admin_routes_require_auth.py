@@ -42,8 +42,8 @@ from api import main
 from api.core import staff_authz, staff_secret
 from api.main import app
 from api.routers import (
-    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, tenant_account, tenant_addons, tenant_membership,
-    v1_pipeline, v1_tours,
+    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, tenant_account, tenant_addons, tenant_erasure,
+    tenant_membership, v1_pipeline, v1_tours,
 )
 
 # Dependencies that admit staff only (the X-Admin-Secret held by the staff BFF).
@@ -70,6 +70,7 @@ M2M_DEPENDENCIES = {
     tenant_membership.require_tenant_activator,  # POST .../invitations/{id}/activate: + cis.tenant/activate (AA-979)
     tenant_account.require_account_reader,     # /tenant/v1: CRM client + cis.tenant/read (AA-1028, tenant.entitlements.v1)
     tenant_addons.require_addons,              # /tenant/v1 add-ons: CRM client + cis.tenant/addons (AA-1036, tenant.addons.v1)
+    tenant_erasure.require_erasure,            # /tenant/v1 erasure requests: CRM client + cis.tenant/erasure (AA-1093)
 }
 # Functions accepted as an inline staff check at the top of an endpoint body (identity, not name).
 STAFF_INLINE_CHECKS = {admin.verify_admin_secret, admin_settings.verify_admin}
