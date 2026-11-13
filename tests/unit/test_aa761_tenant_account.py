@@ -48,6 +48,7 @@ def test_every_tenant_action_is_visible_and_staff_only_rows_are_not():
                AdminTenantAuditAction.PLAN_ID_BACKFILL, AdminTenantAuditAction.ERASED,
                AdminTenantAuditAction.RESTORE_DRILL, AdminTenantAuditAction.ERASURE_APPROVED,
                AdminTenantAuditAction.ERASURE_DRILL, AdminTenantAuditAction.ERASURE_ROUND,
+               AdminTenantAuditAction.ERASURE_STOPPED,
                AdminTenantAuditAction.ERASURE_DONE,
                AdminTenantAuditAction.OFFBOARD, AdminTenantAuditAction.MEMBER_ROLE_CHANGED,
                AdminTenantAuditAction.MEMBER_REMOVED, "staff.request", "publish_mode_transition",

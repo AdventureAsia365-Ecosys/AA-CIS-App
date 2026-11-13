@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  APPS, ERASURE_REQUESTS_API, approvalBlockers, notBefore, phaseTone, prefixMatches, shortHash, stepOf, stepStatus,
+  APPS, ERASURE_REQUESTS_API, STOPPED_KIND, approvalBlockers, decisionActions, isStopped, notBefore, phaseTone,
+  prefixMatches, shortHash, stepOf, stepStatus,
 } from "./tenantErasure.ts";
 
 const FP = "abcdef0123456789".repeat(4);
@@ -78,4 +79,15 @@ test("phase tones", () => {
   assert.equal(phaseTone("awaiting_approval"), "warning");
   assert.equal(phaseTone("cancelled"), "neutral");
   assert.equal(phaseTone("apply"), "info");
+});
+
+test("a failed request offers a new round or a stop; a stopped one neither; apply / verify never a stop", () => {
+  assert.deepEqual(decisionActions(req({ phase: "failed" })), { newRound: true, stop: true });
+  const stopped = req({ phase: "failed", blockers: [{ app: "cis", kind: STOPPED_KIND, detail: "stopped" }] });
+  assert.equal(isStopped(stopped), true);
+  assert.deepEqual(decisionActions(stopped), { newRound: false, stop: false });
+  assert.deepEqual(decisionActions(req({ phase: "apply" })), { newRound: true, stop: false });
+  assert.deepEqual(decisionActions(req({ phase: "verify" })), { newRound: false, stop: false });
+  assert.deepEqual(decisionActions(req({ phase: "done" })), { newRound: false, stop: false });
+  assert.deepEqual(decisionActions(req({ phase: "failed", is_pilot: true })), { newRound: false, stop: true });
 });

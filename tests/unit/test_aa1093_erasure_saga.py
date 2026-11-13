@@ -277,6 +277,50 @@ def test_approval_refused_outside_awaiting_approval_and_for_a_refused_tenant():
     assert _approve(tenant_reasons=["the pilot tenant is never erased"]).code == "tenant"
 
 
+def test_approval_refused_when_the_step_plans_no_longer_give_the_fingerprint():
+    r = _approve(plans_match=False)
+    assert r.status == 409 and r.code == "stale_fingerprint" and "new plan" in r.message
+
+
+def _dry_rows(plans, round_=1):
+    return [{"round": round_, "app": a, "mode": "dry_run", "plan_hash": h} for a, h in plans.items()]
+
+
+def test_the_fingerprint_of_the_step_rows_follows_a_late_report():
+    req = _request()
+    plans = {a: H[a] for a in ("cis", "booking", "tripplanner")}
+    fp = saga.fingerprint_of_steps(req, _dry_rows(plans) + [{"round": 1, "app": "cis", "mode": "apply",
+                                                             "plan_hash": "f" * 64}])
+    assert fp == saga.combined_fingerprint(RID, TID, 1, plans)
+    late = saga.fingerprint_of_steps(req, _dry_rows({**plans, "booking": "9" * 64}))
+    assert late is not None and late != fp                                   # a new Booking plan = another fingerprint
+    assert saga.fingerprint_of_steps(req, _dry_rows({"cis": H["cis"], "booking": H["booking"]})) is None
+    assert saga.fingerprint_of_steps(req, _dry_rows({**plans, "tripplanner": None})) is None
+    assert saga.fingerprint_of_steps(req, _dry_rows(plans, round_=2)) is None   # another round's rows never count
+
+
+def test_a_new_round_starts_from_failed_but_never_after_the_cis_apply_a_stop_or_for_the_pilot():
+    failed = _request(phase="failed", blockers=[{"app": "booking", "kind": "plan_changed", "detail": "refused"}])
+    assert saga.new_round_refusal(failed, cis_apply_started=False) is None
+    for phase in ("dry_run", "awaiting_approval", "apply"):
+        assert saga.new_round_refusal(_request(phase=phase), cis_apply_started=False) is None
+    assert saga.new_round_refusal(failed, cis_apply_started=True).code == "cis_apply_started"
+    for phase in ("verify", "done", "cancelled"):
+        assert saga.new_round_refusal(_request(phase=phase), cis_apply_started=False).code == "phase"
+    assert saga.new_round_refusal({**failed, "is_pilot": True}, cis_apply_started=False).code == "pilot"
+    stopped = {**failed, "blockers": [{"app": "cis", "kind": saga.STOPPED_KIND, "detail": "x"}]}
+    assert saga.new_round_refusal(stopped, cis_apply_started=False).code == "stopped"
+
+
+def test_a_stop_never_while_the_apps_may_be_erasing_and_only_once():
+    for phase in ("dry_run", "awaiting_approval", "failed"):
+        assert saga.stop_refusal(_request(phase=phase)) is None
+    for phase in ("apply", "verify", "done", "cancelled"):
+        assert saga.stop_refusal(_request(phase=phase)).code == "phase"
+    stopped = _request(phase="failed", blockers=[{"app": "cis", "kind": saga.STOPPED_KIND, "detail": "x"}])
+    assert saga.stop_refusal(stopped).code == "stopped"
+
+
 def test_crm_report_rules():
     stage2 = _request(phase="dry_run", round=2, round_apps=["crm"], done_apps=["cis", "booking", "tripplanner"])
     assert saga.report_refusal(stage2, app="crm", mode="dry_run", report_round=2, apply_ok=False) is None

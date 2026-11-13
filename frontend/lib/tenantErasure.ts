@@ -15,7 +15,27 @@ export type Phase = "dry_run" | "awaiting_approval" | "apply" | "verify" | "done
 /** Phases in which the saga job has work to do ("Run now" is offered). */
 export const WORKING_PHASES: readonly Phase[] = ["dry_run", "apply", "verify"];
 /** Phases in which a new DRY RUN round may start (the backend also refuses once the CIS apply started). */
-export const NEW_ROUND_PHASES: readonly Phase[] = ["dry_run", "awaiting_approval", "apply"];
+export const NEW_ROUND_PHASES: readonly Phase[] = ["dry_run", "awaiting_approval", "apply", "failed"];
+/** Phases in which the tech lead may stop the request (it then stays failed); never while the apps may be erasing. */
+export const STOP_PHASES: readonly Phase[] = ["dry_run", "awaiting_approval", "failed"];
+/** The blocker kind of a stopped request (services/tenant_erasure/saga.py STOPPED_KIND). */
+export const STOPPED_KIND = "stopped_by_tech_lead";
+
+/** True once the tech lead stopped the request: no new round, no second stop. */
+export function isStopped(req: Pick<SagaRequest, "blockers">): boolean {
+  return req.blockers.some((b) => b.kind === STOPPED_KIND);
+}
+
+/** Which of "new round" / "stop" the request offers now (the backend refuses the rest). */
+export function decisionActions(req: Pick<SagaRequest, "phase" | "blockers" | "is_pilot">): {
+  newRound: boolean; stop: boolean;
+} {
+  const stopped = isStopped(req);
+  return {
+    newRound: NEW_ROUND_PHASES.includes(req.phase) && !stopped && !req.is_pilot,
+    stop: STOP_PHASES.includes(req.phase) && !stopped,
+  };
+}
 
 export interface SagaBlocker { app: string; kind: string; detail: string }
 

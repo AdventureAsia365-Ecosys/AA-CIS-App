@@ -20,8 +20,13 @@ Phases of a request (shared.tenant_erasure_request.phase, CIS 408; the contract'
   verify             every active app reports the census of its pii: columns for the tenant (pii_rows_found 0). Then
                      those apps are done; if an app is still waiting (the CRM), the request goes back to dry_run with
                      the next round, else done (with the receipt).
-  cancelled          a restore of the tenant before any app applied.
-  failed             a guard stopped the saga (the pilot tenant).
+  cancelled          a restore of the tenant before any approval was given (a failed request too, when no round of
+                     it was ever approved).
+  failed             a step failed or refused, a verify census is not 0, the approval expired, the plan changed, the
+                     apply switch went off or a guard stopped it (the pilot tenant): the contract's "the tech lead
+                     decides". POST .../new-round starts a new DRY RUN round (refused once the CIS apply job of the
+                     round started, and for the pilot), POST .../stop keeps it failed for good. The job has no work in
+                     failed (no saga job is queued for it).
 
 Guards: the pilot tenant is refused everywhere (it is never scheduled at the offboard and the job fails a request
 whose tenant became the pilot); on Dev only a synthetic tenant (copied at T0) may be approved or applied; a drill
@@ -46,9 +51,16 @@ STAGES = (("cis", "booking", "tripplanner"), ("crm",))
 PHASES = ("dry_run", "awaiting_approval", "apply", "verify", "done", "failed", "cancelled")
 OPEN_PHASES = ("dry_run", "awaiting_approval", "apply", "verify")
 TERMINAL_PHASES = ("done", "cancelled", "failed")
-# A restore may cancel the request only before any app was asked to erase (store.on_restore also checks that no app
-# reported an applied erasure and none is done).
+# A restore may cancel the request only before any app was asked to erase (store.on_restore also refuses when any round
+# was ever approved, an app reported an applied erasure or one is done; a failed request with none of these is
+# cancelled too).
 CANCELLABLE_PHASES = ("dry_run", "awaiting_approval")
+# A new DRY RUN round may start from these (and never once the CIS apply job of the current round started).
+NEW_ROUND_PHASES = ("dry_run", "awaiting_approval", "apply", "failed")
+# The tech lead may stop the request (it stays failed) from these: never while the apps may be erasing.
+STOP_PHASES = ("dry_run", "awaiting_approval", "failed")
+# The blocker kind a stop records: a stopped request never starts a new round.
+STOPPED_KIND = "stopped_by_tech_lead"
 # Phases in which the job has something to do (awaiting_approval waits for a person).
 WORKING_PHASES = ("dry_run", "apply", "verify")
 MODES = ("dry_run", "apply", "verify")
@@ -135,6 +147,21 @@ def cis_plan_hash(tenant_id: str, round_: int, rows: Iterable[Mapping[str, Any]]
     lines = sorted(f"{r['table']}|{r['action']}|{int(r['rows'])}|" for r in rows
                    if str(r["table"]) not in SAGA_VOLATILE_TABLES)
     return hashlib.sha256("\n".join([f"{CONTRACT}|{tenant_id}|{int(round_)}"] + lines).encode()).hexdigest()
+
+
+def fingerprint_of_steps(request: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> Optional[str]:
+    """The combined fingerprint of the request's current round from its dry_run step rows as they are now (None when
+    an active app has no dry_run row or no valid plan hash). The approval compares it with the fingerprint shown, so
+    a report that landed after the fingerprint was computed can never be approved unseen."""
+    rnd, apps = int(request["round"]), list(request.get("round_apps") or ())
+    plans = {r["app"]: r.get("plan_hash") for r in rows
+             if int(r["round"]) == rnd and r["mode"] == "dry_run" and r["app"] in apps}
+    if not apps or set(plans) != set(apps):
+        return None
+    try:
+        return combined_fingerprint(str(request["request_id"]), str(request["tenant_id"]), rnd, plans)
+    except ValueError:
+        return None
 
 
 def combined_fingerprint(request_id: str, tenant_id: str, round_: int, plans: Mapping[str, str]) -> str:
@@ -326,9 +353,11 @@ def cis_tenant_guard(tenant: Optional[Mapping[str, Any]]) -> list[str]:
 
 
 def approval_refusal(request: Mapping[str, Any], *, fingerprint: str, now: datetime, cognito_admin: bool,
-                     apply_on: bool, tenant_reasons: list[str], validity: timedelta) -> Optional[Refused]:
+                     apply_on: bool, tenant_reasons: list[str], validity: timedelta,
+                     plans_match: bool = True) -> Optional[Refused]:
     """The first reason an approval is refused, or None. Order: who (403), the switch (403), the phase (409), the
-    fingerprint (409 stale), its age (409), the tenant (409)."""
+    fingerprint (409 stale: not the one shown, or ``plans_match`` False: the step rows' plan hashes no longer give
+    it), its age (409), the tenant (409)."""
     if not cognito_admin:
         return Refused(403, "needs_cognito_admin",
                        "Approving a tenant erasure needs an administrator's company sign-in (Cognito); the admin "
@@ -342,12 +371,41 @@ def approval_refusal(request: Mapping[str, Any], *, fingerprint: str, now: datet
         return Refused(409, "stale_fingerprint",
                        "the fingerprint differs from the request's current combined fingerprint; reload and approve "
                        "the one shown")
+    if not plans_match:
+        return Refused(409, "stale_fingerprint",
+                       "an app reported a new plan after the combined fingerprint was computed; run the saga again "
+                       "or start a new DRY RUN round, then approve the new fingerprint")
     at = request.get("fingerprint_at")
     if at is None or now - at > validity:
         return Refused(409, "fingerprint_too_old",
                        f"the combined fingerprint is older than {validity}; start a new DRY RUN round")
     if tenant_reasons:
         return Refused(409, "tenant", "; ".join(tenant_reasons))
+    return None
+
+
+def new_round_refusal(request: Mapping[str, Any], *, cis_apply_started: bool) -> Optional[Refused]:
+    """Whether a new DRY RUN round may start now (409 otherwise)."""
+    phase = request.get("phase")
+    if phase not in NEW_ROUND_PHASES:
+        return Refused(409, "phase", f"no new round in phase {phase}")
+    if request.get("is_pilot"):
+        return Refused(409, "pilot", "the pilot tenant is never erased by the saga (decision D8)")
+    if any(isinstance(b, Mapping) and b.get("kind") == STOPPED_KIND for b in request.get("blockers") or ()):
+        return Refused(409, "stopped", "the tech lead stopped this request; it stays failed")
+    if cis_apply_started:
+        return Refused(409, "cis_apply_started", "the CIS apply has started; finish or fix it first")
+    return None
+
+
+def stop_refusal(request: Mapping[str, Any]) -> Optional[Refused]:
+    """Whether the tech lead may stop the request now (it then stays failed)."""
+    phase = request.get("phase")
+    if phase not in STOP_PHASES:
+        return Refused(409, "phase", f"no stop in phase {phase}: the apps may be erasing; the saga fails by itself "
+                                     "on a refused step or an expired approval")
+    if any(isinstance(b, Mapping) and b.get("kind") == STOPPED_KIND for b in request.get("blockers") or ()):
+        return Refused(409, "stopped", "the request is already stopped")
     return None
 
 

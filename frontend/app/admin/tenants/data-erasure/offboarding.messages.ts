@@ -58,6 +58,10 @@ export const TO = defineMessages(
     runQueued: "The saga job will run now.",
     newRound: "Start a new round",
     newRoundDone: "A new DRY RUN round started.",
+    stop: "Stop for good",
+    stopConfirm:
+      "Stop this erasure request for good? It stays failed and cannot start a new round. Data an app already erased is not restored.",
+    stopDone: "The request is stopped (failed).",
     approveTitle: "Approve the combined fingerprint",
     approveLead:
       "Approving lets Booking, TripPlanner and the CRM erase this tenant's data, then CIS. It cannot be undone. Take the RDS snapshot first and enter its id.",
@@ -128,6 +132,10 @@ export const TO = defineMessages(
     runQueued: "Job saga sẽ chạy ngay.",
     newRound: "Bắt đầu vòng mới",
     newRoundDone: "Đã bắt đầu vòng DRY RUN mới.",
+    stop: "Dừng hẳn",
+    stopConfirm:
+      "Dừng hẳn yêu cầu xoá này? Yêu cầu giữ trạng thái failed và không bắt đầu vòng mới được. Dữ liệu app nào đã xoá thì không khôi phục.",
+    stopDone: "Đã dừng yêu cầu (failed).",
     approveTitle: "Duyệt fingerprint chung",
     approveLead:
       "Duyệt cho phép Booking, TripPlanner và CRM xoá dữ liệu của tenant này, rồi tới CIS. Không hoàn tác được. Chụp snapshot RDS trước và nhập id của nó.",

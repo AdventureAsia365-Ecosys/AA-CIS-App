@@ -12,6 +12,12 @@ contract's ErasureReport body. Invented ids only.
     fingerprint covers the active apps and the round; the approval route refuses the admin secret alone, the switch
     off, a stale fingerprint and one older than 24 h; CIS applies last (backup, fresh DRY RUN, data_erasure apply);
   * stage 2 (the CRM alone, round 2): its own DRY RUN, approval, apply and census, then done with a receipt;
+  * failed (the contract's "the tech lead decides"): a refused step, a changed CIS plan or a census above 0 moves the
+    request to failed; a new round starts from failed (never after the CIS apply job), a stop keeps it failed; a
+    restore is refused once any round was approved (a new round does not clear it) and cancels a failed request that
+    never was;
+  * a report view without the contract columns is app_not_ready / report_shape_unknown even with no row, a request_id
+    column that is not uuid app_not_ready; the approval is refused when a step's plan changed after the fingerprint;
   * the CRM routes: idempotent report_id (201 / 200 / 409 report_conflict), wrong_app, round_superseded,
     phase_mismatch; the feed lists the CRM step (waiting in stage 1) and serves a change again after the cursor.
 """
@@ -283,6 +289,47 @@ async def test_a_report_view_outside_the_contract_shape_is_a_named_blocker(pool)
     assert st[("tripplanner", "dry_run")]["error_code"] == "report_shape_unknown"
 
 
+@pytest.mark.asyncio
+async def test_an_empty_report_view_outside_the_contract_shape_is_a_named_blocker(pool):
+    """A TripPlanner view with its own columns (no round, report_id, error_code, tables, blockers, census, reported_at)
+    and no row for the request yet: still app_not_ready with report_shape_unknown, read from the catalog, never a
+    silent pending."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    await _views(p)
+    await p.execute(f"CREATE TABLE {SCRATCH}.tp_own (request_id uuid, tenant_id uuid, mode text, status text, "
+                    "reason text, plan_hash text, counts jsonb, job_id uuid, created_at timestamptz, "
+                    "updated_at timestamptz)")
+    await p.execute("DROP VIEW tripplanner.v_tenant_erasure_report_v1")
+    await p.execute(f"CREATE VIEW tripplanner.v_tenant_erasure_report_v1 AS SELECT * FROM {SCRATCH}.tp_own")
+    out = await sj.advance(p, rid, now=datetime.now(timezone.utc) + timedelta(seconds=1))
+    assert out["phase"] == "dry_run" and out["waiting"]
+    st = await _steps(p, rid)
+    assert st[("tripplanner", "dry_run")]["status"] == "app_not_ready"
+    assert st[("tripplanner", "dry_run")]["error_code"] == "report_shape_unknown"
+    assert st[("booking", "dry_run")]["status"] == "pending"                  # contract view, no report yet
+    assert {(b["app"], b["kind"]) for b in json.loads((await _req(p, rid))["blockers"])} >= {
+        ("tripplanner", "app_not_ready")}
+
+
+@pytest.mark.asyncio
+async def test_a_report_view_whose_request_id_is_not_uuid_is_app_not_ready(pool):
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    await _views(p)
+    await p.execute("DROP VIEW booking.v_tenant_erasure_report_v1")
+    await p.execute(f"CREATE VIEW booking.v_tenant_erasure_report_v1 AS SELECT report_id, request_id::text AS "
+                    f"request_id, tenant_id, app, round, mode, status, error_code, plan_hash, tables, blockers, "
+                    f"census, job_id, reported_at FROM {SCRATCH}.reports WHERE app = 'booking'")
+    out = await sj.advance(p, rid, now=datetime.now(timezone.utc) + timedelta(seconds=1))
+    assert out["phase"] == "dry_run" and out["waiting"]
+    st = await _steps(p, rid)
+    assert st[("booking", "dry_run")]["status"] == "app_not_ready"
+    assert st[("booking", "dry_run")]["error_code"] == "app_not_ready"
+
+
 # ── the full drill path: stage 1 then stage 2 ───────────────────────────────────────────────────────────────────────
 
 async def _stage1_to_approval(p, tid, rid, now):
@@ -433,6 +480,8 @@ async def test_a_changed_cis_plan_stops_the_apply(pool, monkeypatch):
                                                "rows": [dict(CIS_ROWS[0], rows=2)] + CIS_ROWS[1:]})
     out = await sj.advance(p, rid, now=later)
     assert not out["waiting"] and out["blockers"][0]["kind"] == "plan_changed"
+    assert out["phase"] == "failed" and (await _req(p, rid))["phase"] == "failed"
+    assert rid not in await sj.ensure_jobs(p, now=later)                     # nothing queued for a failed request
     cis = (await _steps(p, rid))[("cis", "apply")]
     assert cis["status"] == "refused" and cis["error_code"] == "plan_changed"
     assert await p.fetchval("SELECT count(*) AS n FROM shared.job WHERE idempotency_key LIKE $1",
@@ -504,3 +553,145 @@ async def test_crm_feed_serves_its_step_and_changes_after_the_cursor(pool):
     with pytest.raises(M2MProblem) as e:
         await _crm(p, str(uuid.uuid4()), _crm_report(str(uuid.uuid4()), tid, "dry_run", round_=1))
     assert e.value.status == 422                                            # body request_id differs from the path
+
+
+# ── failed: the tech lead decides (a new round, or stop) ────────────────────────────────────────────────────────────
+
+async def _stage1_through_cis_apply(p, tid, rid, monkeypatch, *, cis_left=None):
+    """Stage 1 of a drill up to verify: approval, Booking and TripPlanner apply, CIS backup, re-check and apply."""
+    now = datetime.now(timezone.utc) + timedelta(seconds=1)
+    fp = await _stage1_to_approval(p, tid, rid, now)
+    _switch(monkeypatch, True)
+    await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-f"), _staff(p, COGNITO))
+    later = datetime.now(timezone.utc) + timedelta(seconds=2)
+    for app in ("booking", "tripplanner"):
+        await _report(p, app, rid, tid, "apply", plan_hash=PEER_HASH[app])
+    await sj.advance(p, rid, now=later)
+    await _play(p, "cis:backup", rid, result={})
+    await sj.advance(p, rid, now=later)
+    await _play(p, "cis:recheck", rid, result={"mode": "dry_run", "blocked": False, "fingerprint": "4" * 64,
+                                               "rows": CIS_ROWS})
+    await sj.advance(p, rid, now=later)
+    left = cis_left or {}
+    await _play(p, "cis:apply", rid, result={"mode": "apply", "verified": not any(left.values()),
+                                             "verified_left": left,
+                                             "applied": [{"table": "shared.tenants", "action": "delete", "rows": 1}]})
+    return later
+
+
+@pytest.mark.asyncio
+async def test_a_census_above_zero_fails_the_request_then_only_a_stop(pool, monkeypatch):
+    """Stage 1 verify: Booking finds 2 personal-data rows left. The request moves to failed (no longer open, no job
+    queued); a new round is refused (the CIS apply job of the round ran), a stop keeps it failed, once."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    later = await _stage1_through_cis_apply(p, tid, rid, monkeypatch)
+    await _report(p, "booking", rid, tid, "verify", census={"pii_columns_checked": 3, "pii_rows_found": 2})
+    await _report(p, "tripplanner", rid, tid, "verify", census={"pii_columns_checked": 3, "pii_rows_found": 0})
+    out = await sj.advance(p, rid, now=later)
+    assert out["phase"] == "failed" and out["stopped_in"] == "verify"
+    req = await _req(p, rid)
+    assert req["phase"] == "failed"
+    assert {(b["app"], b["kind"]) for b in json.loads(req["blockers"])} == {("booking", "census_not_zero")}
+    assert rid not in await sj.ensure_jobs(p, now=later)
+    with pytest.raises(HTTPException) as e:
+        await ar.new_round(rid, _staff(p), "pytest")
+    assert e.value.status_code == 409 and "CIS apply" in e.value.detail
+    out = await ar.stop(rid, _staff(p), "pytest")
+    assert out == {"request_id": rid, "phase": "failed", "stopped": True}
+    kinds = [b["kind"] for b in json.loads((await _req(p, rid))["blockers"])]
+    assert kinds == ["census_not_zero", saga.STOPPED_KIND]
+    with pytest.raises(HTTPException) as e:
+        await ar.stop(rid, _staff(p), "pytest")
+    assert e.value.status_code == 409
+    assert await p.fetchval("SELECT count(*) AS n FROM acp_shared.audit_log WHERE resource_id = $1 "
+                            "AND action = 'tenant.erasure_stopped'", rid) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_crm_census_above_zero_fails_then_a_new_round_from_failed(pool):
+    """Stage 2 (the CRM alone, no CIS apply in the round): failed on a census above 0, then a new DRY RUN round."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    now = datetime.now(timezone.utc)
+    await p.execute(
+        "UPDATE shared.tenant_erasure_request SET phase = 'verify', round = 2, round_apps = '{crm}', "
+        "done_apps = '{cis,booking,tripplanner}', combined_fingerprint = $2, fingerprint_at = $3, "
+        "approved_fingerprint = $2, approved_by = 'admin:pytest', approved_at = $3, approval_expires_at = $4 "
+        "WHERE request_id = $1::uuid", rid, "5" * 64, now, now + timedelta(hours=24))
+    await p.execute("INSERT INTO shared.tenant_erasure_step (request_id, round, app, mode, status, plan_hash, "
+                    "approved_plan_hash) VALUES ($1::uuid, 2, 'crm', 'dry_run', 'ok', $2, $2)", rid, PEER_HASH["crm"])
+    await p.execute("INSERT INTO shared.tenant_erasure_step (request_id, round, app, mode, status) "
+                    "VALUES ($1::uuid, 2, 'crm', 'apply', 'ok')", rid)
+    assert (await _crm(p, rid, _crm_report(rid, tid, "verify", round_=2, census={"pii_columns_checked": 2,
+                                                                                 "pii_rows_found": 1})))[0] == 201
+    out = await sj.advance(p, rid, now=now + timedelta(seconds=1))
+    assert out["phase"] == "failed" and out["stopped_in"] == "verify"
+    out = await ar.new_round(rid, _staff(p), "pytest")
+    req = await _req(p, rid)
+    assert out["round"] == 3 and req["phase"] == "dry_run" and list(req["round_apps"]) == []
+    assert list(req["done_apps"]) == ["cis", "booking", "tripplanner"] and req["approved_fingerprint"] is None
+    out = await sj.advance(p, rid, now=now + timedelta(seconds=2))
+    assert out["phase"] == "dry_run" and out["waiting_for"] == ["crm"]                  # the CRM again, round 3
+    with pytest.raises(store.ErasureInProgress):                       # stage 1 is done: never restorable
+        async with p.acquire() as conn, conn.transaction():
+            await store.on_restore(conn, tid)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_dry_run_fails_and_a_restore_cancels_the_failed_request(pool):
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    await _views(p)
+    await _report(p, "booking", rid, tid, "dry_run", status="blocked")
+    out = await sj.advance(p, rid, now=datetime.now(timezone.utc) + timedelta(seconds=1))
+    assert out["phase"] == "failed" and out["stopped_in"] == "dry_run"
+    assert (await _req(p, rid))["phase"] == "failed"
+    async with p.acquire() as conn, conn.transaction():
+        assert await store.on_restore(conn, tid) == rid                  # never approved: cancelled with the restore
+    assert (await _req(p, rid))["phase"] == "cancelled"
+    assert await _last_event(p, tid) == {"op": "cancelled", "request_id": rid}
+    with pytest.raises(HTTPException) as e:
+        await ar.new_round(rid, _staff(p), "pytest")
+    assert e.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_restore_is_refused_after_an_approval_even_after_a_new_round(pool, monkeypatch):
+    """Approve, then a new round (allowed from apply while the CIS apply has not started) puts the request back in
+    dry_run; Booking may already have applied (its report not copied yet). The restore must still be refused."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    fp = await _stage1_to_approval(p, tid, rid, datetime.now(timezone.utc) + timedelta(seconds=1))
+    _switch(monkeypatch, True)
+    await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-r"), _staff(p, COGNITO))
+    await _report(p, "booking", rid, tid, "apply", plan_hash=PEER_HASH["booking"])     # in the view only
+    out = await ar.new_round(rid, _staff(p), "pytest")
+    assert out["round"] == 2 and (await _req(p, rid))["phase"] == "dry_run"
+    with pytest.raises(store.ErasureInProgress):
+        async with p.acquire() as conn, conn.transaction():
+            await store.on_restore(conn, tid)
+    assert (await _req(p, rid))["phase"] == "dry_run"
+
+
+@pytest.mark.asyncio
+async def test_the_approval_is_refused_when_a_plan_changed_after_the_fingerprint(pool, monkeypatch):
+    """A report that lands after the fingerprint was computed (here: the CRM-style late upsert of the Booking dry_run
+    step) never gets approved unseen: the route recomputes the fingerprint from the step rows under its lock."""
+    p, tenants = pool
+    tid = await _tenant(p, tenants)
+    rid = (await _offboard(p, tid, mode="drill"))["request_id"]
+    fp = await _stage1_to_approval(p, tid, rid, datetime.now(timezone.utc) + timedelta(seconds=1))
+    await p.execute("UPDATE shared.tenant_erasure_step SET plan_hash = $2 WHERE request_id = $1::uuid "
+                    "AND round = 1 AND app = 'booking' AND mode = 'dry_run'", rid, "9" * 64)
+    _switch(monkeypatch, True)
+    with pytest.raises(HTTPException) as e:
+        await ar.approve(rid, ar.ApproveRequest(fingerprint=fp, snapshot_id="snap-s"), _staff(p, COGNITO))
+    assert e.value.status_code == 409 and "new plan" in e.value.detail
+    req = await _req(p, rid)
+    assert req["phase"] == "awaiting_approval" and req["approved_fingerprint"] is None
+    assert all(r["approved_plan_hash"] is None for r in (await _steps(p, rid)).values())

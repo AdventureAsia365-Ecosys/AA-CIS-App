@@ -10,8 +10,11 @@
                                                               fingerprint (Cognito administrator only, within 24 h
                                                               of the fingerprint, apply switch on, never the pilot,
                                                               Dev: synthetic only); the apps then apply, CIS last
-  POST /admin/job-runner/erasure/requests/{request_id}/new-round  start a new DRY RUN round (after an expired or refused
-                                                              approval, a plan_changed or a failed step)
+  POST /admin/job-runner/erasure/requests/{request_id}/new-round  start a new DRY RUN round (in failed: after an
+                                                              expired approval, a plan_changed, a failed step or a
+                                                              census above 0; refused once the CIS apply job started)
+  POST /admin/job-runner/erasure/requests/{request_id}/stop   the tech lead stops the request: it stays failed for
+                                                              good (dry_run, awaiting_approval or failed only)
 
 Under /admin/job-runner/erasure like the data_erasure routes, so the admin BFF rule (frontend lib/rbac.ts
 `job-runner/erasure`: admin only) and POLICY (tenant.read / tenant.write) cover them. Reads hold ids, phases, hashes,
@@ -206,12 +209,15 @@ async def approve(request_id: str, body: ApproveRequest, request: Request):
             if req is None:
                 raise HTTPException(status_code=404, detail="No erasure request has this id")
             reasons = saga.request_guard(req, environment=policy.environment())
+            # the fingerprint the step rows give now, under the request lock (a report after the fingerprint = stale)
+            now_fp = saga.fingerprint_of_steps(req, await store.steps(conn, rid, int(req["round"])))
             if "cis" in req["round_apps"]:            # stage 1: CIS still erases, its tenant row must be right
                 row = await conn.fetchrow(TENANT_SQL, req["tenant_id"])
                 reasons += saga.cis_tenant_guard(dict(row) if row else None)
             refusal = saga.approval_refusal(req, fingerprint=body.fingerprint, now=now, cognito_admin=cognito_admin,
                                             apply_on=policy.apply_enabled(), tenant_reasons=reasons,
-                                            validity=validity)
+                                            validity=validity,
+                                            plans_match=now_fp is not None and now_fp == req["combined_fingerprint"])
             if refusal is not None:
                 logger.warning("tenant_erasure_approval_refused", request_id=rid, code=refusal.code)
                 raise HTTPException(status_code=refusal.status, detail=refusal.message)
@@ -241,9 +247,10 @@ async def approve(request_id: str, body: ApproveRequest, request: Request):
 @router.post("/{request_id}/new-round", summary="Start a new DRY RUN round of this request")
 async def new_round(request_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
     """A new round: phase dry_run, round + 1, no app active until the next pass picks the apps past their not_before
-    that are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record).
-    Allowed while no CIS apply job has started: in dry_run (a stopped step), awaiting_approval, or apply (an expired
-    approval, plan_changed, a failed step)."""
+    that are not done, the fingerprint and the approval cleared (the step rows of earlier rounds stay as the record,
+    their approved_plan_hash too: a restore stays refused). Allowed while no CIS apply job of the round has started:
+    in dry_run, awaiting_approval, apply, or failed (the usual case: the saga stopped on an expired approval, a
+    plan_changed, a failed step or a census above 0); never for the pilot or a request the tech lead stopped."""
     rid = _rid(request_id)
     actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
     try:
@@ -251,14 +258,13 @@ async def new_round(request_id: str, request: Request, x_admin_user_id: Optional
             req = await store.get_request(conn, rid, for_update=True)
             if req is None:
                 raise HTTPException(status_code=404, detail="No erasure request has this id")
-            if req["phase"] not in ("dry_run", "awaiting_approval", "apply"):
-                raise HTTPException(status_code=409, detail=f"no new round in phase {req['phase']}")
             cis_apply = await conn.fetchval(
                 "SELECT job_id::text AS job_id FROM shared.tenant_erasure_step WHERE request_id = $1::uuid "
                 "AND round = $2 AND app = 'cis' AND mode = 'apply' AND job_id IS NOT NULL", rid, int(req["round"]))
-            if cis_apply is not None:
-                raise HTTPException(status_code=409, detail="the CIS apply has started; finish or fix it first")
-            await store.move(conn, rid, ("dry_run", "awaiting_approval", "apply"), "dry_run",
+            refusal = saga.new_round_refusal(req, cis_apply_started=cis_apply is not None)
+            if refusal is not None:
+                raise HTTPException(status_code=refusal.status, detail=refusal.message)
+            await store.move(conn, rid, saga.NEW_ROUND_PHASES, "dry_run",
                              round=int(req["round"]) + 1, round_apps=[], combined_fingerprint=None, fingerprint_at=None,
                              approved_fingerprint=None, approved_by=None, approved_at=None,
                              approval_expires_at=None, blockers=[])
@@ -270,4 +276,37 @@ async def new_round(request_id: str, request: Request, x_admin_user_id: Optional
         raise _unavailable(e)
     except asyncpg.exceptions.CheckViolationError:
         raise HTTPException(status_code=409, detail="too many rounds for one request")
+    except asyncpg.exceptions.UniqueViolationError:
+        # failed -> dry_run while the tenant has another open request (restored and offboarded again meanwhile)
+        raise HTTPException(status_code=409, detail="the tenant has another open erasure request")
     return {"request_id": rid, "phase": "dry_run", "round": int(req["round"]) + 1}
+
+
+@router.post("/{request_id}/stop", summary="Stop this request for good (it stays failed)")
+async def stop(request_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    """The contract's "the tech lead decides (a new round, or stop)": the request moves to (or stays in) failed with
+    the blocker stopped_by_tech_lead and never starts a new round. Only in dry_run, awaiting_approval or failed:
+    never while the apps may be erasing (apply, verify). Nothing is erased or restored here; what an app already
+    erased is the runbook's manual follow-up."""
+    rid = _rid(request_id)
+    actor = f"admin:{x_admin_user_id}"[:64] if x_admin_user_id else "admin"
+    try:
+        async with request.app.state.pool.acquire() as conn, conn.transaction():
+            req = await store.get_request(conn, rid, for_update=True)
+            if req is None:
+                raise HTTPException(status_code=404, detail="No erasure request has this id")
+            refusal = saga.stop_refusal(req)
+            if refusal is not None:
+                raise HTTPException(status_code=refusal.status, detail=refusal.message)
+            blockers = list(req["blockers"] or []) + [{"app": "cis", "kind": saga.STOPPED_KIND,
+                                                       "detail": "stopped by the tech lead"}]
+            if not await store.move(conn, rid, saga.STOP_PHASES, "failed", blockers=blockers):
+                raise HTTPException(status_code=409, detail="the request moved meanwhile; reload it")
+            await write_audit_log(conn, tenant_id=req["tenant_id"], actor=actor,
+                                  action=AdminTenantAuditAction.ERASURE_STOPPED, resource_type="tenant_erasure",
+                                  resource_id=rid, details={"round": int(req["round"]),
+                                                            "previous_phase": req["phase"]})
+    except store.NOT_MIGRATED as e:
+        raise _unavailable(e)
+    logger.info("tenant_erasure_stopped", request_id=rid, actor=actor)
+    return {"request_id": rid, "phase": "failed", "stopped": True}

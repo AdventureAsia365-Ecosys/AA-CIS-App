@@ -120,26 +120,45 @@ async def open_request(conn, tenant_id: str, *, for_update: bool = False) -> Opt
         f"AND phase = ANY($2::text[]){lock}", tenant_id, list(saga.OPEN_PHASES)))
 
 
+# The requests a restore must look at: the open one and every failed one (a failed request may start a new round, so
+# it is not over). approved: an approval was given in some round (approved_plan_hash survives a new round: the step
+# rows of earlier rounds stay), or an app reported an ok apply. Either means an app may already have erased its part,
+# even when its report has not reached the step table yet (Booking / TripPlanner reports are copied by a saga pass).
+_RESTORE_SQL = f"""
+    SELECT {', '.join('r.' + c.strip() for c in REQUEST_COLUMNS.split(','))},
+           EXISTS (SELECT 1 FROM shared.tenant_erasure_step s
+                    WHERE s.request_id = r.request_id
+                      AND (s.approved_plan_hash IS NOT NULL OR (s.mode = 'apply' AND s.status = 'ok'))) AS approved
+      FROM shared.tenant_erasure_request r
+     WHERE r.tenant_id = $1::uuid AND r.phase = ANY($2::text[])
+     ORDER BY r.created_at, r.request_id
+       FOR UPDATE OF r
+"""
+
+
 async def on_restore(conn, tenant_id: str) -> Optional[str]:
-    """The hook of POST /admin/tenants/{id}/restore, inside its transaction: cancels the open request (returns its
-    id) or raises ErasureInProgress once the apply started. None when there is none or CIS 408 is not applied."""
+    """The hook of POST /admin/tenants/{id}/restore, inside its transaction: cancels the open request and any failed
+    one (returns the open one's id, else the first failed one's) or raises ErasureInProgress when an approval was ever
+    given or an app may have erased its part. None when there is none or CIS 408 is not applied."""
     try:
         async with conn.transaction():
-            req = await open_request(conn, tenant_id, for_update=True)
-            if req is None:
+            rows = [(_row(r), bool(r["approved"])) for r in await conn.fetch(
+                _RESTORE_SQL, tenant_id, list(saga.OPEN_PHASES) + ["failed"])]
+            if not rows:
                 return None
-            applied = await conn.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM shared.tenant_erasure_step WHERE request_id = $1::uuid "
-                "AND mode = 'apply' AND status = 'ok') AS ok", req["request_id"])
-            if req["phase"] not in saga.CANCELLABLE_PHASES or applied or req["done_apps"]:
-                raise ErasureInProgress(f"the erasure of this tenant is in phase {req['phase']} and an app may already "
-                                        "have erased its part")
-            await conn.execute(
-                "UPDATE shared.tenant_erasure_request SET phase = 'cancelled', cancelled_at = now() "
-                "WHERE request_id = $1::uuid AND phase = ANY($2::text[])", req["request_id"],
-                list(saga.CANCELLABLE_PHASES))
-            await emit(conn, tenant_id, event_change(req, "cancelled"))
-            return req["request_id"]
+            for req, approved in rows:
+                if approved or req["done_apps"] or req["phase"] not in saga.CANCELLABLE_PHASES + ("failed",):
+                    raise ErasureInProgress(
+                        f"the erasure of this tenant is in phase {req['phase']} (round {req['round']}) and was "
+                        "approved, so an app may already have erased its part")
+            for req, _ in rows:
+                await conn.execute(
+                    "UPDATE shared.tenant_erasure_request SET phase = 'cancelled', cancelled_at = now() "
+                    "WHERE request_id = $1::uuid AND phase = ANY($2::text[])", req["request_id"],
+                    list(saga.CANCELLABLE_PHASES) + ["failed"])
+                await emit(conn, tenant_id, event_change(req, "cancelled"))
+            open_ids = [req["request_id"] for req, _ in rows if req["phase"] != "failed"]
+            return (open_ids or [rows[0][0]["request_id"]])[0]
     except NOT_MIGRATED:
         return None
 

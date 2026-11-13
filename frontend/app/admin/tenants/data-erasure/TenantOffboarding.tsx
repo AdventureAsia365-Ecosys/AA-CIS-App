@@ -6,20 +6,20 @@
 //   1. Settings: the apply switch, the exit windows, how long an approval is valid.
 //   2. Requests: one per offboarded tenant (phase, round, the date the DRY RUN round may start, blockers).
 //   3. A request: the per-app dates, the steps of the current round (DRY RUN plan hash, apply, census), the blockers,
-//      Run now (queue the saga job), Start a new round, and the approval form (fingerprint prefix + RDS snapshot id;
+//      Run now (queue the saga job), Start a new round, Stop (the request stays failed), and the approval form (fingerprint prefix + RDS snapshot id;
 //      the API accepts only a Cognito administrator).
 //   4. Drill: window 0 for an offboarded synthetic tenant (nothing is approved or applied there).
 // API through the BFF (/api/admin/job-runner/erasure/requests*, admin only: lib/rbac.ts `job-runner/erasure`).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
+import { Ban, Play, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, DateText, ErrorState, Input, K, StatusBadge, TableSkeleton, apiGet, mono, useT,
   type ColumnDef,
 } from "../../../_kit";
 import {
-  APPS, ERASURE_REQUESTS_API, FINGERPRINT_PREFIX, NEW_ROUND_PHASES, WORKING_PHASES, approvalBlockers, notBefore,
+  APPS, ERASURE_REQUESTS_API, FINGERPRINT_PREFIX, WORKING_PHASES, approvalBlockers, decisionActions, notBefore,
   phaseTone, prefixMatches, shortHash, stepOf, stepStatus,
   type App, type SagaDetail, type SagaList, type SagaRequest, type StepMode,
 } from "@/lib/tenantErasure";
@@ -76,6 +76,7 @@ type Act = (path: string, body: Record<string, unknown>, done: string) => Promis
 
 function DetailActions({ req, busy, act }: { req: SagaRequest; busy: boolean; act: Act }) {
   const t = useT(TO);
+  const can = decisionActions(req);
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       {WORKING_PHASES.includes(req.phase) && (
@@ -84,10 +85,16 @@ function DetailActions({ req, busy, act }: { req: SagaRequest; busy: boolean; ac
           <Play size={13} /> {t("runNow")}
         </Button>
       )}
-      {NEW_ROUND_PHASES.includes(req.phase) && (
+      {can.newRound && (
         <Button size="sm" variant="ghost" disabled={busy}
           onClick={() => void act("/new-round", {}, t("newRoundDone"))}>
           <RotateCcw size={13} /> {t("newRound")}
+        </Button>
+      )}
+      {can.stop && (
+        <Button size="sm" variant="danger" disabled={busy} data-testid="tenant-erasure-stop"
+          onClick={() => { if (window.confirm(t("stopConfirm"))) void act("/stop", {}, t("stopDone")); }}>
+          <Ban size={13} /> {t("stop")}
         </Button>
       )}
     </div>

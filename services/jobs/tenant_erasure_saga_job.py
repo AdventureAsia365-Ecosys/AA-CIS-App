@@ -8,8 +8,9 @@ One run = one pass over the request's current phase, every write a conditional U
 retry or a restore in between are harmless (idempotent per request and phase). A pass that has to wait (an app has not
 reported, a CIS job is still running) raises Reschedule: the same job row looks again later (shared/jobs/registry.py,
 at most RESCHEDULE_MAX_COUNT times; then it fails and the ops sampler queues a new one while the request is open).
-A pass that cannot go on (a step failed, the plan changed, the approval expired, the apply switch is off) records the
-blockers on the request and ends: a person starts a new DRY RUN round (admin Tenant offboarding tab).
+A pass that cannot go on (a step failed or refused, a census is not 0, the plan changed, the approval expired, the
+apply switch is off) moves the request to failed with its blockers and ends (the contract: the tech lead decides): a
+person starts a new DRY RUN round or stops it (admin Tenant offboarding tab). Nothing is queued for a failed request.
 
 Rounds: a round starts in dry_run when an app that is not done passes its not_before (stage 1 CIS, Booking,
 TripPlanner at T0 + 30 days; stage 2 the CRM at T0 + 90 days); the apps of the round are fixed then (round_apps).
@@ -110,10 +111,10 @@ async def _app_steps(conn, req: dict, mode: str) -> dict[str, Optional[dict]]:
             not_ready = None
             try:
                 rows = await reports.read(conn, app, rid)
-            except reports.AppNotReady:
-                not_ready, rows = "app_not_ready", []
+            except reports.AppNotReady as e:
+                not_ready, rows = e.code, []           # no readable view, or a view without the contract columns
             if not_ready is None and saga.report_shape_unknown(rows):
-                not_ready = "report_shape_unknown"     # rows exist but none in the contract's shape
+                not_ready = reports.SHAPE_CODE         # rows exist but none in the contract's shape
             if not_ready is not None:
                 if prev is None or prev["status"] in ("pending", "app_not_ready"):
                     await store.upsert_step(conn, rid, rnd, app, mode, "app_not_ready", error_code=not_ready,
@@ -162,8 +163,13 @@ def _cis_tables(rows: list) -> list[dict]:
 
 
 async def _stopped(conn, req: dict, blockers: list[dict]) -> dict:
-    await store.set_blockers(conn, req["request_id"], req["phase"], blockers)
-    return _stop(req["phase"], blockers=blockers)
+    """A step needs a person: the request moves from its phase to failed with the blockers (the contract's "a step
+    failed or refused; the tech lead decides"). It then leaves the open-request index and the ops sampler's list."""
+    if not await store.move(conn, req["request_id"], (req["phase"],), "failed", blockers=blockers):
+        return _stop(req["phase"], reason="moved meanwhile", blockers=blockers)
+    logger.warning("tenant_erasure_failed", request_id=req["request_id"], round=int(req["round"]),
+                   stopped_in=req["phase"], kinds=sorted({str(b.get("kind")) for b in blockers}))
+    return _stop("failed", stopped_in=req["phase"], blockers=blockers)
 
 
 # ── the pass ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -232,16 +238,35 @@ async def _dry_run(pool, conn, req: dict, now: datetime) -> dict:
     steps = await _app_steps(conn, req, "dry_run")
     state = saga.phase_state(steps, req["round_apps"], need_hash=True)
     if state.ready:
-        fp = saga.combined_fingerprint(rid, tid, rnd, {app: steps[app]["plan_hash"] for app in req["round_apps"]})
-        await store.move(conn, rid, ("dry_run",), "awaiting_approval", combined_fingerprint=fp, fingerprint_at=now,
-                         blockers=[])
-        logger.info("tenant_erasure_awaiting_approval", request_id=rid, round=rnd, fingerprint=fp[:12])
-        return _stop("awaiting_approval", fingerprint=fp)
-    await store.set_blockers(conn, rid, "dry_run", list(state.blockers))
+        return await _await_approval(conn, req, now)
     if state.stopped:
-        return _stop("dry_run", blockers=list(state.blockers))
+        return await _stopped(conn, req, list(state.blockers))
+    await store.set_blockers(conn, rid, "dry_run", list(state.blockers))
     delay = CIS_JOB_POLL_S if "cis" in state.waiting else APP_POLL_S
     return _wait("dry_run", delay, waiting_for=list(state.waiting), blockers=list(state.blockers))
+
+
+async def _await_approval(conn, req: dict, now: datetime) -> dict:
+    """Every active app reported an ok plan: compute the combined fingerprint and move to awaiting_approval under the
+    request's row lock, from the step rows read inside that lock. The CRM report route takes the same lock and
+    accepts a dry_run report only in phase dry_run, so no report can land between the fingerprint and the move."""
+    rid, rnd, tid = req["request_id"], int(req["round"]), req["tenant_id"]
+    async with conn.transaction():
+        locked = await store.get_request(conn, rid, for_update=True)
+        if locked is None or locked["phase"] != "dry_run" or int(locked["round"]) != rnd:
+            return _stop(locked["phase"] if locked else "dry_run", reason="moved meanwhile")
+        rows = store.by_app_mode(await store.steps(conn, rid, rnd))
+        state = saga.phase_state({app: rows.get((app, "dry_run")) for app in req["round_apps"]}, req["round_apps"],
+                                 need_hash=True)
+        if not state.ready:                  # a report changed meanwhile: the next pass reads it again
+            return _wait("dry_run", CIS_JOB_POLL_S, waiting_for=list(state.waiting) or ["a new report"],
+                         blockers=list(state.blockers))
+        fp = saga.combined_fingerprint(rid, tid, rnd, {app: rows[(app, "dry_run")]["plan_hash"]
+                                                       for app in req["round_apps"]})
+        await store.move(conn, rid, ("dry_run",), "awaiting_approval", combined_fingerprint=fp, fingerprint_at=now,
+                         blockers=[])
+    logger.info("tenant_erasure_awaiting_approval", request_id=rid, round=rnd, fingerprint=fp[:12])
+    return _stop("awaiting_approval", fingerprint=fp)
 
 
 async def _apply(pool, conn, req: dict, tenant: Optional[dict], now: datetime, env: Optional[dict]) -> dict:
@@ -372,9 +397,9 @@ async def _verify(conn, req: dict, now: datetime) -> dict:
     steps = await _app_steps(conn, req, "verify")
     state = saga.phase_state(steps, req["round_apps"], need_census=True)
     if not state.ready:
+        if state.stopped:                    # a failed verify or a census above 0: failed, the tech lead decides
+            return await _stopped(conn, req, list(state.blockers))
         await store.set_blockers(conn, rid, "verify", list(state.blockers))
-        if state.stopped:
-            return _stop("verify", blockers=list(state.blockers))
         return _wait("verify", APP_POLL_S, waiting_for=list(state.waiting))
     done = [a for a in saga.APPS if a in set(req["done_apps"]) | set(req["round_apps"])]
     clear = dict(combined_fingerprint=None, fingerprint_at=None, approved_fingerprint=None, approved_by=None,
