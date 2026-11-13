@@ -34,6 +34,10 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
   breaks the read; a missing view, schema or grant is `app_not_ready` (a blocker on the request, never a skip).
 - **The pilot is never scheduled** at the offboard (the route reports `skipped`); a request whose tenant became the
   pilot fails at the next pass. Dev: approve / apply only when `is_synthetic` (copied at T0).
+- **A report view outside the contract shape is a named blocker.** When an app's report view answers rows for the
+  request and none has the contract's core (`round`, a contract `mode` and `status`), the step is `app_not_ready` with
+  the code `report_shape_unknown` instead of a silent `pending` (S279 resume: the TripPlanner tp-030 view had no
+  `round` and its own status words).
 - **Restore** cancels the open request until any app reported an ok apply (or one is done); afterwards it answers 409.
 - **Event** `account.erasure_requested` is emitted from code through `shared.tenant_account_emit()` under a
   savepoint: before 409 the CHECK refuses the type and the offboard still succeeds (no event).
@@ -62,6 +66,14 @@ Contract: root `docs/contracts/tenant.erasure.v1.openapi.yaml` 1.0 (root PR #747
 - The CIS census is the `data_erasure` verification (rows left per table), not a `pii:` comment census.
 
 ## Should know
+
+- **View shape = the merged contract, not the first lane brief.** The brief of this lane described
+  `catalog.v_tenant_erasure_v1` as one row per request with `phase 'plan'|'apply'` and an `approved_plans` jsonb; the
+  contract `tenant.erasure.v1` 1.0 merged on root master (and Booking bk-057 / `bk_tenant_erase`) uses one row per
+  request and app (`app`, `step_status`, `not_before`, `approved_plan_hash`, `round`). CIS 410 serves the contract
+  shape. The TripPlanner lane (tp-030 view and `tp_tenant_erase` feed reader: `mode`, `tripplanner_plan_hash`, statuses
+  planned / applied) must align with the contract before its reports count; until then the saga shows its step as
+  `app_not_ready` / `report_shape_unknown` (or its feed reader answers `feed_shape_unknown`).
 
 - Apply order on Dev: CIS 408 (expand) and 409 / 410 (contract) before this PR's deploy (readiness raised to 408 / 409).
 - A drill never applies in this lane. Applying a drill on Dev also needs `ERASURE_APPLY_ENABLED=true`, the setting
