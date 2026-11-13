@@ -65,6 +65,17 @@ def _audit_rows(conn):
     return out
 
 
+@pytest.fixture
+def erasure_hooks(monkeypatch):
+    """AA-1093 lane L2: the offboard / restore hooks of the erasure saga, stubbed (their SQL is covered by
+    tests/integration/test_aa1093_erasure_saga_db.py); returns (on_offboard, on_restore)."""
+    on_offboard = AsyncMock(return_value={"status": "scheduled", "request_id": "r-1"})
+    on_restore = AsyncMock(return_value=None)
+    monkeypatch.setattr("services.tenant_erasure.store.on_offboard", on_offboard)
+    monkeypatch.setattr("services.tenant_erasure.store.on_restore", on_restore)
+    return on_offboard, on_restore
+
+
 def _before(**kw):
     row = {"plan_tier": "starter", "plan_id": PLAN_ID, "rate_limit_rpm": 60,
            "is_active": True, "cancelled_at": None}
@@ -224,6 +235,7 @@ class TestNoApiKey:
         assert "api_key" not in admin.RestoreTenantResponse.model_fields
 
 
+@pytest.mark.usefixtures("erasure_hooks")
 class TestOffboard:
     @pytest.mark.asyncio
     async def test_aa_internal_tenant_is_refused(self):
@@ -240,10 +252,10 @@ class TestOffboard:
         assert e.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_no_stale_acc1_bucket_note_and_queued_only_cancel(self, monkeypatch):
+    async def test_no_stale_acc1_bucket_note_and_queued_only_cancel(self, monkeypatch, erasure_hooks):
         conn = _conn()
         conn.fetchrow.side_effect = [
-            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None},
+            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None, "is_pilot": False},
             {"reason": "AA test tenant", "added_at": CANCELLED, "added_by": "migration-181"},
         ]
         view = {"session_id": "s-1", "tenant_id": str(TENANT_ID), "session_staff": "u-9", "end_reason": "revoked"}
@@ -271,13 +283,19 @@ class TestOffboard:
         assert details["jev_allowlist"] == {"reason": "AA test tenant", "added_at": CANCELLED.isoformat(),
                                             "added_by": "migration-181"}
         hook.assert_awaited_once()
+        # AA-1093 lane L2: T0 of the erasure saga, in the offboard transaction (the pilot flag passed on)
+        on_offboard, _ = erasure_hooks
+        kw = on_offboard.await_args.kwargs
+        assert kw["is_pilot"] is False and kw["actor"] == "admin:u-2"
+        assert out["erasure_request"] == {"status": "scheduled", "request_id": "r-1"}
 
     @pytest.mark.asyncio
     async def test_offboard_is_soft_state_only(self, monkeypatch):
         """Nghiệp 14/10: restore must bring data + settings back, so offboard deletes nothing but
         the Jev allow-list row (snapshotted in the audit row) and only UPDATEs shared.tenants."""
         conn = _conn()
-        conn.fetchrow.side_effect = [{"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None}, None]
+        conn.fetchrow.side_effect = [
+            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None, "is_pilot": False}, None]
         conn.fetch.return_value = []
         monkeypatch.setattr("shared.jobs.registry.run_terminal_hook", AsyncMock())
         await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="left"), _request(conn),
@@ -316,6 +334,7 @@ class TestOffboard:
         assert "gdpr" not in text.lower()
 
 
+@pytest.mark.usefixtures("erasure_hooks")
 class TestRestore:
     async def _restore(self, conn, role="admin", redis=None):
         return await admin.restore_tenant(TENANT_ID, _request(conn, redis=redis), x_admin_secret=_SECRET,
@@ -377,6 +396,18 @@ class TestRestore:
         assert details["cancelled_jobs_not_rerun"] == [{"id": "j1", "kind": "t9_write"}]
         assert "jev_allowlist" in details["restored"]
         redis.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_erasure_in_progress_refuses_the_restore(self, erasure_hooks):
+        from services.tenant_erasure import store
+        _, on_restore = erasure_hooks
+        on_restore.side_effect = store.ErasureInProgress("an app already applied the erasure")
+        conn = _conn()
+        conn.fetchrow.return_value = self._offboarded()
+        with pytest.raises(HTTPException) as e:
+            await self._restore(conn)
+        assert e.value.status_code == 409
+        assert not any("UPDATE shared.tenants" in c.args[0] for c in conn.execute.call_args_list)
 
     @pytest.mark.asyncio
     async def test_no_allowlist_snapshot_restores_without_it(self):
