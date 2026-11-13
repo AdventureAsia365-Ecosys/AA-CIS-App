@@ -15,6 +15,7 @@ from services.tenant_account import plans as tenant_plans
 from api.routers._billing import no_plan_usage, usage_row_to_dict
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
+from shared import settings as platform_settings
 from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
 from services.photos import covers as _covers
@@ -433,9 +434,15 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     return str(row["plan"]), int(row["quota"] or 0)
 
 
+OVER_QUOTA_SETTING = "cis.billing.rewrite_over_quota_mode"   # S279 thresholds L1: soft (default) | hard
+
+
 async def _check_and_consume_rewrite_quota(conn, tenant_id: str) -> None:
     """Atomically increments this month's rewrite count. AA-640: past the plan quota the rewrite
-    is still allowed (billed as overage) — logged, never blocked, while the product is in trial."""
+    is still allowed (billed as overage) — logged, never blocked, while the product is in trial.
+    S279 thresholds L1: the rule is the setting `cis.billing.rewrite_over_quota_mode` (Platform › Settings): `soft`
+    (today) allows and bills the overage; `hard` refuses the rewrite with 429 (the caller's transaction rolls the
+    count back)."""
     plan, limit = await _get_tenant_plan_limit(conn, tenant_id)
     year_month, _next_month = _current_year_month_and_reset()
     used = await conn.fetchval("""
@@ -447,8 +454,14 @@ async def _check_and_consume_rewrite_quota(conn, tenant_id: str) -> None:
         RETURNING rewrite_count
     """, tenant_id, year_month)
     if used > limit:
+        mode = platform_settings.get(OVER_QUOTA_SETTING)
         logger.info("rewrite_over_quota", tenant_id=tenant_id, plan=plan, used=used, quota=limit,
-                    year_month=year_month)
+                    year_month=year_month, mode=mode)
+        if mode == "hard":
+            raise HTTPException(status_code=429, detail=(
+                f"Monthly rewrite quota reached: your plan includes {limit} rewrite(s) a month and this month's are "
+                f"used. The quota resets on {_next_month.strftime('%Y-%m-%d')}. Contact Adventure Asia for a larger "
+                "plan."))
 
 
 # Real replacement for the endpoint CatalogTab.tsx used to call before AA-428 deleted that

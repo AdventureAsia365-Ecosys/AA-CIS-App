@@ -99,7 +99,7 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
 from api.services import (ai_gateway, ai_gateway_batches, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide,
-                          crm_console, docs_reader, platform_apps, tenant_ai_budget)
+                          crm_console, docs_reader, platform_apps, settings_registry, tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
@@ -314,10 +314,14 @@ async def get_tenant_budget(request: Request, tenant_id: str = _TENANT_ID) -> di
 @router.put("/tenant-budgets/{tenant_id}", summary="Set one tenant's monthly AI budget (audited)",
             dependencies=TENANT_SCOPED)
 async def put_tenant_budget(body: TenantBudgetBody, request: Request, tenant_id: str = _TENANT_ID,
-                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                            x_admin_user_id: Optional[str] = Header(None),
+                            x_admin_role: Optional[str] = Header(None)) -> dict:
     try:
         return await tenant_ai_budget.upsert(request.app.state.pool, tenant_id.lower(), body.model_dump(),
-                                             actor=_actor(x_admin_user_id))
+                                             actor=_actor(x_admin_user_id),
+                                             tighten_only=settings_registry.tighten_only(x_admin_role))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except LookupError:
         raise HTTPException(status_code=404, detail="no such tenant")
     except tenant_ai_budget.TenantBudgetUnavailable as e:
@@ -327,7 +331,10 @@ async def put_tenant_budget(body: TenantBudgetBody, request: Request, tenant_id:
 @router.delete("/tenant-budgets/{tenant_id}", summary="Remove one tenant's monthly AI budget (audited)",
                dependencies=TENANT_SCOPED)
 async def delete_tenant_budget(request: Request, tenant_id: str = _TENANT_ID,
-                               x_admin_user_id: Optional[str] = Header(None)) -> dict:
+                               x_admin_user_id: Optional[str] = Header(None),
+                               x_admin_role: Optional[str] = Header(None)) -> dict:
+    if settings_registry.tighten_only(x_admin_role):       # S279: removing a budget loosens it
+        raise HTTPException(status_code=403, detail=f"{settings_registry.TIGHTEN_ONLY}: removing the budget")
     try:
         return await tenant_ai_budget.clear(request.app.state.pool, tenant_id.lower(), actor=_actor(x_admin_user_id))
     except LookupError:

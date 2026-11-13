@@ -601,8 +601,14 @@ async def test_backfill_real_run_enqueues_one_job_per_tour(monkeypatch):
     assert kw["created_by"] == "backfill:admin:u" and kw["idempotency_key"].startswith("place_extract:backfill:")
 
 
-def test_backfill_limit_is_capped_at_50():
+def test_backfill_limit_is_capped_by_the_setting_bound(monkeypatch):
+    # S279 thresholds L1: the request bound is the setting's maximum (200); the plan caps at the value in force (50)
     from pydantic import ValidationError
     from api.routers.admin_places import BackfillRequest
+    from services.places import backfill as bf
     with pytest.raises(ValidationError):
-        BackfillRequest(limit=51)
+        BackfillRequest(limit=201)
+    assert BackfillRequest(limit=60).limit == 60
+    assert bf.max_tours() == bf.MAX_TOURS == 50
+    monkeypatch.setattr(bf.settings, "get", lambda key, tenant_id=None: 7)
+    assert bf.max_tours() == 7

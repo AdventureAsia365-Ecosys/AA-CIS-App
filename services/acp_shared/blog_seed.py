@@ -5,8 +5,9 @@ length follows its seed (r = 0.424), and a seed of <= 991 words gave 9 F4 (too s
 memo recommends that a Subject whose seed cannot carry a ~900-word article is not proposed on Blog (it stays on the
 shorter Channels). This module holds the setting and the estimate; `slate._fetch_short_blog_seeds()` applies it.
 
-**Setting**: env `T7_BLOG_MIN_SEED_WORDS` (an integer number of words), read per call. Unset, empty, 0, negative or
-not a number = off (the default): the Slate behaves exactly as before. The tech lead's decision only sets the number.
+**Setting** (S279 thresholds L1): `cis.t7.blog_min_seed_words` in the settings registry (Platform › Settings, CIS 407;
+seeded 600, the Terraform value in force), read per call through `shared.settings`; 0 = off. The env var
+`T7_BLOG_MIN_SEED_WORDS` stays an emergency override for one release (the reader logs a warning, the page shows it).
 
 **Blog seed words** (the audit's measure: the writer's seed words + its route moment words) estimated at T7 from what
 the pick would hand T9: the seed atom's `atom_seed_text()` (label, evidence, hook, season, siblings, place card) plus
@@ -20,29 +21,29 @@ the measured ratio of a blog's length to its grounded seed: ``sized = ceil(BLOG_
 The effective floor is ``max(flat, sized)`` (`seed_floor()`), applied only while the Blog minimum seed is on (the
 flat setting > 0), so a deployment without it is unchanged.
 
-**Ratio setting**: env `T7_BLOG_CHARS_PER_SEED_WORD` (a positive number of tag-stripped blog characters per seed
-word), read per call; unset or empty = the registry threshold `t7.blog_chars_per_seed_word`
-(services/quality/thresholds.yaml); 0, negative or not a number = no sizing (the flat floor alone). The registry
-default is one written word per seed word at the measured 5.8 characters per word (the no-invention writer cannot
+**Ratio setting** (S279 thresholds L1): `cis.t7.blog_chars_per_seed_word` in the settings registry (moved out of
+services/quality/thresholds.yaml; evidence required on a change), read per call; 0 = no sizing (the flat floor alone).
+The default is one written word per seed word at the measured 5.8 characters per word (the no-invention writer cannot
 write more than its material); `scripts/aa1077/seed_floor_replay.py` measures the ratio on stored blog pieces ($0,
-read-only) and prints the value to set.
+read-only) and prints the value to propose (S279: 3.364). Env `T7_BLOG_CHARS_PER_SEED_WORD` stays an emergency
+override for one release.
 """
 from __future__ import annotations
 
 import math
-import os
 import re
 from typing import Optional
 
 from services.acp_content_writing import length_contract
 from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
-from services.quality import registry as _qr
+from shared import settings
 
-MIN_SEED_ENV = "T7_BLOG_MIN_SEED_WORDS"
-RATIO_ENV = "T7_BLOG_CHARS_PER_SEED_WORD"
-RATIO_THRESHOLD = "t7.blog_chars_per_seed_word"
-# Read at import so a missing registry key fails the build, not a slate job.
-DEFAULT_CHARS_PER_SEED_WORD = float(_qr.threshold(RATIO_THRESHOLD))
+MIN_SEED_ENV = "T7_BLOG_MIN_SEED_WORDS"          # the setting's emergency env override (one release)
+RATIO_ENV = "T7_BLOG_CHARS_PER_SEED_WORD"        # the setting's emergency env override (one release)
+MIN_SEED_SETTING = "cis.t7.blog_min_seed_words"
+RATIO_SETTING = "cis.t7.blog_chars_per_seed_word"
+# The compiled default (the migration seed): read at import so a missing key fails the build, not a slate job.
+DEFAULT_CHARS_PER_SEED_WORD = float(settings.definition(RATIO_SETTING).default_value)
 
 # Why a Blog candidate was not proposed on Blog (the slate's per-Subject `blog_coverage.skipped`, admin only).
 SKIP_THIN_WALK = "thin_walk"                    # the walk the pick would resolve is too thin (slate thin rule)
@@ -55,25 +56,14 @@ WORD_RE = re.compile(r"[A-Za-zÀ-ɏ0-9]+(?:['’-][A-Za-zÀ-ɏ0-9]+)*")
 
 
 def min_seed_words() -> int:
-    """The Blog minimum seed in words; 0 = off (unset, empty, 0, negative or not an integer)."""
-    raw = (os.environ.get(MIN_SEED_ENV) or "").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        return 0
-    return max(value, 0)
+    """The Blog minimum seed in words (setting `cis.t7.blog_min_seed_words`); 0 = off."""
+    return max(int(settings.get(MIN_SEED_SETTING)), 0)
 
 
 def chars_per_seed_word() -> float:
-    """Blog characters per seed word for the sized floor: env `T7_BLOG_CHARS_PER_SEED_WORD`, else the registry default;
-    0.0 = no sizing (set to 0, negative or not a number)."""
-    raw = (os.environ.get(RATIO_ENV) or "").strip()
-    if not raw:
-        return DEFAULT_CHARS_PER_SEED_WORD
-    try:
-        value = float(raw)
-    except ValueError:
-        return 0.0
+    """Blog characters per seed word for the sized floor (setting `cis.t7.blog_chars_per_seed_word`); 0.0 = no
+    sizing."""
+    value = float(settings.get(RATIO_SETTING))
     return value if value > 0 and math.isfinite(value) else 0.0
 
 
@@ -158,6 +148,7 @@ async def blog_seed_words(conn, tenant_id, atom_id: str, tour_id: Optional[str],
     return words
 
 
-__all__ = ["DEFAULT_CHARS_PER_SEED_WORD", "MIN_SEED_ENV", "RATIO_ENV", "RATIO_THRESHOLD", "SKIP_BELOW_LENGTH_FLOOR",
-           "SKIP_BELOW_MIN_SEED", "SKIP_REASONS", "SKIP_THIN_WALK", "WORD_RE", "blog_seed_words", "chars_per_seed_word",
-           "min_seed_words", "seed_floor", "seed_words", "sized_min_seed_words", "skip_reason", "walk_atoms"]
+__all__ = ["DEFAULT_CHARS_PER_SEED_WORD", "MIN_SEED_ENV", "MIN_SEED_SETTING", "RATIO_ENV", "RATIO_SETTING",
+           "SKIP_BELOW_LENGTH_FLOOR", "SKIP_BELOW_MIN_SEED", "SKIP_REASONS", "SKIP_THIN_WALK", "WORD_RE",
+           "blog_seed_words", "chars_per_seed_word", "min_seed_words", "seed_floor", "seed_words",
+           "sized_min_seed_words", "skip_reason", "walk_atoms"]

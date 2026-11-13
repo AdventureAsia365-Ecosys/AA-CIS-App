@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.routers.admin import verify_admin_secret
 from services.seo_intelligence.dfs_queue import research_queue_mode
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
-from services.jobs.segment_research_job import KIND as JOB_KIND, MAX_USD_PER_RUN, dfs_balance, load_budgets
+from services.jobs.segment_research_job import KIND as JOB_KIND, dfs_balance, load_budgets, max_usd_per_run
 from shared.jobs import queue as job_queue
 from shared.jobs.registry import enqueue
 
@@ -51,8 +51,9 @@ router = APIRouter(prefix="/admin/segment-research", tags=["admin-segment-resear
 
 class ResearchScope(BaseModel):
     markets: list[str] = Field(..., min_length=1, description="Buyer market codes, e.g. ['US','UK']")
-    max_usd: Optional[float] = Field(None, gt=0, le=MAX_USD_PER_RUN,
-                                     description="Cap on the selection's capped DFS estimate (default: DFS budget)")
+    max_usd: Optional[float] = Field(None, gt=0,
+                                     description="Cap on the selection's capped DFS estimate (default: DFS budget); at "
+                                                 "most the setting cis.spend.segment_research_max_usd_per_run")
     max_places: Optional[int] = Field(None, ge=1)
     places: Optional[list[str]] = None
     tour_ids: Optional[list[str]] = None
@@ -78,6 +79,15 @@ class ResearchScope(BaseModel):
         if unknown:
             raise ValueError(f"unknown market(s) {unknown}; supported: {sorted(DFS_LOCATION_MAP)}")
         return codes
+
+    @field_validator("max_usd")
+    @classmethod
+    def _within_setting(cls, v: Optional[float]) -> Optional[float]:
+        # S279 thresholds L1: the per-run ceiling is a setting (Platform › Settings), read per request
+        if v is not None and v > max_usd_per_run():
+            raise ValueError(f"max_usd must be at most {max_usd_per_run():g} (setting "
+                             "cis.spend.segment_research_max_usd_per_run)")
+        return v
 
 
 def _kwargs(scope: ResearchScope) -> dict:

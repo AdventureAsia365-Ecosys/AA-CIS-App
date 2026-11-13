@@ -199,7 +199,7 @@ async def summary(request: Request):
     return {
         "signals": {"total": sum(int(r["n"]) for r in sig), **{k: dict(v) for k, v in by.items()}},
         "rules": {status: dict(c) for status, c in rule_counts.items()},
-        "budget": {"month_cap_usd": cfg.MONTH_CAP_USD, "month_spent_usd": round(spent, 4),
+        "budget": {"month_cap_usd": cfg.month_cap_usd(), "month_spent_usd": round(spent, 4),
                    "run_cap_usd": cfg.RUN_CAP_USD, "max_calls_per_run": cfg.MINE_MAX_CALLS},
         "mine_trigger": {"auto_refused": refusal, **gate,
                          "thresholds": {"min_new_pass": cfg.MINE_MIN_NEW_PASS,

@@ -42,7 +42,7 @@ import structlog
 
 from services.retention import rollups, runner
 from services.retention.archive import S3Archiver
-from services.retention.policy import SPECS, TableSpec
+from services.retention.policy import SPECS, TableSpec, current
 from shared.aws_client.bronze import bronze_bucket
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 
@@ -282,7 +282,7 @@ async def run_spec(ctx: JobContext, spec: TableSpec, *, archiver=None) -> dict:
 def _register(spec: TableSpec):
     @job_kind(spec.kind, concurrency=1, max_attempts=2, expected_seconds=1800, background=True)
     async def run(ctx: JobContext) -> dict:
-        result = await run_spec(ctx, spec)
+        result = await run_spec(ctx, current(spec))   # S279: the windows in force (Platform › Settings)
         ctx.set_result(result)
         return result
     return run
@@ -354,6 +354,7 @@ async def status(pool) -> dict:
         "WHERE format('%I.%I', n.nspname, c.relname) = ANY($1::text[])", tables)}
     out = []
     for kind, spec in SPECS.items():
+        spec = current(spec)                       # S279: the windows in force (Platform › Settings)
         jobs = by_kind[kind]
         live = jobs.get("live")
         live_windows = None

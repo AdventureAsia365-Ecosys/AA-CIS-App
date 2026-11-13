@@ -71,6 +71,7 @@ def test_role_perms_match_the_s241_matrix():
         "tenant.member.resend", "tenant.book.write",   # AA-1035 S267 fix pass
         "tenant.view_as", "notifications.read",        # AA-1035 R2 slice 2 (lab.tenant_text.read: ai_ops only)
         "reference_price.read", "reference_price.write",   # AA-1091
+        "settings.write", "settings.approve",              # S279 thresholds L1 (Platform › Settings, admin only)
     }
     # admin holds every role capability but the Lab-only logged read of ai_ops and the book-scoped Tenant QA read of
     # customer_success (admin reads tenant text in its own right: tenant_content.read)

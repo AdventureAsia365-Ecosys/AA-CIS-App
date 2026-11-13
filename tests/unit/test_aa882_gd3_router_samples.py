@@ -102,6 +102,7 @@ SAMPLES = [
     ("admin_facts", "PATCH", "/admin/facts/{fact_id}", {"body": "b", "expected_updated_at": "2026-10-29T08:00:00Z"}),
     ("admin_reference_prices", "GET", "/admin/reference-prices", None),   # AA-1091 (content reads, admin writes)
     ("admin_reference_prices", "POST", "/admin/reference-prices/accept", {"source_keys": ["k"]}),
+    ("admin_settings_registry", "POST", "/admin/settings/registry/{key}/proposals", {}),   # S279 thresholds L1
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
 ]

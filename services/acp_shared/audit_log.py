@@ -88,6 +88,11 @@ class PlatformAuditAction:
     REFERENCE_PRICE_CLEARED = "reference_price.cleared"
     REFERENCE_PRICE_PARSED = "reference_price.parsed"        # "Parse source texts" (not reviewed)
     REFERENCE_PRICE_IMPORTED = "reference_price.imported"    # Excel import (applied, not the DRY RUN)
+    # S279 thresholds L1 (CIS 407) — the settings registry (Platform › Settings): a value proposed, approved (details:
+    # before / after, self_approved), rejected. resource_type "setting", resource_id the key (tenant rows: key@tenant).
+    SETTING_PROPOSED = "settings.value_proposed"
+    SETTING_APPROVED = "settings.value_approved"
+    SETTING_REJECTED = "settings.value_rejected"
 
 
 class AdminAuditAction:

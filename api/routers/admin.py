@@ -165,6 +165,17 @@ def _require_tenant_patch(x_admin_role: Optional[str], fields: set[str]) -> None
     raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
 
 
+# S279 thresholds L1 (tech lead Q1): a delegated role (customer_success: tenant.book.write without tenant.write) may
+# only tighten a tenant's limits (lower the RPM or the daily publish limit), never raise one; raising is the admin's.
+TIGHTEN_ONLY = "Your role may only lower this limit; ask an administrator to raise it"
+
+
+def _tighten_only(x_admin_role: Optional[str]) -> bool:
+    from api.services.settings_registry import tighten_only
+
+    return tighten_only(x_admin_role)
+
+
 def _require_tenant_book_write(x_admin_role: Optional[str]) -> None:
     """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity; AA-1036 R3: the decision on
     an add-on request): tenant.write (admin) or tenant.book.write (customer_success; require_tenant_scope has already
@@ -451,7 +462,7 @@ async def list_tenants(
                 # AA-819 — the publish/day override (null = the code default) and the limit in force
                 "daily_publish_limit": publish_limits.get(r["tenant_id"]),
                 "daily_publish_limit_effective": publish_limits.get(r["tenant_id"],
-                                                                    daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT),
+                                                                    daily_limit.platform_default_limit()),
                 "is_active":      r["is_active"],
                 "status":         tenant_status(r["is_active"], r["cancelled_at"]),
                 "cancelled_at":   r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
@@ -612,7 +623,7 @@ async def get_tenant_usage(
             "tours_per_month":   tours_quota,  # AA-640: shared.membership_plans
             "daily_publish_limit": publish_override,  # AA-819: null = the code default
             "daily_publish_limit_effective": (publish_override if publish_override is not None
-                                              else daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT),
+                                              else daily_limit.platform_default_limit()),
             "publishes_today": publishes_today,
         },
         "t2_versions": t2["versions"],
@@ -676,7 +687,7 @@ async def update_tenant(
             if not await daily_limit.override_column_exists(conn):
                 raise HTTPException(status_code=409, detail=(
                     "The per-tenant publish limit needs migration 230 (shared.tenants.daily_publish_limit); "
-                    f"until it is applied every tenant has the default {daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT}/day."))
+                    f"until it is applied every tenant has the default {daily_limit.platform_default_limit()}/day."))
     publish_limit_now: Optional[int] = None
     async with pool.acquire() as conn, conn.transaction():
         before = await conn.fetchrow("""
@@ -715,6 +726,10 @@ async def update_tenant(
             changed.append("plan")
 
         if body.rate_limit_rpm is not None and body.rate_limit_rpm != rpm_now:
+            if _tighten_only(x_admin_role):
+                current = rpm_now if rpm_now is not None else await _tier_rpm(conn, before["plan_tier"])
+                if current is None or body.rate_limit_rpm > current:
+                    raise HTTPException(status_code=403, detail=f"{TIGHTEN_ONLY} (rate_limit_rpm now {current})")
             # AA-766 — RPM override without a plan change (or the same plan re-sent).
             await conn.execute("""
                 UPDATE shared.tenants SET rate_limit_rpm = $2, updated_at = NOW() WHERE tenant_id = $1
@@ -731,6 +746,13 @@ async def update_tenant(
             publish_limit_now = await conn.fetchval(
                 "SELECT daily_publish_limit FROM shared.tenants WHERE tenant_id = $1", tenant_id)
             if body.daily_publish_limit != publish_limit_now:
+                if _tighten_only(x_admin_role):
+                    default = daily_limit.platform_default_limit()
+                    now_eff = publish_limit_now if publish_limit_now is not None else default
+                    new_eff = body.daily_publish_limit if body.daily_publish_limit is not None else default
+                    if new_eff > now_eff:
+                        raise HTTPException(status_code=403,
+                                            detail=f"{TIGHTEN_ONLY} (daily_publish_limit now {now_eff})")
                 await conn.execute("""
                     UPDATE shared.tenants SET daily_publish_limit = $2, updated_at = NOW() WHERE tenant_id = $1
                 """, tenant_id, body.daily_publish_limit)
@@ -740,7 +762,7 @@ async def update_tenant(
                     resource_type="tenant", resource_id=str(tenant_id),
                     details={"before": {"daily_publish_limit": publish_limit_now},
                              "after": {"daily_publish_limit": body.daily_publish_limit},
-                             "default": daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT},
+                             "default": daily_limit.platform_default_limit()},
                 )
                 changed.append("daily_publish_limit")
                 publish_limit_now = body.daily_publish_limit
@@ -774,7 +796,7 @@ async def update_tenant(
         # AA-819 — only when the request set it (the override; null = the code default)
         **({"daily_publish_limit": publish_limit_now,
             "daily_publish_limit_effective": (publish_limit_now if publish_limit_now is not None
-                                              else daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT)}
+                                              else daily_limit.platform_default_limit())}
            if set_publish_limit else {}),
     }
 

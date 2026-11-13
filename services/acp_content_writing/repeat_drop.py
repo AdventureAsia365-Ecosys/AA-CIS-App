@@ -11,7 +11,7 @@ The rule (a proposer; the existing invariants stay the arbiters):
 
 - **candidate** — a sentence the F13 gate would quote (`hygiene.find_issues(...)["repeat"]`) that is an exact or
   near-exact repeat of an earlier prose sentence: its copy words (`hygiene.copy_words`) match the earlier one's IN
-  ORDER with a Dice share >= the registry threshold `t9.repeat_drop_near_exact` (0.9; 1.0 = exact). A paraphrase, a
+  ORDER with a Dice share >= the setting `cis.t9.repeat_drop_near_exact` (0.9; 1.0 = exact). A paraphrase, a
   figure told twice in other words, an echo or a misplaced moment is not a near-exact copy and stays for F13.
 - **floor** — the piece after the delete still measures >= the F4 blog floor (`length_contract.BLOG_FLOOR_CHARS`,
   tag-stripped). Otherwise the piece is held as today: a drop never trades F13 for a `length_short` hold.
@@ -30,11 +30,17 @@ from typing import Optional
 
 from services.acp_content_writing import hygiene
 from services.acp_content_writing import length_contract as lc
-from services.quality import registry as _qr
+from shared import settings
 
 MODE_ENV = "T9_REPEAT_DROP"
 _OFF = frozenset({"off", "0", "false", "no"})
-NEAR_EXACT_SHARE = float(_qr.threshold("t9.repeat_drop_near_exact"))
+NEAR_EXACT_SETTING = "cis.t9.repeat_drop_near_exact"   # S279 thresholds L1: Platform › Settings (evidence required)
+NEAR_EXACT_SHARE = float(settings.definition(NEAR_EXACT_SETTING).default_value)   # the compiled default (0.9)
+
+
+def near_exact_share() -> float:
+    """The Dice share in force (setting `cis.t9.repeat_drop_near_exact`)."""
+    return float(settings.get(NEAR_EXACT_SETTING))
 _MIN_COPY_WORDS = 4      # hygiene._COPY_MIN_WORDS: a short line is never judged a copy
 _MAX_DROPS = 5           # one drop per pass (offsets move); a piece with more repeats is not this step's case
 
@@ -43,14 +49,14 @@ def enabled() -> bool:
     return (os.environ.get(MODE_ENV) or "").strip().lower() not in _OFF
 
 
-def near_exact(later: str, earlier: str, ignore: frozenset = frozenset(), share: float = NEAR_EXACT_SHARE) -> bool:
+def near_exact(later: str, earlier: str, ignore: frozenset = frozenset(), share: Optional[float] = None) -> bool:
     """`later` repeats `earlier` exactly or nearly: >= 4 copy words each, and the ordered Dice share of their copy
     words (2 x matched / (len a + len b), difflib matching blocks) >= `share`. Pure."""
     ca, cb = hygiene.copy_words(later, ignore), hygiene.copy_words(earlier, ignore)
     if len(ca) < _MIN_COPY_WORDS or len(cb) < _MIN_COPY_WORDS:
         return False
     matched = sum(m.size for m in difflib.SequenceMatcher(None, ca, cb, autojunk=False).get_matching_blocks())
-    return 2.0 * matched / (len(ca) + len(cb)) >= share
+    return 2.0 * matched / (len(ca) + len(cb)) >= (near_exact_share() if share is None else share)
 
 
 def _quoted(finding: str) -> str:
@@ -69,7 +75,7 @@ def drop_repeats(text: str, hyg: hygiene.HygieneContext, *, floor: int = lc.BLOG
     above `floor` and every invariant holds. Returns (text, log). Pure (no I/O)."""
     if not text or hyg is None:
         return text, []
-    share = NEAR_EXACT_SHARE if share is None else share
+    share = near_exact_share() if share is None else share
     cta = hyg.cta
     ignore = hygiene.brand_words(hyg.brand_name)
     seed = hygiene.source_forms(hyg.source_text)
@@ -107,4 +113,5 @@ def drop_repeats(text: str, hyg: hygiene.HygieneContext, *, floor: int = lc.BLOG
     return text, log
 
 
-__all__ = ["MODE_ENV", "NEAR_EXACT_SHARE", "drop_repeats", "enabled", "near_exact"]
+__all__ = ["MODE_ENV", "NEAR_EXACT_SETTING", "NEAR_EXACT_SHARE", "drop_repeats", "enabled", "near_exact",
+           "near_exact_share"]

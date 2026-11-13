@@ -26,6 +26,7 @@ from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
+from shared import settings as platform_settings
 from services.waves import report as wave_report
 
 logger = structlog.get_logger()
@@ -42,10 +43,15 @@ _COUNTRY_TOURS_SQL = """
 """
 
 
+WAVE_SIZE_SETTING = "cis.spend.rerun_wave_max_tours"
+
+
 class WaveCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     country: Optional[str] = Field(None, max_length=100)
-    tour_ids: Optional[list[str]] = Field(None, max_length=2000)
+    # S279 thresholds L1: at most the bound of cis.spend.rerun_wave_max_tours here; the route checks the value in force
+    tour_ids: Optional[list[str]] = Field(
+        None, max_length=int(platform_settings.definition(WAVE_SIZE_SETTING).max_value))
     notes: Optional[str] = Field(None, max_length=2000)
 
 
@@ -57,6 +63,10 @@ async def create_wave(body: WaveCreate, request: Request, x_admin_secret: str = 
     async with pool.acquire() as conn:
         if body.tour_ids:
             ids = list(dict.fromkeys(t.strip() for t in body.tour_ids if t and t.strip()))
+            if len(ids) > int(platform_settings.get(WAVE_SIZE_SETTING)):
+                raise HTTPException(status_code=422, detail={
+                    "error": "too many tours for one wave", "max_tours": int(platform_settings.get(WAVE_SIZE_SETTING)),
+                    "setting": WAVE_SIZE_SETTING})
             found = await conn.fetch(
                 "SELECT tour_id::text FROM silver_aa_internal.raw_tours WHERE tour_id::text = ANY($1::text[])", ids)
             missing = sorted(set(ids) - {r["tour_id"] for r in found})

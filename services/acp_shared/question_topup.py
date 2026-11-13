@@ -27,9 +27,11 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from typing import Sequence
+from typing import Optional, Sequence
 
 import structlog
+
+from shared import settings
 
 from services.acp_shared.real_questions import (
     SOURCE_SERP_TOPUP, TOPUP_MARKET, QuestionScope, PlacePaaSource, SegmentMatchSource, SerpTopupSource,
@@ -38,7 +40,10 @@ from services.acp_shared.real_questions import (
 
 logger = structlog.get_logger()
 
-TOPUP_CAP_USD = 3.0           # hard cap for the whole top-up (AA-779 scope), never raised by a caller
+# S279 thresholds L1: the hard cap for the whole top-up is the setting `cis.spend.question_topup_cap_usd` (Platform ›
+# Settings), never raised by a caller; TOPUP_CAP_USD is its compiled default, `topup_cap_usd()` the cap in force.
+TOPUP_CAP_SETTING = "cis.spend.question_topup_cap_usd"
+TOPUP_CAP_USD = float(settings.definition(TOPUP_CAP_SETTING).default_value)
 TOPUP_CLICK_DEPTH = 2         # PAA box expanded two levels
 TOPUP_LOCATION_CODE = 2840    # United States
 TOPUP_LANGUAGE_CODE = "en"
@@ -151,11 +156,16 @@ def collect_needs(work_places: Sequence[tuple[str, str, str]]) -> dict[str, Plac
     return out
 
 
-def plan(needs: Sequence[PlaceNeed], cap_usd: float = TOPUP_CAP_USD,
+def topup_cap_usd() -> float:
+    return float(settings.get(TOPUP_CAP_SETTING))
+
+
+def plan(needs: Sequence[PlaceNeed], cap_usd: Optional[float] = None,
          estimate_usd: float = TOPUP_CALL_ESTIMATE_USD) -> dict:
     """Which places get a SERP and what it costs at most. Places named by more blog work first, then
     the ones with fewer real questions; at most floor(cap / estimate) calls. Pure."""
-    cap_usd = max(min(float(cap_usd), TOPUP_CAP_USD), 0.0)
+    hard_cap = topup_cap_usd()
+    cap_usd = max(min(float(hard_cap if cap_usd is None else cap_usd), hard_cap), 0.0)
     targets = sorted((n for n in needs if n.needs_serp), key=lambda n: (-n.used_by, n.real_now, n.keyword))
     max_calls = int(math.floor(cap_usd / estimate_usd + 1e-9)) if estimate_usd > 0 else 0
     chosen = targets[:max_calls]
@@ -227,22 +237,24 @@ async def store_questions(conn, keyword: str, questions: Sequence[str], domains:
                        json.dumps(list(domains)) if domains else None)
 
 
-async def run_topup(pool, *, dry_run: bool = True, cap_usd: float = TOPUP_CAP_USD,
+async def run_topup(pool, *, dry_run: bool = True, cap_usd: Optional[float] = None,
                     client=None, budget=None) -> dict:
     """The top-up. `dry_run` (default): the plan only, no paid call, no write. A real run buys one
     SERP per planned place under a hard budget of min(cap_usd, $3 − what earlier runs spent) and
     stores what comes back (an empty marker row for a place with no question)."""
-    if cap_usd > TOPUP_CAP_USD:
-        raise ValueError(f"cap_usd {cap_usd} is above the top-up hard cap ${TOPUP_CAP_USD:.2f}")
+    hard_cap = topup_cap_usd()
+    cap_usd = hard_cap if cap_usd is None else cap_usd
+    if cap_usd > hard_cap:
+        raise ValueError(f"cap_usd {cap_usd} is above the top-up hard cap ${hard_cap:.2f}")
     prior = await prior_spend(pool)
-    left = round(TOPUP_CAP_USD - prior, 4)
+    left = round(hard_cap - prior, 4)
     run_cap = min(float(cap_usd), left)
     needs = await find_needs(pool)
     result = plan(needs, max(run_cap, 0.0))
     result.update({"dry_run": dry_run, "prior_spent_usd": prior, "left_usd": max(left, 0.0)})
     if run_cap <= 0:
         result.update({"planned_calls": 0, "targets": [], "estimated_cost_usd": 0.0,
-                       "refused": f"the question top-up already spent ${prior:.4f} of its ${TOPUP_CAP_USD:.2f} cap"})
+                       "refused": f"the question top-up already spent ${prior:.4f} of its ${hard_cap:.2f} cap"})
         return result
     if dry_run:
         return result
@@ -292,7 +304,8 @@ async def run_topup(pool, *, dry_run: bool = True, cap_usd: float = TOPUP_CAP_US
 
 
 __all__ = [
-    "TOPUP_CAP_USD", "TOPUP_CLICK_DEPTH", "TOPUP_CALL_ESTIMATE_USD", "MIN_REAL_PER_PLACE", "PlaceNeed",
+    "TOPUP_CAP_SETTING", "TOPUP_CAP_USD", "topup_cap_usd",
+    "TOPUP_CLICK_DEPTH", "TOPUP_CALL_ESTIMATE_USD", "MIN_REAL_PER_PLACE", "PlaceNeed",
     "SERP_PAA_DEEP_ENDPOINT", "collect_needs", "plan", "find_needs", "prior_spend", "store_questions",
     "run_topup",
 ]

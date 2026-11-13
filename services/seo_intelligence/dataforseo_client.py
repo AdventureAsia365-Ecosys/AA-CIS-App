@@ -2,7 +2,7 @@ import time
 
 from shared.secrets import get_dataforseo_creds
 from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
-from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded
+from shared.cost_guard import BudgetExceeded, dfs_call_estimate_usd
 from shared import provider_circuit
 from shared.llm_client import connections as conn_registry
 import httpx
@@ -136,7 +136,7 @@ class DataForSEOClient:
         client's ``meta``; ``stage`` overrides the client's (the balance read)."""
         cost = extract_cost(response)
         if self.budget is not None:
-            self.budget.charge(cost if cost is not None else DFS_CALL_ESTIMATE_USD.get(endpoint, 0.0))
+            self.budget.charge(cost if cost is not None else dfs_call_estimate_usd().get(endpoint, 0.0))
         status_err = _dfs_status_error(response, task_ok)
         merged = {**(self.meta or {}), **(meta or {})} or None
         kwargs = {"meta": merged} if merged else {}
@@ -171,7 +171,7 @@ class DataForSEOClient:
         post sends up to 100)."""
         if self.budget is not None:
             try:
-                self.budget.check(DFS_CALL_ESTIMATE_USD.get(endpoint, 0.1) * max(tasks, 1))
+                self.budget.check(dfs_call_estimate_usd().get(endpoint, 0.1) * max(tasks, 1))
             except BudgetExceeded as e:
                 self._log_failed(endpoint, status="refused", error=f"budget: {e}"[:500], keyword=keyword,
                                  location_code=location_code, keyword_count=keyword_count)

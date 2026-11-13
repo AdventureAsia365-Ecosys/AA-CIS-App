@@ -384,7 +384,7 @@ async def run_shadow(pool, conf: ShadowConfig, *, writer_fn=None, flush=None, se
             for i, inp in enumerate(inputs):
                 s = await spent()
                 est = cfg.SHADOW_INPUT_ESTIMATE_USD[writer]
-                if s + est > conf.cap_usd or month_start + s + est > cfg.MONTH_CAP_USD:
+                if s + est > conf.cap_usd or month_start + s + est > cfg.month_cap_usd():
                     stop_reason = "budget_cap"
                     break
                 owner = inp.get("tenant_id")

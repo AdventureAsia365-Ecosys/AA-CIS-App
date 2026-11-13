@@ -254,7 +254,8 @@ TOURS = {TOUR_A: "Valdoria lakes", TOUR_B: "Corvin passes", TOUR_C: "Aurel coast
 
 
 @pytest.mark.asyncio
-async def test_propose_covers_the_starved_tour_and_reports_the_others():
+async def test_propose_covers_the_starved_tour_and_reports_the_others(monkeypatch):
+    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "0")       # S279: the setting is 600; this test runs with the floor off
     conn = _Conn(TOURS)
     unseeded = [_seg("u1", "Selva Bay", 4, [TOUR_C])]
     result = await _propose(conn, _starved(), unseeded=unseeded)
@@ -303,8 +304,10 @@ async def test_a_short_blog_seed_stays_on_social_and_names_the_reason():
 
 # ── 5. the Blog minimum seed ─────────────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("raw,expected", [(None, 0), ("", 0), ("0", 0), ("-5", 0), ("abc", 0), ("600", 600),
-                                          (" 1000 ", 1000), ("6.5", 0)])
+# S279 thresholds L1: the value is the setting cis.t7.blog_min_seed_words (seeded 600, the Terraform value in force);
+# the env var is its emergency override: a valid value wins, an invalid one is ignored (the setting stays in force).
+@pytest.mark.parametrize("raw,expected", [(None, 600), ("", 600), ("0", 0), ("-5", 600), ("abc", 600), ("600", 600),
+                                          (" 1000 ", 1000), ("6.5", 600)])
 def test_min_seed_setting(monkeypatch, raw, expected):
     if raw is None:
         monkeypatch.delenv(blog_seed.MIN_SEED_ENV, raising=False)
@@ -315,7 +318,7 @@ def test_min_seed_setting(monkeypatch, raw, expected):
 
 @pytest.mark.asyncio
 async def test_min_seed_off_reads_nothing(monkeypatch):
-    monkeypatch.delenv(blog_seed.MIN_SEED_ENV, raising=False)
+    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "0")
     conn = MagicMock()
     conn.fetch = AsyncMock()
     out = await slate._fetch_short_blog_seeds(uuid4(), conn, _starved(), ["blog", "linkedin"], {}, {})

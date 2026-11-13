@@ -732,7 +732,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         s = await spent()
         if s + estimate > conf.cap_usd:
             raise _Stop("budget_cap", phase)
-        if month_start + s + estimate > cfg.MONTH_CAP_USD:
+        if month_start + s + estimate > cfg.month_cap_usd():
             details["month_cap_hit"] = True
             raise _Stop("budget_cap", phase)
 
@@ -1411,8 +1411,8 @@ async def estimate(pool, conf: R2Config) -> dict:
     if est_max > conf.cap_usd:
         refusals.append(f"estimated {est_max} > cap {conf.cap_usd}: size --cap-usd from estimated_usd_max "
                         f"(at most {cfg.R2_RUN_CAP_USD}) or plan fewer items")
-    if month + est_max > cfg.MONTH_CAP_USD:
-        refusals.append(f"month cap: spent {round(month, 4)} + estimated {est_max} > {cfg.MONTH_CAP_USD}")
+    if month + est_max > cfg.month_cap_usd():
+        refusals.append(f"month cap: spent {round(month, 4)} + estimated {est_max} > {cfg.month_cap_usd()}")
     return {"writer": conf.writer, "release": conf.release_id, "items": len(items), "plan": n,
             "calibration_items": len(calib), "calibration_labels": calib_labels,
             "calibrated_possible": (len(calib) >= cfg.MIN_KAPPA_PAIRS
@@ -1423,8 +1423,8 @@ async def estimate(pool, conf: R2Config) -> dict:
             "calibrate_only": conf.calibrate_only, "require_calibrated": conf.require_calibrated,
             "judge_model": conf.judge_model, "judge_connection": conf.judge_connection,
             "item_estimate": est, "estimated_usd_max": est_max, "cap_usd": conf.cap_usd,
-            "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.MONTH_CAP_USD,
-            "month_after_cap_ok": month + conf.cap_usd <= cfg.MONTH_CAP_USD,
+            "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.month_cap_usd(),
+            "month_after_cap_ok": month + conf.cap_usd <= cfg.month_cap_usd(),
             "judge_family_check": family_check, "would_refuse": refusals,
             # AA-1051
             "eval_split": conf.eval_split, "sample_ids": len(conf.sample_ids or []),

@@ -88,6 +88,7 @@ from api.routers.admin_claim_labels import router as admin_claim_labels_router  
 from api.routers.admin_claim_shadow import router as admin_claim_shadow_router  # AA-1050 W4
 from api.routers.admin_facts import router as admin_facts_router  # AA-814
 from api.routers.admin_reference_prices import router as admin_reference_prices_router  # AA-1091
+from api.routers.admin_settings_registry import router as admin_settings_registry_router  # S279 thresholds L1
 from api.routers.admin_reports import router as admin_reports_router  # AA-1003
 from api.routers.admin_quality_funnel import router as admin_quality_funnel_router  # AA-900 W0
 from api.routers.admin_quality_lineage import router as admin_quality_lineage_router  # AA-1052 W6
@@ -154,6 +155,11 @@ async def lifespan(app: FastAPI):
     # baseline for the wave-4 main-pool shrink decision. api only; cancelled before the pool closes.
     main_pool_gauge_task = start_main_pool_gauge(app)
 
+    # S279 thresholds L1 — the settings registry reader (shared/settings) reads through this pool and refreshes its
+    # snapshot every 30 s in the background (off when ENVIRONMENT == "test"); never raises, never delays start-up.
+    from shared import settings as platform_settings
+    settings_refresh_task = platform_settings.start_refresher(pool)
+
     # AA-751 / AA-832 / S263 — every 300 s read per-role connections, XID age and the shared.job backlog (line
     # `ops_metrics_sampled`) and run the in-app ops checks on them (shared/ops_checks.py: admin bell + alert
     # e-mail on the SNS topic; no CloudWatch metric since the S263 alert diet). AA-913: the same tick reconciles
@@ -211,6 +217,7 @@ async def lifespan(app: FastAPI):
     await stop_m2m_jwks_prefetch(m2m_prefetch_task)
     await stop_partner_jwks_prefetch(partner_prefetch_task)
     await stop_main_pool_gauge(main_pool_gauge_task)
+    await platform_settings.stop_refresher(settings_refresh_task)
     await pool.close()
     if app.state.tenant_pool is not None:
         await app.state.tenant_pool.close()
@@ -371,6 +378,7 @@ app.include_router(admin_claim_labels_router)  # AA-1048 W2 — /admin/writing-m
 app.include_router(admin_claim_shadow_router)  # AA-1050 W4 — /admin/writing-memory/claim-shadow (no include prefix)
 app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
 app.include_router(admin_reference_prices_router)  # AA-1091 — /admin/reference-prices (tour reference prices)
+app.include_router(admin_settings_registry_router)  # S279 thresholds L1 — /admin/settings/registry
 app.include_router(admin_reports_router)  # AA-1003 — /admin/reports (report register, runs; no include prefix)
 app.include_router(admin_quality_funnel_router)  # AA-900 W0 — GET /admin/quality/funnel (CIS-08 snapshot, $0)
 app.include_router(admin_quality_lineage_router)  # AA-1052 W6 — GET /admin/quality/lineage/* (stored fields, $0)

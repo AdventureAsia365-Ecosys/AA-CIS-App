@@ -214,7 +214,9 @@ async def _proposed(conn, tenant, channel):
 
 @pytest.mark.asyncio
 async def test_propose_slate_reports_every_adopted_tour(conn, monkeypatch):
-    monkeypatch.delenv(blog_seed.MIN_SEED_ENV, raising=False)
+    # S279 thresholds L1: the Blog minimum seed is the setting cis.t7.blog_min_seed_words (600); its env override 0
+    # runs this test with the floor off, as before
+    monkeypatch.setenv(blog_seed.MIN_SEED_ENV, "0")
     monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
     w = await _world(conn)
     result = await _propose_on(conn, w.tenant)

@@ -226,6 +226,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "plans", roles: ["admin"] },
   // AA-1091 — reference price writes (save, clear, accept, parse, import); the backend re-checks (reference_price.write).
   { prefix: "reference-prices", roles: REFERENCE_PRICE_WRITERS },
+  // S279 thresholds L1 — Platform › Settings (backend /admin/settings/registry): propose / approve / reject a setting
+  // value; admin only, re-checked by the backend (settings.write / settings.approve).
+  { prefix: "settings/registry", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
@@ -233,6 +236,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
 // /admin/openapi.json re-checks the forwarded x-admin-role.
 export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "openapi.json", roles: ["admin"] },
+  // S279 thresholds L1 — backend /admin/settings/registry (Platform › Settings): admin only, re-checked by the backend
+  // (staff_policy, capability ops.read).
+  { prefix: "settings/registry", roles: ["admin"] },
   // AA-1035 R2 close-out — backend /admin/platform/crm/* (the CRM L1 console relay): the book roles read their book
   // (re-checked by the backend: tenant.book.read and require_tenant_scope); writes stay admin (API_WRITE_RULES
   // "platform/"). Before the "platform" rule (first match wins).
@@ -321,7 +327,9 @@ export type Capability =
   // AA-1035 R2 close-out
   | "tenant_content.book.read"    // Tenant QA lists / details of the own book (customer_success), scoped
   // AA-1091 — AA Catalogue › Reference prices (the customer-service team enters the tours' reference prices)
-  | "reference_price.read" | "reference_price.write";
+  | "reference_price.read" | "reference_price.write"
+  // S279 thresholds L1 — Platform › Settings: propose a new value (settings.write), approve / reject (settings.approve)
+  | "settings.write" | "settings.approve";
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -331,7 +339,7 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
     "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
-    "reference_price.read", "reference_price.write",
+    "reference_price.read", "reference_price.write", "settings.write", "settings.approve",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",

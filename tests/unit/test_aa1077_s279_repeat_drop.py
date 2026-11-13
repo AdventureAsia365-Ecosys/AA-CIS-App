@@ -159,6 +159,11 @@ def test_t9_runs_it_on_blogs_after_the_trim_and_before_the_gates():
     assert 'step_guard("repeat_drop"' in src[drop:gates]
 
 
-def test_the_share_is_the_registry_threshold():
-    from services.quality import registry
-    assert repeat_drop.NEAR_EXACT_SHARE == registry.threshold("t9.repeat_drop_near_exact") == 0.9
+def test_the_share_is_the_setting(monkeypatch):
+    # S279 thresholds L1: moved from thresholds.yaml to the setting cis.t9.repeat_drop_near_exact (evidence required)
+    from shared import settings
+    d = settings.definition(repeat_drop.NEAR_EXACT_SETTING)
+    assert repeat_drop.NEAR_EXACT_SHARE == d.default_value == repeat_drop.near_exact_share() == 0.9
+    assert d.evidence_required and d.min_value == 0.8 and d.max_value == 1.0
+    monkeypatch.setattr(repeat_drop.settings, "get", lambda key, tenant_id=None: 1.0)
+    assert repeat_drop.near_exact_share() == 1.0

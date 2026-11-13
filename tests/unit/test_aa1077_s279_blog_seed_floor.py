@@ -1,6 +1,7 @@
 """AA-1077 (S279) — the T7 Blog seed floor sized from the F4 blog floor and the measured chars per seed word.
 
-1. Settings: `T7_BLOG_CHARS_PER_SEED_WORD` (env) over the registry default; 0 / bad = no sizing.
+1. Settings (S279 thresholds L1): the settings cis.t7.blog_min_seed_words (600) and cis.t7.blog_chars_per_seed_word
+   (5.8); their env vars are emergency overrides (a valid value wins, an invalid one is ignored); 0 = off / no sizing.
 2. `seed_floor()`: max(flat, sized) while the flat Blog minimum seed is on; all 0 while it is off.
 3. `skip_reason` / `blog_skipped_subjects`: per Subject why it was not proposed on Blog.
 4. `_fetch_short_blog_seeds`: a seed that clears the flat 600 but not the sized floor is skipped on Blog only, and the
@@ -29,15 +30,17 @@ def no_seed_env(monkeypatch):
 
 # ── 1. settings ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_registry_default_is_one_word_per_seed_word():
+def test_setting_default_is_one_word_per_seed_word():
     from services.acp_content_writing import length_contract as lc
-    from services.quality import registry
-    assert blog_seed.DEFAULT_CHARS_PER_SEED_WORD == registry.threshold("t7.blog_chars_per_seed_word") \
+    from shared import settings
+    assert blog_seed.DEFAULT_CHARS_PER_SEED_WORD == settings.definition(blog_seed.RATIO_SETTING).default_value \
         == lc.CHARS_PER_WORD
+    assert settings.definition(blog_seed.RATIO_SETTING).env_override == blog_seed.RATIO_ENV
+    assert settings.definition(blog_seed.MIN_SEED_SETTING).env_override == blog_seed.MIN_SEED_ENV
 
 
 @pytest.mark.parametrize("raw,expected", [(None, 5.8), ("", 5.8), ("6.5", 6.5), (" 7 ", 7.0), ("0", 0.0),
-                                          ("-3", 0.0), ("abc", 0.0), ("inf", 0.0), ("nan", 0.0)])
+                                          ("-3", 5.8), ("abc", 5.8), ("inf", 5.8), ("nan", 5.8)])
 def test_ratio_setting(no_seed_env, raw, expected):
     if raw is not None:
         no_seed_env.setenv(blog_seed.RATIO_ENV, raw)
@@ -52,7 +55,8 @@ def test_sized_floor_reaches_the_f4_floor(ratio, expected):
 # ── 2. seed_floor ────────────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("flat,ratio,expected", [
-    (None, None, (0, 0, 0)),          # the Blog minimum seed off: no sizing either (a deployment without it)
+    (None, None, (811, 600, 811)),    # S279: the settings in force (600 flat, 5.8 chars per seed word)
+    ("0", None, (0, 0, 0)),           # the Blog minimum seed off: no sizing either
     ("600", None, (811, 600, 811)),   # the sized floor binds
     ("900", None, (900, 900, 811)),   # the flat floor binds
     ("600", "0", (600, 600, 0)),      # sizing switched off: the flat floor alone
@@ -133,6 +137,7 @@ async def test_sizing_off_keeps_the_flat_floor_alone(no_seed_env):
 
 @pytest.mark.asyncio
 async def test_flat_floor_off_reads_nothing_whatever_the_ratio(no_seed_env):
+    no_seed_env.setenv(blog_seed.MIN_SEED_ENV, "0")
     no_seed_env.setenv(blog_seed.RATIO_ENV, "5.8")
     conn = MagicMock()
     conn.fetch = AsyncMock()
@@ -186,6 +191,7 @@ async def test_slate_result_reports_the_floor_and_each_skipped_subject(no_seed_e
 
 @pytest.mark.asyncio
 async def test_slate_with_the_floor_off_lists_nothing(no_seed_env):
+    no_seed_env.setenv(blog_seed.MIN_SEED_ENV, "0")
     conn = _Conn({TOUR_A: "Valdoria coast"}, channels=["blog"])
     result = await _propose(conn, [_seg("s1", "Corvane Fort", 1, [TOUR_A])], {}, frozenset())
     cov = result["blog_coverage"]

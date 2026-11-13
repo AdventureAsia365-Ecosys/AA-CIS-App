@@ -43,6 +43,7 @@ import structlog
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.erasure import inventory as inv
 from services.erasure import plan as pl
+from shared import settings as _settings
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 
 logger = structlog.get_logger()
@@ -55,8 +56,10 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 SALT_RE = re.compile(r"^[0-9a-f]{32}$")
 
 APPLY_FLAG = "ERASURE_APPLY_ENABLED"
-# Business values not set yet (Nghiệp sets the tenant retention window, AA-839): safe defaults, env-overridable.
-DEFAULT_TENANT_RETENTION_DAYS = 30
+# S279 thresholds L1: the tenant retention window is the setting cis.erasure.tenant_retention_days (Platform ›
+# Settings); DEFAULT_TENANT_RETENTION_DAYS is its compiled default.
+TENANT_RETENTION_SETTING = "cis.erasure.tenant_retention_days"
+DEFAULT_TENANT_RETENTION_DAYS = int(_settings.definition(TENANT_RETENTION_SETTING).default_value)
 DEFAULT_DRY_RUN_MAX_AGE_HOURS = 24
 STATEMENT_TIMEOUT = "120s"
 LOCK_TIMEOUT = "10s"
@@ -84,7 +87,19 @@ def _int_env(name: str, default: int, env: Optional[dict] = None) -> int:
 
 
 def tenant_retention_days(env: Optional[dict] = None) -> int:
-    return max(0, _int_env("ERASURE_TENANT_RETENTION_DAYS", DEFAULT_TENANT_RETENTION_DAYS, env))
+    """S279 thresholds L1: the setting cis.erasure.tenant_retention_days (Platform › Settings); its env var
+    ERASURE_TENANT_RETENTION_DAYS stays an emergency override for one release (the Dev drill sets 0). ``env`` (tests):
+    a valid value there wins, an invalid one is ignored."""
+    if env is None:
+        return max(0, int(_settings.get(TENANT_RETENTION_SETTING)))
+    d = _settings.definition(TENANT_RETENTION_SETTING)
+    raw = str(env.get(d.env_override or "", "") or "").strip()
+    if raw:
+        value, problem = _settings.parse_text(d, raw)
+        if problem is None:
+            return max(0, int(value))
+    res = _settings.resolve(TENANT_RETENTION_SETTING)          # the stored value, never the process env here
+    return max(0, int(d.default_value if res.source == "env" else res.value))
 
 
 def dry_run_max_age(env: Optional[dict] = None) -> timedelta:

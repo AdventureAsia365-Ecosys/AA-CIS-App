@@ -25,12 +25,21 @@ import structlog
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 
+from shared import settings
+
 logger = structlog.get_logger()
 
 KIND = "segment_research"
 # AA-1055 — the USD cap replaced the 200-place cap. The most one run may spend on DataForSEO: the route refuses a
 # larger `max_usd`, and a run whose budget row sets no limit is capped here.
-MAX_USD_PER_RUN = 50.0
+# S279 thresholds L1: the cap is the setting `cis.spend.segment_research_max_usd_per_run` (Platform › Settings);
+# MAX_USD_PER_RUN is its compiled default, `max_usd_per_run()` the cap in force.
+MAX_USD_SETTING = "cis.spend.segment_research_max_usd_per_run"
+MAX_USD_PER_RUN = float(settings.definition(MAX_USD_SETTING).default_value)
+
+
+def max_usd_per_run() -> float:
+    return float(settings.get(MAX_USD_SETTING))
 _SCOPE_KEYS = ("places", "tour_ids", "country", "max_places", "max_usd", "strategy", "use_suggestions", "tiers",
                "dfs_queue", "recompute", "reatomized")
 
@@ -59,7 +68,8 @@ def max_usd_for(payload: dict, dfs_budget) -> float:
     above MAX_USD_PER_RUN. Never None: a budget row with no limit does not mean an unbounded selection."""
     remaining = dfs_budget.remaining_usd()
     asked = payload.get("max_usd")
-    caps = [MAX_USD_PER_RUN, float(asked) if asked is not None else MAX_USD_PER_RUN]
+    ceiling = max_usd_per_run()
+    caps = [ceiling, float(asked) if asked is not None else ceiling]
     if remaining is not None:
         caps.append(remaining)
     return min(caps)
