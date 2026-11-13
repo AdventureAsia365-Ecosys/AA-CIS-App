@@ -5,7 +5,7 @@ on the 215 false positives of R1 (root `docs/audits/2026-11-13-S279-session/aa10
 that the instrument over-fires (H2: about 95% of the false positives), not that the labels are wrong (H1: 2.3-3.3%),
 and proposed prompt changes B1-B5 and a gated entailment run on a subset of the fired claims.
 
-Two PRs (MIG-4): the migration-only PR (CIS 416: five settings, `enforced = false`) and this code PR.
+Two PRs (MIG-4): the migration-only PR (CIS 417: five settings, `enforced = false`) and this code PR.
 
 ## Decisions
 
@@ -57,14 +57,18 @@ Two PRs (MIG-4): the migration-only PR (CIS 416: five settings, `enforced = fals
   `bars.tp_kept_on = ["tp"]`); `relabelled_in_sample` and `true_positives_with_relabels` are reported beside them.
   Example the reviewer gave: 18/20 stored kept + 5/5 relabels = 23/25 = 92% pooled, but the gate reads 18/20 = 90%.
 - **Thresholds are settings** (tech lead S279): the cap, the claim limits and both bars are read from the settings
-  registry (CIS 416), refreshed from the database before a paid run (`settings.ensure_fresh`, an ECS exec process has
+  registry (CIS 417), refreshed from the database before a paid run (`settings.ensure_fresh`, an ECS exec process has
   no refresher). The cap is also clamped to `r1.HARD_CAP_USD`.
 
 ## Changed (vs. the lane brief)
 
-- Migration number **416**, not 412: other lanes of the wave hold CIS 412-415 (quality settings 412-413, TripPlanner
-  settings 414-415). Renumber to owner main max + 1 at ship time if the batch changes (`git grep '416_'` and `'416'`
-  in the file, its integration test, `compiled_defaults.json` and the seed-parity test).
+- Migration number **417**, not 412: other lanes of the wave hold CIS 412-416 (quality settings 412-413, TripPlanner
+  settings 414-415, the operator guides of every setting 416). Renumber to owner main max + 1 at ship time if the batch
+  changes (`git grep '417_'` and `'417'` in the file, its integration test, `compiled_defaults.json` and the
+  seed-parity test).
+- The five seed rows carry a plain label and a complete EN + VI operator guide (what, raise, lower, when, example) in
+  the `guide` column CIS 416 adds: the guide lint (`tests/unit/test_aa1096_settings_guides.py`, empty baseline) fails a
+  compiled key without one. 417 therefore needs 416 applied first.
 - Stage `adhoc_aa1048` instead of `adhoc_AA-1048` (above).
 - B3 is in v2 as written, but the $0 check does **not** support the hypothesis behind it (below).
 
@@ -102,13 +106,14 @@ background), which the whole-source entailment of v2 targets.
 
 ## Should know
 
-- **CI of this code PR needs CIS 416 on main**: the settings-lint test fails on a `settings.get("cis....")` key that is
+- **CI of this code PR needs CIS 417 on main**: the settings-lint test fails on a `settings.get("cis....")` key that is
   not compiled until the migration PR merges (it carries `compiled_defaults.json`). Ship the migration PR first; this
   PR is tested on the merge result.
-- **Review fix in CIS 416**: the description of `cis.quality.instrument_eval_tp_keep_min_pct` now says the bar reads
+- **Review fix in CIS 417**: the description of `cis.quality.instrument_eval_tp_keep_min_pct` now says the bar reads
   the stored violations only (the relabels are in-sample). The migration branch was also rebased on main after CIS
   412-413 merged (`compiled_defaults.json` regenerated, not hand-merged). At ship time the CIS preflight wants main max
-  + 1; in this wave lane l21 holds 414-415 and another lane also drafted a 415, so the wave's CIS batch renumbers.
+  + 1: 414-415 (TripPlanner settings) are on main and 416 is the settings guides, so this file was renumbered 416 ->
+  417 (S279).
 - **Follow-up (settings)**: a later migration sets `enforced = true` on the five keys once this code is deployed, and
   removes them from the not-enforced list in `tests/unit/test_s279_settings_seed_parity.py`.
 - **Follow-up (T9 seed bug, not filed as an issue here)**: the T9 seed's SCOPE line can contradict its own itinerary
