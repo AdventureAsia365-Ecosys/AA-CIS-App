@@ -113,7 +113,7 @@ from services.acp_content_writing.seed_align import adjudicate as seed_adjudicat
 from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
 from services.acp_content_writing import repeat_drop  # AA-1077 S279 (blog repeat drop)
 from services.content_generation.batch_prompt import prompt_version_of
-from services.quality.registry import threshold
+from services.quality.registry import threshold, threshold_reader
 from shared import settings
 
 logger = structlog.get_logger()
@@ -192,9 +192,7 @@ def seo_builder_mode() -> str:
 # flag (AA-499) and the cross-tenant `F10_cannibalization_cross_tenant` BLOCKING gate (AA-484) —
 # a shared threshold for the same underlying question ("is this near-duplicate content?") is
 # more defensible than inventing a second number for the softer, flag-only case.
-def _reuse_similarity() -> float:
-    """thresholds.yaml t10.reuse_similarity; S279 L2: a setting, read at call time."""
-    return float(threshold("t10.reuse_similarity"))
+_reuse_similarity = threshold_reader("t10.reuse_similarity")   # S279 L2: a setting, read per call
 
 
 class ContentWritingError(Exception):

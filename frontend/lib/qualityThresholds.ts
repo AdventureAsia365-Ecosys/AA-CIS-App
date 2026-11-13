@@ -48,3 +48,25 @@ export function inMetaBand(n: number, seo: SeoBands | null | undefined): boolean
   if (!seo) return null;
   return n >= seo.meta.min && n <= seo.meta.max;
 }
+
+/** The Review Queue score filter labels' numbers ("—" until the thresholds load). */
+export function scoreFilterNumbers(
+  bands: ScoreBands | null | undefined,
+  passLine: number | null | undefined,
+): { low: string; belowPass: string; pass: string } {
+  return {
+    low: bands ? bands.low.toFixed(1) : "—",
+    belowPass: passLine != null ? (passLine - 0.1).toFixed(1) : "—",
+    pass: passLine != null ? passLine.toFixed(1) : "—",
+  };
+}
+
+/** Is an SEO field of `n` characters over its band maximum? false while the band is not loaded. */
+export function overSeoMax(n: number, seo: SeoBands | null | undefined, field: "title" | "meta"): boolean {
+  return !!seo && n > seo[field].max;
+}
+
+/** The band maximum of an SEO field as text ("—" until it loads). */
+export function seoMaxLabel(seo: SeoBands | null | undefined, field: "title" | "meta"): string {
+  return seo ? String(seo[field].max) : "—";
+}

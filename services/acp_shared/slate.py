@@ -93,8 +93,7 @@ from services.acp_shared.subject_seed import (
 
 logger = structlog.get_logger()
 
-# One row per Channel: its structure (S279 lane L2: the Bar's numbers, STEP0 Q3's literal reference/channels.toml
-# numbers, are the settings cis.t7.channel_bar_<channel>; `bar(channel)` is the Bar in force), which grain
+# One row per Channel: the Bar (S279 L2: its STEP0 Q3 numbers are settings, `bar(channel)` per call), which grain
 # it reads (every Channel is Segment grain since AA-741 S271; Blog was Route grain from AA-511 to
 # S271, AA-CIS's own extension, STEP0 Q2 — see "Blog is a Segment that walks its Route" in the
 # module docstring), and whether it is on-demand (no weekly rhythm, origin's derive_posting_rhythm() skips these
@@ -117,42 +116,25 @@ logger = structlog.get_logger()
 # candidate (`_choose_slate(cover=...)` seats those first); a tour that gets none is given a typed reason
 # (`blog_tour_coverage`, NO_TOPIC_REASONS) the tenant sees.
 CHANNEL_BARS: dict[str, dict] = {
-    "blog":          {"grain": "segment", "on_demand": False,
-                       "takes_route": True, "one_piece_per_place": True, "cover_each_tour": True},
-    "linkedin":      {"grain": "segment", "on_demand": False,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "facebook":      {"grain": "segment", "on_demand": False,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "instagram":     {"grain": "segment", "on_demand": False,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "tiktok":        {"grain": "segment", "on_demand": False,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "email":         {"grain": "segment", "on_demand": True,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "landing_page":  {"grain": "segment", "on_demand": True,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
-    "ads":           {"grain": "segment", "on_demand": True,
-                       "takes_route": False, "one_piece_per_place": False, "cover_each_tour": False},
+    "blog": {"grain": "segment", "on_demand": False, "takes_route": True, "one_piece_per_place": True,
+             "cover_each_tour": True},
+    **{c: {"grain": "segment", "on_demand": False, "takes_route": False, "one_piece_per_place": False,
+           "cover_each_tour": False} for c in ("linkedin", "facebook", "instagram", "tiktok")},
+    **{c: {"grain": "segment", "on_demand": True, "takes_route": False, "one_piece_per_place": False,
+           "cover_each_tour": False} for c in ("email", "landing_page", "ads")},
 }
 
 
 def bar(channel: str) -> dict:
-    """S279 lane L2 (AA-1096): one Channel's Bar in force — its structure above plus its numbers, the setting
-    cis.t7.channel_bar_<channel> (Platform › Settings, evidence-gated, read at call time; seeded with the literal
-    reference/channels.toml numbers: Blog demand 1,000 and 3 questions, the social Channels 150 atom words said, the
-    weekly-rhythm Channels most_per_hub 99, the on-demand Channels no hub cap). Keys: needs_demand, needs_questions,
-    needs_said, most_per_hub (None = no cap) and the structure keys."""
+    """S279 L2: a Channel's Bar in force: the structure above + the setting cis.t7.channel_bar_<channel>, per call."""
     from services.quality import settings_keys
     from shared import settings
-
-    numbers = settings.get(settings_keys.CHANNEL_BARS[channel]) or {}
-    return {**CHANNEL_BARS[channel], "needs_demand": int(numbers.get("needs_demand", 0)),
-            "needs_questions": int(numbers.get("needs_questions", 0)), "needs_said": int(numbers.get("needs_said", 0)),
-            "most_per_hub": None if numbers.get("most_per_hub") is None else int(numbers["most_per_hub"])}
+    n = settings.get(settings_keys.CHANNEL_BARS[channel]) or {}
+    return {**CHANNEL_BARS[channel], **{k: int(n.get(k, 0)) for k in ("needs_demand", "needs_questions", "needs_said")},
+            "most_per_hub": None if n.get("most_per_hub") is None else int(n["most_per_hub"])}
 
 
 def bars() -> dict[str, dict]:
-    """Every Channel's Bar in force (`bar`), in CHANNEL_BARS order."""
     return {channel: bar(channel) for channel in CHANNEL_BARS}
 
 

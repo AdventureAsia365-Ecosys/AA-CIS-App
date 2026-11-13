@@ -4,7 +4,7 @@
 // undefined until it loads (the helpers in lib/qualityThresholds.ts then return neutral values).
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../../_kit";
-import { QUALITY_THRESHOLDS_PATH, type QualityThresholds } from "@/lib/qualityThresholds";
+import { QUALITY_THRESHOLDS_PATH, type QualityThresholds, type ScoreBands, type SeoBands } from "@/lib/qualityThresholds";
 
 export function useQualityThresholds(): QualityThresholds | undefined {
   const q = useQuery({
@@ -14,4 +14,19 @@ export function useQualityThresholds(): QualityThresholds | undefined {
     retry: 1,
   });
   return q.data;
+}
+
+/** The score colour bands in force (undefined until they load). */
+export function useScoreBands(): ScoreBands | undefined {
+  return useQualityThresholds()?.score_bands;
+}
+
+/** The SEO bands in force (undefined until they load). */
+export function useSeoBands(): SeoBands | undefined {
+  return useQualityThresholds()?.seo_bands;
+}
+
+/** The quality pass line in force (undefined until it loads). */
+export function usePassLine(): number | undefined {
+  return useQualityThresholds()?.pass_line;
 }

@@ -27,7 +27,7 @@ import { RetireTourDialog, type RetireAction } from "../_components/RetireTourDi
 import { Pagination } from "../_components/Pagination";
 import { shownRange } from "@/lib/pageRange";
 import { scoreTone as bandTone, type ScoreBands } from "@/lib/qualityThresholds";
-import { useQualityThresholds } from "../_components/useQualityThresholds";
+import { useScoreBands } from "../_components/useQualityThresholds";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
 const PAGE_SIZE = 20;
@@ -217,7 +217,7 @@ function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | n
 // ── Score Bar ─────────────────────────────────────────────────────────────────
 
 function ScoreBar({ label, value, tooltip }: { label: string; value: number | null; tooltip?: string }) {
-  const bands = useQualityThresholds()?.score_bands;
+  const bands = useScoreBands();
   const pct = value != null ? Math.min(100, (value / 10) * 100) : 0;
   const color = scoreColor(value, bands);
   return (
@@ -773,7 +773,7 @@ export default function MasterContentPage() {
 }
 
 function MasterContentPageInner() {
-  const bands = useQualityThresholds()?.score_bands;
+  const bands = useScoreBands();
   // AA-882 — the master lifecycle (activate / deactivate / trash / restore) is master.admin on the
   // backend; other roles see the catalog without those buttons.
   const role = useAdminIdentity().role;

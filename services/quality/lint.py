@@ -393,6 +393,33 @@ def _mapped(entry: dict, where: str, class_ids: set[str], res: Result) -> None:
             res.errors.append(f"{where}: unknown class {c!r}")
 
 
+def _detector_problems(cid: str, d: dict, kinds: set, modes: set, known: set) -> list[str]:
+    """S279 L2: a known kind, no YAML mode, and a seeded mode setting that allows detector_modes."""
+    ref, out = d.get("ref"), []
+    if d.get("kind") not in kinds:
+        out.append(f"taxonomy {cid}: detector {ref!r} kind invalid")
+    key = registry.detector_mode_key(cid, ref)
+    if "mode" in d:   # the mode is a setting (Platform › Settings), never a YAML value
+        out.append(f"taxonomy {cid}: detector {ref!r} has a YAML mode; its mode is the setting {key!r}")
+    if key is None or key not in known:
+        out.append(f"taxonomy {cid}: detector {ref!r} has no mode setting (services/quality/settings_keys.py "
+                   f"DETECTOR_MODES + a migration seed row)")
+    elif set(_settings.definition(key).allowed_values or ()) != modes:
+        out.append(f"taxonomy {cid}: detector {ref!r} mode setting {key} allows "
+                   f"{_settings.definition(key).allowed_values}, not detector_modes")
+    return out
+
+
+def _threshold_entry_problems(k: str, e: dict, known: set) -> list[str]:
+    """S279 L2: a thresholds.yaml entry names exactly one of setting / settings / ref, and every setting is seeded."""
+    out = []
+    if sum(f in e for f in ("setting", "settings", "ref")) != 1 or "value" in e:
+        out.append(f"threshold {k}: give exactly one of setting / settings / ref (the value is a setting, S279 L2)")
+    names = [e["setting"]] if "setting" in e else list(e.get("settings") or [])
+    out += [f"threshold {k}: setting {n!r} is not in the compiled settings defaults" for n in names if n not in known]
+    return out
+
+
 def check_schema(res: Result, tracked: set[str]) -> None:
     tax = registry.taxonomy()
     if tax.get("version") != registry.TAXONOMY_VERSION:
@@ -425,18 +452,7 @@ def check_schema(res: Result, tracked: set[str]) -> None:
             if d.get("ref") not in detector_refs:
                 res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} is not a registered gate, Jev key "
                                   f"or A1 code")
-            if d.get("kind") not in kinds:
-                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} kind invalid")
-            if "mode" in d:   # S279 L2: the mode is a setting (Platform › Settings), never a YAML value
-                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} has a YAML mode; its mode is the "
-                                  f"setting {registry.detector_mode_key(cid, d.get('ref'))!r}")
-            key = registry.detector_mode_key(cid, d.get("ref"))
-            if key is None or key not in known_settings:
-                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} has no mode setting "
-                                  f"(services/quality/settings_keys.py DETECTOR_MODES + a migration seed row)")
-            elif set(_settings.definition(key).allowed_values or ()) != modes:
-                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} mode setting {key} allows "
-                                  f"{_settings.definition(key).allowed_values}, not detector_modes")
+            res.errors += _detector_problems(cid, d, kinds, modes, known_settings)
             seen_detectors.add((cid, d.get("ref")))
             for w in d.get("writers") or []:
                 if w not in writers:
@@ -491,12 +507,7 @@ def check_schema(res: Result, tracked: set[str]) -> None:
     # thresholds
     th = registry.thresholds_doc().get("thresholds") or {}
     for k, e in th.items():
-        if sum(f in e for f in ("setting", "settings", "ref")) != 1 or "value" in e:
-            res.errors.append(f"threshold {k}: give exactly one of setting / settings / ref (the value is a setting, "
-                              f"S279 L2)")
-        for name in ([e["setting"]] if "setting" in e else list(e.get("settings") or [])):
-            if name not in known_settings:
-                res.errors.append(f"threshold {k}: setting {name!r} is not in the compiled settings defaults")
+        res.errors += _threshold_entry_problems(k, e, known_settings)
         try:
             registry.threshold(k)
         except (KeyError, ValueError) as err:

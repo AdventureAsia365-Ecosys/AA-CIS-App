@@ -101,12 +101,60 @@ def _canon(v: Any) -> str:
     return json.dumps(v, sort_keys=True, default=str)
 
 
+def _settings_diff() -> dict:
+    from shared import settings
+    diffs = {}
+    for k, v in BEFORE.items():
+        r = settings.resolve(k)
+        if r.value != v:
+            diffs[k] = {"before": v, "in_force": r.value, "source": r.source}
+    return diffs
+
+
+def _band(score: float) -> str:
+    """The Review Queue band of a score and the SQL edge text of that band (admin_pipeline)."""
+    from api.routers import admin_pipeline as ap
+    low, floor = ap._score_band_low(), ap._low_quality_floor()
+    name = "critical" if score < low else "low" if score < floor else "ok"
+    return f"{name}|{ap._score_band_where(name)}"
+
+
+def _differ(values: list, verdict: Callable[[Any], Any]) -> list:
+    """The values whose verdict differs between the values in force and BEFORE."""
+    return [v for v in values if len(set(map(_canon, _both(lambda v=v: verdict(v))))) > 1]
+
+
+def _piece_mismatches(pieces: list) -> tuple[list, list, int, int]:
+    """(length mismatches, F9 mismatches, blog pieces, F9 entries) over stored pieces."""
+    from services.acp_content_writing import f9_policy, length_contract as lc
+    blog = [r for r in pieces if r["channel"] == "blog"]
+    length = [r["id"] for r in blog if _differ([lc.measure(r["content_text"])], lc.side)]
+    f9 = [(r["id"], g) for r in pieces for g in _ledger(r["gate_ledger"])
+          if g.get("gate") == "F9_cta_fact" and not g.get("passed")]
+    f9_bad = sorted({pid for pid, g in f9 if _differ([g], lambda e: f9_policy.apply_policy(dict(e)))})
+    return length, f9_bad, len(blog), len(f9)
+
+
+def _publish_verdict(score: float) -> tuple:
+    from api.routers import admin_pipeline as ap
+    from services.content_generation import graph
+    res = {"quality_score": score, "brand_audit_status": "pass", "failure_codes": []}
+    return ap._is_publishable(res), graph.should_retry({**res, "retry_count": 0})
+
+
+async def _rows(pool: Any, sql: str, name: str, limit: int, missing: list) -> list:
+    import asyncpg
+    try:
+        async with pool.acquire() as conn:
+            return list(await conn.fetch(sql, limit))
+    except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError):
+        missing.append(name)          # a database without that table (a local scratch DB): reported, skipped
+        return []
+
+
 async def run(limit: int) -> dict:
     import asyncpg
 
-    from api.routers import admin_pipeline as ap
-    from services.acp_content_writing import f9_policy, length_contract as lc
-    from services.content_generation import graph
     from services.jobs import t2_rewrite_job as t2
     from shared import settings
 
@@ -115,76 +163,23 @@ async def run(limit: int) -> dict:
                                      server_settings={"default_transaction_read_only": "on"})
     try:
         fresh = await settings.ensure_fresh(pool)
-        out: dict[str, Any] = {"settings_fresh": fresh, "settings_error": settings.READER.last_error}
-        diffs = {}
-        for k, v in BEFORE.items():
-            r = settings.resolve(k)
-            if r.value != v:
-                diffs[k] = {"before": v, "in_force": r.value, "source": r.source}
-        out["settings"] = {"keys": len(BEFORE), "differ": diffs}
-
-        mism: dict[str, list] = {"review_queue": [], "t2_versions": [], "pieces_length": [], "pieces_f9": [],
-                                 "publish": []}
+        diffs = _settings_diff()
         missing: list[str] = []
-
-        async def rows(sql: str, name: str) -> list:
-            try:
-                async with pool.acquire() as conn:
-                    return list(await conn.fetch(sql, limit))
-            except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError):
-                missing.append(name)          # a database without that table (a local scratch DB): reported, skipped
-                return []
-
-        rq = await rows(_RQ_SQL, "review_queue")
-        tv = await rows(_T2_SQL, "tenant_tour_versions")
-        pieces = await rows(_PIECE_SQL, "content_piece")
-        out["tables_missing"] = missing
-
-        def band(score: float) -> str:
-            for name in ("critical", "low", "ok"):
-                where = ap._score_band_where(name)
-                low, floor = ap._score_band_low(), ap._low_quality_floor()
-                if (name == "critical" and score < low) or (name == "low" and low <= score < floor) or \
-                        (name == "ok" and score >= floor):
-                    return f"{name}|{where}"
-            return "none"
-
-        for r in rq:
-            now, was = _both(lambda r=r: band(r["score"]))
-            if now != was:
-                mism["review_queue"].append(r["id"])
-        for r in tv:
-            now, was = _both(lambda r=r: t2._t2_status(r["score"]))
-            if now != was:
-                mism["t2_versions"].append(r["id"])
-        blog = f9 = 0
-        for r in pieces:
-            if r["channel"] == "blog":
-                blog += 1
-                n = lc.measure(r["content_text"])
-                now, was = _both(lambda n=n: lc.side(n))
-                if now != was:
-                    mism["pieces_length"].append(r["id"])
-            for g in _ledger(r["gate_ledger"]):
-                if g.get("gate") != "F9_cta_fact" or g.get("passed"):
-                    continue
-                f9 += 1
-                now, was = _both(lambda g=g: _canon(f9_policy.apply_policy(dict(g))))
-                if now != was:
-                    mism["pieces_f9"].append(r["id"])
-        for s in _SCORES:
-            res = {"quality_score": s, "brand_audit_status": "pass", "failure_codes": []}
-            now, was = _both(lambda res=res: (ap._is_publishable(res),
-                                                 graph.should_retry({**res, "retry_count": 0})))
-            if now != was:
-                mism["publish"].append(s)
-        out["rows"] = {"review_queue": len(rq), "t2_versions": len(tv), "pieces": len(pieces), "blog_pieces": blog,
-                       "f9_entries": f9, "publish_grid": len(_SCORES)}
-        out["mismatches"] = {k: v[:50] for k, v in mism.items()}
-        out["identical"] = not diffs and not any(mism.values())
-        return out
+        rq = await _rows(pool, _RQ_SQL, "review_queue", limit, missing)
+        tv = await _rows(pool, _T2_SQL, "tenant_tour_versions", limit, missing)
+        pieces = await _rows(pool, _PIECE_SQL, "content_piece", limit, missing)
     finally:
         await pool.close()
+    length, f9_bad, blog, f9 = _piece_mismatches(pieces)
+    mism = {"review_queue": [r["id"] for r in rq if _differ([r["score"]], _band)],
+            "t2_versions": [r["id"] for r in tv if _differ([r["score"]], t2._t2_status)],
+            "pieces_length": length, "pieces_f9": f9_bad, "publish": _differ(_SCORES, _publish_verdict)}
+    return {"settings_fresh": fresh, "settings_error": settings.READER.last_error,
+            "settings": {"keys": len(BEFORE), "differ": diffs}, "tables_missing": missing,
+            "rows": {"review_queue": len(rq), "t2_versions": len(tv), "pieces": len(pieces), "blog_pieces": blog,
+                     "f9_entries": f9, "publish_grid": len(_SCORES)},
+            "mismatches": {k: v[:50] for k, v in mism.items()},
+            "identical": not diffs and not any(mism.values())}
 
 
 def main(argv=None) -> int:

@@ -53,34 +53,47 @@ def _num(v: Any) -> float:
     return float(v)
 
 
-def _order_problems(key: str, get: Callable[[str], Any]) -> Optional[str]:
+def _under_problems(key: str, get: Callable[[str], Any]) -> Optional[str]:
     for lo, hi in _UNDER:
         if key in (lo, hi) and not _num(get(lo)) < _num(get(hi)):
             return f"{_name(lo)} ({get(lo)}) must stay under {_name(hi)} ({get(hi)})"
     for lo, hi in _NOT_ABOVE:
         if key in (lo, hi) and _num(get(lo)) > _num(get(hi)):
             return f"{_name(lo)} ({get(lo)}) must not be above {_name(hi)} ({get(hi)})"
-    for name in ("meta", "title"):
-        lo, hi = K.SEO[f"{name}_min"], K.SEO[f"{name}_max"]
-        if key in (lo, hi) and not _num(get(lo)) < _num(get(hi)):
-            return f"the {name} band minimum ({get(lo)}) must stay under its maximum ({get(hi)})"
-    lo, hi = K.T9_BLOG_CHARS
-    if key in (lo, hi) and not _num(get(lo)) < _num(get(hi)):
-        return f"the blog length floor ({get(lo)}) must stay under the ceiling ({get(hi)})"
-    meta_min, meta_max = K.SEO["meta_min"], K.SEO["meta_max"]
-    for writer, (amin, amax) in K.WRITER_AIMS.items():
-        if key not in (amin, amax, meta_min, meta_max):
-            continue
-        if not _num(get(amin)) < _num(get(amax)):
-            return f"the {writer} meta aim minimum ({get(amin)}) must stay under its maximum ({get(amax)})"
-        if _num(get(amax)) > _num(get(meta_max)):
-            return (f"the {writer} meta aim maximum ({get(amax)}) must not be above the meta band maximum "
-                    f"({get(meta_max)}): lower the aim first")
-        # writing_policy.schema_errors: only a writer with a deterministic short fix may aim under the band minimum
-        if writer not in _SHORT_FIX_WRITERS and _num(get(amin)) < _num(get(meta_min)):
-            return (f"the {writer} meta aim minimum ({get(amin)}) must not be under the meta band minimum "
-                    f"({get(meta_min)}): this writer has no deterministic short fix")
     return None
+
+
+def _band_problems(key: str, get: Callable[[str], Any]) -> Optional[str]:
+    pairs = [(f"the {n} band minimum", K.SEO[f"{n}_min"], "its maximum", K.SEO[f"{n}_max"]) for n in ("meta", "title")]
+    pairs.append(("the blog length floor", K.T9_BLOG_CHARS[0], "the ceiling", K.T9_BLOG_CHARS[1]))
+    for lo_name, lo, hi_name, hi in pairs:
+        if key in (lo, hi) and not _num(get(lo)) < _num(get(hi)):
+            return f"{lo_name} ({get(lo)}) must stay under {hi_name} ({get(hi)})"
+    return None
+
+
+def _aim_problem(writer: str, amin: str, amax: str, get: Callable[[str], Any]) -> Optional[str]:
+    meta_min, meta_max = K.SEO["meta_min"], K.SEO["meta_max"]
+    if not _num(get(amin)) < _num(get(amax)):
+        return f"the {writer} meta aim minimum ({get(amin)}) must stay under its maximum ({get(amax)})"
+    if _num(get(amax)) > _num(get(meta_max)):
+        return (f"the {writer} meta aim maximum ({get(amax)}) must not be above the meta band maximum "
+                f"({get(meta_max)}): lower the aim first")
+    # writing_policy.schema_errors: only a writer with a deterministic short fix may aim under the band minimum
+    if writer not in _SHORT_FIX_WRITERS and _num(get(amin)) < _num(get(meta_min)):
+        return (f"the {writer} meta aim minimum ({get(amin)}) must not be under the meta band minimum "
+                f"({get(meta_min)}): this writer has no deterministic short fix")
+    return None
+
+
+def _order_problems(key: str, get: Callable[[str], Any]) -> Optional[str]:
+    problem = _under_problems(key, get) or _band_problems(key, get)
+    if problem:
+        return problem
+    for writer, (amin, amax) in K.WRITER_AIMS.items():
+        if key in (amin, amax, K.SEO["meta_min"], K.SEO["meta_max"]):
+            problem = problem or _aim_problem(writer, amin, amax, get)
+    return problem
 
 
 _SHORT_FIX_WRITERS = ("t9", "s1")   # writing_policy.yaml writer_aims.meta.<writer>.short_fix

@@ -13,7 +13,7 @@ from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.errors import is_llm_access_denied
 from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
-from services.quality.registry import threshold
+from services.quality.registry import threshold, threshold_reader
 from .prompts import parse_source_day_word_counts
 from .batch_prompt import (
     build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
@@ -57,11 +57,7 @@ def max_retries() -> int:
 # a row, the cut JSON lost its trailing fields (MISSING_FIELD) and every truncation cost a full
 # rewrite. Output tokens are billed as used, so a higher ceiling costs nothing for shorter tours.
 GENERATE_MAX_TOKENS = 8192
-
-
-def min_quality() -> float:
-    """The A1 pass line in force (thresholds.yaml a1.min_quality; S279 L2: a setting, read at call time)."""
-    return float(threshold("a1.min_quality"))
+min_quality = threshold_reader("a1.min_quality")  # services/quality/thresholds.yaml (AA-926); S279 L2: read per call
 
 
 def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
@@ -206,11 +202,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
 # AA-216: structural failure (empty/missing field) caps quality below the gate regardless of
 # other sub-scores. Empty content scores brand/quality=10 (no rule to violate) which the
 # 4-bucket average can't pull under 7 — mirror judge's _MISSION_ABSENT_CAP pattern.
-def missing_field_cap() -> float:
-    """The validate score cap of a MISSING_FIELD (thresholds.yaml a1.missing_field_cap; S279 L2: a setting)."""
-    return float(threshold("a1.missing_field_cap"))
-
-
+missing_field_cap = threshold_reader("a1.missing_field_cap")
 # AA-234: failure codes that HARD-BLOCK approve of a human-edited version even when the
 # overall score clears MIN_QUALITY. These are rule violations that must never reach gold
 # (SEO length/floor, brand deny-list, forbidden words, missing fields) — the exact class

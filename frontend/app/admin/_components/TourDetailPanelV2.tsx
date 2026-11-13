@@ -9,7 +9,7 @@ import {
 import { tourTraceHref } from "@/lib/aiGateway";
 import { M } from "./tour.messages";
 import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
-import { useQualityThresholds } from "./useQualityThresholds";
+import { useScoreBands } from "./useQualityThresholds";
 import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -108,7 +108,6 @@ interface VersionContent {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-/** The colour of a score against the score bands in force (useQualityThresholds); neutral until they load. */
 export function scoreColor(s: number | null | undefined, bands: ScoreBands | null | undefined): string {
   const tone = scoreTone(s, bands);
   return tone === "success" ? K.success : tone === "warning" ? K.amber : tone === "danger" ? K.danger : K.muted2;
@@ -392,7 +391,7 @@ export function TourDetailPanelV2(props: PanelProps) {
 }
 
 function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelProps) {
-  const bands = useQualityThresholds()?.score_bands;
+  const bands = useScoreBands();
   const t = useT(M);
   const toast = useToast();
   const { isAdmin } = useAdminIdentity();

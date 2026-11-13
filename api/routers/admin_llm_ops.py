@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, model_validator
 from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
 from services.quality import edit_gate
-from services.quality.registry import threshold
+from services.quality.registry import threshold, threshold_reader
 from api.routers.admin import verify_admin_secret
 from shared.aws_client import accounts as aws_accounts
 from shared.aws_client.cost_explorer import (
@@ -790,9 +790,7 @@ _SHADOW_REPORT_SQL = """
 
 # The judge pass line judge_node._MIN_QUALITY reads (thresholds.yaml a1.judge_pass; AA-926). The registry
 # imports nothing from the LLM pipeline, so this router's import graph stays small.
-def _judge_pass_line() -> float:
-    """The judge pass line in force (S279 L2: a setting, read at call time)."""
-    return float(threshold("a1.judge_pass"))
+_judge_pass_line = threshold_reader("a1.judge_pass")   # S279 L2: a setting, read per call
 
 
 def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:

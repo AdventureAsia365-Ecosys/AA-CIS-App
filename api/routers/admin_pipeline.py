@@ -37,7 +37,7 @@ from shared.tour_liveness import (
     SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
     source_state,
 )
-from services.quality.registry import threshold
+from services.quality.registry import threshold, threshold_reader
 from services.quality import final_contract as _fcon  # AA-1047 W1 (REPORT-mode exit contract)
 from services.quality import lineage as _lineage  # AA-1052 W6 (writer-time lineage stamp)
 from services.quality import final_contract_store as _fc_store  # AA-1047 W1
@@ -117,19 +117,10 @@ def _surviving_hard_codes(result: dict) -> set:
     return set(result.get("failure_codes", []) or []) & set(hard_block_codes(result))
 
 
-# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands). S279 L2: the values are
-# settings (Platform › Settings), read at call time — never copied into a module constant.
-def _publish_floor() -> float:
-    return float(threshold("a1.publish_floor"))
-
-
-def _low_quality_floor() -> float:
-    return float(threshold("review.low_quality_floor"))
-
-
-def _score_band_low() -> float:
-    return float(threshold("review.score_band_low"))
-
+# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands); S279 L2: read per call.
+_publish_floor = threshold_reader("a1.publish_floor")
+_low_quality_floor = threshold_reader("review.low_quality_floor")
+_score_band_low = threshold_reader("review.score_band_low")
 
 def _is_publishable(result: dict) -> bool:
     """AA-211: audit-aware publish gate (mirror catalog readiness + v5 spec).
@@ -178,10 +169,8 @@ def _histogram_case(edges) -> str:
     return "CASE" + "".join(pad + w for w in whens) + pad + f"ELSE '<{edges[-1]:g}'" + "\n" + " " * 16 + "END"
 
 
-# Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot. S279 L2: a report layout
-# (bucket edges of a chart), not a threshold: it left thresholds.yaml and is no setting.
-_SCORE_HISTOGRAM_EDGES = (9, 8, 7)  # technical-constant: chart bucket edges of the library metrics, no gate reads them
-_SCORE_HISTOGRAM_CASE = _histogram_case(_SCORE_HISTOGRAM_EDGES)
+# Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot.
+_SCORE_HISTOGRAM_CASE = _histogram_case((9, 8, 7))  # technical-constant: chart bucket edges (S279 L2), no gate
 
 
 def _build_failure_summary(result: dict) -> str:

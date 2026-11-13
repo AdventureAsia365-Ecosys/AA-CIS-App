@@ -652,7 +652,7 @@
     "module": "api.routers.admin_quality_lineage"
   },
   "GET /admin/quality/thresholds": {
-    "capability": "content.read|tenant_content.read|tenant_content.book.read|tenant.book.read",
+    "capability": "content.read|tenant.book.read",
     "module": "api.routers.admin_quality_thresholds"
   },
   "GET /admin/reference-prices": {

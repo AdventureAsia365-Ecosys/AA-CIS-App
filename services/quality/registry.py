@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import yaml
 
@@ -265,6 +265,24 @@ def threshold(key: str) -> Any:
 
 def pass_line() -> float:
     return float(threshold("pass_line"))
+
+
+def _number(v: Any) -> Any:
+    return tuple(float(x) for x in v) if isinstance(v, tuple) else float(v)
+
+
+def threshold_reader(key: str) -> Callable[[], Any]:
+    """S279 L2: a zero-argument reader of threshold ``key`` (a float, a band a tuple of floats) read at CALL time, for
+    a consumer that used to bind the value at import (``_PASS = threshold(...)`` -> ``_pass = threshold_reader(...)``,
+    called ``_pass()``). The key is checked now, so a typo still fails at import."""
+    threshold_setting(key)
+    return lambda: _number(threshold(key))
+
+
+def setting_reader(key: str) -> Callable[[], Any]:
+    """A zero-argument reader of a numeric setting (``settings_keys``) read at call time; an unknown key fails now."""
+    _settings.definition(key)
+    return lambda: _number(_settings.get(key))
 
 
 # ------------------------------------------------------------------------------------------- parity

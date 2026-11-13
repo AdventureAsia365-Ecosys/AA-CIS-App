@@ -54,8 +54,8 @@ import {
   policyEvidenceText,
   type ReviewItem,
 } from "./reviewModel";
-import { reviewLevel } from "@/lib/qualityThresholds";
-import { useQualityThresholds } from "../_components/useQualityThresholds";
+import { reviewLevel, scoreFilterNumbers } from "@/lib/qualityThresholds";
+import { usePassLine, useScoreBands } from "../_components/useQualityThresholds";
 
 // Reviewer identity prompt (temporary until AA-232). Called once on mount so the x-reviewer-id
 // header the BFF forwards is populated for the audit trail.
@@ -119,9 +119,9 @@ const selectStyle: React.CSSProperties = {
 };
 
 function ReviewQueueInner() {
-  const qt = useQualityThresholds();
-  const bands = qt?.score_bands;
-  const passLine = qt?.pass_line;
+  const bands = useScoreBands();
+  const passLine = usePassLine();
+  const filterNums = scoreFilterNumbers(bands, passLine);
   const toast = useToast();
   const t = useT(M);
   const lang = useLang();
@@ -420,7 +420,7 @@ function ReviewQueueInner() {
       },
     ],
     // bands / canApprove (the pass line): the score colour and the Approve rule follow the thresholds in force
-    [approveM, canAct, t, bands, canApprove],
+    [approveM, canAct, t, bands, canApprove, setRegenItems, setReasonAction],
   );
 
   // ── Non-blocking regenerate: mark rows regenerating, close modal, let the poll refresh ──
@@ -567,9 +567,9 @@ function ReviewQueueInner() {
             </Select>
             <Select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
               <option value="all">{t("allScores")}</option>
-              <option value="critical">{t("critical", bands ? bands.low.toFixed(1) : "—")}</option>
-              <option value="low">{t("low", bands ? bands.low.toFixed(1) : "—", passLine != null ? (passLine - 0.1).toFixed(1) : "—")}</option>
-              <option value="ok">{t("ok", passLine != null ? passLine.toFixed(1) : "—")}</option>
+              <option value="critical">{t("critical", filterNums.low)}</option>
+              <option value="low">{t("low", filterNums.low, filterNums.belowPass)}</option>
+              <option value="ok">{t("ok", filterNums.pass)}</option>
             </Select>
             <Select value={filterPolicy} onChange={(e) => setPolicy(e.target.value)} style={selectStyle}
               aria-label={t("policyBadge")}>

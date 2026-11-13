@@ -2119,12 +2119,8 @@ PROMOTION_LOG_EVENT = "t10_promoted_check"
 
 
 def _check_mode(mode_key: str, allowed: tuple[str, ...], default: str) -> str:
-    """S279 L2: the mode is a setting (cis.quality_modes.<mode_key>, Platform › Settings, evidence-gated), read per
-    call;
-    its env var (the *_MODE_ENV constants above) stays the definition's emergency override for one release."""
-    from services.quality import settings_keys
+    from services.quality import settings_keys  # S279 L2: a setting (the *_MODE_ENV var its override for one release)
     from shared import settings
-
     raw = str(settings.get(settings_keys.MODES[mode_key]) or "").strip().lower()
     return raw if raw in allowed else default
 

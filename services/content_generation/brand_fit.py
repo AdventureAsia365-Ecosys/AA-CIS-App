@@ -30,7 +30,7 @@ from shared.llm_client.call_log import BILLED_FIELD_KEYS, V2_BILLED_KEYS, billed
 from shared.llm_client.client import LLMClient
 from shared.llm_client.judge import call_judge
 from shared.llm_client.json_reply import first_json_value
-from services.quality.registry import threshold
+from services.quality.registry import threshold, threshold_reader
 
 logger = structlog.get_logger()
 
@@ -45,11 +45,7 @@ _JUDGE_SEED = 42
 # `supports_temperature`) is already reproducible, so it is scored once. Layer 1 = the single call;
 # layer 3 = the Jev tie-break in judge_node, which only fires when a score is still exactly on the
 # line after this.
-def _repeat_band() -> tuple[float, float]:
-    """Inclusive (low, high), today (6.0, 8.0); the pass line sits in the middle. S279 L2: two settings, read at call
-    time (thresholds.yaml brand_fit.repeat_band)."""
-    lo, hi = threshold("brand_fit.repeat_band")
-    return float(lo), float(hi)
+_repeat_band = threshold_reader("brand_fit.repeat_band")  # inclusive (6.0, 8.0) read per call; the pass line in the middle
 _REPEAT_EXTRA = 2                  # 2 more calls -> median of 3
 
 

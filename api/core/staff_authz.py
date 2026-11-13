@@ -595,10 +595,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/reference-prices/parse"): REFERENCE_PRICE_WRITE,
     ("POST", "/admin/reference-prices/import"): REFERENCE_PRICE_WRITE,
     # S279 thresholds L1 — Platform › Settings (the settings registry, CIS 407): admin only
-    # S279 thresholds L2 — the pass line, score bands and SEO bands the score views colour by (no secret, no tenant
-    # data): every role that opens a page showing a quality score (content, tenant QA, tenant 360 of the own book).
-    ("GET", "/admin/quality/thresholds"): any_of(CONTENT_READ, TENANT_CONTENT_READ, TENANT_CONTENT_BOOK_READ,
-                                                 TENANT_BOOK_READ),
+    ("GET", "/admin/quality/thresholds"): any_of(CONTENT_READ, TENANT_BOOK_READ),   # S279 L2: every score view's bands
     ("GET", "/admin/settings/registry"): OPS_READ,
     ("GET", "/admin/settings/registry/{key}/history"): OPS_READ,
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
@@ -825,11 +822,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/supply-content/{entity_id}/unpublish"): REVIEW_ACT,
 }
 
-# POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The
-# route-policy test allows these to be missing from the app; once the route exists it must match the
-# template exactly (every /admin/platform/* route needs a POLICY entry, so a different parameter name
-# fails CI there instead of leaving the route open to every staff role). Empty since AA-883's two
-# /admin/platform/staff routes landed.
+# POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The route-policy test
+# allows these to be missing from the app; once the route exists it must match the template exactly (every
+# /admin/platform/* route needs a POLICY entry, so a different parameter name fails CI there instead of leaving the
+# route open to every staff role). Empty since AA-883's two /admin/platform/staff routes landed.
 AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 
 # Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope). /v1/social has no

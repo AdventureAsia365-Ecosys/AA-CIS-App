@@ -29,7 +29,7 @@ import { fmtDailyPublishLimit } from "./tenant360";
 import { T360_WORDS_MESSAGES } from "./tenant360.messages";
 import type { Tenant } from "./tenantRow";
 import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
-import { useQualityThresholds } from "../../_components/useQualityThresholds";
+import { useScoreBands } from "../../_components/useQualityThresholds";
 import { TEN } from "../messages";
 
 // ─── Detail types (unchanged from previous) ───────────────────────────────────
@@ -78,7 +78,7 @@ function StatusChip({ status }: { status: string }) {
   return <Badge tone={STATUS_TONE[status] ?? "neutral"} dot={false} style={{ textTransform: "none", letterSpacing: 0 }}>{status}</Badge>;
 }
 function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursView?: string }) {
-  const bands = useQualityThresholds()?.score_bands;
+  const bands = useScoreBands();
   const tr = useT(TEN);
   const { formatDate: fmtD } = useFormat();
   const isPublished = toursView === "published";
@@ -371,7 +371,7 @@ interface RewriteActivityItem {
   edit_source: string | null; created_at: string;
 }
 function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
-  const bands = useQualityThresholds()?.score_bands;
+  const bands = useScoreBands();
   const t = useT(TEN);
   const { formatDate: fmtD } = useFormat();
   return (

@@ -8,9 +8,9 @@ maker-checker). The frontend used to carry a generated copy (frontend/lib/qualit
 SEO_BANDS / PASS_LINE); it now reads this route (frontend/lib/qualityThresholds.ts), so an approved change reaches the
 Review, Master content, tenant and compare views within one settings cache window (audit 5.4 check 3: no mirrors).
 
-Who may call: every staff role that opens a page showing a quality score (api/core/staff_authz.py POLICY: content.read,
-tenant_content.read, tenant_content.book.read or tenant.book.read). Values in force from the settings reader's snapshot:
-no DB call on the request path.
+Who may call: every staff role that opens a page showing a quality score (api/core/staff_authz.py POLICY: content.read
+or tenant.book.read; finance has neither). Values in force from the settings reader's snapshot: no DB call on the
+request path.
 """
 from __future__ import annotations
 

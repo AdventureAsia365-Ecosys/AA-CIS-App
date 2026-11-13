@@ -10,7 +10,7 @@ import { K, mono, sans, AiNotice, Button, useFormat, useT, Input, Textarea, Spin
 import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
 import { inMetaBand } from "@/lib/qualityThresholds";
-import { useQualityThresholds } from "../_components/useQualityThresholds";
+import { useSeoBands } from "../_components/useQualityThresholds";
 import {
   AREA_FIELDS,
   LIST_FIELDS,
@@ -155,7 +155,7 @@ export function ReviewEditor({
   /** AA-845 — may mark sentences unsupported in the Source check (review.act). */
   canLabel?: boolean;
 }) {
-  const seo = useQualityThresholds()?.seo_bands;
+  const seo = useSeoBands();
   const t = useT(M);
   const { formatDateTime } = useFormat();
   const [draft, setDraft] = useState<Record<string, string>>(() => toDraft(item.raw));
