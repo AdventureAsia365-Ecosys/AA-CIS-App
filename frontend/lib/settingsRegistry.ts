@@ -34,7 +34,7 @@ export interface SettingRow {
   decided_by_name?: string | null;
 }
 
-/** AA-1096 l23 (CIS 417): the operator's guide of a setting, one per language. */
+/** AA-1096 l23 (CIS 416): the operator's guide of a setting, one per language. */
 export const GUIDE_PARTS = ["what", "raise", "lower", "when", "example"] as const;
 export type GuidePart = (typeof GUIDE_PARTS)[number];
 export type GuideText = Record<GuidePart, string>;

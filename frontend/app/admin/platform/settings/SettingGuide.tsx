@@ -10,7 +10,7 @@
 //   line computed from the values in force, then the technical description as a collapsed "Engineering note". The
 //   change dialog shows it above the inputs, and under the input the same line for the value being typed.
 // - ActorName: the staff member's name or e-mail, the actor id in the tooltip.
-// The guide comes from the API in English and Vietnamese (CIS 417, lib/settingsRegistry guideFor); kit only.
+// The guide comes from the API in English and Vietnamese (CIS 416, lib/settingsRegistry guideFor); kit only.
 
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useState, type ReactNode } from "react";

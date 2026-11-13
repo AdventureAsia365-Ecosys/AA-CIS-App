@@ -1,6 +1,6 @@
 // app/admin/platform/settings/messages.ts — S279 thresholds L1: Platform › Settings in English and Vietnamese.
 // Setting labels and descriptions come from the API (the definition rows, English); refusals from the server as sent.
-// AA-1096 l23: each setting's guide comes from the API in both languages (CIS 417); the part names are here.
+// AA-1096 l23: each setting's guide comes from the API in both languages (CIS 416); the part names are here.
 
 import { defineMessages } from "../../../_kit/core/i18n";
 
