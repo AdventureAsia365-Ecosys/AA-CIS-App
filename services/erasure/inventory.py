@@ -378,6 +378,12 @@ TENANT_CHECKLIST: tuple[ChecklistItem, ...] = (
                   "objects do not), and any repo copy of that fixture",
                   "runbook section 4: cut a new fixture version without the tenant, import it, then delete the old "
                   "objects (WRITE); the importer refuses an offboarded tenant, so a stale fixture cannot come back"),
+    # AA-1093 part 3: the tenant_backup job writes the tenant's rows to the gold bucket; the bucket's exports/ rule
+    # deletes them after 7 days, so an erasure past the retention window finds none left (listed for an earlier one)
+    ChecklistItem("AA-CIS (operator)", "per-tenant backups s3://<gold>/exports/tenants/<tenant>/cis/ "
+                  "(tenant_backup job: the tenant's CIS rows as JSONL)",
+                  "runbook section 4: the 7-day exports/ rule deletes them; an erasure inside 7 days of a backup "
+                  "removes the prefix by hand after the DB apply (WRITE)"),
     ChecklistItem("AA-Partner (crm)", "the tenant's CRM rows (DM-6.8 hard delete on offboarding)",
                   "AA-Partner tenant erasure, owner crm; cis_app has no grant on crm.*"),
     ChecklistItem("Cognito", "tenant portal users (once built)", "runbook section 4"),
