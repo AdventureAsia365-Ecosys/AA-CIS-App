@@ -2,7 +2,7 @@
 // app/admin/platform/settings/SettingGuide.tsx — AA-1096 l23 (tech lead S279: "each setting needs an explanation or
 // definition so I know when to change it"): the operator's guide of a setting on Platform › Settings.
 //
-// - SettingCell: the Setting column — plain label, the one-line "what it controls", the key (small, monospace), the
+// - SettingCell: the Setting column — plain label, the short "what it controls" (two lines), the key (small, monospace), the
 //   badges and an Explain toggle that opens the guide in place (in the flow of the cell, never a floating popover in
 //   the scrolling table: lesson S239).
 // - GuideDetails: what it controls / if you raise it / if you lower it (an on/off switch: turn on / off; a choice:
@@ -31,11 +31,18 @@ function partKey(part: GuidePart, item: GuideItem): PartKey {
   return part === "what" ? "guideWhat" : part === "when" ? "guideWhen" : "guideExample";
 }
 
-/** The one-line "what it controls" under a label (nothing when the setting has no guide yet). */
+// Two lines at most under the label; the whole text is in the tooltip and in the open guide.
+const clamp = { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as const;
+
+/** The short "what it controls" under a label (nothing when the setting has no guide yet). */
 export function GuideSummary({ item }: { item: GuideItem }) {
   const guide = guideFor(item, useLang());
   if (!guide) return null;
-  return <span style={{ ...small, color: K.body }} data-testid={`settings-what-${item.key}`}>{guide.what}</span>;
+  return (
+    <span style={{ ...small, ...clamp, color: K.body }} title={guide.what} data-testid={`settings-what-${item.key}`}>
+      {guide.what}
+    </span>
+  );
 }
 
 function EngineeringNote({ text }: { text: string }) {
@@ -83,9 +90,9 @@ export function SettingCell({ item, badges, extra }: { item: GuideItem; badges: 
   const t = useT(SETTINGS);
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ display: "grid", gap: 4, minWidth: 240, maxWidth: 560 }}>
+    <div style={{ display: "grid", gap: 4, minWidth: 240, maxWidth: 460 }}>
       <strong style={{ fontSize: 13 }}>{item.label}</strong>
-      <GuideSummary item={item} />
+      {!open && <GuideSummary item={item} />}
       <span style={{ ...small, fontFamily: mono, fontSize: 11 }}>{item.key}</span>
       {badges}
       {extra}
