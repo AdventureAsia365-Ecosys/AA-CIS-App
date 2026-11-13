@@ -13,11 +13,20 @@ Per stored blog piece (acp_shared.content_piece, channel blog, created at or aft
              the MEASURED ratio say about the pick: keep, or the skip reason (seed_below_min / seed_below_length_floor).
 Per Subject (tenant x subject) the newest piece decides.
 
-The measured ratio: the median ratio of the material-bound pieces (stored under the F4 floor: the writer stopped
-because the seed ran out, S278 extend step) of the newest writer prompt version that has any, else of all versions.
-A piece that reached the floor only shows the writer's target, not what its seed could carry, so it is not used.
+The measured ratio is sized CONSERVATIVELY from the material-bound pieces (stored under the F4 floor: the writer
+stopped because the seed ran out, S278 extend step) of the newest writer prompt version that has any, else of all
+versions. Per such piece, `needed` = the seed words it would have needed to reach the F4 floor at its own ratio
+(ceil(seed_words x BLOG_FLOOR_CHARS / chars)). The recommended ratio is the LOWEST ratio of them (= the floor is the
+largest `needed`) while there are fewer than 4, else their 25th percentile (one outlier does not set the floor), cut
+down to 3 decimals: at the minimum every material-bound piece of the sample is skipped (seed_words < needed <= floor).
+A median would leave a seed sitting at the floor short about half the time. A piece that reached the floor only shows
+the writer's target, not what its seed could carry, so it is not used. The median is printed for reference only.
 SUMMARY prints the ratio, the sized floor it gives, and per floor how many Subjects are kept / skipped, how many of
 the short ones the floor skips (wanted) and how many approved ones it skips (lost topics).
+
+TARGET lines: per arm, the verdict on each Subject whose tour starts with a TARGET_TOURS prefix (default ac574bfe,
+the S278 Galle Subject's tour) or whose piece starts with a TARGET_PIECES prefix; SUMMARY `target` says per arm whether
+every short target Subject is skipped (the live step asserts it for `at_measured`).
 
 Run by the orchestrator in aa-cis-dev-api (cwd /app; container DATABASE_URL = cis_app, ssl=require), S3-mediated
 ECS exec (`scripts/` is not in the image; it imports services.* only):
@@ -29,11 +38,14 @@ Env
   MIN_SEED  (optional) the flat Blog minimum seed to evaluate (default T7_BLOG_MIN_SEED_WORDS, else 600).
   RATIO     (optional) chars per seed word for the "configured" floor (default T7_BLOG_CHARS_PER_SEED_WORD, else the
             registry value).
+  TARGET_TOURS   (optional) comma-separated tour id prefixes to print a verdict for (default ac574bfe).
+  TARGET_PIECES  (optional) comma-separated piece id prefixes to print a verdict for (default none).
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import statistics
 import sys
@@ -44,6 +56,8 @@ sys.path.insert(0, os.getcwd())
 
 AUDIT_TENANTS = "audit-atlas-hearth,audit-terra-family,audit-trail-pulse,audit-wildkind-travel"
 DEFAULT_FLAT = 600
+DEFAULT_TARGET_TOURS = "ac574bfe"          # the S278 Galle Subject's tour (F4 short at 4,425 chars)
+LOW_QUANTILE_MIN_N = 4                    # from this many material-bound pieces the 25th percentile, below it the min
 
 PIECES_SQL = """
     SELECT cp.piece_id::text AS piece_id, cp.tenant_id::text AS tenant_id, t.slug AS tenant, cp.status,
@@ -83,26 +97,55 @@ def piece_line(row: dict, t7_words: Optional[int]) -> dict:
     return {"piece": str(row["piece_id"])[:8], "tenant": row.get("tenant"), "status": row.get("status"),
             "subject": (row.get("subject_id") or "-")[:8], "segment": row.get("segment_id"),
             "tour": (row.get("tour_id") or "-")[:8], "writer": wi.get("writer_prompt_version") or "-",
-            "chars": chars, "side": lc.side(chars) or "in", "t7_words": t7_words, "t9_words": t9,
+            "chars": chars, "side": lc.side(chars) or "in", "t7_words": t7_words, "t9_words": t9, "seed_words": base,
             "ratio": round(chars / base, 3) if base else None, "created_at": str(row.get("created_at"))}
 
 
+def needed_seed_words(line: dict) -> Optional[int]:
+    """The seed words this piece would have needed to reach the F4 blog floor at its own chars per seed word. Pure."""
+    from services.acp_content_writing import length_contract as lc
+    if not line.get("chars") or not line.get("seed_words"):
+        return None
+    return int(math.ceil(line["seed_words"] * lc.BLOG_FLOOR_CHARS / line["chars"]))
+
+
+def _floor3(value: float) -> float:
+    """Cut down to 3 decimals: a rounded-up ratio could size the floor one word under a piece's need."""
+    return math.floor(value * 1000) / 1000
+
+
+def _low_quantile(ratios: list[float]) -> tuple[float, str]:
+    if len(ratios) < LOW_QUANTILE_MIN_N:
+        return min(ratios), "min"
+    return statistics.quantiles(ratios, n=4, method="inclusive")[0], "p25"
+
+
 def measured_ratio(lines: list[dict]) -> dict:
-    """The median ratio of the material-bound (short) pieces of the newest writer version that has any, else of every
-    short piece; None without a short piece. Pure."""
+    """The conservative chars per seed word of the material-bound (short) pieces of the newest writer version that has
+    any, else of every short piece: their lowest ratio under 4 pieces, else their 25th percentile (the floor a seed
+    needs so that pieces like these are skipped, not the typical one); None without a short piece. Pure."""
     short = [p for p in lines if p["side"] == "short" and p["ratio"]]
     if not short:
         return {"ratio": None, "n": 0, "writer": None}
     newest: dict[str, str] = {}
     for p in lines:
         newest[p["writer"]] = max(newest.get(p["writer"], ""), p["created_at"])
-    for writer in sorted(newest, key=newest.get, reverse=True):
-        pick = [p["ratio"] for p in short if p["writer"] == writer]
+    pick, writer = [], "all"
+    for w in sorted(newest, key=newest.get, reverse=True):
+        pick = [p for p in short if p["writer"] == w]
         if pick:
-            return {"ratio": round(statistics.median(pick), 3), "n": len(pick), "writer": writer,
-                    "min": min(pick), "max": max(pick)}
-    pick = [p["ratio"] for p in short]
-    return {"ratio": round(statistics.median(pick), 3), "n": len(pick), "writer": "all"}
+            writer = w
+            break
+    if not pick:
+        pick = short
+    ratios = [p["ratio"] for p in pick]
+    ratio, rule = _low_quantile(ratios)
+    needed = [n for n in (needed_seed_words(p) for p in pick) if n]
+    return {"ratio": _floor3(ratio), "rule": rule, "n": len(pick), "writer": writer, "min": min(ratios),
+            "max": max(ratios), "median": round(statistics.median(ratios), 3),
+            "needed_max": max(needed) if needed else None,
+            "pieces": [{"piece": p["piece"], "tour": p["tour"], "ratio": p["ratio"], "needed": needed_seed_words(p)}
+                       for p in pick]}
 
 
 def floor_at(flat: int, ratio: Optional[float]) -> dict:
@@ -140,7 +183,23 @@ def verdicts(subs: list[dict], floor: dict) -> dict:
             "rows": rows}
 
 
-def summarize(lines: list[dict], flat: int, configured_ratio: float) -> dict:
+def _prefixes(raw: Optional[str]) -> list[str]:
+    return [x.strip().lower() for x in (raw or "").split(",") if x.strip()]
+
+
+def target_verdicts(verdict: dict, tours: list[str], pieces: list[str]) -> dict:
+    """The rows of `verdict` whose tour or piece starts with a target prefix, and whether every short one is skipped
+    (None when no short target row). Pure."""
+    rows = [r for r in verdict["rows"]
+            if any(str(r["tour"]).lower().startswith(t) for t in tours)
+            or any(str(r["piece"]).lower().startswith(x) for x in pieces)]
+    short = [r for r in rows if r["side"] == "short"]
+    return {"rows": rows, "short": len(short), "short_skipped": sum(1 for r in short if r["verdict"] != "keep"),
+            "all_short_skipped": (all(r["verdict"] != "keep" for r in short) if short else None)}
+
+
+def summarize(lines: list[dict], flat: int, configured_ratio: float, *, target_tours: Optional[list[str]] = None,
+              target_pieces: Optional[list[str]] = None) -> dict:
     m = measured_ratio(lines)
     subs = subjects(lines)
     out = {"pieces": len(lines), "subjects": len(subs), "measured": m,
@@ -150,7 +209,20 @@ def summarize(lines: list[dict], flat: int, configured_ratio: float) -> dict:
         out["at_measured"] = verdicts(subs, floor_at(flat, m["ratio"]))
         out["recommended_env"] = {"T7_BLOG_CHARS_PER_SEED_WORD": m["ratio"],
                                   "sized_min_seed_words": out["at_measured"]["floor"]["sized"]}
+    tours = [t.lower() for t in (target_tours if target_tours is not None else [DEFAULT_TARGET_TOURS])]
+    pieces = [x.lower() for x in (target_pieces or [])]
+    out["target"] = {"tours": tours, "pieces": pieces}
+    for arm in ("configured", "at_measured", "flat_only"):
+        if arm in out:
+            out["target"][arm] = target_verdicts(out[arm], tours, pieces)
     return out
+
+
+def _strip_rows(value: Any) -> Any:
+    """The summary without per-row lists (they are printed as lines). Pure."""
+    if isinstance(value, dict):
+        return {k: _strip_rows(v) for k, v in value.items() if k not in ("rows", "pieces") or not isinstance(v, list)}
+    return value
 
 
 async def main() -> int:
@@ -183,13 +255,26 @@ async def main() -> int:
         print(f"PIECE {p['piece']} {p['tenant']} tour={p['tour']} subject={p['subject']} status={p['status']} "
               f"writer={p['writer']} chars={p['chars']} side={p['side']} t7_words={p['t7_words']} "
               f"t9_words={p['t9_words']} ratio={p['ratio']}")
-    summary = summarize(lines, flat, ratio)
+    target_tours = _prefixes(os.environ.get("TARGET_TOURS")) if os.environ.get("TARGET_TOURS") is not None else None
+    summary = summarize(lines, flat, ratio, target_tours=target_tours,
+                        target_pieces=_prefixes(os.environ.get("TARGET_PIECES")))
+    for p in (summary["measured"].get("pieces") or []):
+        print(f"NEEDED {p['piece']} tour={p['tour']} ratio={p['ratio']} needed_seed_words={p['needed']}")
     for arm in ("configured", "at_measured", "flat_only"):
         for r in (summary.get(arm) or {}).get("rows", []):
             print(f"SUBJECT {arm} {r['subject']} {r['tenant']} tour={r['tour']} status={r['status']} side={r['side']} "
                   f"seed={r['seed_words']} floor={summary[arm]['floor']['min_seed_words']} -> {r['verdict']}")
-    print("SUMMARY " + json.dumps({k: ({kk: vv for kk, vv in v.items() if kk != "rows"} if isinstance(v, dict) else v)
-                                   for k, v in summary.items()}, sort_keys=True, default=str))
+    for arm in ("configured", "at_measured", "flat_only"):
+        t = summary["target"].get(arm)
+        if not t:
+            continue
+        for r in t["rows"]:
+            print(f"TARGET {arm} {r['subject']} {r['tenant']} tour={r['tour']} piece={r['piece']} status={r['status']} "
+                  f"side={r['side']} seed={r['seed_words']} floor={summary[arm]['floor']['min_seed_words']} "
+                  f"-> {r['verdict']}")
+        print(f"TARGET {arm} all_short_skipped={t['all_short_skipped']} short={t['short']} "
+              f"short_skipped={t['short_skipped']}")
+    print("SUMMARY " + json.dumps(_strip_rows(summary), sort_keys=True, default=str))
     return 0
 
 

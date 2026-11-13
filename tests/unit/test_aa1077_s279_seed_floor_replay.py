@@ -45,11 +45,65 @@ def _lines():
     ]
 
 
-def test_measured_ratio_is_the_median_of_the_newest_writers_short_pieces():
+def test_measured_ratio_is_the_lowest_ratio_of_the_newest_writers_short_pieces():
     m = rp.measured_ratio(_lines())
-    assert m["writer"] == "w7" and m["n"] == 2
-    assert m["ratio"] == round((4425 / 640 + 4200 / 700) / 2, 3)
+    assert m["writer"] == "w7" and m["n"] == 2 and m["rule"] == "min"
+    assert m["ratio"] == 6.0 and m["min"] == 6.0 and m["max"] == round(4425 / 640, 3)
+    assert m["median"] == round((4425 / 640 + 4200 / 700) / 2, 3)          # reference only, never the recommendation
+    assert {p["piece"][:2]: p["needed"] for p in m["pieces"]} == {"p2": 680, "p3": 784}
+    assert m["needed_max"] == 784
     assert rp.measured_ratio([_lines()[3]]) == {"ratio": None, "n": 0, "writer": None}
+
+
+def test_measured_ratio_cuts_down_so_the_lowest_piece_is_still_skipped():
+    # 4,699 chars (1 under the floor) from 680 seed words: ratio 6.910294...; the recommended ratio is cut down to
+    # 6.910, never rounded up past the piece's own ratio, so the sized floor (681) stays above its 680 words.
+    line = rp.piece_line(_row("q1", "held", 4699, seed_words=680), 680)
+    m = rp.measured_ratio([line])
+    assert m["ratio"] <= 4699 / 680
+    floor = rp.floor_at(600, m["ratio"])
+    assert rp.verdicts(rp.subjects([line]), floor)["rows"][0]["verdict"] == "seed_below_length_floor"
+
+
+def test_measured_ratio_uses_the_25th_percentile_from_four_short_pieces():
+    lines = [rp.piece_line(_row(f"r{i}", "held", chars, subject=f"5ub{i}", seed_words=words), words)
+             for i, (chars, words) in enumerate([(4000, 800), (4200, 700), (4400, 640), (4600, 600), (4500, 500)])]
+    m = rp.measured_ratio(lines)
+    ratios = sorted(p["ratio"] for p in lines)
+    assert m["rule"] == "p25" and m["n"] == 5 and ratios[0] < m["ratio"] <= ratios[1]
+
+
+def test_the_lowest_ratio_short_piece_is_skipped_where_the_median_kept_it():
+    # The target (tour ac57...) has the lowest ratio of the short pieces: a median-sized floor keeps it, the
+    # recommended (lowest ratio) floor skips every short piece of the sample.
+    lines = [
+        rp.piece_line({**_row("g1", "held", 4425, subject="9a11", seed_words=700), "tour_id": "ac574bfe-0000"}, 700),
+        rp.piece_line(_row("p2", "held", 4425, subject="5ub2", seed_words=600), 600),
+        rp.piece_line(_row("p3", "held", 4400, subject="5ub3", seed_words=580), 580),
+    ]
+    median = rp.measured_ratio(lines)["median"]
+    median_floor = rp.floor_at(600, median)
+    assert {r["piece"][:2]: r["verdict"] for r in rp.verdicts(rp.subjects(lines), median_floor)["rows"]}["g1"] == "keep"
+    s = rp.summarize(lines, 600, 5.8)
+    # 4425 / 700 = 6.3214..., cut down to 3 decimals
+    assert s["recommended_env"]["T7_BLOG_CHARS_PER_SEED_WORD"] == s["measured"]["ratio"] == 6.321
+    assert s["at_measured"]["short_skipped"] == s["at_measured"]["short_total"] == 3
+    t = s["target"]["at_measured"]
+    assert t["all_short_skipped"] is True and [r["piece"][:2] for r in t["rows"]] == ["g1"]
+    assert s["target"]["tours"] == ["ac574bfe"]
+
+
+def test_target_by_piece_prefix_and_no_short_target():
+    s = rp.summarize(_lines(), 600, 5.8, target_tours=[], target_pieces=["P4"])
+    t = s["target"]["configured"]
+    assert [r["piece"][:2] for r in t["rows"]] == ["p4"] and t["short"] == 0 and t["all_short_skipped"] is None
+    assert rp.summarize(_lines(), 600, 5.8, target_tours=[])["target"]["flat_only"]["rows"] == []
+
+
+def test_summary_line_drops_row_lists_but_keeps_counts():
+    s = rp._strip_rows(rp.summarize(_lines(), 600, 5.8))
+    assert s["pieces"] == 4 and "pieces" not in s["measured"] and "rows" not in s["configured"]
+    assert "rows" not in s["target"]["configured"] and s["measured"]["needed_max"] == 784
 
 
 def test_newest_piece_per_subject_decides():
