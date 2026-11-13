@@ -34,6 +34,8 @@ from contextlib import contextmanager
 from typing import Any, Callable
 from unittest.mock import patch
 
+# The SEO bands and meta aims are not listed: the API refuses any value but their seed (quality_settings
+# START_TIME_REASON), and the writing-policy lint keeps band literals out of code.
 # The value of each key before the move (thresholds.yaml / writing_policy.yaml / taxonomy.yaml, the worker's Terraform
 # env values, the code literals). Restated here on purpose: the replay compares against what main ran.
 BEFORE: dict[str, Any] = {
@@ -43,8 +45,6 @@ BEFORE: dict[str, Any] = {
     "cis.quality.t9_blog_length_target_margin": 0.17, "cis.quality.t10_reuse_similarity": 0.92,
     "cis.quality.review_score_band_low": 5, "cis.quality.ui_score_band_top": 9,
     "cis.quality.auto_upgrade_threshold": 8.5,
-    "cis.seo.meta_min": 140, "cis.seo.meta_max": 155, "cis.seo.title_min": 45, "cis.seo.title_max": 60,
-    "cis.seo.slug_max": 60,
     "cis.t9.blog_chars_min": 4700, "cis.t9.blog_chars_max": 13000,
     "cis.quality_modes.t10_f12_scope": "warn", "cis.quality_modes.t10_f9_brand_style": "warn",
     "cis.quality_modes.t10_f14_floor": "repair", "cis.quality_modes.t10_f9_policy": "interim",
