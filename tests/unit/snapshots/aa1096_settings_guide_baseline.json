@@ -1,0 +1,4 @@
+{
+ "about": "AA-1096 l23 (CIS 416): settings allowed on Platform › Settings without a complete EN + VI guide. Shrink-only (tests/unit/test_aa1096_settings_guides.py): a new entry needs the tech lead's OK in review; write the guide instead.",
+ "keys_without_guide": []
+}
