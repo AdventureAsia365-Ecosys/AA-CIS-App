@@ -105,6 +105,10 @@ background), which the whole-source entailment of v2 targets.
 - **CI of this code PR needs CIS 416 on main**: the settings-lint test fails on a `settings.get("cis....")` key that is
   not compiled until the migration PR merges (it carries `compiled_defaults.json`). Ship the migration PR first; this
   PR is tested on the merge result.
+- **Review fix in CIS 416**: the description of `cis.quality.instrument_eval_tp_keep_min_pct` now says the bar reads
+  the stored violations only (the relabels are in-sample). The migration branch was also rebased on main after CIS
+  412-413 merged (`compiled_defaults.json` regenerated, not hand-merged). At ship time the CIS preflight wants main max
+  + 1; in this wave lane l21 holds 414-415 and another lane also drafted a 415, so the wave's CIS batch renumbers.
 - **Follow-up (settings)**: a later migration sets `enforced = true` on the five keys once this code is deployed, and
   removes them from the not-enforced list in `tests/unit/test_s279_settings_seed_parity.py`.
 - **Follow-up (T9 seed bug, not filed as an issue here)**: the T9 seed's SCOPE line can contradict its own itinerary
