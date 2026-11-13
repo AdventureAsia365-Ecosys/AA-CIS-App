@@ -1881,7 +1881,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`ignore-unfixed`); an accepted one goes into `.trivyignore` with a `# reason` line and `exp:YYYY-MM-DD`
   ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
   (`.github/coverage-ratchet.json`, `.github/scripts/coverage_ratchet.py`): below `floor` fails, lowering
-  `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. `deploy-dev.yml` does
+  `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. **Code-health ratchets**
+  (AA-1097; `.github/scripts/code_health.py`, limits and exemptions with reasons in `.github/code-health.json`): a new
+  function over cyclomatic complexity 10 (Python: ruff C901, in **Lint**; TypeScript: ESLint `complexity`, in
+  **Frontend Lint**) or a new `.py/.ts/.tsx/.js/.mjs` file over 800 lines (tests included; generated files,
+  migrations, fixtures exempt) fails; today's offenders sit in `.github/code-health-baseline.json` and may not get
+  worse, and the baseline only shrinks: after an improvement run `python3 .github/scripts/code_health.py update` and
+  commit it (a moved function keeps its entry under its new path). `scripts/pre-push.sh` runs it too. `deploy-dev.yml` does
   not trigger on `frontend/**` (the image has no frontend file). The URL-pinned wheel of `requirements.txt` (the
   spaCy model) is never downloaded per job: `.github/actions/url-wheels` restores it from the actions cache (key = the
   URL + sha256 pins, warmed on main by Deploy Dev and the nightly run), downloads it with retries only on a miss, checks
