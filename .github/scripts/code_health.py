@@ -12,11 +12,18 @@ Two ratchets, one committed baseline (.github/code-health-baseline.json), limits
               Exempt paths (generated code, migrations, fixtures, catalogues, vendored code) carry a reason.
 
 The baseline only shrinks. `check` also fails when an entry is stale (the function is gone or back under the limit,
-the file shrank) so the baseline always equals today's offenders: run `update`, which only removes entries and lowers
-values, and commit the baseline. Against a base commit (`--base`, CI passes the PR base) `check` fails when the
-baseline gained an entry or a value went up, or a limit was raised. A function moved to another file keeps its
-entry under the new path (same qualified name, score not higher); a baseline file split into parts may list the parts
-while their total stays within the removed file's lines.
+the file is gone or back under the limit), so the baseline lists only today's offenders: run `update`, which only removes
+entries and lowers values, and commit the baseline. An entry that improved but is still over the limit is a printed
+notice, not a failure, so editing a big baseline file does not force a baseline edit (parallel branches would conflict
+on that line); `update` lowers it whenever someone runs it. Against a base commit (`--base`, CI passes the PR base,
+pre-push passes origin/main; the check uses the merge-base with HEAD, so a baseline that shrank on main after the branch
+point is not read as a raise) `check` fails when the baseline gained an entry or a value went up, or a limit was raised.
+A function moved to another file keeps its entry under the new path (same qualified name, score not higher); a
+baseline file split into parts may list the parts while their total stays within the removed file's lines.
+Ordinals: a repeated name gets "#2", "#3"... in source order ("Page.map()#3", "Store.size#2"). Inserting a simple
+callback above a baseline one renumbers it, so entries are paired by family (the key without its "#n") before
+anything is reported: within one family the over-limit functions are matched to the baseline entries, each to an
+entry scoring at least as much. A renumbered entry is a notice and `update` re-keys it.
 
   python3 .github/scripts/code_health.py check  [--kind python,typescript,files] [--base REF] [--allow-missing-tools]
   python3 .github/scripts/code_health.py update [--kind ...]     # shrink the baseline after an improvement
@@ -206,54 +213,112 @@ def limit_of(kind: str, config: dict) -> int:
 # --- comparing (pure) ----------------------------------------------------------------------------------------------
 
 
-def compare(kind: str, current: dict[str, int], limit: int, baseline: dict[str, int]) -> tuple[list[str], dict]:
-    """Problems of CURRENT (every measured item) against BASELINE, and the shrunk baseline `update` would write."""
+ORDINAL = re.compile(r"#\d+$")
+
+
+def family(kind: str, key: str) -> str:
+    """The key without its ordinal ("a.tsx::Page.map()#3" -> "a.tsx::Page.map()"); a file is its own family."""
+    return key if kind == "files" else ORDINAL.sub("", key)
+
+
+def match_scores(items: list[tuple[str, int]], entries: list[tuple[str, int]]
+                 ) -> tuple[list[tuple[str, int, str, int]], list[tuple[str, int]], list[tuple[str, int]]]:
+    """Pair as many ITEMS as possible with distinct ENTRIES scoring at least as much.
+
+    Smallest item first, each takes the smallest entry that still covers it (an entry with the same key wins a tie),
+    which pairs the most items. Returns (pairs as (item key, score, entry key, value), unpaired items, unused entries).
+    """
+    left = sorted(entries, key=lambda kv: (kv[1], kv[0]))
+    pairs, unpaired = [], []
+    for key, score in sorted(items, key=lambda kv: (kv[1], kv[0])):
+        fits = [i for i, (_, value) in enumerate(left) if value >= score]
+        if not fits:
+            unpaired.append((key, score))
+            continue
+        entry_key, value = left.pop(min(fits, key=lambda i: (left[i][1], left[i][0] != key)))
+        pairs.append((key, score, entry_key, value))
+    return pairs, unpaired, left
+
+
+def compare(kind: str, current: dict[str, int], limit: int, baseline: dict[str, int]
+            ) -> tuple[list[str], list[str], dict]:
+    """Problems and notices of CURRENT (every measured item) against BASELINE, and the baseline `update` would write.
+
+    Problems: NEW (over the limit, no baseline entry covers it), WORSE (scores above its baseline entry) and STALE (a
+    baseline entry no over-limit item needs any more). Notices: TIGHT (improved, still over the limit) and RENUM (an
+    ordinal shifted; the item is covered by a sibling entry of its family). `update` writes the paired items at their
+    current score: it removes and lowers entries and re-keys renumbered ones, it never adds or raises.
+    """
     unit = "lines" if kind == "files" else "complexity"
+    what = "file" if kind == "files" else "function"
     over = {k: v for k, v in current.items() if v > limit}
-    problems: list[str] = []
-    for key in sorted(over):
-        if key not in baseline:
-            what = "file" if kind == "files" else "function"
-            problems.append(f"NEW    {key}: {unit} {over[key]} > limit {limit}. A new or newly over-limit {what} must "
-                            f"stay within {limit}: split it.")
-        elif over[key] > baseline[key]:
-            problems.append(f"WORSE  {key}: {unit} {over[key]} > baseline {baseline[key]}. A baseline entry may not "
-                            f"grow: bring it back to {baseline[key]} or below (better: under {limit}).")
-        elif over[key] < baseline[key]:
-            problems.append(f"TIGHT  {key}: {unit} {over[key]} < baseline {baseline[key]}. Improved: run "
-                            f"`{SELF} update` and commit {BASELINE_PATH}.")
-    for key in sorted(set(baseline) - set(over)):
-        state = "gone" if key not in current else f"now {current[key]} <= limit {limit}"
-        problems.append(f"STALE  {key}: {state}. Run `{SELF} update` and commit {BASELINE_PATH}.")
-    shrunk = {k: min(v, over[k]) for k, v in baseline.items() if k in over}
-    return problems, shrunk
+    families: dict[str, tuple[list, list]] = {}
+    for key, value in over.items():
+        families.setdefault(family(kind, key), ([], []))[0].append((key, value))
+    for key, value in baseline.items():
+        families.setdefault(family(kind, key), ([], []))[1].append((key, value))
+    problems: list[tuple[str, str]] = []
+    notices: list[str] = []
+    shrunk: dict[str, int] = {}
+    for items, entries in families.values():
+        pairs, unpaired, unused = match_scores(items, entries)
+        for key, score, entry_key, value in pairs:
+            shrunk[key] = score
+            if entry_key != key:
+                notices.append(f"RENUM  {entry_key} -> {key}: {unit} {score} <= baseline {value} (an ordinal shifted). "
+                               f"`{SELF} update` re-keys it.")
+            elif score < value:
+                notices.append(f"TIGHT  {key}: {unit} {score} < baseline {value}. Improved: `{SELF} update` lowers "
+                               "the entry (optional).")
+        unused = sorted(unused, key=lambda kv: kv[1])
+        for key, score in sorted(unpaired, key=lambda kv: -kv[1]):
+            if not unused:
+                problems.append((key, f"NEW    {key}: {unit} {score} > limit {limit}. A new or newly over-limit {what} "
+                                      f"must stay within {limit}: split it."))
+                continue
+            # The family still has an entry, just not a big enough one: the item got worse (its own entry first).
+            entry_key, value = unused.pop(next((i for i, kv in enumerate(unused) if kv[0] == key), len(unused) - 1))
+            shrunk[key] = value  # update never raises
+            was = "" if entry_key == key else f" (entry {entry_key}, an ordinal shifted)"
+            problems.append((key, f"WORSE  {key}: {unit} {score} > baseline {value}{was}. A baseline entry may not "
+                                  f"grow: bring it back to {value} or below (better: under {limit})."))
+        for key, _ in unused:
+            state = ("gone" if key not in current else f"now {current[key]} <= limit {limit}" if key not in over
+                     else "renumbered, its family has fewer over-limit items")
+            problems.append((f"~{key}", f"STALE  {key}: {state}. Run `{SELF} update` and commit {BASELINE_PATH}."))
+    return [p for _, p in sorted(problems)], sorted(notices), shrunk
 
 
 def compare_with_base(kind: str, head: dict[str, int], base: dict[str, int]) -> list[str]:
-    """The baseline may only shrink against the base commit: no new entry, no higher value."""
+    """The baseline may only shrink against the base commit: no new entry, no higher value.
+
+    Functions are compared per family of the qualified name without path and ordinal, so a function moved to another
+    file, or renumbered, keeps its entry as long as it does not score higher than the entry it takes over.
+    """
     problems: list[str] = []
-    added = {k: v for k, v in head.items() if k not in base}
-    removed = {k: v for k, v in base.items() if k not in head}
-    for key in sorted(k for k in head if k in base and head[k] > base[k]):
-        problems.append(f"RAISED {key}: baseline {base[key]} -> {head[key]}. The baseline only shrinks.")
     if kind == "files":
+        added = {k: v for k, v in head.items() if k not in base}
+        removed = {k: v for k, v in base.items() if k not in head}
+        for key in sorted(k for k in head if k in base and head[k] > base[k]):
+            problems.append(f"RAISED {key}: baseline {base[key]} -> {head[key]}. The baseline only shrinks.")
         if added and sum(added.values()) > sum(removed.values()):
             problems.append(f"ADDED  {', '.join(sorted(added))}: new baseline file(s) with {sum(added.values())} lines "
                             f"but only {sum(removed.values())} lines of removed entries. A new file stays within the "
                             "limit; a split baseline file's parts may not total more than the file had.")
         return problems
-    pool = {}
-    for key, value in removed.items():
-        pool.setdefault(key.split("::", 1)[-1], []).append(value)
-    for key in sorted(added):
-        name = key.split("::", 1)[-1]
-        candidates = sorted(v for v in pool.get(name, []) if v >= added[key])
-        if candidates:
-            pool[name].remove(candidates[0])  # a moved function keeps its entry under the new path
-            continue
-        problems.append(f"ADDED  {key}: {added[key]}. The baseline only shrinks; a new function stays within the limit "
-                        "(a moved function keeps its qualified name and may not score higher).")
-    return problems
+    families: dict[str, tuple[list, list]] = {}
+    for key, value in head.items():
+        families.setdefault(ORDINAL.sub("", key.split("::", 1)[-1]), ([], []))[0].append((key, value))
+    for key, value in base.items():
+        families.setdefault(ORDINAL.sub("", key.split("::", 1)[-1]), ([], []))[1].append((key, value))
+    for items, entries in families.values():
+        for key, value in match_scores(items, entries)[1]:
+            if key in base:
+                problems.append(f"RAISED {key}: baseline {base[key]} -> {value}. The baseline only shrinks.")
+            else:
+                problems.append(f"ADDED  {key}: {value}. The baseline only shrinks; a new function stays within the "
+                                "limit (a moved function keeps its qualified name and may not score higher).")
+    return sorted(problems)
 
 
 # --- baseline / config io ------------------------------------------------------------------------------------------
@@ -288,6 +353,11 @@ def base_problems(root: Path, ref: str, config: dict, baseline: dict, kinds: lis
                       capture_output=True).returncode != 0:
         print(f"notice: base {ref} is not available: the shrink-only check against the base is skipped")
         return []
+    # Compare with the branch point, not the base tip: a baseline that shrank on main after this branch was cut is not
+    # this branch raising it (pre-push passes origin/main; in CI the PR base is already an ancestor, so it is the same).
+    fork = subprocess.run(["git", "merge-base", ref, "HEAD"], cwd=root, capture_output=True, text=True)
+    if fork.returncode == 0 and fork.stdout.strip():
+        ref = fork.stdout.strip()
     base_config = git_show_json(root, ref, CONFIG_PATH)
     base_baseline = git_show_json(root, ref, BASELINE_PATH)
     if base_config is None or base_baseline is None:
@@ -336,13 +406,15 @@ def run_kind(command: str, kind: str, current: dict[str, int], limit: int, basel
         print(f"{kind}: baseline written with {len(over)} entries (limit {limit})")
         return []
     old = baseline.get(kind, {})
-    problems, shrunk = compare(kind, current, limit, old)
+    problems, notices, shrunk = compare(kind, current, limit, old)
     if command == "update":
         new_baseline[kind] = shrunk
         print(f"{kind}: baseline {len(old)} -> {len(shrunk)} entries")
         problems = [p for p in problems if p.startswith(("NEW", "WORSE"))]
     else:
         print(f"{kind}: {len(current)} measured, limit {limit}, {len(over)} over the limit (baseline {len(old)})")
+        for notice in notices:
+            print(f"[{kind}] {notice}")
     return [f"[{kind}] {p}" for p in problems]
 
 

@@ -1,9 +1,13 @@
 """AA-1097 code-health ratchets (.github/scripts/code_health.py): complexity and file size may not get worse.
 
 - compare(): a new function / file over the limit fails, a baseline entry may not grow, a stale entry (gone, or back
-  under the limit) and an improved one fail until `update` shrinks the baseline; `update` never adds or raises.
+  under the limit) fails until `update` shrinks the baseline; an improved entry still over the limit is only a notice
+  (no forced baseline edit on every change to a big file); `update` never adds or raises. Ordinals ("map()#3") are
+  paired by family, so a simple callback inserted above a baseline one does not fail, and `update` re-keys it.
 - compare_with_base(): against the base commit the baseline only shrinks; a function moved to another file keeps its
-  entry (same qualified name, score not higher); a split baseline file's parts may not total more than the file had.
+  entry (same qualified name, score not higher), a renumbered one too; a split baseline file's parts may not total
+  more than the file had; the base is the merge-base with HEAD, so a baseline that shrank on main after the branch
+  point does not fail the branch.
 - Python qualified names (Class.method, outer.inner, "#2" for a repeated name) and, when the frontend's node_modules
   are installed, the TypeScript names from code_health_eslint.mjs.
 - End to end in a throwaway git repository: init -> check ok; a grown file and a new over-limit function fail;
@@ -60,29 +64,59 @@ def _frontend_with_eslint() -> Path | None:
 
 class CompareTest(unittest.TestCase):
     def test_new_function_over_the_limit_fails(self):
-        problems, _ = ch.compare("python", {"a.py::f": 12, "a.py::g": 3}, 10, {})
+        problems, _, _ = ch.compare("python", {"a.py::f": 12, "a.py::g": 3}, 10, {})
         self.assertEqual(len(problems), 1)
         self.assertTrue(problems[0].startswith("NEW    a.py::f"), problems)
 
     def test_function_at_the_limit_passes(self):
-        problems, shrunk = ch.compare("python", {"a.py::f": 10}, 10, {})
+        problems, _, shrunk = ch.compare("python", {"a.py::f": 10}, 10, {})
         self.assertEqual((problems, shrunk), ([], {}))
 
     def test_baseline_entry_may_not_grow(self):
-        problems, shrunk = ch.compare("typescript", {"web/a.tsx::Page": 21}, 10, {"web/a.tsx::Page": 20})
+        problems, _, shrunk = ch.compare("typescript", {"web/a.tsx::Page": 21}, 10, {"web/a.tsx::Page": 20})
         self.assertTrue(problems[0].startswith("WORSE  web/a.tsx::Page"), problems)
         self.assertEqual(shrunk, {"web/a.tsx::Page": 20})  # update never raises
 
-    def test_stale_and_improved_entries_fail_until_update(self):
+    def test_stale_entries_fail_and_improved_ones_are_a_notice(self):
         current = {"a.py::gone_under": 4, "a.py::better": 15}
         baseline = {"a.py::gone_under": 14, "a.py::better": 18, "b.py::deleted": 30}
-        problems, shrunk = ch.compare("python", current, 10, baseline)
-        kinds = sorted(p.split()[0] for p in problems)
-        self.assertEqual(kinds, ["STALE", "STALE", "TIGHT"])
+        problems, notices, shrunk = ch.compare("python", current, 10, baseline)
+        self.assertEqual(sorted(p.split()[0] for p in problems), ["STALE", "STALE"])
+        self.assertEqual([n.split()[:2] for n in notices], [["TIGHT", "a.py::better:"]])
         self.assertEqual(shrunk, {"a.py::better": 15})
 
+    def test_simple_callback_inserted_above_a_baseline_one(self):
+        # Baseline: the 3rd and 4th map() callbacks are over the limit. A trivial map() is added above them, so they
+        # become #4 and #5 and the trivial one is #3.
+        baseline = {"web/a.tsx::Page.map()#3": 12, "web/a.tsx::Page.map()#4": 15}
+        current = {"web/a.tsx::Page.map()": 1, "web/a.tsx::Page.map()#2": 2, "web/a.tsx::Page.map()#3": 1,
+                   "web/a.tsx::Page.map()#4": 12, "web/a.tsx::Page.map()#5": 15}
+        problems, notices, shrunk = ch.compare("typescript", current, 10, baseline)
+        self.assertEqual(problems, [])
+        self.assertTrue(all(n.startswith("RENUM") for n in notices) and len(notices) == 2, notices)
+        self.assertEqual(shrunk, {"web/a.tsx::Page.map()#4": 12, "web/a.tsx::Page.map()#5": 15})  # update re-keys
+        self.assertEqual(ch.compare_with_base("typescript", shrunk, baseline), [])
+
+    def test_renumbered_family_may_not_get_worse(self):
+        baseline = {"web/a.tsx::Page.map()#3": 12, "web/a.tsx::Page.map()#4": 15}
+        current = {"web/a.tsx::Page.map()#4": 12, "web/a.tsx::Page.map()#5": 16}
+        problems, _, shrunk = ch.compare("typescript", current, 10, baseline)
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("WORSE  web/a.tsx::Page.map()#5"), problems)
+        self.assertLessEqual(sorted(shrunk.values()), sorted(baseline.values()))  # update never raises
+        # A second over-limit callback in a family with one entry is new.
+        problems, _, _ = ch.compare("typescript", {"a.tsx::P.map()": 11, "a.tsx::P.map()#2": 11}, 10,
+                                    {"a.tsx::P.map()": 11})
+        self.assertEqual([p.split()[0] for p in problems], ["NEW"])
+
+    def test_python_repeated_name_renumbered(self):
+        baseline = {"m.py::Store.size#2": 14}
+        current = {"m.py::Store.size": 3, "m.py::Store.size#2": 2, "m.py::Store.size#3": 14}
+        problems, notices, shrunk = ch.compare("python", current, 10, baseline)
+        self.assertEqual((problems, len(notices), shrunk), ([], 1, {"m.py::Store.size#3": 14}))
+
     def test_files_new_and_grown(self):
-        problems, _ = ch.compare("files", {"big.py": 900, "new.ts": 801, "ok.ts": 800}, 800, {"big.py": 850})
+        problems, _, _ = ch.compare("files", {"big.py": 900, "new.ts": 801, "ok.ts": 800}, 800, {"big.py": 850})
         self.assertEqual(sorted(p.split()[0] for p in problems), ["NEW", "WORSE"])
 
 
@@ -109,6 +143,14 @@ class CompareWithBaseTest(unittest.TestCase):
         base = {"big.py::handler": 15}
         head = {"a.py::handler": 15, "b.py::handler": 15}
         self.assertEqual(len(ch.compare_with_base("python", head, base)), 1)
+
+    def test_renumbered_entry_is_not_a_raise(self):
+        base = {"web/a.tsx::Page.map()#3": 12, "web/a.tsx::Page.map()#4": 15}
+        head = {"web/a.tsx::Page.map()#4": 12, "web/a.tsx::Page.map()#5": 15}
+        self.assertEqual(ch.compare_with_base("typescript", head, base), [])
+        raised = ch.compare_with_base("typescript", {"web/a.tsx::Page.map()#4": 13, "web/a.tsx::Page.map()#5": 15},
+                                      base)
+        self.assertEqual(len(raised), 1)
 
     def test_split_file_parts_within_the_removed_total(self):
         base = {"routers/big.py": 3000}
@@ -223,7 +265,10 @@ class EndToEndTest(unittest.TestCase):
         (self.root / "big.py").write_text("x = 1\n" * 8, encoding="utf-8")
         self.assertEqual(self.run_cli("check", "--kind", "files"), 1)  # grew
         (self.root / "big.py").write_text("x = 1\n" * 6, encoding="utf-8")
-        self.assertEqual(self.run_cli("check", "--kind", "files"), 1)  # improved: baseline must shrink
+        self.assertEqual(self.run_cli("check", "--kind", "files"), 0)  # improved: a notice, the baseline may stay
+        (self.root / "big.py").write_text("x = 1\n" * 3, encoding="utf-8")
+        self.assertEqual(self.run_cli("check", "--kind", "files"), 1)  # back under the limit: stale entry
+        (self.root / "big.py").write_text("x = 1\n" * 6, encoding="utf-8")
         self.assertEqual(self.run_cli("update", "--kind", "files"), 0)
         self.assertEqual(self.baseline()["files"], {"big.py": 6})
         (self.root / "new.py").write_text("x = 1\n" * 9, encoding="utf-8")
@@ -239,6 +284,27 @@ class EndToEndTest(unittest.TestCase):
         self.run_cli("init", "--kind", "files")  # someone regenerates the baseline to hide other.py
         self.assertEqual(self.run_cli("check", "--kind", "files"), 0)
         self.assertEqual(self.run_cli("check", "--kind", "files", "--base", "HEAD"), 1)
+
+    def test_baseline_shrunk_on_main_after_the_branch_point(self):
+        (self.root / "big.py").write_text("x = 1\n" * 7, encoding="utf-8")
+        (self.root / "other.py").write_text("x = 1\n" * 9, encoding="utf-8")
+        self.run_cli("init", "--kind", "files")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "base")
+        self.git("checkout", "-q", "-b", "feature")
+        (self.root / "small.py").write_text("x = 1\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "unrelated change")
+        self.git("checkout", "-q", "main")
+        (self.root / "other.py").write_text("x = 1\n" * 8, encoding="utf-8")
+        self.run_cli("update", "--kind", "files")  # another PR shrinks the baseline on main
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "shrink")
+        self.git("checkout", "-q", "feature")
+        # The feature branch never touched other.py: comparing with the main tip would read 8 -> 9 as a raise.
+        self.assertEqual(self.run_cli("check", "--kind", "files", "--base", "main"), 0)
+        self.assertEqual(ch.compare_with_base("files", self.baseline()["files"], {"big.py": 7, "other.py": 8}),
+                         ["RAISED other.py: baseline 8 -> 9. The baseline only shrinks."])
 
     def test_raised_limit_fails_against_the_base(self):
         self.run_cli("init", "--kind", "files")
