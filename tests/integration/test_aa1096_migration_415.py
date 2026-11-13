@@ -65,10 +65,15 @@ def applied_415(db_migrator_login):  # noqa: F811
 
 @pytest.fixture
 def cur():
+    """A rolled-back transaction with RLS ENABLE + FORCE on both tables, as on Dev (CIS 407): the replay's X1 shaping
+    may have taken it off, and the view must answer through catalog_owner's policies, not around them."""
     c = t245._connect()
     c.autocommit = False
     try:
-        yield c.cursor()
+        k = c.cursor()
+        for table in ("shared.setting_definition", "shared.setting_value"):
+            k.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY")
+        yield k
     finally:
         c.rollback()
         c.close()
@@ -152,7 +157,8 @@ def test_a_tenant_override_is_its_own_row(cur):
     _value(cur, TKEY, 300, version=1)
     _value(cur, TKEY, 25, version=1, tenant=TENANT)
     rows = [r for r in _rows(cur) if r[1] == TKEY]
-    assert sorted((r[4], r[2], r[3]) for r in rows) == sorted([(None, "300", 1), (TENANT, "25", 1)])
+    assert sorted(((r[4], r[2], r[3]) for r in rows), key=str) == sorted([(None, "300", 1), (TENANT, "25", 1)],
+                                                                         key=str)
 
 
 def test_tripplanner_never_sees_another_apps_rows(cur):
