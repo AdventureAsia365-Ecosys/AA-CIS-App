@@ -11,11 +11,14 @@ swallowed), twice. Teardown drops the view, revokes the column grants and unregi
     not_before and step status (active, failed, done, waiting), the approved plan hash of the CURRENT round only and
     only in phase apply / verify.
 """
+import json
 import os
 import sys
 import uuid
 
 import pytest
+import yaml
+from jsonschema import Draft202012Validator
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -32,6 +35,9 @@ COLUMNS = ("request_id", "tenant_id", "phase", "round", "opened_at", "approval_e
 REQ_COLS = ("request_id", "tenant_id", "phase", "round", "opened_at", "approval_expires_at", "is_pilot", "is_synthetic",
             "not_before_booking", "not_before_tripplanner", "round_apps", "done_apps", "updated_at")
 STEP_COLS = ("request_id", "round", "app", "mode", "status", "approved_plan_hash")
+# The contract copy (byte-identical to the root AA-Ecosys docs/contracts file; its sha256 is pinned by
+# tests/unit/test_aa1093_tenant_erasure_contract.py).
+CONTRACT = os.path.join(HERE, "..", "..", "docs", "contracts", "tenant.erasure.v1.openapi.yaml")
 
 
 def undo_410(a):
@@ -147,3 +153,21 @@ def test_tripplanner_reads_the_view(cur):
     cur.execute("SET LOCAL ROLE tripplanner")
     cur.execute(f"SELECT count(*) FROM {VIEW} WHERE app = 'tripplanner'")
     assert cur.fetchone()[0] >= 1
+
+
+def test_every_row_validates_as_the_contract_request_row(cur):
+    with open(CONTRACT, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    schema = Draft202012Validator({"$ref": "#/components/schemas/ErasureRequestRow", "components": doc["components"]})
+    applying = _request(cur, phase="apply", round_=2, round_apps="{booking,tripplanner}", done_apps="{cis}")
+    _step(cur, applying, "booking", round_=2, approved="a" * 64)
+    fresh = _request(cur, phase="dry_run", round_apps="{}")
+    cur.execute("SET LOCAL ROLE booking")
+    cur.execute(f"SELECT to_jsonb(v)::text AS row FROM {VIEW} v WHERE request_id = ANY(%s::uuid[])",
+                ([applying, fresh],))
+    rows = [json.loads(r[0]) for r in cur.fetchall()]
+    assert len(rows) == 4 and {r["app"] for r in rows} == {"booking", "tripplanner"}
+    for row in rows:
+        assert set(row) == set(COLUMNS)
+        errors = sorted(schema.iter_errors(row), key=str)
+        assert not errors, (row["app"], [e.message for e in errors])
