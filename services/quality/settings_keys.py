@@ -1,9 +1,9 @@
-"""S279 thresholds lane L2 (AA-1096, CIS 409) — where each quality value lives in the settings registry.
+"""S279 thresholds lane L2 (AA-1096, CIS 412) — where each quality value lives in the settings registry.
 
 Every key the quality registry, the T10 / seed-align / T7 / T2 modes, the claim verdicts, the detector modes, the SEO
 bands and the T7 Channel bars read through ``shared.settings`` (Platform › Settings, evidence-gated, maker-checker).
 Readers name a key through these maps, never a copied value: ``settings.get(settings_keys.QUALITY['pass_line'])``.
-Standard library only (the CI Lint job imports the quality registry with PyYAML alone). The keys equal the CIS 409
+Standard library only (the CI Lint job imports the quality registry with PyYAML alone). The keys equal the CIS 412
 seed: tests/unit/quality/test_s279_quality_settings_keys.py checks both ways.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""S279 thresholds lane L2 (AA-1096) — CIS 409, the quality registry on the settings registry (and CIS 410, prompt
+"""S279 thresholds lane L2 (AA-1096) — CIS 412, the quality registry on the settings registry (and CIS 413, prompt
 version t9_write v8), on real Postgres
 (conftest replays every migration).
 
@@ -49,7 +49,7 @@ async def _refused(c, *args):
 
 @pytest.mark.asyncio
 async def test_409_registered_and_seeded_like_the_compiled_defaults(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '409'") == "409"
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '412'") == "412"
     rows = {r["key"]: r for r in await conn.fetch(
         "SELECT key, default_value::text AS d, evidence_required, approval, area FROM shared.setting_definition "
         "WHERE key = ANY($1::text[])", list(sk.ALL_KEYS))}
@@ -73,11 +73,11 @@ async def test_a_quality_proposal_needs_its_evidence_and_must_fit(conn):
 
 @pytest.mark.asyncio
 async def test_410_registers_t9_write_v8_with_the_manifest_hash(conn):
-    """CIS 410: prompt version t9_write v8 (the blog length values rendered at call time) is registered with the hash
+    """CIS 413: prompt version t9_write v8 (the blog length values rendered at call time) is registered with the hash
     of the manifest's newest t9_write entry."""
     manifest = json.loads(open(os.path.join(os.path.dirname(__file__), "..", "..", "shared", "llm_client",
                                             "prompt_versions.json"), encoding="utf-8").read())
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '410'") == "410"
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '413'") == "413"
     row = await conn.fetchrow("SELECT prompt_sha256 AS sha, source_path AS path FROM shared.prompt_version "
                               "WHERE stage = 't9_write' AND version = 'v8'")
     assert row is not None and row["path"] == "services/acp_content_writing/prompts.py"

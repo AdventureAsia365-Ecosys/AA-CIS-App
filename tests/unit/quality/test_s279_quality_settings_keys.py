@@ -1,4 +1,4 @@
-"""S279 thresholds lane L2 (AA-1096, CIS 409) — the quality settings index equals the CIS 409 seed, and every quality
+"""S279 thresholds lane L2 (AA-1096, CIS 412) — the quality settings index equals the CIS 412 seed, and every quality
 key is evidence-gated and maker-checker (tech lead S279: quality thresholds are admin-editable WITH an evidence link).
 No DB."""
 from __future__ import annotations

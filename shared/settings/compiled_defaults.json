@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed of 407_platform_settings_registry.sql, 409_quality_settings_registry.sql, 411_tenant_erasure_saga_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",

@@ -1,4 +1,4 @@
--- Migration 409: S279 thresholds lane L2 (AA-1096) — the quality registry moves onto the platform settings registry
+-- Migration 412: S279 thresholds lane L2 (AA-1096) — the quality registry moves onto the platform settings registry
 -- (CIS 407): 151 setting definitions seeded from today's effective values, every one evidence-gated and maker-checker.
 --
 -- Why. Tech lead S279: quality thresholds are admin-editable WITH a required evidence link (an eval / golden-set run
@@ -49,8 +49,8 @@
 --
 -- Re-run: ON CONFLICT (key) DO NOTHING (an identical row is already there; a later migration changes a definition).
 --
--- Number. 407 is the highest on main; 408 is reserved by the AA-1093 lane of the same wave (shipped first in the
--- batch).
+-- Number. 411 is the highest on main (CIS 408-411, the tenant erasure saga); this file takes 412 and the t9_write v8
+-- registration 413 (batch cis 412-413).
 --
 -- Rollback (a new forward migration, after the code is reverted): DELETE FROM shared.setting_value / setting_definition
 -- WHERE key LIKE 'cis.quality%' OR key LIKE 'cis.seo.%' OR key IN (the t9 / t7 keys) - a destructive file, DRY RUN.
@@ -227,7 +227,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('409', now(), 'S279 thresholds L2: the quality registry on the settings registry (151 evidence-gated settings)')
+VALUES ('412', now(), 'S279 thresholds L2: the quality registry on the settings registry (151 evidence-gated settings)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
