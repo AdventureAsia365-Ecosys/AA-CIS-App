@@ -130,7 +130,7 @@ function ProposeModal({ item, twoPerson, canWrite, onClose, onDone }: {
       footer={<>
         <Button variant="secondary" onClick={onClose}>{t("cancel")}</Button>
         <Button variant="primary" disabled={!!problem || busy || !canWrite} onClick={() => void submit()}
-          data-testid="settings-propose-submit">
+          testId="settings-propose-submit">
           {busy ? t("saving") : draft.apply ? t("proposeApply") : t("propose")}
         </Button>
       </>}>
@@ -239,7 +239,7 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
           <Button variant="secondary" disabled={busy || note.trim().length < 3} onClick={() => void decide(false)}>
             {t("reject")}</Button>
           <Button variant="primary" disabled={busy} onClick={() => void decide(true)}
-            data-testid="settings-approve">{t("approve")}</Button>
+            testId="settings-approve">{t("approve")}</Button>
         </>}
         <Button variant="secondary" onClick={onClose}>{t("close")}</Button>
       </>}>
@@ -310,7 +310,7 @@ function AppSettings({ app }: { app: SettingApp }) {
       cell: ({ row: { original: s } }) => (
         <span style={{ display: "inline-flex", gap: 6 }}>
           {isAdmin && <Button size="sm" variant="secondary" onClick={() => setEditing(s)}
-            data-testid={`settings-change-${s.key}`}><Pencil size={12} /> {t("change")}</Button>}
+            testId={`settings-change-${s.key}`}><Pencil size={12} /> {t("change")}</Button>}
           <Button size="sm" variant="secondary" onClick={() => setViewing(s)}>
             <History size={12} /> {s.proposals.length ? t("review") : t("history")}</Button>
         </span>
