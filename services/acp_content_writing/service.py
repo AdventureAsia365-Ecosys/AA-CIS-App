@@ -113,7 +113,7 @@ from services.acp_content_writing.seed_align import adjudicate as seed_adjudicat
 from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
 from services.acp_content_writing import repeat_drop  # AA-1077 S279 (blog repeat drop)
 from services.content_generation.batch_prompt import prompt_version_of
-from services.quality.registry import threshold, threshold_reader
+from services.quality.registry import threshold_reader
 from shared import settings
 
 logger = structlog.get_logger()

@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, model_validator
 from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
 from services.quality import edit_gate
-from services.quality.registry import threshold, threshold_reader
+from services.quality.registry import threshold_reader
 from api.routers.admin import verify_admin_secret
 from shared.aws_client import accounts as aws_accounts
 from shared.aws_client.cost_explorer import (

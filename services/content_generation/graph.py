@@ -13,7 +13,7 @@ from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.errors import is_llm_access_denied
 from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
-from services.quality.registry import threshold, threshold_reader
+from services.quality.registry import threshold_reader
 from .prompts import parse_source_day_word_counts
 from .batch_prompt import (
     build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
