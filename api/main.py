@@ -100,6 +100,8 @@ from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the par
 from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
 from api.routers.tenant_account import router as tenant_account_router  # AA-1028 — tenant.entitlements.v1
 from api.routers.tenant_addons import router as tenant_addons_router  # AA-1036 — tenant.addons.v1
+from api.routers.tenant_erasure import router as tenant_erasure_router  # AA-1093 L2 — tenant.erasure.v1
+from api.routers.admin_tenant_erasure import router as admin_tenant_erasure_router  # AA-1093 L2 — erasure saga (staff)
 from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
 from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
 from api.middleware.view_as import ViewAsGateMiddleware  # AA-1035 R2 slice 2 — read-only view-as tokens
@@ -361,6 +363,7 @@ app.include_router(admin_data_coverage_router)  # AA-992 — /admin/data-coverag
 app.include_router(admin_seo_router)  # AA-705 — /admin/seo-intelligence (demand, keywords, PAA, gaps, spend)
 app.include_router(admin_llm_ops_router)  # AA-518/AA-505 — /admin/llm-config, /admin/llm-usage/*
 app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-research/{preview,run,status}
+app.include_router(admin_tenant_erasure_router)  # AA-1093 L2 — /admin/job-runner/erasure/requests/* (erasure saga)
 app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_ai_gateway_router)  # AA-804 — /admin/ai-gateway/{providers,trace} (AI providers page)
@@ -398,6 +401,7 @@ app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.
 app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
 app.include_router(tenant_account_router)  # AA-1028 — /tenant/v1 (M2M cis.tenant/read)
 app.include_router(tenant_addons_router)  # AA-1036 R3 — /tenant/v1 add-ons (M2M cis.tenant/addons)
+app.include_router(tenant_erasure_router)  # AA-1093 L2 — /tenant/v1 erasure requests (M2M cis.tenant/erasure)
 app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
 
 app.middleware("http")(rate_limit_middleware)

@@ -128,6 +128,15 @@ export const T360_SUB = defineMessages(
     declineDone: "Request declined",
     submitApprove: "Approve and attach",
     submitDecline: "Decline request",
+    // leave pilot mode (AA-1086)
+    endPilot: "End pilot",
+    endPilotTitle: (name: string) => `End the pilot of ${name}?`,
+    endPilotBody: "The pilot marker is removed now: the pilot's nightly backup and clean-up protections stop, the CRM "
+      + "follows within a few minutes and the one pilot slot is free again. The account itself does not change. "
+      + "This is recorded.",
+    endPilotReason: "Reason",
+    endPilotDone: "Pilot ended",
+    endPilotNoChange: "This tenant was not the pilot any more; nothing changed",
   },
   {
     loading: "Đang tải…",
@@ -252,5 +261,13 @@ export const T360_SUB = defineMessages(
     declineDone: "Đã từ chối yêu cầu",
     submitApprove: "Duyệt và gắn gói",
     submitDecline: "Từ chối yêu cầu",
+    endPilot: "Kết thúc thí điểm",
+    endPilotTitle: (name: string) => `Kết thúc thí điểm của ${name}?`,
+    endPilotBody: "Dấu thí điểm được gỡ ngay: bản sao lưu hằng đêm và các bảo vệ dọn dẹp của thí điểm dừng, CRM cập "
+      + "nhật trong vài phút và suất thí điểm duy nhất được giải phóng. Bản thân tài khoản không đổi. Việc này được "
+      + "ghi lại.",
+    endPilotReason: "Lý do",
+    endPilotDone: "Đã kết thúc thí điểm",
+    endPilotNoChange: "Tenant này đã không còn là thí điểm; không có gì thay đổi",
   },
 );

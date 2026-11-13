@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.6"
+  version: "1.7"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -85,10 +85,18 @@ info:
     is_synthetic = shared.tenants.is_canary IS TRUE and not the pilot (NULL or FALSE canary and the pilot are real).
     AA-Booking's Dev-only E2E write identities (root ADR 0006a A10e) may write only to records of an agency whose
     is_synthetic is true; a reader that cannot see the column treats every agency as real (fail closed).
+    1.7 (AA-1093, additive): the feed gains the event type account.erasure_requested, body ErasureRequestChange
+    {op, request_id}: op requested when CIS opens the offboarding erasure request of the tenant (at the soft offboard,
+    T0, right after the account.status_changed to offboarding), op cancelled when a restore before the first
+    not_before cancels it. It is a hint only: the erasure itself runs on the contract tenant.erasure.v1 (the CRM reads
+    GET /tenant/v1/erasure-requests with the scope cis.tenant/erasure; Booking and TripPlanner read
+    catalog.v_tenant_erasure_v1), which holds the phases, the per-app not_before and the approved plan hashes. A
+    consumer that does not know the type skips the event (contracts rule 2: a minor widens the enum); one that knows it
+    may poll the erasure feed at once instead of waiting for its next run. No HTTP path changes.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
-  x-aa-issues: [AA-1028, AA-1037, AA-1038]
+  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093]
 servers:
   - url: /tenant/v1
 security:
@@ -312,6 +320,14 @@ components:
           enum: [plan, trial, override, null]
           description: Null on removed.
         expires_at: {type: [string, "null"], format: date-time}
+    ErasureRequestChange:
+      type: object
+      additionalProperties: false
+      required: [op, request_id]
+      description: 1.7 - the body of account.erasure_requested; the request itself is served by tenant.erasure.v1.
+      properties:
+        op: {type: string, enum: [requested, cancelled]}
+        request_id: {type: string, format: uuid}
     AccountEvent:
       type: object
       additionalProperties: false
@@ -321,7 +337,7 @@ components:
         cursor: {type: string, maxLength: 200}
         type:
           type: string
-          enum: [account.status_changed, subscription.changed, entitlement.changed]
+          enum: [account.status_changed, subscription.changed, entitlement.changed, account.erasure_requested]
         occurred_at: {type: string, format: date-time}
         tenant_id: {type: string, format: uuid}
         change:
@@ -329,7 +345,9 @@ components:
             - {$ref: "#/components/schemas/StatusChange"}
             - {$ref: "#/components/schemas/SubscriptionChange"}
             - {$ref: "#/components/schemas/EntitlementChange"}
-          description: The body of the type (StatusChange, SubscriptionChange or EntitlementChange respectively).
+            - {$ref: "#/components/schemas/ErasureRequestChange"}
+          description: The body of the type (StatusChange, SubscriptionChange, EntitlementChange or
+            ErasureRequestChange (1.7) respectively).
     AccountEventPage:
       type: object
       additionalProperties: false
