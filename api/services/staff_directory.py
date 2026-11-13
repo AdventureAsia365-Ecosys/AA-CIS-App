@@ -18,7 +18,7 @@ Operations
 - create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, content only, no
   Booking grant and no CRM role — AA-816 E2E, migration 250; and, Dev only, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`,
   admin only, no Booking grant and no CRM role, refused unless ``ENVIRONMENT`` is exactly ``dev`` — A10b, migration
-  283; likewise :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`, customer_success only — A10d, migration 378); username
+  283; likewise :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`, customer_success — A10d, 378 — plus A10e-2 contracting); username
   derived from the address's local part (unique); ``password_hash`` NULL (Cognito-only member);
   optional Booking grant and CRM roles (AA-1031). Cognito: ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
   (always: without it Cognito mails a temporary password and the person could set a permanent password through
@@ -339,17 +339,16 @@ def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Option
     """An E2E test address may only hold its one CIS role (``content`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
     for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, ``customer_success`` for :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`) with no
     Booking grant and no CRM role (400 ``e2e_test_scope``; root ADR 0006a A10 / A10b / A10d, the WORKFORCE trigger
-    holds the same rule). No-op for every other address. ``role`` /
-    ``booking_role`` / ``crm_roles`` are the values the row would end up with."""
+    holds the same rule; A10e-2: the A10d address may hold Booking ``contracting`` on Dev only, see
+    :func:`e2e_staff.e2e_booking_role_allowed`). No-op for other addresses. The arguments are the row's end state."""
     address = normalise_email(email)
     allowed = _E2E_TEST_STAFF_ROLES.get(address)
     if allowed is None:
         return
-    if role != allowed or booking_role is not None or crm_roles:
-        name = _E2E_ACCOUNT_NAMES[address]
+    if role != allowed or not e2e_staff.e2e_booking_role_allowed(address, booking_role) or crm_roles:
+        name, booking = _E2E_ACCOUNT_NAMES[address], e2e_staff.e2e_booking_rule(address)
         raise StaffDirectoryError(
-            400, f"The {name} may only have the CIS role {allowed}, no Booking role and no CRM role",
-            "e2e_test_scope")
+            400, f"The {name} may only have the CIS role {allowed}, {booking} and no CRM role", "e2e_test_scope")
 
 
 def require_dev_only_e2e_environment(email: Any) -> None:

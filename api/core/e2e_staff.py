@@ -105,6 +105,19 @@ E2E_CRM_STAFF_TEST_STAFF_EMAIL = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
 E2E_BOOKING_STAFF_TEST_STAFF_EMAIL = "e2e-booking-staff@e2e-mail.lumiguides.it.com"
 E2E_BOOKING_MAKER_TEST_STAFF_EMAIL = "e2e-booking-maker@e2e-mail.lumiguides.it.com"
 E2E_BOOKING_CHECKER_TEST_STAFF_EMAIL = "e2e-booking-checker@e2e-mail.lumiguides.it.com"
+# A10e-2 (AA-1091, S279, root ADR 0006a A10e-2): the AA-1091 live check with SYNTHETIC prices. The maker is the A10d
+# address above once an owner gave it the Staff page "Pricing team" preset: its one Booking grant may then be
+# ``contracting`` (Dev only; staff_directory.require_e2e_test_scope), so its groups are exactly cis-customer_success +
+# booking-contracting. Its CIS session stays read-only (A10d: no write allow-list); AA-Booking holds its writes to the
+# pricing steps on synthetic trip plans. The checker is a Dev-only booking-contracting address, never in the CIS
+# directory (same address as AA-CIS-Infra workforce.py E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL and AA-Booking
+# app/auth/e2e_staff.E2E_PRICING_CHECKER_EMAIL).
+E2E_CIS_CS_PRICING_BOOKING_ROLE = "contracting"
+E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL = "e2e-booking-pricing-checker@e2e-mail.lumiguides.it.com"
+# The one Booking grant a CIS directory E2E address may hold (Dev only; every other E2E address holds none). Read-only.
+DEV_ONLY_E2E_BOOKING_ROLES: Mapping[str, str] = MappingProxyType({
+    E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_PRICING_BOOKING_ROLE,
+})
 
 # The one ENVIRONMENT value under which the account may exist (compared exactly).
 DEV_ONLY_ENVIRONMENT = "dev"
@@ -202,6 +215,19 @@ def is_e2e_cis_admin(email: Any) -> bool:
 def is_e2e_cis_cs(email: Any) -> bool:
     """True for the A10d address (after trimming and lower-casing)."""
     return normalise(email) == E2E_CIS_CS_TEST_STAFF_EMAIL
+
+
+def e2e_booking_role_allowed(email: Any, booking_role: Any) -> bool:
+    """A10e-2: True for no Booking grant, or for the one grant :data:`DEV_ONLY_E2E_BOOKING_ROLES` allows the address,
+    only where ``ENVIRONMENT`` is exactly ``"dev"`` (the staff directory's E2E scope rule)."""
+    allowed = DEV_ONLY_E2E_BOOKING_ROLES.get(normalise(email))
+    return booking_role is None or (allowed is not None and booking_role == allowed and dev_only_e2e_environment())
+
+
+def e2e_booking_rule(email: Any) -> str:
+    """How the directory's 400 ``e2e_test_scope`` words the Booking part of an E2E address's scope."""
+    allowed = DEV_ONLY_E2E_BOOKING_ROLES.get(normalise(email))
+    return f"no Booking role other than {allowed} (Dev only)" if allowed else "no Booking role"
 
 
 def is_dev_only_e2e_staff(email: Any) -> bool:

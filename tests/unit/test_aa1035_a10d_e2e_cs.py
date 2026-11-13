@@ -119,7 +119,9 @@ def test_scope_accepts_customer_success_only():
 
 @pytest.mark.parametrize("role,booking,crm", [
     ("admin", None, ()), ("support", None, ()), ("content", None, ()), (None, None, ()),
-    ("customer_success", "sales", ()), ("customer_success", "admin", ()),
+    ("customer_success", "sales", ()), ("customer_success", "admin", ()), ("customer_success", "finance", ()),
+    ("customer_success", "content_creator", ()), ("admin", "contracting", ()),
+    ("customer_success", "contracting", ("ops",)),
     ("customer_success", None, ("ops",)), ("customer_success", None, ("platform_admin",)),
 ])
 def test_scope_refuses_anything_else(role, booking, crm):

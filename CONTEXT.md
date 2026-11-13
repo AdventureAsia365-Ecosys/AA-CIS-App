@@ -2368,7 +2368,9 @@ no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_S
 `e2e-cis-admin@e2e-mail.lumiguides.it.com` as an admin, not an owner, no password, no Booking grant (migration 283
 CHECK + `api/core/e2e_staff.py` / `staff_directory.require_e2e_test_scope` / `require_dev_only_e2e_environment` +
 the WORKFORCE triggers' dev-only map); and, **Dev only** (A10d, AA-1035 S270), `e2e-cis-cs@e2e-mail.lumiguides.it.com`
-as `customer_success`, same scope rules (migration 378 CHECK) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+as `customer_success`, same scope rules (migration 378 CHECK; A10e-2, AA-1091 S279: its one possible Booking grant is
+`contracting`, the "Pricing team" preset, Dev only — `e2e_staff.e2e_booking_role_allowed`; no migration: the 378 CHECK
+constrains `admin_users` only, `staff_app_grant` has no E2E rule) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
 `contracting` / `content_creator` / `finance` (CIS 363, group `booking-finance`)). AA-Partner (CRM) staff roles are a set per person in

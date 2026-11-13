@@ -32,10 +32,11 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
   breakglass                   the break-glass user: present, CONFIRMED, disabled at rest, in cis-admin and
                                booking-admin. Each deviation is an issue.
   known_e2e_exceptions         Dev only (ENVIRONMENT exactly "dev", api/core/e2e_staff.dev_only_e2e_environment):
-                               the E2E staff identities root ADR 0006a A10 / A10a / A10b / A10c / A10d / A10e
-                               allows, each with its ADR clause, listed apart and NOT counted in drift_total. Only
-                               the exact address with its exact staff group set (and, for A10 / A10b / A10d, its
-                               directory row with the expected role; A10a / A10c / A10e have no row) is listed;
+                               the E2E staff identities root ADR 0006a A10 / A10a / A10b / A10c / A10d / A10e /
+                               A10e-2 allows, each with its ADR clause, listed apart and NOT counted in drift_total.
+                               Only the exact address with one of its exact staff group sets (A10d: alone, or with
+                               booking-contracting under A10e-2) (and, for A10 / A10b / A10d, its directory row with
+                               the expected role; A10a / A10c / A10e / A10e-2 have no row) is listed;
                                an E2E address with any other group set, a missing or wrong row, or on any other
                                environment goes through the categories above like every user (AA-816 S253).
 
@@ -107,9 +108,9 @@ NOTES = (
     "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
-KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d, A10e) are listed "
-                  "under known_e2e_exceptions and not counted as drift, only with their exact address and staff "
-                  "groups.")
+KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d, A10e, A10e-2) "
+                  "are listed under known_e2e_exceptions and not counted as drift, only with their exact address and "
+                  "staff groups.")
 CRM_NOT_COMPARED_NOTE = ("CRM roles were not compared: the directory table for them (CIS migration 330) is not applied "
                          "yet, so the crm-* groups are neither checked nor reported.")
 
@@ -122,6 +123,12 @@ class KnownE2E:
     reason: str
     groups: frozenset[str]
     directory_role: Optional[str]
+    # Other exact group sets the identity may hold (A10e-2: the A10d account with the Pricing team preset).
+    other_groups: tuple[frozenset[str], ...] = ()
+
+    def allows(self, groups: set[str]) -> bool:
+        """True when ``groups`` is exactly one of the identity's allowed group sets."""
+        return groups == set(self.groups) or any(groups == set(g) for g in self.other_groups)
 
 
 # Read-only, code constant (never configuration), exact addresses: the same allow-list the WORKFORCE pre token trigger
@@ -147,9 +154,11 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
     # AA-1035 A10d (S270): the Dev-only read-only customer_success E2E account, in the CIS directory (CIS 378).
     e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL: KnownE2E(
         clause="ADR 0006a A10d",
-        reason=("Dev-only CIS customer success E2E account: read-only session, synthetic tenants only, "
-                "no Booking access."),
-        groups=frozenset({"cis-customer_success"}), directory_role=e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE),
+        reason=("Dev-only CIS customer success E2E account: read-only session, synthetic tenants only; with the "
+                "Pricing team preset (ADR 0006a A10e-2) it also holds Booking contracting for the synthetic price "
+                "check."),
+        groups=frozenset({"cis-customer_success"}), directory_role=e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE,
+        other_groups=(frozenset({"cis-customer_success", "booking-contracting"}),)),
     # AA-1087 A10e (S278): the Dev-only write-capable AA-Booking E2E accounts, one Booking group each, created outside
     # the CIS directory (AA-CIS-Infra crm_dev_identity.py e2e-booking-writers), like A10a / A10c.
     e2e_staff.E2E_BOOKING_STAFF_TEST_STAFF_EMAIL: KnownE2E(
@@ -167,6 +176,13 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
         reason=("Dev-only AA-Booking finance checker E2E writer (approve or reject an agency payment, synthetic "
                 "agencies only); never in the CIS staff directory."),
         groups=frozenset({"booking-finance"}), directory_role=None),
+    # AA-1091 A10e-2 (S279): the Dev-only pricing checker of the synthetic price check (approve, reject or withdraw the
+    # pricing maker's versions on synthetic trip plans); never in the CIS directory, like A10e.
+    e2e_staff.E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10e-2",
+        reason=("Dev-only AA-Booking pricing checker E2E writer (approve, reject or withdraw the E2E pricing maker's "
+                "versions on synthetic trip plans); never in the CIS staff directory."),
+        groups=frozenset({"booking-contracting"}), directory_role=None),
 })
 
 
@@ -394,7 +410,7 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         spec = known_e2e_spec(u) if known_e2e else None
         if reason is not None:
             if (spec is not None and spec.directory_role is None and reason == "no_row"
-                    and u.groups == set(spec.groups)):
+                    and spec.allows(u.groups)):
                 # A10a: by design not in the CIS directory, so "no staff account" is the expected state.
                 known.append(known_entry(spec, u, None, ["cognito_without_row"]))
                 continue
@@ -407,7 +423,7 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
                                crm_grant.get(row["id"], set()) if crm_directory else None)
         drift.extend(row_drift)
         if (spec is not None and spec.directory_role is not None and not row_drift
-                and u.groups == set(spec.groups) and row.get("role") == spec.directory_role):
+                and spec.allows(u.groups) and row.get("role") == spec.directory_role):
             # A10 / A10b: in the directory with the one role the ADR allows. Nothing is exempted (every check above
             # and (d) below still runs); listed so the non-company address on the Staff page is explained.
             known.append(known_entry(spec, u, row, []))
