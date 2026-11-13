@@ -15,8 +15,12 @@ through billed_fields and to quality_signal), so a measurement always says which
       recall holds (B5). Entailment v2 reads the whole source and the text around the sentence, not only the aligned
       lines (support the instrument did not see was one cause of false fires).
 
-Every example in these prompts uses invented places and phrasing (the golden-set text guard; nothing is copied from a
-tour, a label or an audit). Pure: no DB, no network, no model call.
+Every example in these prompts uses invented places and phrasing (the golden-set text guard). The B5 examples name the
+pattern classes of the five claims the tech lead relabelled to violation in S279, in wording of their own: checked
+against the evaluation pool before S279 shipped, no example shares a three-word sequence (with a content word) with any
+pool claim, and none shares a content word with a relabelled claim other than 'before'. The relabelled claims
+still shaped the patterns, so they are in-sample for v2: instrument_eval scores them apart and gates on the stored
+violations only. Pure: no DB, no network, no model call.
 """
 from __future__ import annotations
 
@@ -61,12 +65,12 @@ _V2_RULES = (
     "Judge the whole sentence the way a careful editor would, never fragment by fragment or word by word. A sentence "
     "is supported when the source states the same thing in other words (paraphrase) or when it follows from the "
     "source in one obvious step (one-step inference). Examples, all supported:\n"
-    "  - source 'drive back to Varno on the last afternoon', sentence 'a round trip from Varno' (one step);\n"
-    "  - source 'climb to the top of Mount Selk', sentence 'reach the summit of Mount Selk' (paraphrase);\n"
-    "  - source '9 nights', sentence 'ten days on the road' (the same span);\n"
+    "  - source 'come back to Varno at the end', sentence 'a round trip from Varno' (one step);\n"
+    "  - source 'hike up Mount Selk', sentence 'walk to the highest point of Mount Selk' (paraphrase);\n"
+    "  - source '9 nights', sentence 'ten days in all' (the same span);\n"
     "  - source 'Orvin, then Tessa', sentence 'south from Orvin to Tessa' when Tessa lies south of Orvin (where the "
     "named places are);\n"
-    "  - tone and feeling words ('unhurried', 'a gentle start', 'memorable') that add no fact about the trip.",
+    "  - tone and feeling words ('unhurried', 'restful', 'memorable') that add no fact about the trip.",
     # B2: place background is allowed until it becomes a trip promise.
     "Background about a place the source names (its history, age, builder, architecture, nickname, region, position "
     "relative to another place) is allowed even when the source does not state it. It needs the source only when the "
@@ -79,17 +83,18 @@ _V2_RULES = (
     # B4: headings, FAQ questions, CTAs, disclaimers and keyword titles.
     "Headings, FAQ questions, calls to action, disclaimers and keyword titles state nothing on their own: judge them "
     "together with the text that follows them (AFTER), and treat them as supported when that text is supported.",
-    # B5: the confirmed promise patterns stay unsupported (recall).
+    # B5: the confirmed promise patterns stay unsupported (recall). The examples name each pattern in wording of
+    # their own: no example shares a sentence frame or a distinctive phrase with a claim of the evaluation pool.
     "Still unsupported, the promises this check exists for (the source must state them):\n"
-    "  - the character of a meal ('eat local', 'a home-cooked lunch') when the source names only a restaurant or a "
-    "meal break;\n"
-    "  - qualities of the guide ('a local who knows every lane and story') when the source says only that a guide "
+    "  - the character of a meal ('a family-style dinner', 'recipes handed down for generations') when the source "
+    "names only a restaurant or a meal break;\n"
+    "  - qualities of the guide ('a guide who grew up in the valley') when the source says only that a guide "
     "leads;\n"
-    "  - a group or social experience ('swap stories with the others on the tour') when the source speaks of one "
+    "  - a group or social experience ('new friends by the end of the week') when the source speaks of one "
     "traveller or says nothing about other travellers;\n"
-    "  - an arrival or crowd atmosphere ('Tessa is still quiet when you arrive', 'ahead of the crowds') the source "
+    "  - an arrival or crowd atmosphere ('the plaza is deserted for us', 'before the coach parties') the source "
     "does not give;\n"
-    "  - an experience at a stop (a view, a light, something done or felt there) the source does not describe;\n"
+    "  - an experience at a stop (scenery seen, a sound heard, a mood felt there) the source does not describe;\n"
     "  - a number, name, day, order or direction that contradicts the source.",
 )
 ENTAILMENT_SYSTEM_V2 = (

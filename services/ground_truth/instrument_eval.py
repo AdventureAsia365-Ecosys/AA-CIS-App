@@ -31,8 +31,11 @@ group the order is the claim hash (deterministic, unrelated to the text). The tr
 subset in round-robin group order, so it holds a relabelled claim, a false positive and a stored violation.
 
 Score: a false positive is dropped when the vote majority clears it (False), a true positive kept when the majority
-flags it (True); an unverified claim (no majority) is neither (r1.majority, D7 "a miss is unverified"). go only when
-the run finished, the subset has both kinds, and both bars hold; a trial never gives a verdict.
+flags it (True); an unverified claim (no majority) is neither (r1.majority, D7 "a miss is unverified"). The five
+relabelled claims are in-sample for v2 (its B5 patterns were drawn from them), so TP-kept, recall, precision and the
+verdict read the stored violations (group tp) only; the relabels are reported apart and never gated on. go only when
+the run finished, the subset has false positives and stored violations, and both bars hold; a trial never gives a
+verdict.
 
 Calls: every call goes through r1.run (the Model Gateway on stage r1.STAGE, role judge, the hard cap gated on each
 call's worst case, the ledger probe, one shared.llm_call_log row per reply with **billed_fields and the prompt version).
@@ -376,19 +379,31 @@ def decide(fp_drop: Optional[float], tp_keep: Optional[float], lim: Limits, *, t
     return "go" if fp_drop >= lim.fp_drop_min and tp_keep >= lim.tp_keep_min else "no_go"
 
 
+def _tp_block(c: Counter) -> dict:
+    n = sum(c.values())
+    return {"n": n, **c, "kept_share": _share(c["kept"], n)}
+
+
 def score(subset: list[PoolItem], votes: dict[str, list], lim: Limits, *, trial: bool = False,
           stopped: Optional[str] = None) -> dict:
-    """FP-dropped and TP-kept shares, precision and recall on the subset, per group, and the verdict (module doc)."""
+    """FP-dropped and TP-kept shares, precision and recall on the subset, per group, and the verdict (module doc).
+
+    The relabelled claims (tp_relabel) are in-sample for a prompt whose B5 patterns were drawn from them, so TP-kept,
+    recall, precision and the verdict read the stored violations (tp) only; the relabels are reported apart
+    (`relabelled_in_sample`) and together (`true_positives_with_relabels`), never gated on."""
     per = _verdicts(subset, votes)
     fp = sum((per[g] for g in per if g not in TP_GROUPS), Counter())
-    tp = sum((per[g] for g in TP_GROUPS if g in per), Counter())
-    n_fp, n_tp = sum(fp.values()), sum(tp.values())
-    fp_drop, tp_keep = _share(fp["dropped"], n_fp), _share(tp["kept"], n_tp)
+    tp, rel = per.get("tp", Counter()), per.get("tp_relabel", Counter())
+    n_fp = sum(fp.values())
+    fp_drop, tp_keep = _share(fp["dropped"], n_fp), _share(tp["kept"], sum(tp.values()))
     return {"false_positives": {"n": n_fp, **fp, "dropped_share": fp_drop},
-            "true_positives": {"n": n_tp, **tp, "kept_share": tp_keep},
+            "true_positives": {**_tp_block(tp), "sample": "out_of_sample", "groups": ["tp"]},
+            "relabelled_in_sample": {**_tp_block(rel), "sample": "in_sample", "groups": ["tp_relabel"],
+                                     "note": "the v2 B5 patterns were drawn from these claims; reported, not gated"},
+            "true_positives_with_relabels": _tp_block(tp + rel),
             "precision": _share(tp["kept"], tp["kept"] + fp["firing"]), "recall": tp_keep,
             "by_group": {g: dict(c) for g, c in sorted(per.items())},
-            "bars": {"fp_dropped_min": lim.fp_drop_min, "tp_kept_min": lim.tp_keep_min},
+            "bars": {"fp_dropped_min": lim.fp_drop_min, "tp_kept_min": lim.tp_keep_min, "tp_kept_on": ["tp"]},
             "verdict": decide(fp_drop, tp_keep, lim, trial=trial, stopped=stopped)}
 
 

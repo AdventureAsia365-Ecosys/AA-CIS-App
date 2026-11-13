@@ -24,7 +24,13 @@ Two PRs (MIG-4): the migration-only PR (CIS 416: five settings, `enforced = fals
   `prompts.around`), not the three aligned lines: "support the instrument did not see" and the heading / FAQ cases
   (B4) need it. v2 extraction keeps the v1 user prompt and asks for whole sentences.
 - **Every prompt example is invented** (Varno, Mount Selk, Orvin, Tessa, Velmora): the golden-set text guard, and no
-  claim text from the panel leaks into a public repo.
+  claim text from the panel leaks into a public repo. The first v2 draft broke this for B5: its examples were close
+  paraphrases of the five relabelled claims (the same meal phrase, an arrival sentence with only the place name
+  swapped, the guide, group and stop-experience phrasings), and the docstring said nothing was copied. Review fix:
+  each B5 pattern keeps its class but has examples in wording of its own, and four B1 examples that shared a phrase
+  with a pool false positive were rewritten too. Checked against the pool (scratch script, the pool stays in
+  `.tmp-session/`): no three-word sequence with a content word is shared between the v2 system texts and any of the
+  286 pool claims, and the quoted examples share no content word with a relabelled claim except "before".
 - **The evaluation lives under `services/`** (`python -m services.ground_truth.instrument_eval`), not `scripts/`: the
   image has no `scripts/` (S278 had to embed the R1 CLI into its ECS exec script). The ledger probe moved from
   `scripts/aa1048/r1_calibrate.py` into `r1.ledger_probe` for the same reason; `r1_calibrate.ledger_probe` delegates.
@@ -43,7 +49,13 @@ Two PRs (MIG-4): the migration-only PR (CIS 416: five settings, `enforced = fals
   first, then stored violations in proportion per writer. Deterministic (claim-hash order, no randomness). The trial
   is the first N of the subset in round-robin group order (a relabel, a false positive, a stored violation).
 - **Score**: FP dropped = majority cleared it; TP kept = majority flagged it; unverified counts neither way (D7). go
-  only when the run finished, both kinds are present and both bars hold; a trial never gives a verdict.
+  only when the run finished, false positives and stored violations are both present and both bars hold; a trial
+  never gives a verdict.
+- **The relabels are in-sample, so they are never gated on** (review fix): the five relabelled claims shaped the B5
+  patterns and always enter the subset (5 of its 25 true positives, 20% against 5/76 = 6.6% in the population).
+  TP-kept, recall, precision and the verdict read the stored violations (`tp`) only (`true_positives`,
+  `bars.tp_kept_on = ["tp"]`); `relabelled_in_sample` and `true_positives_with_relabels` are reported beside them.
+  Example the reviewer gave: 18/20 stored kept + 5/5 relabels = 23/25 = 92% pooled, but the gate reads 18/20 = 90%.
 - **Thresholds are settings** (tech lead S279): the cap, the claim limits and both bars are read from the settings
   registry (CIS 416), refreshed from the database before a paid run (`settings.ensure_fresh`, an ECS exec process has
   no refresher). The cap is also clamped to `r1.HARD_CAP_USD`.
@@ -80,6 +92,9 @@ background), which the whole-source entailment of v2 targets.
   but GPT-6 Luna input is cheap and the reasoning output dominates. DRY RUN on the real pool: 50 claims x 3 votes =
   150 calls, expected 0.51 USD (cap 1.5, fits with the 2x safety), worst case 1.93 USD (the per-call gate stops before
   the cap); trial 3 claims = 9 calls, expected 0.03 USD.
+- The relabels still take 5 of the 25 true-positive slots at `--limit 50`, so the gated out-of-sample TP-kept rests on
+  20 stored violations (a 90% bar allows 2 lost). Kept that way: the relabels are the direct check that v2 still
+  fires on the confirmed patterns, and a larger out-of-sample n costs a larger limit (a setting), not a code change.
 - Proportional FP allocation gives only 4 verbatim and 4 background claims: their per-group shares are noisy. The go
   decision reads the pooled shares, which the allocation keeps unbiased.
 - A setting per limit (five keys) instead of CLI literals: a migration and a MIG-4 chain for an adhoc tool, but the

@@ -3368,7 +3368,8 @@ other than v1 is part of the instrument id (`...:entailment#v2`), and every call
 `shared.llm_call_log.prompt_version`. A new version is measured first by the gated evaluation
 (`python -m services.ground_truth.instrument_eval`, DRY RUN default; a stratified subset of the claims R1 fired on;
 cap, claim limits and go / no-go bars in the settings registry, `cis.spend.instrument_eval_*`,
-`cis.quality.instrument_eval_*`, CIS 416); it never writes a label.
+`cis.quality.instrument_eval_*`, CIS 416); it never writes a label. Claims a version's examples were drawn from (the
+five S279 relabels for v2) are in-sample: reported apart, never in the TP-kept bar.
 _Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:

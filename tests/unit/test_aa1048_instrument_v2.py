@@ -262,6 +262,26 @@ def test_go_needs_both_bars():
     assert _scored(0, 0, 3, 3)["verdict"] == "incomplete"
 
 
+def test_relabelled_claims_are_reported_apart_and_never_gated():
+    # 17 of 20 stored violations kept and 5 of 5 relabels kept: 22/25 = 88% together would clear an 88% bar, but the
+    # bar reads the out-of-sample 17/20 = 85%: no_go whatever the in-sample relabels do.
+    lim = ev.Limits(cap_usd=1.5, max_claims=50, trial_claims=3, fp_drop_min=0.6, tp_keep_min=0.88)
+    subset, votes, n = [], {}, 0
+    for group, count, kept in (("fp_paraphrase", 10, 0), ("tp", 20, 17), ("tp_relabel", 5, 5)):
+        for k in range(count):
+            n += 1
+            subset.append(ev.PoolItem(_item(n, "x y z", "ok" if group.startswith("fp") else "violation"), group))
+            votes[_h(n)] = [False] * 3 if group.startswith("fp") or k >= kept else [True] * 3
+    rep = ev.score(subset, votes, lim)
+    assert rep["true_positives"]["n"] == 20 and rep["true_positives"]["kept_share"] == 0.85
+    assert rep["true_positives"]["sample"] == "out_of_sample" and rep["bars"]["tp_kept_on"] == ["tp"]
+    assert rep["relabelled_in_sample"]["kept_share"] == 1.0 and rep["relabelled_in_sample"]["sample"] == "in_sample"
+    assert rep["true_positives_with_relabels"]["n"] == 25 and rep["true_positives_with_relabels"]["kept"] == 22
+    assert rep["recall"] == 0.85 and rep["precision"] == 1.0 and rep["verdict"] == "no_go"
+    only_relabels = [p for p in subset if p.group != "tp"]
+    assert ev.score(only_relabels, votes, lim)["verdict"] == "incomplete"                   # no stored violation
+
+
 def test_unverified_claims_count_neither_way():
     subset = [ev.PoolItem(_item(1, "x y z"), "fp_verbatim"), ev.PoolItem(_item(2, "x y z", "violation"), "tp")]
     rep = ev.score(subset, {_h(1): [True, False, None], _h(2): [None, None, None]}, LIM)
@@ -343,7 +363,8 @@ def test_live_trial_runs_through_r1_and_scores(pool_file, capsys, monkeypatch, t
                     "--out", str(out_file))
     assert rc == 0 and out["mode"] == "live" and out["calls"] == 9 and len(calls) == 9
     assert all(s == pr.ENTAILMENT_SYSTEM_V2 for s in calls)
-    assert out["score"]["verdict"] == "trial" and out["score"]["true_positives"]["kept"] == 2
+    assert out["score"]["verdict"] == "trial" and out["score"]["true_positives"]["kept"] == 1
+    assert out["score"]["relabelled_in_sample"]["kept"] == 1
     assert out["settings_refreshed"] is True and json.loads(out_file.read_text())["run_id"] == out["run_id"]
     assert all(len(k) == 16 for k in out["votes"])                                            # prefixes only
     assert len(rows) == 9 and {r["prompt_version"] for r in rows} == {pr.get("v2").tag}
