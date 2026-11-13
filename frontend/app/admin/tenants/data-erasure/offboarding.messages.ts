@@ -1,4 +1,4 @@
-// app/admin/tenants/data-erasure/offboardingMessages.ts — the Tenant offboarding tab in English and Vietnamese.
+// app/admin/tenants/data-erasure/offboarding.messages.ts — the Tenant offboarding tab in English and Vietnamese.
 // App names (CIS, Booking, TripPlanner, CRM), phase codes, step statuses and API errors stay as sent.
 
 import { defineMessages } from "../../../_kit/core/i18n";

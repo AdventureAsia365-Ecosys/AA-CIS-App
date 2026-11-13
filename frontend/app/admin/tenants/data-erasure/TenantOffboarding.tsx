@@ -25,7 +25,7 @@ import {
 } from "@/lib/tenantErasure";
 import { TenantName, TenantSelect } from "../../_components/TenantSelect";
 import { Facts, Notice, Section, hintStyle, inputStyle, labelStyle } from "./erasureUi";
-import { TO } from "./offboardingMessages";
+import { TO } from "./offboarding.messages";
 
 const LIST_POLL_MS = 15_000;
 const APP_LABEL: Record<App, string> = { cis: "CIS", booking: "Booking", tripplanner: "TripPlanner", crm: "CRM" };

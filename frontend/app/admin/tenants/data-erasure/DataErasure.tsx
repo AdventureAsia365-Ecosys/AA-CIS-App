@@ -39,7 +39,7 @@ import ErasurePlan from "./ErasurePlan";
 import SubjectForm from "./SubjectForm";
 import { Facts, Notice, Section, useErasureWords } from "./erasureUi";
 import { ER } from "./messages";
-import { TO } from "./offboardingMessages";
+import { TO } from "./offboarding.messages";
 import TenantOffboarding from "./TenantOffboarding";
 
 type Tab = "subjects" | "offboarding";
