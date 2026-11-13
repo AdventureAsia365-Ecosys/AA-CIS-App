@@ -197,7 +197,8 @@ BEGIN
     IF granted IS DISTINCT FROM 'effective_from,key,status,tenant_id,value,version' THEN
         RAISE EXCEPTION 'migration 415: catalog_owner reads shared.setting_value columns %', granted;
     END IF;
-    SELECT string_agg(p.polname || ':' || p.polcmd || ':' || pg_get_userbyid(p.polroles[1]), ',' ORDER BY p.polname)
+    SELECT string_agg(p.polname || ':' || p.polcmd::text || ':' || pg_get_userbyid(p.polroles[1]), ','
+                      ORDER BY p.polname)
       INTO pols
       FROM pg_policy p
      WHERE p.polrelid IN ('shared.setting_definition'::regclass, 'shared.setting_value'::regclass)
