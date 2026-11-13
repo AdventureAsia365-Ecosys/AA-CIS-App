@@ -129,6 +129,9 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.tenant_addon_request", "the tenant's add-on requests and the staff decisions"),
     # AA-1038 R5 slice 2 (379): the TripPlanner site settings (theme tokens, locale); FK cascade as the backstop.
     _d("shared.tenant_tripplanner_site", "the tenant's TripPlanner site settings (theme, locale, lead route)"),
+    # S279 thresholds L1 (407): the tenant's own setting values (per-tenant overrides of the settings registry). The
+    # trigger allows deleting a tenant row (never a platform row); FK cascade from shared.tenants as the backstop.
+    _d("shared.setting_value", "the tenant's per-tenant setting values (settings registry overrides)"),
     # AA-916 (277, ADR 0010 decision 11): tenant text lives only in deletable tables. Platform rows have no tenant.
     _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     # AA-917 (280): tenant-scoped learned writing rules (derived from the tenant's text). Platform rules have no tenant.
