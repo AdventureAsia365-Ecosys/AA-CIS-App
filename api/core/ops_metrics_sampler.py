@@ -88,6 +88,10 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   database and S3) once per UTC day from 20:00 UTC (idempotency key per day), only while the kind is registered,
   TENANT_BACKUP_PILOT=on (default off) and a tenant is the pilot. Field `tenant_backup` (the job id, when created) or
   `tenant_backup_error`.
+- AA-1093 lane L2: each tick also makes sure every open tenant erasure request whose phase has work (scheduled from its
+  latest not_before, dry_run, apply, verify) has one live `tenant_erasure_saga` job ($0; services/jobs/
+  tenant_erasure_saga_job.ensure_jobs), only while the kind is registered and CIS 408 is applied. Field
+  `tenant_erasure` (the jobs created) or `tenant_erasure_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -428,6 +432,18 @@ async def _tenant_backup_part(pool, kinds: dict, ts: datetime, out: dict) -> Non
         out["tenant_backup"] = {"job_id": job_id, "key": key}
 
 
+async def _tenant_erasure_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1093 lane L2: one live saga job per open erasure request with work to do (a handful of rows; nothing before
+    CIS 408). Only while the kind is registered."""
+    from services.jobs.tenant_erasure_saga_job import KIND, ensure_jobs
+
+    if KIND not in kinds:
+        return
+    created = await ensure_jobs(pool, now=ts)
+    if created:
+        out["tenant_erasure"] = {"jobs": created}
+
+
 async def _tenant_billing_tick_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     """AA-1037 R4: the hourly billing tick (Booking's billing status -> the account state), once per UTC hour
     (idempotency key per hour). Only while the kind is registered; TENANT_BILLING_TICK=off stops it."""
@@ -590,6 +606,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tenant_backup_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["tenant_backup_error"] = _err(e)
+
+    # AA-1093 L2: one SELECT of the open erasure requests, an INSERT only when one has no live saga job
+    try:
+        await asyncio.wait_for(_tenant_erasure_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["tenant_erasure_error"] = _err(e)
 
     # AA-1037 R4: one idempotent INSERT an hour (database only), same short budget
     try:

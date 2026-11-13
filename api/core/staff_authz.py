@@ -384,6 +384,13 @@ POLICY: dict[tuple[str, str], Any] = {
     # AA-839 — data erasure: tenant accounts and DSARs are admin-only (an apply also needs Cognito + the env flag)
     ("GET", "/admin/job-runner/erasure"): TENANT_READ,
     ("POST", "/admin/job-runner/erasure/run"): TENANT_WRITE,
+    # AA-1093 L2 — the tenant offboarding erasure saga (the approval also needs a Cognito administrator in the route)
+    ("GET", "/admin/job-runner/erasure/requests"): TENANT_READ,
+    ("GET", "/admin/job-runner/erasure/requests/{request_id}"): TENANT_READ,
+    ("POST", "/admin/job-runner/erasure/requests/drill"): TENANT_WRITE,
+    ("POST", "/admin/job-runner/erasure/requests/{request_id}/advance"): TENANT_WRITE,
+    ("POST", "/admin/job-runner/erasure/requests/{request_id}/approve"): TENANT_WRITE,
+    ("POST", "/admin/job-runner/erasure/requests/{request_id}/new-round"): TENANT_WRITE,
     # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,

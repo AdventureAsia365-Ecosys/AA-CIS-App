@@ -26,6 +26,7 @@ from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.tenant_account import dev_guard
 from services.tenant_account import plans as tenant_plans
+from services.tenant_erasure import store as erasure_store  # AA-1093 lane L2 (offboard / restore hooks)
 from shared.ops_checks import EVENT_TYPE_PREFIX as OPS_CHECK_EVENT_PREFIX
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -1464,7 +1465,7 @@ async def offboard_tenant(
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         tenant = await conn.fetchrow(
-            "SELECT tenant_id, name, cancelled_at FROM shared.tenants WHERE tenant_id=$1::uuid",
+            "SELECT tenant_id, name, cancelled_at, is_pilot FROM shared.tenants WHERE tenant_id=$1::uuid",
             tenant_id,
         )
         if not tenant:
@@ -1527,6 +1528,14 @@ async def offboard_tenant(
             # AA-741 (S229): an offboarded tenant's content must never reach Jev again.
             await conn.execute(
                 "DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid", tenant_id)
+            # AA-1093 lane L2 (T0 of the erasure saga): record the erasure request with each app's earliest date
+            # (CRM T0 + 90 days, the others T0 + the retention window) and emit account.erasure_requested. Under a
+            # savepoint: before CIS 408 is applied, or for the pilot tenant, nothing is scheduled.
+            offboarded_at = await conn.fetchval(
+                "SELECT cancelled_at FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id)
+            erasure = await erasure_store.on_offboard(
+                conn, tenant_id, offboarded_at=offboarded_at, actor=_admin_actor(x_admin_user_id),
+                is_pilot=bool(tenant["is_pilot"]))
 
     # Same follow-up as POST /admin/job-runner/jobs/{id}/cancel: a cancelled job's domain row
     # (T2 version / T9 piece) is marked failed by its kind's on_terminal hook. Never raises.
@@ -1540,6 +1549,7 @@ async def offboard_tenant(
         "status": "offboarded",
         "cancelled_jobs": len(cancelled),
         "ended_view_as_sessions": len(closed_views),
+        "erasure_request": erasure,
         "note": "Tenant data and settings are kept; POST /admin/tenants/{id}/restore brings the tenant back.",
     }
 
@@ -1554,6 +1564,8 @@ class RestoreTenantResponse(BaseModel):
     previous_reason: Optional[str]
     jev_allowlist_restored: bool
     cancelled_jobs: list[dict]
+    # AA-1093 lane L2: the erasure request this restore cancelled (None: there was none)
+    erasure_request_cancelled: Optional[str] = None
     message: str
 
 
@@ -1592,6 +1604,13 @@ async def restore_tenant(
                         "only an offboarded tenant can be restored"),
             )
         offboarded_at = row["cancelled_at"]
+
+        # AA-1093 lane L2: a restore cancels the tenant's open erasure request; once its apply started (some app may
+        # already have erased its part) the restore is refused.
+        try:
+            erasure_cancelled = await erasure_store.on_restore(conn, tid)
+        except erasure_store.ErasureInProgress as e:
+            raise HTTPException(status_code=409, detail=f"{e}; the tenant cannot be restored")
 
         # The jobs this offboard cancelled (same transaction set finished_at = cancelled_at).
         jobs = await conn.fetch("""
@@ -1634,6 +1653,7 @@ async def restore_tenant(
                 "restored": ["status:active"] + (["jev_allowlist"] if allow_restored else []),
                 "unchanged": "plan_tier, plan_id, rate limit, brand rules, planning config, content, users",
                 "cancelled_jobs_not_rerun": cancelled_jobs,
+                "erasure_request_cancelled": erasure_cancelled,
             },
         )
 
@@ -1646,6 +1666,7 @@ async def restore_tenant(
         previous_reason=row["cancellation_reason"],
         jev_allowlist_restored=allow_restored,
         cancelled_jobs=cancelled_jobs,
+        erasure_request_cancelled=erasure_cancelled,
         message=f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run.",
     )
 

@@ -46,7 +46,9 @@ def test_every_tenant_action_is_visible_and_staff_only_rows_are_not():
     hidden = {v for k, v in vars(AdminAuditAction).items() if k.isupper()}
     hidden |= {AdminTenantAuditAction.BRAND_UPDATED, AdminTenantAuditAction.CONFIG_UPDATED,
                AdminTenantAuditAction.PLAN_ID_BACKFILL, AdminTenantAuditAction.ERASED,
-               AdminTenantAuditAction.RESTORE_DRILL,
+               AdminTenantAuditAction.RESTORE_DRILL, AdminTenantAuditAction.ERASURE_APPROVED,
+               AdminTenantAuditAction.ERASURE_DRILL, AdminTenantAuditAction.ERASURE_ROUND,
+               AdminTenantAuditAction.ERASURE_DONE,
                AdminTenantAuditAction.OFFBOARD, AdminTenantAuditAction.MEMBER_ROLE_CHANGED,
                AdminTenantAuditAction.MEMBER_REMOVED, "staff.request", "publish_mode_transition",
                "trip_reallocation_suggestion"}
