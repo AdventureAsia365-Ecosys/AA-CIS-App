@@ -18,7 +18,7 @@ from api.core.tenant_scope import (
     tenant_scope_sql,
 )
 from pydantic import BaseModel, Field
-from api.core import view_as
+from api.core import e2e_tenant_writes, view_as
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
 
@@ -1429,7 +1429,7 @@ class OffboardRequest(BaseModel):
 
 
 @router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant (soft)",
-             dependencies=TENANT_SCOPED)
+             dependencies=TENANT_SCOPED + e2e_tenant_writes.SYNTHETIC_PATH_TENANT)  # A10b-5: synthetic only for E2E
 async def offboard_tenant(
     tenant_id: str,
     body: OffboardRequest,
@@ -1553,7 +1553,7 @@ class RestoreTenantResponse(BaseModel):
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
              summary="Restore an offboarded tenant with its data and settings",
-             dependencies=TENANT_SCOPED)
+             dependencies=TENANT_SCOPED + e2e_tenant_writes.SYNTHETIC_PATH_TENANT)  # A10b-5: synthetic only for E2E
 async def restore_tenant(
     tenant_id: UUID,
     request: Request,
