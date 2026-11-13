@@ -18,7 +18,10 @@
 --      maker_checker), evidence_required (an eval / replay reference is required on every change), env_override (the
 --      emergency env var the reader still honours for one release, with a warning and a page badge), cache_s (reader
 --      cache, 5-3600 s) and enforced (false = stored only: the page shows "not enforced yet"). CHECKs keep the default
---      inside its bounds. cis_app reads it only: rows come from migrations.
+--      inside its bounds. cis_app reads it only: rows come from migrations. The trigger
+--      shared.setting_definition_guard refuses every write by a role outside cis_owner (CIS 245's default privileges
+--      give cis_app INSERT / UPDATE / DELETE on every new shared table and an expand file cannot REVOKE them, as CIS 400
+--      notes; the value trigger reads its bounds from this table, so a widened bound must not be writable by the app).
 --   2. shared.setting_value: one row per proposed value of a key at a scope (tenant_id NULL = platform): value (jsonb),
 --      version (per key and scope, optimistic lock: a proposal names the version it replaces, the API answers 409 on
 --      a stale one), status proposed -> approved | rejected, approved -> superseded, effective_from (future dating
@@ -29,7 +32,9 @@
 --   3. Trigger shared.setting_value_guard (BEFORE INSERT / UPDATE / DELETE): an insert must be a proposal of a known
 --      key whose value matches the definition (type, bounds, allowed values; scope platform+tenant for a tenant row;
 --      evidence_ref when evidence_required); an update may only decide a proposal (approved / rejected, decider and
---      time set; maker_checker: the decider is not the proposer unless self_approved) or supersede an approved row;
+--      time set; maker_checker: the decider is not the proposer unless self_approved, and a self-approval only while
+--      cis.settings.two_person_approval is off; the flag is maker_checker itself, so once on, the person it checks
+--      cannot switch it off alone) or supersede an approved row;
 --      every other column is immutable; a platform row is never deleted (a tenant row goes with its tenant: FK ON
 --      DELETE CASCADE, the offboarding erase).
 --   4. The 25 CIS settings of lane L1 (seed block below, read by scripts/settings/gen_compiled_defaults.py into
@@ -55,14 +60,15 @@
 -- values) and the admin routes answer 503 "not migrated".
 --
 -- Class: expand (root ADR 0017 d3): two new tables with their constraints, indexes, RLS (ENABLE + FORCE, policies),
--- two new functions and the trigger on the new table, an FK from a new table, grants and comments on new objects,
+-- three new functions and the triggers on the new tables, an FK from a new table, grants and comments on new objects,
 -- rows inserted only into a table this file creates (and the shared.schema_versions registration); no existing
 -- object changes, no DO block.
 --
 -- Number. 406 is the highest on main (13/11/2026, the acc1 Bedrock connection).
 --
 -- Rollback (a new forward migration, after the code is reverted): DROP TABLE shared.setting_value,
--- shared.setting_definition and DROP FUNCTION shared.setting_value_guard, shared.setting_value_problem (a destructive
+-- shared.setting_definition and DROP FUNCTION shared.setting_value_guard, shared.setting_value_problem,
+-- shared.setting_definition_guard (a destructive
 -- file, DRY RUN).
 --
 -- X1. One BEGIN … COMMIT block, no role switch. Migration Apply runs cis/ files as cis_owner, the owner of schema
@@ -281,10 +287,25 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
     IF OLD.status = 'proposed' AND NEW.status IN ('approved', 'rejected') THEN
-        IF NEW.status = 'approved' AND d.approval = 'maker_checker' AND NEW.decided_by = NEW.proposed_by
-           AND NOT NEW.self_approved THEN
-            RAISE EXCEPTION 'setting % needs a second person to approve (or a recorded self-approval)', NEW.key
-                USING ERRCODE = 'check_violation';
+        IF NEW.status = 'approved' AND d.approval = 'maker_checker' AND NEW.decided_by = NEW.proposed_by THEN
+            IF NOT NEW.self_approved THEN
+                RAISE EXCEPTION 'setting % needs a second person to approve (or a recorded self-approval)', NEW.key
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            -- A self-approval only while two-person approval is off: the latest approved platform value of
+            -- cis.settings.two_person_approval in force, else its default (the API checks the same in the decision
+            -- transaction first; this is the backstop). The flag is maker_checker itself, so once it is on the person
+            -- it checks cannot switch it off alone.
+            IF coalesce((SELECT v.value FROM shared.setting_value v
+                          WHERE v.key = 'cis.settings.two_person_approval' AND v.tenant_id IS NULL
+                            AND v.status = 'approved' AND v.effective_from <= now()
+                          ORDER BY v.effective_from DESC, v.version DESC LIMIT 1),
+                        (SELECT t.default_value FROM shared.setting_definition t
+                          WHERE t.key = 'cis.settings.two_person_approval'),
+                        'false'::jsonb) <> 'false'::jsonb THEN
+                RAISE EXCEPTION 'setting % needs a second person to approve (two-person approval is on)', NEW.key
+                    USING ERRCODE = 'check_violation';
+            END IF;
         END IF;
         RETURN NEW;
     END IF;
@@ -302,6 +323,30 @@ $fn$;
 CREATE TRIGGER setting_value_guard_trg
     BEFORE INSERT OR UPDATE OR DELETE ON shared.setting_value
     FOR EACH ROW EXECUTE FUNCTION shared.setting_value_guard();
+
+-- Definitions come only from migrations (S279 review). cis_owner's default privileges (CIS 245) give cis_app INSERT,
+-- UPDATE and DELETE on every new shared table, and an expand file cannot REVOKE them (CIS 400 states the same limit);
+-- the FOR ALL policy does not narrow them either. Without this guard the app role (or an ECS exec script on
+-- DATABASE_URL) could widen a bound, switch approval to single or drop evidence_required, and the value trigger reads
+-- its bounds from this table. Only a member of cis_owner (Migration Apply runs cis/ files as cis_owner; the DB
+-- migrator role is a member; a superuser counts as a member of every role) may write a definition.
+CREATE FUNCTION shared.setting_definition_guard() RETURNS trigger
+    LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF NOT pg_has_role(current_user, 'cis_owner', 'MEMBER') THEN
+        RAISE EXCEPTION 'shared.setting_definition is written only by migrations (cis_owner), not by %', current_user
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END
+$fn$;
+
+CREATE TRIGGER setting_definition_guard_trg
+    BEFORE INSERT OR UPDATE OR DELETE ON shared.setting_definition
+    FOR EACH ROW EXECUTE FUNCTION shared.setting_definition_guard();
+CREATE TRIGGER setting_definition_guard_truncate_trg
+    BEFORE TRUNCATE ON shared.setting_definition
+    FOR EACH STATEMENT EXECUTE FUNCTION shared.setting_definition_guard();
 
 COMMENT ON TABLE shared.setting_definition IS
     'S279 thresholds L1 (CIS 407): one row per admin-editable setting (threshold, limit, cap, policy value), written '
@@ -332,10 +377,10 @@ INSERT INTO shared.setting_definition
 SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min_value, s.max_value, s.allowed_values,
        s.default_value, s.scope_kind, s.impact, s.approval, s.evidence_required, s.env_override, s.cache_s, s.enforced
   FROM jsonb_to_recordset($seed$[
-{"key": "cis.t7.blog_min_seed_words", "app": "cis", "area": "content", "label": "T7 Blog minimum seed (words)", "description": "A Subject whose grounded seed is shorter than this is not proposed on Blog (it stays on the shorter channels). 0 = off. Seeded from the Terraform value in force (600; the code default was 0). The effective floor is the larger of this and the length-sized floor (cis.t7.blog_chars_per_seed_word).", "value_type": "int", "unit": "words", "min_value": 0, "max_value": 5000, "allowed_values": null, "default_value": 600, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": "T7_BLOG_MIN_SEED_WORDS", "cache_s": 30, "enforced": true},
+{"key": "cis.t7.blog_min_seed_words", "app": "cis", "area": "content", "label": "T7 Blog minimum seed (words)", "description": "A Subject whose grounded seed is shorter than this is not proposed on Blog (it stays on the shorter channels). 0 = off. Seeded from the Terraform value in force (600; the code default was 0). The effective floor is the larger of this and the length-sized floor (cis.t7.blog_chars_per_seed_word). No env override: the worker's old env var is no longer read, so the value here is the one the worker uses.", "value_type": "int", "unit": "words", "min_value": 0, "max_value": 5000, "allowed_values": null, "default_value": 600, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.t7.blog_chars_per_seed_word", "app": "cis", "area": "content", "label": "T7 Blog characters per seed word", "description": "Blog characters the T9 writer produces per grounded seed word; sizes the Blog seed floor as ceil(4,700 / ratio) while the flat minimum is on. 0 = no sizing. Seeded at today's effective 5.8 (811 words). The S279 $0 replay of stored blog pieces measured 3.364 (floor 1,398 words): the recommended value, to be proposed with that replay as evidence.", "value_type": "numeric", "unit": "chars/word", "min_value": 0, "max_value": 20, "allowed_values": null, "default_value": 5.8, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": true, "env_override": "T7_BLOG_CHARS_PER_SEED_WORD", "cache_s": 30, "enforced": true},
 {"key": "cis.t9.repeat_drop_near_exact", "app": "cis", "area": "content", "label": "T9 blog repeat drop: near-exact share", "description": "The blog repeat drop deletes the later copy of a sentence the F13 gate quotes only when its words match an earlier sentence in order with at least this Dice share (1.0 = exact). Lower values drop paraphrases too.", "value_type": "numeric", "unit": "share", "min_value": 0.8, "max_value": 1.0, "allowed_values": null, "default_value": 0.9, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": true, "env_override": null, "cache_s": 30, "enforced": true},
-{"key": "cis.t9.max_attempts", "app": "cis", "area": "content", "label": "T9 write attempts per piece", "description": "Attempts of the T9 writer loop per piece: 3 = first write, one repair and the third step (the $0 stop-and-label, or a paid sentence repair in legacy mode); 2 = first write and one repair only. Trades cost against the hold rate.", "value_type": "int", "unit": "attempts", "min_value": 2, "max_value": 3, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
+{"key": "cis.t9.max_attempts", "app": "cis", "area": "content", "label": "T9 write attempts per piece", "description": "Attempts of the T9 writer loop per piece: 3 = first write, one repair and a third step; 2 = first write and one repair, no paid third step. In the default stop-and-label mode the third step is the $0 label, so 2 and 3 cost the same there; in legacy mode 3 adds a paid sentence repair of attempt 2. Trades cost against the hold rate.", "value_type": "int", "unit": "attempts", "min_value": 2, "max_value": 3, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.a1.attempts_before_review", "app": "cis", "area": "content", "label": "A1 S1 rewrite attempts before review", "description": "A1 (S1) rewrite attempts of one tour before it goes to human review when the quality score stays under the pass line (the score-rule path; S1 contract mode routes by its own codes).", "value_type": "int", "unit": "attempts", "min_value": 1, "max_value": 5, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.t2.version_writer_max", "app": "cis", "area": "content", "label": "T2 writer calls per tour version", "description": "Paid T2 writer calls (first write and field regenerations) one tenant tour version may spend, counted across a job retry.", "value_type": "int", "unit": "calls", "min_value": 1, "max_value": 5, "allowed_values": null, "default_value": 2, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.t2.version_repair_max", "app": "cis", "area": "content", "label": "T2 repair calls per tour version", "description": "Paid T2 flag-fix (repair) calls one tenant tour version may spend; a sentence repair is one call, a meta regenerate counts each real attempt.", "value_type": "int", "unit": "calls", "min_value": 0, "max_value": 6, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
@@ -346,7 +391,7 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
 {"key": "cis.spend.place_backfill_max_tours", "app": "cis", "area": "spend", "label": "Place backfill tours per run", "description": "Tours one place backfill run (by country) may process; bounds the paid locate / days calls of one run.", "value_type": "int", "unit": "tours", "min_value": 1, "max_value": 200, "allowed_values": null, "default_value": 50, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.spend.rerun_wave_max_tours", "app": "cis", "area": "spend", "label": "Rerun wave size", "description": "Tours one rerun wave may list (its expected set). The rerun runbook steps 3 tours, then at most 50, then a country.", "value_type": "int", "unit": "tours", "min_value": 1, "max_value": 5000, "allowed_values": null, "default_value": 2000, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.spend.question_topup_cap_usd", "app": "cis", "area": "spend", "label": "Question top-up total cap", "description": "The DataForSEO spend of the admin SERP question top-up in all, across every run (each call is logged and counted).", "value_type": "usd", "unit": "USD", "min_value": 0, "max_value": 20, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
-{"key": "cis.spend.dfs_call_estimate_usd", "app": "cis", "area": "spend", "label": "DataForSEO price per call (pre-call estimate)", "description": "Worst-case price of one DataForSEO call per endpoint label, used for the pre-call budget check before the real price is known. Keep it at or above the price DataForSEO charges (AA-1055: the queue prices were 2.4x off).", "value_type": "json", "unit": "USD/call", "min_value": 0, "max_value": 1, "allowed_values": null, "default_value": {"search_volume": 0.09, "search_volume_bulk": 0.09, "keywords_for_keywords": 0.09, "serp_advanced": 0.002, "serp_advanced_paa_deep": 0.01, "search_volume_bulk_queue": 0.06, "serp_advanced_queue": 0.0006}, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
+{"key": "cis.spend.dfs_call_estimate_usd", "app": "cis", "area": "spend", "label": "DataForSEO price per call (pre-call estimate)", "description": "Worst-case price of one DataForSEO call per endpoint label, used for the pre-call budget check before the real price is known. Keep it at or above the price DataForSEO charges (AA-1055: the queue prices were 2.4x off). Every price is above 0; a label left out keeps its seeded price.", "value_type": "json", "unit": "USD/call", "min_value": 0.0001, "max_value": 1, "allowed_values": null, "default_value": {"search_volume": 0.09, "search_volume_bulk": 0.09, "keywords_for_keywords": 0.09, "serp_advanced": 0.002, "serp_advanced_paa_deep": 0.01, "search_volume_bulk_queue": 0.06, "serp_advanced_queue": 0.0006}, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.publish.daily_limit_default", "app": "cis", "area": "publish", "label": "Daily publish limit (platform default)", "description": "Posts one tenant may publish per UTC day when the tenant has no own limit (Tenant 360 > Settings sets a per-tenant limit up to 1,000).", "value_type": "int", "unit": "posts/day", "min_value": 1, "max_value": 1000, "allowed_values": null, "default_value": 20, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.billing.rewrite_over_quota_mode", "app": "cis", "area": "billing", "label": "Rewrite over-quota rule", "description": "What happens when a tenant passes its monthly rewrite quota: soft = the rewrite runs and is billed as overage (today, trial); hard = the rewrite is refused until the quota resets or the plan grows.", "value_type": "enum", "unit": null, "min_value": null, "max_value": null, "allowed_values": ["soft", "hard"], "default_value": "soft", "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.lifecycle.tour_retirement_notice_days", "app": "cis", "area": "lifecycle", "label": "Tour retirement notice (platform default)", "description": "Days of notice a tenant gets before the automatic draft of its posts about a retired tour, when neither its own setting nor its plan names a number.", "value_type": "int", "unit": "days", "min_value": 1, "max_value": 30, "allowed_values": null, "default_value": 7, "scope_kind": "platform", "impact": "medium", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
@@ -356,7 +401,7 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
 {"key": "cis.retention.job_failed_days", "app": "cis", "area": "retention", "label": "Failed job retention", "description": "Days a failed, cancelled or budget-stopped shared.job row is kept before it is archived to S3.", "value_type": "int", "unit": "days", "min_value": 14, "max_value": 730, "allowed_values": null, "default_value": 90, "scope_kind": "platform", "impact": "low", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "cis.erasure.tenant_retention_days", "app": "cis", "area": "retention", "label": "Offboarded tenant retention", "description": "Days after a tenant's offboarding before the data erasure may remove its CIS data (the apply switch itself stays in Terraform). The Dev erasure drill sets the env override to 0.", "value_type": "int", "unit": "days", "min_value": 0, "max_value": 365, "allowed_values": null, "default_value": 30, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": "ERASURE_TENANT_RETENTION_DAYS", "cache_s": 30, "enforced": true},
 {"key": "cis.content.trash_retention_days", "app": "cis", "area": "retention", "label": "Trash retention", "description": "Days a deleted item stays in the trash before it is purged. Shown on Settings > Plan; no purge job reads it yet (not enforced).", "value_type": "int", "unit": "days", "min_value": 1, "max_value": 365, "allowed_values": null, "default_value": 30, "scope_kind": "platform", "impact": "low", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": false},
-{"key": "cis.settings.two_person_approval", "app": "cis", "area": "platform", "label": "Two-person approval of settings", "description": "On: a maker-checker setting needs a second staff member to approve. Off (dev phase, tech lead S279): the administrator may approve their own change with a reason, and a high-impact change e-mails the tech lead. Turn on at the first prod or paying tenant.", "value_type": "bool", "unit": null, "min_value": null, "max_value": null, "allowed_values": null, "default_value": false, "scope_kind": "platform", "impact": "high", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true}
+{"key": "cis.settings.two_person_approval", "app": "cis", "area": "platform", "label": "Two-person approval of settings", "description": "On: a maker-checker setting needs a second staff member to approve. Off (dev phase, tech lead S279): the administrator may approve their own change with a reason, and a high-impact change e-mails the tech lead. Turn on at the first prod or paying tenant. This flag is maker-checker itself: while it is on, turning it off needs a second person.", "value_type": "bool", "unit": null, "min_value": null, "max_value": null, "allowed_values": null, "default_value": false, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true}
 ]$seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
                       min_value numeric, max_value numeric, allowed_values jsonb, default_value jsonb, scope_kind text,
                       impact text, approval text, evidence_required boolean, env_override text, cache_s integer,

@@ -6,7 +6,9 @@ its bounds, an enum default not allowed), the value trigger (insert = a proposal
 definition; evidence when required; a tenant row only for a platform+tenant key; only the decision columns change;
 maker_checker needs a second person or a recorded self-approval; a platform row is never deleted, a tenant row goes
 with its tenant), one open proposal per key and scope, RLS (ENABLE + FORCE, the X1 parity policies) and cis_app's
-grants. The service and the reader are tested in the code PR. Invented values only; every test runs in a transaction
+grants, the definition guard (only cis_owner writes a definition, even with the CIS 245 default DML grants) and the
+two-person backstop (no self-approval while cis.settings.two_person_approval is on, including of the flag itself).
+The service and the reader are tested in the code PR. Invented values only; every test runs in a transaction
 that is rolled back."""
 import json
 import os
@@ -180,3 +182,54 @@ async def test_rls_and_grants(conn):
         "AND table_schema = 'shared' AND table_name LIKE 'setting_%'")}
     assert grants == {("setting_definition", "SELECT"), ("setting_value", "SELECT"), ("setting_value", "INSERT"),
                       ("setting_value", "UPDATE"), ("setting_value", "DELETE")}
+
+
+@pytest.mark.asyncio
+async def test_only_cis_owner_writes_a_definition_even_with_the_245_default_grants(conn):
+    """S279 review: on Dev cis_owner's default privileges (CIS 245) give cis_app INSERT / UPDATE / DELETE on every new
+    shared table; the CI replay lacks that ACL, so the test grants it here (rolled back) and checks the trigger."""
+    await conn.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    await conn.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON shared.setting_definition TO cis_app")
+    denied = asyncpg.exceptions.InsufficientPrivilegeError
+    for sql in ("UPDATE shared.setting_definition SET max_value = 100000 WHERE key = 'cis.publish.daily_limit_default'",
+                "UPDATE shared.setting_definition SET approval = 'single', evidence_required = false "
+                "WHERE key = 'cis.t9.repeat_drop_near_exact'",
+                "DELETE FROM shared.setting_definition WHERE key = 'cis.content.trash_retention_days'",
+                "INSERT INTO shared.setting_definition (key, app, area, label, description, value_type, default_value, "
+                "impact, approval) VALUES ('cis.zz.app_made', 'cis', 'zz', 'Zz label', "
+                "'A definition the app role tries to add.', 'int', '1', 'low', 'single')"):
+        with pytest.raises(denied):
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE cis_app")
+                await conn.execute(sql)
+    await conn.execute("RESET ROLE")
+    assert await conn.fetchval("SELECT max_value::int AS ok FROM shared.setting_definition "
+                               "WHERE key = 'cis.publish.daily_limit_default'") == 1000
+    # cis_owner (Migration Apply) still writes one (the replay's schema owner is the test user: grant it here)
+    await conn.execute("GRANT USAGE ON SCHEMA shared TO cis_owner")
+    await conn.execute("GRANT SELECT, UPDATE ON shared.setting_definition TO cis_owner")
+    async with conn.transaction():
+        await conn.execute("SET LOCAL ROLE cis_owner")
+        await conn.execute("UPDATE shared.setting_definition SET label = 'Zz owner label' "
+                           "WHERE key = 'cis.content.trash_retention_days'")
+    await conn.execute("RESET ROLE")
+
+
+@pytest.mark.asyncio
+async def test_no_self_approval_while_two_person_approval_is_on(conn):
+    flag = "cis.settings.two_person_approval"
+    assert await conn.fetchval("SELECT approval AS ok FROM shared.setting_definition WHERE key = $1", flag) == \
+        "maker_checker"
+    on = await _propose(conn, flag, True)
+    await conn.execute("UPDATE shared.setting_value SET status = 'approved', decided_by = proposed_by, "
+                       "decided_at = now(), self_approved = true WHERE id = $1", on)     # off: a self-approval is fine
+    vid = await _propose(conn)
+    await _refused(conn, "UPDATE shared.setting_value SET status = 'approved', decided_by = proposed_by, "
+                         "decided_at = now(), self_approved = true WHERE id = $1", vid)
+    await conn.execute("UPDATE shared.setting_value SET status = 'approved', decided_by = 'admin:zz-b', "
+                       "decided_at = now() WHERE id = $1", vid)                          # a second person: fine
+    off = await _propose(conn, flag, False, version=2)
+    await _refused(conn, "UPDATE shared.setting_value SET status = 'approved', decided_by = proposed_by, "
+                         "decided_at = now(), self_approved = true WHERE id = $1", off)
+    await conn.execute("UPDATE shared.setting_value SET status = 'approved', decided_by = 'admin:zz-b', "
+                       "decided_at = now() WHERE id = $1", off)
