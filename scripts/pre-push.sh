@@ -31,6 +31,9 @@
 #                   Python it uses must have the fastapi / pydantic versions requirements.txt pins (CI installs them);
 #                   another version makes test_aa899_openapi_export red on main too. A mismatch stops at once with the
 #                   install line; skip once, visibly: AA_PREPUSH_SKIP_PINS=1 git push.
+#   code_health     AA-1097: complexity + file-size ratchets (.github/scripts/code_health.py check --base <base>) whenever
+#                   code changed: Python complexity (ruff C901) and file size always, TypeScript complexity when
+#                   frontend/ changed (or --full). A missing ruff / frontend node_modules is a SKIP outside --ci.
 #   --base REF      diff base (default origin/main, or AA_PREPUSH_BASE).
 #   --head REF      commit being pushed (default HEAD; the hook passes the pushed SHA).
 #
@@ -39,7 +42,7 @@
 set -uo pipefail
 
 SELF=$(realpath "${BASH_SOURCE[0]}")
-CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit integration frontend_kit frontend_tsc frontend_lint)
+CHECK_IDS=(resource_ids text_guard quality_lint code_health flake8 unit integration frontend_kit frontend_tsc frontend_lint)
 
 # --- CI command lines, verbatim from .github/workflows/ci.yml (printed when a check fails) -----------------------
 # shellcheck disable=SC2054  # the commas belong to flake8's option values
@@ -52,6 +55,7 @@ CI_CMD[flake8]="flake8 api/ services/ shared/ ${FLAKE8_ARGS[*]}   (ci.yml Lint >
 FLAKE8_INSTALL="pip install flake8 flake8-bugbear pyyaml==6.0.3"
 CI_CMD[resource_ids]="python3 .github/scripts/check_resource_ids.py   (ci.yml Lint > Resource-ID check)"
 CI_CMD[text_guard]="python3 -m services.golden_set.text_guard scan   (ci.yml Lint > Golden-set text guard; locally markers only unless GOLDEN_GUARD_KEY is set)"
+CI_CMD[code_health]="python3 .github/scripts/code_health.py check --kind python,files --base <base>   (ci.yml Lint > Code health ratchets; the TypeScript part: Frontend Lint > Code health (TypeScript complexity), --kind typescript; CI installs ruff==0.16.9. Improved code: python3 .github/scripts/code_health.py update, commit .github/code-health-baseline.json)"
 CI_CMD[quality_lint]="python -m services.quality.lint --report   (ci.yml Lint > Quality registry lint)"
 CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=services --cov=shared --cov-report=term-missing --cov-report=xml:coverage.xml && pytest tests/acp/ -v --tb=short && python3 .github/scripts/coverage_ratchet.py coverage.xml --base <base>   (ci.yml Unit Tests; CI installs: .github/actions/url-wheels, then uv pip install --system -r <its rewritten requirements.txt> -r requirements-dev.txt)"
 UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
@@ -108,9 +112,9 @@ plan_checks() {
   done
   echo resource_ids
   echo text_guard
-  if [[ $mode == full ]]; then echo quality_lint; echo flake8; echo unit
+  if [[ $mode == full ]]; then echo quality_lint; echo code_health; echo flake8; echo unit
   else
-    [[ $code == 1 ]] && echo quality_lint
+    [[ $code == 1 ]] && { echo quality_lint; echo code_health; }
     [[ $py_lint == 1 ]] && echo flake8
     [[ $py == 1 ]] && echo unit
   fi
@@ -307,25 +311,25 @@ self_test() {
   local all tmp; all=$(printf '%s\n' "${CHECK_IDS[@]}" | grep -vx integration | tr '\n' ' '); all=${all% }
   expect "empty diff: always-on scans only"        fast 0 "resource_ids text_guard"
   expect "docs only"                               fast 0 "resource_ids text_guard" docs/implementation-notes/AA-1.md README.md
-  expect "service module"                          fast 0 "resource_ids text_guard quality_lint flake8 unit" services/quality/lint.py
-  expect "api route + doc"                         fast 0 "resource_ids text_guard quality_lint flake8 unit" api/routers/x.py docs/a.md
-  expect "test file only: no flake8 (CI scope)"    fast 0 "resource_ids text_guard quality_lint unit" tests/unit/test_x.py
-  expect "worker only: no flake8 (CI scope)"       fast 0 "resource_ids text_guard quality_lint unit" worker/main.py
-  expect "requirements bump: unit"                 fast 0 "resource_ids text_guard quality_lint unit" requirements.txt
-  expect "requirements-dev bump: unit"             fast 0 "resource_ids text_guard quality_lint unit" requirements-dev.txt
-  expect "migration sql: unit + integration stamp" fast 0 "resource_ids text_guard quality_lint unit integration" api/migrations/300_x.sql
-  expect "integration test: unit + stamp"          fast 0 "resource_ids text_guard quality_lint unit integration" tests/integration/test_x.py
-  expect "full mode, integration test: stamp too"  full 0 "resource_ids text_guard quality_lint flake8 unit integration" tests/integration/test_x.py
-  expect "test helper module: unit, no flake8"     fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/chain.py
-  expect "Q0 case json: unit"                      fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/cases/a1_contract.json
-  expect ".trivyignore: unit"                      fast 0 "resource_ids text_guard quality_lint unit" .trivyignore
-  expect "yaml registry: quality lint"             fast 0 "resource_ids text_guard quality_lint" services/quality/registry.yaml
-  expect "frontend only: tsc + lint, never build"  fast 0 "resource_ids text_guard quality_lint frontend_kit frontend_tsc frontend_lint" frontend/app/page.tsx
-  expect "workflow only: unit (CI gate tests)"     fast 0 "resource_ids text_guard quality_lint unit" .github/workflows/ci.yml
-  expect "ratchet config: unit"                    fast 0 "resource_ids text_guard quality_lint unit" .github/coverage-ratchet.json
-  expect "mixed backend + frontend"                fast 0 "resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint" shared/db.py frontend/lib/a.ts
-  expect "full mode, docs only: python checks"     full 0 "resource_ids text_guard quality_lint flake8 unit" docs/a.md
-  expect "full mode + frontend"                    full 0 "resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint" frontend/a.tsx
+  expect "service module"                          fast 0 "resource_ids text_guard quality_lint code_health flake8 unit" services/quality/lint.py
+  expect "api route + doc"                         fast 0 "resource_ids text_guard quality_lint code_health flake8 unit" api/routers/x.py docs/a.md
+  expect "test file only: no flake8 (CI scope)"    fast 0 "resource_ids text_guard quality_lint code_health unit" tests/unit/test_x.py
+  expect "worker only: no flake8 (CI scope)"       fast 0 "resource_ids text_guard quality_lint code_health unit" worker/main.py
+  expect "requirements bump: unit"                 fast 0 "resource_ids text_guard quality_lint code_health unit" requirements.txt
+  expect "requirements-dev bump: unit"             fast 0 "resource_ids text_guard quality_lint code_health unit" requirements-dev.txt
+  expect "migration sql: unit + integration stamp" fast 0 "resource_ids text_guard quality_lint code_health unit integration" api/migrations/300_x.sql
+  expect "integration test: unit + stamp"          fast 0 "resource_ids text_guard quality_lint code_health unit integration" tests/integration/test_x.py
+  expect "full mode, integration test: stamp too"  full 0 "resource_ids text_guard quality_lint code_health flake8 unit integration" tests/integration/test_x.py
+  expect "test helper module: unit, no flake8"     fast 0 "resource_ids text_guard quality_lint code_health unit" tests/unit/quality/chain.py
+  expect "Q0 case json: unit"                      fast 0 "resource_ids text_guard quality_lint code_health unit" tests/unit/quality/cases/a1_contract.json
+  expect ".trivyignore: unit"                      fast 0 "resource_ids text_guard quality_lint code_health unit" .trivyignore
+  expect "yaml registry: quality lint"             fast 0 "resource_ids text_guard quality_lint code_health" services/quality/registry.yaml
+  expect "frontend only: tsc + lint, never build"  fast 0 "resource_ids text_guard quality_lint code_health frontend_kit frontend_tsc frontend_lint" frontend/app/page.tsx
+  expect "workflow only: unit (CI gate tests)"     fast 0 "resource_ids text_guard quality_lint code_health unit" .github/workflows/ci.yml
+  expect "ratchet config: unit"                    fast 0 "resource_ids text_guard quality_lint code_health unit" .github/coverage-ratchet.json
+  expect "mixed backend + frontend"                fast 0 "resource_ids text_guard quality_lint code_health flake8 unit frontend_kit frontend_tsc frontend_lint" shared/db.py frontend/lib/a.ts
+  expect "full mode, docs only: python checks"     full 0 "resource_ids text_guard quality_lint code_health flake8 unit" docs/a.md
+  expect "full mode + frontend"                    full 0 "resource_ids text_guard quality_lint code_health flake8 unit frontend_kit frontend_tsc frontend_lint" frontend/a.tsx
   expect "--ci, docs only: never skips by diff"    full 1 "$all" docs/a.md
   expect "--ci, empty diff"                        fast 1 "$all"
 
@@ -726,6 +730,22 @@ do_frontend_lint() {
   node_check frontend frontend_lint npx eslint --no-warn-ignored -- "${targets[@]}"
 }
 
+# do_code_health: AA-1097 complexity + file-size ratchets (.github/scripts/code_health.py) against the diff base, the
+# way CI runs them: Python complexity and file size always (Lint job), TypeScript complexity when frontend/ or the
+# ratchet files changed, or in full mode (Frontend Lint job; needs frontend/node_modules). A missing ruff or
+# node_modules is a visible SKIP outside --ci (CI installs both).
+do_code_health() {
+  [[ -f .github/scripts/code_health.py ]] || { RESULTS+=("SKIP  -     code_health (no .github/scripts/code_health.py)"); return; }
+  local kinds=python,files f allow=(--allow-missing-tools)
+  [[ $CI_MODE == 1 ]] && allow=()
+  for f in "${CHANGED[@]}"; do
+    case $f in frontend/*|.github/code-health*|.github/scripts/code_health*) kinds=python,files,typescript ;; esac
+  done
+  [[ $MODE == full ]] && kinds=python,files,typescript
+  run_check code_health "$PY .github/scripts/code_health.py check --kind $kinds --base $BASE" \
+    "$PY" .github/scripts/code_health.py check --kind "$kinds" --base "$BASE" "${allow[@]}"
+}
+
 # gitleaks_bin: $AA_GITLEAKS, gitleaks on PATH, or the workspace copy in a parent directory of this checkout (the repo
 # sits at <workspace>/apps/AA-CIS-App, a lane worktree under <workspace>/.tmp-session/wt/).
 gitleaks_bin() {
@@ -844,6 +864,7 @@ main() {
             env GOLDEN_GUARD_REQUIRE_KEY=false "$PY" -m services.golden_set.text_guard scan
         fi ;;
       quality_lint) run_check "$id" "$PY -m services.quality.lint --report" "$PY" -m services.quality.lint --report ;;
+      code_health) do_code_health ;;
       flake8)
         local targets=()
         if [[ $MODE == full ]]; then targets=("${FLAKE8_SCOPE[@]}")
