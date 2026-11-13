@@ -32,8 +32,10 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 MIGRATIONS = os.path.join(HERE, "..", "..", "api", "migrations")
-if not any(f.startswith("408_") for f in os.listdir(MIGRATIONS)):
-    pytest.skip("CIS 408 is not in this tree yet (the migration-only PR merges first)", allow_module_level=True)
+# The migration-only PR (CIS 408-411) merges before this code; until then the branch has no 408 to replay (a skip
+# marker, not a module-level skip: pytest still collects the tests and exits 0).
+pytestmark = pytest.mark.skipif(not any(f.startswith("408_") for f in os.listdir(MIGRATIONS)),
+                                reason="CIS 408 is not in this tree yet (the migration-only PR merges first)")
 
 import services.jobs  # noqa: E402,F401  (registers every kind, data_erasure and tenant_backup included)
 from api.core.m2m_auth import M2MCaller, M2MProblem  # noqa: E402
