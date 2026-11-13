@@ -378,3 +378,12 @@ def _tour(split):
     from services.ground_truth import claims as cl
 
     return next(f"tour-{n}" for n in range(1000) if cl.split_of(f"tour_id:tour-{n}") == split)
+
+
+def test_limits_come_from_the_settings_registry(monkeypatch):
+    values = {"cis.spend.instrument_eval_cap_usd": 5, "cis.spend.instrument_eval_max_claims": 40,
+              "cis.spend.instrument_eval_trial_claims": 2, "cis.quality.instrument_eval_fp_drop_min_pct": 70,
+              "cis.quality.instrument_eval_tp_keep_min_pct": 95}
+    monkeypatch.setattr(ev.settings, "get", lambda key, tenant_id=None: values[key])
+    lim = ev.limits()
+    assert lim == ev.Limits(cap_usd=r1.HARD_CAP_USD, max_claims=40, trial_claims=2, fp_drop_min=0.7, tp_keep_min=0.95)
