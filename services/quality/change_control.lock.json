@@ -7,9 +7,9 @@
       "refs": "AA-1052"
     },
     "gates": {
-      "sha": "8280a86bda5fe76b",
-      "evidence": "parity:tests/unit/test_s279_settings_readers.py",
-      "refs": "AA-1096"
+      "sha": "04960a8c8c30d25e",
+      "evidence": "parity:tests/unit/test_aa926_equivalence.py",
+      "refs": "AA-1097"
     },
     "prompt_registry": {
       "sha": "93942918915283fe",

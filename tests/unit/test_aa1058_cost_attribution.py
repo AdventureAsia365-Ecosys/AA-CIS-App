@@ -289,7 +289,7 @@ def test_s1_prompt_version_prefers_the_registered_version(monkeypatch):
 
 
 def test_the_s1_insert_writes_the_prompt_version_column():
-    src = (ROOT / "api/routers/admin_pipeline.py").read_text(encoding="utf-8")
+    src = (ROOT / "api/routers/admin_pipeline/_engine.py").read_text(encoding="utf-8")
     assert "satellite_account, revalidate_passed, prompt_version" in src
     assert "_s1_prompt_version(result)," in src
 

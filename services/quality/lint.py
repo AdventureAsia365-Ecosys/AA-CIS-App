@@ -12,7 +12,7 @@ Errors
   (c) a Jev question key (code constant `*_Q` / `*QUESTION*`, or a key seeded by
       `INSERT INTO shared.decision_question (question_key …)` in a migration) not in the registry.
   (d) an A1 validate / brand-audit / grounding code not mapped in `a1_codes` (code maps and `*_CODES` in
-      services/content_generation/ and admin_pipeline.py, `{"code": ...}` literals and `X = "X"` / `*_CODE`
+      services/content_generation/ and api/routers/admin_pipeline/, `{"code": ...}` literals and `X = "X"` / `*_CODE`
       module constants in services/content_generation/, and the code constants and `*_CODES` of the A1
       code-check modules in services/quality/, read only — they stay exempt from (a)/(b)).
   (e) an admin chip not mapped (defect classes — set and order frozen —, duplicate reasons, review kinds).
@@ -293,7 +293,7 @@ def a1_code_sites(files: dict[str, str]) -> dict[str, str]:
                             if isinstance(c, ast.Constant):
                                 add(c.value, path, c.lineno)
             continue
-        if not (path.startswith("services/content_generation/") or path == "api/routers/admin_pipeline.py"):
+        if not (path.startswith("services/content_generation/") or path.startswith("api/routers/admin_pipeline/")):
             continue
         tree = ast.parse(src)
         if path.startswith("services/content_generation/"):
@@ -362,7 +362,7 @@ def check_chips(files: dict[str, str], root: Path, res: Result) -> None:
             for k in _ts_object_keys(ts, const):
                 if k not in (chips.get(group) or {}):
                     res.errors.append(f"(e) frontend {const}.{k} is not mapped in chips.{group}")
-    ap = files.get("api/routers/admin_pipeline.py")
+    ap = files.get("api/routers/admin_pipeline/review.py")  # _review_block
     if ap:
         for node in ast.walk(ast.parse(ap)):
             if isinstance(node, ast.FunctionDef) and node.name == "_review_block":

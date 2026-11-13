@@ -254,7 +254,7 @@ async def test_disabled_and_cache_hits_never_load_a_budget():
 
 def test_both_s1_callers_pass_the_s1_rewrite_budget_kind():
     assert seo_handler.S1_REWRITE_BUDGET_KIND == "s1_rewrite"
-    for path in ("api/routers/admin_pipeline.py", "services/content_generation/s1_batch.py"):
+    for path in ("api/routers/admin_pipeline/_engine.py", "services/content_generation/s1_batch.py"):
         text = (ROOT / path).read_text()
         calls = text.count("await process_seo(")
         assert calls == 1 and text.count("budget_kind=S1_REWRITE_BUDGET_KIND") == calls, path

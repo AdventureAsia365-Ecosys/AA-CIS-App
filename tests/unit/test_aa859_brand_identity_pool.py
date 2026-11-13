@@ -321,9 +321,10 @@ async def test_staff_post_keeps_aa_internal_markets_out_of_seo_config():
 
 def test_brand_identity_flag_is_used_only_by_the_two_brand_identity_handlers():
     import ast
-    import inspect
+    from pathlib import Path
 
-    tree = ast.parse(inspect.getsource(ap))
+    # AA-1097: the router is a package; scan every part of it
+    tree = ast.parse("\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(ap.__file__).parent.glob("*.py"))))
     users = {fn.name for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
              and any(isinstance(n, ast.Name) and n.id == "BRAND_IDENTITY_FLAG" for n in ast.walk(fn))}
     assert users == {"get_brand_identity", "update_brand_identity"}
