@@ -62,8 +62,8 @@ async def pool(monkeypatch):
 async def _staff(conn, username, display_name=None):
     staff_id = str(uuid.uuid4())
     await conn.execute(
-        "INSERT INTO shared.admin_users (id, username, role, is_active, display_name, is_owner, created_at, updated_at) "
-        "VALUES ($1::uuid, $2, 'admin', true, $3, false, now(), now())", staff_id, username, display_name)
+        "INSERT INTO shared.admin_users (id, username, role, is_active, display_name, is_owner, created_at, "
+        "updated_at) VALUES ($1::uuid, $2, 'admin', true, $3, false, now(), now())", staff_id, username, display_name)
     return staff_id
 
 
