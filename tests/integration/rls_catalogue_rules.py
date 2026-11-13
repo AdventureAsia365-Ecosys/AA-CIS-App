@@ -209,6 +209,8 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "booking.v_from_prices:cis_app": "contract: price.from.v1, the Content studio Marketplace from price (bk-040)",
         "booking.v_tenant_billing_status:cis_app":
             "contract: agency billing status for the CIS tenant_billing_tick (bk-042)",
+        "booking.v_tenant_erasure_report_v1:cis_app":
+            "contract: tenant.erasure.v1, Booking erasure report for the CIS tenant_erasure_saga (bk-057)",
         "booking:tripplanner": "contract: schema USAGE for the public from price view (bk-039)",
         "booking.v_from_prices:tripplanner": "contract: price.from.v1, the tour page from price, RRP only (bk-039)",
         # AA-1046: tripplanner:booking and tripplanner.v_inquiry_outbox:booking (tp-009, the retired inquiry.submitted
@@ -219,6 +221,8 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "tripplanner.v_ops_pin_components:cis_app": "contract: CIS data coverage page, pinned component ids (tp-020)",
         "tripplanner.v_ops_component_id_map:cis_app": "contract: CIS data coverage page, id-map edges (tp-020)",
         "tripplanner.v_ops_inquiry_keys:cis_app": "contract: CIS TP-03 handoff check, keys and times (tp-022)",
+        "tripplanner.v_tenant_erasure_report_v1:cis_app":
+            "contract: tenant.erasure.v1, TripPlanner erasure report for the CIS tenant_erasure_saga (tp-030)",
     },
     "t": {
         "acp_contract.tour_atoms:catalog_owner_read": "catalog_owner views read every atom as before (CIS 266); D9 = 0 "
