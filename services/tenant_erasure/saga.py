@@ -95,9 +95,9 @@ class Refused(Exception):
 
 # ── schedule ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def schedule(offboarded_at: datetime, mode: str, env: Optional[dict] = None) -> dict[str, datetime]:
+def schedule(offboarded_at: datetime, mode: str) -> dict[str, datetime]:
     """not_before per app: T0 + the app's window (drill: T0 for every app)."""
-    return {app: offboarded_at + w for app, w in policy.windows(mode, env).items()}
+    return {app: offboarded_at + w for app, w in policy.windows(mode).items()}
 
 
 def not_before(request: Mapping[str, Any]) -> dict[str, datetime]:

@@ -104,8 +104,8 @@ EVAL_STAGES = ("writing_memory_eval",)
 # added here; tests/unit/test_aa900_w0_config_fp.py fails when a `*_ENV = "..."` constant of a writer module is
 # neither here nor in NOT_OUTPUT_FLAGS.
 MODE_FLAGS: dict[str, tuple[str, ...]] = {
-    # S1_JUDGE_LIVE (judge_node, S271 W0 t2s1 lane), T2_INTERIM (t2_interim, same lane), T10_F9_POLICY_MODE
-    # (f9_policy) and T9_LAST_ATTEMPT_MODE (acp_content_writing.service, S271 W0 t9 lane): classified here ahead of
+    # S1_JUDGE_LIVE (judge_node, S271 W0 t2s1 lane), T2_INTERIM (t2_interim, same lane) and T9_LAST_ATTEMPT_MODE
+    # (acp_content_writing.service, S271 W0 t9 lane): classified here ahead of
     # those PRs, so the env-switch guard below stays green whichever PR merges first.
     "a1": ("S1_WRITER_V2", "S1_STRUCTURED_FACTS", "S1_PER_DAY_TARGETS", "S1_WRITER_TEMPERATURE",
            "A1_BRAND_FIT_RUBRIC", "A1_V2_BRAND_FIT_GATE", "S1_JUDGE_LIVE",
@@ -115,25 +115,22 @@ MODE_FLAGS: dict[str, tuple[str, ...]] = {
            "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM",
            # AA-1049 W3 (T2 train): the linear orchestrator (opt-in; unset / unknown = main's graph path)
            "T2_ORCHESTRATOR"),
-    "t9_blog": ("T9_BRIEF_GROUNDING_MODE", "T9_READER_CHECKLIST_MODE", "T9_FAQ_LLM_FILTER", "T10_F12_SCOPE_MODE",
-                "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
-                "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE", "T9_SEO_BUILDER",
-                # AA-1077: the extend repair of a short blog (length_extend; opt-in `on`, default = the full rewrite)
-                "T9_LENGTH_EXTEND",
+    # AA-1096 l5 (CIS 428): the T9 / T10 gate modes, the brief grounding switch and the extend repair are settings now
+    # (their env overrides retired); the policy part (quality_settings.settings_fp) carries their values instead.
+    "t9_blog": ("T9_READER_CHECKLIST_MODE", "T9_FAQ_LLM_FILTER", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE",
+                "T9_SEO_BUILDER",
                 # AA-1077 (S279): the deterministic near-exact repeat drop before F13 (repeat_drop; kill switch `off`)
                 "T9_REPEAT_DROP"),
-    "t9_social": ("T9_BRIEF_GROUNDING_MODE", "T9_READER_CHECKLIST_MODE", "T10_F12_SCOPE_MODE",
-                  "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
-                  "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE"),
+    "t9_social": ("T9_READER_CHECKLIST_MODE", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE"),
 }
 # Gateway switches that change which model answers or how it is asked, on every writer path.
 GATEWAY_FLAGS = ("LLM_STAGE_PARAMS", "LLM_ROUTE_AWS_FIRST", "LLM_DEPLOYMENT_ROUTING", "LLM_LEGACY_ALIASES",
                  "LLM_LEGACY_ACC2_NATIVE", "LLM_TOKEN_FLOOR", "LLM_BUDGET_RETRY", "LLM_CONVERSE_CACHE_POINT")
 # Writing-memory switches that change what the writer or its gates do (l0.L0_ENFORCE_ENV: the L0 lexicon blocks).
 MEMORY_FLAGS = ("WRITING_MEMORY_L0_ENFORCE",)
-# Per-class families (seed_align modes.py / adjudicate.py read <PREFIX>_<CLASS>): every env var with the prefix.
-MODE_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {"t9_blog": ("T10_SA_MODE_", "T10_ADJ_MODE_"),
-                                                  "t9_social": ("T10_SA_MODE_", "T10_ADJ_MODE_")}
+# Per-class families (a reader of <PREFIX>_<CLASS>): every env var with the prefix. Empty since CIS 428: the seed-align
+# and adjudicator class modes (T10_SA_MODE_<CLASS> / T10_ADJ_MODE_<CLASS>) are settings, their env overrides retired.
+MODE_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {}
 # Env constants of writer modules that do NOT change a stored output (budgets, breakers, capacity, the learning loop's
 # own schedule, batch submission, the record-only reply cassette of the S271 W0 cassette lane): read by the guard
 # test only.

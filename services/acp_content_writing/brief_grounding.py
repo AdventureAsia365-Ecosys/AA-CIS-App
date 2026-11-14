@@ -26,22 +26,21 @@ reader and its shape: section, FAQ, lead, reader, family, day …). A count in a
 A dropped clause that carried a part label ("Lead with: …") hands the label to the next kept clause of its sentence.
 When nothing is left, the brief is ``FALLBACK_BRIEF`` (the same line channel_spec uses).
 
-Mode switch: api/worker env ``T9_BRIEF_GROUNDING_MODE`` = ``r9`` turns it on; unset (default) or any other value is
-``off`` and the writer prompt is byte for byte the round-6 prompt (test_aa790_round9_brief_grounding pins a 192-prompt
-fixture hash). The A/B harness passes the mode explicitly (``build_user_prompt(brief_grounding=...)``), so both arms
-run on one deployed image with the env unset. Only the brief the writer READS changes: the stored angle, the angle
-picker, the AI-tell context (``ai_tells.angle_text``) and the brief-copy check (``hygiene.brief_phrases``) still see
-the full brief, so a writer that copies a dropped clause is still caught.
+Mode switch: the setting ``cis.quality_modes.t9_brief_grounding`` (Platform › Settings; its env override retired by
+CIS 428) = ``r9`` turns it on; the default or any other value is ``off`` and the writer prompt is byte for byte the
+round-6 prompt (test_aa790_round9_brief_grounding pins a 192-prompt fixture hash). The A/B harness passes the mode
+explicitly (``build_user_prompt(brief_grounding=...)``), so both arms run on one deployed image whatever the setting.
+Only the brief the writer READS changes: the stored angle, the angle picker, the AI-tell context
+(``ai_tells.angle_text``) and the brief-copy check (``hygiene.brief_phrases``) still see the full brief, so a writer
+that copies a dropped clause is still caught.
 """
 from __future__ import annotations
 
-import os
 import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import _STOP, _forms, fold, source_forms
 
-MODE_ENV = "T9_BRIEF_GROUNDING_MODE"
 MODE_OFF = "off"
 MODE_R9 = "r9"
 MODES = (MODE_OFF, MODE_R9)
@@ -93,7 +92,7 @@ _THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}\b)")  # '1,283' is one number, '20
 
 def brief_grounding_mode(value: Optional[str] = None) -> str:
     """The mode: `value` when given (the A/B harness), else the setting cis.quality_modes.t9_brief_grounding (S279 L2;
-    the env var stays its emergency override for one release). Only 'r9' turns round 9 on; anything else is 'off'."""
+    its env override retired by CIS 428). Only 'r9' turns round 9 on; anything else is 'off'."""
     if value is None:
         from services.quality import settings_keys
         from shared import settings
@@ -221,5 +220,5 @@ def ground_angle(angle: dict, source: Optional[str], mode: Optional[str] = None)
 
 
 __all__ = ["BRIEF_WORDS", "DROP_ANY", "DROP_MIN", "DROP_SHARE", "FALLBACK_BRIEF", "FUNCTION_WORDS", "MODES",
-           "MODE_ENV", "MODE_OFF", "MODE_R9", "Source", "brief_grounding_mode", "ground_angle", "ground_brief",
+           "MODE_OFF", "MODE_R9", "Source", "brief_grounding_mode", "ground_angle", "ground_brief",
            "is_grounded", "unsupported_words"]

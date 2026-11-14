@@ -33,9 +33,9 @@ Switch (S280, CIS 418): the setting `cis.t9.blog_length_extend` (off | on, Platf
 evidence-gated), read per piece for the piece's tenant (`mode(tenant_id)`): the tenant's value, else the platform
 value, else the default off. A tenant value runs the paid trial on one audit tenant, through the normal tenant studio
 flow (whose routes never pass a job's trial_flags); the platform value turns it on for everyone. Resolution order: a
-job's trial flag `T9_LENGTH_EXTEND` (quality.trial_flags, one audit-tenant job) first, then the settings reader, whose
-own first step is the env var `T9_LENGTH_EXTEND` (the old switch, now the definition's emergency override for one
-release; scripts/aa1077/extend_trial.py sets it in its own process). Off = main's full rewrite, byte for byte (lesson
+job's trial flag `T9_LENGTH_EXTEND` (quality.trial_flags, one audit-tenant job; scripts/aa1077/extend_trial.py sets
+it in its own process) first, then the settings reader (the old env var of the same name is no override any more: CIS
+428 retired it). Off = main's full rewrite, byte for byte (lesson
 S272: a change of the writing loop that has not had its measured trial ships behind a switch whose default is main).
 
 After the normalizer (S280, `length_recheck.lengthen_after_normalizer`): a loop-approved blog a MANDATORY normalizer cut
@@ -57,7 +57,7 @@ from services.quality import registry as qr
 from services.quality import settings_keys, trial_flags
 from shared import settings
 
-EXTEND_ENV = "T9_LENGTH_EXTEND"
+EXTEND_FLAG = "T9_LENGTH_EXTEND"   # the trial flag of a t9_write job (quality.trial_flags), never an env var
 EXTEND_ON, EXTEND_OFF = "on", "off"
 EXTEND_MODE = "length_extend"
 SECTIONS_MAX = 3            # body sections that get a paragraph
@@ -74,12 +74,12 @@ EXTEND_SETTING = settings_keys.T9_BLOG_LENGTH_EXTEND   # "cis.t9.blog_length_ext
 
 def mode(tenant_id: Optional[str] = None) -> str:
     """'on' / 'off' for a piece of `tenant_id`: the running job's trial flag when it set one (an audit-tenant trial
-    job), else the setting cis.t9.blog_length_extend for the tenant (env override T9_LENGTH_EXTEND, then the tenant's
-    value, then the platform value, then the default off; shared.settings, never the database). Anything but 'on' is
+    job), else the setting cis.t9.blog_length_extend for the tenant (the tenant's value, then the platform value, then
+    the default off; shared.settings, never the database). Anything but 'on' is
     off."""
     active = trial_flags.active()
-    if EXTEND_ENV in active:
-        raw = active[EXTEND_ENV]
+    if EXTEND_FLAG in active:
+        raw = active[EXTEND_FLAG]
     else:
         raw = settings.get(EXTEND_SETTING, str(tenant_id) if tenant_id else None)
     return EXTEND_ON if str(raw or "").strip().lower() == EXTEND_ON else EXTEND_OFF
@@ -296,5 +296,5 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
     return cur, float(cost or 0.0), entry
 
 
-__all__ = ["EXTEND_ENV", "EXTEND_SETTING", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX",
+__all__ = ["EXTEND_FLAG", "EXTEND_SETTING", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX",
            "mode", "mode_for", "pin", "record", "sections", "plan_for", "plan_after_repair", "extend"]

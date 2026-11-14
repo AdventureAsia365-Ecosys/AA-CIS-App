@@ -2094,32 +2094,29 @@ def gate_faq_contract(content_text: str) -> GateResultLite:
 # F12_scope warns for one checkpoint round (S234 plan C4); flip to True once the replay and the
 # live checkpoint show 0 false positives. It is repairable either way: a body violation quotes
 # its sentence, so sentence_repair can fix it once it blocks. AA-788 — the code default stays False; the
-# promotion is the per-check mode below (`T10_F12_SCOPE_MODE=block`), so it is switched on and off without a deploy.
+# promotion is the per-check mode below (setting t10_f12_scope = block), so it is switched on and off without a deploy.
 F12_SCOPE_BLOCKING = False
 
 
 # ---------------------------------------------------------------- AA-788: per-check modes of the promoted checks
 
-# AA-788 (Report 12 #4, S234 panel) promotes three advisory checks. Each has its own mode (worker task-def env, read
-# per call, like T10_SA_MODE). An unset or unknown value is the code default — today's behaviour, so the ledger is byte
-# for byte what it was until a mode is set (S246 standing rule: no new blocking gate before the freeze ends, ~19/11,
-# without the tech lead's go):
-# - T10_F12_SCOPE_MODE       warn (default) | block  — a BODY finding blocks: one sentence repair, held when it is
+# AA-788 (Report 12 #4, S234 panel) promotes three advisory checks. Each has its own mode (a setting,
+# cis.quality_modes.<mode>, read per call; S279 L2, its env override retired by CIS 428). An unknown value is the
+# code default — today's behaviour, so the ledger is byte for byte what it was until a mode is set (S246 standing
+# rule: no new blocking gate before the freeze ends, ~19/11, without the tech lead's go):
+# - t10_f12_scope           warn (default) | block  — a BODY finding blocks: one sentence repair, held when it is
 #                            left after the repair; a title / meta-only finding stays a warning (the SEO fit owns it
 #                            and refuses such a value, like F17 / F18).
-# - T10_F9_BRAND_STYLE_MODE  warn (default) | repair — on attempt 1 only, a flagged phrase that sits in a body sentence
+# - t10_f9_brand_style      warn (default) | repair — on attempt 1 only, a flagged phrase that sits in a body sentence
 #                            blocks for one sentence repair (t9_repair); it never holds a piece (STYLE_ONLY_GATES).
-# - T10_F14_FLOOR_MODE       repair (default, AA-780) | warn — the kill switch of the attempt-1 under-floor rewrite.
+# - t10_f14_floor           repair (default, AA-780) | warn — the kill switch of the attempt-1 under-floor rewrite.
 WARN_MODE, BLOCK_MODE, REPAIR_MODE = "warn", "block", "repair"
-F12_SCOPE_MODE_ENV = "T10_F12_SCOPE_MODE"
-F9_BRAND_STYLE_MODE_ENV = "T10_F9_BRAND_STYLE_MODE"
-F14_FLOOR_MODE_ENV = "T10_F14_FLOOR_MODE"
 # The decision log line of a promoted check that failed while its mode is not the default (gate, mode, blocking, why).
 PROMOTION_LOG_EVENT = "t10_promoted_check"
 
 
 def _check_mode(mode_key: str, allowed: tuple[str, ...], default: str) -> str:
-    from services.quality import settings_keys  # S279 L2: a setting (the *_MODE_ENV var its override for one release)
+    from services.quality import settings_keys  # S279 L2: a setting (no env override since CIS 428)
     from shared import settings
     raw = str(settings.get(settings_keys.MODES[mode_key]) or "").strip().lower()
     return raw if raw in allowed else default
@@ -2925,7 +2922,7 @@ def run_quality_gates(
         # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
         # channel without a spec (every channel but LinkedIn).
         # AA-780 — under the floor blocks on attempt 1 only (`stock_blocking`), for one full rewrite.
-        # AA-788 — T10_F14_FLOOR_MODE=warn is its kill switch (f14_floor_mode).
+        # AA-788 — setting t10_f14_floor = warn is its kill switch (f14_floor_mode).
         gate_social_shape(content_text, spec, floor_blocking=f14_floor_mode() == REPAIR_MODE and stock_blocking),
         # F15_voice (the source check, deduplicated above) and the warn-only checks (F15_voice_warn), kept apart
         # so a stock repair never rewrites them; AA-924 stores both in one F15_voice entry.
@@ -2948,7 +2945,8 @@ def run_quality_gates(
                                     voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
                                     **seo_kw)
     # AA-900 W0 (ADR 0020 D1/D3/D4/D15) — the interim F9 policy: F9_cta_fact holds only on a quoted, unsupported trip
-    # activity / service / time / view; every other F9 class warns (f9_policy; T10_F9_POLICY_MODE=legacy rolls back).
+    # activity / service / time / view; every other F9 class warns (f9_policy; setting t10_f9_policy = legacy rolls
+    # back).
     # A replay's stored verdicts go through it too, so the replay shows the declared diff.
     f9_lexicon = hygiene_ctx.lexicon if hygiene_ctx is not None else None
     sources = [f9_policy.apply_policy(g, f9_lexicon) if g.get("gate") == qr.F9_CTA_FACT else g for g in sources]
@@ -3013,7 +3011,7 @@ __all__ = [
     "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",
     "faq_subject_tokens", "faq_answer_problem", "drop_subjectless_faq", "paa_for_scope", "PAA_MAX_QUESTIONS",
     "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
-    "WARN_MODE", "BLOCK_MODE", "REPAIR_MODE", "F12_SCOPE_MODE_ENV", "F9_BRAND_STYLE_MODE_ENV", "F14_FLOOR_MODE_ENV",
+    "WARN_MODE", "BLOCK_MODE", "REPAIR_MODE",
     "PROMOTION_LOG_EVENT", "f12_scope_mode", "f9_brand_style_mode", "f14_floor_mode", "brand_style_sentences",
     "promote_brand_style", "F9_STYLE_PROBLEM",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",

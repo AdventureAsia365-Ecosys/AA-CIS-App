@@ -26,8 +26,7 @@ flat setting > 0), so a deployment without it is unchanged.
 services/quality/thresholds.yaml; evidence required on a change), read per call; 0 = no sizing (the flat floor alone).
 The default is one written word per seed word at the measured 5.8 characters per word (the no-invention writer cannot
 write more than its material); `scripts/aa1077/seed_floor_replay.py` measures the ratio on stored blog pieces ($0,
-read-only) and prints the value to propose (S279: 3.364). Env `T7_BLOG_CHARS_PER_SEED_WORD` stays an emergency
-override for one release.
+read-only) and prints the value to propose (S279: 3.364). Its env override was retired by CIS 428.
 """
 from __future__ import annotations
 
@@ -39,7 +38,6 @@ from services.acp_content_writing import length_contract
 from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
 from shared import settings
 
-RATIO_ENV = "T7_BLOG_CHARS_PER_SEED_WORD"        # the setting's emergency env override (one release)
 MIN_SEED_SETTING = "cis.t7.blog_min_seed_words"
 RATIO_SETTING = "cis.t7.blog_chars_per_seed_word"
 # The compiled default (the migration seed): read at import so a missing key fails the build, not a slate job.
@@ -149,7 +147,7 @@ async def blog_seed_words(conn, tenant_id, atom_id: str, tour_id: Optional[str],
     return words
 
 
-__all__ = ["DEFAULT_CHARS_PER_SEED_WORD", "MIN_SEED_SETTING", "RATIO_ENV", "RATIO_SETTING",
+__all__ = ["DEFAULT_CHARS_PER_SEED_WORD", "MIN_SEED_SETTING", "RATIO_SETTING",
            "SKIP_BELOW_LENGTH_FLOOR", "SKIP_BELOW_MIN_SEED", "SKIP_REASONS", "SKIP_THIN_WALK", "WORD_RE",
            "blog_seed_words", "chars_per_seed_word", "min_seed_words", "seed_floor", "seed_words",
            "sized_min_seed_words", "skip_reason", "walk_atoms"]

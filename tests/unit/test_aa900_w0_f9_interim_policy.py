@@ -115,9 +115,9 @@ def test_legacy_mode_and_idempotence():
 
 def test_env_switch(monkeypatch):
     assert fp.policy_mode() == fp.INTERIM_MODE
-    monkeypatch.setenv(fp.F9_POLICY_MODE_ENV, "legacy")
+    monkeypatch.setenv("T10_F9_POLICY_MODE", "legacy")
     assert fp.policy_mode() == fp.LEGACY_MODE
-    monkeypatch.setenv(fp.F9_POLICY_MODE_ENV, "nonsense")
+    monkeypatch.setenv("T10_F9_POLICY_MODE", "nonsense")
     assert fp.policy_mode() == fp.INTERIM_MODE
 
 
@@ -162,7 +162,7 @@ def test_gate_stack_warns_on_place_background():
 
 
 def test_gate_stack_legacy_mode_blocks_on_background(monkeypatch):
-    monkeypatch.setenv(fp.F9_POLICY_MODE_ENV, "legacy")
+    monkeypatch.setenv("T10_F9_POLICY_MODE", "legacy")
     _, f9 = _gates(_verdict(("The old fort stands above the river and has guarded the valley for centuries.",
                              "the fort's age")))
     assert f9["blocking"] is True
@@ -173,3 +173,11 @@ def test_gate_stack_cta_only_warns():
                                         "failure_codes": ["CTA_NOT_REFLECTED"], "flagged_phrases": [],
                                         "broken_sentences": [], "notes": "", "unsupported_claims": []})})
     assert f9["blocking"] is False and f9["f9_policy"]["classes"] == {fp.CTA_NOT_REFLECTED: 1}
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

@@ -86,7 +86,7 @@ def test_the_lowest_ratio_short_piece_is_skipped_where_the_median_kept_it():
     assert {r["piece"][:2]: r["verdict"] for r in rp.verdicts(rp.subjects(lines), median_floor)["rows"]}["g1"] == "keep"
     s = rp.summarize(lines, 600, 5.8)
     # 4425 / 700 = 6.3214..., cut down to 3 decimals
-    assert s["recommended_env"]["T7_BLOG_CHARS_PER_SEED_WORD"] == s["measured"]["ratio"] == 6.321
+    assert s["recommended_setting"]["cis.t7.blog_chars_per_seed_word"] == s["measured"]["ratio"] == 6.321
     assert s["at_measured"]["short_skipped"] == s["at_measured"]["short_total"] == 3
     t = s["target"]["at_measured"]
     assert t["all_short_skipped"] is True and [r["piece"][:2] for r in t["rows"]] == ["g1"]
@@ -128,6 +128,6 @@ def test_verdicts_per_floor_count_short_and_approved_skips():
 def test_summary_recommends_the_measured_ratio():
     s = rp.summarize(_lines(), 600, 5.8)
     assert s["pieces"] == 4 and s["subjects"] == 4
-    assert s["recommended_env"]["T7_BLOG_CHARS_PER_SEED_WORD"] == s["measured"]["ratio"]
-    assert s["recommended_env"]["sized_min_seed_words"] == s["at_measured"]["floor"]["sized"] > 600
+    assert s["recommended_setting"]["cis.t7.blog_chars_per_seed_word"] == s["measured"]["ratio"]
+    assert s["recommended_setting"]["sized_min_seed_words"] == s["at_measured"]["floor"]["sized"] > 600
     assert "at_measured" not in rp.summarize([_lines()[3]], 600, 5.8)

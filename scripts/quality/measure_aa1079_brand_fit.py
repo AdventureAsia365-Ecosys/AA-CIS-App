@@ -209,10 +209,12 @@ def report_markdown(result: dict) -> str:
                 lines.append(f"- **{name} ({mode})**: `{d['status']}`, proposed threshold {d['proposed_threshold']}, "
                              f"keep {d['keep']}. {d['why']}")
     lines += ["", "Options:", "",
-              "- [ ] A. Keep T7 Debate rank only (`T7_DEBATE_MODE` unset) and the T2 brand-fit score report only; "
+              "- [ ] A. Keep T7 Debate rank only (setting `cis.quality_modes.t7_debate` = rank) and the T2 brand-fit "
+              "score report only; "
               "label more items (recommended unless an instrument above is `calibrated`).",
               "- [ ] B. Bring the Debate cut back at the proposed threshold of `t2_judge_brand_fit` "
-              "(`T7_DEBATE_MODE=cut`, `t7.brand_fit_cut` set to it, with its calibration record).",
+              "(setting `cis.quality_modes.t7_debate` = cut, `t7.brand_fit_cut` set to it, with its calibration "
+              "record).",
               "- [ ] C. Retire the brand-fit score from the stored quality score until a rubric change is measured.",
               ""]
     return "\n".join(lines)

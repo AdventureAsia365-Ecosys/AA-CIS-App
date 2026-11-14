@@ -227,7 +227,7 @@ async def test_propose_slate_reports_every_adopted_tour(conn, monkeypatch):
     # S279 thresholds L1: the Blog minimum seed is the setting cis.t7.blog_min_seed_words (600); served 0 here runs
     # this test with the floor off, as before (no env override since the S279 review)
     set_min_seed(monkeypatch, 0)
-    monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
+    monkeypatch.delenv("T7_BLOG_CHARS_PER_SEED_WORD", raising=False)
     w = await _world(conn)
     result = await _propose_on(conn, w.tenant)
     cov = result["blog_coverage"]
@@ -253,7 +253,7 @@ async def test_propose_slate_min_seed_moves_a_short_seed_off_blog(conn, monkeypa
     assert await _proposed(conn, w.tenant, "blog") == []
     assert "zz1081_e_a1" in await _proposed(conn, w.tenant, "email")   # still offered on a shorter Channel
     set_min_seed(monkeypatch, 5)
-    monkeypatch.setenv(blog_seed.RATIO_ENV, "0")                  # AA-1077 S279: the flat floor alone
+    monkeypatch.setenv("T7_BLOG_CHARS_PER_SEED_WORD", "0")                  # AA-1077 S279: the flat floor alone
     result = await _propose_on(conn, w.tenant)
     tour_a = next(t for t in result["blog_coverage"]["tours"] if t["tour_id"] == w.a)
     assert tour_a["topics"] == 2 and result["blog_coverage"]["short_seed"] == 0
@@ -267,7 +267,7 @@ async def test_propose_slate_length_sized_floor_skips_a_seed_the_flat_floor_lets
     (4,700 chars at the default 5.8 chars per seed word = 811 words) does not, and each skipped Subject says why."""
     w = await _world(conn)
     set_min_seed(monkeypatch, 5)
-    monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
+    monkeypatch.delenv("T7_BLOG_CHARS_PER_SEED_WORD", raising=False)
     result = await _propose_on(conn, w.tenant)
     cov = result["blog_coverage"]
     assert cov["min_seed_words"] == 811 and cov["seed_floor"]["flat"] == 5 and cov["seed_floor"]["sized"] == 811
@@ -311,3 +311,11 @@ async def test_the_seed_floor_replay_query_runs_on_the_schema(conn):
     from scripts.aa1077 import seed_floor_replay as rp
     rows = await conn.fetch(rp.PIECES_SQL, ["zz1081-no-such-tenant"], datetime(2026, 11, 1, tzinfo=timezone.utc))
     assert rows == []
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

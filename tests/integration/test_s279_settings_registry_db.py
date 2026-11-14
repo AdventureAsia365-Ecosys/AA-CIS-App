@@ -10,6 +10,7 @@ proposals).
 Needs CIS 407 (shared.setting_definition / setting_value). It ships in the migration-only PR before this code; until
 that PR is on the branch the module is skipped (it then runs on every CI round: the conftest replays 407).
 Invented values only; every test runs in one transaction that is rolled back."""
+import dataclasses
 import os
 import sys
 
@@ -314,7 +315,10 @@ async def test_the_last_change_is_an_approved_one_never_a_rejection(pool):
 async def test_a_tenant_value_is_refused_while_the_env_override_is_in_force(pool, monkeypatch):
     if not await pool.conn.fetchval("SELECT count(*) AS ok FROM shared.setting_definition WHERE key = $1", TENANT_KEY):
         pytest.skip("the tenant-scoped definition is not on this branch yet")
-    env = settings.definition(TENANT_KEY).env_override
+    # CIS 428 retired every env override; the mechanism stays, so an invented one-release override is laid on the key
+    env = "ZZ_TENANT_KEY_OVERRIDE"
+    monkeypatch.setitem(settings.READER._defs, TENANT_KEY,
+                        dataclasses.replace(settings.definition(TENANT_KEY), env_override=env))
     monkeypatch.setenv(env, "on")
     with pytest.raises(reg.SettingsError) as e:
         await reg.propose(pool, TENANT_KEY, value="on", reason=REASON, actor=A, base_version=0,

@@ -219,11 +219,14 @@ def test_the_auto_upgrade_score_is_a_threshold():
     assert registry.threshold("a1.auto_upgrade") == 8.5
 
 
-def test_the_env_override_still_wins_for_one_release(monkeypatch):
+def test_the_retired_env_override_no_longer_wins(monkeypatch):
+    """AA-1096 l5 (CIS 428): the one release is over; a stray env var changes nothing, the setting rules."""
     from services.acp_shared import debate
     monkeypatch.setenv("T7_DEBATE_MODE", "cut")
-    assert debate.debate_mode() == "cut"
-    assert settings.resolve("cis.quality_modes.t7_debate").source == "env"
+    assert debate.debate_mode() == "rank"
+    assert settings.resolve("cis.quality_modes.t7_debate").source == "default"
+    with serve({"cis.quality_modes.t7_debate": "cut"}):
+        assert debate.debate_mode() == "cut"
 
 
 # ── 3. evidence, admin only, bounds ──────────────────────────────────────────────────────────────────────────────

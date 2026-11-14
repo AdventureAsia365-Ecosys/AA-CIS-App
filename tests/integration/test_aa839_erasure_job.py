@@ -44,6 +44,15 @@ from shared.jobs.registry import JobContext, NonRetryable  # noqa: E402
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 APP_DSN = f"postgresql://cis_app:{CIS_APP_CI_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 ON = {ej.APPLY_FLAG: "true"}
+
+
+def _retention_zero(monkeypatch):
+    """The Dev drill's window: cis.erasure.tenant_retention_days = 0 as an approved value (CIS 428 retired the env
+    override ERASURE_TENANT_RETENTION_DAYS the job used to take)."""
+    from shared import settings
+    real = settings.READER.get
+    monkeypatch.setattr(settings.READER, "get",
+                        lambda key, tenant_id=None: 0 if key == ej.TENANT_RETENTION_SETTING else real(key, tenant_id))
 MIGRATION_244 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "244_x1_cis_app_runtime.sql")
 # Registry tables the replayed test database may lack (migrations 001 / 020 and the acp_deliver page table are
 # skipped or fail there), plus the legacy entries registered "absent on Dev". Missing is fine (nothing to erase);
@@ -485,7 +494,7 @@ async def test_tenant_dry_run_lists_s3_keys_outside_the_tenant_prefixes(pool):
 
 
 @pytest.mark.asyncio
-async def test_tenant_apply_refusals(pool):
+async def test_tenant_apply_refusals(pool, monkeypatch):
     admin, _ = pool
     tid = await _tenant(pool, offboarded_days=3)
     await _seed(pool, tid, f"adhoc_aa839_{uuid.uuid4().hex[:8]}")
@@ -496,7 +505,8 @@ async def test_tenant_apply_refusals(pool):
         await _run(pool, apply)                                   # flag off (the default everywhere)
     with pytest.raises(NonRetryable, match="less than 30 days"):
         await _run(pool, apply, env=ON)                           # offboarded 3 days ago
-    env = dict(ON, ERASURE_TENANT_RETENTION_DAYS="0")
+    env = ON
+    _retention_zero(monkeypatch)
     extra = await admin.fetchval("INSERT INTO shared.unmapped_market_requests (tenant_id, country_code) "
                                  "VALUES ($1::uuid, 'ZY') RETURNING id", tid)   # counts change after the approval
     with pytest.raises(NonRetryable, match="counts changed"):
@@ -778,12 +788,12 @@ async def test_same_counts_for_two_tenants_give_two_fingerprints(pool, monkeypat
     with pytest.raises(NonRetryable, match="approved_fingerprint differs"):
         await _run(pool, {"subject": "tenant", "tenant": b, "mode": "apply", "dry_run_job_id": dry_b_id,
                           "approved_fingerprint": dry_a["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
-                   env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
+                   env=ON)
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", b) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_v1_dry_run_is_refused_and_not_claimed(pool):
+async def test_a_v1_dry_run_is_refused_and_not_claimed(pool, monkeypatch):
     """AA-839 review: a DRY RUN made before fingerprint v2 (no fingerprint_version) cannot be applied, and the
     refusal happens before the claim, so the DRY RUN row carries no used_by_apply."""
     admin, _ = pool
@@ -793,7 +803,7 @@ async def test_a_v1_dry_run_is_refused_and_not_claimed(pool):
     with pytest.raises(NonRetryable, match="predates the subject-bound fingerprint"):
         await _run(pool, {"subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": dry_id,
                           "approved_fingerprint": dry["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
-                   env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
+                   env=ON)
     assert await admin.fetchval("SELECT result ? 'used_by_apply' FROM shared.job WHERE id = $1::uuid",
                                 dry_id) is False
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", tid) == 1

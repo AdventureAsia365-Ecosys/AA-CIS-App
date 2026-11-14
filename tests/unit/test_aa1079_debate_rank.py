@@ -264,3 +264,11 @@ def test_replay_needs_a_tenant_or_all_cached():
     with pytest.raises(SystemExit):
         replay.parse_args([])
     assert replay.parse_args(["--all-cached"]).all_cached is True
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

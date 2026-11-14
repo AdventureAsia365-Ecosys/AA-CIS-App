@@ -132,11 +132,11 @@ def honest_violation(k: int, prompt: str) -> dict:
 @pytest.fixture
 def env(monkeypatch):
     for c in adj.CLASSES:
-        monkeypatch.delenv(f"{adj.MODE_ENV}_{c.upper()}", raising=False)
-    monkeypatch.delenv(adj.MODE_ENV, raising=False)
+        monkeypatch.delenv(f"{"T10_ADJ_MODE"}_{c.upper()}", raising=False)
+    monkeypatch.delenv("T10_ADJ_MODE", raising=False)
     for c in sa.ALL_CLASSES:
-        monkeypatch.delenv(f"{modes.MODE_ENV}_{c.upper()}", raising=False)
-    monkeypatch.delenv(modes.MODE_ENV, raising=False)
+        monkeypatch.delenv(f"{"T10_SA_MODE"}_{c.upper()}", raising=False)
+    monkeypatch.delenv("T10_SA_MODE", raising=False)
     return monkeypatch
 
 
@@ -157,20 +157,20 @@ def test_every_class_off_by_default(env):
 
 @pytest.mark.parametrize("value", ["hold", "HOLD", "on", "1", "warn", ""])
 def test_anything_but_off_shadow_repair_reads_as_off(env, value):
-    env.setenv(adj.MODE_ENV, value)
+    env.setenv("T10_ADJ_MODE", value)
     assert adj.active_modes() == {}
 
 
 def test_global_env_and_per_class_override(env):
-    env.setenv(adj.MODE_ENV, "shadow")
-    env.setenv(f"{adj.MODE_ENV}_SCOPELESS_SUPERLATIVE", "repair")
-    env.setenv(f"{adj.MODE_ENV}_FAQ_NON_ANSWER", "off")
+    env.setenv("T10_ADJ_MODE", "shadow")
+    env.setenv(f"{"T10_ADJ_MODE"}_SCOPELESS_SUPERLATIVE", "repair")
+    env.setenv(f"{"T10_ADJ_MODE"}_FAQ_NON_ANSWER", "off")
     assert adj.active_modes() == {adj.NAMING: "shadow", adj.REPEAT: "shadow", adj.HYPE: "repair"}
 
 
 def test_classes_sit_under_existing_gates_and_tier1_env_does_not_switch_tier2(env):
     assert set(adj.CLASS_GATE.values()) <= {qr.F13_LEAK, qr.F13_REPEAT, qr.F18_RARITY}
-    env.setenv(modes.MODE_ENV, "repair")
+    env.setenv("T10_SA_MODE", "repair")
     assert adj.active_modes() == {}
 
 
@@ -245,8 +245,8 @@ def test_the_only_sentence_of_an_faq_answer_is_adjudicated_but_never_goes_live(e
     trig = {t.cls: t for t in adj.find_triggers(lone, SEED, t1_ok().record)}
     assert trig[adj.FAQ].sentence == FAQ_S and trig[adj.FAQ].cuttable is False
     assert all(t.cuttable for c, t in trig.items() if c != adj.FAQ)
-    env.setenv(adj.MODE_ENV, "shadow")
-    env.setenv(f"{adj.MODE_ENV}_FAQ_NON_ANSWER", "repair")  # only the lone FAQ sentence is in repair mode
+    env.setenv("T10_ADJ_MODE", "shadow")
+    env.setenv(f"{"T10_ADJ_MODE"}_FAQ_NON_ANSWER", "repair")  # only the lone FAQ sentence is in repair mode
     out = adj.run(lone, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED), client=FakeClient(honest_violation))
     faq = next(f for f in out.record["findings"] if f["cls"] == adj.FAQ)
     assert faq["mode"] == "repair" and faq["live_blocked"] == "only_sentence_of_faq_answer"
@@ -317,7 +317,7 @@ def test_worst_case_model_row_on_clean_sentences_never_becomes_a_finding(log_row
                         '"action": "cut"}]}'), "error"),  # a missing item is an unusable reply
 ])
 def test_a_model_error_or_unusable_reply_changes_nothing(env, log_rows, client, status):
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     out = adj.run(PIECE, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED), client=client)
     assert out.record["status"] == status and out.live == {} and out.record["findings"] == []
     if isinstance(client.raises, Exception):
@@ -327,7 +327,7 @@ def test_a_model_error_or_unusable_reply_changes_nothing(env, log_rows, client, 
 
 
 def test_the_deadline_changes_nothing(env, log_rows, monkeypatch):
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     monkeypatch.setattr(adj, "TIMEOUT_S", 0.05)
     out = adj.run(PIECE, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED),
                   client=FakeClient(raises=RuntimeError("late"), sleep=0.5))  # finishes after the test, logs nothing
@@ -335,7 +335,7 @@ def test_the_deadline_changes_nothing(env, log_rows, monkeypatch):
 
 
 def test_tier1_not_ok_means_no_call(env, log_rows):
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     client = FakeClient(honest_violation)
     for tier1 in (None, modes.SeedAlignRun(record={"status": "nlp_unavailable", "candidates": []})):
         out = adj.run(PIECE, tier1=tier1, trip_ctx=tf.TripFactContext(seed=SEED), client=client)
@@ -346,7 +346,7 @@ def test_tier1_not_ok_means_no_call(env, log_rows):
 # ---------------------------------------------------------------- shadow / repair (module level)
 
 def test_shadow_records_findings_and_never_goes_live(env, log_rows):
-    env.setenv(adj.MODE_ENV, "shadow")
+    env.setenv("T10_ADJ_MODE", "shadow")
     client = FakeClient(honest_violation)
     out = adj.run(PIECE, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED), client=client)
     assert out.live == {} and "live" not in out.record
@@ -356,7 +356,7 @@ def test_shadow_records_findings_and_never_goes_live(env, log_rows):
 
 
 def test_repair_puts_at_most_one_sentence_live_the_first_in_text_order(env, log_rows):
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     out = adj.run(PIECE, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED), client=FakeClient(honest_violation))
     live = [v for vs in out.live.values() for v in vs]
     assert len(live) == 1 and len(out.record["findings"]) == 4
@@ -367,14 +367,14 @@ def test_repair_puts_at_most_one_sentence_live_the_first_in_text_order(env, log_
 
 
 def test_repair_only_for_classes_in_repair_mode(env, log_rows):
-    env.setenv(adj.MODE_ENV, "shadow")
-    env.setenv(f"{adj.MODE_ENV}_SCOPELESS_SUPERLATIVE", "repair")
+    env.setenv("T10_ADJ_MODE", "shadow")
+    env.setenv(f"{"T10_ADJ_MODE"}_SCOPELESS_SUPERLATIVE", "repair")
     out = adj.run(PIECE, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED), client=FakeClient(honest_violation))
     assert out.live == {qr.F18_RARITY: [adj.finding_text(adj.HYPE, HYPE_S)]}
 
 
 def test_at_most_max_items_are_sent_in_one_call(env, log_rows):
-    env.setenv(adj.MODE_ENV, "shadow")
+    env.setenv("T10_ADJ_MODE", "shadow")
     many = PIECE.replace(HYPE_S, " ".join(f"Few places can match the calm of bay {i}." for i in range(9)))
     client = FakeClient(honest_violation)
     out = adj.run(many, tier1=t1_ok(), trip_ctx=tf.TripFactContext(seed=SEED), client=client)
@@ -385,8 +385,8 @@ def test_at_most_max_items_are_sent_in_one_call(env, log_rows):
 
 @pytest.mark.parametrize("cls", adj.CLASSES)
 def test_a_tier2_finding_never_holds_whatever_the_env(env, monkeypatch, cls):
-    env.setenv(modes.MODE_ENV, "hold")
-    env.setenv(adj.MODE_ENV, "hold")
+    env.setenv("T10_SA_MODE", "hold")
+    env.setenv("T10_ADJ_MODE", "hold")
     monkeypatch.setattr(modes, "HOLD_PROMOTED", frozenset(sa.ALL_CLASSES))  # even with every tier-1 class promoted
     g = {"gate": adj.CLASS_GATE[cls], "passed": False, "blocking": True, "repairable": True,
          "violations": [adj.finding_text(cls, "Some sentence.")]}
@@ -507,7 +507,7 @@ def test_off_makes_zero_calls_and_leaves_the_outcome_as_tier1_left_it(gate_env):
 def test_shadow_records_under_seed_align_and_never_changes_the_ledger(gate_env):
     env, client = gate_env
     off = _gates()
-    env.setenv(adj.MODE_ENV, "shadow")
+    env.setenv("T10_ADJ_MODE", "shadow")
     shadow = _gates()
     assert len(client.requests) == 1
     assert shadow["gate_ledger"] == off["gate_ledger"] and shadow["flags"] == off["flags"]
@@ -520,7 +520,7 @@ def test_shadow_records_under_seed_align_and_never_changes_the_ledger(gate_env):
 def test_repair_adds_one_finding_and_never_changes_what_holds(gate_env):
     env, _client = gate_env
     off = _gates()
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     rep = _gates()
     found = _t2(rep["gate_ledger"])
     assert found == [adj.finding_text(adj.NAMING, NAMING_S)]
@@ -534,7 +534,7 @@ def test_repair_adds_one_finding_and_never_changes_what_holds(gate_env):
 def test_model_error_inside_the_gates_leaves_the_ledger_unchanged(gate_env, monkeypatch):
     env, _client = gate_env
     off = _gates()
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     monkeypatch.setattr(adj, "_default_client", lambda: FakeClient(raises=RuntimeError("boom")))
     out = _gates()
     assert out["gate_ledger"] == off["gate_ledger"] and out["seed_align"]["tier2"]["status"] == "error"
@@ -542,7 +542,7 @@ def test_model_error_inside_the_gates_leaves_the_ledger_unchanged(gate_env, monk
 
 def test_a_replay_calls_nothing(gate_env):
     env, client = gate_env
-    env.setenv(adj.MODE_ENV, "repair")
+    env.setenv("T10_ADJ_MODE", "repair")
     out = _gates(f9_results=[])
     assert client.requests == [] and out["seed_align"]["tier2"]["status"] == "replay" and _t2(out["gate_ledger"]) == []
 
@@ -612,3 +612,11 @@ def test_runner_refuses_an_unpriced_model(tmp_path):
     cal = _runner()
     with pytest.raises(ValueError):
         cal.calibrate([], [str(tmp_path / "o.jsonl")], client=FakeClient(), model="sonnet")
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

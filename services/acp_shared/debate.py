@@ -21,11 +21,11 @@ signal is measurable or a judgement call:
 
 **Rank only until calibrated (AA-1079, S277).** The AA-741 phase 3 audit (root
 `docs/audits/2026-11-10-S276-aa741-phase3/` §4.3) found Debate flagging 499 of 502 free candidates: the
-`max_cut_fraction()` cap, not the judgement, decided what was dropped. `debate_mode()` (env `T7_DEBATE_MODE`,
-`rank` when unset) now keeps every candidate: the flags ride on the Candidate (`debate_flags`,
-`debate_severity`), `_choose_slate()` orders unflagged candidates before flagged ones (rank-sum order inside each
-group) and the `t7_slate` job result records them (`debate_report()`). `cut` is the pre-AA-1079 behaviour, kept
-for the day the brand-fit judge is calibrated (AA-1079 part 2).
+`max_cut_fraction()` cap, not the judgement, decided what was dropped. `debate_mode()` (setting
+`cis.quality_modes.t7_debate`, `rank` by default) now keeps every candidate: the flags ride on the Candidate
+(`debate_flags`, `debate_severity`), `_choose_slate()` orders unflagged candidates before flagged ones (rank-sum
+order inside each group) and the `t7_slate` job result records them (`debate_report()`). `cut` is the pre-AA-1079
+behaviour, kept for the day the brand-fit judge is calibrated (AA-1079 part 2).
 
 **Advisory, never able to empty a Channel's list** — mirrors the origin's own safety rule
 ("any failure/malformed ruling and the rules-based list stands unchanged... Debate must never
@@ -69,9 +69,8 @@ logger = structlog.get_logger()
 def max_cut_fraction() -> float:
     return float(_settings.get(_keys.T7_DEBATE_MAX_CUT_FRACTION))
 
-# AA-1079 — what Debate does with its flags. `rank` (the default, also when the env var is unset or unknown): no
+# AA-1079 — what Debate does with its flags. `rank` (the default, also for an unknown value): no
 # candidate is dropped, flagged ones are ordered after unflagged ones. `cut`: the AA-631 cut under the cap above.
-DEBATE_MODE_ENV = "T7_DEBATE_MODE"
 DEBATE_MODE_RANK = "rank"
 DEBATE_MODE_CUT = "cut"
 DEBATE_MODES = (DEBATE_MODE_RANK, DEBATE_MODE_CUT)
@@ -105,8 +104,8 @@ def debate_concurrency() -> int:
 
 
 def debate_mode() -> str:
-    """`rank` unless the setting cis.quality_modes.t7_debate says `cut` (S279 L2; the env var `T7_DEBATE_MODE` stays
-    its emergency override for one release). Anything else is rank: the safe side."""
+    """`rank` unless the setting cis.quality_modes.t7_debate says `cut` (S279 L2; its env override retired by
+    CIS 428). Anything else is rank: the safe side."""
     raw = _settings.get(_keys.MODES["t7_debate"])
     return raw if raw in DEBATE_MODES else DEBATE_MODE_RANK
 

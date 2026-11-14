@@ -11,6 +11,12 @@ AA-1096 l23 (CIS 416): the operator's guide of a key and its plain label live be
 the existing rows). Applied in file order after the seed rows of the same file; a guide row of a key no earlier file
 seeds fails the generator (the migration's post-check refuses it on apply too).
 
+AA-1096 l5 (CIS 428): a later file changes some fields of existing keys between ``-- settings-edit:begin`` and
+``-- settings-edit:end``, one JSON array of ``{"key", <field>: <value>, ...}`` inside ``$edit$ … $edit$`` (an UPDATE of
+the existing rows; CIS 428 retires the one-release env overrides: ``env_override`` null, the description and guide
+without the override sentence). Applied in file order after the seed and guide rows of the same file; a field outside
+the definition's fields, or a key no earlier file seeds, fails the generator.
+
 The reader (shared/settings) serves these defaults when the database cannot be read, and the admin page reads labels and
 guides from them, so they must equal the migrations: ``--check`` exits 1 when the committed file differs
 (tests/unit/test_s279_settings_seed_parity.py runs it in CI).
@@ -31,6 +37,7 @@ MIGRATIONS = ROOT / "api" / "migrations"
 OUT = ROOT / "shared" / "settings" / "compiled_defaults.json"
 BLOCK_RE = re.compile(r"--\s*settings-seed:begin.*?\$seed\$(.*?)\$seed\$.*?--\s*settings-seed:end", re.S)
 GUIDE_RE = re.compile(r"--\s*settings-guide:begin.*?\$guide\$(.*?)\$guide\$.*?--\s*settings-guide:end", re.S)
+EDIT_RE = re.compile(r"--\s*settings-edit:begin.*?\$edit\$(.*?)\$edit\$.*?--\s*settings-edit:end", re.S)
 FILE_RE = re.compile(r"^(\d{3})_.*\.sql$")
 FIELDS = ("key", "app", "area", "label", "description", "value_type", "unit", "min_value", "max_value",
           "allowed_values", "default_value", "scope_kind", "impact", "approval", "evidence_required", "env_override",
@@ -45,8 +52,8 @@ def seed_rows(migrations: Path = MIGRATIONS) -> tuple[list[dict], list[str]]:
     sources = []
     for path in files:
         text = path.read_text(encoding="utf-8")
-        blocks, guides = BLOCK_RE.findall(text), GUIDE_RE.findall(text)
-        if not blocks and not guides:
+        blocks, guides, edits = BLOCK_RE.findall(text), GUIDE_RE.findall(text), EDIT_RE.findall(text)
+        if not blocks and not guides and not edits:
             continue
         sources.append(path.name)
         for block in blocks:
@@ -55,6 +62,9 @@ def seed_rows(migrations: Path = MIGRATIONS) -> tuple[list[dict], list[str]]:
         for block in guides:
             for row in json.loads(block):
                 _guide(rows, row, path.name)
+        for block in edits:
+            for row in json.loads(block):
+                _edit(rows, row, path.name)
     return [rows[k] for k in sorted(rows)], sources
 
 
@@ -74,6 +84,18 @@ def _guide(rows: dict[str, dict], row: dict, source: str) -> None:
     if not isinstance(row.get("label"), str) or not isinstance(row.get("guide"), dict):
         raise SystemExit(f"{source}: guide row {key} needs a label (text) and a guide (object)")
     rows[key] = {**rows[key], "label": row["label"], "guide": row["guide"]}
+
+
+def _edit(rows: dict[str, dict], row: dict, source: str) -> None:
+    key = row.get("key")
+    if key not in rows:
+        raise SystemExit(f"{source}: edit row {key} names no seeded key")
+    fields = {f: v for f, v in row.items() if f != "key"}
+    unknown = sorted(set(fields) - set(FIELDS) - set(OPTIONAL) - {"app"}) + (["app"] if "app" in fields else [])
+    if not fields or unknown:
+        raise SystemExit(f"{source}: edit row {key} changes {unknown or 'nothing'} (only definition fields, never key "
+                         "or app)")
+    rows[key] = {**rows[key], **fields}
 
 
 def render(migrations: Path = MIGRATIONS) -> str:

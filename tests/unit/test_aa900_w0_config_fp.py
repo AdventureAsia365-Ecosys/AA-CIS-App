@@ -97,14 +97,17 @@ def test_an_unrelated_stage_does_not_move_config_fp():
     assert _fp(settings={"order_mode": "aws_first", "current_version": 8})["sha"] != base["sha"]
 
 
-def test_a_mode_switch_moves_config_fp_and_only_names_are_stored():
+def test_a_mode_switch_moves_config_fp_and_only_names_are_stored(monkeypatch):
+    # an invented per-class family: CIS 428 emptied MODE_FLAG_PREFIXES (the class modes are settings); the
+    # mechanism stays
+    monkeypatch.setitem(cf.MODE_FLAG_PREFIXES, "t9_blog", ("ZZ_CLASS_MODE_",))
     base = _fp()
-    on = _fp(env={"T9_READER_CHECKLIST_MODE": "R10", "T10_SA_MODE_DATES": "block", "UNRELATED_SWITCH": "1"})
+    on = _fp(env={"T9_READER_CHECKLIST_MODE": "R10", "ZZ_CLASS_MODE_DATES": "block", "UNRELATED_SWITCH": "1"})
     assert cf.reverify_components(_wrap(base), _wrap(on)) == ["mode_flags"]
-    assert on["mode_flags_set"] == ["T10_SA_MODE_DATES", "T9_READER_CHECKLIST_MODE"]
+    assert on["mode_flags_set"] == ["T9_READER_CHECKLIST_MODE", "ZZ_CLASS_MODE_DATES"]
     assert "r10" not in str(on) and "block" not in str(on["mode_flags_set"])
     assert _fp(env={"UNRELATED_SWITCH": "1"})["sha"] == base["sha"]
-    spaced = {"T9_READER_CHECKLIST_MODE": "  r10 ", "T10_SA_MODE_DATES": "BLOCK"}
+    spaced = {"T9_READER_CHECKLIST_MODE": "  r10 ", "ZZ_CLASS_MODE_DATES": "BLOCK"}
     assert _fp(env=spaced)["sha"] == on["sha"]                       # values are normalised (strip, lower)
 
 
@@ -189,7 +192,8 @@ def test_collect_marks_the_catalog_unavailable_when_routes_fail():
 def test_the_sibling_w0_switches_are_classified_ahead():
     assert "S1_JUDGE_LIVE" in cf.MODE_FLAGS["a1"] and "T2_INTERIM" in cf.MODE_FLAGS["t2"]
     for w in ("t9_blog", "t9_social"):
-        assert {"T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE"} <= set(cf.MODE_FLAGS[w])
+        assert "T9_LAST_ATTEMPT_MODE" in cf.MODE_FLAGS[w]
+        assert not set(cf.MODE_FLAGS[w]) & {"T10_F9_POLICY_MODE", "T10_SA_MODE", "T9_LENGTH_EXTEND"}   # CIS 428
     assert "LLM_CASSETTE" in cf.NOT_OUTPUT_FLAGS                         # record-only: never changes an output
 
 

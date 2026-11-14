@@ -310,3 +310,11 @@ async def test_apply_debate_brand_profile_fetch_failure_disables_brand_fit_not_t
         out = await apply_debate(uuid4(), [candidate], conn)
 
     assert out == [candidate]  # brand profile fetch failed -> brand-fit skipped, contested still ran
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

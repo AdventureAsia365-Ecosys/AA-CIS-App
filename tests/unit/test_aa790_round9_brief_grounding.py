@@ -72,20 +72,20 @@ def fixture_sha(**extra) -> str:
 # ---------------------------------------------------------------- flag off: byte for byte the round-6 prompt
 
 def test_flag_off_by_default_is_the_round6_prompt(monkeypatch):
-    monkeypatch.delenv(bg.MODE_ENV, raising=False)
+    monkeypatch.delenv("T9_BRIEF_GROUNDING_MODE", raising=False)
     assert len(fixture_prompts()) == 192
     assert fixture_sha() == ROUND6_FIXTURE_SHA
 
 
 @pytest.mark.parametrize("value", ["off", "", "OFF", "r8", "on", "true", "1", "r9x"])
 def test_any_other_env_value_is_off(monkeypatch, value):
-    monkeypatch.setenv(bg.MODE_ENV, value)
+    monkeypatch.setenv("T9_BRIEF_GROUNDING_MODE", value)
     assert bg.brief_grounding_mode() == bg.MODE_OFF
     assert fixture_sha() == ROUND6_FIXTURE_SHA
 
 
 def test_explicit_off_beats_the_env(monkeypatch):
-    monkeypatch.setenv(bg.MODE_ENV, "r9")
+    monkeypatch.setenv("T9_BRIEF_GROUNDING_MODE", "r9")
     assert fixture_sha(brief_grounding="off") == ROUND6_FIXTURE_SHA
 
 
@@ -97,7 +97,7 @@ def test_system_prompt_and_writer_version_unchanged():
 
 
 def test_ground_angle_off_returns_the_same_object(monkeypatch):
-    monkeypatch.delenv(bg.MODE_ENV, raising=False)
+    monkeypatch.delenv("T9_BRIEF_GROUNDING_MODE", raising=False)
     angle = {"name": "n", "best_final_style": BRIEF}
     assert bg.ground_angle(angle, SEED) is angle
     assert bg.ground_angle(angle, SEED, "off") is angle
@@ -107,12 +107,12 @@ def test_ground_angle_off_returns_the_same_object(monkeypatch):
 
 @pytest.mark.parametrize("how", ["env", "explicit"])
 def test_r9_changes_only_the_brief_line(monkeypatch, how):
-    monkeypatch.delenv(bg.MODE_ENV, raising=False)
+    monkeypatch.delenv("T9_BRIEF_GROUNDING_MODE", raising=False)
     off = fixture_prompts()
     if how == "env":
         # S279 L2: the env var is the setting's emergency override; the reader matches an enum value exactly
         # (surrounding spaces stripped), so " R9 " is ignored like any other unknown value
-        monkeypatch.setenv(bg.MODE_ENV, " r9 ")
+        monkeypatch.setenv("T9_BRIEF_GROUNDING_MODE", " r9 ")
         on = fixture_prompts()
     else:
         on = fixture_prompts(brief_grounding="r9")
@@ -237,9 +237,9 @@ def test_module_text_is_generic():
 # ---------------------------------------------------------------- writer_input marker
 
 def test_writer_input_marks_the_mode_only_when_on(monkeypatch):
-    monkeypatch.delenv(bg.MODE_ENV, raising=False)
+    monkeypatch.delenv("T9_BRIEF_GROUNDING_MODE", raising=False)
     assert "brief_grounding" not in service.writer_input_snapshot({})
-    monkeypatch.setenv(bg.MODE_ENV, "r9")
+    monkeypatch.setenv("T9_BRIEF_GROUNDING_MODE", "r9")
     assert service.writer_input_snapshot({})["brief_grounding"] == "r9"
 
 
@@ -288,3 +288,11 @@ def test_harness_rejects_angles_file_with_regen(monkeypatch):
     monkeypatch.setattr("sys.argv", ["x", "--ids", "a", "--angles", "regen", "--angles-file", "f.json"])
     with pytest.raises(SystemExit):
         rp.main()
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

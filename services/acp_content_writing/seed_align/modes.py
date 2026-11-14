@@ -1,6 +1,6 @@
 """AA-789 tier 1 — per-class mode, routing under the existing gates, and the hold rule.
 
-Each class has its own mode (worker task-def env), default `off`:
+Each class has its own mode (a setting on Platform › Settings, S279 L2), default `off`:
 - `off`: the check does not run. With every class off the gate ledger is byte for byte what it was (invariant I2),
   and spaCy is never loaded.
 - `shadow`: the check runs; its candidates are recorded only (`run_quality_gates` → outcome["seed_align"], stored in
@@ -11,10 +11,11 @@ Each class has its own mode (worker task-def env), default `off`:
 - `hold`: like repair, and a finding that survives its repair may hold the piece. Only the four fact classes may
   ever reach it (`HOLD_CAPABLE`: optional told as planned, planned told as optional, near told as at, world share),
   and only once a class is in `HOLD_PROMOTED`, which is changed by a promotion PR with the evidence table (plan §3:
-  G1 offline, G2 shadow, G3 ≥ 50 labelled fires with ≤ 1 false, after the S246 freeze, ~18/11). Until then an env
+  G1 offline, G2 shadow, G3 ≥ 50 labelled fires with ≤ 1 false, after the S246 freeze, ~18/11). Until then a
   value `hold` reads as `repair`.
 
-Env: `T10_SA_MODE` sets every class; `T10_SA_MODE_<CLASS>` (e.g. `T10_SA_MODE_NEAR_AS_AT`) overrides one.
+Settings: `cis.quality_modes.t10_seed_align` sets every class; `cis.quality_modes.t10_seed_align_<class>` (unless
+`inherit`) overrides one. Their env overrides (`T10_SA_MODE`, `T10_SA_MODE_<CLASS>`) were retired by CIS 428.
 No new gate is added (S246 freeze): the finding prefix `sa:` is the only new thing a ledger reader sees.
 """
 from __future__ import annotations
@@ -37,7 +38,6 @@ logger = structlog.get_logger()
 
 OFF, SHADOW, REPAIR, HOLD = "off", "shadow", "repair", "hold"
 MODES = (OFF, SHADOW, REPAIR, HOLD)
-MODE_ENV = "T10_SA_MODE"
 FINDING_PREFIX = "sa:"
 # On a result `apply` appended `sa:` findings to: did the gate's own findings block before them? `apply` must make the
 # result blocking so the `sa:` findings get their repair, but a warning the gate wrote (an F17 / F18 'title …' or
@@ -65,14 +65,10 @@ HOLD_CAPABLE = frozenset({sa_checks.OPTIONAL_AS_PLANNED, sa_checks.PLANNED_AS_OP
 HOLD_PROMOTED: frozenset = frozenset()
 
 
-def _env_for(cls: str) -> str:
-    return f"{MODE_ENV}_{cls.upper()}"
-
-
 def class_mode(cls: str) -> str:
     """The mode a class runs in: its own setting (cis.quality_modes.t10_seed_align_<class>, unless `inherit`), else the
     mode of every class (cis.quality_modes.t10_seed_align), default off (S279 L2: Platform › Settings, evidence-gated;
-    the env vars T10_SA_MODE_<CLASS> / T10_SA_MODE stay their emergency overrides for one release). An unknown value
+    their env overrides retired by CIS 428). An unknown value
     reads as off; `hold` reads as `repair` unless the class may hold and is promoted."""
     raw = _settings.get(_keys.SEED_ALIGN_CLASS_MODES[cls]) if cls in _keys.SEED_ALIGN_CLASS_MODES else _keys.INHERIT
     if raw == _keys.INHERIT:
@@ -211,6 +207,6 @@ def apply(sources: list[dict], sa: Optional[SeedAlignRun]) -> list[dict]:
     return out
 
 
-__all__ = ["OFF", "SHADOW", "REPAIR", "HOLD", "MODES", "MODE_ENV", "FINDING_PREFIX", "BASE_BLOCKING_KEY", "CLASS_GATE",
+__all__ = ["OFF", "SHADOW", "REPAIR", "HOLD", "MODES", "FINDING_PREFIX", "BASE_BLOCKING_KEY", "CLASS_GATE",
            "HOLD_CAPABLE", "HOLD_PROMOTED", "class_mode", "active_modes", "finding_class", "finding_may_hold",
            "SeedAlignRun", "run", "base_blocking", "apply"]

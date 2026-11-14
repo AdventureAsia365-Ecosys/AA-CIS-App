@@ -49,3 +49,33 @@ def serve_from_env(monkeypatch, key: str, env: str, default):
         return real(k, tenant_id)
 
     monkeypatch.setattr(settings.READER, "get", fake)
+
+
+def serve_retired_env(monkeypatch, keys=None):
+    """AA-1096 l5 (CIS 428): serve each retired env-override key (``snapshots/aa1096_retired_env_overrides.json``) from
+    its old env var, read at call time, as an approved platform value would be (invalid or unset: the real
+    resolution). Lets a test written for the env switch keep driving the setting with monkeypatch.setenv / delenv
+    after CIS 428 retired the override in the app. ``keys`` limits it to some keys (default every retired key)."""
+    import json
+    import os
+    from pathlib import Path
+
+    from shared.settings.reader import Resolution, coerce, parse_text
+
+    retired = json.loads((Path(__file__).resolve().parent / "snapshots" / "aa1096_retired_env_overrides.json")
+                         .read_text(encoding="utf-8"))
+    if keys is not None:
+        retired = {k: retired[k] for k in keys}
+    real = settings.READER.resolve
+
+    def fake(key, tenant_id=None):
+        env = retired.get(key)
+        raw = os.environ.get(env) if env else None
+        if raw is not None and raw.strip():
+            d = settings.definition(key)
+            value, problem = parse_text(d, raw)
+            if problem is None:
+                return Resolution(key, coerce(d, value), "platform", version=1)
+        return real(key, tenant_id)
+
+    monkeypatch.setattr(settings.READER, "resolve", fake)

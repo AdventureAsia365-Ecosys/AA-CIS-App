@@ -1,7 +1,7 @@
 """AA-1077 (S280, CIS 418) — the lengthening repair switch is the setting cis.t9.blog_length_extend, not an env var.
 
-- `length_extend.mode(tenant_id)`: a job's trial flag first, then the settings reader (env override T9_LENGTH_EXTEND,
-  then the tenant's value, then the platform value, then the default off); anything but 'on' is off.
+- `length_extend.mode(tenant_id)`: a job's trial flag first, then the settings reader (the tenant's value, then the
+  platform value, then the default off; its env override retired by CIS 428); anything but 'on' is off.
 - the plans (`plan_for`, `plan_after_repair`) take a `switch`, else the piece's pinned one, else resolve `tenant_id`.
 - the loop resolves the switch ONCE per piece for the piece's tenant, so a tenant value runs the trial on one audit
   tenant through the normal studio flow, and the blog's length trace records it.
@@ -31,7 +31,7 @@ OTHER = "00000000-0000-4000-8000-0000000000b2"
 def _clean(monkeypatch):
     """No env override, no pinned switch and an empty snapshot (= every key at its compiled default) unless a test
     sets one."""
-    monkeypatch.delenv(le.EXTEND_ENV, raising=False)
+    monkeypatch.delenv(le.EXTEND_FLAG, raising=False)
     monkeypatch.setattr(settings.READER, "_snapshot", {})
     le._PINNED.set(None)                           # no piece's pin left over from another test
 
@@ -49,7 +49,7 @@ def test_the_key_is_the_compiled_definition():
     d = settings.definition(KEY)
     assert le.EXTEND_SETTING == KEY == "cis.t9.blog_length_extend"
     assert d.default_value == "off" and list(d.allowed_values) == ["off", "on"] and d.tenant_scoped
-    assert d.env_override == le.EXTEND_ENV and d.evidence_required and d.approval == "maker_checker"
+    assert d.env_override is None and d.evidence_required   # CIS 428: no env override and d.approval == "maker_checker"
 
 
 def test_the_default_is_off_for_every_tenant():
@@ -76,7 +76,7 @@ def test_the_env_var_is_the_emergency_override(monkeypatch, env, expected):
     """A valid env value wins over the tenant value; an invalid one ('yes') is ignored by the reader, never served,
     so the tenant value stands."""
     _values(monkeypatch, trial="on")
-    monkeypatch.setenv(le.EXTEND_ENV, env)
+    monkeypatch.setenv(le.EXTEND_FLAG, env)
     assert le.mode(TRIAL) == expected
     assert le.mode(OTHER) == ("on" if env == "on" else "off")
 
@@ -84,7 +84,7 @@ def test_the_env_var_is_the_emergency_override(monkeypatch, env, expected):
 @pytest.mark.parametrize("flag,expected", [("on", "on"), ("off", "off")])
 def test_a_job_trial_flag_comes_first(monkeypatch, flag, expected):
     _values(monkeypatch, trial="off" if flag == "on" else "on")
-    monkeypatch.setattr(le.trial_flags, "active", lambda: {le.EXTEND_ENV: flag})
+    monkeypatch.setattr(le.trial_flags, "active", lambda: {le.EXTEND_FLAG: flag})
     assert le.mode(TRIAL) == expected
 
 
@@ -228,3 +228,11 @@ def test_the_extend_plan_replay_reads_what_the_repair_could_reach():
     assert s["short"] == 3 and s["reachable"] == ["aaaaaaaa"] == s["reachable_length_only"]
     assert s["no_material"] == ["bbbbbbbb"] and s["plan_reasons"]["no_seed"] == 1
     assert s["floor_chars"] == 4700 and s["recheck_held"] == []
+
+
+# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

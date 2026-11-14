@@ -83,7 +83,8 @@ def trial_piece(row: dict, *, call, live_f9: bool) -> dict:
     base = pr.run(text, pack=pr.stored_pack, f9=stored_f9, stock_blocking=False)
     out.update(chars_before=lc.measure(text), words_before=lc.words(text),
                base_codes=gate_eval.hold_reason_codes(base), base_hold=(hold_failure(base) or {}).get("gate"))
-    plan = length_extend.plan_for(text, base, channel="blog", source=pr.atom_text)
+    # the trial IS the extend: the switch is on for this call whatever the setting (CIS 428: no env override)
+    plan = length_extend.plan_for(text, base, channel="blog", source=pr.atom_text, switch=length_extend.EXTEND_ON)
     if plan is None:
         out["skip"] = "no extend plan (not short, no body section or no untold seed fact)"
         return out
@@ -127,8 +128,6 @@ async def main() -> int:
         print("STOP PIECES (8-char ids) and CAP_USD (> 0) are required")
         return 2
     live_f9 = (os.environ.get("F9") or "live").strip().lower() != "stored"
-    from services.acp_content_writing import length_extend
-    os.environ[length_extend.EXTEND_ENV] = length_extend.EXTEND_ON   # this process only: the trial IS the extend
     tenants = [t.strip() for t in (os.environ.get("TENANTS") or AUDIT_TENANTS).split(",") if t.strip()]
     started = datetime.now(timezone.utc).isoformat()
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], ssl="require")
