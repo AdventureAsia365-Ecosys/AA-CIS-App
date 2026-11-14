@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -652,6 +652,42 @@
      "lower": "Đoán mã khó hơn, nhưng người kiểm nhiều chứng chỉ nhanh sẽ được báo chờ.",
      "when": "Tăng nếu một đối tác kiểm cả loạt chứng chỉ và bị từ chối; giảm nếu nhật ký cho thấy có người đoán mã.",
      "example": "Với mặc định 30, lần kiểm thứ 31 trong một phút từ cùng một địa chỉ phải chờ hết phút đó."
+    }
+   }
+  },
+  {
+   "key": "cis.learn.verify_visitor_requests_per_minute",
+   "app": "cis",
+   "area": "learn",
+   "label": "Academy: certificate checks per minute for one visitor of the academy web",
+   "description": "ADR 0022 decision 11: the academy web calls the public verify route /learn/public/v1/certificates/{code} from its server, so all its visitors reach CIS from one address and cis.learn.verify_requests_per_minute caps the whole web. This is how many verify requests one visitor of the academy web may make per minute: CIS sends it on every verify answer (response header X-Learn-Visitor-Limit, contract learn.http.v1) and the academy web refuses a visitor over it before it calls CIS. CIS sends at most the per-address limit minus one, so one visitor can never use up the web's whole budget. Read by the AA Academy learning API from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "requests",
+   "min_value": 1,
+   "max_value": 300,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many certificate checks one visitor of the academy web may make per minute on the public verify page. All visitors of the academy web share the per-address limit (certificate checks per minute), so this smaller number keeps one visitor from using all of it.",
+     "raise": "A visitor who checks many certificates in a row is told to wait less often, but fewer such visitors fit in the shared per-address limit before everyone is told to wait. It never goes above the per-address limit minus one, whatever this says.",
+     "lower": "One visitor reloading the page in a loop uses less of the shared limit, so other visitors keep their checks, but a visitor checking a batch of certificates by hand is told to wait sooner.",
+     "when": "Raise it if a partner checking a batch of certificates on the academy web is told to wait; lower it if the logs show one visitor reloading the verify page in a loop while others are refused.",
+     "example": "With the default of 6 and the per-address limit at its default of 30: the 7th check within one minute from the same visitor waits until the minute ends, and five such visitors together still leave room for others."
+    },
+    "vi": {
+     "what": "Số lần mỗi phút một người truy cập trang academy được kiểm chứng chỉ trên trang xác minh công khai. Mọi người truy cập trang academy dùng chung giới hạn theo địa chỉ (số lần kiểm chứng chỉ mỗi phút), nên con số nhỏ hơn này giữ cho một người không dùng hết giới hạn chung đó.",
+     "raise": "Người kiểm nhiều chứng chỉ liên tiếp ít bị báo chờ hơn, nhưng giới hạn chung theo địa chỉ chứa được ít người như vậy hơn trước khi mọi người bị báo chờ. Giá trị gửi đi không bao giờ vượt quá giới hạn theo địa chỉ trừ một, dù ở đây đặt bao nhiêu.",
+     "lower": "Một người tải lại trang liên tục chỉ dùng ít phần của giới hạn chung, nên người khác vẫn kiểm được, nhưng người kiểm cả loạt chứng chỉ bằng tay sẽ bị báo chờ sớm hơn.",
+     "when": "Tăng nếu một đối tác kiểm cả loạt chứng chỉ trên trang academy bị báo chờ; giảm nếu nhật ký cho thấy một người tải lại trang xác minh liên tục trong khi người khác bị từ chối.",
+     "example": "Với mặc định 6 và giới hạn theo địa chỉ ở mặc định 30: lần kiểm thứ 7 trong một phút của cùng một người phải chờ hết phút đó, và năm người như vậy cùng lúc vẫn chừa chỗ cho người khác."
     }
    }
   },
