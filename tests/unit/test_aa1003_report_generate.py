@@ -112,7 +112,7 @@ def test_automated_from_parses_and_refuses_a_bad_date():
 
 
 def test_due_state_of_reports_not_generated_here():
-    assert generate.due_state(_reg().report("FI-07"), None, NOW)["state"] == "not_automated"   # R3 generates FI-01
+    assert generate.due_state(_reg().report("FI-09"), None, NOW)["state"] == "not_automated"   # R5 generates FI-07
 
 
 def test_register_lists_every_report_and_flags_failures():
@@ -123,7 +123,7 @@ def test_register_lists_every_report_and_flags_failures():
     assert "EX-04" in out.output["attention"]
     # EX-04, EX-06; R2: OPS-12 (TP-03 retired by the R0 hotfix); R3: 8 money; R4: 8; R4 part 2: TP-01, SEC-03, SEC-08,
     # DEV-01, DEV-03, OPS-15; AA-900: CIS-08
-    assert out.output["registry"]["automated"] == 26
+    assert out.output["registry"]["automated"] == 29     # R5 adds FI-08, BK-03, FI-07
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
 
 
@@ -158,4 +158,4 @@ def test_render_refuses_a_report_without_renderer():
 
     reg = _reg()
     with pytest.raises(LookupError):
-        asyncio.run(generate.render(None, reg, reg.report("FI-07"), DAY, DAY, NOW))
+        asyncio.run(generate.render(None, reg, reg.report("FI-09"), DAY, DAY, NOW))
