@@ -42,6 +42,26 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   identical copy in `AA-CIS-Infra/db/migrations/cis/` by the **DB Migrate** workflow, before the
   code that needs it merges.
 
+## Run it locally
+
+The shortest path that works without AWS access. The [README](README.md) has the full commands and the variable
+names; the Dev environment is described under [Deploy & CI](#deploy--ci).
+
+| Part | Command (from the repo root) | Needs |
+|---|---|---|
+| Python setup | `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt` | Python 3.12 |
+| Unit tests | `ENVIRONMENT=test DATABASE_URL=postgresql://x/y JWT_SECRET=x .venv/bin/python -m pytest tests/unit/ -q` | nothing else: no database, no AWS |
+| Lint | `.venv/bin/python -m flake8 .` (line length 120) | |
+| Integration tests | `scripts/pre-push.sh --integration` runs the integration tests your diff touches on a throwaway PostgreSQL cluster it starts itself | PostgreSQL 15 or 16 binaries; by hand, a throwaway database whose user is a superuser, as in CI (the test setup applies every `api/migrations/` file) |
+| API | `.venv/bin/python -m uvicorn api.main:app --reload --port 8000`, then `curl -s localhost:8000/health` | a reachable PostgreSQL in `DATABASE_URL` (the API opens its pool at start and refuses to start without one) and a local `JWT_SECRET` |
+| Job worker | `.venv/bin/python -m worker` (a separate process) | the same database |
+| Admin app | `cd frontend && npm ci && npm run dev` (port 3000) | Node 20 or later; the API base comes from its server environment (README, "Environment variables", Frontend row) |
+| Pre-push checks | `scripts/install-hooks.sh` once per clone; each push then runs `scripts/pre-push.sh` | |
+
+- Copy `.env.example` to `.env` and ask the tech lead for values; never point a local run at the Dev database.
+- Run frontend installs in a worktree, not in the main checkout of the workspace.
+- Leave the paid-provider keys (LLM, DataForSEO) empty locally: a local run must not spend money.
+
 ## Architecture at a glance
 
 Architecture diagram (AWS icons): `AA-Ecosys/docs/architecture/diagrams/cis.svg`, drawn from `cis.py` in the
