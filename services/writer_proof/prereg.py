@@ -7,7 +7,7 @@ call what the proof measures and how it decides:
   {
     "format": 1,
     "id": "w5-null-t9-blog",                     the run rows carry it (prompt_eval_runs.details.prereg.id)
-    "workflow": "null" | "t9" | "s1" | "t2",     WORKFLOWS below: writer, D12 cap, minimum sample
+    "workflow": "null" | "t9" | "s1" | "t2",     WORKFLOWS below: writer, D12 cap and minimum sample settings
     "status": "draft" | "registered",            only a registered file may start a paid run
     "registered_by": "tech_lead", "registered_on": "2026-11-20",
     "golden_set": {"name": "aa729", "version": "1.4.0"},
@@ -23,7 +23,7 @@ call what the proof measures and how it decides:
                  "alpha": 0.05, "noise_se_k": 2.0},
     "requirements": {"paired_all": true, "max_mixed_judges": 0, "max_hard_stop_1": 0},
     "power": {"min_power": 0.8, "writer_sd": null, "claims_per_item": 60, "effect_abs": null},
-    "cap_usd": 5.0                                <= the workflow's D12 cap
+    "cap_usd": 5.0                                <= the workflow's D12 cap (setting, workflow_cap)
   }
 
 `power.effect_abs` is the pre-registered true improvement an `improve` decision is powered for (required for that
@@ -38,6 +38,12 @@ The lock: `sha256` is taken over the canonical JSON (sorted keys, no whitespace)
 nothing and any edit of a value changes it. Every run of a pre-registration records the sha (R2 details.prereg); a
 run is refused, and a report is refused, when an earlier run with at least one result recorded another sha
 (r2.prereg_refusal / `lock_problem` here): the file was edited after its first result.
+
+Immutable once registered (S280): `prereg/registered.lock.json` maps each registered id to its sha. `load` refuses a
+registered file whose id is missing there or whose sha differs, and a unit test keeps the lock and the files equal, so
+registering a file (or, by exception, editing a registered one) always shows as a lock-file change in review, before
+any run. An entry is never removed: a lock entry without its registered file fails the same test. A new attempt is a new
+id.
 """
 from __future__ import annotations
 
@@ -52,14 +58,39 @@ from typing import Any, Iterable, Optional
 
 FORMAT = 1
 PREREG_DIR = Path(__file__).resolve().parent / "prereg"
+LOCK_FILE = PREREG_DIR / "registered.lock.json"
 # Root ADR 0020 D12: eval null run <= $5, T9 <= $15, S1 <= $8, T2 <= $5, <= $33 in total; each after its own yes.
+# S280 (CIS 419): the caps and the minimum samples are settings (Platform › Settings, tech lead S279: a cap is a
+# setting, never a code literal); the defaults are those numbers. Read them with workflow_cap / min_items / total_cap.
 WORKFLOWS: dict[str, dict[str, Any]] = {
-    "null": {"writer": "t9_blog", "cap_usd": 5.0, "min_items": 12},
-    "t9": {"writer": "t9_blog", "cap_usd": 15.0, "min_items": 12},
-    "s1": {"writer": "a1", "cap_usd": 8.0, "min_items": 25},
-    "t2": {"writer": "t2", "cap_usd": 5.0, "min_items": 20},
+    "null": {"writer": "t9_blog", "cap_setting": "cis.spend.writer_proof_null_run_cap_usd",
+             "min_items_setting": "cis.quality.writer_proof_null_run_min_items"},
+    "t9": {"writer": "t9_blog", "cap_setting": "cis.spend.writer_proof_t9_cap_usd",
+           "min_items_setting": "cis.quality.writer_proof_t9_min_items"},
+    "s1": {"writer": "a1", "cap_setting": "cis.spend.writer_proof_s1_cap_usd",
+           "min_items_setting": "cis.quality.writer_proof_s1_min_items"},
+    "t2": {"writer": "t2", "cap_setting": "cis.spend.writer_proof_t2_cap_usd",
+           "min_items_setting": "cis.quality.writer_proof_t2_min_items"},
 }
-TOTAL_CAP_USD = 33.0
+TOTAL_CAP_SETTING = "cis.spend.writer_proof_total_cap_usd"
+
+
+def workflow_cap(workflow: str) -> float:
+    """The workflow's D12 cap in force (USD)."""
+    from shared import settings
+    return float(settings.get(WORKFLOWS[workflow]["cap_setting"]))
+
+
+def min_items(workflow: str) -> int:
+    """The fewest GATE samples a registered pre-registration of the workflow may fix, in force."""
+    from shared import settings
+    return int(settings.get(WORKFLOWS[workflow]["min_items_setting"]))
+
+
+def total_cap() -> float:
+    """The D12 total of every W5 proof together, in force (USD)."""
+    from shared import settings
+    return float(settings.get(TOTAL_CAP_SETTING))
 STATUSES = ("draft", "registered")
 RULES = ("non_inferior", "improve")
 DIRECTIONS = ("lower", "higher")
@@ -121,7 +152,9 @@ def _num(v: Any) -> Optional[float]:
 
 
 def problems(doc: Any) -> list[str]:
-    """Every reason the document is not a valid pre-registration (a draft may have an empty sample). Pure."""
+    """Every reason the document is not a valid pre-registration (a draft may have an empty sample). Reads the
+    settings registry (the D12 cap and minimum sample in force, CIS 419: call settings.ensure_fresh first in a process
+    without the refresher); otherwise pure."""
     if not isinstance(doc, dict):
         return ["the pre-registration is not a JSON object"]
     p: list[str] = []
@@ -153,8 +186,9 @@ def problems(doc: Any) -> list[str]:
             p.append("sample_ids must be distinct")
         if ids != sorted(ids):
             p.append("sample_ids must be sorted")
-        if status == "registered" and len(ids) < spec["min_items"]:
-            p.append(f"a registered {wf} proof needs >= {spec['min_items']} sample ids, has {len(ids)}")
+        floor = min_items(wf)
+        if status == "registered" and len(ids) < floor:
+            p.append(f"a registered {wf} proof needs >= {floor} sample ids, has {len(ids)}")
     noise = doc.get("noise_sample_ids", [])
     if not isinstance(noise, list) or any(not isinstance(i, str) for i in noise):
         p.append("noise_sample_ids must be a list of sample ids")
@@ -204,8 +238,9 @@ def problems(doc: Any) -> list[str]:
                 p.append("power.effect_abs must be > decision.margin_abs: at a true effect equal to the margin the "
                          "improve rule passes at most about half the time")
     cap = _num(doc.get("cap_usd"))
-    if cap is None or not 0 < cap <= spec["cap_usd"]:
-        p.append(f"cap_usd must be in (0, {spec['cap_usd']}] (root ADR 0020 D12 for {wf})")
+    d12 = workflow_cap(wf)
+    if cap is None or not 0 < cap <= d12:
+        p.append(f"cap_usd must be in (0, {d12}] (root ADR 0020 D12 for {wf})")
     if status == "registered":
         if not (isinstance(doc.get("registered_by"), str) and doc["registered_by"].strip()):
             p.append("a registered pre-registration names registered_by")
@@ -296,7 +331,79 @@ def load(path_or_id: str) -> Prereg:
     pre = from_doc(doc, path=str(p))
     if pre.id != p.stem:
         raise PreregRefused(f"file {p.name} holds id {pre.id}: the file name is the id")
+    why = registered_lock_problem(pre, read_lock())
+    if why:
+        raise PreregRefused(why)
     return pre
+
+
+def read_lock(path: Optional[Path] = None) -> dict[str, str]:
+    """{id: sha256} of every registered pre-registration (the lock file; missing = none registered yet)."""
+    path = LOCK_FILE if path is None else path
+    if not path.is_file():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise PreregRefused(f"{path.name} is not JSON: {e}") from e
+    reg = doc.get("registered") if isinstance(doc, dict) else None
+    if not isinstance(reg, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in reg.items()):
+        raise PreregRefused(f"{path.name} must be {{\"registered\": {{id: sha256}}}}")
+    return dict(reg)
+
+
+def registered_lock_problem(pre: Prereg, lock: dict[str, str]) -> Optional[str]:
+    """Why a registered file does not match the lock (None for a draft or a match). Pure."""
+    if not pre.registered:
+        return None
+    want = lock.get(pre.id)
+    if want is None:
+        return (f"{pre.id} is registered but not in {LOCK_FILE.name}: add its sha {pre.sha256} in the same reviewed "
+                "PR that registers it")
+    if want != pre.sha256:
+        return (f"{pre.id} was edited after it was registered: {LOCK_FILE.name} holds {want[:12]}…, the file hashes "
+                f"to {pre.sha256[:12]}… (register a new id for a new attempt)")
+    return None
+
+
+def registered_files(workflow: Optional[str] = None) -> list[Prereg]:
+    """Every registered pre-registration in the package (optionally of one workflow), by id. A file that does not
+    load is skipped here (its own `load` reports why)."""
+    out = []
+    for f in sorted(PREREG_DIR.glob("*.json")):
+        if f.name == LOCK_FILE.name:
+            continue
+        try:
+            pre = load(str(f))
+        except PreregRefused:
+            continue
+        if pre.registered and (workflow is None or pre.workflow == workflow):
+            out.append(pre)
+    return out
+
+
+def unloadable_registered(workflow: Optional[str] = None) -> list[dict]:
+    """[{file, why}]: every file in the package that says status registered (optionally of one workflow) but does
+    not load (lock mismatch, a minimum sample or cap raised in the settings after it was registered): what
+    `registered_files` skips, with the reason, so a gate that needs such a file can say why it was ignored."""
+    out = []
+    for f in sorted(PREREG_DIR.glob("*.json")):
+        if f.name == LOCK_FILE.name:
+            continue
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            out.append({"file": f.name, "why": f"not JSON: {e}"[:300]})
+            continue
+        if not isinstance(doc, dict) or doc.get("status") != "registered":
+            continue
+        if workflow is not None and doc.get("workflow") != workflow:
+            continue
+        try:
+            load(str(f))
+        except PreregRefused as e:
+            out.append({"file": f.name, "why": str(e)[:300]})
+    return out
 
 
 def require_registered(pre: Prereg) -> None:
@@ -328,7 +435,7 @@ def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional
     draft: the tech lead registers it in a reviewed PR. Pure."""
     wf = template["workflow"]
     writer = WORKFLOWS[wf]["writer"]
-    size = n if n is not None else max(WORKFLOWS[wf]["min_items"], len(template.get("sample_ids") or []))
+    size = n if n is not None else max(min_items(wf), len(template.get("sample_ids") or []))
     gate = [it["sample_id"] for it in items
             if it.get("writer") == writer and not it.get("trap") and it.get("eval_split") == "gate"]
     picked = pick_sample(gate, size, seed=template["id"])
@@ -341,6 +448,8 @@ def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional
     return out
 
 
-__all__ = ["COMPUTED_METRICS", "FORMAT", "PAIRED_METRICS", "PREREG_DIR", "Prereg", "PreregRefused", "TOTAL_CAP_USD",
+__all__ = ["COMPUTED_METRICS", "FORMAT", "LOCK_FILE", "PAIRED_METRICS", "PREREG_DIR", "Prereg", "PreregRefused",
+           "TOTAL_CAP_SETTING", "min_items", "read_lock", "registered_files", "registered_lock_problem",
+           "total_cap", "workflow_cap",
            "WORKFLOWS", "canonical", "draft", "from_doc", "load", "lock_problem", "path_for", "pick_sample",
            "problems", "require_registered", "sha256_of"]

@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
-from services.writer_proof.prereg import TOTAL_CAP_USD, WORKFLOWS
+from services.writer_proof.prereg import total_cap, workflow_cap
 
 W5_STAGE = "adhoc_aa1051"            # = services.writing_memory.config.W5_STAGE (a unit test keeps them equal)
 CONFIRM_TOKEN = "CONFIRM"
@@ -64,9 +64,11 @@ def _num(v: Any) -> Optional[float]:
 def refusals(*, workflow: str, prereg_cap: float, cap_usd: Any, confirm: Optional[str], spent_workflow: Any,
              spent_total: Any, estimate_usd: Any, reserved_workflow: Any = 0.0, reserved_total: Any = 0.0) -> list[str]:
     """Every reason a live run of `workflow` may not start (empty = it may). `reserved_*`: the caps of the queued or
-    running W5 jobs (of the workflow / of all W5). Pure."""
+    running W5 jobs (of the workflow / of all W5). Reads the settings registry (the D12 caps in force, CIS 419: call
+    settings.ensure_fresh first in a process without the refresher); otherwise pure."""
     out: list[str] = []
-    d12 = WORKFLOWS[workflow]["cap_usd"]
+    d12 = workflow_cap(workflow)
+    d12_total = total_cap()
     if confirm != CONFIRM_TOKEN:
         out.append(f"no confirmation: a paid W5 run needs --confirm {CONFIRM_TOKEN} after the tech lead's own yes")
     cap = _num(cap_usd)
@@ -83,9 +85,9 @@ def refusals(*, workflow: str, prereg_cap: float, cap_usd: Any, confirm: Optiona
         if sw + rw + cap > d12 + 1e-9:
             out.append(f"{workflow} already spent {sw:.4f} USD and its queued / running jobs reserve {rw:.4f}; "
                        f"+ cap {cap} passes its D12 cap {d12}")
-        if st + rt + cap > TOTAL_CAP_USD + 1e-9:
+        if st + rt + cap > d12_total + 1e-9:
             out.append(f"W5 already spent {st:.4f} USD and its queued / running jobs reserve {rt:.4f}; + cap {cap} "
-                       f"passes the D12 total {TOTAL_CAP_USD}")
+                       f"passes the D12 total {d12_total}")
     est = _num(estimate_usd)
     if est is None:
         out.append("no cost estimate: run the DRY RUN plan first")
