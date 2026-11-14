@@ -430,7 +430,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             <input
               value={globalFilter}
               onChange={(e) => setGlobalFilter(e.target.value)}
-              placeholder={searchPlaceholder}
+              placeholder={searchPlaceholder} aria-label={searchPlaceholder}
               style={{
                 padding: "7px 12px 7px 32px",
                 borderRadius: RADIUS.pill,
