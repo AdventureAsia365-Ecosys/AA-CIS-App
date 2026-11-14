@@ -180,12 +180,17 @@ def certificate_status(row: dict, path: Optional[dict], modules: dict[str, dict]
 
 
 def renewal_reason(row: Optional[dict], path: dict, modules: dict[str, dict], now: datetime) -> Optional[str]:
-    """Why an existing certificate is issued again (CHECK certificate_renewal_check), None for a first issue."""
+    """Why an existing certificate is issued again (CHECK certificate_renewal_check), None for a first issue.
+
+    Only an expired or renewal-due certificate is issued again: a valid or revoked one raises ValueError, so no
+    caller can store a reason that did not happen (the audited renewal_reason column)."""
     if row is None:
         return None
     status = certificate_status(row, path, modules, now)
     if status == "expired":
         return "expired"
+    if status != "renewal_due":
+        raise ValueError(f"a {status} certificate is not renewed")
     pinned = row.get("module_versions") or {}
     required = [e["id"] for e in path.get("modules", []) if e.get("required")]
     if any(m not in pinned for m in required):

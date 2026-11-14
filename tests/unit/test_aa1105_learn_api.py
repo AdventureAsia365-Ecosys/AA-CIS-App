@@ -299,6 +299,40 @@ def test_final_quiz_issues_a_verifiable_certificate(h):
     assert h.client.get(f"/learn/public/v1/certificates/{new.json()['code']}").status_code == 200
 
 
+def pass_final_quiz(h, path_id):
+    final = h.post(f"/v1/paths/{path_id}/final-quiz/attempts")
+    assert final.status_code == 201, final.text
+    return h.post(f"/v1/quiz/attempts/{final.json()['attempt_id']}/submit",
+                  {"responses": answers([i["id"] for i in final.json()["items"]])}).json()
+
+
+def test_final_quiz_passed_again_keeps_the_valid_certificate(h):
+    complete_lessons(h, "Z9-01", "Z9-02")
+    pass_module_quiz(h, "Z9")
+    first = pass_final_quiz(h, "sample-path")["certificate"]
+    stored = dict(next(iter(h.store.certs.values())))
+    again = pass_final_quiz(h, "sample-path")
+    conforms(again, "QuizResult")
+    assert again["passed"] is True and again["certificate"] is None
+    after = next(iter(h.store.certs.values()))
+    assert after["code_sha256"] == stored["code_sha256"] and after["issued_at"] == stored["issued_at"]
+    assert after["expires_at"] == stored["expires_at"] and after["renewal_reason"] is None
+    assert h.client.get(f"/learn/public/v1/certificates/{first['code']}").status_code == 200
+
+
+def test_final_quiz_renews_after_a_major_version(h):
+    complete_lessons(h, "Z9-01", "Z9-02")
+    pass_module_quiz(h, "Z9")
+    first = pass_final_quiz(h, "sample-path")["certificate"]
+    h.bundle.modules["Z9"]["version"] = "2.0.0"
+    assert pass_module_quiz(h, "Z9")["certificate"] is None    # the new major needs its module quiz first
+    renewed = pass_final_quiz(h, "sample-path")["certificate"]
+    assert renewed is not None and renewed["certificate_id"] == first["certificate_id"]
+    assert next(iter(h.store.certs.values()))["renewal_reason"] == "major_version"
+    assert h.client.get(f"/learn/public/v1/certificates/{first['code']}").status_code == 404
+    assert h.client.get(f"/learn/public/v1/certificates/{renewed['code']}").status_code == 200
+
+
 def test_path_without_final_quiz_certifies_on_its_last_module(h):
     complete_lessons(h, "Z8-01")
     result = pass_module_quiz(h, "Z8")

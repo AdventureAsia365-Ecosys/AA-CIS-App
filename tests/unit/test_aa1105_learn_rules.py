@@ -58,6 +58,19 @@ def test_certificate_status():
                                                                "version": "1.0.0"}}, T0) == "renewal_due"
     assert g.renewal_reason(None, path, modules, T0) is None
     assert g.renewal_reason({**row, "expires_at": T0}, path, modules, T0) == "expired"
+    assert g.renewal_reason(row, path, {"Z9": {**modules["Z9"], "version": "2.0.0"}}, T0) == "major_version"
+    assert g.renewal_reason({**row, "status": "renewal_due"}, path, modules, T0) == "major_version"
+    assert g.renewal_reason(row, added, {**modules, "Z8": {"id": "Z8", "status": "active",
+                                                           "version": "1.0.0"}}, T0) == "module_added"
+
+
+@pytest.mark.parametrize("status", ["valid", "revoked"])
+def test_no_renewal_reason_for_a_valid_or_revoked_certificate(status):
+    path = {"id": "p", "modules": [{"id": "Z9", "required": True}]}
+    modules = {"Z9": {"id": "Z9", "status": "active", "version": "1.2.0"}}
+    row = {"status": status, "expires_at": None, "module_versions": {"Z9": "1.0.0"}}
+    with pytest.raises(ValueError):
+        g.renewal_reason(row, path, modules, T0)
 
 
 def test_card_checks():

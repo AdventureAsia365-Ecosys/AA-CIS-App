@@ -310,9 +310,11 @@ async def record_progress(ctx: Ctx, body: dict) -> tuple[dict, bool]:
 # ── certificates (issued here so progress and quiz submissions share one rule) ─────────────────────────────────────
 
 async def issue_certificate(ctx: Ctx, path: dict, final_attempt_id: Optional[str]) -> Optional[dict]:
-    """Issue or renew the path certificate; the CertificateCode (shown once), or None when it stays revoked."""
+    """Issue or renew the path certificate; the CertificateCode (shown once), or None when nothing is due: a revoked
+    certificate stays revoked and a valid one keeps its code, dates and pinned versions (a pass of the final quiz
+    while the certificate is valid issues nothing, the same rule as :func:`issue_ready_certificates`)."""
     existing = await ctx.store.certificate(ctx.learner_id, path_id=path["id"])
-    if existing is not None and existing["status"] == "revoked":
+    if existing is not None and not _needs_certificate(ctx, existing):   # revoked or valid: nothing is due
         return None
     now = g.now_utc()
     versions = {m["id"]: str(m["version"]) for m in required_modules(ctx, path) if m is not None}
@@ -351,9 +353,7 @@ async def issue_ready_certificates(ctx: Ctx, state: State, module_id: str) -> li
             continue
         if not required_complete(ctx, state, path):
             continue
-        if not _needs_certificate(ctx, await ctx.store.certificate(ctx.learner_id, path_id=path["id"])):
-            continue
-        code = await issue_certificate(ctx, path, None)
+        code = await issue_certificate(ctx, path, None)     # None when the certificate is still valid
         if code is not None:
             issued.append(code)
     return issued
