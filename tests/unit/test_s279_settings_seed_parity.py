@@ -82,12 +82,16 @@ def test_the_trash_window_is_badged_not_enforced():
     assert by_key["cis.content.trash_retention_days"]["enforced"] is False
     # AA-1093 L2 (CIS 411): the erasure saga's three keys stay not enforced until the saga code is deployed; a later
     # migration marks them enforced and removes them from this list. AA-1048 (CIS 417): the claim-instrument
-    # evaluation's five limits likewise, until the evaluation code is deployed.
-    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == [
+    # evaluation's five limits likewise, until the evaluation code is deployed. AA-1051 (CIS 419): the nine W5 writer
+    # proof caps and minimum samples likewise, until the proof code that reads them is deployed.
+    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted([
         "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
         "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",
         "cis.quality.instrument_eval_tp_keep_min_pct", "cis.spend.instrument_eval_cap_usd",
-        "cis.spend.instrument_eval_max_claims", "cis.spend.instrument_eval_trial_claims"]
+        "cis.spend.instrument_eval_max_claims", "cis.spend.instrument_eval_trial_claims",
+        "cis.spend.writer_proof_null_run_cap_usd", "cis.spend.writer_proof_t9_cap_usd", "cis.spend.writer_proof_s1_cap_usd",
+        "cis.spend.writer_proof_t2_cap_usd", "cis.spend.writer_proof_total_cap_usd", "cis.quality.writer_proof_null_run_min_items",
+        "cis.quality.writer_proof_t9_min_items", "cis.quality.writer_proof_s1_min_items", "cis.quality.writer_proof_t2_min_items"])
 
 
 def test_the_measured_ratio_needs_evidence():
