@@ -41,6 +41,23 @@ S272: a change of the writing loop that has not had its measured trial ships beh
 After the normalizer (S280, `length_recheck.lengthen_after_normalizer`): a loop-approved blog a MANDATORY normalizer cut
 took under the floor gets one more `plan_after_repair` + `extend` pass on the stored text, with the same pinned switch,
 then the final integrity pass and every gate again.
+
+S281 (paid trial 5: a repair round shrank a blog 4,988 → 4,669 chars, the expand then added nothing: the writer left
+both sections empty, "no fitting fact"). Two settings (CIS 426), platform + tenant, read once per piece with the switch
+(`pin`) and only while it is on:
+- `cis.t9.blog_extend_material` (source_facts | with_background, default source_facts = the repair above). With
+  background, a paragraph may also give general background about a place, people, tradition or history the post or its
+  source names (`background_names`: the seed's moment names), in the third person (writing policy: background about a
+  named place is fine; never a tour activity, service, time, view or promise the source lacks). A plan no longer needs
+  an untold fact. Each background paragraph gets three more code checks before it stands: no reader / group address
+  (`_READER_RE`: "you", "we", "our": background is about the place, not what the trip does), no name the post and its
+  source lack (`repair_contract.new_names`), and no NEW F17 trip-fact or F18 rarity finding on the spliced text
+  (`trip_facts.find_trip_fact_issues`, before vs after). F17 / F12 and every other gate still run on the whole text
+  after the extend, as for any attempt.
+- `cis.t9.blog_extend_shrink_sections` (int 0..6, default 3): when the repair round itself made the blog shorter and
+  left it under the floor (`shrunk`: the text before the repair was longer), the plan asks up to this many sections
+  (each another chance that a paragraph fits) instead of the one or two the deficit alone gives; the words asked are the
+  same deficit shared between them. 0 = the deficit alone (the plan above).
 """
 from __future__ import annotations
 
@@ -49,13 +66,18 @@ import math
 import re
 from typing import Callable, Optional
 
+import structlog
+
 from services.acp_content_writing import length_contract as lc
 from services.acp_content_writing.hygiene import LEAK_RE, _is_cta
 from services.acp_content_writing.quality_gates import expand_ledger, unused_source_facts
+from services.acp_content_writing.trip_facts import find_trip_fact_issues, parse_moments
 from services.acp_shared.citation_tags import TAG_RE
 from services.quality import registry as qr
 from services.quality import settings_keys, trial_flags
 from shared import settings
+
+logger = structlog.get_logger()
 
 EXTEND_ENV = "T9_LENGTH_EXTEND"
 EXTEND_ON, EXTEND_OFF = "on", "off"
@@ -70,6 +92,14 @@ _LIST_LINE_RE = re.compile(r"^\s*(?:[-*•]\s|\d+[.)]\s)", re.M)
 
 
 EXTEND_SETTING = settings_keys.T9_BLOG_LENGTH_EXTEND   # "cis.t9.blog_length_extend" (CIS 418)
+MATERIAL_SETTING = settings_keys.T9_BLOG_EXTEND_MATERIAL               # CIS 426 (S281)
+SHRINK_SECTIONS_SETTING = settings_keys.T9_BLOG_EXTEND_SHRINK_SECTIONS  # CIS 426 (S281)
+MATERIAL_FACTS, MATERIAL_BACKGROUND = "source_facts", "with_background"
+# The options a piece runs with when the settings cannot be read: the repair before S281 (facts only, no shrink plan).
+MAIN_OPTIONS = {"material": MATERIAL_FACTS, "shrink_sections": 0}
+# S281 — a background paragraph is about the place, never about what the reader or the group does on the trip.
+_READER_RE = re.compile(r"\b(?:you(?:['’](?:ll|re|ve|d))?|your|yours|yourself|yourselves|we(?:['’](?:ll|re|ve|d))?|"
+                        r"our|ours|us)\b", re.I)
 
 
 def mode(tenant_id: Optional[str] = None) -> str:
@@ -88,6 +118,23 @@ def mode(tenant_id: Optional[str] = None) -> str:
 # The piece's switch, pinned ONCE per piece by service.run_write_background (`pin`) so a setting change mid-piece
 # never splits its repair rounds; the plans read it when the caller passes no `switch`. Cleared by `record`.
 _PINNED: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("length_extend_pinned", default=None)
+# S281 — the piece's options (`options`), pinned with the switch when it is on; read by the plans like the switch.
+_PINNED_OPTS: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("length_extend_opts", default=None)
+
+
+def options(tenant_id: Optional[str] = None) -> dict:
+    """S281 (CIS 426) — {"material": source_facts | with_background, "shrink_sections": int >= 0} for a piece of
+    `tenant_id` (tenant value, else platform value, else the default; shared.settings, never the database). A value
+    that cannot be read gives MAIN_OPTIONS (the repair before S281), never an error in the writing loop."""
+    tid = str(tenant_id) if tenant_id else None
+    try:
+        material = str(settings.get(MATERIAL_SETTING, tid) or "").strip().lower()
+        shrink = int(settings.get(SHRINK_SECTIONS_SETTING, tid) or 0)
+    except Exception as e:  # noqa: BLE001 — a settings failure keeps the repair as it was, never fails the piece
+        logger.warning("t9_length_extend_options_unread", error=f"{type(e).__name__}: {str(e)[:160]}")
+        return dict(MAIN_OPTIONS)
+    return {"material": MATERIAL_BACKGROUND if material == MATERIAL_BACKGROUND else MATERIAL_FACTS,
+            "shrink_sections": max(0, shrink)}
 
 
 def mode_for(tenant_id: Optional[str], channel: Optional[str]) -> str:
@@ -99,6 +146,7 @@ def pin(tenant_id: Optional[str], channel: Optional[str]) -> str:
     """Resolve the piece's switch (`mode_for`), pin it for the plans of this piece and return it."""
     resolved = mode_for(tenant_id, channel)
     _PINNED.set(resolved)
+    _PINNED_OPTS.set(options(tenant_id) if resolved == EXTEND_ON else None)
     return resolved
 
 
@@ -107,6 +155,7 @@ def record(context: dict, channel: Optional[str], switch: str) -> None:
     if channel == "blog" and context.get("length_trace"):
         context["length_trace"]["extend"] = switch
     _PINNED.set(None)
+    _PINNED_OPTS.set(None)
 
 
 def _f4_short(gate_ledger: list) -> Optional[dict]:
@@ -155,8 +204,30 @@ def _switch(switch: Optional[str], tenant_id: Optional[str]) -> str:
     return mode(tenant_id) if switch is None else switch
 
 
+def _opts(opts: Optional[dict], tenant_id: Optional[str]) -> dict:
+    """The options a plan reads: the caller's `opts`, else the piece's pinned ones (`pin`), else `options(tenant_id)`."""
+    if opts is None:
+        opts = _PINNED_OPTS.get()
+    return {**MAIN_OPTIONS, **(options(tenant_id) if opts is None else opts)}
+
+
+def background_names(source: str) -> list[str]:
+    """S281 — the places the piece's source names as its moments (trip_facts.parse_moments on the seed half of the
+    grounding text), in order, once each: what a background paragraph may be about (with what the post itself names)."""
+    return list(dict.fromkeys(m.name for m in parse_moments(source or "") if m.name))
+
+
+def _material(opts: dict, source: str, facts: list[str]) -> tuple[str, list[str]]:
+    """(material, named) of a plan: with_background needs at least one name; else the plan stays on source facts."""
+    if opts["material"] != MATERIAL_BACKGROUND:
+        return MATERIAL_FACTS, []
+    named = background_names(source)
+    return (MATERIAL_BACKGROUND, named) if named else (MATERIAL_FACTS, [])
+
+
 def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], source: str,
-             tenant_id: Optional[str] = None, switch: Optional[str] = None) -> Optional[dict]:
+             tenant_id: Optional[str] = None, switch: Optional[str] = None,
+             opts: Optional[dict] = None) -> Optional[dict]:
     """The extend plan of one attempt, or None (the old path): {"ledger": the ledger with the short F4 entry passed,
     "only_length": no other blocking failure, "facts": the untold seed facts, "sections": the chosen sections with
     the words to add, "deficit_chars", "target_chars"}. Runs when `_switch` is on."""
@@ -171,23 +242,30 @@ def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], so
     if deficit <= 0 or not body:
         return None
     facts = unused_source_facts(source or "", content_text, limit=FACTS_MAX)
-    if not facts:
+    material, named = _material(_opts(opts, tenant_id), source, facts)
+    if not facts and material != MATERIAL_BACKGROUND:
         return None
     ledger = [({**g, "passed": True, "violations": [], "set_aside": EXTEND_MODE}
                if g.get("gate") == qr.F4_EXTREME_LENGTH else g) for g in gate_ledger or []]
     others = [g for g in expand_ledger(ledger) if not g.get("passed") and g.get("blocking", True)]
     return {"ledger": ledger, "only_length": not others, "facts": facts,
-            "sections": _choose(body, deficit, facts), "deficit_chars": deficit, "target_chars": target}
+            "sections": _choose(body, deficit, facts, by_facts=material == MATERIAL_FACTS),
+            "deficit_chars": deficit, "target_chars": target,
+            **({"material": material, "named": named} if material == MATERIAL_BACKGROUND else {})}
 
 
-def _choose(body: list[dict], deficit: int, facts: list[str], holes: Optional[dict] = None) -> list[dict]:
+def _choose(body: list[dict], deficit: int, facts: list[str], holes: Optional[dict] = None, *,
+            min_sections: int = 0, by_facts: bool = True) -> list[dict]:
     """The sections that get a paragraph, each with the words to add. Round 2: the sections a repair made shorter
     (`holes`: section index -> chars lost) come first, largest loss first, so a cut sentence's place is filled; then
-    the thinnest. One section per WORDS_MAX words needed (at least two past half of it), within what exists."""
+    the thinnest. One section per WORDS_MAX words needed (at least two past half of it), within what exists.
+    S281: `min_sections` (the shrink setting, after a repair that shrank the blog) asks at least that many sections
+    (past SECTIONS_MAX too), the same words shared between them; `by_facts` False (background material) no longer caps
+    the sections at the number of untold facts. Both at their defaults = the plan before S281."""
     holes = holes or {}
     words_needed = math.ceil(deficit / lc.CHARS_PER_WORD)
-    wanted = max(math.ceil(words_needed / WORDS_MAX), 2 if words_needed > WORDS_MAX // 2 else 1)
-    k = min(SECTIONS_MAX, len(body), len(facts), wanted)
+    wanted = max(math.ceil(words_needed / WORDS_MAX), 2 if words_needed > WORDS_MAX // 2 else 1, min_sections)
+    k = min(max(SECTIONS_MAX, min_sections), len(body), len(facts) if by_facts else len(body), wanted)
     per = min(WORDS_MAX, max(WORDS_MIN, math.ceil(words_needed / k)))
     order = sorted(body, key=lambda s: (-holes.get(s["index"], 0), s["chars"], s["index"]))
     return [{**s, "words": per, **({"hole_chars": holes[s["index"]]} if holes.get(s["index"]) else {})}
@@ -205,13 +283,16 @@ def _holes(before: Optional[str], after: str) -> dict:
 
 def plan_after_repair(content_text: str, *, before: Optional[str], channel: Optional[str],
                       source: str, tenant_id: Optional[str] = None,
-                      switch: Optional[str] = None) -> tuple[Optional[dict], str]:
+                      switch: Optional[str] = None, opts: Optional[dict] = None,
+                      shrunk: Optional[bool] = None) -> tuple[Optional[dict], str]:
     """AA-1077 round 2 — the expand step of a repair round: (plan, reason). A blog repair round (the sentence repair
     of cut-type fixes, or the full rewrite) that leaves the text UNDER the F4 floor is never accepted as it is: the
     expand runs on the text the repair left, sized from ITS deficit to the target (the cuts' lost characters included:
     S278 73e6a233 went 3,957 → 3,546 chars after 6 F17 cuts and was held on length), with the sections the repair
     made shorter first. reason: 'expand' with a plan, else why not ('off', 'not_blog', 'at_or_over_floor',
-    'no_sections', 'no_untold_facts')."""
+    'no_sections', 'no_untold_facts': no untold fact and, with background material, no name either).
+    S281: `shrunk` (default: `before` was longer than the text now) asks the shrink setting's sections; the material
+    setting adds background (`_material`). `opts` = the piece's options (default: pinned, else read)."""
     if channel != "blog":
         return None, "not_blog"
     if _switch(switch, tenant_id) != EXTEND_ON:
@@ -223,16 +304,30 @@ def plan_after_repair(content_text: str, *, before: Optional[str], channel: Opti
     if not body:
         return None, "no_sections"
     facts = unused_source_facts(source or "", content_text, limit=FACTS_MAX)
-    if not facts:
+    o = _opts(opts, tenant_id)
+    material, named = _material(o, source, facts)
+    if not facts and material != MATERIAL_BACKGROUND:
         return None, "no_untold_facts"
+    if shrunk is None:
+        shrunk = before is not None and lc.measure(before) > now
     target = lc.extend_target_chars()
     deficit = target - now
     holes = _holes(before, content_text)
-    return ({"facts": facts, "sections": _choose(body, deficit, facts, holes), "deficit_chars": deficit,
-             "target_chars": target, "hole_chars": sum(holes.values())}, "expand")
+    secs = _choose(body, deficit, facts, holes, min_sections=o["shrink_sections"] if shrunk else 0,
+                   by_facts=material == MATERIAL_FACTS)
+    plan = {"facts": facts, "sections": secs, "deficit_chars": deficit, "target_chars": target,
+            "hole_chars": sum(holes.values())}
+    if shrunk and o["shrink_sections"]:
+        plan["shrunk"] = True
+    if material == MATERIAL_BACKGROUND:
+        plan.update(material=material, named=named)
+    return plan, "expand"
 
 
-def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx) -> Optional[str]:
+def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx,
+             known: Optional[str] = None) -> Optional[str]:
+    """Why a paragraph is refused, else None. `known` (S281, background material only: the post's text) adds the
+    background checks: no reader / group address and no name the post and its source lack."""
     from services.quality.repair_contract import new_specifics  # lazy: repair_contract imports hygiene
     if not add.strip():
         return "empty (no fitting fact)"
@@ -249,7 +344,23 @@ def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx)
     added = new_specifics("", add, trip_ctx=trip_ctx, source=source)
     if added:
         return "new specifics: " + "; ".join(added[:3])
+    if known is not None:
+        from services.quality.repair_contract import new_names  # lazy: repair_contract imports hygiene
+        reader = _READER_RE.search(add)
+        if reader:   # S281 — background is about the place, never what the reader or the group does
+            return f"addresses the reader or the group ('{reader.group(0)}'): background is third person"
+        names = new_names(known, add, source)
+        if names:
+            return "names what neither the post nor its source names: " + ", ".join(names[:3])
     return None
+
+
+def _new_trip_findings(cur: str, trial: str, trip_ctx) -> list[str]:
+    """S281 — the F17 trip-fact / F18 rarity findings the spliced text has and the text before it had not."""
+    if trip_ctx is None:
+        return []
+    was, now = find_trip_fact_issues(cur, trip_ctx), find_trip_fact_issues(trial, trip_ctx)
+    return [f for k in ("trip_fact", "rarity") for f in now[k] if f not in was[k]]
 
 
 def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str], float, Optional[str]]],
@@ -263,8 +374,15 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
     entry: dict = {"sections": len(plan["sections"]), "facts_offered": len(plan["facts"]),
                    "words_asked": sum(s["words"] for s in plan["sections"]), "chars_before": before,
                    "target_chars": plan["target_chars"], "added": 0, "refused": [], "model": None}
+    background = plan.get("material") == MATERIAL_BACKGROUND
+    if background:   # S281 — recorded only off the default material, so a source_facts entry keeps its shape
+        entry["material"] = MATERIAL_BACKGROUND
+    if plan.get("shrunk"):
+        entry["shrunk"] = True
     asked = [{"heading": s["heading"], "text": s["text"], "words": s["words"],
               **({"hole_chars": s["hole_chars"]} if s.get("hole_chars") else {})} for s in plan["sections"]]
+    if background:
+        call_kw = {**call_kw, "background": plan.get("named") or []}
     try:
         adds, cost, model = call(sections=asked, facts=plan["facts"], voice=voice, **call_kw)
     except Exception as e:  # noqa: BLE001 — an extend failure never fails the job; the old outcome stands
@@ -274,7 +392,8 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
     cur = content_text
     # splice from the last section to the first, so earlier offsets stay valid; each paragraph checked on its own
     for sec, raw in sorted(zip(plan["sections"], adds), key=lambda p: -p[0]["index"]):
-        why = _refusal(str(raw or ""), sec["words"], cta=cta, source=source, trip_ctx=trip_ctx)
+        why = _refusal(str(raw or ""), sec["words"], cta=cta, source=source, trip_ctx=trip_ctx,
+                       known=cur if background else None)
         add = " ".join(str(raw or "").split())
         live = next((s for s in sections(cur) if s["index"] == sec["index"]), None)
         at = _insert_at(cur, live, cta) if live is not None and why is None else -1
@@ -284,8 +403,11 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
             rest = cur[at:].lstrip("\n")
             trial = cur[:at].rstrip("\n") + "\n\n" + add + ("\n\n" + rest if rest else cur[at:])
             problems = _integrity(cur, trial, ignore, cta, moments)
+            trip = _new_trip_findings(cur, trial, trip_ctx) if background and not problems else []
             if problems:
                 why = "seam: " + "; ".join(problems[:2])
+            elif trip:
+                why = "trip fact: " + "; ".join(trip[:2])
             else:
                 cur = trial
                 entry["added"] += 1
@@ -297,4 +419,6 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
 
 
 __all__ = ["EXTEND_ENV", "EXTEND_SETTING", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX",
-           "mode", "mode_for", "pin", "record", "sections", "plan_for", "plan_after_repair", "extend"]
+           "MATERIAL_SETTING", "SHRINK_SECTIONS_SETTING", "MATERIAL_FACTS", "MATERIAL_BACKGROUND", "MAIN_OPTIONS",
+           "mode", "mode_for", "options", "pin", "record", "sections", "background_names", "plan_for",
+           "plan_after_repair", "extend"]
