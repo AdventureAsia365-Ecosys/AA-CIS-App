@@ -25,8 +25,11 @@
 -- tests/unit/test_aa1096_settings_env_lint.py lists it with its removal date and fails once that date has passed).
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): UPDATEs of existing config rows and one DO
--- block (the post-check). MIG-4: a migration-only PR without a readiness raise; on Dev, Infra Migration Apply once
--- every job table is idle (root ADR 0017a). DM-6.1: no personal data (definition text). DM-7.1: no new table.
+-- block (the post-check). No readiness raise. MIG-4 deviation (recorded in the implementation notes): this file ships
+-- in ONE PR with the code that stops naming the retired env vars, not as a migration-only PR, because the seed-parity
+-- and migration-replay tests bind this block, the generator and compiled_defaults.json together (either half alone is
+-- red), and no code reads the column, so a deploy before the apply changes nothing. On Dev, Infra Migration Apply
+-- once every job table is idle (root ADR 0017a). DM-6.1: no personal data (definition text). DM-7.1: no new table.
 --
 -- Number. 420 is the newest CIS migration on main (15/11/2026) and 421-427 are taken by other lanes of this wave. If
 -- the owner main max + 1 differs at merge, renumber (git grep '428_' and '428' here, in

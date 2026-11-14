@@ -73,6 +73,8 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
 
 ## Should know
 
+- **MIG-4 deviation, recorded (review S281).** The lane rule and root ADR 0017 MIG-4 ship a contract file in a migration-only PR, then the code PR. This branch ships the migration and the code in one PR on purpose: the seed-parity test `tests/unit/test_s279_settings_seed_parity.py` (JSON = generator over the migrations) and the replay test `tests/integration/test_s279_migration_407.py` (DB `env_override` = generator seed) tie CIS 428, the generator and `compiled_defaults.json` together, so a migration-only PR is red unless it also carries the regen, and the regen alone stops the reader honouring the env names, which turns ~30 test modules red unless they move too; a code PR branched from `origin/main` would then touch the same test lines and go DIRTY after the squash. The order MIG-4 protects still holds at runtime: no readiness raise (the Migration preflight accepts it), no code reads the `env_override` column, so a deploy before Infra Migration Apply changes nothing. The migration header says the same; the PR body names the chain as `applies:` on this one PR.
+
 - Number 428: 421-427 are taken by other lanes of this wave (orchestrator hint). If main max + 1 differs at merge,
   renumber (`git grep '428_'` and `'428'` in the migration, the 428 integration test, the generator docstring,
   `compiled_defaults.json`'s `_generated` line, this file, the env lint docstring, `CONTEXT.md`).

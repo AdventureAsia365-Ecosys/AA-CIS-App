@@ -67,7 +67,6 @@ async def test_an_incomplete_guide_is_refused_and_null_is_allowed(conn):
     assert await conn.fetchval("SELECT guide IS NULL AS ok FROM shared.setting_definition WHERE key = $1", KEY)
 
 
-@pytest.mark.asyncio
 def _edited_later() -> set:
     """Keys whose label / guide a later file changes (a settings-guide or settings-edit block after 416, e.g. CIS 428):
     a replay of 416 alone puts its own text back on those, which the later file then owns."""
@@ -83,6 +82,7 @@ def _edited_later() -> set:
     return keys
 
 
+@pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
     body = _body()
     later = _edited_later()
