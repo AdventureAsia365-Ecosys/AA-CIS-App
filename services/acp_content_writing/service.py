@@ -26,6 +26,7 @@ N7 (AA-416 only fixed this symptom after 2 real production ALB-timeout incidents
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import re
@@ -60,7 +61,7 @@ from services.acp_content_writing.facts import fetch_facts_for_writing, format_f
 from services.quality import trial_flags  # AA-1049: per-job opt-in of the W3 switches (audit tenants)
 from services.acp_content_writing import (ai_tells, authenticity, faq_answer_fit, faq_filter, hygiene, length_trim,
                                           sentence_repair, text_integrity, trip_facts)
-from services.acp_content_writing import length_contract, length_extend  # AA-1077 (blog length contract)
+from services.acp_content_writing import length_contract, length_extend, length_recheck  # AA-1077 (blog length)
 from services.acp_shared.signature_vocabulary import signature_words
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, extend_sections,
                                                    fit_seo_fields, repair_sentences, rewrite_with_feedback,
@@ -2116,38 +2117,8 @@ def _add_date_spans(context: dict) -> None:
         context["route_segments"] = [(a, trip_facts.with_date_spans(t)) for a, t in context["route_segments"]]
 
 
-LENGTH_TRACE_STEP = "length_trace"
-
-
-def _recheck_length(content_text: str, gate_ledger: list, status: str, held_reason: Optional[str], *,
-                    trace: dict, floor_kept: Optional[list] = None) -> tuple[list, str, Optional[str], dict]:
-    """AA-1077 — F4 again on the text a blog stores (the last step of _normalize_final_text). S276: 3 of 7 approved
-    phase 2 blogs were stored under the 4,700-char floor while their ledger said F4 passed, and 10 of 13 F4 holds
-    were stored 192–557 chars shorter than the F4 reading. A fresh F4 failure replaces the ledger's F4 entry and
-    holds an approved piece (its label then reads `length_short`); a fresh pass leaves a failed entry as it is
-    (status never moves from held to approved here: the hold was decided on the gated text). Returns (ledger,
-    status, held_reason, the `length_trace` record for writer_input: chars after each normalizer step, the verdict)."""
-    from services.acp_content_writing.quality_gates import gate_extreme_length  # lazy, as the other F4 re-runs
-    fresh = gate_extreme_length(strip_citation_tags(content_text), "blog")
-    side = length_contract.entry_side(fresh)
-    entry = {"step": LENGTH_TRACE_STEP, "chars": dict(trace), "floor": length_contract.floor_chars(),
-             "target": length_contract.target_chars(), "words": length_contract.words(content_text),
-             "verdict": length_contract.code_for(fresh) or "in", "held": False}
-    if floor_kept:   # S278 — the optional normalizer steps whose edit the floor stopped (the ledger note)
-        entry["floor_kept"] = list(floor_kept)
-    if side is None:
-        return gate_ledger, status, held_reason, entry
-    ledger = list(gate_ledger)
-    k = next((i for i, g in enumerate(ledger) if isinstance(g, dict) and g.get("gate") == qr.F4_EXTREME_LENGTH), None)
-    if k is None:
-        ledger.append(fresh)
-    else:
-        ledger[k] = {**ledger[k], **fresh}
-    if status == "approved":
-        status, held_reason = "held", _held_reason_from(fresh)
-        entry["held"] = True
-        logger.info("t9_length_recheck_held", verdict=entry["verdict"], chars=entry["chars"])
-    return ledger, status, held_reason, entry
+# AA-1077 — the F4 re-check of the stored text lives in length_recheck (S280, with the post-normalizer lengthen pass)
+LENGTH_TRACE_STEP, _recheck_length = length_recheck.LENGTH_TRACE_STEP, length_recheck.recheck_length
 
 
 async def _normalize_final_text(content_text: str, *, gate_ledger: list, flags: list, status: str,
@@ -2396,6 +2367,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         paid_attempts = paid_attempts_for(stop_label, max_attempts())
         stopped_for_label = False
         extend_mode = length_extend.pin(tenant_id, channel)   # AA-1077 S280: the lengthening switch, once per piece
+        # The gates of every attempt and of the post-normalizer lengthen pass, with the piece's own arguments: S234 r2
+        # F15 sibling templates, r3 F17/F18 + brief phrases in F15, r4 F4 a title the brand used, AA-777 sticky pass.
+        gates = functools.partial(
+            run_quality_gates, atom_text=grounding_text, cta=cta, brand_rubric_text=brand_rubric_text, channel=channel,
+            keyword=keyword, brand_pack=brand_audience, hygiene_ctx=hyg, sibling_texts=sibling_texts, trip_ctx=trip_ctx,
+            brief_texts=briefs, taken_titles=taken_titles, f9_passed_sentences=f9_passed, **openers_kw)
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()
@@ -2787,18 +2764,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             first_line_log = first_line_log + tf_log + final_log + trim_log + repeat_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
-                run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
-                brand_rubric_text=brand_rubric_text, channel=channel, keyword=keyword,
-                seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
-                slug=seo_meta.get("slug"), cannibalization_match=cannibalization_match,
-                brand_pack=brand_audience, hygiene_ctx=hyg, **openers_kw,
-                # S234 review — a stock phrase blocks (one sentence repair) on attempt 1 only.
-                stock_blocking=attempt == 1,
-                sibling_texts=sibling_texts,  # S234 round 2 — F15 sibling templates
-                trip_ctx=trip_ctx, brief_texts=briefs,  # S234 round 3 — F17/F18, brief phrases in F15
-                taken_titles=taken_titles,  # S234 round 4 — F4: a title this brand already used
-                f9_passed_sentences=f9_passed,  # AA-777 — sticky pass, one set per job
-            )
+                gates, content_text=content_text, seo_title=seo_meta.get("seo_title"),
+                meta_description=seo_meta.get("meta_description"), slug=seo_meta.get("slug"),
+                cannibalization_match=cannibalization_match,
+                stock_blocking=attempt == 1)  # S234 review — a stock phrase blocks (one sentence repair) on attempt 1
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
             # AA-789 tier 1 — the seed-alignment candidates of this attempt (shadow included), admin-only
@@ -2949,6 +2918,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             repair_log=repair_log, summary=summary, embedding=embedding, attempt=attempt, channel=channel, spec=spec,
             cta=cta, brand_ignore=brand_ignore, hyg=hyg, context=context, piece_id=piece_id, request_id=request_id,
             tenant_id=tenant_id)
+        # AA-1077 S280 — a loop-approved blog a mandatory normalizer cut took under the floor: one PAID lengthen pass
+        # (switch on, a paid attempt left: none after attempt 2 in stop-and-label mode), then every gate again.
+        norm = await length_recheck.lengthen_after_normalizer(
+            norm, loop_text=content_text, loop_status=status, switch=extend_mode, channel=channel, attempt=attempt,
+            attempts_left=paid_attempts - attempt, source=grounding_text, context=context, hyg=hyg, cta=cta,
+            gates=functools.partial(gates, seo_title=seo_meta.get("seo_title"), slug=seo_meta.get("slug"),
+                                    meta_description=seo_meta.get("meta_description"), stock_blocking=False,
+                                    cannibalization_match=cannibalization_match),
+            call=extend_sections, ignore=brand_ignore, trip_ctx=trip_ctx, brand_pack=brand_audience,
+            embed=compute_embedding, tenant_id=tenant_id, request_id=request_id, piece_id=piece_id)
         content_text, gate_ledger, flags = norm["content_text"], norm["gate_ledger"], norm["flags"]
         status, held_reason, repair_log = norm["status"], norm["held_reason"], norm["repair_log"]
         summary, embedding = norm["summary"], norm["embedding"]

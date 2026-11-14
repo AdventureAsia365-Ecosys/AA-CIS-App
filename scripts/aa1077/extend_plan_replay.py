@@ -16,11 +16,18 @@ would do with it, through the code of the checkout it runs in (the plan is the l
             the chars it must add to reach the target), or why not (`at_or_over_floor`, `no_sections`,
             `no_untold_facts`);
   trace     what the piece's own repair rounds recorded (`length_net.expand`, the `length_extend` entry) when the switch
-            was on for it, and `length_trace.extend` (S280: the switch the loop resolved for the piece).
+            was on for it, and `length_trace.extend` (S280: the switch the loop resolved for the piece);
+  post      S280 (length_recheck.lengthen_after_normalizer) for a piece the re-check held: whether the post-normalizer
+            lengthen pass would run with the switch on (`lengthen`, or why not: `not_a_mandatory_cut`,
+            `no_attempt_left`: no PAID attempt left, the same budget as the loop, so in stop-and-label mode a piece
+            approved at attempt 2 is never eligible), the step that crossed the floor, and what the piece itself
+            recorded (`length_trace.post_normalizer`) when it ran with the switch on.
 
 Summary: short pieces, short held for length only, the plan reasons, `reachable` (short with an expand plan) and
 `reachable_length_only` (the pieces the repair could approve if its paragraphs pass every gate: the trial's best case),
-`no_material` (short, no untold fact: only the T7 seed floor helps them), `recheck_held`.
+`no_material` (short, no untold fact: only the T7 seed floor helps them), `recheck_held`, `post_normalizer` (the
+eligibility reasons of the re-check holds) and `post_normalizer_reachable` (eligible with an expand plan: the pass's
+best case).
 
 Run by the orchestrator in aa-cis-dev-api (cwd /app; container DATABASE_URL = cis_app, ssl=require), one line:
     tools/ecs/ecsx.sh apps/AA-CIS-App/scripts/aa1077/extend_plan_replay.py SINCE=2026-11-10T05:49:46Z
@@ -83,7 +90,21 @@ def _own_rounds(repair_log: list) -> dict:
     return out
 
 
-def replay_piece(row: dict, *, source_of=_source) -> dict:
+def _post_normalizer(trace: dict, paid_attempts: int) -> dict:
+    """S280 — what the post-normalizer lengthen pass would do with a piece the re-check held (switch on), and what the
+    piece recorded when it ran with the switch on. {} for a piece the re-check did not hold."""
+    from services.acp_content_writing import length_extend as le, length_recheck as lr
+    if not trace.get("held") and not trace.get(lr.TRACE_KEY):
+        return {}
+    attempt = int(trace.get("attempt") or 1)
+    reason, step = lr.eligibility({**trace, "held": True}, loop_status="approved", switch=le.EXTEND_ON,
+                                  attempts_left=paid_attempts - attempt)
+    own = trace.get(lr.TRACE_KEY) if isinstance(trace.get(lr.TRACE_KEY), dict) else {}
+    return {"reason": reason, "crossed_at": step,
+            "recorded": {k: own.get(k) for k in ("reason", "outcome", "cost_usd", "failing") if k in own}}
+
+
+def replay_piece(row: dict, *, source_of=_source, paid_attempts: int = 2) -> dict:
     """One piece's line (pure but for the service imports; unit-tested with `source_of` injected)."""
     from services.acp_content_writing import gate_eval, length_contract as lc, length_extend as le
     ledger = _j(row.get("gate_ledger")) or []
@@ -101,7 +122,7 @@ def replay_piece(row: dict, *, source_of=_source) -> dict:
            "length_only": bool(status == "held" and side == lc.SHORT and hold_capable <= {le.qr.F4_EXTREME_LENGTH}
                                and lc.CODE_SHORT in codes),
            "recheck_held": bool(trace.get("held")), "switch_recorded": trace.get("extend"),
-           "own_rounds": _own_rounds(repair_log)}
+           "own_rounds": _own_rounds(repair_log), "post_normalizer": _post_normalizer(trace, paid_attempts)}
     if not wi.get("seed"):
         out["plan"] = "no_seed"
         return out
@@ -126,10 +147,20 @@ def summarize(rows: list[dict]) -> dict:
         "reachable_length_only": sorted(r["piece"] for r in short if r["plan"] == "expand" and r["length_only"]),
         "no_material": sorted(r["piece"] for r in short if r["plan"] == "no_untold_facts"),
         "recheck_held": sorted(r["piece"] for r in rows if r["recheck_held"]),
+        "post_normalizer": _count(r["post_normalizer"].get("reason") for r in rows if r.get("post_normalizer")),
+        "post_normalizer_reachable": sorted(r["piece"] for r in rows if (r.get("post_normalizer") or {}).get("reason")
+                                            == "lengthen" and r["plan"] == "expand"),
         "median_deficit_chars": _median([r["deficit_chars"] for r in short if "deficit_chars" in r]),
         "switch_recorded": {str(k): sum(r["switch_recorded"] == k for r in rows)
                             for k in sorted({r["switch_recorded"] for r in rows}, key=str)},
     }
+
+
+def _count(values) -> dict:
+    out: dict = {}
+    for v in values:
+        out[str(v)] = out.get(str(v), 0) + 1
+    return out
 
 
 def _median(values: list) -> Any:
@@ -155,12 +186,15 @@ async def main() -> int:
         raw = [dict(r) for r in await conn.fetch(PIECES_SQL, tenants, since)]
     finally:
         await conn.close()
+    # The piece's PAID attempt budget, exactly as run_write_background computes it (stop-and-label: never past 2).
+    from services.acp_content_writing import service as svc
+    paid_attempts = svc.paid_attempts_for(svc.last_attempt_mode() == svc.STOP_AND_LABEL, svc.max_attempts())
     rows = []
     for r in raw:
         if str(r["piece_id"])[:8] in exclude:
             continue
         try:
-            rows.append(replay_piece(r))
+            rows.append(replay_piece(r, paid_attempts=paid_attempts))
         except Exception as e:  # noqa: BLE001 — one piece that cannot be replayed is reported, never fatal
             print(f"ERROR {str(r['piece_id'])[:8]} {type(e).__name__}: {str(e)[:160]}")
     for r in rows:

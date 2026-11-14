@@ -3965,7 +3965,7 @@ target (read from the hashed `prompts._BLOG_WORDS` / `_BLOG_WORDS_MAX`, pinned a
 extend target. A blog F4 violation names its side (`length_short: content is only N chars (about W words), under the
 blog floor …` / `length_long: … far beyond …`) and the hold reason code is `length_short` / `length_long`
 (`gate_eval`; old labels keep `length`, group with `gate_eval.reason_family`). The normalizer ends with an F4 re-check
-of the stored blog text (`service._recheck_length`: an approved piece under the floor is held) and
+of the stored blog text (`length_recheck.recheck_length`, service's `_recheck_length`: an approved piece under the floor is held) and
 `writer_input.length_trace` (chars after each step); its FAQ answer fit never drops a pair that would take the blog under the
 floor. **Extend repair** (`length_extend.py`; switch = the setting `cis.t9.blog_length_extend`, off | on, CIS 418,
 platform + tenant scope, resolved once per piece for its tenant (S280); a job `trial_flags` value first, the env var
@@ -4003,6 +4003,15 @@ puts back any delete that would take the blog under the floor (`service._floor_k
 expand paragraph that names a source is refused, and `repair_log[-1].length_net` records before / after_repair /
 after_expand / expand reason (`attempt_3_no_expand` on attempt 3) / `shrank_under_floor`. Switch off = main's loop (the feedback order and
 wording above are on for everyone).
+AA-1077 S280 — **post-normalizer lengthen pass** (`length_recheck.lengthen_after_normalizer`, after
+`_normalize_final_text`, before the result is unpacked): a blog the loop APPROVED that a mandatory normalizer step
+(usage-policy cut, final integrity pass) took under the floor, so the re-check held it, gets ONE lengthen pass when the
+piece's pinned extend switch is on and it has a PAID attempt left (`paid_attempts_for`: `cis.t9.max_attempts`, and in
+stop-and-label mode never past attempt 2, root ADR 0020 D6: so there only an attempt-1 approval is eligible): the expand plan
+on the stored text (`plan_after_repair`, the cut sections first), one `extend_sections` call (quality signal
+`step: post_normalizer`; a tenant-budget stop is re-raised), then `text_integrity.final_pass` and EVERY gate (the loop's
+`run_quality_gates` partial, attempt > 1) on that text; accepted (status approved, the re-run ledger) only when all pass,
+else the normalizer's result byte for byte. Recorded in `writer_input.length_trace.post_normalizer`. Switch off = main.
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
