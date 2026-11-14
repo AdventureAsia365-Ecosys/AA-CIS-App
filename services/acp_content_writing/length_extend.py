@@ -205,7 +205,7 @@ def _switch(switch: Optional[str], tenant_id: Optional[str]) -> str:
 
 
 def _opts(opts: Optional[dict], tenant_id: Optional[str]) -> dict:
-    """The options a plan reads: the caller's `opts`, else the piece's pinned ones (`pin`), else `options(tenant_id)`."""
+    """The options a plan reads: the caller's `opts`, else the piece's pinned ones (`pin`), else `options(tenant)`."""
     if opts is None:
         opts = _PINNED_OPTS.get()
     return {**MAIN_OPTIONS, **(options(tenant_id) if opts is None else opts)}

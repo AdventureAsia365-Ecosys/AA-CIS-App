@@ -45,32 +45,42 @@ SEED = (
 FACTS = (
     "\nFacts:\n"
     "- The shepherd huts on the ridge are built from flat river stones without any mortar.\n"
-    "- Lake Orrin freezes from the northern shore first and the ice stays until late spring.\n"
+    "- Lake Orrin is fed by snowmelt from the plateau and its water stays cold through the year.\n"
     "- The market in Tessaly sells smoked trout and sheep cheese from the villages around the lake.\n"
     "- The rim path is lined with old juniper trees bent low by the wind from the plateau.\n"
 )
 SOURCE = SEED + FACTS
 
-# Distinct invented sentences per section (no repeats, so the seam checks read them as they would a real post).
-WORDS = ["amber", "birch", "cedar", "dune", "elder", "fern", "gorse", "hazel", "iris", "juniper", "kelp", "larch",
-         "moss", "nettle", "oak", "pine", "quince", "rowan", "sorrel", "thyme", "umber", "vetch", "willow", "yarrow"]
+# Distinct invented sentences per section, made of invented words that never repeat (so the writing loop's own
+# near-duplicate and echo checks leave them alone, as they would a real post).
+SYL = ["ba", "ko", "ri", "tu", "le", "mo", "sa", "ve", "di", "na", "po", "gu"]
+VERBS = ["shades", "faces", "guards", "borders", "hides", "frames", "crowns", "shelters", "flanks", "overlooks",
+         "fronts", "screens"]
 HEADS = ["The Rim Path", "Above the Ast", "Tessaly Lanes", "The Lake Road", "Stone Huts"]
+PER_SECTION = 15
 
 
-def _sentences(head: str, n: int) -> list[str]:
-    tag = head.split()[-1].lower()
-    return [f"The {WORDS[i % 24]} slope near the {tag} keeps a {WORDS[(i * 7 + 3) % 24]} hedge along the "
-            f"{WORDS[(i * 5 + 1) % 24]} wall." for i in range(n)]
+def _word(i: int) -> str:
+    return SYL[i % 12] + SYL[(i // 12) % 12] + SYL[(i // 144 + 3) % 12] + "n"
+
+
+def _sentences(k: int, n: int = PER_SECTION) -> list[str]:
+    out = []
+    for j in range(n):
+        b = (k * 16 + j) * 5
+        out.append(f"The {_word(b)} {_word(b + 1)} {VERBS[(k + j) % 12]} a {_word(b + 2)} {_word(b + 3)} near the "
+                   f"{_word(b + 4)}.")
+    return out
 
 
 def _post(cut: int = 0) -> str:
     """A blog over the floor (before the repair); `cut` drops that many sentences of 'Above the Ast' (the repair)."""
     secs = []
     for k, head in enumerate(HEADS):
-        sents = _sentences(head + str(k), 16)
+        sents = _sentences(k)
         if head == "Above the Ast" and cut:
             sents = sents[:-cut]
-        secs.append(f"## {head}\n\n" + " ".join(sents[:8]) + "\n\n" + " ".join(sents[8:]))
+        secs.append(f"## {head}\n\n" + " ".join(sents[:7]) + "\n\n" + " ".join(sents[7:]))
     intro = "Vellmar Gorge rewards a slow walk. Tessaly waits at the end of the lake road."
     return (f"{intro}\n\n" + "\n\n".join(secs) + f"\n\n{CTA}\n\n## FAQ\n\n**Q: Where is Tessaly?**\n"
             "A: Tessaly sits at the end of the lake road.\n")
@@ -80,7 +90,7 @@ def _trial_shape() -> tuple[str, str]:
     """(before, after): the repair took a blog over the floor to one just under it, the deficit to the target being
     the 81-160 words for which the deficit alone asks TWO sections (trial 5: 4,988 → 4,669 chars)."""
     before = _post()
-    for cut in range(1, 16):
+    for cut in range(1, PER_SECTION):
         after = _post(cut)
         if lc.measure(after) < lc.floor_chars():
             return before, after
@@ -277,7 +287,7 @@ def test_the_background_call_gets_the_named_list():
 
 
 @pytest.mark.parametrize("bad,why", [
-    ("You can join a boat trip across the lake from the market and watch the sunset over the water.", "addresses"),
+    ("You can join the shepherd families at the market and taste the smoked trout from the lake.", "addresses"),
     ("Our guide explains how the gorge was carved by the river through the soft limestone.", "addresses"),
     ("Travellers stop here for lunch at noon before the walk back along the rim to the village.", "new specifics"),
     ("The gorge was first mapped in 1620 by surveyors who followed the river up from the plain.", "new specifics"),
@@ -347,3 +357,116 @@ def test_the_background_prompt_forbids_trip_claims_numbers_and_new_names():
     for rule in ("third person", "never say what travellers do", "No number of any kind", "superlative",
                  "never a place, person, group or thing", "Never add an activity, service, meal, time of day"):
         assert rule in p
+
+
+# ---------------------------------------------------------------- the loop: the trial 5 shape end to end
+
+def _loop_ctx():
+    from tests.unit.test_aa1077_s278_round2 import _ctx as round2_ctx
+    return {**round2_ctx(), "atom_text": SOURCE, "cta": CTA}
+
+
+def _cut_sentences(before: str, after: str) -> list[str]:
+    return [s for s in _sentences(HEADS.index("Above the Ast")) if s in before and s not in after]
+
+
+def _loop_gates(calls: list, cuts: list[str]):
+    """run_quality_gates stand-in: attempt 1 = F4 in band + F17 quoting the sentences the repair will cut; later = F4
+    measured on the real text."""
+    from tests.unit.test_aa1077_s278_round2 import _f17
+
+    def run(**kw):
+        calls.append(kw["content_text"])
+        ledger = [{**qg.gate_extreme_length(qg.strip_citation_tags(kw["content_text"]), "blog"), "blocking": True}]
+        if len(calls) == 1:
+            ledger.append({"gate": qg.qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable": True,
+                           "violations": [_f17(c) for c in cuts]})
+        first = next((g for g in ledger if not g["passed"] and g.get("blocking", True)), None)
+        return {"passed": first is None, "gate_ledger": ledger, "first_failure": first, "flags": []}
+    return run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shrink,status", [(3, "approved"), (0, "held")])
+async def test_the_loop_re_extends_a_blog_its_repair_shrank_under_the_floor(monkeypatch, shrink, status):
+    """Trial 5 in the loop: attempt 1 is over the floor with F17 findings; the sentence repair cuts them and leaves the
+    blog under the floor; the expand then runs on what is left. The writer has nothing for the two sections the
+    deficit alone asks (empty, as in the trial) and a fact paragraph for one more: with the shrink setting (3) that
+    section is asked and the piece is approved over the floor; with 0 it is held on length (the trial's outcome)."""
+    import uuid
+    from unittest.mock import AsyncMock
+
+    from services.acp_content_writing import service
+
+    before, after = _trial_shape()
+    cuts = _cut_sentences(before, after)
+    assert cuts
+    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    _values(monkeypatch, shrink__platform=shrink)
+    deficit_plan, _ = le.plan_after_repair(after, before=before, channel="blog", source=SOURCE, switch="on",
+                                           opts={"material": "source_facts", "shrink_sections": 0})
+    deficit_heads = {s["heading"] for s in deficit_plan["sections"]}
+    para = ("The shepherd huts on the ridge are built from flat river stones laid without any mortar, and the market "
+            "in Tessaly sells smoked trout and sheep cheese brought in from the villages around the lake.")
+    seen: list = []
+
+    def ext(*, sections, facts, voice=None, **kw):
+        seen.append([s["heading"] for s in sections])
+        return [("" if s["heading"] in deficit_heads else para) for s in sections], 0.004, "writer-model"
+
+    calls: list[str] = []
+    with patch.object(service.hygiene, "ensure_cta", side_effect=lambda text, cta: (text, [])), \
+            patch.object(service.text_integrity, "final_pass", side_effect=lambda text, hyg, **kw: (text, [], [])), \
+            patch.object(service, "_fit_seo_meta", new=AsyncMock(side_effect=lambda seo, kw, **k: (seo, 0.0))), \
+            patch.object(service, "_enforce_faq_contract",
+                         new=AsyncMock(side_effect=lambda text, **k: (text, 0.0, []))), \
+            patch.object(service, "_apply_faq_answer_fit",
+                         new=AsyncMock(side_effect=lambda text, flags, **k: (text, flags, 0.0))), \
+            patch.object(service, "_recheck_length", side_effect=lambda t, led, st, hr, **kw: (led, st, hr, {})), \
+            patch.object(service, "write_content", return_value=(before, 0.05, {}, None)), \
+            patch.object(service, "rewrite_with_feedback") as rewrite, \
+            patch.object(service, "repair_sentences", return_value=([""] * len(cuts), 0.01)), \
+            patch.object(service, "extend_sections", side_effect=ext), \
+            patch.object(service, "run_quality_gates", side_effect=_loop_gates(calls, cuts)), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(uuid.UUID("00000000-0000-4000-8000-000000001281"),
+                                           uuid.UUID("00000000-0000-4000-8000-000000002281"), _loop_ctx(),
+                                           pool=MagicMock())
+    rewrite.assert_not_called()
+    kw = fin.call_args.kwargs
+    entry = next(e for e in kw["repair_log"] if e.get("length_net"))
+    net = entry["length_net"]
+    assert net["before"] >= lc.floor_chars() > net["after_repair"]               # the repair shrank it under
+    assert len(seen) == 1 and len(seen[0]) == (3 if shrink else 2)
+    assert kw["status"] == status
+    if shrink:
+        assert entry[le.EXTEND_MODE]["added"] == 1 and entry[le.EXTEND_MODE]["shrunk"] is True
+        assert net["after_expand"] >= lc.floor_chars() and not net["shrank_under_floor"]
+        assert para in kw["content_text"] and not any(c in kw["content_text"] for c in cuts)
+    else:
+        assert entry[le.EXTEND_MODE]["added"] == 0 and net["shrank_under_floor"]
+
+
+# ---------------------------------------------------------------- the $0 extend-plan replay (scripts/aa1077)
+
+def test_the_replay_shows_what_background_and_the_shrink_plan_unblock():
+    """A short piece with no untold fact: no_untold_facts with source facts, expand with background; a piece whose own
+    repair round shrank it under the floor is replayed with the shrink sections."""
+    from scripts.aa1077 import extend_plan_replay as rp
+    told = _told()
+    f4 = qg.gate_extreme_length(qg.strip_citation_tags(told), "blog")
+    row = {"piece_id": "aaaaaaaa-1", "tenant": "audit-x", "status": "held", "held_reason": None, "content_text": told,
+           "gate_ledger": [f4], "repair_log": [], "writer_input": {"seed": SOURCE}}
+    dry = rp.replay_piece(row, source_of=lambda wi, r: SOURCE, shrink=3)
+    assert dry["plan"] == "no_untold_facts" and dry["plan_background"] == "expand"
+    assert dry["names_offered_background"] == 2 and dry["facts_offered_background"] == 0
+    before, after = _trial_shape()
+    shrunk_row = {**row, "piece_id": "bbbbbbbb-2", "content_text": after,
+                  "gate_ledger": [qg.gate_extreme_length(qg.strip_citation_tags(after), "blog")],
+                  "repair_log": [{"attempt": 1}, {"attempt": 2, "length_net": {"shrank_under_floor": True}}]}
+    shrunk = rp.replay_piece(shrunk_row, source_of=lambda wi, r: SOURCE, shrink=3)
+    plain = rp.replay_piece(shrunk_row, source_of=lambda wi, r: SOURCE, shrink=0)
+    assert shrunk["shrunk_by_repair"] and shrunk["sections"] == 3 and plain["sections"] == 2
+    s = rp.summarize([dry, shrunk])
+    assert s["no_material"] == ["aaaaaaaa"] and s["no_material_background"] == []
+    assert s["reachable_background"] == ["aaaaaaaa", "bbbbbbbb"] and s["shrunk_by_repair"] == ["bbbbbbbb"]

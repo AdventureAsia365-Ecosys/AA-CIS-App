@@ -23,11 +23,17 @@ would do with it, through the code of the checkout it runs in (the plan is the l
             approved at attempt 2 is never eligible), the step that crossed the floor, and what the piece itself
             recorded (`length_trace.post_normalizer`) when it ran with the switch on.
 
+S281 (CIS 426): the plan is replayed in two arms, `plan` with the material source_facts (the repair before S281) and
+`plan_background` with with_background (background about what the source names; facts optional), both with the shrink
+setting's sections when the piece's own repair round shrank it under the floor (`shrunk_by_repair`: its
+`length_net.shrank_under_floor`). Per arm: sections asked and facts / names offered.
+
 Summary: short pieces, short held for length only, the plan reasons, `reachable` (short with an expand plan) and
 `reachable_length_only` (the pieces the repair could approve if its paragraphs pass every gate: the trial's best case),
 `no_material` (short, no untold fact: only the T7 seed floor helps them), `recheck_held`, `post_normalizer` (the
 eligibility reasons of the re-check holds) and `post_normalizer_reachable` (eligible with an expand plan: the pass's
-best case).
+best case); S281: `reachable_background`, `reachable_length_only_background`, `no_material_background` (the same
+counts in the with_background arm: `no_material` minus these is what background unblocks) and `shrunk_by_repair`.
 
 Run by the orchestrator in aa-cis-dev-api (cwd /app; container DATABASE_URL = cis_app, ssl=require), one line:
     tools/ecs/ecsx.sh apps/AA-CIS-App/scripts/aa1077/extend_plan_replay.py SINCE=2026-11-10T05:49:46Z
@@ -36,6 +42,9 @@ Env
   SINCE     (required) ISO start; blog pieces created at or after it.
   TENANTS   (optional) comma-separated tenant slugs; default the four AA-741 audit tenants.
   EXCLUDE   (optional) comma-separated 8-char piece ids to leave out (default the S238 synthetic piece d67e3178).
+  PIECES    (optional, S281) comma-separated 8-char piece ids to keep (e.g. the paid trial's pieces); default all.
+  SHRINK    (optional, S281) the shrink sections to replay with; default the platform value of
+            cis.t9.blog_extend_shrink_sections.
 """
 from __future__ import annotations
 
@@ -104,7 +113,25 @@ def _post_normalizer(trace: dict, paid_attempts: int) -> dict:
             "recorded": {k: own.get(k) for k in ("reason", "outcome", "cost_usd", "failing") if k in own}}
 
 
-def replay_piece(row: dict, *, source_of=_source, paid_attempts: int = 2) -> dict:
+def _shrunk(repair_log: list) -> bool:
+    """S281 — the piece's own repair round shrank it under the floor (its last length_net says so)."""
+    nets = [e["length_net"] for e in repair_log or [] if isinstance(e, dict) and isinstance(e.get("length_net"), dict)]
+    return bool(nets and nets[-1].get("shrank_under_floor"))
+
+
+def _arm(text: str, source: str, *, material: str, shrink: int, shrunk: bool) -> dict:
+    from services.acp_content_writing import length_extend as le
+    plan, why = le.plan_after_repair(text, before=None, channel="blog", source=source, switch=le.EXTEND_ON,
+                                     opts={"material": material, "shrink_sections": shrink}, shrunk=shrunk)
+    out = {"plan": why}
+    if plan is not None:
+        out.update(facts_offered=len(plan["facts"]), sections=len(plan["sections"]),
+                   words_asked=sum(s["words"] for s in plan["sections"]), deficit_chars=plan["deficit_chars"],
+                   names_offered=len(plan.get("named") or []))
+    return out
+
+
+def replay_piece(row: dict, *, source_of=_source, paid_attempts: int = 2, shrink: int = 0) -> dict:
     """One piece's line (pure but for the service imports; unit-tested with `source_of` injected)."""
     from services.acp_content_writing import gate_eval, length_contract as lc, length_extend as le
     ledger = _j(row.get("gate_ledger")) or []
@@ -126,11 +153,14 @@ def replay_piece(row: dict, *, source_of=_source, paid_attempts: int = 2) -> dic
     if not wi.get("seed"):
         out["plan"] = "no_seed"
         return out
-    plan, why = le.plan_after_repair(text, before=None, channel="blog", source=source_of(wi, row), switch=le.EXTEND_ON)
-    out["plan"] = why
-    if plan is not None:
-        out.update(facts_offered=len(plan["facts"]), sections=len(plan["sections"]),
-                   words_asked=sum(s["words"] for s in plan["sections"]), deficit_chars=plan["deficit_chars"])
+    source = source_of(wi, row)
+    shrunk = _shrunk(repair_log)
+    out["shrunk_by_repair"] = shrunk
+    facts = _arm(text, source, material=le.MATERIAL_FACTS, shrink=shrink, shrunk=shrunk)
+    facts.pop("names_offered", None)
+    out.update(facts)
+    bg = _arm(text, source, material=le.MATERIAL_BACKGROUND, shrink=shrink, shrunk=shrunk)
+    out.update({f"{k}_background": v for k, v in bg.items()})
     return out
 
 
@@ -150,6 +180,11 @@ def summarize(rows: list[dict]) -> dict:
         "post_normalizer": _count(r["post_normalizer"].get("reason") for r in rows if r.get("post_normalizer")),
         "post_normalizer_reachable": sorted(r["piece"] for r in rows if (r.get("post_normalizer") or {}).get("reason")
                                             == "lengthen" and r["plan"] == "expand"),
+        "reachable_background": sorted(r["piece"] for r in short if r.get("plan_background") == "expand"),
+        "reachable_length_only_background": sorted(r["piece"] for r in short if r.get("plan_background") == "expand"
+                                                   and r["length_only"]),
+        "no_material_background": sorted(r["piece"] for r in short if r.get("plan_background") == "no_untold_facts"),
+        "shrunk_by_repair": sorted(r["piece"] for r in rows if r.get("shrunk_by_repair")),
         "median_deficit_chars": _median([r["deficit_chars"] for r in short if "deficit_chars" in r]),
         "switch_recorded": {str(k): sum(r["switch_recorded"] == k for r in rows)
                             for k in sorted({r["switch_recorded"] for r in rows}, key=str)},
@@ -179,6 +214,7 @@ async def main() -> int:
     since = datetime.fromisoformat(os.environ["SINCE"].replace("Z", "+00:00"))
     tenants = [t.strip() for t in (os.environ.get("TENANTS") or AUDIT_TENANTS).split(",") if t.strip()]
     exclude = {p.strip() for p in (os.environ.get("EXCLUDE") or DEFAULT_EXCLUDE).split(",") if p.strip()}
+    keep = {p.strip() for p in (os.environ.get("PIECES") or "").split(",") if p.strip()}
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], ssl="require")
     try:
         await conn.execute("SET default_transaction_read_only = on")
@@ -189,12 +225,15 @@ async def main() -> int:
     # The piece's PAID attempt budget, exactly as run_write_background computes it (stop-and-label: never past 2).
     from services.acp_content_writing import service as svc
     paid_attempts = svc.paid_attempts_for(svc.last_attempt_mode() == svc.STOP_AND_LABEL, svc.max_attempts())
+    from services.acp_content_writing import length_extend as le
+    shrink = int(os.environ["SHRINK"]) if os.environ.get("SHRINK") else le.options(None)["shrink_sections"]
+    print(f"ARMS shrink_sections={shrink} materials={le.MATERIAL_FACTS},{le.MATERIAL_BACKGROUND}")
     rows = []
     for r in raw:
-        if str(r["piece_id"])[:8] in exclude:
+        if str(r["piece_id"])[:8] in exclude or (keep and str(r["piece_id"])[:8] not in keep):
             continue
         try:
-            rows.append(replay_piece(r, paid_attempts=paid_attempts))
+            rows.append(replay_piece(r, paid_attempts=paid_attempts, shrink=shrink))
         except Exception as e:  # noqa: BLE001 — one piece that cannot be replayed is reported, never fatal
             print(f"ERROR {str(r['piece_id'])[:8]} {type(e).__name__}: {str(e)[:160]}")
     for r in rows:
