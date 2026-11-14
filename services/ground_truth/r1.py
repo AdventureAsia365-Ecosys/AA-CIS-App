@@ -465,6 +465,7 @@ def flags_from_reply(inst: Instrument, parsed: dict, group: list[Item]) -> dict[
 
 
 Caller = Callable[[Instrument, str, str, dict], Any]
+REASON_CHARS = 300                       # one entailment `why` kept by run(): enough to read, short of a whole reply
 
 
 SpendProbe = Callable[[], Optional[float]]
@@ -507,13 +508,23 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
     stay, `stopped` says why). `attempts_of` gives the attempts reserved per call (default: route_attempts on the
     Model Gateway, 1 for an injected caller). Returns {"votes": {instrument id: {claim_hash: [True|False|None, ...]}},
     "spent_usd", "charged_usd", "ledger_usd", "calls", "stopped", "identity_mismatches", "caller_errors",
-    "worst_case_charges", "reserved_attempts"}."""
+    "worst_case_charges", "reserved_attempts", "reasons"}. `reasons` holds each entailment reply's `why` (cut to
+    REASON_CHARS; "" for a reply that gave no vote), in vote order: model text that may quote the tour, for a $0
+    reading of a run's misses (instrument_eval --with-reasons); it is never written to the ledger."""
     if attempts_of is None:
         attempts_of = route_attempts if caller is None else (lambda _inst: 1)
     caller = caller or gateway_call
     budget = Budget(cap)
     reserved = {inst.id: max(1, int(attempts_of(inst))) for inst in insts}
     out: dict[str, dict[str, list]] = {i.id: defaultdict(list) for i in insts}
+    why: dict[str, dict[str, list]] = {i.id: defaultdict(list) for i in insts if i.mode == "entailment"}
+
+    def no_vote(inst: Instrument, group: list[Item]) -> None:
+        for i in group:
+            out[inst.id][i.claim_hash].append(None)
+            if inst.id in why:
+                why[inst.id][i.claim_hash].append("")
+
     stopped = None
     mismatches = Counter()
     errors: list[dict] = []
@@ -534,8 +545,7 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
                 if stopped or not budget.allows(worst):
                     stopped = stopped or (f"cap {cap} USD: spent {budget.spent:.4f} + the next call's worst case "
                                           f"{worst:.4f} would pass it, after {budget.calls} calls")
-                    for i in group:
-                        out[inst.id][i.claim_hash].append(None)
+                    no_vote(inst, group)
                     continue
                 try:
                     resp = caller(inst, system, user, schema)
@@ -545,8 +555,7 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
                     errors.append({"instrument": inst.id, "vote": vote, "error": type(e).__name__,
                                    "detail": str(e)[:200]})
                     stopped = f"caller error after {budget.calls} calls ({type(e).__name__}): stopped, report partial"
-                    for i in group:
-                        out[inst.id][i.claim_hash].append(None)
+                    no_vote(inst, group)
                     continue
                 amount, notes = billed_cost(inst, user, resp)
                 budget.charge(amount, worst)
@@ -564,22 +573,23 @@ def run(items: list[Item], insts: list[Instrument], *, cap: float, votes: int = 
                         raise ValueError("reply is not a JSON object")
                 except Exception as e:                       # noqa: BLE001 — logged as billed_unusable, no vote
                     log(resp, signal, None, e)
-                    for i in group:
-                        out[inst.id][i.claim_hash].append(None)
+                    no_vote(inst, group)
                     continue
                 log(resp, signal, parsed, None)
                 if not _identity_ok(inst, resp):
                     mismatches[inst.id] += 1
-                    for i in group:
-                        out[inst.id][i.claim_hash].append(None)
+                    no_vote(inst, group)
                     continue
                 for h, flagged in flags_from_reply(inst, parsed, group).items():
                     out[inst.id][h].append(flagged)
+                    if inst.id in why:
+                        why[inst.id][h].append(str(parsed.get("why") or "")[:REASON_CHARS])
     return {"votes": {k: dict(v) for k, v in out.items()}, "spent_usd": round(budget.spent, 6),
             "charged_usd": round(budget.charged, 6),
             "ledger_usd": round(budget.ledger, 6) if budget.ledger is not None else None,
             "calls": budget.calls, "stopped": stopped, "identity_mismatches": dict(mismatches),
-            "caller_errors": errors, "worst_case_charges": dict(worst_notes), "reserved_attempts": reserved}
+            "caller_errors": errors, "worst_case_charges": dict(worst_notes), "reserved_attempts": reserved,
+            "reasons": {k: dict(v) for k, v in why.items()}}
 
 
 # ── measurement ────────────────────────────────────────────────────────────────────────────────────────────────

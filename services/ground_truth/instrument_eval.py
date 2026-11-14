@@ -19,6 +19,9 @@ ones?
       --confirm-spend and exactly one of --trial / --limit, within the settings below. --exclude leaves out the
       claims an earlier evaluation voted on (a version shaped on that run's misses is in-sample there; the relabels
       stay, never gated); --measured takes the plan's expected cost from a finished live run (measured_expectation).
+      A prompt version names the runs it was shaped on (prompts.PromptVersion.shaped_on): a live run refuses unless
+      --exclude names each of those run reports (out_of_sample). --with-reasons adds each entailment reply's `why`
+      to the report (model text that may quote the tour: the report then stays in .tmp-session/, like the pool).
   python -m services.ground_truth.instrument_eval score --pool <pool.jsonl> --report <report.json>
       $0: score a finished run again from the votes in its report (replay; no model call).
 
@@ -44,8 +47,8 @@ verdict.
 
 Calls: every call goes through r1.run (the Model Gateway on stage r1.STAGE, role judge, the hard cap gated on each
 call's worst case, the ledger probe, one shared.llm_call_log row per reply with **billed_fields and the prompt version).
-Nothing here writes a label. The output files carry counts, groups and hash prefixes only; the pool file holds real
-text and stays in the workspace scratch folder (.tmp-session/), never in a repo.
+Nothing here writes a label. The output files carry counts, groups and hash prefixes only (unless --with-reasons);
+the pool file holds real text and stays in the workspace scratch folder (.tmp-session/), never in a repo.
 """
 from __future__ import annotations
 
@@ -381,6 +384,23 @@ def prefixes_from(text: str) -> set[str]:
     return out
 
 
+def run_of(text: str) -> Optional[str]:
+    """The run-id prefix (8 characters) of an exclude file that is a run report; None for a list of prefixes."""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return None
+    run_id = obj.get("run_id") if isinstance(obj, dict) else None
+    return str(run_id)[:8].lower() if isinstance(run_id, str) and len(run_id) >= 8 else None
+
+
+def out_of_sample(version: pr.PromptVersion, excluded_runs: Iterable[str]) -> dict:
+    """Which of the runs that shaped `version` the evaluation leaves out. A version written from a run's misses is
+    in-sample on that run's claims, so a live run needs `missing` empty (cmd_run)."""
+    shaped, done = sorted(version.shaped_on), sorted(set(excluded_runs))
+    return {"shaped_on": shaped, "excluded_runs": done, "missing": [r for r in shaped if r not in done]}
+
+
 def exclude(pool: list[PoolItem], prefixes: set[str]) -> tuple[list[PoolItem], dict]:
     """The pool without the claims a prompt version was shaped on (an earlier evaluation's subset, whose misses its
     rules were written from), so the next subset is out-of-sample. The relabelled claims stay: they are in-sample for
@@ -588,7 +608,9 @@ def _live(subset: list[PoolItem], inst: r1.Instrument, a: argparse.Namespace, ca
             "calls": result["calls"], "stopped": result["stopped"], "caller_errors": result["caller_errors"],
             "identity_mismatches": result["identity_mismatches"], "reserved_attempts": result.get("reserved_attempts"),
             "score": score(subset, votes, lim, trial=a.trial is not None, stopped=result["stopped"]),
-            "votes": {h[:16]: v for h, v in sorted(votes.items())}}
+            "votes": {h[:16]: v for h, v in sorted(votes.items())},
+            **({"reasons": {h[:16]: v for h, v in sorted((result.get("reasons", {}).get(inst.id) or {}).items())}}
+               if getattr(a, "with_reasons", False) else {})}
 
 
 def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
@@ -599,8 +621,12 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
     n = gate(a, lim)
     inst = _instrument(a)
     full = read_pool(_read(a.pool))
-    pool, excluded = (exclude(full, set().union(*(prefixes_from(_read(f)) for f in a.exclude))) if a.exclude
-                      else (full, None))
+    texts = [_read(f) for f in a.exclude]
+    pool, excluded = (exclude(full, set().union(*(prefixes_from(t) for t in texts))) if texts else (full, None))
+    oos = out_of_sample(inst.prompt_version, (r for r in map(run_of, texts) if r))
+    if a.live and oos["missing"]:
+        raise EvalRefused(f"{inst.prompt_version.id} was shaped on run(s) {', '.join(oos['missing'])}: --exclude "
+                          "their run reports, or the run is in-sample")
     # the measured run's claims are read from the whole pool: they are usually the ones --exclude just left out
     expected_of, measured = (measured_expectation(full, json.loads(_read(a.measured)), inst) if a.measured
                              else (None, None))
@@ -612,7 +638,8 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
         raise EvalRefused(str(e)) from e
     rep = {"mode": "live" if a.live else "dry_run", "instrument": inst.id,
            "prompt_version": inst.prompt_version.tag, "settings_refreshed": fresh, "limits": asdict(lim),
-           "excluded": excluded, "measured": measured, "subset": composition(subset), "plan": the_plan}
+           "excluded": excluded, "out_of_sample": oos, "measured": measured, "subset": composition(subset),
+           "plan": the_plan}
     if not the_plan["fits_cap"]:
         return 3, {"ok": False, "refused": "the plan does not fit the cap", **rep}
     if not a.live:
@@ -656,7 +683,10 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--exclude", action="append", default=[],
                    help="leave out the claims of this run report (or JSON list of hash prefixes): out-of-sample")
     r.add_argument("--measured", help="expected cost from this finished live run report (same model and mode)")
-    r.add_argument("--out", help="write the report (counts, groups and hash prefixes only) here too")
+    r.add_argument("--with-reasons", action="store_true",
+                   help="add each entailment reply's 'why' to the report (model text: keep it in .tmp-session/)")
+    r.add_argument("--out", help="write the report here too (counts, groups and hash prefixes; with "
+                                "--with-reasons also the model's reasons, which can quote tour text)")
     s = sub.add_parser("score", help="$0: score a finished run again from the votes in its report")
     s.add_argument("--pool", required=True)
     s.add_argument("--report", required=True)
