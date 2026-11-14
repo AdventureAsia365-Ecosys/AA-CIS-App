@@ -242,6 +242,53 @@ async def test_no_attempt_left_in_the_budget_keeps_the_hold(_stubs, monkeypatch)
     assert kw["status"] == "held" and ctx["length_trace"][lr.TRACE_KEY]["reason"] == "no_attempt_left"
 
 
+async def _run_approved_at_attempt_two(ctx, calls):
+    """The loop fails attempt 1 on a repairable F17 problem (the text over the floor), repairs it and approves attempt
+    2; then the mandatory cut takes it under the floor and the re-check holds it."""
+    def gates(**kw):
+        calls.append(kw)
+        ledger = [_f4(kw["content_text"])] + ([F17_FAIL] if len(calls) == 1 else [])
+        return _outcome(ledger)
+    with patch.object(service, "write_content", return_value=(_loop_text(), 0.05, {}, None)), \
+            patch.object(service, "rewrite_with_feedback", return_value=(_loop_text(), 0.05, {}, None)), \
+            patch.object(service, "repair_sentences", side_effect=lambda *, sentences, **kw: (
+                [it["sentence"] for it in sentences], 0.01)), \
+            patch.object(service, "extend_sections", side_effect=_call) as ext, \
+            patch.object(service, "run_quality_gates", side_effect=gates), \
+            patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(REQUEST_ID, PIECE_ID, ctx, pool=MagicMock())
+    return ext, fin.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_stop_and_label_approval_at_attempt_two_has_no_paid_attempt_left(_stubs, monkeypatch):
+    """Review S280: the default mode's third step is the $0 label (root ADR 0020 D6, setting cis.t9.max_attempts), so
+    a blog approved at attempt 2 gets no paid extend call, whatever the setting says (default 3)."""
+    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.delenv(service.LAST_ATTEMPT_MODE_ENV, raising=False)
+    assert service.max_attempts() == 3
+    ctx, calls = _ctx(), []
+    ext, kw = await _run_approved_at_attempt_two(ctx, calls)
+    ext.assert_not_called()
+    assert len(calls) == 2                                      # attempts 1 and 2, no post-normalizer gate run
+    assert kw["status"] == "held" and kw["held_reason"].startswith(qr.F4_EXTREME_LENGTH)
+    assert ctx["length_trace"][lr.TRACE_KEY] == {"reason": "no_attempt_left", "crossed_at": "final_integrity",
+                                                 "attempt": 3}
+
+
+@pytest.mark.asyncio
+async def test_legacy_mode_approval_at_attempt_two_keeps_its_paid_third_attempt(_stubs, monkeypatch):
+    """Legacy mode keeps a paid attempt 3 (setting at 3): the pass may use it, logged as attempt 3."""
+    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
+    ctx, calls = _ctx(), []
+    ext, kw = await _run_approved_at_attempt_two(ctx, calls)
+    ext.assert_called_once()
+    assert ext.call_args.kwargs["attempt"] == 3 and len(calls) == 3
+    assert kw["status"] == "approved"
+    assert ctx["length_trace"][lr.TRACE_KEY]["reason"] == "lengthen"
+
+
 # ---------------------------------------------------------------- the tenant AI budget is never swallowed
 
 class _BudgetStop(Exception):
@@ -299,7 +346,7 @@ def test_the_replay_says_what_the_pass_would_do_with_each_recheck_hold():
     spent = rp.replay_piece(row("cccccccc-3", {"loop": 4800, "authenticity_cut": 4400},
                                 post_normalizer={"reason": "lengthen", "outcome": "held:gates", "cost_usd": 0.02,
                                                  "failing": ["F17_trip_fact"]}),
-                            source_of=lambda wi, r: SOURCE, attempts=1)
+                            source_of=lambda wi, r: SOURCE, paid_attempts=1)
     assert mandatory["post_normalizer"] == {"reason": "lengthen", "crossed_at": "final_integrity", "recorded": {}}
     assert optional["post_normalizer"]["reason"] == "not_a_mandatory_cut"
     assert spent["post_normalizer"]["reason"] == "no_attempt_left"
@@ -307,3 +354,15 @@ def test_the_replay_says_what_the_pass_would_do_with_each_recheck_hold():
     s = rp.summarize([mandatory, optional, spent])
     assert s["post_normalizer"] == {"lengthen": 1, "not_a_mandatory_cut": 1, "no_attempt_left": 1}
     assert s["post_normalizer_reachable"] == ["aaaaaaaa"]
+
+
+def test_the_replay_uses_the_paid_budget_so_a_stop_and_label_attempt_two_approval_is_not_eligible():
+    from scripts.aa1077 import extend_plan_replay as rp
+    cut = _cut(_loop_text())
+    row = {"piece_id": "dddddddd-4", "tenant": "audit-x", "status": "held", "held_reason": None, "content_text": cut,
+           "gate_ledger": [_f4(cut)], "repair_log": [],
+           "writer_input": {"seed": SOURCE, "length_trace": {"held": True, "attempt": 2,
+                                                            "chars": {"loop": 4800, "final_integrity": 4400}}}}
+    assert rp.replay_piece(row, source_of=lambda wi, r: SOURCE)["post_normalizer"]["reason"] == "no_attempt_left"
+    assert rp.replay_piece(row, source_of=lambda wi, r: SOURCE, paid_attempts=3)["post_normalizer"]["reason"] == (
+        "lengthen")

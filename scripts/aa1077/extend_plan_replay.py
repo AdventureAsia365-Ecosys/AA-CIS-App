@@ -19,8 +19,9 @@ would do with it, through the code of the checkout it runs in (the plan is the l
             was on for it, and `length_trace.extend` (S280: the switch the loop resolved for the piece);
   post      S280 (length_recheck.lengthen_after_normalizer) for a piece the re-check held: whether the post-normalizer
             lengthen pass would run with the switch on (`lengthen`, or why not: `not_a_mandatory_cut`,
-            `no_attempt_left`), the step that crossed the floor, and what the piece itself recorded
-            (`length_trace.post_normalizer`) when it ran with the switch on.
+            `no_attempt_left`: no PAID attempt left, the same budget as the loop, so in stop-and-label mode a piece
+            approved at attempt 2 is never eligible), the step that crossed the floor, and what the piece itself
+            recorded (`length_trace.post_normalizer`) when it ran with the switch on.
 
 Summary: short pieces, short held for length only, the plan reasons, `reachable` (short with an expand plan) and
 `reachable_length_only` (the pieces the repair could approve if its paragraphs pass every gate: the trial's best case),
@@ -89,7 +90,7 @@ def _own_rounds(repair_log: list) -> dict:
     return out
 
 
-def _post_normalizer(trace: dict, attempts: int) -> dict:
+def _post_normalizer(trace: dict, paid_attempts: int) -> dict:
     """S280 — what the post-normalizer lengthen pass would do with a piece the re-check held (switch on), and what the
     piece recorded when it ran with the switch on. {} for a piece the re-check did not hold."""
     from services.acp_content_writing import length_extend as le, length_recheck as lr
@@ -97,13 +98,13 @@ def _post_normalizer(trace: dict, attempts: int) -> dict:
         return {}
     attempt = int(trace.get("attempt") or 1)
     reason, step = lr.eligibility({**trace, "held": True}, loop_status="approved", switch=le.EXTEND_ON,
-                                  attempts_left=attempts - attempt)
+                                  attempts_left=paid_attempts - attempt)
     own = trace.get(lr.TRACE_KEY) if isinstance(trace.get(lr.TRACE_KEY), dict) else {}
     return {"reason": reason, "crossed_at": step,
             "recorded": {k: own.get(k) for k in ("reason", "outcome", "cost_usd", "failing") if k in own}}
 
 
-def replay_piece(row: dict, *, source_of=_source, attempts: int = 3) -> dict:
+def replay_piece(row: dict, *, source_of=_source, paid_attempts: int = 2) -> dict:
     """One piece's line (pure but for the service imports; unit-tested with `source_of` injected)."""
     from services.acp_content_writing import gate_eval, length_contract as lc, length_extend as le
     ledger = _j(row.get("gate_ledger")) or []
@@ -121,7 +122,7 @@ def replay_piece(row: dict, *, source_of=_source, attempts: int = 3) -> dict:
            "length_only": bool(status == "held" and side == lc.SHORT and hold_capable <= {le.qr.F4_EXTREME_LENGTH}
                                and lc.CODE_SHORT in codes),
            "recheck_held": bool(trace.get("held")), "switch_recorded": trace.get("extend"),
-           "own_rounds": _own_rounds(repair_log), "post_normalizer": _post_normalizer(trace, attempts)}
+           "own_rounds": _own_rounds(repair_log), "post_normalizer": _post_normalizer(trace, paid_attempts)}
     if not wi.get("seed"):
         out["plan"] = "no_seed"
         return out
@@ -185,14 +186,15 @@ async def main() -> int:
         raw = [dict(r) for r in await conn.fetch(PIECES_SQL, tenants, since)]
     finally:
         await conn.close()
-    from services.acp_content_writing.service import max_attempts   # the piece's attempt budget (cis.t9.max_attempts)
-    attempts = max_attempts()
+    # The piece's PAID attempt budget, exactly as run_write_background computes it (stop-and-label: never past 2).
+    from services.acp_content_writing import service as svc
+    paid_attempts = svc.paid_attempts_for(svc.last_attempt_mode() == svc.STOP_AND_LABEL, svc.max_attempts())
     rows = []
     for r in raw:
         if str(r["piece_id"])[:8] in exclude:
             continue
         try:
-            rows.append(replay_piece(r, attempts=attempts))
+            rows.append(replay_piece(r, paid_attempts=paid_attempts))
         except Exception as e:  # noqa: BLE001 — one piece that cannot be replayed is reported, never fatal
             print(f"ERROR {str(r['piece_id'])[:8]} {type(e).__name__}: {str(e)[:160]}")
     for r in rows:

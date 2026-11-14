@@ -3986,7 +3986,8 @@ wording above are on for everyone).
 AA-1077 S280 — **post-normalizer lengthen pass** (`length_recheck.lengthen_after_normalizer`, after
 `_normalize_final_text`, before the result is unpacked): a blog the loop APPROVED that a mandatory normalizer step
 (usage-policy cut, final integrity pass) took under the floor, so the re-check held it, gets ONE lengthen pass when the
-piece's pinned extend switch is on and its attempt budget (`cis.t9.max_attempts`) has an attempt left: the expand plan
+piece's pinned extend switch is on and it has a PAID attempt left (`paid_attempts_for`: `cis.t9.max_attempts`, and in
+stop-and-label mode never past attempt 2, root ADR 0020 D6: so there only an attempt-1 approval is eligible): the expand plan
 on the stored text (`plan_after_repair`, the cut sections first), one `extend_sections` call (quality signal
 `step: post_normalizer`; a tenant-budget stop is re-raised), then `text_integrity.final_pass` and EVERY gate (the loop's
 `run_quality_gates` partial, attempt > 1) on that text; accepted (status approved, the re-run ledger) only when all pass,

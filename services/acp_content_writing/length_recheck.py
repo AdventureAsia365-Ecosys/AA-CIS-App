@@ -13,8 +13,11 @@ cis.t9.blog_length_extend), it gets ONE targeted lengthen pass:
 
 1. Eligible only when ALL hold: blog; the re-check turned the loop's `approved` into `held` (so F4 short is the only
    hold reason); the text was at or over the floor at the end of the loop and the step that took it under is a
-   mandatory one; the switch is on; the piece has an attempt left in its attempt budget (setting cis.t9.max_attempts:
-   the pass counts as the piece's next attempt, `attempts_left` > 0).
+   mandatory one; the switch is on; the piece has a PAID attempt left (`attempts_left` > 0: the pass is a paid call
+   and counts as the piece's next attempt). The caller passes its last paid attempt minus the loop's attempt
+   (service.paid_attempts_for: setting cis.t9.max_attempts, and in stop-and-label mode, the default, never past
+   attempt 2, because root ADR 0020 D6 makes the third step the $0 label with no paid writer or repair call). So in
+   that mode only a blog approved at attempt 1 is eligible; in legacy mode one approved at attempt 1 or 2.
 2. Planned by `length_extend.plan_after_repair` on the stored text with `before` = the loop's text, so the sections
    the cut shortened come first ("a repair cut text here"); facts = the seed's untold fact sentences only.
 3. One `generate.extend_sections` call (output capped by its max_tokens; through the gateway, so the tenant AI budget
@@ -96,7 +99,8 @@ def crossing_step(chars: dict) -> Optional[str]:
 def eligibility(trace: Optional[dict], *, loop_status: str, switch: str,
                 attempts_left: int) -> tuple[str, Optional[str]]:
     """(reason, crossing step): reason 'lengthen' when the pass runs, else why not: 'not_held_by_recheck', 'off',
-    'not_loop_approved', 'not_a_mandatory_cut' or 'no_attempt_left'."""
+    'not_loop_approved', 'not_a_mandatory_cut' or 'no_attempt_left'. ``attempts_left`` counts PAID attempts only
+    (the last paid attempt minus the loop's attempt), never the $0 stop-and-label step."""
     if not trace or not trace.get("held"):
         return "not_held_by_recheck", None
     step = crossing_step(trace.get("chars") or {})

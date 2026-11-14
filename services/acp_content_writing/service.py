@@ -2918,11 +2918,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             repair_log=repair_log, summary=summary, embedding=embedding, attempt=attempt, channel=channel, spec=spec,
             cta=cta, brand_ignore=brand_ignore, hyg=hyg, context=context, piece_id=piece_id, request_id=request_id,
             tenant_id=tenant_id)
-        # AA-1077 S280 — a loop-approved blog a mandatory normalizer cut took under the floor: one lengthen pass (switch
-        # on), the final integrity pass and every gate again on its text; else the normalizer's result as it is.
+        # AA-1077 S280 — a loop-approved blog a mandatory normalizer cut took under the floor: one PAID lengthen pass
+        # (switch on, a paid attempt left: none after attempt 2 in stop-and-label mode), then every gate again.
         norm = await length_recheck.lengthen_after_normalizer(
             norm, loop_text=content_text, loop_status=status, switch=extend_mode, channel=channel, attempt=attempt,
-            attempts_left=max_attempts() - attempt, source=grounding_text, context=context, hyg=hyg, cta=cta,
+            attempts_left=paid_attempts - attempt, source=grounding_text, context=context, hyg=hyg, cta=cta,
             gates=functools.partial(gates, seo_title=seo_meta.get("seo_title"), slug=seo_meta.get("slug"),
                                     meta_description=seo_meta.get("meta_description"), stock_blocking=False,
                                     cannibalization_match=cannibalization_match),
