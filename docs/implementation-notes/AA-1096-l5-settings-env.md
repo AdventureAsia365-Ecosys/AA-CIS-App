@@ -79,3 +79,8 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
 - Other env-only thresholds were seen on the way and are NOT migrated settings (out of scope, follow-up material for
   the thresholds audit): `ERASURE_DRY_RUN_MAX_AGE_HOURS`, `T7_DEBATE_CONCURRENCY`.
 - AA-CIS-Infra drops the `erasure_tenant_retention_days` variable (the drill's env) in the same wave.
+- Change control (ADR 0020): the compiled defaults are part of the `gates` component, so the lock is re-accepted with
+  `parity:tests/unit/test_s279_quality_settings_parity.py` (no value, bound or verdict changes: only env_override,
+  descriptions and guides).
+- The two worktree branches opened at the start for a separate code PR (`refactor/aa1096-cis-drop-settings-env-reads`
+  here, `refactor/aa1096-crm-drop-settings-env-reads` in AA-Partner) carry no commit and are not used.
