@@ -1,8 +1,9 @@
 """S279 thresholds L1 — Platform › Settings: the admin-editable settings registry (CIS 407).
 
   GET  /admin/settings/registry?app=cis&area=            every setting of the app with the value in force, its source
-                                                          (env / tenant / platform / default), bounds, last change and
-                                                          open proposal
+                                                          (env / tenant / platform / default), bounds, last change,
+                                                          open proposal and the tenant values in force
+                                                          (tenant_overrides, a tenant-scoped key)
   GET  /admin/settings/registry/{key}/history?tenant_id=  every value row of the key, newest first, with the value each
                                                           replaced (the page's diff)
   POST /admin/settings/registry/{key}/proposals           {value, reason (>= 20), evidence_ref?, effective_from?,

@@ -3,7 +3,8 @@ api/routers/admin_settings_registry.py; reader shared/settings).
 
 - ``list_settings``: every definition of an app (CIS: the compiled defaults, equal to the migration seed) with the value
   in force and where it comes from (env / tenant / platform / default), its bounds, the last decided change, the open
-  proposal, the "overridden by env" and "not enforced yet" flags.
+  proposal, the "overridden by env" and "not enforced yet" flags, and (a tenant-scoped key) ``tenant_overrides``: the
+  approved tenant value in force of each tenant (AA-1096, S280).
 - ``history``: every value row of a key, newest first, each with the approved value it replaced (the page's diff).
 - ``propose``: a new value (validated against the definition first: 422 with the reason), optimistic lock on the
   approved version the person saw (409 when it moved), one open proposal per key and scope (409). ``apply=True`` also
@@ -89,6 +90,15 @@ _LATEST_SQL = f"""
 """
 _OPEN_SQL = f"SELECT {_ROW_COLS} FROM shared.setting_value v WHERE v.key LIKE $1 AND v.status = 'proposed' " \
             "ORDER BY v.proposed_at"
+# AA-1096 (S280): the approved tenant values in force of every tenant-scoped key, one row per (key, tenant): the page
+# counts them on the row and names each tenant's value (the reader's own resolution order: latest in force wins).
+_TENANT_SQL = """
+    SELECT DISTINCT ON (v.key, v.tenant_id) v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text,
+           v.version, v.effective_from
+      FROM shared.setting_value v
+     WHERE v.tenant_id IS NOT NULL AND v.status = 'approved' AND v.effective_from <= now()
+     ORDER BY v.key, v.tenant_id, v.effective_from DESC, v.version DESC
+"""
 _HISTORY_SQL = f"""
     SELECT {_ROW_COLS} FROM shared.setting_value v
      WHERE v.key = $1 AND v.tenant_id IS NOT DISTINCT FROM $2::uuid
@@ -132,6 +142,18 @@ async def _actor_names(conn: Any, rows: list[dict]) -> None:
             r[f"{field}_name"] = names.get(m.group(1).lower()) if m else None
 
 
+async def _tenant_values(conn: Any, defs: list[Definition]) -> dict[str, list[dict]]:
+    """key -> the approved tenant values in force (tenant_id, value, version, effective_from); read only when the app
+    has a tenant-scoped key."""
+    out: dict[str, list[dict]] = {}
+    if not any(d.tenant_scoped for d in defs):
+        return out
+    for r in await conn.fetch(_TENANT_SQL):
+        out.setdefault(r["key"], []).append({"tenant_id": r["tenant_id"], "value": _json(r["value_text"]),
+                                             "version": r["version"], "effective_from": _iso(r["effective_from"])})
+    return out
+
+
 def _app_definitions(app: Optional[str], area: Optional[str]) -> list[Definition]:
     out = []
     for key in settings.READER.keys():
@@ -152,6 +174,7 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
             open_rows: dict[str, list] = {}
             for r in await conn.fetch(_OPEN_SQL, "%"):
                 open_rows.setdefault(r["key"], []).append(_row_out(r))
+            tenant_rows = await _tenant_values(conn, defs)
             await _actor_names(conn, [*latest.values(), *(r for rs in open_rows.values() for r in rs)])
     except asyncpg.exceptions.UndefinedTableError:
         raise SettingsError(503, NOT_MIGRATED, "not_migrated") from None
@@ -164,6 +187,7 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
             "value": res.value, "source": res.source, "version": res.version,
             "overridden_by_env": res.source == "env", "env_ignored": env_ignored if env_set else None,
             "refused": res.refused, "last_change": latest.get(d.key), "proposals": open_rows.get(d.key, []),
+            "tenant_overrides": tenant_rows.get(d.key, []) if d.tenant_scoped else [],
         })
     areas = sorted({d.area for d in defs})
     return {"app": app, "areas": areas, "settings": rows, "two_person_approval": bool(settings.get(TWO_PERSON_KEY)),

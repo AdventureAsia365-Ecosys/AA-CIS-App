@@ -139,6 +139,35 @@ async def test_refusals(pool):
     assert ok["evidence_ref"] == "replay:zz-s279-seed-floor"
 
 
+# ── AA-1096 (S280): the list names the tenant values in force of a tenant-scoped key ──────────────────────────────
+TENANT_KEY = "cis.t9.blog_length_extend"         # platform+tenant, enum off/on, evidence required
+SCOPED_TENANT = "00000000-0000-4000-8000-00000000a280"
+
+
+@pytest.mark.asyncio
+async def test_the_list_names_each_tenant_value_in_force(pool):
+    if not await pool.conn.fetchval("SELECT count(*) AS ok FROM shared.setting_definition WHERE key = $1", TENANT_KEY):
+        pytest.skip("the tenant-scoped definition is not on this branch yet")
+    await pool.conn.execute(
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week) "
+        "VALUES ($1::uuid, 'Zz Settings Probe', 'zz-settings-probe-a280', 'starter', 3) ON CONFLICT DO NOTHING",
+        SCOPED_TENANT)
+    listing = await reg.list_settings(pool, app="cis")
+    row = next(r for r in listing["settings"] if r["key"] == TENANT_KEY)
+    assert row["tenant_overrides"] == []
+    assert next(r for r in listing["settings"] if r["key"] == KEY)["tenant_overrides"] == []
+    out = await reg.propose(pool, TENANT_KEY, value="on", reason=REASON, actor=A, base_version=0, apply=True,
+                            can_approve=True, tenant_id=SCOPED_TENANT, evidence_ref="replay:zz-invented-run-a280")
+    assert (out["status"], out["tenant_id"]) == ("approved", SCOPED_TENANT)
+    listing = await reg.list_settings(pool, app="cis")
+    row = next(r for r in listing["settings"] if r["key"] == TENANT_KEY)
+    assert [(o["tenant_id"], o["value"], o["version"]) for o in row["tenant_overrides"]] == [(SCOPED_TENANT, "on", 1)]
+    assert row["last_change"] is None or row["last_change"]["tenant_id"] is None   # the platform row stays apart
+    h = await reg.history(pool, TENANT_KEY, SCOPED_TENANT)
+    assert [(r["tenant_id"], r["value"]) for r in h["history"]] == [(SCOPED_TENANT, "on")]
+    assert (await reg.history(pool, TENANT_KEY))["history"] == []
+
+
 @pytest.mark.asyncio
 async def test_reject_needs_a_note_and_two_person_approval_refuses_the_proposer(pool):
     p = await reg.propose(pool, KEY, value=30, reason=REASON, actor=A, base_version=0)

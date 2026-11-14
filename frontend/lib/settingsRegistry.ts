@@ -63,6 +63,14 @@ export interface SettingDefinition {
   guide?: SettingGuide | null;
 }
 
+/** AA-1096 (S280): an approved tenant value in force of a tenant-scoped key (the list's tenant_overrides). */
+export interface TenantOverride {
+  tenant_id: string;
+  value: SettingValue;
+  version: number;
+  effective_from: string | null;
+}
+
 export interface SettingItem extends SettingDefinition {
   value: SettingValue;
   source: SettingSource;
@@ -72,6 +80,8 @@ export interface SettingItem extends SettingDefinition {
   refused: string | null;
   last_change: SettingRow | null;
   proposals: SettingRow[];
+  /** The tenant values in force (a tenant-scoped key; [] otherwise; absent from an older API or the CRM relay). */
+  tenant_overrides?: TenantOverride[];
 }
 
 export interface RegistryResp {
@@ -220,8 +230,10 @@ export function draftProblem(d: SettingDefinition, draft: ProposalDraft): string
   return null;
 }
 
-/** The POST body of a proposal (the server re-checks everything). */
-export function proposalBody(d: SettingDefinition, item: Pick<SettingItem, "version">, draft: ProposalDraft) {
+/** The POST body of a proposal (the server re-checks everything). `item.version` is the approved version of the
+ *  scope being changed (scopeTarget); a tenant value names its tenant (AA-1096, S280). */
+export function proposalBody(d: SettingDefinition, item: Pick<SettingItem, "version">, draft: ProposalDraft,
+  tenantId?: string | null) {
   const parsed = parseDraft(d, draft.text);
   return {
     value: parsed.value,
@@ -230,7 +242,65 @@ export function proposalBody(d: SettingDefinition, item: Pick<SettingItem, "vers
     effective_from: draft.effectiveFrom ? new Date(draft.effectiveFrom).toISOString() : null,
     base_version: item.version ?? 0,
     apply: draft.apply,
+    ...(tenantId ? { tenant_id: tenantId } : {}),
   };
+}
+
+/** AA-1096 (S280): where a change applies. A key whose definition allows a tenant value (scope_kind
+ *  "platform+tenant") offers Platform or One tenant; any other key, and every CRM key (its agencies are the CRM's,
+ *  not CIS tenants: they keep their values in the CRM), offers Platform only. */
+export type SettingScope = "platform" | "tenant";
+export function scopeOptions(d: Pick<SettingDefinition, "scope_kind" | "app">): SettingScope[] {
+  return d.scope_kind === "platform+tenant" && d.app !== "crm" ? ["platform", "tenant"] : ["platform"];
+}
+
+export function tenantScoped(d: Pick<SettingDefinition, "scope_kind" | "app">): boolean {
+  return scopeOptions(d).includes("tenant");
+}
+
+/** The scope picked in the change form: the platform, or one tenant ("" = none picked yet). */
+export interface ScopeChoice { kind: SettingScope; tenantId: string }
+export const PLATFORM_SCOPE: ScopeChoice = { kind: "platform", tenantId: "" };
+
+/** The tenant a change names (null = the platform, or no tenant picked yet). */
+export function scopeTenant(c: ScopeChoice): string | null {
+  return c.kind === "tenant" && c.tenantId ? c.tenantId : null;
+}
+
+/** Whether the scope is complete: the platform, or a tenant picked. */
+export function scopeReady(c: ScopeChoice): boolean {
+  return c.kind === "platform" || c.tenantId !== "";
+}
+
+/** The value a change replaces at a scope and the version it names: the platform value in force, or a tenant's own
+ *  value (else what the tenant inherits today: the platform value, version 0 = no tenant value yet). `inherited`
+ *  tells the form the tenant has no value of its own. Pure. */
+export function scopeTarget(item: Pick<SettingItem, "value" | "version" | "tenant_overrides">, tenantId: string | null):
+  { value: SettingValue; version: number; inherited: boolean } {
+  if (!tenantId) return { value: item.value, version: item.version ?? 0, inherited: false };
+  const own = (item.tenant_overrides ?? []).find((o) => o.tenant_id === tenantId);
+  return own ? { value: own.value, version: own.version, inherited: false }
+    : { value: item.value, version: 0, inherited: true };
+}
+
+/** The tenant whose values the history dialog opens on: the tenant of the open proposal when only a tenant has one
+ *  (the Review button), else the platform (null). Pure. */
+export function historyTenant(item: Pick<SettingItem, "proposals">): string | null {
+  if (item.proposals.some((p) => !p.tenant_id)) return null;
+  return item.proposals.find((p) => p.tenant_id)?.tenant_id ?? null;
+}
+
+/** AA-1096 (S280): the page search over every area of the app: each word of the query must appear in the key, the
+ *  label or the description (any case); "" = no search. Matches sorted by area, then label. Pure. */
+export function searchSettings<T extends Pick<SettingDefinition, "key" | "label" | "description" | "area">>(
+  items: T[], query: string): T[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const hit = (s: T) => {
+    const text = `${s.key} ${s.label} ${s.description}`.toLowerCase();
+    return words.every((w) => text.includes(w));
+  };
+  return items.filter(hit).sort((a, b) => a.area.localeCompare(b.area) || a.label.localeCompare(b.label));
 }
 
 /** The POST body of an approve / reject. A CRM row is decided in the CRM (AA-1096 L4: the CIS API relays it there),
