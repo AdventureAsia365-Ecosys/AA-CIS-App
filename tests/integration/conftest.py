@@ -106,6 +106,8 @@ X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_share
 # test know only the 244-time set: x1_244_ci_shape takes their RLS and their cis_app policy off around 244 (the
 # 262 / 265 / 266 state minus what 244 must not see; the other policies stay, inert while RLS is off),
 # x1_244_ci_unshape puts both back.
+X1_420_LEARN_RLS = tuple(f"learn.{t}" for t in ("learner", "enrollment", "statement", "lesson_progress", "quiz_attempt",
+                                                 "review_card", "lab_run", "certificate"))
 X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.quarter_plan_version",
                    "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms",
@@ -130,8 +132,8 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    # 394 (AA-1063), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.eval_claim_proposal", "shared.eval_claim_relabel",
                    "shared.eval_golden_split",  # 400 (AA-1051), FORCE: also X1_POST_245_FORCE_RLS
-                   # 407 (S279 thresholds L1), FORCE: also X1_POST_245_FORCE_RLS
-                   "shared.setting_definition", "shared.setting_value")
+                   # 407 (S279 thresholds L1) and 420 (AA-1105), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.setting_definition", "shared.setting_value", *X1_420_LEARN_RLS)
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
 # own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
 # FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
@@ -144,7 +146,7 @@ X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared
                          "acp_shared.tenant_tour_notice", "acp_shared.tour_retirement_policy",
                          "acp_shared.fact_sheet", "shared.eval_claim_label", "shared.claim_shadow_verdict",
                          "shared.eval_claim_proposal", "shared.eval_claim_relabel", "shared.eval_golden_split",
-                         "shared.setting_definition", "shared.setting_value")
+                         "shared.setting_definition", "shared.setting_value", *X1_420_LEARN_RLS)
 
 # AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
 # missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
@@ -291,16 +293,14 @@ def _apply_schema(conn):
         DROP TYPE IF EXISTS review_status_enum CASCADE;
         DROP TYPE IF EXISTS webhook_status_enum CASCADE;
     """)
-    # AA-859: the other schemas the migrations create, so a reused local DB starts like CI's fresh one.
-    # A persisted acp_shared kept angle_gate_option under 241's RLS, which 239's guard refuses on the next
-    # session (and 241's then fails on 147's re-grant): both errors are swallowed below. One statement
-    # per schema, tolerant: a non-superuser local runner may not own every object in them.
-    # AA-860 (X1 S21): also the four schemas x1_244_ci_shape creates (X1_LEGACY_EMPTY_SCHEMAS; dropped on Dev by CIS
-    # 299, AA-850). Left over (a session stopped before x1_244_undo), they let 019 create acp_silver_s4.social_content
-    # (RLS on) on the next session's replay, which CI's fresh DB never has and the 244 / 245 exact RLS-set guards
-    # refuse.
-    # AA-850: also `retired` (CIS 294 quarantine): left over, the next replay's 294 finds the wave-1 names taken.
-    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo", *X1_LEGACY_EMPTY_SCHEMAS, "retired"):
+    # AA-859: the other schemas the migrations create, so a reused local DB starts like CI's fresh one (a persisted
+    # acp_shared kept angle_gate_option under 241's RLS, which 239's guard refuses next session). One statement per
+    # schema, tolerant: a non-superuser local runner may not own every object in them. AA-860 (X1 S21): the four
+    # schemas x1_244_ci_shape creates (X1_LEGACY_EMPTY_SCHEMAS) let 019 create acp_silver_s4.social_content (RLS on),
+    # which the 244 / 245 exact RLS-set guards refuse. AA-850: a left-over `retired` (CIS 294) has the wave-1 names
+    # taken. AA-1105: a left-over `learn` (CIS 420) loses learn.learner's FK to shared.admin_users (shared CASCADE).
+    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo", *X1_LEGACY_EMPTY_SCHEMAS, "retired",
+                   "learn"):
         try:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         except psycopg2.Error as e:
