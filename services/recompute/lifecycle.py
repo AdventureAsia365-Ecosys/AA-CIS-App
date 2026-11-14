@@ -40,12 +40,22 @@ SWEEP_CREATED_BY = "scheduler:recompute_sweep"
 SWEEP_REASON = "lifecycle_sweep"
 
 # $1 events, $2 window (days), $3 limit (seconds). One row; NULL lags when nothing was followed yet.
+# `fin` of an event = min(finished_at) of the succeeded `recompute` jobs that STARTED after it. `rj` reads shared.job
+# ONCE (C4.3 W46: the per-event correlated subquery walked job_finished_idx and the heap for every event, ~2.6 M
+# buffer hits and ~2.3 s a call). MATERIALIZED is load-bearing: a CTE used once is otherwise inlined by Postgres 12+,
+# which would bring the per-event scan back. The window filter on `rj` drops only jobs no event can use: every event
+# has occurred_at > now() - window, so a job that started after one also started after now() - window (same now(),
+# the transaction start). NULL started_at / finished_at behave as before (the > test and min() skip them).
 LAG_SQL = """
-WITH ev AS (
-    SELECT e.occurred_at,
-           (SELECT min(j.finished_at) FROM shared.job j
-             WHERE j.kind = 'recompute' AND j.status = 'succeeded' AND j.started_at > e.occurred_at) AS fin
+WITH rj AS MATERIALIZED (
+    SELECT j.started_at, j.finished_at
+      FROM shared.job j
+     WHERE j.kind = 'recompute' AND j.status = 'succeeded'
+       AND j.started_at > now() - make_interval(days => $2)
+), ev AS (
+    SELECT e.occurred_at, f.fin
       FROM gold_aa_internal.tour_lifecycle_event e
+      CROSS JOIN LATERAL (SELECT min(rj.finished_at) AS fin FROM rj WHERE rj.started_at > e.occurred_at) f
      WHERE e.event = ANY($1::text[]) AND e.occurred_at > now() - make_interval(days => $2)
 )
 SELECT count(*)::int AS events,
