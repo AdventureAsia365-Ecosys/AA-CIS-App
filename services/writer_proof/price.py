@@ -7,9 +7,12 @@ the pinned judge from `shared.llm_model_catalog` (the deployment's price overrid
 re-states each arm's estimate with it; the runner gates on the larger of the two estimates (fail closed).
 
 Per judge call:
-  profile  the token counts of the last judge calls of the same writer in the eval stages (shared.llm_call_log, role
-           judge, joined to the eval run for its writer): p90 input (cache reads counted as uncached input) and p90
-           output, times R2's estimate margin. Used when there are >= R2_MIN_COST_SAMPLES rows.
+  profile  the token counts of the last judge calls OF THE PINNED MODEL for the same writer in the eval stages
+           (shared.llm_call_log, role judge, `model` = the pinned catalog key or a legacy id the pricing maps to it,
+           joined to the eval run for its writer): p90 input (cache reads counted as uncached input) and p90 output,
+           times R2's estimate margin. Used when there are >= R2_MIN_COST_SAMPLES rows. Only the pinned model's own
+           calls count: a reasoning judge (Claude, Kimi, a gpt reasoning model) writes far longer replies than the
+           cheap default judge, so a profile of every judge model would undershoot exactly the pricier pinned judge.
   bound    no profile (a writer never judged): the evidence caps of the judge (SOURCE_CHARS + OUTPUT_CHARS + the
            prompt's own text) at a conservative chars-per-token, and the whole first output ceiling (MAX_TOKENS raised
            to the model's reasoning floor). An upper bound, flagged as such.
@@ -46,13 +49,18 @@ DEPLOYMENT_SQL = """
       FROM shared.llm_model_deployment
      WHERE model_key = $1 AND connection_key = $2
 """
-# The judge calls of one writer's eval runs, newest first (R2 binds quality_signal.eval_run to every call it makes).
+# The judge calls of the pinned model in one writer's eval runs, newest first (R2 binds quality_signal.eval_run to
+# every call it makes). llm_call_log.model holds the catalog key: call_log._normalize_model_provider strips the
+# "satellite-" / vendor label prefixes, so a reply that another model answered (eval_judge logs it, then refuses it)
+# carries that model's key and stays out of the pinned judge's profile.
+# $4 = log_models(model_key): the key plus the legacy ids pricing.catalog_key maps to it.
 JUDGE_TOKENS_SQL = """
     SELECT l.tokens_in, l.tokens_out, coalesce(l.cache_read_tokens, 0) AS cache_read_tokens
       FROM shared.llm_call_log l
       JOIN shared.prompt_eval_runs p ON p.id::text = l.quality_signal->>'eval_run'
      WHERE l.stage = ANY($1::text[]) AND l.role = 'judge' AND coalesce(l.status, 'ok') = 'ok'
        AND l.tokens_in IS NOT NULL AND l.tokens_out IS NOT NULL
+       AND l.model = ANY($4::text[])
        AND p.pipeline = 'writing_memory' AND p.writer = $2
      ORDER BY l.created_at DESC, l.id DESC
      LIMIT $3
@@ -73,6 +81,14 @@ def _p90(vals: list[float]) -> float:
     if len(vals) == 1:
         return float(vals[0])
     return float(statistics.quantiles(vals, n=10, method="inclusive")[-1])
+
+
+def log_models(model_key: str) -> list[str]:
+    """The `llm_call_log.model` values that mean the pinned catalog key: the key itself and every legacy model id
+    `pricing.catalog_key` maps to it (old rows of the acc2-native chain logged the raw id). Pure."""
+    from shared.aa_llm import pricing as core
+    legacy = [mid for mid in getattr(core, "_MODEL_ID_TO_CATALOG_KEY", {}) if core.catalog_key(mid) == model_key]
+    return sorted({model_key, *legacy})
 
 
 def token_profile(rows: list[dict], *, min_samples: int) -> Optional[dict]:
@@ -184,10 +200,10 @@ def arm_estimate(r2_estimate: dict, judge_call_usd: float) -> dict:
 
 
 async def read(conn, *, model_key: str, connection: Optional[str], writer: str, stages: tuple[str, ...]) -> dict:
-    """The catalog row, the pinned deployment row and the judge-call rows of the writer (READ ONLY)."""
+    """The catalog row, the pinned deployment row and the pinned model's judge-call rows of the writer (READ ONLY)."""
     cat = await conn.fetchrow(CATALOG_SQL, model_key)
     dep = await conn.fetchrow(DEPLOYMENT_SQL, model_key, connection) if connection else None
-    rows = await conn.fetch(JUDGE_TOKENS_SQL, list(stages), writer, PROFILE_ROWS)
+    rows = await conn.fetch(JUDGE_TOKENS_SQL, list(stages), writer, PROFILE_ROWS, log_models(model_key))
     return {"catalog": dict(cat) if cat else None, "deployment": dict(dep) if dep else None,
             "token_rows": [dict(r) for r in rows]}
 
@@ -217,4 +233,5 @@ async def check(pool, *, model_key: str, connection: Optional[str], writer: str,
 
 
 __all__ = ["CATALOG_SQL", "CHARS_PER_TOKEN", "DEPLOYMENT_SQL", "JUDGE_TOKENS_SQL", "PROFILE_ROWS", "arm_estimate",
-           "bound_tokens", "call_quote", "calls_of", "catalog_problems", "check", "judge_call", "read", "token_profile"]
+           "bound_tokens", "call_quote", "calls_of", "catalog_problems", "check", "judge_call", "log_models", "read",
+           "token_profile"]

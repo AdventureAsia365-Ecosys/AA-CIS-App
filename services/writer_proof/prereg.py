@@ -152,7 +152,9 @@ def _num(v: Any) -> Optional[float]:
 
 
 def problems(doc: Any) -> list[str]:
-    """Every reason the document is not a valid pre-registration (a draft may have an empty sample). Pure."""
+    """Every reason the document is not a valid pre-registration (a draft may have an empty sample). Reads the
+    settings registry (the D12 cap and minimum sample in force, CIS 419: call settings.ensure_fresh first in a process
+    without the refresher); otherwise pure."""
     if not isinstance(doc, dict):
         return ["the pre-registration is not a JSON object"]
     p: list[str] = []
@@ -377,6 +379,30 @@ def registered_files(workflow: Optional[str] = None) -> list[Prereg]:
             continue
         if pre.registered and (workflow is None or pre.workflow == workflow):
             out.append(pre)
+    return out
+
+
+def unloadable_registered(workflow: Optional[str] = None) -> list[dict]:
+    """[{file, why}]: every file in the package that says status registered (optionally of one workflow) but does
+    not load (lock mismatch, a minimum sample or cap raised in the settings after it was registered): what
+    `registered_files` skips, with the reason, so a gate that needs such a file can say why it was ignored."""
+    out = []
+    for f in sorted(PREREG_DIR.glob("*.json")):
+        if f.name == LOCK_FILE.name:
+            continue
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            out.append({"file": f.name, "why": f"not JSON: {e}"[:300]})
+            continue
+        if not isinstance(doc, dict) or doc.get("status") != "registered":
+            continue
+        if workflow is not None and doc.get("workflow") != workflow:
+            continue
+        try:
+            load(str(f))
+        except PreregRefused as e:
+            out.append({"file": f.name, "why": str(e)[:300]})
     return out
 
 

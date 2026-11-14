@@ -123,7 +123,9 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
     from services.writing_memory import r2
     from shared import settings
     await settings.ensure_fresh(pool)           # S280: the D12 caps and minimum samples in force (CIS 419)
-    blocking: list[str] = []
+    # `pre` may have been loaded before this refresh (the CLI loads it first; an exec process has no refresher, so
+    # load() checked it against the compiled defaults): check it again under the values an administrator set.
+    blocking: list[str] = [f"pre-registration: {x}" for x in pr.problems(pre.doc)]
     out: dict[str, Any] = {"prereg": pre.id, "sha256": pre.sha256, "workflow": pre.workflow, "writer": pre.writer,
                            "status": pre.doc.get("status"), "samples": len(pre.doc.get("sample_ids") or []),
                            "noise_samples": len(pre.doc.get("noise_sample_ids") or []),
@@ -209,17 +211,20 @@ async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = 
     if pre.workflow == "null":
         return {"required": False}
     candidates = [n for n in (pr.registered_files("null") if nulls is None else nulls) if same_instrument(n, pre)]
+    # a registered null run that no longer loads (lock mismatch, a raised minimum sample) is named with its reason
+    ignored = pr.unloadable_registered("null") if nulls is None else []
     checked = []
     for n in candidates:
         rep = await report(pool, n)
         verdict = ((rep.get("decision") or {}).get("verdict")) if rep.get("ok") else None
         checked.append({"prereg": n.id, "verdict": verdict, "refused": rep.get("refused")})
         if verdict == "non_inferior":
-            return {"required": True, "passed_by": n.id, "checked": checked}
+            return {"required": True, "passed_by": n.id, "checked": checked, "ignored": ignored}
     judge = pre.doc.get("judge") or {}
-    return {"required": True, "passed_by": None, "checked": checked,
+    why = "".join(f"; registered null run {i['file']} ignored: {i['why']}" for i in ignored)
+    return {"required": True, "passed_by": None, "checked": checked, "ignored": ignored,
             "blocking": (f"no null run with the same judge ({judge.get('model_key')}@{judge.get('connection')}) and "
-                         f"golden version came out non_inferior yet: run the null run first (root ADR 0020 W5)")}
+                         f"golden version came out non_inferior yet: run the null run first (root ADR 0020 W5){why}")}
 
 
 CAMPAIGN_ORDER = ("w5-null-t9-blog", "w5-t9", "w5-s1", "w5-t2")    # root ADR 0020 W5: null run, then T9, S1, T2
@@ -228,9 +233,13 @@ CAMPAIGN_ORDER = ("w5-null-t9-blog", "w5-t9", "w5-s1", "w5-t2")    # root ADR 00
 async def campaign(pool, *, ids: tuple[str, ...] = CAMPAIGN_ORDER, r1_report: Optional[str] = None,
                    instrument: Optional[str] = None) -> dict:
     """The DRY RUN of the whole W5 campaign ($0, READ ONLY): each proof's plan in the D12 order (samples, stage,
-    estimate vs its cap, ready or not and why) and the sum of the estimates against the D12 total. Queues nothing."""
+    estimate vs its cap, ready or not and why) and the sum of the estimates, plus what the W5 ledger already shows
+    spent and the queued / running W5 jobs reserve, against the D12 total. Queues nothing."""
+    from shared import settings
+    await settings.ensure_fresh(pool)           # before the first load: min samples / caps in force (CIS 419)
     rows = []
     total = 0.0
+    committed: Optional[float] = None           # W5 spend + reservations (all workflows), the same in every plan
     for pid in ids:
         try:
             pre = pr.load(pid)
@@ -240,6 +249,9 @@ async def campaign(pool, *, ids: tuple[str, ...] = CAMPAIGN_ORDER, r1_report: Op
         p = await plan(pool, pre, r1_report=r1_report, instrument=instrument)
         est = p.get("estimated_usd_max")
         total += float(est or 0.0)
+        sp = p.get("spend") or {}
+        committed = max(committed or 0.0, float(sp.get("total") or 0.0)
+                        + float((sp.get("reserved") or {}).get("total") or 0.0))
         rows.append({"prereg": pid, "workflow": pre.workflow, "writer": pre.writer, "status": p["status"],
                      "stage": spend.W5_STAGE, "golden_set": p.get("golden_set"), "samples": p["samples"],
                      "noise_samples": p["noise_samples"],
@@ -248,9 +260,13 @@ async def campaign(pool, *, ids: tuple[str, ...] = CAMPAIGN_ORDER, r1_report: Op
                      "judge_call_usd": ((p.get("price_check") or {}).get("judge") or {}).get("call"),
                      "prereg_cap_usd": p["prereg_cap_usd"], "d12_cap_usd": p["d12_cap_usd"],
                      "ready_for_live": p["ready_for_live"], "blocking": p["blocking"]})
+    spent = round(committed or 0.0, 4)
     return {"mode": "dry_run", "order": list(ids), "proofs": rows, "estimated_usd_max_total": round(total, 4),
-            "d12_total_cap_usd": pr.total_cap(), "fits_d12_total": total <= pr.total_cap() + 1e-9,
-            "note": "estimates only; the measured cost comes from the ledger after each run (runner report)"}
+            "spent_or_reserved_usd": spent, "d12_total_cap_usd": pr.total_cap(),
+            "fits_d12_total": spent + total <= pr.total_cap() + 1e-9,
+            "note": ("estimates only; fits_d12_total = spent_or_reserved_usd + the estimates' sum (a proof that "
+                     "already ran still counts by its plan's estimate); the measured cost comes from the ledger after "
+                     "each run (runner report)")}
 
 
 async def run_live(pool, pre: pr.Prereg, *, r1_report: str, instrument: Optional[str], cap_usd: float,
@@ -374,17 +390,17 @@ def _parse(argv=None):
 async def _main(argv=None) -> int:
     import asyncpg
 
+    from shared import settings
     from shared.secrets import get_database_url
     a = _parse(argv)
     pre = None
-    if a.cmd != "campaign":
-        try:
-            pre = pr.load(a.prereg)
-        except pr.PreregRefused as e:
-            print(json.dumps({"ok": False, "refused": str(e)}))
-            return 2
     pool = await asyncpg.create_pool(get_database_url().strip(), ssl="require", min_size=1, max_size=2)
     try:
+        # an exec process runs no settings refresher: read the values in force BEFORE load() checks the minimum
+        # samples and the cap against them (else it would check the compiled defaults)
+        await settings.ensure_fresh(pool)
+        if a.cmd != "campaign":
+            pre = pr.load(a.prereg)
         if a.cmd == "campaign":
             out: dict = await campaign(pool, r1_report=a.r1_report, instrument=a.instrument)
         elif a.cmd == "plan" or (a.cmd == "run" and not a.live):

@@ -255,3 +255,125 @@ def test_caps_and_minimum_samples_come_from_the_settings_registry(monkeypatch):
     out = spend.refusals(workflow="t9", prereg_cap=15.0, cap_usd=12.0, confirm=spend.CONFIRM_TOKEN,
                          spent_workflow=0.0, spent_total=0.0, estimate_usd=1.0)
     assert any("passes the D12 total 10.0" in x for x in out)
+
+
+# ── S280 fix round: the pinned judge's own token profile ─────────────────────────────────────────────────────────
+
+def test_log_models_maps_the_catalog_key_and_its_legacy_ids():
+    assert price.log_models("gpt-6-luna-openai") == ["gpt-6-luna-openai"]
+    assert {"sonnet", "sonnet-4-6"} <= set(price.log_models("sonnet"))
+
+
+def test_the_profile_reads_only_the_pinned_judges_rows(fakes, tmp_path):
+    """Many short replies of the cheap default judge must not price the pricier pinned reasoning judge."""
+    pre = _pre(judge={"model_key": "zz-pricey", "connection": "zz-conn"})
+    cheap = [{"model": "gpt-6-luna-openai", "tokens_in": 9000, "tokens_out": 300, "cache_read_tokens": 0}] * 150
+    long_ = [{"model": "zz-pricey", "tokens_in": 9000, "tokens_out": 6000, "cache_read_tokens": 0}]
+    kw = {"catalog": {"zz-pricey": PRICEY}, "deployment": {("zz-pricey", "zz-conn"): DEPLOYMENT}}
+    # too few rows of the pinned model: the upper bound, never the cheap judge's profile
+    out = asyncio.run(runner.plan(_Pool(token_rows=cheap + long_ * 3, **kw), pre, r1_report=_r1_report(tmp_path)))
+    jc = out["price_check"]["judge"]["call"]
+    assert jc["source"] == "bound" and out["price_check"]["judge"]["profile"] is None
+    # enough rows of the pinned model: its own p90, the cheap rows ignored
+    out = asyncio.run(runner.plan(_Pool(token_rows=cheap + long_ * cfg.R2_MIN_COST_SAMPLES, **kw), pre,
+                                  r1_report=_r1_report(tmp_path)))
+    prof = out["price_check"]["judge"]["profile"]
+    assert prof["samples"] == cfg.R2_MIN_COST_SAMPLES and prof["out_p90"] == 6000
+    assert out["price_check"]["judge"]["call"]["tokens_out"] == int(-(-6000 * cfg.R2_ESTIMATE_MARGIN // 1))
+
+
+# ── S280 fix round: the settings in force, not the compiled defaults ─────────────────────────────────────────────
+
+def _raised(monkeypatch, values):
+    from shared import settings
+    real = settings.get
+    monkeypatch.setattr(settings, "get", lambda key, tenant_id=None: values.get(key, real(key, tenant_id)))
+
+
+def test_plan_rechecks_the_file_under_a_minimum_sample_raised_after_load(fakes, tmp_path, monkeypatch):
+    pre = _pre()                                    # loaded (validated) under the defaults: 12 samples, min 12
+    out = asyncio.run(runner.plan(_Pool(), pre, r1_report=_r1_report(tmp_path)))
+    assert out["ready_for_live"], out["blocking"]
+    _raised(monkeypatch, {"cis.quality.writer_proof_null_run_min_items": 20})
+    out = asyncio.run(runner.plan(_Pool(), pre, r1_report=_r1_report(tmp_path)))
+    assert not out["ready_for_live"]
+    assert any(b.startswith("pre-registration: ") and "needs >= 20 sample ids" in b for b in out["blocking"])
+
+
+def _order_probe(monkeypatch, seen):
+    from shared import settings
+
+    async def ensure_fresh(pool):
+        seen.append("ensure_fresh")
+        return True
+    real_load = pr.load
+
+    def load(x):
+        seen.append("load")
+        return real_load(x)
+    monkeypatch.setattr(settings, "ensure_fresh", ensure_fresh)
+    monkeypatch.setattr(pr, "load", load)
+
+
+def test_the_cli_refreshes_the_settings_before_it_loads_the_file(fakes, monkeypatch):
+    import asyncpg
+
+    import shared.secrets
+    seen: list[str] = []
+    _order_probe(monkeypatch, seen)
+
+    class Pool(_Pool):
+        async def close(self):
+            seen.append("close")
+
+    async def create_pool(*a, **k):
+        return Pool()
+
+    async def plan(pool, pre, **kw):
+        seen.append("plan")
+        return {}
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(shared.secrets, "get_database_url", lambda: "postgresql://zz")
+    monkeypatch.setattr(runner, "plan", plan)
+    assert asyncio.run(runner._main(["plan", "--prereg", "w5-null-t9-blog"])) == 0
+    assert seen == ["ensure_fresh", "load", "plan", "close"]
+    seen.clear()
+    assert asyncio.run(runner._main(["plan", "--prereg", "w5-nothing-here"])) == 2     # refused, pool still closed
+    assert seen == ["ensure_fresh", "load", "close"]
+
+
+def test_campaign_refreshes_the_settings_before_its_first_load(fakes, monkeypatch):
+    seen: list[str] = []
+    _order_probe(monkeypatch, seen)
+    asyncio.run(runner.campaign(_Pool(), ids=("w5-nothing-here",)))
+    assert seen[:2] == ["ensure_fresh", "load"]
+
+
+def test_campaign_counts_what_the_ledger_already_shows_against_the_d12_total(fakes):
+    out = asyncio.run(runner.campaign(_Pool({"total": 30.0, "workflow": 0.0, "rows": 3})))
+    assert out["spent_or_reserved_usd"] == 30.0 and out["fits_d12_total"]
+    out = asyncio.run(runner.campaign(_Pool({"total": 30.0, "workflow": 0.0, "rows": 3},
+                                            jobs=[{"job_id": "job-1", "status": "running", "prereg_id": "w5-zz",
+                                                   "workflow": "t2", "arm": "B", "cap_usd": 4.0, "key": "k"}])))
+    assert out["spent_or_reserved_usd"] == 34.0 and not out["fits_d12_total"]
+
+
+def test_null_gate_names_a_registered_null_run_it_had_to_ignore(fakes, tmp_path, monkeypatch):
+    fakes["null_gate"] = "real"
+    monkeypatch.setattr(pr, "registered_files", lambda workflow=None: [])
+    monkeypatch.setattr(pr, "unloadable_registered",
+                        lambda workflow=None: [{"file": "w5-null-zz.json", "why": "w5-null-zz needs >= 20 sample ids"}])
+    out = asyncio.run(runner.plan(_Pool(), _t9(), r1_report=_r1_report(tmp_path)))
+    assert out["null_run"]["ignored"][0]["file"] == "w5-null-zz.json"
+    assert any("registered null run w5-null-zz.json ignored: w5-null-zz needs >= 20" in b for b in out["blocking"])
+
+
+def test_unloadable_registered_reports_a_registered_file_outside_the_lock(tmp_path, monkeypatch):
+    pre = _pre()
+    (tmp_path / f"{pre.id}.json").write_text(json.dumps(pre.doc))
+    (tmp_path / "w5-t9.json").write_text(json.dumps(pr.load("w5-t9").doc))          # a draft: not reported
+    monkeypatch.setattr(pr, "PREREG_DIR", tmp_path)
+    monkeypatch.setattr(pr, "LOCK_FILE", tmp_path / "registered.lock.json")
+    got = pr.unloadable_registered("null")
+    assert [g["file"] for g in got] == [f"{pre.id}.json"] and "not in registered.lock.json" in got[0]["why"]
+    assert pr.registered_files("null") == [] and pr.unloadable_registered("t9") == []

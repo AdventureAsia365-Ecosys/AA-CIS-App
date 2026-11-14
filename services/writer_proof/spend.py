@@ -64,7 +64,8 @@ def _num(v: Any) -> Optional[float]:
 def refusals(*, workflow: str, prereg_cap: float, cap_usd: Any, confirm: Optional[str], spent_workflow: Any,
              spent_total: Any, estimate_usd: Any, reserved_workflow: Any = 0.0, reserved_total: Any = 0.0) -> list[str]:
     """Every reason a live run of `workflow` may not start (empty = it may). `reserved_*`: the caps of the queued or
-    running W5 jobs (of the workflow / of all W5). Pure."""
+    running W5 jobs (of the workflow / of all W5). Reads the settings registry (the D12 caps in force, CIS 419: call
+    settings.ensure_fresh first in a process without the refresher); otherwise pure."""
     out: list[str] = []
     d12 = workflow_cap(workflow)
     d12_total = total_cap()

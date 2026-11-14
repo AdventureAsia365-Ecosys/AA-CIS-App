@@ -4437,8 +4437,9 @@ stage `adhoc_aa1051`, queued by `python -m services.writer_proof.runner run --li
 only when its **pre-registration** (`services/writer_proof/prereg/<id>.json`: metrics, fixed sample ids, an absolute
 non-inferiority margin, the pinned judge, the cap) is registered and matches its locked sha
 (`prereg/registered.lock.json`; the run rows carry it too), the power check from the R1 vote variance is adequate, the
-estimate (the larger of R2's and the pinned judge priced from `shared.llm_model_catalog`) fits, a null run with the same
-judge and golden version came out non_inferior first (T9 / S1 / T2), and the D12 caps hold (settings
+estimate (the larger of R2's and the pinned judge priced from `shared.llm_model_catalog` on that model's own past judge
+tokens) fits, a null run with the same judge and golden version came out non_inferior first (T9 / S1 / T2), and the
+D12 caps and minimum samples in force (re-read before the file is checked) hold (settings
 `cis.spend.writer_proof_*_cap_usd`, defaults null $5, T9 $15, S1 $8, T2 $5, $33 in total, read against the ledger; minimum
 samples `cis.quality.writer_proof_*_min_items`). `runner campaign` is the DRY plan of all four in order. `runner report` gives the
 pre-registered verdict, the targets and the cost and requests per object from `shared.llm_call_log`.

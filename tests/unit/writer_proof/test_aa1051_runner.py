@@ -75,7 +75,9 @@ class _Conn:
     async def fetch(self, sql, *args):
         if sql == price.JUDGE_TOKENS_SQL:
             assert tuple(args[0]) == tuple(cfg.EVAL_LOG_STAGES) and args[2] == price.PROFILE_ROWS
-            return list(self.token_rows)
+            # $4 = the pinned model's log names: a row naming another model is filtered out like the SQL does
+            return [{k: v for k, v in r.items() if k != "model"} for r in self.token_rows
+                    if r.get("model", args[3][0]) in args[3]]
         if sql == spend.ACTIVE_JOBS_SQL:
             assert args == (spend.R2_JOB_KIND,)
             return [{k: j[k] for k in ("job_id", "status", "prereg_id", "workflow", "arm", "cap_usd")}
