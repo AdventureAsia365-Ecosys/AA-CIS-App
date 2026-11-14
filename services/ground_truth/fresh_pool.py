@@ -11,12 +11,15 @@ violations left. A new measurement needs claims from pieces none of that touched
       The export lines whose piece (content_sha256) holds no claim of an excluded pool and no claim of an excluded run
       (a run report's hash prefixes are located through the pools and exports given; a prefix found nowhere is
       refused: it cannot be kept out). With --labels it also prints the plan of the R1 firing run on those claims
-      (gpt-6-luna-openai extraction, prompt v1: the instrument whose false positives are being measured), which the
-      orchestrator runs with scripts/aa1048/r1_calibrate.py (--split as here; paid, its own yes).
+      (gpt-6-luna-openai extraction, prompt v1: the instrument whose false positives are being measured) on the
+      labelled claims (scripts/aa1048/r1_calibrate.py). services/ground_truth/r1_fire.py fires the same instrument on
+      a capped sample of the eligible claims whatever their label (paid, its own yes): its report is a --votes file.
   python -m services.ground_truth.fresh_pool sample --eligible <eligible.jsonl> --manifest <eligible-manifest.json>
       --votes <r1 report | votes log> [--instrument <id>] [--size N] --out-dir <dir>
       The claims the R1 majority fired on, at most N (cis.quality.claim_fresh_pool_sample_max), spread over the writers
       in proportion and ordered by sha256(salt + claim hash) with a salt taken from the eligible manifest (recorded).
+      A fire report of r1_fire.py must be a full live run on this eligible file (a trial or another file is refused);
+      the sample manifest records the votes file's digest and run.
       Writes candidates.jsonl (the claims), sheet.jsonl (one row per claim, numbered, blank answer fields),
       sources.jsonl (each piece's source once) and sample-manifest.json (counts, salt, hash prefixes; no text).
   python -m services.ground_truth.fresh_pool import --candidates <candidates.jsonl> --sample-manifest <json>
@@ -56,6 +59,7 @@ OK_REASONS = {"paraphrase": "fp_paraphrase", "verbatim": "fp_verbatim", "backgro
               "other": "fp_other"}
 STEP1 = ("restatement", "new_claim")
 SHEET_FIELDS = ("label", "ok_reason", "step1", "reason")
+FIRE_REPORT_KIND = "r1_fire"                             # services/ground_truth/r1_fire.py writes this report
 
 
 class PoolRefused(ev.EvalRefused):
@@ -176,6 +180,24 @@ def read_fire_votes(text: str, instrument: str = FIRE_INSTRUMENT) -> dict[str, l
         raise PoolRefused(str(e)) from e
 
 
+def fire_report_check(text: str, manifest: dict) -> dict:
+    """{} for a votes file that is not an r1_fire report; for one, its run and whether it stopped early. Refused unless
+    it is a full live fire on the eligible file of `manifest` (a trial fires a few claims only; a dry run has no votes;
+    another file's votes would sample claims of another file)."""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return {}
+    if not isinstance(obj, dict) or obj.get("kind") != FIRE_REPORT_KIND:
+        return {}
+    if obj.get("mode") != "live" or obj.get("fire_kind") != "full":
+        raise PoolRefused("the fire report is a dry run or a trial: sample from a full live fire (r1_fire.py --live "
+                          "without --trial)")
+    if obj.get("eligible_sha256") != manifest.get("eligible_sha256"):
+        raise PoolRefused("the fire report fired another eligible file (eligible_sha256 differs)")
+    return {"votes_run": str(obj.get("run_id", ""))[:8], "votes_partial": bool(obj.get("stopped"))}
+
+
 def salt_of(manifest: dict) -> str:
     return "aa1048-fresh:" + str(manifest.get("eligible_sha256", ""))[:16]
 
@@ -211,7 +233,9 @@ def cmd_sample(a: argparse.Namespace) -> dict:
     if manifest.get("eligible_sha256") != _sha(text):
         raise PoolRefused("the eligible manifest is not the manifest of this eligible file (sha256 differs)")
     lines = pn.read_jsonl(text)
-    votes = ev.by_prefix([e["claim_hash"] for e in lines], read_fire_votes(_read(a.votes), a.instrument))
+    votes_text = _read(a.votes)
+    fire = fire_report_check(votes_text, manifest)
+    votes = ev.by_prefix([e["claim_hash"] for e in lines], read_fire_votes(votes_text, a.instrument))
     if not votes:
         raise PoolRefused("the votes cover none of the eligible claims (fire the eligible claims first)")
     fired = [e for e in lines if r1.majority(votes.get(e["claim_hash"]) or []) is True]
@@ -228,7 +252,8 @@ def cmd_sample(a: argparse.Namespace) -> dict:
     sources = {piece(e)[:16]: e.get("source_text") or "" for e in chosen}
     _write_jsonl(out("sources.jsonl"), ({"piece": k, "source": v} for k, v in sorted(sources.items())))
     sample = {"kind": "fresh_sample", "issue": "AA-1048", "salt": salt, "instrument": a.instrument,
-              "eligible_sha256": manifest["eligible_sha256"], "voted": len(votes), "fired": len(fired),
+              "eligible_sha256": manifest["eligible_sha256"], "votes_sha256": _sha(votes_text)[:16], **fire,
+              "voted": len(votes), "fired": len(fired),
               "size": size, "claims": len(chosen), "pieces": len(sources),
               "by_writer": dict(Counter(e["writer"] for e in chosen)),
               "rows": {str(n): e["claim_hash"][:16] for n, e in enumerate(chosen, 1)},
