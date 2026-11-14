@@ -75,8 +75,9 @@ async def test_421_registered_with_triggers_and_index(conn):
     for t in CHILDREN:
         assert f"{t}_tenant_trg" in names[t], t
     assert "learner_tenant_fixed_trg" in names["learner"]
-    assert await conn.fetchval("SELECT indexdef AS ok FROM pg_indexes WHERE schemaname = 'learn' "
-                               "AND indexname = 'lab_run_learner_idx'").endswith("(learner_id, module_id, started_at)")
+    indexdef = await conn.fetchval("SELECT indexdef AS ok FROM pg_indexes WHERE schemaname = 'learn' "
+                                   "AND indexname = 'lab_run_learner_idx'")
+    assert indexdef.endswith("(learner_id, module_id, started_at)")
 
 
 @pytest.mark.asyncio
