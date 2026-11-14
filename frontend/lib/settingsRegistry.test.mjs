@@ -12,7 +12,8 @@ import {
   formatValue, groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath,
   registryPath, valuesInForce, withValue, PLATFORM_SCOPE, historyTenant, scopeOptions, scopeReady, scopeTarget,
   scopeTenant, searchSettings, tenantScoped, approvedVersion, scheduledOf, openProposal, tenantProposals,
-  canApplyAtOnce, lastChangeState, isScheduled, loadProblem, effectiveInPast, localMinute, PROBLEM_IDS,
+  canApplyAtOnce, lastChangeState, isScheduled, loadProblem, effectiveInPast, localMinute, PROBLEM_IDS, agencyScoped,
+  agencyNames, effectiveShown,
 } from "./settingsRegistry.ts";
 import { canReadAdminPath, canWriteAdminPath } from "./rbac.ts";
 import { ADMIN_IA } from "./adminIa.ts";
@@ -123,6 +124,25 @@ test("a CRM row is decided in the CRM; an agency's own row names its agency", ()
   assert.deepEqual(decisionBody(crm, { tenant_id: agency }, ""), { note: null, app: "crm", tenant_id: agency });
   assert.equal(historyPath("crm.rate.intake_form_per_hour", agency),
     `/api/admin/settings/registry/crm.rate.intake_form_per_hour/history?tenant_id=${agency}`);
+});
+
+// S280 fix round: the CRM tab lists each agency's own value and open change (the relay maps agency_overrides /
+// agency_pending), named by the CRM; Review opens the agency's rows, where Approve / Reject send its id.
+test("a CRM platform+tenant key lists its agencies by the CRM's names, and a change stays a platform change", () => {
+  const crm = { ...INT, key: "crm.rate.intake_form_per_hour", app: "crm", scope_kind: "platform+tenant" };
+  const a = "00000000-0000-4000-8000-0000000000a1";
+  const b = "00000000-0000-4000-8000-0000000000b2";
+  assert.equal(agencyScoped(crm), true);
+  assert.equal(agencyScoped({ ...crm, scope_kind: "platform" }), false);
+  assert.equal(agencyScoped({ ...crm, app: "cis" }), false);
+  assert.deepEqual(scopeOptions(crm), ["platform"]);
+  const item = { ...crm, proposals: [{ tenant_id: b, agency_name: "Beta Travel", status: "proposed" }],
+    tenant_overrides: [{ tenant_id: a, agency_name: "Alpha Tours", value: 900, version: 2, effective_from: null },
+      { tenant_id: b, agency_name: null, value: 300, version: 1, effective_from: null }] };
+  assert.deepEqual([...agencyNames(item)], [[a, "Alpha Tours"], [b, "Beta Travel"]]);
+  assert.equal(historyTenant(item), b);
+  assert.deepEqual(decisionBody(crm, { tenant_id: b }, "ok"), { note: "ok", app: "crm", tenant_id: b });
+  assert.deepEqual(agencyNames({ proposals: [] }), new Map());
 });
 
 // AA-1096 l23: the tech lead typed "3,364" and got "Enter a number"; both decimal marks are one number now. A
@@ -366,4 +386,17 @@ test("a 503 is 'not set up yet' only for the registry's own codes; the CRM or th
   assert.equal(loadProblem(503, undefined), "unavailable");
   assert.equal(loadProblem(500, "x"), "other");
   assert.equal(actorText("platform:abc-sub"), "abc-sub");
+});
+
+// S280 fix round: a change sent without a date is stored with its proposal time; History shows when it really applies.
+test("History's Effective from: when approved for an undated open change, else the later of date and approval", () => {
+  const proposed_at = "2026-11-14T05:00:00.000Z";
+  const row = { status: "proposed", effective_from: "2026-11-14T05:00:00.400Z", proposed_at, decided_at: null };
+  assert.equal(effectiveShown(row), null);
+  assert.equal(effectiveShown({ ...row, effective_from: "2026-11-20T00:00:00.000Z" }), "2026-11-20T00:00:00.000Z");
+  const approved = { ...row, status: "approved", decided_at: "2026-11-15T08:00:00.000Z" };
+  assert.equal(effectiveShown(approved), "2026-11-15T08:00:00.000Z");
+  assert.equal(effectiveShown({ ...approved, effective_from: "2026-11-20T00:00:00.000Z" }), "2026-11-20T00:00:00.000Z");
+  assert.equal(effectiveShown({ ...approved, status: "superseded" }), "2026-11-15T08:00:00.000Z");
+  assert.equal(effectiveShown({ ...approved, status: "rejected" }), null);
 });

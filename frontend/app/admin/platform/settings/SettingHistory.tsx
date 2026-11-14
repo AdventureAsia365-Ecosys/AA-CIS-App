@@ -5,8 +5,9 @@
 // Every version of the key at one scope (the platform, or one tenant: HistoryScope, which also lists the open tenant
 // proposals with a Review link), newest first: status (an approved change dated ahead shows "Scheduled"), the value it
 // replaced and the new one (in the page's words), "Effective from" ("when approved" for an open proposal without a
-// date), who proposed it and why, who decided it. An open proposal of the scope is approved or rejected here by a
-// person who may (canApprove: the administrator; on the CRM tab only a CRM platform administrator).
+// date; a decided one the later of its date and its approval, lib effectiveShown), who proposed it and why, who
+// decided it. An open proposal of the scope is approved or rejected here by a person who may (canApprove: the
+// administrator; on the CRM tab only a CRM platform administrator).
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -15,8 +16,8 @@ import {
   type Tone,
 } from "../../../_kit";
 import {
-  decisionBody, decisionPath, formatValue, historyPath, historyTenant, isScheduled, type HistoryResp, type SettingItem,
-  type SettingRow,
+  decisionBody, decisionPath, effectiveShown, formatValue, historyPath, historyTenant, isScheduled, type HistoryResp,
+  type SettingItem, type SettingRow,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
 import { ActorName } from "./SettingGuide";
@@ -55,9 +56,12 @@ function useHistoryColumns(item: SettingItem): ColumnDef<SettingRow, unknown>[] 
       cell: ({ getValue }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{String(getValue())}</span> },
     { id: "now", header: t("colNow"), accessorFn: (r) => formatValue(r.value, item, words),
       cell: ({ getValue }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{String(getValue())}</span> },
-    { id: "effective", header: t("colEffective"), accessorFn: (r) => r.effective_from ?? "",
-      cell: ({ row: { original: r } }) => <span style={small}>
-        {r.effective_from ? <DateText value={r.effective_from} withTime /> : t("whenApproved")}</span> },
+    { id: "effective", header: t("colEffective"), accessorFn: (r) => effectiveShown(r) ?? "",
+      cell: ({ row: { original: r } }) => {
+        const at = effectiveShown(r);
+        return <span style={small}>
+          {at ? <DateText value={at} withTime /> : r.status === "proposed" ? t("whenApproved") : "—"}</span>;
+      } },
     { id: "who", header: t("colWho"), accessorFn: (r) => r.proposed_by_name ?? r.proposed_by,
       cell: ({ row: { original: r } }) => <span style={small}><ActorName actor={r.proposed_by}
         name={r.proposed_by_name} /><br /><DateText value={r.proposed_at} withTime /></span> },

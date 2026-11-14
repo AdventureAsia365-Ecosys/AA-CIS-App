@@ -162,6 +162,10 @@ export const SETTINGS = defineMessages(
     pendingScope: "A proposal for this scope is already open: approve or reject it in History first.",
     pendingTitle: "A proposal is pending: review it first",
     tenantProposalsTitle: "Open tenant proposals",
+    agencyValues: (n: number) => `${n} agency ${n === 1 ? "value" : "values"}`,
+    agencyValuesTitle: "Agency values in force",
+    noAgencyValues: "No agency has its own value; every agency uses the platform value.",
+    agencyProposalsTitle: "Open agency changes",
     reviewTenant: "Review",
     refusedWhy: (why: string) => `The stored value is refused and the default is served: ${why}. Propose a value that fits.`,
     crmReadOnly:
@@ -339,6 +343,10 @@ export const SETTINGS = defineMessages(
     pendingScope: "Phạm vi này đã có một đề xuất đang mở: hãy duyệt hoặc từ chối nó trong Lịch sử trước.",
     pendingTitle: "Có đề xuất chờ duyệt: hãy xem xét trước",
     tenantProposalsTitle: "Đề xuất đang mở của tenant",
+    agencyValues: (n: number) => `${n} giá trị riêng của đại lý`,
+    agencyValuesTitle: "Giá trị riêng của đại lý đang áp dụng",
+    noAgencyValues: "Chưa đại lý nào có giá trị riêng; mọi đại lý dùng giá trị nền tảng.",
+    agencyProposalsTitle: "Thay đổi đang mở của đại lý",
     reviewTenant: "Xem xét",
     refusedWhy: (why: string) => `Giá trị đã lưu bị từ chối nên đang dùng mặc định: ${why}. Hãy đề xuất một giá trị hợp lệ.`,
     crmReadOnly:

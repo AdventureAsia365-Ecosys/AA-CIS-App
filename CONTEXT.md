@@ -1910,7 +1910,10 @@ schedules dated at or after it. A tenant value is refused while the key's env ov
 `env_override_active`, the CRM rule). The list carries `approved_version` (the base version of a platform change) and
 `scheduled`; "Last change" is an approved change only. The CRM tab's list adds `can_write` (the CRM's `/console`
 answer: only `crm-platform-admin` writes) and names the CRM staff actor (`platform:<sub>`) from `shared.admin_users`
-by Cognito sub.
+by Cognito sub. The relay maps the CRM's agency rows (crm.ops.v1 1.14 `agency_overrides` / `agency_pending`) to
+`tenant_overrides` / `proposals` with `agency_name`, so the CRM tab lists each agency's value and open change and decides
+it with the agency id (a change made there stays a platform change), and writes a CRM approval's
+`superseded_versions` / `cancelled_scheduled_versions` (1.15, the same rule as CIS) into the CIS audit row.
 
 ## Deploy & CI
 
