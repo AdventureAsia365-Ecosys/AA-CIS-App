@@ -179,7 +179,9 @@ def test_only_the_r2_runner_imports_the_eval_judge():
                 importers.add(f.relative_to(REPO).as_posix())
     assert importers == {"services/writing_memory/r2.py", "scripts/aa919/kappa_diag.py",
                          "scripts/aa919/judge_compare.py", "scripts/aa729/labels.py",
-                         "services/jobs/llm_contract_smoke_job.py", "services/ground_truth/review.py"}
+                         "services/jobs/llm_contract_smoke_job.py", "services/ground_truth/review.py",
+                         # AA-1051 (S280): the W5 plan reads the judge's token constants to price it; it never calls it.
+                         "services/writer_proof/price.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):
