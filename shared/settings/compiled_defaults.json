@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -7032,6 +7032,45 @@
      "lower": "Blog ngắn hơn được chấp nhận; có thể đọc sơ sài.",
      "when": "Đổi theo chiến lược nội dung, ví dụ khi báo cáo tìm kiếm ưu tiên bài dài hay ngắn hơn. Đổi cùng tỷ lệ dư và mức trần. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
      "example": "Với mặc định 4.700 ký tự (khoảng 810 từ): blog 4.500 ký tự là quá ngắn."
+    }
+   }
+  },
+  {
+   "key": "cis.t9.blog_length_extend",
+   "app": "cis",
+   "area": "content",
+   "label": "Blog length: lengthen a short blog before holding it",
+   "description": "off: a blog still under the length minimum after its repair round is held for length (the full rewrite path, unchanged). on: a blog under the minimum after its repair round gets one lengthening repair first: one new paragraph in each of up to three of its thinnest sections, written only from facts of its own source that the blog does not use yet; each paragraph is checked in code (no new number, time, heading, list, question or call to action, no mention of where a fact comes from) and then every quality check runs again on the whole text. A tenant value turns it on for one agency only (a trial on an audit tenant); the platform value for everyone. The env var stays an emergency override for one release (a badge on this page). Evidence required: a $0 replay of stored pieces, or a trial run whose cost is read from the call ledger.",
+   "value_type": "enum",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "off",
+    "on"
+   ],
+   "default_value": "off",
+   "scope_kind": "platform+tenant",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": true,
+   "env_override": "T9_LENGTH_EXTEND",
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Whether a blog that is still shorter than the blog length minimum after its repair round gets one lengthening pass before it is held. The pass adds one paragraph to each of up to three of its thinnest sections, using only facts from its own source material that the blog does not use yet; every added paragraph is checked, then all the quality checks run again on the whole blog.",
+     "raise": "Turn on: fewer blogs are held for being too short. Each short blog costs one more writer call (one or two US cents), and an added paragraph can trip another check, which then holds the blog as before. A blog whose source has no unused fact left is still held.",
+     "lower": "Turn off: a short blog keeps the old path, one full rewrite and a hold for length if it is still short. No extra writer call.",
+     "when": "Turn it on for one test agency first and compare how many of its blogs are held for being too short; turn it on for everyone when that test shows fewer length holds and no new holds from other checks. Turn it off if added paragraphs start causing other holds. The change form asks for evidence: a free replay of stored blogs, or the test run with its cost.",
+     "example": "With the default of off: a blog of 4,200 characters after its repair round is held for being too short (the minimum is 4,700 characters by default). With on, it first gets new paragraphs from facts it has not used, and is held only if it is still short."
+    },
+    "vi": {
+     "what": "Một bài blog vẫn ngắn hơn độ dài tối thiểu sau vòng sửa có được kéo dài thêm một lần trước khi bị giữ lại hay không. Lần kéo dài thêm một đoạn vào tối đa ba phần mỏng nhất của bài, chỉ dùng những dữ kiện trong tư liệu nguồn của chính bài mà bài chưa dùng tới; mỗi đoạn thêm vào đều được kiểm tra, rồi mọi bước kiểm chất lượng chạy lại trên toàn bài.",
+     "raise": "Bật: ít blog bị giữ vì quá ngắn hơn. Mỗi bài ngắn tốn thêm một lần gọi bộ viết (một đến hai xu Mỹ), và một đoạn thêm vào có thể vướng một bước kiểm khác, khi đó bài vẫn bị giữ như trước. Bài mà nguồn không còn dữ kiện nào chưa dùng thì vẫn bị giữ.",
+     "lower": "Tắt: bài ngắn đi theo đường cũ, viết lại toàn bài một lần và bị giữ vì độ dài nếu vẫn còn ngắn. Không tốn thêm lần gọi bộ viết nào.",
+     "when": "Bật cho một đại lý thử nghiệm trước và so số blog của đại lý đó bị giữ vì quá ngắn; bật cho tất cả khi lần thử cho thấy ít bài bị giữ vì độ dài hơn và không có bài bị giữ mới vì bước kiểm khác. Tắt nếu các đoạn thêm vào bắt đầu gây ra lý do giữ bài khác. Form đổi giá trị yêu cầu bằng chứng: một lần replay miễn phí các blog đã lưu, hoặc lần chạy thử kèm chi phí.",
+     "example": "Với mặc định off (tắt): một blog dài 4.200 ký tự sau vòng sửa bị giữ vì quá ngắn (mức tối thiểu mặc định là 4.700 ký tự). Khi bật, bài được thêm đoạn từ những dữ kiện chưa dùng trước, và chỉ bị giữ nếu vẫn còn ngắn."
     }
    }
   },
