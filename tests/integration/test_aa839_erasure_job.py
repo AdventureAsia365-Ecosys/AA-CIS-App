@@ -485,7 +485,7 @@ async def test_tenant_dry_run_lists_s3_keys_outside_the_tenant_prefixes(pool):
 
 
 @pytest.mark.asyncio
-async def test_tenant_apply_refusals(pool):
+async def test_tenant_apply_refusals(pool, monkeypatch):
     admin, _ = pool
     tid = await _tenant(pool, offboarded_days=3)
     await _seed(pool, tid, f"adhoc_aa839_{uuid.uuid4().hex[:8]}")
@@ -496,15 +496,15 @@ async def test_tenant_apply_refusals(pool):
         await _run(pool, apply)                                   # flag off (the default everywhere)
     with pytest.raises(NonRetryable, match="less than 30 days"):
         await _run(pool, apply, env=ON)                           # offboarded 3 days ago
-    env = dict(ON, ERASURE_TENANT_RETENTION_DAYS="0")
+    monkeypatch.setattr(ej, "tenant_retention_days", lambda: 0)   # CIS 424: the Dev drill sets the setting to 0
     extra = await admin.fetchval("INSERT INTO shared.unmapped_market_requests (tenant_id, country_code) "
                                  "VALUES ($1::uuid, 'ZY') RETURNING id", tid)   # counts change after the approval
     with pytest.raises(NonRetryable, match="counts changed"):
-        await _run(pool, apply, env=env)
+        await _run(pool, apply, env=ON)
     # that apply claimed the DRY RUN: even with the counts back, the same approval cannot be used again
     await admin.execute("DELETE FROM shared.unmapped_market_requests WHERE id = $1", extra)
     with pytest.raises(NonRetryable, match="already used by apply job"):
-        await _run(pool, apply, env=env)
+        await _run(pool, apply, env=ON)
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", tid) == 1
 
 
@@ -778,12 +778,12 @@ async def test_same_counts_for_two_tenants_give_two_fingerprints(pool, monkeypat
     with pytest.raises(NonRetryable, match="approved_fingerprint differs"):
         await _run(pool, {"subject": "tenant", "tenant": b, "mode": "apply", "dry_run_job_id": dry_b_id,
                           "approved_fingerprint": dry_a["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
-                   env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
+                   env=ON)
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", b) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_v1_dry_run_is_refused_and_not_claimed(pool):
+async def test_a_v1_dry_run_is_refused_and_not_claimed(pool, monkeypatch):
     """AA-839 review: a DRY RUN made before fingerprint v2 (no fingerprint_version) cannot be applied, and the
     refusal happens before the claim, so the DRY RUN row carries no used_by_apply."""
     admin, _ = pool
@@ -793,7 +793,7 @@ async def test_a_v1_dry_run_is_refused_and_not_claimed(pool):
     with pytest.raises(NonRetryable, match="predates the subject-bound fingerprint"):
         await _run(pool, {"subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": dry_id,
                           "approved_fingerprint": dry["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
-                   env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
+                   env=ON)
     assert await admin.fetchval("SELECT result ? 'used_by_apply' FROM shared.job WHERE id = $1::uuid",
                                 dry_id) is False
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", tid) == 1
