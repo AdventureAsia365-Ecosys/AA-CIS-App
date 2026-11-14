@@ -32,7 +32,8 @@ rows:
   - {gate: F11_brand_name, action: repair_sentence, parse: quoted}
   - {gate: F19_authenticity, action: repair_sentence, parse: quoted}
   - {gate: F10_cannibalization_cross_tenant, action: rewrite}
-  # AA-1077: with T9_LENGTH_EXTEND=on a blog SHORT of the floor goes to the extend repair first (length_extend.py)
+  # AA-1077: with the setting cis.t9.blog_length_extend on (tenant or platform value; env T9_LENGTH_EXTEND overrides)
+  # a blog SHORT of the floor goes to the extend repair first (length_extend.py)
   - {gate: F4_extreme_length, action: rewrite}
   - {gate: F0_complete, action: rewrite}
   - {gate: F12_scope, action: repair_sentence, parse: quoted}

@@ -2395,6 +2395,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # S279 thresholds L1 (setting cis.t9.max_attempts): an earlier stop only; attempt numbers keep their meaning.
         paid_attempts = paid_attempts_for(stop_label, max_attempts())
         stopped_for_label = False
+        # AA-1077 (S280, CIS 418) — the lengthening repair switch (setting cis.t9.blog_length_extend, the piece's
+        # tenant value, else the platform value; a job trial flag first), resolved ONCE per piece so a setting change
+        # mid-piece never splits one piece's repair rounds; the blog's length trace records it.
+        extend_mode = length_extend.mode(tenant_id) if channel == "blog" else length_extend.EXTEND_OFF
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()
@@ -2430,7 +2434,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # as before (a sentence repair for quoted findings; one that needs the full rewrite takes it, and
                 # then no extend runs). Attempt 2 only (attempt 3 never rewrites, AA-770).
                 extend_plan = (length_extend.plan_for(content_text, gate_ledger, channel=channel,
-                                                      source=grounding_text) if attempt == 2 else None)
+                                                      source=grounding_text, switch=extend_mode)
+                               if attempt == 2 else None)
                 if extend_plan is not None:
                     repair_items = ([] if extend_plan["only_length"]
                                     else sentence_repair.plan(content_text, extend_plan["ledger"]))
@@ -2464,8 +2469,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # length_contract.keeps_not_cut), attempt 2 then runs the expand step on what the repair left
                 # (length_extend.plan_after_repair) and attempt 3, which has no expand after it, puts back a cut that
                 # would take the blog under the floor (S278 review: a just-expanded blog cut back under it).
-                length_round = (attempt >= 2 and channel == "blog"
-                                and length_extend.mode() == length_extend.EXTEND_ON)
+                length_round = (attempt >= 2 and channel == "blog" and extend_mode == length_extend.EXTEND_ON)
                 keep_hint = (length_round and bool(repair_items) and length_contract.cut_projection(
                     content_text, repair_items) < length_contract.floor_chars())
                 if repair_items:
@@ -2588,7 +2592,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     )
                     fresh_text = True
             expand_plan, expand_why, net = None, None, None
-            if attempt >= 2 and channel == "blog" and length_extend.mode() == length_extend.EXTEND_ON:
+            if attempt >= 2 and channel == "blog" and extend_mode == length_extend.EXTEND_ON:
                 # AA-1077 round 2 — the repair round's net length: the expand step runs on the text the repair (the
                 # sentence repair's cuts, or the full rewrite) left, whenever that text is under the floor, sized from
                 # its own deficit (the cuts' lost characters included) to the target. Before, the extend plan was
@@ -2597,7 +2601,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # paragraphs again) has no expand; its floor guard is _floor_kept_cuts, and the round is recorded too.
                 if attempt == 2:
                     expand_plan, expand_why = length_extend.plan_after_repair(
-                        content_text, before=prev_snapshot["content_text"], channel=channel, source=grounding_text)
+                        content_text, before=prev_snapshot["content_text"], channel=channel, source=grounding_text,
+                        switch=extend_mode)
                 else:
                     expand_why = LAST_ATTEMPT_NO_EXPAND
                 net = {"before": length_contract.measure(prev_snapshot["content_text"]),
@@ -2954,6 +2959,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         status, held_reason, repair_log = norm["status"], norm["held_reason"], norm["repair_log"]
         summary, embedding = norm["summary"], norm["embedding"]
         total_cost += norm["cost_usd"]
+        if channel == "blog" and context.get("length_trace"):
+            context["length_trace"]["extend"] = extend_mode   # AA-1077 S280: was the lengthening repair on for it
         # AA-925 (Q-2, design §6.3) — the very last verdict step: a hard fail-open detector on the FINAL attempt
         # (the F9 judge outage marker on its ledger) labels an approved piece held. Reverses AA-770's "an F9
         # outage is a warn, not a hold"; `held` stays an admin-only label, the tenant still receives the piece.
