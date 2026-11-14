@@ -1,4 +1,4 @@
--- Migration 429: AA-1048 (S281 lane l13) — the size of the R1 firing sample of unlabelled claims, in the platform
+-- Migration 426: AA-1048 (S281 lane l13) — the size of the R1 firing sample of unlabelled claims, in the platform
 -- settings registry (CIS 407; tech lead S279: a threshold, limit or cap is a setting on Platform › Settings, never a
 -- code literal or an env var alone).
 --
@@ -17,7 +17,7 @@
 --      Seeded with enforced = false: the code that reads it ships in the next PR of this lane (MIG-4), and the
 --      settings-lint guard refuses an enforced key that no code reads. A later migration marks it enforced (with the
 --      CIS 417 and 423 keys) once the firing code is on Dev.
---   2. Register 429.
+--   2. Register 426.
 --
 -- Behaviour on apply. None for running code: no value row is seeded and nothing reads the key until the firing code is
 -- deployed; then it resolves to its default until an administrator approves a change.
@@ -26,8 +26,8 @@
 -- MIG-4: a migration-only PR in the wave's CIS migration batch; applied on Dev by Infra Migration Apply when the job
 -- tables are idle (ADR 0017a). DM-7.1: no new table.
 --
--- Number. Main ends at 423; this wave's other CIS lanes hold 424-428, so the lane takes 429. If the owner main max + 1
--- differs at merge, renumber (git grep '429_' and '429' here, in tests/integration/test_aa1048_migration_429.py,
+-- Number. Renumbered to 426 in the S281 wave batch (424, 425 are the other lanes). If the owner main max + 1
+-- differs at merge, renumber (git grep '426_' and '426' here, in tests/integration/test_aa1048_migration_426.py,
 -- compiled_defaults.json and the seed-parity test).
 --
 -- Locks. One INSERT of one row (the definition guard trigger allows the file's role, cis_owner). lock_timeout 5s.
@@ -56,7 +56,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('429', now(), 'AA-1048: the R1 firing sample size of unlabelled claims')
+VALUES ('426', now(), 'AA-1048: the R1 firing sample size of unlabelled claims')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

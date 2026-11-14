@@ -86,7 +86,7 @@ def test_the_trash_window_is_badged_not_enforced():
     # proof caps and minimum samples likewise, until the proof code that reads them is deployed. AA-1105 (CIS 420): the
     # twelve AA Academy settings likewise, until the learning API that reads them is deployed. AA-1048 (CIS 423): the
     # two-step evaluation's three step bars and the fresh-pool sheet size likewise, until the two-step code is deployed.
-    # AA-1048 (CIS 429): the R1 firing sample size of unlabelled claims likewise, until the firing code is deployed.
+    # AA-1048 (CIS 426): the R1 firing sample size of unlabelled claims likewise, until the firing code is deployed.
     assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted([
         "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
         "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",

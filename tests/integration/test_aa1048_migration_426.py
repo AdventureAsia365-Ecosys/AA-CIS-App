@@ -1,4 +1,4 @@
-"""AA-1048 (S281 lane l13) — CIS 429: the R1 firing sample size of unlabelled claims in shared.setting_definition
+"""AA-1048 (S281 lane l13) — CIS 426: the R1 firing sample size of unlabelled claims in shared.setting_definition
 (conftest replays every migration). Registered; the row equals the compiled default the reader serves; enforced is false
 until the firing code ships; maker-checker; it carries its label and a complete guide; a re-run changes nothing. Runs
 in a transaction that is rolled back."""
@@ -17,7 +17,7 @@ from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 M429 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "429_aa1048_claim_fire_sample_setting.sql")
+                    "426_aa1048_claim_fire_sample_setting.sql")
 KEY = "cis.quality.claim_fire_sample_max"
 
 
@@ -35,7 +35,7 @@ async def conn():
 
 @pytest.mark.asyncio
 async def test_429_registered_and_the_row_is_the_compiled_default(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '429'") == "429"
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '426'") == "426"
     row = await conn.fetchrow(
         "SELECT default_value, enforced, approval, evidence_required, label, min_value, max_value, value_type, "
         "shared.setting_guide_complete(guide) AS guided FROM shared.setting_definition WHERE key = $1", KEY)
