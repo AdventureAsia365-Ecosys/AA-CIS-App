@@ -37,7 +37,7 @@ paid call:
   - the three step bars on the stored violations and false positives.
 
   The verdict is go only when the overall verdict is go and every step bar holds.
-- **Per-step bars are settings (CIS 430).**
+- **Per-step bars are settings (CIS 423).**
   - `route_tp` defaults to 95. The step-1 losses compound with step 2's, so 95 x 95 still clears 90.
   - `judge_tp_keep` defaults to 95.
   - `judge_fp_drop` defaults to 40. It holds when no false positive reached step 2.
@@ -113,10 +113,10 @@ paid call:
 
 ## Should know
 
-- **Migration.** CIS 430 is a contract file: four config rows, `enforced = false`. It ships first, in the wave's CIS
-  migration batch (MIG-4). This code PR reads the keys and needs 430 applied. Its own CI is red on the settings-lint
+- **Migration.** CIS 423 is a contract file: four config rows, `enforced = false`. It ships first, in the wave's CIS
+  migration batch (MIG-4). This code PR reads the keys and needs 423 applied. Its own CI is red on the settings-lint
   check until the migration PR has merged, because the code reads keys that are not yet compiled.
-- **Follow-up.** A later migration should mark the four CIS 430 keys and the five CIS 417 keys enforced once this code
+- **Follow-up.** A later migration should mark the four CIS 423 keys and the five CIS 417 keys enforced once this code
   is deployed (417's code has been live since S279).
 - **Order of the live steps** (runbook in root `.tmp-session/S281/aa1048-two-step/`):
   1. export claims;

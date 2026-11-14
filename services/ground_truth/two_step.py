@@ -41,7 +41,7 @@ Settings (Platform > Settings; read after a refresh from the database before a p
   cis.quality.claim_two_step_judge_tp_keep_min_pct  step 2 must flag at least this share of the violations it judges
   cis.quality.claim_two_step_judge_fp_drop_min_pct  step 2 must clear at least this share of the false positives it
                                                     judges (no false positive reached it: the bar holds)
-go needs the overall bars and the three step bars (CIS 430). The subset and the overall score are instrument_eval's.
+go needs the overall bars and the three step bars (CIS 423). The subset and the overall score are instrument_eval's.
 
 Calls: every call goes through the Model Gateway (r1.gateway_call: stage r1.STAGE, role judge, the pinned connection
 first) and writes one shared.llm_call_log row through r1._log (**billed_fields, the step's prompt version). The cap is

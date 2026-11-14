@@ -271,7 +271,7 @@ def test_the_preregistration_names_the_code_prompts_and_the_settings_defaults():
     assert prereg["prompt_versions"] == {s: insts[s].prompt_version.tag for s in ts.STEPS}
     assert sorted(prereg["shaped_on"]) == ts.shaped_on(insts) and prereg["candidate"] == CAND
     assert prereg["shaped_on_pools"] == ts.shaped_on_pools(insts) == [pr.S279_POOL]
-    # the settings' defaults are the registered bars (CIS 417 + 430), so a fresh Dev matches the pre-registration
+    # the settings' defaults are the registered bars (CIS 417 + 423), so a fresh Dev matches the pre-registration
     for name, key in prereg["bars_settings"].items():
         assert float(settings.definition(key).default_value) == prereg["bars"][name]
     chk = ts.preregistration_check(prereg, LIM, SLIM, insts, 3)

@@ -3502,7 +3502,7 @@ specifics) and `v5j` (step `judge`: is each listed specific supported). A claim 
 a restatement; otherwise the step-2 majority decides (an unverified step 1 never clears). A step version is
 entailment-only and refused by `r1.instruments`. The evaluation is pre-registered
 (`services/ground_truth/preregistration/aa1048_two_step_v5.json`, `docs/calibration/aa1048-two-step-preregistration.md`):
-a live run refuses unless the settings bars (CIS 417 overall + CIS 430 step bars), prompt tags, candidate and votes
+a live run refuses unless the settings bars (CIS 417 overall + CIS 423 step bars), prompt tags, candidate and votes
 equal the file, and unless the pool is out of sample for both steps: a fresh pool (`services/ground_truth/
 fresh_pool.py`: R1-fired claims on pieces no earlier round touched, the agent panel's sheet, a manifest with the pool
 digest and the excluded runs and pieces) or `--exclude` of the shaping runs.
