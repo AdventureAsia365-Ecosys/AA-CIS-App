@@ -19,6 +19,10 @@ CRM's route class checks the group itself: cis-admin or crm-platform-admin read,
   rows name their CRM staff actor (``platform:<Cognito sub>``, the same workforce pool as CIS staff) by the CIS staff
   name (``proposed_by_name`` / ``decided_by_name``, the CIS rows' fields), and a change dated in the past is refused
   before it is relayed (``settings_registry.effective_start``, the CIS rule).
+- S280 fix round, second pass: the agencies' own values and open changes (crm.ops.v1 1.14 ``agency_overrides`` /
+  ``agency_pending``) are relayed as ``tenant_overrides`` / ``proposals`` with ``agency_name`` (the page lists and
+  decides them on the CRM tab), and an approval's ``superseded_versions`` / ``cancelled_scheduled_versions`` (1.15) go
+  into the CIS audit row. ``approved_version`` and ``scheduled`` (1.15) pass through as the CRM sends them.
 """
 from __future__ import annotations
 
@@ -57,8 +61,19 @@ async def _call(authorization: Optional[str], method: str, path: str, *, json: A
 
 
 def _page_row(setting: dict) -> dict:
+    """One CRM setting in the page's shape: ``pending`` -> ``proposals``; the agencies' own values in force
+    (``agency_overrides``, crm.ops.v1 1.14) -> ``tenant_overrides`` and their open changes (``agency_pending``) join
+    ``proposals``, each with its ``agency_name`` (the CRM's agencies are not CIS tenants; Approve / Reject send the
+    row's ``tenant_id``)."""
     out = dict(setting)
-    out["proposals"] = out.pop("pending", [])
+    agency_pending = out.pop("agency_pending", None) or []
+    out["proposals"] = (out.pop("pending", None) or []) + agency_pending
+    overrides = out.pop("agency_overrides", None)
+    if overrides is not None:
+        out["tenant_overrides"] = [
+            {"tenant_id": o.get("tenant_id"), "value": o.get("value"), "version": o.get("version"),
+             "effective_from": o.get("effective_from"), "agency_name": o.get("agency_name")}
+            for o in overrides if isinstance(o, dict) and o.get("tenant_id")]
     return out
 
 
@@ -131,6 +146,12 @@ async def _audit(pool: Any, *, actor: str, action: str, row: dict, extra: dict) 
         logger.error("crm_setting_audit_failed", key=row.get("key"), action=action, error=repr(exc)[:200])
 
 
+def _superseded(row: dict) -> dict:
+    """What a CRM approval superseded (crm.ops.v1 1.15: the newest decision wins, as on CIS), for the CIS audit row;
+    the same fields as a CIS approval's audit (none superseded, or an older CRM: no field)."""
+    return {k: row[k] for k in ("superseded_versions", "cancelled_scheduled_versions") if isinstance(row.get(k), list)}
+
+
 async def propose(pool: Any, authorization: Optional[str], key: str, *, actor: str, value: Any, reason: str,
                   base_version: Optional[int], evidence_ref: Optional[str] = None,
                   effective_from: Optional[datetime] = None, tenant_id: Optional[str] = None,
@@ -143,7 +164,8 @@ async def propose(pool: Any, authorization: Optional[str], key: str, *, actor: s
     await _audit(pool, actor=actor, action=PlatformAuditAction.SETTING_PROPOSED, row=row,
                  extra={"reason": reason, "evidence_ref": evidence_ref})
     if row.get("status") == "approved":
-        await _audit(pool, actor=actor, action=PlatformAuditAction.SETTING_APPROVED, row=row, extra={})
+        await _audit(pool, actor=actor, action=PlatformAuditAction.SETTING_APPROVED, row=row,
+                     extra=_superseded(row))
     logger.info("crm_setting_relayed", key=key, status=row.get("status"), agency=tenant_id is not None)
     return row
 
@@ -154,7 +176,7 @@ async def decide(pool: Any, authorization: Optional[str], value_id: str, *, acto
     row = await _call(authorization, "POST", f"/settings/changes/{value_id}/{decision}",
                       json={"note": note, "tenant_id": tenant_id})
     action = PlatformAuditAction.SETTING_APPROVED if approve else PlatformAuditAction.SETTING_REJECTED
-    await _audit(pool, actor=actor, action=action, row=row, extra={"note": note})
+    await _audit(pool, actor=actor, action=action, row=row, extra={"note": note, **_superseded(row)})
     logger.info("crm_setting_decision_relayed", key=row.get("key"), status=row.get("status"))
     return row
 

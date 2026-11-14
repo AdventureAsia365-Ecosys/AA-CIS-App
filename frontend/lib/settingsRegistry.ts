@@ -37,6 +37,8 @@ export interface SettingRow {
   /** The staff member's name or e-mail (null = no staff row: a script or a migration), read by the API. */
   proposed_by_name?: string | null;
   decided_by_name?: string | null;
+  /** CRM tab: the agency of an agency's own row (the CRM's agency_pending, relayed as a proposal). */
+  agency_name?: string | null;
 }
 
 /** AA-1096 l23 (CIS 416): the operator's guide of a setting, one per language. */
@@ -74,6 +76,8 @@ export interface TenantOverride {
   value: SettingValue;
   version: number;
   effective_from: string | null;
+  /** CRM tab: the agency's name (the CRM's agency_overrides; its agencies are not CIS tenants). */
+  agency_name?: string | null;
 }
 
 /** S280: an approved value whose effective_from is still ahead (the list's scheduled; every scope). */
@@ -329,6 +333,21 @@ export function tenantScoped(d: Pick<SettingDefinition, "scope_kind" | "app">): 
   return scopeOptions(d).includes("tenant");
 }
 
+/** A CRM key an agency may keep its own value of: the page lists the agencies' values and open changes (named by the
+ *  CRM, decided with the agency's id), while a change from this page stays a platform change. */
+export function agencyScoped(d: Pick<SettingDefinition, "scope_kind" | "app">): boolean {
+  return d.app === "crm" && d.scope_kind === "platform+tenant";
+}
+
+/** The agency names the CRM gave with its agencies' values and open changes (CRM tab), by agency id. Pure. */
+export function agencyNames(item: Pick<SettingItem, "tenant_overrides" | "proposals">): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of [...(item.tenant_overrides ?? []), ...item.proposals]) {
+    if (r.tenant_id && r.agency_name && !out.has(r.tenant_id)) out.set(r.tenant_id, r.agency_name);
+  }
+  return out;
+}
+
 /** The scope picked in the change form: the platform, or one tenant ("" = none picked yet). */
 export interface ScopeChoice { kind: SettingScope; tenantId: string }
 export const PLATFORM_SCOPE: ScopeChoice = { kind: "platform", tenantId: "" };
@@ -408,6 +427,21 @@ export function lastChangeState(row: Pick<SettingRow, "status" | "effective_from
 /** Is a history row an approved change dated ahead? Pure. */
 export function isScheduled(row: Pick<SettingRow, "status" | "effective_from">, now: Date = new Date()): boolean {
   return row.status === "approved" && isAhead(row.effective_from, now);
+}
+
+/** What History's "Effective from" cell shows. A change sent without a date is stored with its proposal time (the
+ *  server's coalesce(now())), but it takes effect only once approved: an open one shows "when approved" (null), an
+ *  approved or superseded one the later of its date and its approval, a rejected one nothing (null as well; the cell
+ *  tells the two apart by status). Pure. */
+export function effectiveShown(row: Pick<SettingRow, "status" | "effective_from" | "proposed_at" | "decided_at">):
+  string | null {
+  const at = row.effective_from;
+  if (row.status === "rejected" || !at) return null;
+  const t = new Date(at).getTime();
+  const proposed = row.proposed_at ? new Date(row.proposed_at).getTime() : NaN;
+  if (row.status === "proposed") return t - proposed <= 1000 ? null : at; // undated: stored as its proposal time
+  const decided = row.decided_at ? new Date(row.decided_at).getTime() : NaN;
+  return decided > t ? row.decided_at : at;
 }
 
 /** Why the list could not load, as the page words it: the registry is not set up yet (CIS 407 / crm-064 missing),
