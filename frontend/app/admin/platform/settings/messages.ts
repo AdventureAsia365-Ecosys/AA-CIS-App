@@ -1,6 +1,8 @@
 // app/admin/platform/settings/messages.ts — S279 thresholds L1: Platform › Settings in English and Vietnamese.
 // Setting labels and descriptions come from the API (the definition rows, English); refusals from the server as sent.
 // AA-1096 l23: each setting's guide comes from the API in both languages (CIS 416); the part names are here.
+// AA-1096 (S280 UX fix round): the form's problems (lib parse ids, "{0}" = the one argument), the area names, the units
+// and the scheduled / pending / CRM-rights / unavailable lines are here in both languages.
 
 import { defineMessages } from "../../../_kit/core/i18n";
 
@@ -57,7 +59,7 @@ export const SETTINGS = defineMessages(
     evidenceHint: "An eval or replay run (id or link). Required for this setting.",
     evidenceOptional: "Optional: an eval run, a report or a ticket.",
     effectiveFrom: "Effective from",
-    effectiveHint: "Leave empty for now. A future time keeps today's value until then.",
+    effectiveHint: "Leave empty to apply it when it is approved. A future time keeps the value in force until then; a past time is refused.",
     applyNow: "Approve it now",
     applySelf: "Approve it now (recorded as a self-approval with your reason)",
     applyTwoPerson: "Two-person approval is on: a second staff member approves it.",
@@ -144,6 +146,45 @@ export const SETTINGS = defineMessages(
     noTenantValues: "No tenant has its own value; every tenant uses the platform value.",
     historyOf: "Show the history of",
     historyPlatform: "Platform",
+    // S280 UX fix round
+    areasLabel: "Areas",
+    appsLabel: "Apps",
+    oneOf: (list: string) => `one of ${list}`,
+    badgeScheduled: "Change scheduled",
+    statusScheduled: "Scheduled",
+    colEffective: "Effective from",
+    whenApproved: "when approved",
+    scheduledLine: (value: string) => `Scheduled: ${value} from`,
+    scheduledWarnNow:
+      "An approved change is scheduled for this scope. Approving this change now cancels it: the newest decision wins.",
+    scheduledWarnLater:
+      "An approved change is scheduled for this scope. Approving this one cancels the schedules dated at or after its date; an earlier one still applies until then.",
+    pendingScope: "A proposal for this scope is already open: approve or reject it in History first.",
+    pendingTitle: "A proposal is pending: review it first",
+    tenantProposalsTitle: "Open tenant proposals",
+    reviewTenant: "Review",
+    refusedWhy: (why: string) => `The stored value is refused and the default is served: ${why}. Propose a value that fits.`,
+    crmReadOnly:
+      "You can read the CRM settings. Changing or approving them needs the CRM platform administrator group (crm-platform-admin).",
+    unavailable: "The settings could not be read: the app or its database did not answer. Try again in a minute.",
+    retry: "Try again",
+    problem_wholeNoSep: "Enter a whole number, without separators",
+    problem_whole: "Enter a whole number",
+    problem_number: "Enter a number",
+    problem_belowMin: "The value is below the minimum {0}",
+    problem_aboveMax: "The value is above the maximum {0}",
+    problem_entryBelowMin: "An entry is below the minimum {0}",
+    problem_entryAboveMax: "An entry is above the maximum {0}",
+    problem_onOff: "Choose on or off",
+    problem_chooseOne: "Choose one of {0}",
+    problem_json: "Enter valid JSON",
+    problem_jsonList: "Enter a JSON list",
+    problem_notAllowed: "{0} is not allowed",
+    problem_jsonObject: "Enter a JSON object or list",
+    problem_entryNumber: "Every entry must be a number",
+    problem_reasonShort: "Give a reason of at least {0} characters",
+    problem_evidence: "This setting needs an evidence link (an eval or replay run)",
+    problem_effectivePast: "Effective from is in the past: pick a later time or leave it empty",
   },
   {
     title: "Cài đặt",
@@ -197,7 +238,7 @@ export const SETTINGS = defineMessages(
     evidenceHint: "Một lần chạy eval hoặc replay (mã hoặc liên kết). Bắt buộc với cài đặt này.",
     evidenceOptional: "Không bắt buộc: một lần chạy eval, một báo cáo hoặc một ticket.",
     effectiveFrom: "Có hiệu lực từ",
-    effectiveHint: "Để trống nếu áp dụng ngay. Một thời điểm trong tương lai sẽ giữ giá trị hiện tại đến lúc đó.",
+    effectiveHint: "Để trống để áp dụng khi được duyệt. Một thời điểm trong tương lai giữ giá trị đang áp dụng đến lúc đó; thời điểm đã qua sẽ bị từ chối.",
     applyNow: "Duyệt ngay",
     applySelf: "Duyệt ngay (ghi nhận là tự duyệt kèm lý do của bạn)",
     applyTwoPerson: "Duyệt hai người đang bật: một nhân viên khác sẽ duyệt.",
@@ -283,5 +324,89 @@ export const SETTINGS = defineMessages(
     noTenantValues: "Chưa tenant nào có giá trị riêng; mọi tenant dùng giá trị nền tảng.",
     historyOf: "Xem lịch sử của",
     historyPlatform: "Nền tảng",
+    areasLabel: "Nhóm cài đặt",
+    appsLabel: "Ứng dụng",
+    oneOf: (list: string) => `một trong ${list}`,
+    badgeScheduled: "Có thay đổi đã lên lịch",
+    statusScheduled: "Đã lên lịch",
+    colEffective: "Có hiệu lực từ",
+    whenApproved: "khi được duyệt",
+    scheduledLine: (value: string) => `Đã lên lịch: ${value} từ`,
+    scheduledWarnNow:
+      "Phạm vi này có một thay đổi đã duyệt đang chờ đến ngày áp dụng. Duyệt thay đổi này ngay sẽ huỷ lịch đó: quyết định mới nhất được áp dụng.",
+    scheduledWarnLater:
+      "Phạm vi này có một thay đổi đã duyệt đang chờ đến ngày áp dụng. Duyệt thay đổi này sẽ huỷ các lịch có ngày từ ngày của nó trở về sau; lịch có ngày sớm hơn vẫn áp dụng đến lúc đó.",
+    pendingScope: "Phạm vi này đã có một đề xuất đang mở: hãy duyệt hoặc từ chối nó trong Lịch sử trước.",
+    pendingTitle: "Có đề xuất chờ duyệt: hãy xem xét trước",
+    tenantProposalsTitle: "Đề xuất đang mở của tenant",
+    reviewTenant: "Xem xét",
+    refusedWhy: (why: string) => `Giá trị đã lưu bị từ chối nên đang dùng mặc định: ${why}. Hãy đề xuất một giá trị hợp lệ.`,
+    crmReadOnly:
+      "Bạn có thể xem các cài đặt CRM. Muốn đổi hoặc duyệt cần thuộc nhóm quản trị nền tảng CRM (crm-platform-admin).",
+    unavailable: "Không đọc được các cài đặt: ứng dụng hoặc cơ sở dữ liệu của nó không phản hồi. Hãy thử lại sau một phút.",
+    retry: "Thử lại",
+    problem_wholeNoSep: "Hãy nhập số nguyên, không có dấu phân cách",
+    problem_whole: "Hãy nhập số nguyên",
+    problem_number: "Hãy nhập một số",
+    problem_belowMin: "Giá trị thấp hơn mức tối thiểu {0}",
+    problem_aboveMax: "Giá trị cao hơn mức tối đa {0}",
+    problem_entryBelowMin: "Có mục thấp hơn mức tối thiểu {0}",
+    problem_entryAboveMax: "Có mục cao hơn mức tối đa {0}",
+    problem_onOff: "Hãy chọn bật hoặc tắt",
+    problem_chooseOne: "Hãy chọn một trong {0}",
+    problem_json: "Hãy nhập JSON hợp lệ",
+    problem_jsonList: "Hãy nhập một danh sách JSON",
+    problem_notAllowed: "{0} không được phép",
+    problem_jsonObject: "Hãy nhập một đối tượng hoặc danh sách JSON",
+    problem_entryNumber: "Mọi mục phải là số",
+    problem_reasonShort: "Hãy ghi lý do dài ít nhất {0} ký tự",
+    problem_evidence: "Cài đặt này cần liên kết bằng chứng (một lần chạy eval hoặc replay)",
+    problem_effectivePast: "Thời điểm có hiệu lực đã qua: hãy chọn thời điểm muộn hơn hoặc để trống",
   },
 );
+
+/** The area tabs by name (the API sends the area id; an unknown id is shown spaced and capitalised). */
+const AREA_NAMES: Record<string, { en: string; vi: string }> = {
+  content: { en: "Content", vi: "Nội dung" },
+  quality: { en: "Quality", vi: "Chất lượng" },
+  quality_detectors: { en: "Quality detectors", vi: "Bộ phát hiện chất lượng" },
+  quality_modes: { en: "Quality modes", vi: "Chế độ kiểm chất lượng" },
+  quality_claims: { en: "Quality claims", vi: "Kiểm khẳng định" },
+  spend: { en: "Spend", vi: "Chi phí" },
+  seo: { en: "SEO", vi: "SEO" },
+  t7: { en: "Channel planning", vi: "Lập kế hoạch kênh" },
+  retention: { en: "Retention", vi: "Lưu giữ dữ liệu" },
+  billing: { en: "Billing", vi: "Thanh toán" },
+  lifecycle: { en: "Tour lifecycle", vi: "Vòng đời tour" },
+  publish: { en: "Publishing", vi: "Đăng bài" },
+  platform: { en: "Platform", vi: "Nền tảng" },
+  rate: { en: "Rate limits", vi: "Giới hạn tần suất" },
+  rate_limit: { en: "Rate limits", vi: "Giới hạn tần suất" },
+  ai: { en: "AI", vi: "AI" },
+  handoff: { en: "Handoff", vi: "Chuyển giao" },
+  leads: { en: "Leads", vi: "Khách tiềm năng" },
+  agency_defaults: { en: "Agency defaults", vi: "Mặc định của đại lý" },
+  payments: { en: "Payments", vi: "Thanh toán đại lý" },
+};
+
+export function areaName(area: string, lang: string): string {
+  const known = AREA_NAMES[area];
+  if (known) return lang === "vi" ? known.vi : known.en;
+  const spaced = area.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** The units of the definitions in Vietnamese (English is the definition's own text; an unknown unit is shown as is). */
+const UNITS_VI: Record<string, string> = {
+  characters: "ký tự", days: "ngày", hours: "giờ", months: "tháng", words: "từ", items: "mục", calls: "lượt gọi",
+  attempts: "lần thử", claims: "khẳng định", tours: "tour", tokens: "token", share: "tỉ lệ", "posts/day": "bài/ngày",
+  "per hour": "mỗi giờ", "per minute": "mỗi phút", "per Subject": "mỗi Subject", "USD/call": "USD/lượt gọi",
+  "USD/month": "USD/tháng", "USD/run": "USD/lần chạy", "chars/word": "ký tự/từ", "leads/24 h": "khách/24 giờ",
+  "score (0-10)": "điểm (0-10)", score: "điểm", reminders: "lần nhắc", "checks/min": "lần kiểm/phút",
+  "requests/min": "yêu cầu/phút", "calls/min": "lượt gọi/phút", "writes/min": "lượt ghi/phút",
+  "submissions/hour": "lượt gửi/giờ", "base currency": "tiền tệ gốc",
+};
+
+export function unitName(unit: string, lang: string): string {
+  return lang === "vi" ? UNITS_VI[unit] ?? unit : unit;
+}

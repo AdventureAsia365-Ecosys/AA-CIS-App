@@ -243,3 +243,80 @@ async def test_a_future_dated_quality_approval_counts_when_the_next_one_is_appro
     with pytest.raises(reg.SettingsError) as e:
         await reg.decide(pool, line["id"], actor=B, approve=True)
     assert e.value.code == "cross_check" and "future-dated" in e.value.detail
+
+
+# ── AA-1096 (S280 UX fix round): no backdated change, the newest decision wins, the list's base version and schedule ─
+async def _in(pool, interval: str):
+    return await pool.conn.fetchval(f"SELECT now() + interval '{interval}' AS ok")
+
+
+async def _statuses(pool, key=KEY):
+    return {r["version"]: r["status"] for r in await pool.conn.fetch(
+        "SELECT version, status FROM shared.setting_value WHERE key = $1 AND tenant_id IS NULL", key)}
+
+
+@pytest.mark.asyncio
+async def test_a_change_dated_in_the_past_is_refused(pool):
+    from datetime import datetime, timedelta, timezone
+    with pytest.raises(reg.SettingsError) as e:
+        await reg.propose(pool, KEY, value=12, reason=REASON, actor=A, base_version=0, apply=True, can_approve=True,
+                          effective_from=datetime.now(timezone.utc) - timedelta(hours=2))
+    assert (e.value.status, e.value.code) == (422, "effective_in_past")
+    assert await _statuses(pool) == {}
+
+
+@pytest.mark.asyncio
+async def test_an_approval_now_cancels_an_older_scheduled_change(pool):
+    sched = await reg.propose(pool, KEY, value=40, reason=REASON, actor=A, base_version=0, apply=True,
+                              can_approve=True, effective_from=await _in(pool, "7 days"))
+    assert sched["status"] == "approved"
+    listing = await reg.list_settings(pool, app="cis")
+    row = next(r for r in listing["settings"] if r["key"] == KEY)
+    assert [(s["value"], s["version"]) for s in row["scheduled"]] == [(40, 1)]
+    assert (row["value"], row["approved_version"]) == (20, 0)          # the default stays in force until then
+    now = await reg.propose(pool, KEY, value=12, reason=REASON, actor=A, base_version=0, apply=True, can_approve=True)
+    assert now["status"] == "approved"
+    assert await _statuses(pool) == {1: "superseded", 2: "approved"}  # the scheduled 40 would have replaced 12
+    approved = await pool.conn.fetchrow(
+        "SELECT details FROM acp_shared.audit_log WHERE resource_type = 'setting' AND action = $1 "
+        "AND details->>'version' = '2'", "settings.value_approved")
+    import json as _json
+    details = approved["details"] if isinstance(approved["details"], dict) else _json.loads(approved["details"])
+    assert details["superseded_versions"] == [1] and details["cancelled_scheduled_versions"] == [1]
+    listing = await reg.list_settings(pool, app="cis")
+    row = next(r for r in listing["settings"] if r["key"] == KEY)
+    assert row["scheduled"] == [] and row["approved_version"] == 2 and row["value"] == 12
+
+
+@pytest.mark.asyncio
+async def test_a_future_approval_cancels_only_the_schedules_dated_after_it(pool):
+    early = await reg.propose(pool, KEY, value=30, reason=REASON, actor=A, base_version=0, apply=True,
+                              can_approve=True, effective_from=await _in(pool, "1 day"))
+    late = await reg.propose(pool, KEY, value=40, reason=REASON, actor=A, base_version=0, apply=True,
+                             can_approve=True, effective_from=await _in(pool, "9 days"))
+    mid = await reg.propose(pool, KEY, value=35, reason=REASON, actor=A, base_version=0, apply=True,
+                            can_approve=True, effective_from=await _in(pool, "4 days"))
+    assert [r["version"] for r in (early, late, mid)] == [1, 2, 3]
+    assert await _statuses(pool) == {1: "approved", 2: "superseded", 3: "approved"}
+
+
+@pytest.mark.asyncio
+async def test_the_last_change_is_an_approved_one_never_a_rejection(pool):
+    ok = await reg.propose(pool, KEY, value=12, reason=REASON, actor=A, base_version=0, apply=True, can_approve=True)
+    p = await reg.propose(pool, KEY, value=30, reason=REASON, actor=A, base_version=1)
+    await reg.decide(pool, p["id"], actor=B, approve=False, note="zz not now")
+    listing = await reg.list_settings(pool, app="cis")
+    row = next(r for r in listing["settings"] if r["key"] == KEY)
+    assert row["last_change"]["id"] == ok["id"] and row["last_change"]["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_value_is_refused_while_the_env_override_is_in_force(pool, monkeypatch):
+    if not await pool.conn.fetchval("SELECT count(*) AS ok FROM shared.setting_definition WHERE key = $1", TENANT_KEY):
+        pytest.skip("the tenant-scoped definition is not on this branch yet")
+    env = settings.definition(TENANT_KEY).env_override
+    monkeypatch.setenv(env, "on")
+    with pytest.raises(reg.SettingsError) as e:
+        await reg.propose(pool, TENANT_KEY, value="on", reason=REASON, actor=A, base_version=0,
+                          tenant_id=SCOPED_TENANT, evidence_ref="replay:zz-invented-run-a280")
+    assert (e.value.status, e.value.code) == (409, "env_override_active")

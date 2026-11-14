@@ -10,16 +10,19 @@
 // - ScopeCurrent: the "In force now" line of the scope (a tenant without a value of its own uses the platform value).
 // - TenantCount: the row's count of tenant values in force (the list's tenant_overrides).
 // - TenantValues: each tenant's own value by name, with a History link (the history dialog).
-// - HistoryScope: whose history the dialog shows (Platform or one tenant; GET .../history?tenant_id=).
+// - HistoryScope: whose history the dialog shows (Platform or one tenant; GET .../history?tenant_id=), and (S280 UX
+//   fix round) the open tenant proposals by name with a Review link, so a tenant proposal is decided here even while
+//   the platform has one too (the row's "pending" badge counts every scope).
 // Every other key renders nothing here and keeps the form as before. Kit + TenantSelect only.
 
 import { K, Badge, Field, LinkButton, Select, mono, useT } from "../../../_kit";
 import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import {
-  boundsText, formatValue, scopeOptions, scopeTarget, scopeTenant, tenantScoped, type ScopeChoice, type SettingItem,
-  type SettingScope,
+  boundsText, formatValue, scopeOptions, scopeTarget, scopeTenant, tenantProposals, tenantScoped, type ScopeChoice,
+  type SettingItem, type SettingScope,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
+import { useSettingWords } from "./useSettingWords";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 
@@ -46,14 +49,15 @@ export function ScopeFields({ item, value, onChange }: {
 /** "In force now: <value> · Allowed: <bounds>" of the scope being changed. */
 export function ScopeCurrent({ item, scope }: { item: SettingItem; scope: ScopeChoice }) {
   const t = useT(SETTINGS);
+  const { words } = useSettingWords();
   const { label } = useTenants();
   const tenant = scopeTenant(scope);
   const target = scopeTarget(item, tenant);
-  const bounds = boundsText(item);
+  const bounds = boundsText(item, words);
   return (
     <div style={small}>
       {tenant ? t("currentFor", label(tenant)) : t("current")}:{" "}
-      <strong style={{ fontFamily: mono }}>{formatValue(target.value, item)}</strong>
+      <strong style={{ fontFamily: mono }}>{formatValue(target.value, item, words)}</strong>
       {target.inherited && <> ({t("inheritsPlatform")})</>}
       {bounds && <> · {t("colBounds")}: {bounds}</>}
     </div>
@@ -75,6 +79,7 @@ export function TenantCount({ item }: { item: SettingItem }) {
 /** Each tenant's own value by name (slug in brackets) with a link to its history. */
 export function TenantValues({ item, onPick }: { item: SettingItem; onPick: (tenantId: string) => void }) {
   const t = useT(SETTINGS);
+  const { words } = useSettingWords();
   const { byId, label } = useTenants();
   const rows = item.tenant_overrides ?? [];
   return (
@@ -86,7 +91,7 @@ export function TenantValues({ item, onPick }: { item: SettingItem; onPick: (ten
         return (
           <span key={o.tenant_id} style={{ ...small, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span title={o.tenant_id}>{label(o.tenant_id)}{slug && slug !== label(o.tenant_id) && ` (${slug})`}</span>
-            <strong style={{ fontFamily: mono, color: K.body }}>{formatValue(o.value, item)}</strong>
+            <strong style={{ fontFamily: mono, color: K.body }}>{formatValue(o.value, item, words)}</strong>
             <span>v{o.version}</span>
             <LinkButton size="sm" onClick={() => onPick(o.tenant_id)}>{t("history")}</LinkButton>
           </span>
@@ -96,7 +101,31 @@ export function TenantValues({ item, onPick }: { item: SettingItem; onPick: (ten
   );
 }
 
-/** Whose history the dialog shows: the platform ("") or one tenant, and the tenant values in force. */
+/** The open proposals of tenants by name, each with a Review link (the dialog switches to that tenant's rows, where
+ *  Approve / Reject appear). */
+function TenantProposals({ item, onPick }: { item: SettingItem; onPick: (tenantId: string) => void }) {
+  const t = useT(SETTINGS);
+  const { words } = useSettingWords();
+  const { label } = useTenants();
+  const rows = tenantProposals(item);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ display: "grid", gap: 4 }} data-testid="settings-tenant-proposals">
+      <strong style={{ fontSize: 12 }}>{t("tenantProposalsTitle")}</strong>
+      {rows.map((p) => (
+        <span key={p.id} style={{ ...small, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span title={p.tenant_id ?? ""}>{label(p.tenant_id ?? "")}</span>
+          <strong style={{ fontFamily: mono, color: K.body }}>{formatValue(p.value, item, words)}</strong>
+          <span>v{p.version}</span>
+          <LinkButton size="sm" onClick={() => onPick(p.tenant_id ?? "")}>{t("reviewTenant")}</LinkButton>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Whose history the dialog shows: the platform ("") or one tenant, the tenant values in force and the open tenant
+ *  proposals. */
 export function HistoryScope({ item, tenant, onTenant }: {
   item: SettingItem; tenant: string | null; onTenant: (tenantId: string | null) => void;
 }) {
@@ -105,6 +134,7 @@ export function HistoryScope({ item, tenant, onTenant }: {
   return (
     <div style={{ display: "grid", gap: 10, border: `1px solid ${K.line}`, borderRadius: 8, padding: 10 }}>
       <TenantValues item={item} onPick={onTenant} />
+      <TenantProposals item={item} onPick={onTenant} />
       <TenantSelect value={tenant ?? ""} onChange={(id) => onTenant(id || null)} label={t("historyOf")}
         placeholder={t("historyPlatform")} includeInactive testId="settings-history-scope" />
     </div>
