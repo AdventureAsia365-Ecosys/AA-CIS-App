@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from services.erasure.inventory import (
-    CIS_SCHEMAS, EMAIL_TOKEN_RE, QUARANTINE_SCHEMAS, TRAVELLER_EXACT, TRAVELLER_TEXT, Registry, TenantTable,
-    TravellerScan,
+    CIS_SCHEMAS, DELETE_SETTINGS, EMAIL_TOKEN_RE, QUARANTINE_SCHEMAS, TRAVELLER_EXACT, TRAVELLER_TEXT, Registry,
+    TenantTable, TravellerScan,
 )
 
 MAX_DEPTH = 8          # FK hops from a tenant table; deeper is a blocker (never seen: raw_tours -> atoms -> members)
@@ -485,6 +485,9 @@ async def apply_tenant(conn, plan: TenantPlan, tenant_id: str, expected: dict[tu
             await conn.execute(merge_sql[tb], tenant_id)
             st = await conn.execute(f"DELETE FROM {qname(tb)} t WHERE {predicate(plan.nodes, tb, 't')}", tenant_id)
             check(tb, "merge", _affected(st))
+    for tb, (name, value) in sorted(DELETE_SETTINGS.items()):
+        if tb in plan.nodes and plan.nodes[tb].deletes:
+            await conn.execute("SELECT set_config($1, $2, true)", name, value)   # this transaction only
     for tb in plan.order:
         node = plan.nodes[tb]
         st = await conn.execute(f"DELETE FROM {qname(tb)} t WHERE {predicate(plan.nodes, tb, 't')}", tenant_id)

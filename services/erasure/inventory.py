@@ -25,10 +25,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-# The 7 CIS runtime schemas: the 11 of X1 (CIS 244) less the four empty legacy ones CIS 299 dropped (AA-850,
-# tests/integration/conftest.py X1_LEGACY_EMPTY_SCHEMAS). `catalog` holds views only.
+# The 8 CIS runtime schemas: the 11 of X1 (CIS 244) less the four empty legacy ones CIS 299 dropped (AA-850,
+# tests/integration/conftest.py X1_LEGACY_EMPTY_SCHEMAS), plus `learn` (CIS 420, AA-1105: the AA Academy learner
+# records; a partner learner carries the tenant). `catalog` holds views only.
 CIS_SCHEMAS: tuple[str, ...] = (
-    "acp_contract", "acp_deliver", "acp_shared", "geo", "gold_aa_internal", "shared", "silver_aa_internal",
+    "acp_contract", "acp_deliver", "acp_shared", "geo", "gold_aa_internal", "learn", "shared", "silver_aa_internal",
 )
 
 # AA-850 (CIS 294, data standards DM-3.9): dead CIS tables wait here for their drop, with no grant to any role. Not a
@@ -195,6 +196,19 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
            ("{t}.tenant_tour_version_id IN (SELECT {t}_g.id FROM silver_aa_internal.generated_content {t}_g "
             "WHERE {t}_g.tenant_id = $1::uuid)", ("silver_aa_internal.generated_content",)),
        )),
+    # AA-1105 (CIS 420): the AA Academy records of the tenant's partner learners (kind partner, tenant_id set; a staff
+    # learner has no tenant and stays). learn.learner has no FK to shared.tenants; its children name the learner
+    # (ON DELETE CASCADE) and carry the tenant too, so each is its own node, children first. learn.statement is
+    # append-only: its trigger lets a DELETE through only with learn.retention_purge = 'on' in the transaction, which
+    # plan.apply_tenant sets for it (DELETE_SETTINGS below). learn.content_review_item has no tenant (course sources).
+    _d("learn.learner", "the tenant's partner learners (identity, name on the certificate)"),
+    _d("learn.enrollment", "the tenant's learners' path enrollments"),
+    _d("learn.statement", "the tenant's learners' learning records (append-only, purge flag set by the apply)"),
+    _d("learn.lesson_progress", "the tenant's learners' lesson progress"),
+    _d("learn.quiz_attempt", "the tenant's learners' quiz attempts (answers, scores)"),
+    _d("learn.review_card", "the tenant's learners' spaced-review cards"),
+    _d("learn.lab_run", "the tenant's learners' lab runs"),
+    _d("learn.certificate", "the tenant's learners' certificates (revoke reason pii:free_text)"),
     # The account row goes last (plan.py orders deletes children-first, and every table above points at it).
     _d("shared.tenants", "the tenant account row"),
     # ── legacy tables: absent on Dev (schema reference 22/10/2026), still created by the CI migration replay
@@ -232,6 +246,11 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
 )
 
 TENANT_TABLE_BY_NAME: dict[str, TenantTable] = {t.table: t for t in TENANT_TABLES}
+
+# Transaction settings an apply sets before it deletes from a table whose guard trigger asks for one (the table's
+# owner migration names the setting). AA-1105 (CIS 420): learn.statement is append-only unless the transaction set
+# learn.retention_purge = 'on' (the learn_retention job and an erasure, which deletes the tenant's learners).
+DELETE_SETTINGS: dict[str, tuple[str, str]] = {"learn.statement": ("learn.retention_purge", "on")}
 
 # merge SQL per table ($1 = tenant id as text). Sums the tenant's rows into the NULL-tenant row of the same key.
 MERGE_SQL: dict[str, str] = {
@@ -392,7 +411,8 @@ TENANT_CHECKLIST: tuple[ChecklistItem, ...] = (
                   "runbook section 4: the 7-day exports/ rule deletes them; an erasure inside 7 days of a backup "
                   "removes the prefix by hand after the DB apply (WRITE)"),
     ChecklistItem("AA-Partner (crm)", "the tenant's CRM rows (DM-6.8 hard delete on offboarding)",
-                  "AA-Partner tenant erasure, owner crm; cis_app has no grant on crm.*"),
+                  "stage 2 of the tenant erasure saga (AA-1093): the CRM job crm_tenant_erase erases, crypto-shreds "
+                  "and reports its census to CIS; cis_app has no grant on crm.*"),
     ChecklistItem("Cognito", "tenant portal users (once built)", "runbook section 4"),
     ChecklistItem("Sentry", "events tagged with the tenant id", "runbook section 4"),
     ChecklistItem("RDS backups", "automated backups age out in 7 days; delete the manual pre-erasure snapshot",
