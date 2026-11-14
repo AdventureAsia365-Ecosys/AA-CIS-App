@@ -676,13 +676,13 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/platform/staff-directory/health"): STAFF_READ,
     ("POST", "/admin/platform/staff-directory/reconcile"): STAFF_READ,
 
-    # ── admin_platform_ops (AA-884, GĐ7/8/10) — Apps (health/version), the staff audit trail, cost per app.
-    ("GET", "/admin/platform/apps"): OPS_READ,
-    ("GET", "/admin/platform/apps/{app_id}"): OPS_READ,
+    # ── admin_platform_ops (AA-884, GĐ7/8/10) — Apps (health/version), the staff audit trail, cost per app; AA-1096
+    # Infra limits (the Terraform layer, read-only).
+    ("GET", "/admin/platform/apps"): OPS_READ, ("GET", "/admin/platform/apps/{app_id}"): OPS_READ,
     ("GET", "/admin/platform/apps/crm/jobs"): OPS_READ,  # AA-936: CRM jobs (crm.ops.v1), staff token relayed
-    ("GET", "/admin/platform/audit"): AUDIT_READ,
-    ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
+    ("GET", "/admin/platform/audit"): AUDIT_READ, ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
     ("GET", "/admin/platform/cost"): SPEND_READ,
+    ("GET", "/admin/platform/infra"): OPS_READ,
     # ── admin_crm_console (AA-941, CRM-13a S-01) — the partner CRM's L1 console, relayed with the staff member's own
     # Cognito token; the CRM re-checks its own groups (cis-admin / crm-platform-admin read, crm-platform-admin writes).
     # AA-1035 R2 close-out (root ADR 0019 d4): the desk roles read the CRM L1 console of their book. CIS scopes the

@@ -1845,6 +1845,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   TripPlanner rows are reported, never written; `store.known_destinations` / `upsert_destination` answer a merged
   key with its keeper, so a rebuild does not recreate the duplicate.
 
+### Infra limits: the Terraform layer, read-only (AA-1096)
+
+Platform › Infra limits (`/admin/platform/infra`, API `GET /admin/platform/infra`, ops.read, admin only in the BFF)
+shows the limits the S279 thresholds audit keeps in Terraform on purpose (section 4): WAF rate rules and the country
+allow-list, API Gateway throttles, Lambda reserved concurrency, the acc2 AWS Budgets and the alarm thresholds. No app
+role may write them. Source: the AA-CIS-Infra root output `platform_limits`, rendered by its docs generator into the
+section "Edge, budget and alarm limits" of the root page `docs/generated/alarms.md` (OPS-07) and published by Docs sync;
+`api/services/platform_infra.py` reads that page through the docs reader (no AWS or Terraform state access, $0) and
+adds, per value, a plain label in English and Vietnamese, its unit and the Terraform variable or resource that sets it
+(`CATALOG`; a value it does not know is still shown, a catalog key the page lost is listed as stale). A change is an
+AA-CIS-Infra PR + apply; the page shows it after the next docs run is merged into the root repo.
+
 ### Settings registry: every key ships its guide (AA-1096, CIS 407 / 416)
 
 Platform › Settings (`/admin/platform/settings`, API `/admin/settings/registry`) lists every admin-editable threshold,
@@ -2679,7 +2691,8 @@ NavGroup, S264; no sections, no footer Settings entry):
 - **Trade** (AA-1037, root ADR 0019 d9 "Screens now") — Booking admin, Agency billing, Agency tiers, B2B desk: pages of
   AA-Booking's admin (`external` items; the URL comes from `lib/apps.ts appPageUrl`; same tab, never the active item),
   shown to `billing.read` or `tenant.book.account.read` (`lib/rbac.ts canSeeNavItem`); Booking checks its own grant;
-- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs, UI kit.
+- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, Settings, Infra limits, API Docs, Data model, Docs,
+  UI kit.
 
 Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
 `next.config.ts` before `proxy.ts`): `/admin/content-quality` → `/admin/tenant-qa/quality`, `/admin/tenant-activity`

@@ -35125,6 +35125,69 @@
         ]
       }
     },
+    "/admin/platform/infra": {
+      "get": {
+        "operationId": "get_infra_admin_platform_infra_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The limits that stay in Terraform (WAF, API Gateway throttles, Lambda concurrency, AWS budgets, alarm thresholds), read-only, with where each is changed ($0)",
+        "tags": [
+          "admin-platform-ops"
+        ]
+      }
+    },
     "/admin/platform/staff": {
       "get": {
         "operationId": "list_staff_admin_platform_staff_get",

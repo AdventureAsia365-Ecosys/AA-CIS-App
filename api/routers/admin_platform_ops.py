@@ -6,6 +6,9 @@
   GET /admin/platform/audit            acp_shared.audit_log rows, newest first, keyset cursor        audit.read
   GET /admin/platform/audit/verify     recompute the CIS 248 hash chain (full chain cached 60 s)     audit.read
   GET /admin/platform/cost             cost per app for a month (CE App-tag snapshot + LLM spend)    spend.read
+  GET /admin/platform/infra            AA-1096: the limits that stay in Terraform (WAF, throttles,   ops.read
+                                       Lambda concurrency, budgets, alarms), read-only, with where each
+                                       is changed (api/services/platform_infra.py; docs reader, $0)
 
 No write route, no deploy / scale button, no AWS / Vercel / GitHub write token (S241). Separate from
 admin_platform.py (the staff directory, AA-816 lane) so the two never collide. Included in main.py WITHOUT an
@@ -25,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import platform_apps, platform_audit, platform_cost
+from api.services import platform_apps, platform_audit, platform_cost, platform_infra
 
 logger = structlog.get_logger()
 
@@ -99,3 +102,11 @@ async def get_cost(request: Request, month: Optional[str] = Query(None, pattern=
                                                refresh_if_stale=refresh_if_stale, crm_llm=crm_llm)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/infra", summary="The limits that stay in Terraform (WAF, API Gateway throttles, Lambda concurrency, "
+                              "AWS budgets, alarm thresholds), read-only, with where each is changed ($0)")
+async def get_infra():
+    # AA-1096: read from the generated alarms page (OPS-07) in the docs reader bundle; a missing page is a 200 with
+    # doc.missing, so the page can say why instead of failing.
+    return await platform_infra.read_infra()
