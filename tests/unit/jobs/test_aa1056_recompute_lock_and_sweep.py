@@ -307,9 +307,22 @@ async def test_run_stages_names_each_stage_and_stops_before_the_next():
 
 def test_lag_sql_counts_from_the_first_recompute_started_after_the_event():
     sql = " ".join(lifecycle.LAG_SQL.split())
-    assert "j.started_at > e.occurred_at" in sql and "j.status = 'succeeded'" in sql
-    assert "min(j.finished_at)" in sql and "j.kind = 'recompute'" in sql
+    assert "j.status = 'succeeded'" in sql and "j.kind = 'recompute'" in sql
+    assert "min(rj.finished_at)" in sql and "rj.started_at > e.occurred_at" in sql
     assert lifecycle.lag_args() == (["retired", "paused", "restored"], 30, 1800.0)
+
+
+def test_lag_sql_reads_the_recompute_jobs_once():
+    # C4.3 W46: the per-event correlated subquery over shared.job (repeated once per `fin` reference by the planner)
+    # was the top statement by DB time. The succeeded recompute jobs are read once into a MATERIALIZED CTE (a CTE
+    # used once is inlined otherwise) and each event takes its min(finished_at) from it through a LATERAL join.
+    sql = " ".join(lifecycle.LAG_SQL.split())
+    assert sql.count("shared.job") == 1
+    assert "WITH rj AS MATERIALIZED (" in sql and "CROSS JOIN LATERAL" in sql
+    # the window cut on the jobs is safe: an event's follower started after the event, inside the same window
+    assert "j.started_at > now() - make_interval(days => $2)" in sql
+    assert "e.occurred_at > now() - make_interval(days => $2)" in sql
+    assert "min(j.finished_at)" not in sql                       # the old per-event subquery shape
 
 
 @pytest.mark.asyncio
