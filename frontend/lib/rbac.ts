@@ -329,7 +329,9 @@ export type Capability =
   // AA-1091 — AA Catalogue › Reference prices (the customer-service team enters the tours' reference prices)
   | "reference_price.read" | "reference_price.write"
   // S279 thresholds L1 — Platform › Settings: propose a new value (settings.write), approve / reject (settings.approve)
-  | "settings.write" | "settings.approve";
+  | "settings.write" | "settings.approve"
+  // AA-1105 — AA Academy: draft modules visible on the academy host (read by the learning API, not an admin page)
+  | "learn.preview";
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -339,12 +341,12 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
     "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
-    "reference_price.read", "reference_price.write", "settings.write", "settings.approve",
+    "reference_price.read", "reference_price.write", "settings.write", "settings.approve", "learn.preview",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-    "lab.read", "wave.run", "notifications.read", "reference_price.read", "reference_price.write",
+    "lab.read", "wave.run", "notifications.read", "reference_price.read", "reference_price.write", "learn.preview",
   ],
   content: [
     "content.read", "content.write", "review.act", "catalog.read", "notifications.read", "reference_price.read",

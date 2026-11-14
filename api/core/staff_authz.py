@@ -151,6 +151,11 @@ REFERENCE_PRICE_WRITE = "reference_price.write"
 # gateway) keep their own capabilities.
 SETTINGS_WRITE = "settings.write"
 SETTINGS_APPROVE = "settings.approve"
+# AA-1105 (root ADR 0022, contract learn.http.v1) — AA Academy: a learner holding learn.preview sees the draft modules
+# (marked draft, never counted toward a certificate) on the academy host. Not a CIS admin route capability: the
+# learning API (/learn/v1, api/routers/learn.py) reads it for the learner's WORKFORCE group role. The module owners'
+# roles: admin (the tech lead) and content_lead.
+LEARN_PREVIEW = "learn.preview"
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
@@ -167,13 +172,13 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
         TENANT_VIEW_AS, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE, SETTINGS_WRITE,
-        SETTINGS_APPROVE,
+        SETTINGS_APPROVE, LEARN_PREVIEW,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ, REFERENCE_PRICE_READ,
-        REFERENCE_PRICE_WRITE,
+        REFERENCE_PRICE_WRITE, LEARN_PREVIEW,
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
     "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ},
