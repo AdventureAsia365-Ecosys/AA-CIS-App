@@ -11,7 +11,8 @@ import {
   actorLabel, actorText, badgesOf, boundsText, decisionBody, decisionPath, directionWords, draftProblem, draftText,
   formatValue, groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath,
   registryPath, valuesInForce, withValue, PLATFORM_SCOPE, historyTenant, scopeOptions, scopeReady, scopeTarget,
-  scopeTenant, searchSettings, tenantScoped, approvedVersion, scheduledOf, openProposal, tenantProposals,
+  scopeTenant, searchSettings, tenantScoped, matchesInArea, searchAreaCounts, searchAreaPicked, approvedVersion,
+  scheduledOf, openProposal, tenantProposals,
   canApplyAtOnce, lastChangeState, isScheduled, loadProblem, effectiveInPast, localMinute, PROBLEM_IDS, agencyScoped,
   agencyNames, effectiveShown,
 } from "./settingsRegistry.ts";
@@ -399,4 +400,29 @@ test("History's Effective from: when approved for an undated open change, else t
   assert.equal(effectiveShown({ ...approved, effective_from: "2026-11-20T00:00:00.000Z" }), "2026-11-20T00:00:00.000Z");
   assert.equal(effectiveShown({ ...approved, status: "superseded" }), "2026-11-15T08:00:00.000Z");
   assert.equal(effectiveShown({ ...approved, status: "rejected" }), null);
+});
+
+test("search area chips: count per area with matches, the picked chip falls back to All, filter by the picked area", () => {
+  const all = [item(INT), item(RATIO), item(MODE), item(EXTEND),
+    item({ ...INT, key: "cis.erasure.saga_apply_enabled", area: "tenants", label: "Erasure: apply the saga",
+      description: "Run the data erasure saga for real." })];
+  const found = searchSettings(all, "cis.");
+  // one chip per area with matches, sorted by area, with its match count; the counts add up to the "All" chip
+  assert.deepEqual(searchAreaCounts(found),
+    [{ area: "content", count: 2 }, { area: "publish", count: 2 }, { area: "tenants", count: 1 }]);
+  assert.equal(searchAreaCounts(found).reduce((n, c) => n + c.count, 0), found.length);
+  assert.deepEqual(searchAreaCounts([]), []);
+  // order of the input does not matter
+  assert.deepEqual(searchAreaCounts([...found].reverse()).map((c) => c.area), ["content", "publish", "tenants"]);
+  // null = the "All" chip; an area with matches stays picked; an area without matches (the query changed) = All
+  assert.equal(searchAreaPicked(found, null), null);
+  assert.equal(searchAreaPicked(found, "publish"), "publish");
+  assert.equal(searchAreaPicked(found, "billing"), null);
+  assert.equal(searchAreaPicked(searchSettings(all, "erasure"), "publish"), null);
+  // the rows under the chips
+  assert.deepEqual(matchesInArea(found, null), found);
+  assert.deepEqual(matchesInArea(found, "tenants").map((s) => s.key), ["cis.erasure.saga_apply_enabled"]);
+  assert.deepEqual(matchesInArea(found, "publish").map((s) => s.area), ["publish", "publish"]);
+  assert.deepEqual(matchesInArea(found, "billing"), found);
+  assert.deepEqual(matchesInArea([], "publish"), []);
 });
