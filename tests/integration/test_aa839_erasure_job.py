@@ -44,15 +44,6 @@ from shared.jobs.registry import JobContext, NonRetryable  # noqa: E402
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 APP_DSN = f"postgresql://cis_app:{CIS_APP_CI_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 ON = {ej.APPLY_FLAG: "true"}
-
-
-def _retention_zero(monkeypatch):
-    """The Dev drill's window: cis.erasure.tenant_retention_days = 0 as an approved value (CIS 428 retired the env
-    override ERASURE_TENANT_RETENTION_DAYS the job used to take)."""
-    from shared import settings
-    real = settings.READER.get
-    monkeypatch.setattr(settings.READER, "get",
-                        lambda key, tenant_id=None: 0 if key == ej.TENANT_RETENTION_SETTING else real(key, tenant_id))
 MIGRATION_244 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "244_x1_cis_app_runtime.sql")
 # Registry tables the replayed test database may lack (migrations 001 / 020 and the acp_deliver page table are
 # skipped or fail there), plus the legacy entries registered "absent on Dev". Missing is fine (nothing to erase);
@@ -505,16 +496,15 @@ async def test_tenant_apply_refusals(pool, monkeypatch):
         await _run(pool, apply)                                   # flag off (the default everywhere)
     with pytest.raises(NonRetryable, match="less than 30 days"):
         await _run(pool, apply, env=ON)                           # offboarded 3 days ago
-    env = ON
-    _retention_zero(monkeypatch)
+    monkeypatch.setattr(ej, "tenant_retention_days", lambda: 0)   # CIS 428: the Dev drill sets the setting to 0
     extra = await admin.fetchval("INSERT INTO shared.unmapped_market_requests (tenant_id, country_code) "
                                  "VALUES ($1::uuid, 'ZY') RETURNING id", tid)   # counts change after the approval
     with pytest.raises(NonRetryable, match="counts changed"):
-        await _run(pool, apply, env=env)
+        await _run(pool, apply, env=ON)
     # that apply claimed the DRY RUN: even with the counts back, the same approval cannot be used again
     await admin.execute("DELETE FROM shared.unmapped_market_requests WHERE id = $1", extra)
     with pytest.raises(NonRetryable, match="already used by apply job"):
-        await _run(pool, apply, env=env)
+        await _run(pool, apply, env=ON)
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", tid) == 1
 
 
