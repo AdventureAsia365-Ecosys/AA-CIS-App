@@ -1,4 +1,4 @@
-"""AA-1077 (S281) — CIS 426: what the blog lengthening repair may add (cis.t9.blog_extend_material) and how many
+"""AA-1077 (S281) — CIS 422: what the blog lengthening repair may add (cis.t9.blog_extend_material) and how many
 sections it asks for after a repair round shrank the blog under the floor (cis.t9.blog_extend_shrink_sections), in
 shared.setting_definition (conftest replays every migration). Registered; each row equals the compiled default the
 reader serves (source_facts = today's repair; 3 sections); allowed values and bounds; platform + tenant scope (a
@@ -19,8 +19,8 @@ from services.quality import settings_keys as sk  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M426 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "426_t9_blog_extend_material_settings.sql")
+M422 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "422_t9_blog_extend_material_settings.sql")
 MATERIAL = sk.T9_BLOG_EXTEND_MATERIAL
 SHRINK = sk.T9_BLOG_EXTEND_SHRINK_SECTIONS
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
@@ -49,8 +49,8 @@ async def _refused(c, *args):
 
 
 @pytest.mark.asyncio
-async def test_426_registered_and_the_rows_are_the_compiled_defaults(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '426'") == "426"
+async def test_422_registered_and_the_rows_are_the_compiled_defaults(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '422'") == "422"
     m = await conn.fetchrow(ROW, MATERIAL)
     d = settings.definition(MATERIAL)
     assert json.loads(m["d"]) == "source_facts" == d.default_value
@@ -77,7 +77,7 @@ async def test_a_change_needs_its_evidence_and_a_valid_value(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M426, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = open(M422, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before

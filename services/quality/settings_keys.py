@@ -42,7 +42,7 @@ T9_BLOG_CHARS = ("cis.t9.blog_chars_min", "cis.t9.blog_chars_max")
 # off | on, platform + tenant scope (a tenant value runs the trial on one audit tenant). Not one of the CIS 412
 # quality keys (ALL_KEYS): it is a writing-loop mode of the content area, like cis.t9.max_attempts.
 T9_BLOG_LENGTH_EXTEND = "cis.t9.blog_length_extend"
-# AA-1077 (CIS 426, S281): what the lengthening repair may add (source_facts | with_background) and how many sections
+# AA-1077 (CIS 422, S281): what the lengthening repair may add (source_facts | with_background) and how many sections
 # it asks for after a repair round shrank the blog under the floor (0 = no change). Both platform + tenant, read only
 # while T9_BLOG_LENGTH_EXTEND is on for the piece.
 T9_BLOG_EXTEND_MATERIAL = "cis.t9.blog_extend_material"
