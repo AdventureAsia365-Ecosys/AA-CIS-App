@@ -117,12 +117,27 @@ function Provenance({ data, lang }: { data: InfraResp; lang: InfraLang }) {
   );
 }
 
+function Loaded({ data, lang }: { data: InfraResp; lang: InfraLang }) {
+  const t = useInfraT();
+  const [query, setQuery] = useState("");
+  const groups = useMemo(() => filterGroups(data.groups, query, lang), [data, query, lang]);
+  return (
+    <>
+      <Provenance data={data} lang={lang} />
+      <div style={{ maxWidth: 360 }}>
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("search")}
+          aria-label={t("search")} data-testid="infra-filter" />
+      </div>
+      {groups.length === 0 && <Section><div style={small}>{t("noMatch")}</div></Section>}
+      {groups.map((g) => <GroupSection key={g.group} group={g} lang={lang} />)}
+    </>
+  );
+}
+
 export default function InfraLimits() {
   const t = useInfraT();
   const lang: InfraLang = useLang() === "vi" ? "vi" : "en";
   const q = useQuery({ queryKey: ["platform-infra"], queryFn: () => apiGet<InfraResp>(INFRA_PATH) });
-  const [query, setQuery] = useState("");
-  const groups = useMemo(() => filterGroups(q.data?.groups ?? [], query, lang), [q.data, query, lang]);
   const missing = q.data?.doc.missing ? q.data.doc.reason ?? "not_published" : null;
   return (
     <PageFrame>
@@ -139,17 +154,7 @@ export default function InfraLimits() {
             <div style={small}>{t(`missing_${missing}` as "missing_not_published")}</div>
           </Section>
         )}
-        {q.data && !missing && (
-          <>
-            <Provenance data={q.data} lang={lang} />
-            <div style={{ maxWidth: 360 }}>
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("search")}
-                aria-label={t("search")} data-testid="infra-filter" />
-            </div>
-            {groups.length === 0 && <Section><div style={small}>{t("noMatch")}</div></Section>}
-            {groups.map((g) => <GroupSection key={g.group} group={g} lang={lang} />)}
-          </>
-        )}
+        {q.data && !missing && <Loaded data={q.data} lang={lang} />}
       </div>
     </PageFrame>
   );

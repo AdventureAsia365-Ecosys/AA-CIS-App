@@ -71,20 +71,24 @@ function plainNumber(value: string): number | null {
   return /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : null;
 }
 
+function gib(n: number): string {
+  const g = n / GIB;
+  return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
+}
+
+function wholeHours(n: number): boolean {
+  return Number.isInteger(n) && n >= 3600 && n % 3600 === 0;
+}
+
 /** A readable form of a value for its unit, or null when the raw value already reads well. Pure.
  *  bytes -> "10 GiB"; a whole number of seconds that is a whole number of hours -> "4 h"; large integers get
  *  thousands separators. "on" / "off", lists and text stay as the generator wrote them. */
 export function prettyValue(item: Pick<InfraItem, "unit" | "value">, lang: InfraLang): string | null {
   const n = plainNumber(item.value);
   if (n === null) return null;
-  const locale = lang === "vi" ? "vi-VN" : "en-US";
-  if (item.unit === "bytes" && n >= GIB) {
-    const g = n / GIB;
-    return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
-  }
-  if (item.unit === "seconds" && Number.isInteger(n) && n >= 3600 && n % 3600 === 0) return `${n / 3600} h`;
-  if (Math.abs(n) >= 10000) return n.toLocaleString(locale);
-  return null;
+  if (item.unit === "bytes" && n >= GIB) return gib(n);
+  if (item.unit === "seconds" && wholeHours(n)) return `${n / 3600} h`;
+  return Math.abs(n) >= 10000 ? n.toLocaleString(lang === "vi" ? "vi-VN" : "en-US") : null;
 }
 
 /** Every item of every group whose label, key, value or source matches `query` (case-insensitive). Pure. */
