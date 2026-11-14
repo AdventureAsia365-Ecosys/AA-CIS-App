@@ -277,7 +277,7 @@ function LinkDrawer({ i, data, onClose, openFeature }: {
           {i.contracts.length
             ? <span style={{ display: "grid", gap: 3 }}>
               {i.contracts.map((c) => <span key={c.file}><Code>{c.file}</Code> <span style={small}>v{c.version}</span></span>)}
-              <a href={docHref("docs/contracts/README.md")} style={{ ...small, color: K.accentDeep }}>{t("contractsDoc")}</a>
+              <span style={small}>{t("contractsWhere")}</span>
             </span>
             : <span style={small}>{t("contractsNone")}</span>}
         </Field>
