@@ -145,12 +145,12 @@ TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
 # team's CIS role). Never a selling price (root ADR 0005 d7).
 REFERENCE_PRICE_READ = "reference_price.read"
 REFERENCE_PRICE_WRITE = "reference_price.write"
-# S279 thresholds L1 (tech lead S279 Q1; CIS 407) — Platform › Settings, the admin-editable settings registry
-# (/admin/settings/registry): propose a new value of a threshold, limit, cap or policy value (settings.write) and
-# approve / reject a proposal (settings.approve). Admin role only; the delegated pages (finance billing, ai_ops
-# gateway) keep their own capabilities.
+# S279 thresholds L1 (tech lead S279 Q1; CIS 407) — Platform › Settings (/admin/settings/registry): propose a new value
+# of a threshold, limit, cap or policy value (settings.write), approve / reject it (settings.approve). Admin role only;
+# the delegated pages (finance billing, ai_ops gateway) keep their own capabilities.
 SETTINGS_WRITE = "settings.write"
 SETTINGS_APPROVE = "settings.approve"
+LEARN_PREVIEW = "learn.preview"  # AA-1105: AA Academy draft modules (/learn/v1 reads it; admin and content_lead)
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
@@ -167,13 +167,13 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
         TENANT_VIEW_AS, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE, SETTINGS_WRITE,
-        SETTINGS_APPROVE,
+        SETTINGS_APPROVE, LEARN_PREVIEW,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ, REFERENCE_PRICE_READ,
-        REFERENCE_PRICE_WRITE,
+        REFERENCE_PRICE_WRITE, LEARN_PREVIEW,
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
     "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ},

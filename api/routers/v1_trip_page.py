@@ -131,6 +131,15 @@ _GONE_OR_MOVED_SQL = f"""
         WHERE rt.tour_id = $1::uuid AND rt.tenant_id = '{_AA_INTERNAL_TENANT_ID}'::uuid
 """
 
+# AA-1089: an id that is no tour id of the AA catalogue may be a catalogue key (catalog.v_tour source_id = the source
+# group of a versioned tour). The partner CRM knows a tour only by that key (catalog.http.v1), so its trip header
+# links /trip/<key>: a served key answers 301 to its current version, a retired one 410, like an older version does.
+_KEY_SQL = """
+        SELECT tl.state, tl.reason, tl.tour_id::text AS current_tour_id
+        FROM gold_aa_internal.v_tour_liveness tl
+        WHERE tl.source_id = $1
+"""
+
 
 async def _fetch_page_data(conn, tour_id: str):
     """Real query -- same field set as ADR-2026-030's own v_trip_registry, scoped to a single tour_id; eligible when
@@ -141,8 +150,10 @@ async def _fetch_page_data(conn, tour_id: str):
 async def _gone_or_moved(conn, tour_id: str):
     """For a tour id without a page: ("gone", reason) for a retired key (410), ("moved", current tour id) for an
     older version of a key served by a newer one (301), None otherwise (404: never served, or paused: the URL is kept
-    for when it comes back)."""
+    for when it comes back). AA-1089: an id that is a catalogue key (not a tour id) answers the same way for its key."""
     row = await conn.fetchrow(_GONE_OR_MOVED_SQL, tour_id)
+    if row is None:
+        row = await conn.fetchrow(_KEY_SQL, tour_id.lower())   # AA-1089: a catalogue key
     if row is None:
         return None
     if row["state"] == "retired":

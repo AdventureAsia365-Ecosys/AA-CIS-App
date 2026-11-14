@@ -34,7 +34,8 @@ EXPECTED_PERMS = {
     "content_lead": {"content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
                      "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
                      "lab.read", "wave.run", "notifications.read",
-                     "reference_price.read", "reference_price.write"},   # AA-1091
+                     "reference_price.read", "reference_price.write",   # AA-1091
+                     "learn.preview"},   # AA-1105 (AA Academy drafts)
     "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read",
                 "reference_price.read"},   # AA-1091
     "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
