@@ -1,0 +1,4 @@
+{
+  "note": "AA-1051: the sha256 of every registered W5 pre-registration (prereg.py). Add an entry in the PR that registers a file; never edit or remove one (a new attempt is a new id).",
+  "registered": {}
+}

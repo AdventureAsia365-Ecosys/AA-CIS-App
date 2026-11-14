@@ -38,6 +38,12 @@ The lock: `sha256` is taken over the canonical JSON (sorted keys, no whitespace)
 nothing and any edit of a value changes it. Every run of a pre-registration records the sha (R2 details.prereg); a
 run is refused, and a report is refused, when an earlier run with at least one result recorded another sha
 (r2.prereg_refusal / `lock_problem` here): the file was edited after its first result.
+
+Immutable once registered (S280): `prereg/registered.lock.json` maps each registered id to its sha. `load` refuses a
+registered file whose id is missing there or whose sha differs, and a unit test keeps the lock and the files equal, so
+registering a file (or, by exception, editing a registered one) always shows as a lock-file change in review, before
+any run. An entry is never removed: a lock entry without its registered file fails the same test. A new attempt is a new
+id.
 """
 from __future__ import annotations
 
@@ -52,6 +58,7 @@ from typing import Any, Iterable, Optional
 
 FORMAT = 1
 PREREG_DIR = Path(__file__).resolve().parent / "prereg"
+LOCK_FILE = PREREG_DIR / "registered.lock.json"
 # Root ADR 0020 D12: eval null run <= $5, T9 <= $15, S1 <= $8, T2 <= $5, <= $33 in total; each after its own yes.
 WORKFLOWS: dict[str, dict[str, Any]] = {
     "null": {"writer": "t9_blog", "cap_usd": 5.0, "min_items": 12},
@@ -296,7 +303,55 @@ def load(path_or_id: str) -> Prereg:
     pre = from_doc(doc, path=str(p))
     if pre.id != p.stem:
         raise PreregRefused(f"file {p.name} holds id {pre.id}: the file name is the id")
+    why = registered_lock_problem(pre, read_lock())
+    if why:
+        raise PreregRefused(why)
     return pre
+
+
+def read_lock(path: Optional[Path] = None) -> dict[str, str]:
+    """{id: sha256} of every registered pre-registration (the lock file; missing = none registered yet)."""
+    path = LOCK_FILE if path is None else path
+    if not path.is_file():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise PreregRefused(f"{path.name} is not JSON: {e}") from e
+    reg = doc.get("registered") if isinstance(doc, dict) else None
+    if not isinstance(reg, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in reg.items()):
+        raise PreregRefused(f"{path.name} must be {{\"registered\": {{id: sha256}}}}")
+    return dict(reg)
+
+
+def registered_lock_problem(pre: Prereg, lock: dict[str, str]) -> Optional[str]:
+    """Why a registered file does not match the lock (None for a draft or a match). Pure."""
+    if not pre.registered:
+        return None
+    want = lock.get(pre.id)
+    if want is None:
+        return (f"{pre.id} is registered but not in {LOCK_FILE.name}: add its sha {pre.sha256} in the same reviewed "
+                "PR that registers it")
+    if want != pre.sha256:
+        return (f"{pre.id} was edited after it was registered: {LOCK_FILE.name} holds {want[:12]}…, the file hashes "
+                f"to {pre.sha256[:12]}… (register a new id for a new attempt)")
+    return None
+
+
+def registered_files(workflow: Optional[str] = None) -> list[Prereg]:
+    """Every registered pre-registration in the package (optionally of one workflow), by id. A file that does not
+    load is skipped here (its own `load` reports why)."""
+    out = []
+    for f in sorted(PREREG_DIR.glob("*.json")):
+        if f.name == LOCK_FILE.name:
+            continue
+        try:
+            pre = load(str(f))
+        except PreregRefused:
+            continue
+        if pre.registered and (workflow is None or pre.workflow == workflow):
+            out.append(pre)
+    return out
 
 
 def require_registered(pre: Prereg) -> None:
@@ -341,6 +396,7 @@ def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional
     return out
 
 
-__all__ = ["COMPUTED_METRICS", "FORMAT", "PAIRED_METRICS", "PREREG_DIR", "Prereg", "PreregRefused", "TOTAL_CAP_USD",
+__all__ = ["COMPUTED_METRICS", "FORMAT", "LOCK_FILE", "PAIRED_METRICS", "PREREG_DIR", "Prereg", "PreregRefused",
+           "TOTAL_CAP_USD", "read_lock", "registered_files", "registered_lock_problem",
            "WORKFLOWS", "canonical", "draft", "from_doc", "load", "lock_problem", "path_for", "pick_sample",
            "problems", "require_registered", "sha256_of"]

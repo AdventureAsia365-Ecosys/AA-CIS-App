@@ -24,10 +24,14 @@ Commands (DRY RUN unless `run --live`; every command prints one JSON document, i
   python -m services.writer_proof.runner run    --prereg w5-null-t9-blog --r1-report <file> --cap-usd 5 \\
                                                 --live --confirm CONFIRM [--requested-by <who>]
   python -m services.writer_proof.runner report --prereg w5-null-t9-blog
+  python -m services.writer_proof.runner campaign [--r1-report <file> [--instrument <id>]]
 
 plan    reads the DB (READ ONLY): the pre-registration (valid, registered, golden version = the active one), the
         sample on the GATE side, each arm's R2 estimate (controls, calibration on CAL, judge family, caps), the W5
         spend so far, the lock (no earlier result under another sha), and the power check when an R1 report is given.
+        S280: the pinned judge priced from shared.llm_model_catalog (price.py; each arm is gated on the larger of
+        R2's estimate and the catalog one) and, for T9 / S1 / T2, a null run with the same judge and golden version
+        that came out non_inferior (null_gate).
 draft   fills a draft's sample from the GATE side (seeded hash, no data-driven choice) and prints it; a person saves it
         as prereg/<id>.json with status registered in a reviewed PR. Nothing is written.
 run     everything `plan` checks, plus: a registered file, an adequate power check, the spend gate (--confirm CONFIRM
@@ -36,6 +40,8 @@ run     everything `plan` checks, plus: a registered file, an adequate power che
         lane that built this ran DRY RUN only.
 report  the runs of the pre-registration: the lock check, the pre-registered verdict (decision.py), the targets, and
         cost / requests per object from the ledger (cost_report.py).
+campaign the plan of every W5 proof in the D12 order (null run, T9, S1, T2): samples, stage, estimate vs cap, ready
+        or not and why, and the estimates' sum against the D12 total. Nothing is written or queued.
 """
 from __future__ import annotations
 
@@ -45,7 +51,7 @@ import json
 import sys
 from typing import Any, Optional
 
-from services.writer_proof import cost_report, decision, power, spend
+from services.writer_proof import cost_report, decision, power, price, spend
 from services.writer_proof import prereg as pr
 
 GOALS = {"non_inferior": "non_inferior", "improve": "improve"}
@@ -145,8 +151,20 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
             out["arms"][arm] = est
     else:
         blocking.append("no sample ids")
+    # S280: the pinned judge priced from the catalog; each arm is gated on the larger of R2's and this estimate
+    out["r2_estimated_usd_max"] = round(sum(estimates.values()), 4) if estimates else None
+    out["price_check"] = await price.check(pool, model_key=pre.doc["judge"]["model_key"],
+                                           connection=pre.doc["judge"].get("connection"), writer=pre.writer,
+                                           arms=out["arms"])
+    blocking.extend(out["price_check"]["blocking"])
+    for arm, pc in out["price_check"]["arms"].items():
+        estimates[arm] = max(estimates[arm], float(pc["usd_max"]))
     total_est = round(sum(estimates.values()), 4) if estimates else None
     out["estimated_usd_max"] = total_est
+    # S280: root ADR 0020 W5, the null run proves the eval stable first
+    out["null_run"] = await null_gate(pool, pre)
+    if out["null_run"].get("blocking"):
+        blocking.append(out["null_run"]["blocking"])
     gate_cap = cap_usd if cap_usd is not None else pre.doc["cap_usd"]
     out["spend_gate_preview"] = spend.refusals(
         workflow=pre.workflow, prereg_cap=float(pre.doc["cap_usd"]), cap_usd=gate_cap, confirm=spend.CONFIRM_TOKEN,
@@ -169,6 +187,64 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
     out["blocking"] = list(dict.fromkeys(blocking))
     out["ready_for_live"] = not out["blocking"]
     return out
+
+
+def same_instrument(a: pr.Prereg, b: pr.Prereg) -> bool:
+    """True when two pre-registrations pin the same judge (model and connection) on the same golden version. Pure."""
+    ja, jb = a.doc.get("judge") or {}, b.doc.get("judge") or {}
+    return ((ja.get("model_key"), ja.get("connection")) == (jb.get("model_key"), jb.get("connection"))
+            and (a.doc.get("golden_set") or {}) == (b.doc.get("golden_set") or {}))
+
+
+async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = None) -> dict:
+    """S280 (root ADR 0020 W5: "a null run comes first, to prove that the eval itself is stable"): a T9 / S1 / T2 proof
+    is planned only after a registered null run with the SAME pinned judge and golden version came out non_inferior
+    (its `report`). The null run itself passes. {"required", "passed_by", "checked", "blocking"} (READ ONLY)."""
+    if pre.workflow == "null":
+        return {"required": False}
+    candidates = [n for n in (pr.registered_files("null") if nulls is None else nulls) if same_instrument(n, pre)]
+    checked = []
+    for n in candidates:
+        rep = await report(pool, n)
+        verdict = ((rep.get("decision") or {}).get("verdict")) if rep.get("ok") else None
+        checked.append({"prereg": n.id, "verdict": verdict, "refused": rep.get("refused")})
+        if verdict == "non_inferior":
+            return {"required": True, "passed_by": n.id, "checked": checked}
+    judge = pre.doc.get("judge") or {}
+    return {"required": True, "passed_by": None, "checked": checked,
+            "blocking": (f"no null run with the same judge ({judge.get('model_key')}@{judge.get('connection')}) and "
+                         f"golden version came out non_inferior yet: run the null run first (root ADR 0020 W5)")}
+
+
+CAMPAIGN_ORDER = ("w5-null-t9-blog", "w5-t9", "w5-s1", "w5-t2")    # root ADR 0020 W5: null run, then T9, S1, T2
+
+
+async def campaign(pool, *, ids: tuple[str, ...] = CAMPAIGN_ORDER, r1_report: Optional[str] = None,
+                   instrument: Optional[str] = None) -> dict:
+    """The DRY RUN of the whole W5 campaign ($0, READ ONLY): each proof's plan in the D12 order (samples, stage,
+    estimate vs its cap, ready or not and why) and the sum of the estimates against the D12 total. Queues nothing."""
+    rows = []
+    total = 0.0
+    for pid in ids:
+        try:
+            pre = pr.load(pid)
+        except pr.PreregRefused as e:
+            rows.append({"prereg": pid, "ok": False, "refused": str(e)})
+            continue
+        p = await plan(pool, pre, r1_report=r1_report, instrument=instrument)
+        est = p.get("estimated_usd_max")
+        total += float(est or 0.0)
+        rows.append({"prereg": pid, "workflow": pre.workflow, "writer": pre.writer, "status": p["status"],
+                     "stage": spend.W5_STAGE, "golden_set": p.get("golden_set"), "samples": p["samples"],
+                     "noise_samples": p["noise_samples"],
+                     "judge": f"{pre.doc['judge']['model_key']}@{pre.doc['judge'].get('connection')}",
+                     "estimated_usd_max": est, "r2_estimated_usd_max": p.get("r2_estimated_usd_max"),
+                     "judge_call_usd": ((p.get("price_check") or {}).get("judge") or {}).get("call"),
+                     "prereg_cap_usd": p["prereg_cap_usd"], "d12_cap_usd": p["d12_cap_usd"],
+                     "ready_for_live": p["ready_for_live"], "blocking": p["blocking"]})
+    return {"mode": "dry_run", "order": list(ids), "proofs": rows, "estimated_usd_max_total": round(total, 4),
+            "d12_total_cap_usd": pr.TOTAL_CAP_USD, "fits_d12_total": total <= pr.TOTAL_CAP_USD + 1e-9,
+            "note": "estimates only; the measured cost comes from the ledger after each run (runner report)"}
 
 
 async def run_live(pool, pre: pr.Prereg, *, r1_report: str, instrument: Optional[str], cap_usd: float,
@@ -270,13 +346,15 @@ async def draft(pool, pre: pr.Prereg, *, n: Optional[int], noise: int) -> dict:
 def _parse(argv=None):
     ap = argparse.ArgumentParser(prog="python -m services.writer_proof.runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "draft", "run", "report"):
+    for name in ("plan", "draft", "run", "report", "campaign"):
         sp = sub.add_parser(name)
-        sp.add_argument("--prereg", required=True, help="pre-registration id (prereg/<id>.json) or path")
-        if name in ("plan", "run"):
+        if name != "campaign":
+            sp.add_argument("--prereg", required=True, help="pre-registration id (prereg/<id>.json) or path")
+        if name in ("plan", "run", "campaign"):
             sp.add_argument("--r1-report", help="the R1 report JSON with votes (power check)")
             sp.add_argument("--instrument", help="R1 instrument id (default: the report's recommended one)")
-            sp.add_argument("--cap-usd", type=float)
+            if name != "campaign":
+                sp.add_argument("--cap-usd", type=float)
         if name == "draft":
             sp.add_argument("--n", type=int)
             sp.add_argument("--noise", type=int, default=0)
@@ -292,15 +370,19 @@ async def _main(argv=None) -> int:
 
     from shared.secrets import get_database_url
     a = _parse(argv)
-    try:
-        pre = pr.load(a.prereg)
-    except pr.PreregRefused as e:
-        print(json.dumps({"ok": False, "refused": str(e)}))
-        return 2
+    pre = None
+    if a.cmd != "campaign":
+        try:
+            pre = pr.load(a.prereg)
+        except pr.PreregRefused as e:
+            print(json.dumps({"ok": False, "refused": str(e)}))
+            return 2
     pool = await asyncpg.create_pool(get_database_url().strip(), ssl="require", min_size=1, max_size=2)
     try:
-        if a.cmd == "plan" or (a.cmd == "run" and not a.live):
-            out: dict = await plan(pool, pre, r1_report=a.r1_report, instrument=a.instrument, cap_usd=a.cap_usd)
+        if a.cmd == "campaign":
+            out: dict = await campaign(pool, r1_report=a.r1_report, instrument=a.instrument)
+        elif a.cmd == "plan" or (a.cmd == "run" and not a.live):
+            out = await plan(pool, pre, r1_report=a.r1_report, instrument=a.instrument, cap_usd=a.cap_usd)
             out["mode"] = "dry_run"
         elif a.cmd == "run":
             out = {"mode": "live", **await run_live(pool, pre, r1_report=a.r1_report, instrument=a.instrument,

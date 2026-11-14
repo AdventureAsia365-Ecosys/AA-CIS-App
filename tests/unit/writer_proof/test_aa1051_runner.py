@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from services.writer_proof import prereg as pr
-from services.writer_proof import runner, spend
+from services.writer_proof import price, runner, spend
 from services.writing_memory import config as cfg
 from services.writing_memory import r2
 
@@ -44,17 +44,38 @@ def _r1_report(tmp_path, flaky_every=10 ** 9):
     return str(f)
 
 
-class _Conn:
-    """The runner's reads: the ledger spend, the W5 jobs (a stub shared.job) and the earlier runs of the prereg."""
+# S280: the catalog row of the drafts' judge (invented prices) and judge-call token rows of the writer's eval runs
+CATALOG = {"model_key": "gpt-6-luna-openai", "enabled": True, "blocked_reason": None, "price_in_per_mtok": 0.10,
+           "price_out_per_mtok": 0.50, "price_cache_read_per_mtok": None, "price_cache_write_per_mtok": None,
+           "max_output_tokens": None, "capabilities": {}}
+DEPLOYMENT = {"connection_key": "openai-direct", "enabled": True, "price_in_override": None,
+              "price_out_override": None, "price_cache_read_override": None, "price_cache_write_override": None,
+              "price_cache_write_1h_override": None}
+TOKEN_ROWS = [{"tokens_in": 9000, "tokens_out": 900, "cache_read_tokens": 0} for _ in range(20)]
 
-    def __init__(self, spend_row, jobs, prior):
+
+class _Conn:
+    """The runner's reads: the ledger spend, the W5 jobs (a stub shared.job), the earlier runs of the prereg and
+    (S280) the judge's catalog row, its pinned deployment and the writer's judge-call tokens."""
+
+    def __init__(self, spend_row, jobs, prior, catalog=None, deployment=None, token_rows=None):
         self.spend_row, self.jobs, self.prior = spend_row, jobs, prior
+        self.catalog = {"gpt-6-luna-openai": CATALOG} if catalog is None else catalog
+        self.deployment = {("gpt-6-luna-openai", "openai-direct"): DEPLOYMENT} if deployment is None else deployment
+        self.token_rows = TOKEN_ROWS if token_rows is None else token_rows
 
     async def fetchrow(self, sql, *args):
+        if sql == price.CATALOG_SQL:
+            return self.catalog.get(args[0])
+        if sql == price.DEPLOYMENT_SQL:
+            return self.deployment.get((args[0], args[1]))
         assert sql == spend.SPEND_SQL and args[0] == cfg.W5_STAGE
         return self.spend_row
 
     async def fetch(self, sql, *args):
+        if sql == price.JUDGE_TOKENS_SQL:
+            assert tuple(args[0]) == tuple(cfg.EVAL_LOG_STAGES) and args[2] == price.PROFILE_ROWS
+            return list(self.token_rows)
         if sql == spend.ACTIVE_JOBS_SQL:
             assert args == (spend.R2_JOB_KIND,)
             return [{k: j[k] for k in ("job_id", "status", "prereg_id", "workflow", "arm", "cap_usd")}
@@ -82,9 +103,10 @@ class _Acq:
 
 
 class _Pool:
-    def __init__(self, spend_row=None, jobs=None, prior=None):
+    def __init__(self, spend_row=None, jobs=None, prior=None, **price_rows):
         self.jobs = [] if jobs is None else jobs
-        self.conn = _Conn(spend_row or {"total": 0.0, "workflow": 0.0, "rows": 0}, self.jobs, prior or [])
+        self.conn = _Conn(spend_row or {"total": 0.0, "workflow": 0.0, "rows": 0}, self.jobs, prior or [],
+                          **price_rows)
 
     def acquire(self):
         return _Acq(self.conn)
@@ -104,7 +126,9 @@ async def _stub_enqueue(pool, kind, payload, created_by, idempotency_key=None):
 
 @pytest.fixture
 def fakes(monkeypatch):
-    seen = {"estimates": [], "version": "1.4.0", "est": 2.0, "would_refuse": []}
+    seen = {"estimates": [], "version": "1.4.0", "est": 2.0, "would_refuse": [], "calls": {"judge": 30,
+                                                                                         "writer_items": 12},
+            "item_usd": 0.1, "null_gate": {"required": True, "passed_by": "w5-null-zz", "checked": []}}
 
     class Store:
         def __init__(self, pool, stages=None):
@@ -120,10 +144,22 @@ def fakes(monkeypatch):
     async def estimate(pool, conf):
         conf.validate()
         seen["estimates"].append(conf)
-        return {"estimated_usd_max": seen["est"], "would_refuse": list(seen["would_refuse"])}
+        out = {"estimated_usd_max": seen["est"], "would_refuse": list(seen["would_refuse"]),
+               "item_estimate": {"item_usd": seen["item_usd"]}}
+        if seen["calls"] is not None:
+            out["calls"] = dict(seen["calls"])
+        return out
+
+    real_null_gate = runner.null_gate
+
+    async def null_gate(pool, pre, **kw):
+        if pre.workflow == "null" or seen["null_gate"] == "real":
+            return await real_null_gate(pool, pre, **kw)
+        return dict(seen["null_gate"])
 
     monkeypatch.setattr(r2, "PgStore", Store)
     monkeypatch.setattr(r2, "estimate", estimate)
+    monkeypatch.setattr(runner, "null_gate", null_gate)
     return seen
 
 
