@@ -29,13 +29,18 @@ that text is under the floor: its deficit includes the cut characters and the se
 first (`hole_chars`, marked to the model "a repair cut text here"). A paragraph that names where its facts come from
 (`hygiene.LEAK_RE`) is refused like one with a new specific.
 
-Switch: `T9_LENGTH_EXTEND=on` turns it on (read through quality.trial_flags: one audit-tenant trial job may set it,
-`trial_flags.ALLOWED`). Unset or any other value = off = main's full rewrite, byte for byte (lesson S272: a change of
-the writing loop that has not had its review rounds and its measured trial ships behind a flag whose default is
-main). The tech lead flips the worker env after the paid trial (scripts/aa1077/extend_trial.py) meets the issue's bar.
+Switch (S280, CIS 418): the setting `cis.t9.blog_length_extend` (off | on, Platform › Settings, maker-checker,
+evidence-gated), read per piece for the piece's tenant (`mode(tenant_id)`): the tenant's value, else the platform
+value, else the default off. A tenant value runs the paid trial on one audit tenant, through the normal tenant studio
+flow (whose routes never pass a job's trial_flags); the platform value turns it on for everyone. Resolution order: a
+job's trial flag `T9_LENGTH_EXTEND` (quality.trial_flags, one audit-tenant job) first, then the settings reader, whose
+own first step is the env var `T9_LENGTH_EXTEND` (the old switch, now the definition's emergency override for one
+release; scripts/aa1077/extend_trial.py sets it in its own process). Off = main's full rewrite, byte for byte (lesson
+S272: a change of the writing loop that has not had its measured trial ships behind a switch whose default is main).
 """
 from __future__ import annotations
 
+import contextvars
 import math
 import re
 from typing import Callable, Optional
@@ -45,7 +50,8 @@ from services.acp_content_writing.hygiene import LEAK_RE, _is_cta
 from services.acp_content_writing.quality_gates import expand_ledger, unused_source_facts
 from services.acp_shared.citation_tags import TAG_RE
 from services.quality import registry as qr
-from services.quality import trial_flags
+from services.quality import settings_keys, trial_flags
+from shared import settings
 
 EXTEND_ENV = "T9_LENGTH_EXTEND"
 EXTEND_ON, EXTEND_OFF = "on", "off"
@@ -59,9 +65,44 @@ _FAQ_TITLE_RE = re.compile(r"^#{1,6}\s*(?:faq\b|frequently asked)", re.I)
 _LIST_LINE_RE = re.compile(r"^\s*(?:[-*•]\s|\d+[.)]\s)", re.M)
 
 
-def mode() -> str:
-    raw = (trial_flags.get(EXTEND_ENV) or "").strip().lower()
-    return EXTEND_ON if raw == EXTEND_ON else EXTEND_OFF
+EXTEND_SETTING = settings_keys.T9_BLOG_LENGTH_EXTEND   # "cis.t9.blog_length_extend" (CIS 418)
+
+
+def mode(tenant_id: Optional[str] = None) -> str:
+    """'on' / 'off' for a piece of `tenant_id`: the running job's trial flag when it set one (an audit-tenant trial
+    job), else the setting cis.t9.blog_length_extend for the tenant (env override T9_LENGTH_EXTEND, then the tenant's
+    value, then the platform value, then the default off; shared.settings, never the database). Anything but 'on' is
+    off."""
+    active = trial_flags.active()
+    if EXTEND_ENV in active:
+        raw = active[EXTEND_ENV]
+    else:
+        raw = settings.get(EXTEND_SETTING, str(tenant_id) if tenant_id else None)
+    return EXTEND_ON if str(raw or "").strip().lower() == EXTEND_ON else EXTEND_OFF
+
+
+# The piece's switch, pinned ONCE per piece by service.run_write_background (`pin`) so a setting change mid-piece
+# never splits its repair rounds; the plans read it when the caller passes no `switch`. Cleared by `record`.
+_PINNED: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("length_extend_pinned", default=None)
+
+
+def mode_for(tenant_id: Optional[str], channel: Optional[str]) -> str:
+    """`mode(tenant_id)` for a blog; off for any other channel (no settings read)."""
+    return mode(tenant_id) if channel == "blog" else EXTEND_OFF
+
+
+def pin(tenant_id: Optional[str], channel: Optional[str]) -> str:
+    """Resolve the piece's switch (`mode_for`), pin it for the plans of this piece and return it."""
+    resolved = mode_for(tenant_id, channel)
+    _PINNED.set(resolved)
+    return resolved
+
+
+def record(context: dict, channel: Optional[str], switch: str) -> None:
+    """A blog's `length_trace` (writer_input, admin-only) records the piece's switch; the pin is cleared."""
+    if channel == "blog" and context.get("length_trace"):
+        context["length_trace"]["extend"] = switch
+    _PINNED.set(None)
 
 
 def _f4_short(gate_ledger: list) -> Optional[dict]:
@@ -103,11 +144,19 @@ def _insert_at(text: str, sec: dict, cta: Optional[str]) -> int:
     return sec["end"]
 
 
-def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], source: str) -> Optional[dict]:
+def _switch(switch: Optional[str], tenant_id: Optional[str]) -> str:
+    """The switch a plan reads: the caller's `switch`, else the piece's pinned one (`pin`), else `mode(tenant_id)`."""
+    if switch is None:
+        switch = _PINNED.get()
+    return mode(tenant_id) if switch is None else switch
+
+
+def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], source: str,
+             tenant_id: Optional[str] = None, switch: Optional[str] = None) -> Optional[dict]:
     """The extend plan of one attempt, or None (the old path): {"ledger": the ledger with the short F4 entry passed,
     "only_length": no other blocking failure, "facts": the untold seed facts, "sections": the chosen sections with
-    the words to add, "deficit_chars", "target_chars"}."""
-    if channel != "blog" or mode() != EXTEND_ON:
+    the words to add, "deficit_chars", "target_chars"}. Runs when `_switch` is on."""
+    if channel != "blog" or _switch(switch, tenant_id) != EXTEND_ON:
         return None
     f4 = _f4_short(gate_ledger)
     if f4 is None:
@@ -151,7 +200,8 @@ def _holes(before: Optional[str], after: str) -> dict:
 
 
 def plan_after_repair(content_text: str, *, before: Optional[str], channel: Optional[str],
-                      source: str) -> tuple[Optional[dict], str]:
+                      source: str, tenant_id: Optional[str] = None,
+                      switch: Optional[str] = None) -> tuple[Optional[dict], str]:
     """AA-1077 round 2 — the expand step of a repair round: (plan, reason). A blog repair round (the sentence repair
     of cut-type fixes, or the full rewrite) that leaves the text UNDER the F4 floor is never accepted as it is: the
     expand runs on the text the repair left, sized from ITS deficit to the target (the cuts' lost characters included:
@@ -160,7 +210,7 @@ def plan_after_repair(content_text: str, *, before: Optional[str], channel: Opti
     'no_sections', 'no_untold_facts')."""
     if channel != "blog":
         return None, "not_blog"
-    if mode() != EXTEND_ON:
+    if _switch(switch, tenant_id) != EXTEND_ON:
         return None, "off"
     now = lc.measure(content_text)
     if now >= lc.floor_chars():
@@ -242,5 +292,5 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
     return cur, float(cost or 0.0), entry
 
 
-__all__ = ["EXTEND_ENV", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX", "mode", "sections",
-           "plan_for", "plan_after_repair", "extend"]
+__all__ = ["EXTEND_ENV", "EXTEND_SETTING", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX",
+           "mode", "mode_for", "pin", "record", "sections", "plan_for", "plan_after_repair", "extend"]

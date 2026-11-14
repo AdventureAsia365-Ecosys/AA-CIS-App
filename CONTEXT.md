@@ -3947,8 +3947,9 @@ blog floor …` / `length_long: … far beyond …`) and the hold reason code is
 (`gate_eval`; old labels keep `length`, group with `gate_eval.reason_family`). The normalizer ends with an F4 re-check
 of the stored blog text (`service._recheck_length`: an approved piece under the floor is held) and
 `writer_input.length_trace` (chars after each step); its FAQ answer fit never drops a pair that would take the blog under the
-floor. **Extend repair** (`length_extend.py`, opt-in `T9_LENGTH_EXTEND=on`, also a `trial_flags` switch; default =
-the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
+floor. **Extend repair** (`length_extend.py`; switch = the setting `cis.t9.blog_length_extend`, off | on, CIS 418,
+platform + tenant scope, resolved once per piece for its tenant (S280); a job `trial_flags` value first, the env var
+`T9_LENGTH_EXTEND` stays its emergency override; default off = the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
 from the seed's untold fact sentences (one `t9_write` call, `generate.extend_sections`, mode `length_extend`), each
 checked in code (plain prose, size, `repair_contract.new_specifics`, seam integrity) before every gate re-runs; a gate
 needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`
@@ -3974,7 +3975,7 @@ rule (block and every rewrite footer). No instruction names where facts come fro
 (`length_contract.NO_SOURCE_MENTION`); F13_leak (`hygiene.LEAK_RE`) also catches "the itinerary says / names …" (provenance verbs only;
 "the itinerary gives you …" is reader copy), "the source(s) / notes say …", "source facts", "FACTS lines". A blog rewrite under the floor is told the
 cut-type fixes first (each with `REPLACE_NOT_DELETE`) and the length line LAST ("after every fix above"). With
-`T9_LENGTH_EXTEND=on`: every attempt-2 blog repair round (sentence repair or full rewrite) that leaves the text under the
+the extend switch on: every attempt-2 blog repair round (sentence repair or full rewrite) that leaves the text under the
 floor runs the expand step on THAT text (`length_extend.plan_after_repair`: deficit to the target incl. the cuts, the
 sections the repair shortened first, marked to the model), cut-type sentence-repair problems (never a repeat) carry
 `KEEP_NOT_CUT` when the cuts would leave the blog under the floor (attempts 2 and 3), attempt 3 (no expand after it)
