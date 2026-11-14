@@ -423,8 +423,8 @@ def measured_expectation(pool: list[PoolItem], report: dict,
     """One call's expected cost from a finished live run of the same model, connection and mode: the run's measured
     cost per call, scaled by how much larger this call's prompt is than that run's mean prompt (both on r1's
     conservative input estimate). The model estimate assumes 6,000 reasoning tokens per reply; GPT-6 Luna billed
-    about 250 output tokens per entailment reply in S279, so the model plan needs a cap 15x the real spend. The live
-    gate is unchanged: every call is still charged its worst case against the cap."""
+    about 250 output tokens per entailment reply in S279, so the model plan prices a run at about 16x its real
+    spend. The live gate is unchanged: every call is still charged its worst case against the cap."""
     if report.get("mode") != "live" or report.get("stopped") or not report.get("calls"):
         raise EvalRefused("--measured needs a finished live run report (mode live, not stopped, calls > 0)")
     spent = report.get("spent_usd")
