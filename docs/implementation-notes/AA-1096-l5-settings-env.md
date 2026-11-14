@@ -6,7 +6,7 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
 
 ## Decisions
 
-- **One PR, migration first in it (CIS 428, contract).** The reader and the admin API read the definitions from
+- **One PR, migration first in it (CIS 424, contract).** The reader and the admin API read the definitions from
   `shared/settings/compiled_defaults.json`, generated from the migration blocks (seed-parity test), never from the
   table's `env_override` column. So the code change IS the regenerated file: every test that drove a setting through
   its env var, the scripts that set an env var to force a mode, and the fingerprint entries all have to change in the
@@ -14,7 +14,7 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
   nothing left that does not depend on the migration file, and branched from `origin/main` it would be red until the
   migration merged. No readiness raise (nothing reads the column), so the Migration preflight accepts it; deploying it
   before the Migration Apply changes nothing (the code never reads the column).
-- **`settings-edit` block (generator).** CIS 428 changes some fields of existing keys: `-- settings-edit:begin` …
+- **`settings-edit` block (generator).** CIS 424 changes some fields of existing keys: `-- settings-edit:begin` …
   `$edit$[{"key", <field>: <value>}]$edit$` … `-- settings-edit:end`, applied in file order after the seed and guide
   rows. A field outside the definition's fields (or `key` / `app`) or an unknown key fails the generator. The SQL
   applies exactly those fields (`env_override` when present, `description`, `guide`), skips equal rows (re-runnable),
@@ -50,7 +50,7 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
 
 ## Changed
 
-- `api/migrations/428_aa1096_retire_settings_env_overrides.sql` (new, contract), `scripts/settings/gen_compiled_defaults.py`
+- `api/migrations/424_aa1096_retire_settings_env_overrides.sql` (new, contract), `scripts/settings/gen_compiled_defaults.py`
   (`settings-edit`), `shared/settings/compiled_defaults.json` (regenerated: 0 env overrides).
 - Code: the `*_ENV` constants of the retired switches removed (`brief_grounding.MODE_ENV`, `f9_policy.F9_POLICY_MODE_ENV`,
   `quality_gates.F12/F9/F14_*_MODE_ENV`, `adjudicate.MODE_ENV`, `modes.MODE_ENV` + `_env_for`, `blog_seed.RATIO_ENV`,
@@ -60,7 +60,7 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
   value), so the tests written for the env switches keep driving the setting with `setenv`; 16 modules use it
   (autouse fixture). Direct checks of the override now assert it is gone (`test_s279_quality_settings_parity`,
   `test_aa839_erasure`, `test_aa1093_erasure_saga`, the 418 integration test). The registry 409 test lays an invented
-  override on the tenant key. New: the env lint, `tests/integration/test_aa1096_migration_428.py`.
+  override on the tenant key. New: the env lint, `tests/integration/test_aa1096_migration_424.py`.
 
 ## Tradeoffs
 
@@ -73,10 +73,10 @@ and the live task definitions no longer set any settings env var (AA-CIS-Infra l
 
 ## Should know
 
-- **MIG-4 deviation, recorded (review S281).** The lane rule and root ADR 0017 MIG-4 ship a contract file in a migration-only PR, then the code PR. This branch ships the migration and the code in one PR on purpose: the seed-parity test `tests/unit/test_s279_settings_seed_parity.py` (JSON = generator over the migrations) and the replay test `tests/integration/test_s279_migration_407.py` (DB `env_override` = generator seed) tie CIS 428, the generator and `compiled_defaults.json` together, so a migration-only PR is red unless it also carries the regen, and the regen alone stops the reader honouring the env names, which turns ~30 test modules red unless they move too; a code PR branched from `origin/main` would then touch the same test lines and go DIRTY after the squash. The order MIG-4 protects still holds at runtime: no readiness raise (the Migration preflight accepts it), no code reads the `env_override` column, so a deploy before Infra Migration Apply changes nothing. The migration header says the same; the PR body names the chain as `applies:` on this one PR.
+- **MIG-4 deviation, recorded (review S281).** The lane rule and root ADR 0017 MIG-4 ship a contract file in a migration-only PR, then the code PR. This branch ships the migration and the code in one PR on purpose: the seed-parity test `tests/unit/test_s279_settings_seed_parity.py` (JSON = generator over the migrations) and the replay test `tests/integration/test_s279_migration_407.py` (DB `env_override` = generator seed) tie CIS 424, the generator and `compiled_defaults.json` together, so a migration-only PR is red unless it also carries the regen, and the regen alone stops the reader honouring the env names, which turns ~30 test modules red unless they move too; a code PR branched from `origin/main` would then touch the same test lines and go DIRTY after the squash. The order MIG-4 protects still holds at runtime: no readiness raise (the Migration preflight accepts it), no code reads the `env_override` column, so a deploy before Infra Migration Apply changes nothing. The migration header says the same; the PR body names the chain as `applies:` on this one PR.
 
-- Number 428: 421-427 are taken by other lanes of this wave (orchestrator hint). If main max + 1 differs at merge,
-  renumber (`git grep '428_'` and `'428'` in the migration, the 428 integration test, the generator docstring,
+- Number 424: 421-423 are taken by other lanes of this wave (orchestrator hint). If main max + 1 differs at merge,
+  renumber (`git grep '424_'` and `'424'` in the migration, the 424 integration test, the generator docstring,
   `compiled_defaults.json`'s `_generated` line, this file, the env lint docstring, `CONTEXT.md`).
 - Other env-only thresholds were seen on the way and are NOT migrated settings (out of scope, follow-up material for
   the thresholds audit): `ERASURE_DRY_RUN_MAX_AGE_HOURS`, `T7_DEBATE_CONCURRENCY`.

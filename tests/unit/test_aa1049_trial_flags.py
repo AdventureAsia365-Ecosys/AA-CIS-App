@@ -97,7 +97,7 @@ def test_every_allowed_value_is_one_its_reader_knows(monkeypatch, kind, name):
     from services.acp_content_writing import length_extend, service
     from services.content_generation import t2_orchestrator
     from tests.unit.settings_serve import serve_retired_env
-    serve_retired_env(monkeypatch)        # CIS 428: T9_LENGTH_EXTEND drives its setting here as the old override did
+    serve_retired_env(monkeypatch)        # CIS 424: T9_LENGTH_EXTEND drives its setting here as the old override did
     reader = {"T9_REGRESSION_GUARD_MODE": service.regression_guard_mode, "T9_SEO_BUILDER": service.seo_builder_mode,
               "T9_LENGTH_EXTEND": length_extend.mode, "T2_ORCHESTRATOR": t2_orchestrator.mode}[name]
     for value in tf.ALLOWED[kind][name]:

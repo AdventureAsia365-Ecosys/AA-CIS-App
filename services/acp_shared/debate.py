@@ -105,7 +105,7 @@ def debate_concurrency() -> int:
 
 def debate_mode() -> str:
     """`rank` unless the setting cis.quality_modes.t7_debate says `cut` (S279 L2; its env override retired by
-    CIS 428). Anything else is rank: the safe side."""
+    CIS 424). Anything else is rank: the safe side."""
     raw = _settings.get(_keys.MODES["t7_debate"])
     return raw if raw in DEBATE_MODES else DEBATE_MODE_RANK
 

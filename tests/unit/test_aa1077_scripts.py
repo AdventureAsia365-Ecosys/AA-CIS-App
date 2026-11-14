@@ -74,7 +74,7 @@ BODY = ("Vellmar Gorge rewards a slow walk.\n\n## Above Vellmar Gorge\n\nThe tra
 
 
 def test_trial_piece_runs_base_extend_after_with_stored_f9(monkeypatch):
-    calls = []                     # no setting and no env var: the trial passes the switch itself (CIS 428)
+    calls = []                     # no setting and no env var: the trial passes the switch itself (CIS 424)
 
     def fake(*, sections, facts, voice=None, **kw):
         calls.append(kw)

@@ -496,7 +496,7 @@ async def test_tenant_apply_refusals(pool, monkeypatch):
         await _run(pool, apply)                                   # flag off (the default everywhere)
     with pytest.raises(NonRetryable, match="less than 30 days"):
         await _run(pool, apply, env=ON)                           # offboarded 3 days ago
-    monkeypatch.setattr(ej, "tenant_retention_days", lambda: 0)   # CIS 428: the Dev drill sets the setting to 0
+    monkeypatch.setattr(ej, "tenant_retention_days", lambda: 0)   # CIS 424: the Dev drill sets the setting to 0
     extra = await admin.fetchval("INSERT INTO shared.unmapped_market_requests (tenant_id, country_code) "
                                  "VALUES ($1::uuid, 'ZY') RETURNING id", tid)   # counts change after the approval
     with pytest.raises(NonRetryable, match="counts changed"):

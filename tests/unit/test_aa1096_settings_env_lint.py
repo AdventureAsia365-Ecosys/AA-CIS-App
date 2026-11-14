@@ -1,6 +1,6 @@
-"""AA-1096 lane l5 (CIS 428) — settings-lint: an env override lives one release, then goes.
+"""AA-1096 lane l5 (CIS 424) — settings-lint: an env override lives one release, then goes.
 
-Tech lead S279: "env vars stay for one release as an emergency override, then go". CIS 428 retired the 25 overrides
+Tech lead S279: "env vars stay for one release as an emergency override, then go". CIS 424 retired the 25 overrides
 CIS 407 / 411 / 412 / 418 had given (``snapshots/aa1096_retired_env_overrides.json``, ``{key: env var}``). These
 rules keep the drift from coming back while the ``env_override`` mechanism itself stays for a future one-release
 override:
@@ -11,7 +11,7 @@ override:
    ``snapshots/aa1096_env_override_window.json`` (``{key: {"env", "added", "remove_by", "issue"}}``, dates
    ``YYYY-MM-DD``), with the same env var and at most :data:`MAX_WINDOW_DAYS` between ``added`` and ``remove_by``.
    Once ``remove_by`` has passed the test fails until a migration retires the override (a ``settings-edit`` block
-   with ``"env_override": null``, the CIS 428 pattern) and the entry leaves the file; an entry whose definition no
+   with ``"env_override": null``, the CIS 424 pattern) and the entry leaves the file; an entry whose definition no
    longer carries that override fails too (remove it).
 3. **No runtime code names a retired env var.** In ``api/``, ``services/``, ``shared/``, ``worker/`` and ``scripts/``
    no string literal equals a retired env var or starts a retired per-class family (``T10_SA_MODE_`` /
@@ -66,9 +66,9 @@ def retired_findings(definitions=None, gone: dict[str, str] | None = None) -> li
     out = []
     for key, env in sorted(_overrides(definitions).items()):
         if key in gone:
-            out.append(f"{key}: its env override was retired by CIS 428 and may not come back ({env})")
+            out.append(f"{key}: its env override was retired by CIS 424 and may not come back ({env})")
         elif env in names:
-            out.append(f"{key}: {env} is a retired env override (CIS 428); name the key's own switch on the page")
+            out.append(f"{key}: {env} is a retired env override (CIS 424); name the key's own switch on the page")
     return out
 
 
@@ -129,7 +129,7 @@ def literal_findings(files: list[Path] | None = None, gone: dict[str, str] | Non
                 continue
             if v in names or (v.startswith(RETIRED_FAMILIES) and v.isupper()) or v in {f.rstrip("_") for f in
                                                                                          RETIRED_FAMILIES}:
-                out.append(f"{rel}:{node.lineno}: {v!r} is a retired env override (CIS 428): read the setting")
+                out.append(f"{rel}:{node.lineno}: {v!r} is a retired env override (CIS 424): read the setting")
     return out
 
 

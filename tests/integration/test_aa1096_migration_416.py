@@ -68,7 +68,7 @@ async def test_an_incomplete_guide_is_refused_and_null_is_allowed(conn):
 
 
 def _edited_later() -> set:
-    """Keys whose label / guide a later file changes (a settings-guide or settings-edit block after 416, e.g. CIS 428):
+    """Keys whose label / guide a later file changes (a settings-guide or settings-edit block after 416, e.g. CIS 424):
     a replay of 416 alone puts its own text back on those, which the later file then owns."""
     from scripts.settings import gen_compiled_defaults as gen
     keys: set = set()

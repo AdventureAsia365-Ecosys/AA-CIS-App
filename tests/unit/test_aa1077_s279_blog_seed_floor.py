@@ -36,7 +36,7 @@ def test_setting_default_is_one_word_per_seed_word():
     from shared import settings
     assert blog_seed.DEFAULT_CHARS_PER_SEED_WORD == settings.definition(blog_seed.RATIO_SETTING).default_value \
         == lc.CHARS_PER_WORD
-    assert settings.definition(blog_seed.RATIO_SETTING).env_override is None          # CIS 428: retired
+    assert settings.definition(blog_seed.RATIO_SETTING).env_override is None          # CIS 424: retired
     assert settings.definition(blog_seed.MIN_SEED_SETTING).env_override is None   # S279 review: no hidden override
 
 
@@ -206,7 +206,7 @@ def test_the_workers_old_env_var_is_not_read(no_seed_env):
     assert blog_seed.min_seed_words() == 600
 
 
-# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
 # setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
 @pytest.fixture(autouse=True)
 def _retired_env_drives_the_setting(monkeypatch):

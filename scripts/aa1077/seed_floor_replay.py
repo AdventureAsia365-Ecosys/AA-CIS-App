@@ -209,7 +209,7 @@ def summarize(lines: list[dict], flat: int, configured_ratio: float, *, target_t
            "flat_only": verdicts(subs, floor_at(flat, None))}
     if m["ratio"]:
         out["at_measured"] = verdicts(subs, floor_at(flat, m["ratio"]))
-        # the value to propose on Platform › Settings (evidence: this replay); CIS 428 retired the env override
+        # the value to propose on Platform › Settings (evidence: this replay); CIS 424 retired the env override
         out["recommended_setting"] = {blog_seed.RATIO_SETTING: m["ratio"],
                                       "sized_min_seed_words": out["at_measured"]["floor"]["sized"]}
     tours = [t.lower() for t in (target_tours if target_tours is not None else [DEFAULT_TARGET_TOURS])]

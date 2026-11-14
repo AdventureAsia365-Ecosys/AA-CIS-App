@@ -88,7 +88,7 @@ def _int_env(name: str, default: int, env: Optional[dict] = None) -> int:
 
 def tenant_retention_days() -> int:
     """S279 thresholds L1: the setting cis.erasure.tenant_retention_days (Platform › Settings). Its env override
-    ERASURE_TENANT_RETENTION_DAYS was retired by CIS 428 (AA-1096 l5): the Dev drill sets 0 on the page for its run."""
+    ERASURE_TENANT_RETENTION_DAYS was retired by CIS 424 (AA-1096 l5): the Dev drill sets 0 on the page for its run."""
     return max(0, int(_settings.get(TENANT_RETENTION_SETTING)))
 
 

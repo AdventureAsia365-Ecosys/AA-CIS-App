@@ -115,7 +115,7 @@ MODE_FLAGS: dict[str, tuple[str, ...]] = {
            "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM",
            # AA-1049 W3 (T2 train): the linear orchestrator (opt-in; unset / unknown = main's graph path)
            "T2_ORCHESTRATOR"),
-    # AA-1096 l5 (CIS 428): the T9 / T10 gate modes, the brief grounding switch and the extend repair are settings now
+    # AA-1096 l5 (CIS 424): the T9 / T10 gate modes, the brief grounding switch and the extend repair are settings now
     # (their env overrides retired); the policy part (quality_settings.settings_fp) carries their values instead.
     "t9_blog": ("T9_READER_CHECKLIST_MODE", "T9_FAQ_LLM_FILTER", "T9_LAST_ATTEMPT_MODE", "T9_REGRESSION_GUARD_MODE",
                 "T9_SEO_BUILDER",
@@ -128,7 +128,7 @@ GATEWAY_FLAGS = ("LLM_STAGE_PARAMS", "LLM_ROUTE_AWS_FIRST", "LLM_DEPLOYMENT_ROUT
                  "LLM_LEGACY_ACC2_NATIVE", "LLM_TOKEN_FLOOR", "LLM_BUDGET_RETRY", "LLM_CONVERSE_CACHE_POINT")
 # Writing-memory switches that change what the writer or its gates do (l0.L0_ENFORCE_ENV: the L0 lexicon blocks).
 MEMORY_FLAGS = ("WRITING_MEMORY_L0_ENFORCE",)
-# Per-class families (a reader of <PREFIX>_<CLASS>): every env var with the prefix. Empty since CIS 428: the seed-align
+# Per-class families (a reader of <PREFIX>_<CLASS>): every env var with the prefix. Empty since CIS 424: the seed-align
 # and adjudicator class modes (T10_SA_MODE_<CLASS> / T10_ADJ_MODE_<CLASS>) are settings, their env overrides retired.
 MODE_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {}
 # Env constants of writer modules that do NOT change a stored output (budgets, breakers, capacity, the learning loop's

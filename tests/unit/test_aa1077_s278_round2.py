@@ -670,7 +670,7 @@ async def test_attempt_three_cuts_with_the_switch_off_are_main(_loop_stubs, monk
     assert not any("length_net" in e or "length_floor_kept" in e for e in log)
 
 
-# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
 # setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
 @pytest.fixture(autouse=True)
 def _retired_env_drives_the_setting(monkeypatch):

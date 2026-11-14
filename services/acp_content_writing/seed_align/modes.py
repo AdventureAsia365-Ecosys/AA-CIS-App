@@ -15,7 +15,7 @@ Each class has its own mode (a setting on Platform › Settings, S279 L2), defau
   value `hold` reads as `repair`.
 
 Settings: `cis.quality_modes.t10_seed_align` sets every class; `cis.quality_modes.t10_seed_align_<class>` (unless
-`inherit`) overrides one. Their env overrides (`T10_SA_MODE`, `T10_SA_MODE_<CLASS>`) were retired by CIS 428.
+`inherit`) overrides one. Their env overrides (`T10_SA_MODE`, `T10_SA_MODE_<CLASS>`) were retired by CIS 424.
 No new gate is added (S246 freeze): the finding prefix `sa:` is the only new thing a ledger reader sees.
 """
 from __future__ import annotations
@@ -68,7 +68,7 @@ HOLD_PROMOTED: frozenset = frozenset()
 def class_mode(cls: str) -> str:
     """The mode a class runs in: its own setting (cis.quality_modes.t10_seed_align_<class>, unless `inherit`), else the
     mode of every class (cis.quality_modes.t10_seed_align), default off (S279 L2: Platform › Settings, evidence-gated;
-    their env overrides retired by CIS 428). An unknown value
+    their env overrides retired by CIS 424). An unknown value
     reads as off; `hold` reads as `repair` unless the class may hold and is promoted."""
     raw = _settings.get(_keys.SEED_ALIGN_CLASS_MODES[cls]) if cls in _keys.SEED_ALIGN_CLASS_MODES else _keys.INHERIT
     if raw == _keys.INHERIT:

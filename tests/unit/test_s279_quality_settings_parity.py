@@ -220,7 +220,7 @@ def test_the_auto_upgrade_score_is_a_threshold():
 
 
 def test_the_retired_env_override_no_longer_wins(monkeypatch):
-    """AA-1096 l5 (CIS 428): the one release is over; a stray env var changes nothing, the setting rules."""
+    """AA-1096 l5 (CIS 424): the one release is over; a stray env var changes nothing, the setting rules."""
     from services.acp_shared import debate
     monkeypatch.setenv("T7_DEBATE_MODE", "cut")
     assert debate.debate_mode() == "rank"

@@ -1,4 +1,4 @@
-"""AA-1096 lane l5 (S281) — CIS 428: the one-release env overrides of the settings registry are retired (conftest
+"""AA-1096 lane l5 (S281) — CIS 424: the one-release env overrides of the settings registry are retired (conftest
 replays every migration). Registered; no definition names an env var; each edited row equals the compiled default the
 reader serves (description and guide included); the guides stay complete; a re-run changes nothing. Runs in a
 transaction that is rolled back; invented values only."""
@@ -17,7 +17,7 @@ from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 HERE = os.path.dirname(__file__)
-M428 = os.path.join(HERE, "..", "..", "api", "migrations", "428_aa1096_retire_settings_env_overrides.sql")
+M428 = os.path.join(HERE, "..", "..", "api", "migrations", "424_aa1096_retire_settings_env_overrides.sql")
 RETIRED = os.path.join(HERE, "..", "unit", "snapshots", "aa1096_retired_env_overrides.json")
 
 
@@ -35,7 +35,7 @@ async def conn():
 
 @pytest.mark.asyncio
 async def test_428_registered_and_no_definition_names_an_env_var(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '428'") == "428"
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '424'") == "424"
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition "
                                "WHERE env_override IS NOT NULL") == 0
 

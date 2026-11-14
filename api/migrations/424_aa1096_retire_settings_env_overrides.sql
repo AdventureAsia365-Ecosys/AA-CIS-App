@@ -1,4 +1,4 @@
--- Migration 428: AA-1096 (lane l5, tech lead S279: "env vars stay for one release as an emergency override, then go")
+-- Migration 424: AA-1096 (lane l5, tech lead S279: "env vars stay for one release as an emergency override, then go")
 -- -- the one-release env overrides of the platform settings registry are retired.
 --
 -- Why. CIS 407 / 411 / 412 / 418 gave 25 definitions an env_override (the old env switch of the value, kept for one
@@ -17,7 +17,7 @@
 --      TripPlanner keys (CIS 414), the description and guide without the TripPlanner env fallback (AA-TripPlanner-Web
 --      drops those env reads in the same wave: the fallback is the code default, equal to this default).
 --   2. A post-check: every row of the block is in force, and no definition of the table names an env var any more.
---   3. Register 428.
+--   3. Register 424.
 --
 -- Behaviour on apply. None for running code: the reader and the admin API serve the compiled defaults (regenerated
 -- from this block in the same PR), not this table's env_override column; no value, bound, approval rule or enforcement
@@ -31,9 +31,9 @@
 -- red), and no code reads the column, so a deploy before the apply changes nothing. On Dev, Infra Migration Apply
 -- once every job table is idle (root ADR 0017a). DM-6.1: no personal data (definition text). DM-7.1: no new table.
 --
--- Number. 420 is the newest CIS migration on main (15/11/2026) and 421-427 are taken by other lanes of this wave. If
--- the owner main max + 1 differs at merge, renumber (git grep '428_' and '428' here, in
--- tests/integration/test_aa1096_migration_428.py, compiled_defaults.json's _generated line and the implementation
+-- Number. 420 is the newest CIS migration on main (15/11/2026) and 421-423 are taken by other lanes of this wave. If
+-- the owner main max + 1 differs at merge, renumber (git grep '424_' and '424' here, in
+-- tests/integration/test_aa1096_migration_424.py, compiled_defaults.json's _generated line and the implementation
 -- notes docs/implementation-notes/AA-1096-l5-settings-env.md).
 --
 -- Locks. UPDATEs of 39 rows of a ~220-row table read by no hot path (the reader reads shared.setting_value); the
@@ -121,19 +121,19 @@ BEGIN
               AND (NOT e.doc ? 'description' OR d.description = e.doc ->> 'description')
               AND (NOT e.doc ? 'guide' OR d.guide = e.doc -> 'guide'));
     IF missing IS NOT NULL THEN
-        RAISE EXCEPTION 'CIS 428: no definition or not edited: %', missing;
+        RAISE EXCEPTION 'CIS 424: no definition or not edited: %', missing;
     END IF;
     SELECT string_agg(d.key || ' (' || d.env_override || ')', ', ' ORDER BY d.key) INTO still
       FROM shared.setting_definition AS d
      WHERE d.env_override IS NOT NULL;
     IF still IS NOT NULL THEN
-        RAISE EXCEPTION 'CIS 428: definitions still name an env override: %', still;
+        RAISE EXCEPTION 'CIS 424: definitions still name an env override: %', still;
     END IF;
 END
 $check$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('428', now(), 'AA-1096 l5: retire the one-release env overrides of the platform settings registry')
+VALUES ('424', now(), 'AA-1096 l5: retire the one-release env overrides of the platform settings registry')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

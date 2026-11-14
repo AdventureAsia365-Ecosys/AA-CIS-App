@@ -192,7 +192,7 @@ def _claims_violation(status: str, claims: Iterable[dict]) -> str:
 
 
 def policy_mode() -> str:
-    """The setting cis.quality_modes.t10_f9_policy (S279 L2; its env override retired by CIS 428)."""
+    """The setting cis.quality_modes.t10_f9_policy (S279 L2; its env override retired by CIS 424)."""
     from services.quality import settings_keys
     from shared import settings
 

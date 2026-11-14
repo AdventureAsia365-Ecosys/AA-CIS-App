@@ -50,7 +50,7 @@ def test_crm_gets_90_days_and_the_others_the_retention_window():
 
 
 def test_the_others_follow_the_cis_retention_window_setting(monkeypatch):
-    monkeypatch.setenv("ERASURE_TENANT_RETENTION_DAYS", "0")             # CIS 428: the env var is no override any more
+    monkeypatch.setenv("ERASURE_TENANT_RETENTION_DAYS", "0")             # CIS 424: the env var is no override any more
     with serve({"cis.erasure.tenant_retention_days": 45}):
         nb = saga.schedule(T0, "live")
     assert nb["booking"] == T0 + timedelta(days=45) and nb["crm"] == T0 + timedelta(days=90)

@@ -112,7 +112,7 @@ def test_route_rows_rebuild_the_s271_gate_sets_unchanged():
 
 def test_aa788_promotions_are_registry_entries_equal_to_the_code():
     # The registry rows keep the old env name as the row's id ("env"): renaming it would change the writing policy sha
-    # (every writer release would ask for a re-verify). CIS 428 retired the env override; the mode is the setting.
+    # (every writer release would ask for a re-verify). CIS 424 retired the env override; the mode is the setting.
     from services.acp_content_writing import quality_gates as qg
     code = {"T10_F12_SCOPE_MODE": qg.f12_scope_mode(), "T10_F9_BRAND_STYLE_MODE": qg.f9_brand_style_mode(),
             "T10_F14_FLOOR_MODE": qg.f14_floor_mode()}

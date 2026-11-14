@@ -290,7 +290,7 @@ def test_harness_rejects_angles_file_with_regen(monkeypatch):
         rp.main()
 
 
-# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
 # setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
 @pytest.fixture(autouse=True)
 def _retired_env_drives_the_setting(monkeypatch):

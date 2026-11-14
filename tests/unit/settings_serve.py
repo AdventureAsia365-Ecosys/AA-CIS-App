@@ -52,10 +52,10 @@ def serve_from_env(monkeypatch, key: str, env: str, default):
 
 
 def serve_retired_env(monkeypatch, keys=None):
-    """AA-1096 l5 (CIS 428): serve each retired env-override key (``snapshots/aa1096_retired_env_overrides.json``) from
+    """AA-1096 l5 (CIS 424): serve each retired env-override key (``snapshots/aa1096_retired_env_overrides.json``) from
     its old env var, read at call time, as an approved platform value would be (invalid or unset: the real
     resolution). Lets a test written for the env switch keep driving the setting with monkeypatch.setenv / delenv
-    after CIS 428 retired the override in the app. ``keys`` limits it to some keys (default every retired key)."""
+    after CIS 424 retired the override in the app. ``keys`` limits it to some keys (default every retired key)."""
     import json
     import os
     from pathlib import Path

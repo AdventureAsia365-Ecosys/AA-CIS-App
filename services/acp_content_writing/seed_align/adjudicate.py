@@ -100,7 +100,7 @@ ACTIONS = ("repair", "cut")
 def class_mode(cls: str) -> str:
     """The class's own setting (cis.quality_modes.t10_adjudicate_<class>, unless `inherit`), else the mode of every
     class (cis.quality_modes.t10_adjudicate), default off; anything but off / shadow / repair reads as off (S279 L2;
-    their env overrides retired by CIS 428)."""
+    their env overrides retired by CIS 424)."""
     from services.quality import settings_keys as keys
     from shared import settings
 

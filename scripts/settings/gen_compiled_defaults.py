@@ -11,9 +11,9 @@ AA-1096 l23 (CIS 416): the operator's guide of a key and its plain label live be
 the existing rows). Applied in file order after the seed rows of the same file; a guide row of a key no earlier file
 seeds fails the generator (the migration's post-check refuses it on apply too).
 
-AA-1096 l5 (CIS 428): a later file changes some fields of existing keys between ``-- settings-edit:begin`` and
+AA-1096 l5 (CIS 424): a later file changes some fields of existing keys between ``-- settings-edit:begin`` and
 ``-- settings-edit:end``, one JSON array of ``{"key", <field>: <value>, ...}`` inside ``$edit$ … $edit$`` (an UPDATE of
-the existing rows; CIS 428 retires the one-release env overrides: ``env_override`` null, the description and guide
+the existing rows; CIS 424 retires the one-release env overrides: ``env_override`` null, the description and guide
 without the override sentence). Applied in file order after the seed and guide rows of the same file; a field outside
 the definition's fields, or a key no earlier file seeds, fails the generator.
 

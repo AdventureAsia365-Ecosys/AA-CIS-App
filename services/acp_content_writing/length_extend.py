@@ -35,7 +35,7 @@ value, else the default off. A tenant value runs the paid trial on one audit ten
 flow (whose routes never pass a job's trial_flags); the platform value turns it on for everyone. Resolution order: a
 job's trial flag `T9_LENGTH_EXTEND` (quality.trial_flags, one audit-tenant job; scripts/aa1077/extend_trial.py sets
 it in its own process) first, then the settings reader (the old env var of the same name is no override any more: CIS
-428 retired it). Off = main's full rewrite, byte for byte (lesson
+424 retired it). Off = main's full rewrite, byte for byte (lesson
 S272: a change of the writing loop that has not had its measured trial ships behind a switch whose default is main).
 
 After the normalizer (S280, `length_recheck.lengthen_after_normalizer`): a loop-approved blog a MANDATORY normalizer cut

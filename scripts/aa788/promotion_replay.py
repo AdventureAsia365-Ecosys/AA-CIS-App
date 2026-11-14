@@ -44,7 +44,7 @@ sys.path.insert(0, os.getcwd())
 DEFAULT_DAYS = 60
 DEFAULT_LIMIT = 400
 LIGHT_LABELS = frozenset({"as_is", "light"})
-# The check modes of each run, by their setting (cis.quality_modes.<mode>). CIS 428 retired the env overrides the
+# The check modes of each run, by their setting (cis.quality_modes.<mode>). CIS 424 retired the env overrides the
 # script used to set, so `modes()` lays them over the mode readers of quality_gates for the run instead.
 PROMOTED_MODES = {"t10_f12_scope": "block", "t10_f9_brand_style": "repair"}
 DEFAULT_MODES = {"t10_f12_scope": "warn", "t10_f9_brand_style": "warn"}

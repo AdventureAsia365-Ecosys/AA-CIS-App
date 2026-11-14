@@ -262,7 +262,7 @@ def test_apply_refusals(dry, tenant, needle):
 def test_retention_window_is_a_setting_with_a_safe_default(monkeypatch):
     from tests.unit.settings_serve import serve
     assert ej.tenant_retention_days() == 30
-    monkeypatch.setenv("ERASURE_TENANT_RETENTION_DAYS", "0")      # CIS 428: the old env override changes nothing
+    monkeypatch.setenv("ERASURE_TENANT_RETENTION_DAYS", "0")      # CIS 424: the old env override changes nothing
     assert ej.tenant_retention_days() == 30
     with serve({ej.TENANT_RETENTION_SETTING: 0}):                 # the Dev drill sets 0 on Platform › Settings
         assert ej.tenant_retention_days() == 0

@@ -2101,7 +2101,7 @@ F12_SCOPE_BLOCKING = False
 # ---------------------------------------------------------------- AA-788: per-check modes of the promoted checks
 
 # AA-788 (Report 12 #4, S234 panel) promotes three advisory checks. Each has its own mode (a setting,
-# cis.quality_modes.<mode>, read per call; S279 L2, its env override retired by CIS 428). An unknown value is the
+# cis.quality_modes.<mode>, read per call; S279 L2, its env override retired by CIS 424). An unknown value is the
 # code default — today's behaviour, so the ledger is byte for byte what it was until a mode is set (S246 standing
 # rule: no new blocking gate before the freeze ends, ~19/11, without the tech lead's go):
 # - t10_f12_scope           warn (default) | block  — a BODY finding blocks: one sentence repair, held when it is
@@ -2116,7 +2116,7 @@ PROMOTION_LOG_EVENT = "t10_promoted_check"
 
 
 def _check_mode(mode_key: str, allowed: tuple[str, ...], default: str) -> str:
-    from services.quality import settings_keys  # S279 L2: a setting (no env override since CIS 428)
+    from services.quality import settings_keys  # S279 L2: a setting (no env override since CIS 424)
     from shared import settings
     raw = str(settings.get(settings_keys.MODES[mode_key]) or "").strip().lower()
     return raw if raw in allowed else default

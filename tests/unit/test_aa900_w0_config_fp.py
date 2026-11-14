@@ -98,7 +98,7 @@ def test_an_unrelated_stage_does_not_move_config_fp():
 
 
 def test_a_mode_switch_moves_config_fp_and_only_names_are_stored(monkeypatch):
-    # an invented per-class family: CIS 428 emptied MODE_FLAG_PREFIXES (the class modes are settings); the
+    # an invented per-class family: CIS 424 emptied MODE_FLAG_PREFIXES (the class modes are settings); the
     # mechanism stays
     monkeypatch.setitem(cf.MODE_FLAG_PREFIXES, "t9_blog", ("ZZ_CLASS_MODE_",))
     base = _fp()
@@ -193,7 +193,7 @@ def test_the_sibling_w0_switches_are_classified_ahead():
     assert "S1_JUDGE_LIVE" in cf.MODE_FLAGS["a1"] and "T2_INTERIM" in cf.MODE_FLAGS["t2"]
     for w in ("t9_blog", "t9_social"):
         assert "T9_LAST_ATTEMPT_MODE" in cf.MODE_FLAGS[w]
-        assert not set(cf.MODE_FLAGS[w]) & {"T10_F9_POLICY_MODE", "T10_SA_MODE", "T9_LENGTH_EXTEND"}   # CIS 428
+        assert not set(cf.MODE_FLAGS[w]) & {"T10_F9_POLICY_MODE", "T10_SA_MODE", "T9_LENGTH_EXTEND"}   # CIS 424
     assert "LLM_CASSETTE" in cf.NOT_OUTPUT_FLAGS                         # record-only: never changes an output
 
 

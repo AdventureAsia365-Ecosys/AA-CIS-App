@@ -349,7 +349,7 @@ async def test_an_f1_item_repaired_with_the_extend_is_cut_at_attempt_three(_loop
     assert any(e.get("repair_mode") == "truth_cut" for e in log)
 
 
-# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
 # setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
 @pytest.fixture(autouse=True)
 def _retired_env_drives_the_setting(monkeypatch):

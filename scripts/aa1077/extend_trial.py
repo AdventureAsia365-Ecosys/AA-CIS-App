@@ -83,7 +83,7 @@ def trial_piece(row: dict, *, call, live_f9: bool) -> dict:
     base = pr.run(text, pack=pr.stored_pack, f9=stored_f9, stock_blocking=False)
     out.update(chars_before=lc.measure(text), words_before=lc.words(text),
                base_codes=gate_eval.hold_reason_codes(base), base_hold=(hold_failure(base) or {}).get("gate"))
-    # the trial IS the extend: the switch is on for this call whatever the setting (CIS 428: no env override)
+    # the trial IS the extend: the switch is on for this call whatever the setting (CIS 424: no env override)
     plan = length_extend.plan_for(text, base, channel="blog", source=pr.atom_text, switch=length_extend.EXTEND_ON)
     if plan is None:
         out["skip"] = "no extend plan (not short, no body section or no untold seed fact)"

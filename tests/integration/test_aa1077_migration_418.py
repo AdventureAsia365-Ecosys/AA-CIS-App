@@ -55,7 +55,7 @@ async def test_418_registered_and_the_row_is_the_compiled_default(conn):
     assert json.loads(row["allowed"]) == ["off", "on"]
     assert row["scope_kind"] == "platform+tenant" == d.scope_kind
     assert (row["impact"], row["approval"], row["evidence_required"]) == ("high", "maker_checker", True)
-    assert row["env_override"] is None and row["enforced"] is True     # CIS 428 retired T9_LENGTH_EXTEND
+    assert row["env_override"] is None and row["enforced"] is True     # CIS 424 retired T9_LENGTH_EXTEND
     assert row["guided"] is True and row["label"] == d.label
 
 

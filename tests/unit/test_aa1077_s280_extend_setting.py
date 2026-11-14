@@ -1,7 +1,7 @@
 """AA-1077 (S280, CIS 418) — the lengthening repair switch is the setting cis.t9.blog_length_extend, not an env var.
 
 - `length_extend.mode(tenant_id)`: a job's trial flag first, then the settings reader (the tenant's value, then the
-  platform value, then the default off; its env override retired by CIS 428); anything but 'on' is off.
+  platform value, then the default off; its env override retired by CIS 424); anything but 'on' is off.
 - the plans (`plan_for`, `plan_after_repair`) take a `switch`, else the piece's pinned one, else resolve `tenant_id`.
 - the loop resolves the switch ONCE per piece for the piece's tenant, so a tenant value runs the trial on one audit
   tenant through the normal studio flow, and the blog's length trace records it.
@@ -49,7 +49,7 @@ def test_the_key_is_the_compiled_definition():
     d = settings.definition(KEY)
     assert le.EXTEND_SETTING == KEY == "cis.t9.blog_length_extend"
     assert d.default_value == "off" and list(d.allowed_values) == ["off", "on"] and d.tenant_scoped
-    assert d.env_override is None and d.evidence_required   # CIS 428: no env override and d.approval == "maker_checker"
+    assert d.env_override is None and d.evidence_required   # CIS 424: no env override and d.approval == "maker_checker"
 
 
 def test_the_default_is_off_for_every_tenant():
@@ -230,7 +230,7 @@ def test_the_extend_plan_replay_reads_what_the_repair_could_reach():
     assert s["floor_chars"] == 4700 and s["recheck_held"] == []
 
 
-# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
 # setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
 @pytest.fixture(autouse=True)
 def _retired_env_drives_the_setting(monkeypatch):

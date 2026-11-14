@@ -1903,8 +1903,8 @@ relayed to the CRM tab), the TripPlanner keys and Booking's policy parameters (`
 shrink-only baseline `tests/unit/snapshots/aa1096_settings_guide_baseline.json` is empty; adding a key to it needs the
 tech lead's OK in review.
 
-**Env overrides live one release (AA-1096 l5, CIS 428).** A definition's `env_override` is an emergency switch for one
-release only (tech lead S279). CIS 428 retired the 25 the registry had (erasure retention, 21 quality modes, the blog
+**Env overrides live one release (AA-1096 l5, CIS 424).** A definition's `env_override` is an emergency switch for one
+release only (tech lead S279). CIS 424 retired the 25 the registry had (erasure retention, 21 quality modes, the blog
 seed ratio, the blog extend switch; list in `tests/unit/snapshots/aa1096_retired_env_overrides.json`): no definition
 names an env var, and the Dev erasure drill sets `cis.erasure.tenant_retention_days` to 0 on the page. The mechanism
 stays; `tests/unit/test_aa1096_settings_env_lint.py` refuses a retired override coming back, any runtime literal of a
@@ -3992,7 +3992,7 @@ of the stored blog text (`length_recheck.recheck_length`, service's `_recheck_le
 `writer_input.length_trace` (chars after each step); its FAQ answer fit never drops a pair that would take the blog under the
 floor. **Extend repair** (`length_extend.py`; switch = the setting `cis.t9.blog_length_extend`, off | on, CIS 418,
 platform + tenant scope, resolved once per piece for its tenant (S280); a job `trial_flags` value first, the
-setting next (no env override since CIS 428); default off = the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
+setting next (no env override since CIS 424); default off = the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
 from the seed's untold fact sentences (one `t9_write` call, `generate.extend_sections`, mode `length_extend`), each
 checked in code (plain prose, size, `repair_contract.new_specifics`, seam integrity) before every gate re-runs; a gate
 needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`

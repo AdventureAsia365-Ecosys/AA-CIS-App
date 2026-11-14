@@ -280,7 +280,7 @@ def test_f14_floor_rewrite_feedback_lists_unused_source_facts(modes):
     assert writing_service._repair_feedback([warn], "linkedin", source=SEED, content_text=SHORT_POST) == []
 
 
-# AA-1096 l5 (CIS 428): the env override of these settings is retired in the app; the tests below still drive each
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
 # setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
 @pytest.fixture(autouse=True)
 def _retired_env_drives_the_setting(monkeypatch):

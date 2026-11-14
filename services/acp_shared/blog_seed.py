@@ -26,7 +26,7 @@ flat setting > 0), so a deployment without it is unchanged.
 services/quality/thresholds.yaml; evidence required on a change), read per call; 0 = no sizing (the flat floor alone).
 The default is one written word per seed word at the measured 5.8 characters per word (the no-invention writer cannot
 write more than its material); `scripts/aa1077/seed_floor_replay.py` measures the ratio on stored blog pieces ($0,
-read-only) and prints the value to propose (S279: 3.364). Its env override was retired by CIS 428.
+read-only) and prints the value to propose (S279: 3.364). Its env override was retired by CIS 424.
 """
 from __future__ import annotations
 
