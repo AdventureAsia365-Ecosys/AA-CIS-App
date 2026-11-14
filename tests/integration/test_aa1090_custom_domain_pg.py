@@ -10,13 +10,17 @@ Each test runs on one asyncpg connection inside an outer transaction that is rol
     (the setting's default) and a host another tenant holds are refused; a bad host never reaches the table;
   * the job walks the real row from pending to active (every UPDATE satisfies the 427 CHECKs: the ARN, the CNAME
     target, the validation record), and a removal deletes the row once the alias is detached;
-  * a validation past the timeout fails the host and clears its certificate; retry puts it back to pending.
+  * a validation past the timeout fails the host and clears its certificate; retry puts it back to pending with a
+    full validation window (the next looks keep waiting);
+  * a removal that cannot finish stays removing with its reason and is re-queued by removing it again;
+  * a host whose validation record is gone is failed and leaves the edge set.
 """
 import os
 import sys
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import asyncpg
 import pytest
@@ -29,7 +33,7 @@ from services.jobs import tripplanner_custom_domain_job as job  # noqa: E402  (r
 from services.tenant_account import tp_edge  # noqa: E402
 from services.tenant_account import tripplanner_domain as tpd  # noqa: E402
 from shared.jobs.registry import Reschedule  # noqa: E402
-from tests.unit.test_aa1090_custom_domain import BASE, DIST, TARGET, FakeAcm, FakeCf  # noqa: E402
+from tests.unit.test_aa1090_custom_domain import DIST, TARGET, FakeAcm, FakeCf  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 ACTOR = "admin:zz-aa1090-domain"
@@ -38,7 +42,6 @@ ACTOR = "admin:zz-aa1090-domain"
 @pytest.fixture(autouse=True)
 def edge_env(monkeypatch):
     monkeypatch.setenv(tp_edge.DIST_ENV, DIST)
-    monkeypatch.setenv(tp_edge.BASE_CERT_ENV, BASE)
 
 
 @pytest_asyncio.fixture
@@ -138,7 +141,7 @@ async def test_the_job_walks_a_real_row_to_active_and_removes_it(conn):
     assert removed["status"] == "removing"
     out = await job.run_once(_ctx(conn, did), acm, cf)
     assert out["status"] == "removed" and await _status(conn, did) is None
-    assert cf.config["Aliases"]["Items"] == ["tripplanner.planner-zone.example.test"]
+    assert cf.config["Aliases"] == {"Quantity": 0} and cf.config["ViewerCertificate"]["CloudFrontDefaultCertificate"]
 
 
 @pytest.mark.asyncio
@@ -158,4 +161,52 @@ async def test_timeout_then_retry(conn):
                               "WHERE domain_id = $1::uuid", did)
     assert row["status"] == "failed" and row["certificate_arn"] is None and "retry" in row["failure_message"]
     again = await tpd.retry_domain(conn, tid, did, actor=ACTOR)
-    assert again["status"] == "pending" and again["failure_code"] is None
+    assert again["status"] == "pending" and again["failure_code"] is None and again["validated_at"] is None
+    # The retry restarts the validation window: the next look keeps waiting instead of failing again at once.
+    with pytest.raises(Reschedule):
+        await job.run_once(_ctx(conn, did), acm, cf)
+    assert await _status(conn, did) == "validating"
+    with pytest.raises(Reschedule) as r:
+        await job.run_once(_ctx(conn, did), acm, cf)
+    assert r.value.reason == "validation" and await _status(conn, did) == "validating"
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_removal_is_recorded_and_requeued(conn, monkeypatch):
+    tid = await _tenant(conn)
+    did = (await tpd.add_domain(conn, tid, domain="trip.brackenmoor.example.invalid", actor=ACTOR))["domain_id"]
+    await conn.execute("UPDATE shared.tenant_tripplanner_domain SET status = 'removing', validated_at = now() "
+                       "WHERE domain_id = $1::uuid", did)
+    monkeypatch.delenv(tp_edge.DIST_ENV)
+    out = await job.run_once(_ctx(conn, did), FakeAcm(), FakeCf())
+    assert out["failure_code"] == "edge_not_configured"
+    row = await conn.fetchrow("SELECT status, failure_code FROM shared.tenant_tripplanner_domain "
+                              "WHERE domain_id = $1::uuid", did)
+    assert row["status"] == "removing" and row["failure_code"] == "edge_not_configured"
+    again = await tpd.remove_domain(conn, tid, did, actor=ACTOR)
+    assert again["status"] == "removing" and again["failure_code"] is None
+    keys = await conn.fetch("SELECT idempotency_key FROM shared.job WHERE payload->>'domain_id' = $1 "
+                            "ORDER BY idempotency_key", did)
+    assert len(keys) == 2 and any(k["idempotency_key"].startswith(f"tripplanner_custom_domain:{did}:remove:")
+                                  for k in keys)
+
+
+@pytest.mark.asyncio
+async def test_a_host_with_a_gone_record_is_detached(conn, monkeypatch):
+    alert = AsyncMock()
+    monkeypatch.setattr(job.ops_checks, "raise_alert", alert)
+    tid_a, tid_b = await _tenant(conn), await _tenant(conn)
+    a = (await tpd.add_domain(conn, tid_a, domain="trip.kestrelford.example.invalid", actor=ACTOR))["domain_id"]
+    b = (await tpd.add_domain(conn, tid_b, domain="go.wrenmere.example.invalid", actor=ACTOR))["domain_id"]
+    await conn.execute("UPDATE shared.tenant_tripplanner_domain SET status = 'active', validated_at = now(), "
+                       "active_at = now() WHERE domain_id = ANY($1::uuid[])", [a, b])
+    ctx = _ctx(conn, a)
+    gone = await job._detach(ctx, ["go.wrenmere.example.invalid"], "test")
+    assert gone == ["go.wrenmere.example.invalid"]
+    rows = {r["domain_id"]: r for r in await conn.fetch(
+        "SELECT domain_id::text AS domain_id, status, failure_code FROM shared.tenant_tripplanner_domain "
+        "WHERE domain_id = ANY($1::uuid[])", [a, b])}
+    assert rows[b]["status"] == "failed" and rows[b]["failure_code"] == "validation_record_gone"
+    hosts = await job._edge_hosts(conn)
+    assert rows[a]["status"] == "active" and "trip.kestrelford.example.invalid" in hosts
+    assert "go.wrenmere.example.invalid" not in hosts and alert.await_count == 1

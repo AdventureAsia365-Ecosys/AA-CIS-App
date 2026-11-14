@@ -5,20 +5,26 @@ An agency's planner lives on our path /{slug} (ADR 0019 d10). R8 lets it serve t
 ``tripplanner_site.py``); the page shows the two DNS records the agency creates; the CIS job
 ``tripplanner_custom_domain`` (``services/jobs/tripplanner_custom_domain_job.py``) does the AWS part (``tp_edge.py``):
 an ACM certificate in us-east-1 with DNS validation, then the host as an alternate domain name of the TripPlanner
-CloudFront distribution. TripPlanner serves an ``active`` host as the tenant through
+agency CloudFront distribution (a distribution of its own: the public TripPlanner host never shares a certificate with
+an agency). TripPlanner serves an ``active`` host as the tenant through
 ``catalog.v_tenant_tripplanner_v1.custom_domains`` (CIS 428).
 
 State (``shared.tenant_tripplanner_domain.status``, CIS 427) and the only moves :func:`transition` allows::
 
     pending ──requested──▶ validating ──issued──▶ attaching ──attached──▶ active
        │                      │                      │                      │
-       └───────failed─────────┴────────failed────────┘                      │
-    failed ──retry──▶ pending                                               │
+       └───────failed─────────┴────────failed────────┴───────failed─────────┘
+    failed ──retry──▶ pending (requested_at = now, validated_at / active_at cleared: a full validation window)
     any but removing ──remove──▶ removing ──(job: alias detached, certificate deleted)──▶ row deleted
+    removing ──remove again──▶ removing (a fresh job: a removal that could not finish, failure_code says why)
+
+An active host fails only when its validation record is gone (``validation_record_gone``: the job's pending edge
+certificate check or its daily renewal check detaches it so the other agencies keep a valid certificate).
 
 Limits are settings (CIS 427, Platform › Settings): ``cis.tripplanner.custom_domain_max_per_tenant`` (per tenant,
 hosts not being removed), ``cis.tripplanner.custom_domain_edge_max`` (all tenants, hosts that hold or will hold a
-name on the edge certificate). The job reads the validation timeout and the poll interval.
+name on the edge certificate). The job reads the validation timeout, the poll interval, the edge pending window and
+the renewal grace days.
 
 Routes: ``api/routers/admin_tenant_subscription.py`` (GET / POST ``/admin/tenants/{id}/tripplanner-site/domains``,
 DELETE ``.../domains/{domain_id}``, POST ``.../domains/{domain_id}/retry``). A refusal is :class:`DomainError`
@@ -46,7 +52,7 @@ _MOVES: dict[str, dict[str, str]] = {
     "requested": {"pending": "validating"},
     "issued": {"validating": "attaching"},
     "attached": {"attaching": "active"},
-    "failed": {"pending": "failed", "validating": "failed", "attaching": "failed"},
+    "failed": {"pending": "failed", "validating": "failed", "attaching": "failed", "active": "failed"},
     "retry": {"failed": "pending"},
     "remove": {s: "removing" for s in STATUSES if s != "removing"},
 }
@@ -187,10 +193,19 @@ STATUS_SQL = f"""
      WHERE domain_id = $1::uuid AND tenant_id = $2::uuid
     RETURNING {COLUMNS}
 """
+# A retry starts over: a full validation window from now (the job's timeout measures from requested_at) and no
+# timestamps of the earlier attempt. The certificate stays: the job reuses it while ACM can still issue it.
+RETRY_SQL = f"""
+    UPDATE shared.tenant_tripplanner_domain
+       SET status = 'pending', failure_code = NULL, failure_message = NULL, requested_at = now(), validated_at = NULL,
+           active_at = NULL, updated_at = now(), updated_by = $3
+     WHERE domain_id = $1::uuid AND tenant_id = $2::uuid AND status = 'failed'
+    RETURNING {COLUMNS}
+"""
 
 
 def edge_configured() -> bool:
-    """Both the distribution and its base certificate are known (AA-CIS-Infra sets them on api and worker)."""
+    """The agency distribution is known (AA-CIS-Infra sets TP_AGENCY_DISTRIBUTION_ID on api and worker)."""
     from services.tenant_account import tp_edge
 
     return tp_edge.configured()
@@ -254,20 +269,29 @@ async def add_domain(conn, tenant_id: str, *, domain: Any, actor: str) -> dict:
     return {**shape(row), "job_id": job_id}
 
 
+def _step_key(step: str, row: Any) -> str:
+    """A key per editor action on a row that already had one (retry, removal again): the row's new updated_at."""
+    return f"{step}:{int(row['updated_at'].timestamp() * 1000)}"
+
+
 async def remove_domain(conn, tenant_id: str, domain_id: str, *, actor: str) -> dict:
-    """Mark the host removing and queue the job that detaches it (idempotent while it is removing)."""
+    """Mark the host removing and queue the job that detaches it. Removing it again (a removal that could not finish,
+    or one whose job ended) queues a fresh job: staff can always drive a removal to its end."""
     async with conn.transaction():
         await conn.execute("SELECT set_config('aa.actor', $1, true)", actor)
         await _locked_tenant(conn, tenant_id)
         row = await conn.fetchrow(ROW_SQL + " FOR UPDATE", domain_id, tenant_id)
         if row is None:
             raise DomainError("domain_not_found", status=404)
-        if row["status"] == "removing":
-            return shape(row)
-        new = await conn.fetchrow(STATUS_SQL, domain_id, tenant_id, transition(row["status"], "remove"), actor[:64])
-        job_id = await _enqueue(conn, domain_id, "remove", actor)
-        await _audit(conn, tenant_id, actor, AdminTenantAuditAction.TRIPPLANNER_DOMAIN_REMOVED,
-                     {"domain_id": domain_id, "domain": row["domain"], "before": row["status"], "job_id": job_id})
+        again = row["status"] == "removing"
+        status = "removing" if again else transition(row["status"], "remove")
+        new = await conn.fetchrow(STATUS_SQL, domain_id, tenant_id, status, actor[:64])
+        job_id = await _enqueue(conn, domain_id, _step_key("remove", new) if again else "remove", actor)
+        details = {"domain_id": domain_id, "domain": row["domain"], "before": row["status"], "job_id": job_id}
+        if again:
+            details["requeued"] = True
+            details["failure_code"] = row["failure_code"]
+        await _audit(conn, tenant_id, actor, AdminTenantAuditAction.TRIPPLANNER_DOMAIN_REMOVED, details)
     return {**shape(new), "job_id": job_id}
 
 
@@ -286,9 +310,9 @@ async def retry_domain(conn, tenant_id: str, domain_id: str, *, actor: str) -> d
         await conn.execute(EDGE_LOCK_SQL)
         if int(await conn.fetchval(EDGE_COUNT_SQL, list(ON_EDGE))) >= int(await settings.aget(EDGE_MAX_KEY)):
             raise DomainError("edge_full", status=409)
-        new = await conn.fetchrow(STATUS_SQL, domain_id, tenant_id, transition("failed", "retry"), actor[:64])
-        step = f"retry:{int(new['updated_at'].timestamp() * 1000)}"
-        job_id = await _enqueue(conn, domain_id, step, actor)
+        transition("failed", "retry")
+        new = await conn.fetchrow(RETRY_SQL, domain_id, tenant_id, actor[:64])
+        job_id = await _enqueue(conn, domain_id, _step_key("retry", new), actor)
         await _audit(conn, tenant_id, actor, AdminTenantAuditAction.TRIPPLANNER_DOMAIN_RETRIED,
                      {"domain_id": domain_id, "domain": row["domain"], "failure_code": row["failure_code"],
                       "job_id": job_id})

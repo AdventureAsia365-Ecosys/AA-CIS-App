@@ -3165,11 +3165,14 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   domains (`GET` / `POST /admin/tenants/{id}/tripplanner-site/domains`, `DELETE …/{domain_id}`, `POST …/{domain_id}/retry`;
   write: tenant.write; audited `tenant.tripplanner_domain_*`; `services/tenant_account/tripplanner_domain.py`). The
   job kind `tripplanner_custom_domain` (concurrency 1, polls by rescheduling) requests the host's ACM certificate in
-  us-east-1, shows its validation record, then keeps ONE edge certificate on the TripPlanner CloudFront distribution
-  naming the base names plus every attached host and swaps aliases + certificate in one UpdateDistribution
-  (`services/tenant_account/tp_edge.py`); with no host left the distribution is back on the base certificate and
-  aliases (the Terraform state). Env `TP_WEB_DISTRIBUTION_ID` + `TP_WEB_BASE_CERT_ARN` (AA-CIS-Infra; absent = off,
-  409). Limits are settings (`cis.tripplanner.custom_domain_*`). TripPlanner reads the active hosts in
+  us-east-1, shows its validation record, then keeps ONE edge certificate on the TripPlanner AGENCY CloudFront
+  distribution (its own distribution: the public host never shares a certificate with an agency) naming every attached
+  host and swaps aliases + certificate in one UpdateDistribution (`services/tenant_account/tp_edge.py`); with no host
+  left the distribution is back on no alias and the default certificate (the Terraform state). A host whose
+  validation record is gone is failed and detached (`validation_record_gone`, alert `tripplanner_custom_domain_dns`)
+  by the pending-certificate guard or the daily edge check (same kind, payload `check = edge_health`, queued by the ops
+  sampler), so one agency never blocks or expires another's certificate. Env `TP_AGENCY_DISTRIBUTION_ID`
+  (AA-CIS-Infra; absent = off, 409). Limits are settings (`cis.tripplanner.custom_domain_*`). TripPlanner reads the active hosts in
   `catalog.v_tenant_tripplanner_v1.custom_domains` and serves such a Host as the tenant.
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /

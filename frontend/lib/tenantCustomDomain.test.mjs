@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  canAdd, domainPath, domainsKey, domainsPath, hostProblem, normaliseHost, shouldPoll, statusTone,
+  canAdd, domainPath, domainsKey, domainsPath, hostProblem, normaliseHost, removalStuck, shouldPoll, statusTone,
 } from "./tenantCustomDomain.ts";
 
 const T = "11111111-2222-3333-4444-555555555555";
@@ -51,4 +51,13 @@ test("add rule: switched on, TripPlanner, under the limit (a removing host does 
   assert.equal(canAdd(list(["removing"])), true);
   assert.equal(canAdd(list([], { available: false })), false);
   assert.equal(canAdd(list([], { has_tripplanner: false })), false);
+});
+
+test("a removal the job could not finish stops the polling and offers the removal again", () => {
+  const stuck = { ...row("removing"), failure_code: "edge_not_configured", failure_message: "switched off" };
+  assert.equal(removalStuck(stuck), true);
+  assert.equal(removalStuck(row("removing")), false);
+  assert.equal(removalStuck({ ...row("failed"), failure_code: "job_failed" }), false);
+  assert.equal(shouldPoll({ ...list([]), domains: [stuck] }), false);
+  assert.equal(shouldPoll({ ...list([]), domains: [stuck, row("removing")] }), true);
 });

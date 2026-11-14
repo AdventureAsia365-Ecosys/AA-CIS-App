@@ -456,6 +456,19 @@ async def _tenant_billing_tick_part(pool, kinds: dict, ts: datetime, out: dict) 
         out["tenant_billing_tick"] = {"job_id": job_id, "key": key}
 
 
+async def _tripplanner_domain_health_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1090 R8: the daily agency-edge check of the TripPlanner own domains, once per UTC day (idempotency key per
+    day; one indexed EXISTS a tick after the first). Only while the kind is registered and the agency distribution is
+    configured (TP_AGENCY_DISTRIBUTION_ID, AA-CIS-Infra)."""
+    from services.jobs.tripplanner_custom_domain_job import KIND, enqueue_daily_health
+
+    if KIND not in kinds:
+        return
+    job_id, created, key = await enqueue_daily_health(pool, now=ts)
+    if created:
+        out["tripplanner_custom_domain_health"] = {"job_id": job_id, "key": key}
+
+
 async def _ai_usage_rollup_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     """AA-1045: the usage rollup every quarter hour and its one-time backfill (idempotency keys; one to_regclass and at
     most two indexed EXISTS a tick). Only while the kind is registered; AI_USAGE_ROLLUP=off stops it."""
@@ -624,6 +637,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tenant_billing_tick_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["tenant_billing_tick_error"] = _err(e)
+
+    # AA-1090 R8: at most one idempotent INSERT a day, only with the agency distribution configured, same short budget
+    try:
+        await asyncio.wait_for(_tripplanner_domain_health_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["tripplanner_custom_domain_health_error"] = _err(e)
 
     # AA-1045: at most two idempotent INSERTs a quarter hour (database only), same short budget
     try:

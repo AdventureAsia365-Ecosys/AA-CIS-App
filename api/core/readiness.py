@@ -94,7 +94,7 @@ REQUIRED_CIS_SCHEMA = 322
 # 420 (AA-1105 — the AA Academy learning API, /learn/v1, reads and writes schema learn and its cis.learn.* settings;
 # each route answers 503 without it). 421 (the learn child-tenant triggers) is not needed by this code.
 # 427 (AA-1090 R8 — the Tenant 360 custom-domain editor and the tripplanner_custom_domain job read and write
-# shared.tenant_tripplanner_domain and read its four cis.tripplanner.custom_domain_* settings). 428 (the TripPlanner
+# shared.tenant_tripplanner_domain and read its six cis.tripplanner.custom_domain_* settings). 428 (the TripPlanner
 # view column) is not needed by this code.
 REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 427)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved

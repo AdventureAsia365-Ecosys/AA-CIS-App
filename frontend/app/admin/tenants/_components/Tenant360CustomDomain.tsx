@@ -5,7 +5,8 @@
 // GET /api/admin/tenants/{id}/tripplanner-site/domains: the agency's custom hosts (CIS 427) with their status and the
 // two DNS records the agency creates (the CNAME of the host to the distribution, the ACM validation CNAME). "Add domain"
 // (admin: tenant.write) opens a kit Drawer that POSTs the host; the API refuses a malformed, bare, platform or AWS host
-// (422 with the field) and the limits, which are settings (409). "Remove" (ConfirmModal) and "Retry" (a failed host)
+// (422 with the field) and the limits, which are settings (409). "Remove" (ConfirmModal), "Retry" (a failed host) and
+// "Retry removal" (a removal the job could not finish: the row stays removing with its reason)
 // queue the tripplanner_custom_domain job. While the job works on a host the section refreshes itself. Kit only
 // (Section, Drawer, Field, Input, Badge, Button, ConfirmModal, Toast).
 
@@ -16,7 +17,8 @@ import {
 } from "../../../_kit";
 import { PlanApiError, sendJson } from "@/lib/tenantPlans";
 import {
-  POLL_MS, canAdd, domainPath, domainsKey, domainsPath, hostProblem, normaliseHost, shouldPoll, statusTone,
+  POLL_MS, canAdd, domainPath, domainsKey, domainsPath, hostProblem, normaliseHost, removalStuck, shouldPoll,
+  statusTone,
   type CustomDomain, type DomainList,
 } from "@/lib/tenantCustomDomain";
 import { T360_DOMAIN } from "./customDomain.messages";
@@ -121,6 +123,7 @@ function useDomainActions(tenantId: string, d: CustomDomain, onRemoved: () => vo
   const remove = useMutation({
     mutationFn: () => sendJson<CustomDomain>(domainPath(tenantId, d.domain_id), "DELETE"),
     onSuccess: () => { toast.success(t("removed")); onRemoved(); refresh(); },
+    onError: (e) => { if (removalStuck(d)) toast.error(failText(e)); },
   });
   const retry = useMutation({
     mutationFn: () => sendJson<CustomDomain>(`${domainPath(tenantId, d.domain_id)}/retry`, "POST"),
@@ -146,7 +149,8 @@ function DomainRow({ d, tenantId, canEdit }: { d: CustomDomain; tenantId: string
   const t = useT(T360_DOMAIN);
   const [confirm, setConfirm] = useState(false);
   const { remove, retry, failText } = useDomainActions(tenantId, d, () => setConfirm(false));
-  const showFailure = d.status === "failed" && !!d.failure_message;
+  const stuck = removalStuck(d);
+  const showFailure = (d.status === "failed" || stuck) && !!d.failure_message;
   const showRecords = d.status !== "active" && d.status !== "removing";
 
   return (
@@ -163,6 +167,11 @@ function DomainRow({ d, tenantId, canEdit }: { d: CustomDomain; tenantId: string
             )}
             {d.status !== "removing" && (
               <Button size="sm" variant="ghost" onClick={() => setConfirm(true)}>{t("remove")}</Button>
+            )}
+            {stuck && (
+              <Button size="sm" variant="secondary" disabled={remove.isPending} onClick={() => remove.mutate()}>
+                {t("retryRemoval")}
+              </Button>
             )}
           </span>
         )}

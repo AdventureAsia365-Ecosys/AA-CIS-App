@@ -45,8 +45,13 @@ const WORKING: ReadonlySet<DomainStatus> = new Set(["pending", "validating", "at
 // Each poll is one cheap API read (the job does the AWS calls); a minute-scale job needs no faster refresh.
 export const POLL_MS = 15_000;
 
+/** A removal the job could not finish: the row stays removing with the reason, and staff can remove it again. */
+export function removalStuck(d: CustomDomain): boolean {
+  return d.status === "removing" && !!d.failure_code;
+}
+
 export function shouldPoll(list: DomainList | null | undefined): boolean {
-  return !!list?.domains.some((d) => WORKING.has(d.status));
+  return !!list?.domains.some((d) => WORKING.has(d.status) && !removalStuck(d));
 }
 
 export function statusTone(s: DomainStatus): DomainTone {
