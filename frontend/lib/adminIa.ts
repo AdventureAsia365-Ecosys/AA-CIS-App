@@ -28,7 +28,7 @@ export type NavIcon =
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
-  | "staff" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit"
+  | "staff" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap"
   | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
 
 export interface IaItem {
@@ -146,6 +146,8 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
     { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
     { href: "/admin/docs", label: "Docs", icon: "docs" },
+    // AA-1106: what each app can do, how the apps link and what each link needs (the root repo product catalogue).
+    { href: "/admin/platform/catalogue", label: "Product map", icon: "productMap" },
     // AA-1039 R6 rest: the design-system reference (was the UI Kit tab of Settings).
     { href: "/admin/platform/ui-kit", label: "UI kit", icon: "uiKit" },
   ] },

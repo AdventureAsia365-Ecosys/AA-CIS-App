@@ -17,9 +17,12 @@
 // Pure helpers: lib/settingsRegistry.ts. Kit only.
 // AA-1096 l23: every row explains itself (SettingGuide.tsx): the one-line "what" under the label, an Explain toggle
 // with the whole guide, the same guide at the top of the change dialog; who changed a value is shown by name.
+// AA-1106: `?app=<app>&area=<area>` opens that app tab and area (the Product map links a setting named in a condition
+// here); an unknown value falls back to the first tab / area.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, History, Pencil, SlidersHorizontal } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   Badge, Button, Checkbox, DataTable, DateText, ErrorState, Field, Input, K, Modal, PageFrame, PageHeader, Section,
@@ -271,14 +274,14 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
   );
 }
 
-function AppSettings({ app }: { app: SettingApp }) {
+function AppSettings({ app, initialArea = "" }: { app: SettingApp; initialArea?: string }) {
   const t = useSettingsT();
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
   const q = useQuery({ queryKey: ["settings-registry", app], queryFn: () => apiGet<RegistryResp>(registryPath(app)) });
   const groups = useMemo(() => groupByArea(q.data?.settings ?? []), [q.data]);
   const valueOf = useMemo(() => valuesInForce(q.data?.settings ?? []), [q.data]);
-  const [area, setArea] = useState<string>("");
+  const [area, setArea] = useState<string>(initialArea);
   const [editing, setEditing] = useState<SettingItem | null>(null);
   const [viewing, setViewing] = useState<SettingItem | null>(null);
   const activeArea = groups.some((g) => g.area === area) ? area : groups[0]?.area ?? "";
@@ -368,7 +371,11 @@ function AppSettings({ app }: { app: SettingApp }) {
 
 export default function SettingsRegistry() {
   const t = useSettingsT();
-  const [app, setApp] = useState<SettingApp>("cis");
+  const params = useSearchParams();
+  const asked = params.get("app");
+  const [app, setApp] = useState<SettingApp>(
+    (APPS as readonly string[]).includes(asked ?? "") ? (asked as SettingApp) : "cis");
+  const [askedArea, setAskedArea] = useState(params.get("area") ?? "");
   return (
     <PageFrame>
       <PageHeader
@@ -377,9 +384,10 @@ export default function SettingsRegistry() {
         description={t("intro")}
       />
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
-        <Tabs ariaLabel={t("title")} active={app} onChange={(k) => setApp(k as SettingApp)} testId="settings-apps"
+        <Tabs ariaLabel={t("title")} active={app} onChange={(k) => { setApp(k as SettingApp); setAskedArea(""); }}
+          testId="settings-apps"
           tabs={APPS.map((a) => ({ key: a, label: t(APP_LABEL[a]) }))} />
-        <AppSettings key={app} app={app} />
+        <AppSettings key={app} app={app} initialArea={askedArea} />
       </div>
     </PageFrame>
   );

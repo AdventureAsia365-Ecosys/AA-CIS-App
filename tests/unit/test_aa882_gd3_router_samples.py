@@ -83,6 +83,7 @@ SAMPLES = [
     ("admin_crm_console", "POST", "/admin/platform/crm/agencies/{tenant_id}/lock", {"ticket_ref": "AA-941"}),
     ("admin_data_model", "GET", "/admin/data-model", None),      # AA-894
     ("admin_docs", "GET", "/admin/docs/manifest", None),         # AA-898
+    ("admin_product_catalogue", "GET", "/admin/platform/catalogue", None),   # AA-1106
     ("admin_data_coverage", "GET", "/admin/data-coverage", None),      # AA-992
     ("admin_aa_content", "PUT", "/admin/aa-content/{content_id}/draft",      # AA-977
      {"title": "t", "expected_updated_at": "2026-10-24T08:00:00Z"}),

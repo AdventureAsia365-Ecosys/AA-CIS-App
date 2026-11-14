@@ -683,6 +683,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/platform/audit"): AUDIT_READ, ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
     ("GET", "/admin/platform/cost"): SPEND_READ,
     ("GET", "/admin/platform/infra"): OPS_READ,
+    # ── admin_product_catalogue (AA-1106) — Platform › Product map: the root repo product catalogue bundle, read only.
+    ("GET", "/admin/platform/catalogue"): OPS_READ,
     # ── admin_crm_console (AA-941, CRM-13a S-01) — the partner CRM's L1 console, relayed with the staff member's own
     # Cognito token; the CRM re-checks its own groups (cis-admin / crm-platform-admin read, crm-platform-admin writes).
     # AA-1035 R2 close-out (root ADR 0019 d4): the desk roles read the CRM L1 console of their book. CIS scopes the
