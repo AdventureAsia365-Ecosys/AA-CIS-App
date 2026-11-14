@@ -8,7 +8,8 @@
 // DELETE …/entitlement-overrides/{key} (reason required, audited). Kit only (Section, DataTable, Drawer, Field, Select,
 // Input, ConfirmModal, Badge, Toast). AA-1036 R3: the agency's add-on requests sit above the subscriptions
 // (Tenant360AddOnRequests: approve runs the same saga, decline needs a reason). AA-1038 follow-up: the TripPlanner
-// lead route sits below the overrides (Tenant360LeadRoute). AA-1086 G2: "End pilot" next to the pilot badge
+// lead route sits below the overrides (Tenant360LeadRoute), AA-1090 R8 its own domains below it
+// (Tenant360CustomDomain). AA-1086 G2: "End pilot" next to the pilot badge
 // (Tenant360EndPilot, admin only) asks for a reason and calls POST …/pilot/end, which clears the pilot marker.
 // S280 (AA-1096): the writes (add-on, cancel, override PUT / DELETE) need tenant.write, so finance and
 // customer_success (who read the tab) see no write button and a clicked override opens read-only; an override value
@@ -34,6 +35,7 @@ import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { T360_SUB } from "./subscription.messages";
 import { Tenant360AddOnRequests } from "./Tenant360AddOnRequests";
 import { Tenant360EndPilot } from "./Tenant360EndPilot";
+import { Tenant360CustomDomain } from "./Tenant360CustomDomain";
 import { Tenant360LeadRoute } from "./Tenant360LeadRoute";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45, margin: 0 } as const;
@@ -414,6 +416,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
 
       <Tenant360LeadRoute tenantId={tenantId} canEdit={can(role, "tenant.write")}
         crmCore={data.entitlements.some((e) => e.feature_key === "crm.core")} />
+
+      <Tenant360CustomDomain tenantId={tenantId} canEdit={can(role, "tenant.write")} />
 
       {addOn && <AddOnDrawer tenantId={tenantId} data={data} start={addOn.start} onClose={() => setAddOn(null)} />}
       {override && featuresQ.data && (

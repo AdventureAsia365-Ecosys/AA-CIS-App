@@ -169,6 +169,12 @@ class AdminTenantAuditAction:
     # (CIS 390 columns; services/tenant_account/tripplanner_site.py). details: before / after of the channel and its
     # targets (the agency's business URL / address, never a traveller's).
     TRIPPLANNER_LEAD_ROUTE_CHANGED = "tenant.tripplanner_lead_route_changed"
+    # AA-1090 R8 — Tenant 360 › Subscription: a custom host of the tenant's TripPlanner site added / removed / retried
+    # (CIS 427; services/tenant_account/tripplanner_domain.py). details: domain id, the host, the job id, the status
+    # before a removal or the failure code before a retry (an agency's business host, never personal data).
+    TRIPPLANNER_DOMAIN_ADDED = "tenant.tripplanner_domain_added"
+    TRIPPLANNER_DOMAIN_REMOVED = "tenant.tripplanner_domain_removed"
+    TRIPPLANNER_DOMAIN_RETRIED = "tenant.tripplanner_domain_retried"
     # AA-1035 R2 (CIS 364, root ADR 0019 d4) — who looks after the tenant: a staff assignment set (added or its kind
     # changed) / removed (details: the staff id, the kind before / after; no name, no e-mail).
     ASSIGNMENT_SET = "tenant.assignment_set"

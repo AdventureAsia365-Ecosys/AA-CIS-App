@@ -3159,6 +3159,18 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   spellings) or an internal name (one label, `localhost`, `*.local`, `*.internal` ...). No DNS lookup in CIS:
   TripPlanner checks the resolved addresses again before storing a lead and before each POST. Still no editor for the
   theme (set by a reviewed `run-script` on Dev until it ships).
+  **R8 own domains (AA-1090, CIS 427 + 428, contract tenant.entitlements.v1 1.8; `docs/implementation-notes/AA-1090.md`):**
+  `shared.tenant_tripplanner_domain` (one row per custom host of a tenant site; status pending / validating / attaching
+  / active / removing / failed; no RLS, rule a allowlist) is edited on Tenant 360 › Subscription › TripPlanner own
+  domains (`GET` / `POST /admin/tenants/{id}/tripplanner-site/domains`, `DELETE …/{domain_id}`, `POST …/{domain_id}/retry`;
+  write: tenant.write; audited `tenant.tripplanner_domain_*`; `services/tenant_account/tripplanner_domain.py`). The
+  job kind `tripplanner_custom_domain` (concurrency 1, polls by rescheduling) requests the host's ACM certificate in
+  us-east-1, shows its validation record, then keeps ONE edge certificate on the TripPlanner CloudFront distribution
+  naming the base names plus every attached host and swaps aliases + certificate in one UpdateDistribution
+  (`services/tenant_account/tp_edge.py`); with no host left the distribution is back on the base certificate and
+  aliases (the Terraform state). Env `TP_WEB_DISTRIBUTION_ID` + `TP_WEB_BASE_CERT_ARN` (AA-CIS-Infra; absent = off,
+  409). Limits are settings (`cis.tripplanner.custom_domain_*`). TripPlanner reads the active hosts in
+  `catalog.v_tenant_tripplanner_v1.custom_domains` and serves such a Host as the tenant.
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).

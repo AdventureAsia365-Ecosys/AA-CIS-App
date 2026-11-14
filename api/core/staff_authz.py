@@ -393,7 +393,6 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/decisions/jev-credit/check"): SPEND_WRITE,   # AA-845 low-credit check (+ test alerts); money
     # ── admin_settings — SEO config of the aa_internal tenant
     ("PATCH", "/admin/settings/seo"): CONTENT_SETTINGS_WRITE,
-
     # ── admin (admin.py) — tenant accounts (Tenants page, admin-only; AA-797 already re-checks writes)
     ("GET", "/admin/tenants"): _TENANT_DIRECTORY_READ,     # AA-1035: filtered to the caller's scope
     # AA-1035 (S267 fix pass): the shared tenant picker (id, name, slug, status only; filtered to the caller's scope):
@@ -410,9 +409,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/subscription"): _TENANT_BILLING_READ,
     ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
     ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
-    # AA-1038 R5 slice 3 follow-up (S272): the TripPlanner lead route of a tenant (CIS 390), on the Subscription tab
-    ("GET", "/admin/tenants/{tenant_id}/tripplanner-site/lead-route"): _TENANT_BILLING_READ,
-    ("PUT", "/admin/tenants/{tenant_id}/tripplanner-site/lead-route"): TENANT_WRITE,
+    # Tenant 360 › Subscription: the TripPlanner lead route (AA-1038 S272, CIS 390), own domains (AA-1090 R8, CIS 427)
+    **{(m, "/admin/tenants/{tenant_id}/tripplanner-site/" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE
+       for m, p in (("GET", "lead-route"), ("PUT", "lead-route"), ("GET", "domains"), ("POST", "domains"),
+                    ("DELETE", "domains/{domain_id}"), ("POST", "domains/{domain_id}/retry"))},
     # AA-1036 R3 (root ADR 0019 d7; clarifications TL-7 step 4: the account manager approves): add-on requests. A
     # decision: admin, or customer_success for its own book (tenant.book.write; require_tenant_scope); never support or
     # finance. The approval runs the tenant_provision saga; the drawer polls the request route, not the job route.

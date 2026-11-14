@@ -3429,6 +3429,221 @@
         "title": "DestinationMatchRequest",
         "type": "object"
       },
+      "DnsRecordOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "route",
+              "certificate"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          },
+          "type": {
+            "const": "CNAME",
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "purpose",
+          "type",
+          "name",
+          "value"
+        ],
+        "title": "DnsRecordOut",
+        "type": "object"
+      },
+      "DomainIn": {
+        "properties": {
+          "domain": {
+            "description": "The agency's host, e.g. trip.agency-name.com",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Domain",
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "title": "DomainIn",
+        "type": "object"
+      },
+      "DomainListOut": {
+        "properties": {
+          "available": {
+            "description": "False: own domains are not switched on in this environment",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "domains": {
+            "items": {
+              "$ref": "#/components/schemas/DomainOut"
+            },
+            "title": "Domains",
+            "type": "array"
+          },
+          "has_tripplanner": {
+            "title": "Has Tripplanner",
+            "type": "boolean"
+          },
+          "max_domains": {
+            "description": "The agency's limit (setting cis.tripplanner.custom_domain_max_per_tenant)",
+            "title": "Max Domains",
+            "type": "integer"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "has_tripplanner",
+          "available",
+          "max_domains",
+          "domains"
+        ],
+        "title": "DomainListOut",
+        "type": "object"
+      },
+      "DomainOut": {
+        "properties": {
+          "active_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active At"
+          },
+          "dns_records": {
+            "items": {
+              "$ref": "#/components/schemas/DnsRecordOut"
+            },
+            "title": "Dns Records",
+            "type": "array"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "domain_id": {
+            "title": "Domain Id",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Message"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tripplanner_custom_domain job queued by this change",
+            "title": "Job Id"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "validating",
+              "attaching",
+              "active",
+              "removing",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          }
+        },
+        "required": [
+          "domain_id",
+          "domain",
+          "status",
+          "dns_records"
+        ],
+        "title": "DomainOut",
+        "type": "object"
+      },
       "DraftBody": {
         "additionalProperties": false,
         "properties": {
@@ -45989,6 +46204,386 @@
           }
         },
         "summary": "A tenant's subscriptions, entitlements and overrides",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/tripplanner-site/domains": {
+      "get": {
+        "operationId": "get_domains_admin_tenants__tenant_id__tripplanner_site_domains_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The custom hosts of a tenant's TripPlanner site, with the DNS records the agency creates",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "post_domain_admin_tenants__tenant_id__tripplanner_site_domains_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DomainIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add a custom host to a tenant's TripPlanner site (audited; queues the certificate job)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/tripplanner-site/domains/{domain_id}": {
+      "delete": {
+        "operationId": "delete_domain_admin_tenants__tenant_id__tripplanner_site_domains__domain_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "shared.tenant_tripplanner_domain.domain_id",
+            "in": "path",
+            "name": "domain_id",
+            "required": true,
+            "schema": {
+              "description": "shared.tenant_tripplanner_domain.domain_id",
+              "format": "uuid",
+              "title": "Domain Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove a custom host (the job detaches it from the distribution and deletes its certificate)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/tripplanner-site/domains/{domain_id}/retry": {
+      "post": {
+        "operationId": "retry_domain_admin_tenants__tenant_id__tripplanner_site_domains__domain_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "shared.tenant_tripplanner_domain.domain_id",
+            "in": "path",
+            "name": "domain_id",
+            "required": true,
+            "schema": {
+              "description": "shared.tenant_tripplanner_domain.domain_id",
+              "format": "uuid",
+              "title": "Domain Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry a failed custom host (back to pending; a new certificate job)",
         "tags": [
           "admin"
         ]
