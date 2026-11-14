@@ -378,6 +378,11 @@ async def test_trip_page_answers_410_301_404(ctx):
         grp_new, uuid.uuid4(), MASTER)
     moved = await v1_trip_page.get_trip_page(ctx.old, req)
     assert moved.status_code == 301 and moved.headers["location"] == f"/v1/trip/{grp_new}"
+    # AA-1089: the catalogue key itself (the source group, no tour id), as the partner CRM links it: 301 to the same
+    group_key = await ctx.conn.fetchval("SELECT source_group_id::text AS k FROM silver_aa_internal.raw_tours "
+                                        "WHERE tour_id = $1::uuid", ctx.old)
+    by_key = await v1_trip_page.get_trip_page(group_key, req)
+    assert by_key.status_code == 301 and by_key.headers["location"] == f"/v1/trip/{grp_new}"
 
 
 def test_payload_json_roundtrip():

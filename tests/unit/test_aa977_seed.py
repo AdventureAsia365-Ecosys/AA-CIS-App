@@ -2,8 +2,8 @@
 
 The seed must pass every rule the admin API applies at create and at publish (services/aa_content/validate.py), so
 `--apply --publish` cannot fail half way on Dev. Size (plan contradiction resolved in the implementation notes):
-14 groups x EN + VI = 28 items — 10 prep packs, 2 starter templates, 2 campaign blocks; one prep-pack item stays a
-draft for the rule R check.
+15 groups x EN + VI = 30 items — 10 prep packs, 3 starter templates (AA-1089 added "Booking confirmed"), 2 campaign
+blocks; one prep-pack item stays a draft for the rule R check.
 """
 from __future__ import annotations
 
@@ -40,10 +40,10 @@ def items() -> list[dict]:
 def test_seed_size_and_shape(items):
     data = json.loads(SEED.read_text())
     groups = data["groups"]
-    assert len(groups) == 14 and len(items) == 28
-    assert Counter(g["kind"] for g in groups) == {"prep_pack": 10, "starter_template": 2, "campaign_block": 2}
+    assert len(groups) == 15 and len(items) == 30
+    assert Counter(g["kind"] for g in groups) == {"prep_pack": 10, "starter_template": 3, "campaign_block": 2}
     assert all(set(g["items"]) == {"en", "vi"} for g in groups)                     # every group in both languages
-    assert len({g["group_key"] for g in groups}) == 14
+    assert len({g["group_key"] for g in groups}) == 15
     prep_codes = [g["applies_to"]["country_codes"] for g in groups if g["kind"] == "prep_pack"]
     assert all(len(c) == 1 for c in prep_codes) and {c[0] for c in prep_codes} == PREP_COUNTRIES
     assert data["actor"] == seed_script.ACTOR
@@ -91,8 +91,8 @@ def _row(group_key, locale, *, created_by="seed:AA-977", published=None, draft=1
 
 def test_plan_on_an_empty_database(items):
     p = seed_script.plan(items, [])
-    assert len(p["to_create"]) == 28 and p["existing"] == []
-    assert len(p["to_publish"]) == 27 and p["kept_draft"] == ["prep-pack-bhutan:vi"]
+    assert len(p["to_create"]) == 30 and p["existing"] == []
+    assert len(p["to_publish"]) == 29 and p["kept_draft"] == ["prep-pack-bhutan:vi"]
     assert p["skipped_publish"] == []
 
 
@@ -106,7 +106,7 @@ def test_plan_is_idempotent_and_never_publishes_someone_elses_draft(items):
         _row("prep-pack-bhutan", "vi"),                                      # the kept draft
     ]
     p = seed_script.plan(items, existing)
-    assert len(p["to_create"]) == 22
+    assert len(p["to_create"]) == 24
     assert "prep-pack-vietnam:en" in p["to_publish"]
     reasons = {s["item"]: s["reason"] for s in p["skipped_publish"]}
     assert reasons["prep-pack-vietnam:vi"].startswith("already published")
@@ -114,12 +114,35 @@ def test_plan_is_idempotent_and_never_publishes_someone_elses_draft(items):
     assert reasons["prep-pack-thailand:vi"].startswith("already published")
     assert reasons["prep-pack-laos:en"] == "retired"
     assert p["kept_draft"] == ["prep-pack-bhutan:vi"]
-    assert len(p["to_publish"]) + len(p["skipped_publish"]) + len(p["kept_draft"]) == 28
+    assert len(p["to_publish"]) + len(p["skipped_publish"]) + len(p["kept_draft"]) == 30
 
 
 def test_plan_skips_a_newer_seeded_draft(items):
     p = seed_script.plan(items, [_row("campaign-newsletter-intro", "en", draft=3)])
     assert {"item": "campaign-newsletter-intro:en", "reason": "draft is v3, not the seed's v1"} in p["skipped_publish"]
+
+
+# AA-1089: the merge fields the partner CRM fills in a message template (AA-Partner api/app/proposals/text_render.py
+# MERGE_FIELDS). A starter that names any other field would reach the client with the braces still in it.
+CRM_MESSAGE_FIELDS = {"traveller_first_name", "trip_name", "agency_name", "agent_name", "destination", "departure_date",
+                      "proposal", "payment_amount", "payment_due_date"}
+PLACEHOLDER = re.compile(r"\{\{\s*([^}]*?)\s*\}\}")
+
+
+def test_starter_templates_use_only_the_crm_message_merge_fields(items):
+    for it in (i for i in items if i["kind"] == "starter_template"):
+        names = set(PLACEHOLDER.findall(it["title"] + "\n" + it["body_markdown"]))
+        assert names and names <= CRM_MESSAGE_FIELDS, f"{it['group_key']}:{it['locale']}: {names - CRM_MESSAGE_FIELDS}"
+
+
+def test_booking_confirmed_starter_in_both_languages(items):
+    found = {i["locale"]: i for i in items if i["group_key"] == "template-booking-confirmed"}
+    assert set(found) == {"en", "vi"}
+    assert all(i["kind"] == "starter_template" and not i["keep_draft"] for i in found.values())
+    assert found["en"]["title"] == "Booking confirmed"
+    for it in found.values():
+        assert {"traveller_first_name", "trip_name", "departure_date", "agency_name"} <= set(
+            PLACEHOLDER.findall(it["body_markdown"]))
 
 
 def test_edit_demo_appends_one_review_line():
