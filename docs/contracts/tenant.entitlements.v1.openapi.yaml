@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.7"
+  version: "1.8"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -93,6 +93,13 @@ info:
     catalog.v_tenant_erasure_v1), which holds the phases, the per-app not_before and the approved plan hashes. A
     consumer that does not know the type skips the event (contracts rule 2: a minor widens the enum); one that knows it
     may poll the erasure feed at once instead of waiting for its next run. No HTTP path changes.
+    1.8 (AA-1090 R8, additive; no HTTP shape change): catalog.v_tenant_tripplanner_v1 (CIS 428) appends
+    custom_domains (text[]): the tenant's ACTIVE custom hosts of its TripPlanner site (for example trip.<agency
+    domain>), sorted, '{}' when none. A host is active once its ACM certificate is issued and the CIS job
+    tp_custom_domain attached it to the TripPlanner CloudFront distribution; pending, validating, failed and removing
+    hosts never appear. TripPlanner serves a request whose Host is in custom_domains as that tenant (same branding,
+    tours, lead route and WAF rules as /{slug}), only for a served row; any other host stays a 404. A reader that
+    cannot see the column (42703) treats every custom host as unknown. No personal data.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]

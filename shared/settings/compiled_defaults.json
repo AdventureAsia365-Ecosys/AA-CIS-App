@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 427_aa1090_tenant_tripplanner_domain.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -8193,6 +8193,150 @@
      "lower": "Cả những câu chỉ na ná nhau cũng bị xoá; ít bài bị giữ hơn, nhưng có thể mất một câu người đọc cần.",
      "when": "Đổi khi bước kiểm tra lặp vẫn giữ lại nhiều bài vì một câu nói hai lần (hạ xuống một chút), hoặc khi người duyệt thấy bài bị mất câu (nâng lên). Mỗi lần đổi phải kèm lần replay làm bằng chứng.",
      "example": "Với mặc định 0,9: câu sau bị xoá khi 90 % số từ khớp với câu trước theo đúng thứ tự."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_edge_max",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: own domains on the shared edge",
+   "description": "The most custom hosts of all agencies together on the TripPlanner CloudFront distribution. Every attached host is one name on the one certificate the distribution serves, and ACM allows 10 names per certificate unless AWS raises the account quota; the base names (the wildcard of our zone) take the rest. Tenant 360 refuses a new host beyond this number. Read by the Tenant 360 custom-domain editor and the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "domains",
+   "min_value": 0,
+   "max_value": 98,
+   "allowed_values": null,
+   "default_value": 8,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many agency web addresses, all agencies together, the trip planner can serve. All of them share one security certificate, and Amazon allows a limited number of names on one certificate (10 unless Amazon raises it for our account); our own address takes the remaining places.",
+     "raise": "More agencies can use their own address, but only after Amazon has raised the names-per-certificate limit for our account; above that limit a new address fails when it is attached.",
+     "lower": "No new agency address is accepted once the number in use reaches it; addresses already served keep working.",
+     "when": "Raise it only after Amazon confirmed a higher names-per-certificate limit, to that limit minus two; lower it to stop new addresses while the edge is reworked.",
+     "example": "With the default of 8, the ninth agency address is refused until one of the eight is removed."
+    },
+    "vi": {
+     "what": "Số địa chỉ web của đại lý, tính chung mọi đại lý, mà trang lập lịch trình phục vụ được. Tất cả dùng chung một chứng chỉ bảo mật, và Amazon chỉ cho một số tên có hạn trên một chứng chỉ (10, trừ khi Amazon nâng cho tài khoản của chúng ta); địa chỉ của chính chúng ta chiếm các chỗ còn lại.",
+     "raise": "Nhiều đại lý dùng được địa chỉ riêng hơn, nhưng chỉ sau khi Amazon đã nâng giới hạn số tên trên một chứng chỉ cho tài khoản của chúng ta; vượt giới hạn đó thì địa chỉ mới bị lỗi lúc gắn.",
+     "lower": "Không nhận thêm địa chỉ đại lý nào khi số đang dùng chạm mức này; các địa chỉ đang chạy vẫn hoạt động.",
+     "when": "Chỉ tăng sau khi Amazon xác nhận giới hạn số tên cao hơn, tới giới hạn đó trừ hai; giảm để dừng nhận địa chỉ mới trong lúc sửa lại phần biên.",
+     "example": "Với mặc định 8, địa chỉ đại lý thứ chín bị từ chối cho tới khi gỡ một trong tám địa chỉ."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_max_per_tenant",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: own domains per agency",
+   "description": "The most custom hosts (for example trip.<agency domain>) one agency may have on its TripPlanner site at a time, counting every host that is not being removed. Tenant 360 refuses to add one more. A per-agency value overrides the platform value (the higher tier of ADR 0019 b4). Read by the Tenant 360 custom-domain editor from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "domains",
+   "min_value": 0,
+   "max_value": 10,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform+tenant",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many of its own web addresses (for example trip.agency-name.com) one agency can use for its trip planner at the same time, instead of the address on our site. An agency can be given its own number.",
+     "raise": "An agency can run its planner on several addresses (for example one per brand or language), but each address uses one of the limited places on the shared certificate.",
+     "lower": "Fewer addresses per agency keep places free for other agencies; an agency at the limit must remove an address before adding another.",
+     "when": "Raise it for one agency when its contract includes more addresses; lower the platform value when the shared limit below is nearly used up.",
+     "example": "With the default of 1, an agency that already serves trip.agency-name.com cannot add a second address until the first is removed."
+    },
+    "vi": {
+     "what": "Số địa chỉ web riêng (ví dụ trip.ten-dai-ly.com) một đại lý được dùng cùng lúc cho trang lập lịch trình của mình, thay cho địa chỉ trên trang của chúng ta. Có thể đặt con số riêng cho từng đại lý.",
+     "raise": "Một đại lý chạy trang lập lịch trình trên nhiều địa chỉ (ví dụ mỗi thương hiệu hay mỗi ngôn ngữ một địa chỉ), nhưng mỗi địa chỉ chiếm một chỗ trong số chỗ có hạn trên chứng chỉ dùng chung.",
+     "lower": "Mỗi đại lý ít địa chỉ hơn thì còn chỗ cho đại lý khác; đại lý đã chạm giới hạn phải gỡ một địa chỉ rồi mới thêm được địa chỉ khác.",
+     "when": "Tăng cho một đại lý khi hợp đồng của họ có thêm địa chỉ; giảm giá trị chung khi giới hạn dùng chung bên dưới sắp hết.",
+     "example": "Với mặc định 1, đại lý đang dùng trip.ten-dai-ly.com chưa thêm được địa chỉ thứ hai cho tới khi gỡ địa chỉ đầu."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_poll_seconds",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: seconds between custom-domain checks",
+   "description": "How long the tripplanner_custom_domain job waits before it looks again at a certificate that is still pending validation or a distribution change that is still deploying (the job reschedules itself; the job runner caps one wait at 600 seconds). Each look is one free ACM or CloudFront read. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "duration_s",
+   "unit": "seconds",
+   "min_value": 30,
+   "max_value": 600,
+   "allowed_values": null,
+   "default_value": 120,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How often the system checks whether an agency's DNS record has been seen and whether the address has been put live, while a new address is being set up.",
+     "raise": "Fewer checks run, but an address goes live a little later after the agency added its record.",
+     "lower": "An address goes live sooner after the record appears, with more (free) checks against Amazon.",
+     "when": "Lower it during a guided setup with an agency on the phone; raise it if the job list shows many waiting checks.",
+     "example": "With the default of 120, an address whose record appears at 10:00 is noticed by 10:02 at the latest."
+    },
+    "vi": {
+     "what": "Khoảng thời gian giữa hai lần hệ thống kiểm tra xem bản ghi DNS của đại lý đã có chưa và địa chỉ đã được đưa vào chạy chưa, trong lúc cài đặt một địa chỉ mới.",
+     "raise": "Ít lần kiểm tra hơn, nhưng địa chỉ chạy muộn hơn một chút sau khi đại lý đã thêm bản ghi.",
+     "lower": "Địa chỉ chạy sớm hơn sau khi bản ghi xuất hiện, đổi lại nhiều lần kiểm tra (miễn phí) với Amazon hơn.",
+     "when": "Giảm trong lúc hướng dẫn đại lý cài đặt qua điện thoại; tăng nếu danh sách job có nhiều lượt kiểm tra đang chờ.",
+     "example": "Với mặc định 120, địa chỉ có bản ghi xuất hiện lúc 10:00 sẽ được nhận ra chậm nhất lúc 10:02."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_validation_timeout_hours",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: hours to wait for the agency's DNS record",
+   "description": "How long the tripplanner_custom_domain job waits for an agency's ACM validation record after it requested the certificate. Past it the host is failed with validation_timeout and its certificate deleted; staff retry it once the agency created the record. ACM itself stops at 72 hours. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 72,
+   "allowed_values": null,
+   "default_value": 72,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How long the system waits for an agency to add the DNS record that proves it owns the address it asked for. After that the address is marked failed and staff can try again.",
+     "raise": "Agencies that need a few days to change their DNS do not have to start over, but a forgotten request stays open longer.",
+     "lower": "Forgotten requests are closed sooner, but an agency that is slow to add the record has to be retried.",
+     "when": "Lower it when many requests are left unfinished; keep it at the maximum while agencies set up their DNS through a third party.",
+     "example": "With the default of 72, an address requested on Monday 09:00 fails on Thursday 09:00 if the record is still missing."
+    },
+    "vi": {
+     "what": "Thời gian hệ thống chờ đại lý thêm bản ghi DNS chứng minh họ sở hữu địa chỉ đã xin. Quá thời gian đó địa chỉ bị đánh dấu thất bại và nhân viên có thể thử lại.",
+     "raise": "Đại lý cần vài ngày để sửa DNS không phải làm lại từ đầu, nhưng một yêu cầu bị quên sẽ treo lâu hơn.",
+     "lower": "Yêu cầu bị quên được đóng sớm hơn, nhưng đại lý thêm bản ghi chậm sẽ phải được thử lại.",
+     "when": "Giảm khi nhiều yêu cầu bị bỏ dở; giữ ở mức tối đa khi đại lý sửa DNS qua một bên thứ ba.",
+     "example": "Với mặc định 72, địa chỉ xin lúc 09:00 thứ Hai sẽ thất bại lúc 09:00 thứ Năm nếu vẫn chưa có bản ghi."
     }
    }
   },
