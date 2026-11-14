@@ -16,6 +16,7 @@
 AA-1096 L4: the CRM tab (``app=crm``, a ``crm.*`` key, a decision with ``app: crm``) is relayed to the partner CRM's
 own registry (crm.ops.v1 1.13 ``/settings``; api/services/crm_settings_relay.py) with the staff member's own Cognito
 token: the CRM checks the group itself (crm-platform-admin writes) and CIS writes its audit row of each relayed change.
+The CRM list adds ``can_write`` (the CRM's /console answer) so the page offers Change / Approve only to a CRM writer.
 
 Who may call (api/core/staff_authz.py POLICY): reads ops.read, proposals settings.write, decisions settings.approve —
 all three held by the admin role only (tech lead S279 Q1). The viewer is refused on every write. Every write also
@@ -60,8 +61,13 @@ def _verified(request: Request, capability: str) -> tuple[str, str]:
 def _pool(request: Request) -> Any:
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
-        raise HTTPException(status_code=503, detail="DB not ready")
+        raise HTTPException(status_code=503, detail={"code": "db_not_ready", "message": "The database is not ready"})
     return pool
+
+
+def _pool_or_none(request: Request) -> Any:
+    """The pool when the API has one (a CRM read uses it only for the staff names; it works without)."""
+    return getattr(request.app.state, "pool", None)
 
 
 def _http(e: reg.SettingsError) -> HTTPException:
@@ -95,7 +101,7 @@ async def list_registry(request: Request, app: str = Query("cis", max_length=20)
                         area: Optional[str] = Query(None, max_length=40)):
     try:
         if app == "crm":  # AA-1096 L4: the CRM keeps its own registry (crm-064); relayed with the staff token
-            return await crm.list_settings(relay_authorization(request), area=area)
+            return await crm.list_settings(relay_authorization(request), area=area, pool=_pool_or_none(request))
         return await reg.list_settings(_pool(request), app=app, area=area)
     except reg.SettingsError as e:
         raise _http(e) from None
@@ -107,7 +113,7 @@ async def key_history(request: Request, key: str,
                           None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")):
     try:
         if crm.is_crm_key(key):
-            return await crm.history(relay_authorization(request), key, tenant_id)
+            return await crm.history(relay_authorization(request), key, tenant_id, pool=_pool_or_none(request))
         return await reg.history(_pool(request), key, tenant_id)
     except reg.SettingsError as e:
         raise _http(e) from None

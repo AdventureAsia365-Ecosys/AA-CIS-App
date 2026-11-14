@@ -2,19 +2,26 @@
 api/routers/admin_settings_registry.py; reader shared/settings).
 
 - ``list_settings``: every definition of an app (CIS: the compiled defaults, equal to the migration seed) with the value
-  in force and where it comes from (env / tenant / platform / default), its bounds, the last decided change, the open
-  proposal, the "overridden by env" and "not enforced yet" flags, and (a tenant-scoped key) ``tenant_overrides``: the
-  approved tenant value in force of each tenant (AA-1096, S280).
+  in force and where it comes from (env / tenant / platform / default), its bounds, the last approved change, the open
+  proposals (every scope, each with its ``tenant_id``), the "overridden by env" and "not enforced yet" flags, and (a
+  tenant-scoped key) ``tenant_overrides``: the approved tenant value in force of each tenant (AA-1096, S280). S280 UX
+  fix round: ``approved_version`` (the approved platform version in force, 0 = none: the change form's base version,
+  apart from the resolved ``version``, which is None under an env override or a refused stored value) and
+  ``scheduled`` (approved rows of every scope whose ``effective_from`` is still ahead).
 - ``history``: every value row of a key, newest first, each with the approved value it replaced (the page's diff).
 - ``propose``: a new value (validated against the definition first: 422 with the reason), optimistic lock on the
   approved version the person saw (409 when it moved), one open proposal per key and scope (409). ``apply=True`` also
-  approves it in the same transaction when the caller may.
+  approves it in the same transaction when the caller may. ``effective_from`` may not lie in the past (422
+  ``effective_in_past``; a time within ``PAST_GRACE_S`` counts as now: the form's minute picker); a tenant value is
+  refused while the key's env override is in force (409 ``env_override_active``: the env var wins over every tenant).
 - ``approve`` / ``reject``: decide an open proposal. maker_checker: the approver is not the proposer, unless the
   setting ``cis.settings.two_person_approval`` is off (dev phase, tech lead S279 Q2): then the administrator may approve
   their own change (``self_approved``), and a high-impact one queues an e-mail to the tech lead (ops recipients).
-  An approval whose ``effective_from`` has come supersedes the older approved rows of the same scope. An approval
-  re-checks the value against its definition and, for a quality key, the rules between keys against the approved rows
-  read in its transaction (409 ``cross_check``; S279 L2 review).
+  The newest decision wins (S280 UX fix round): an approval whose ``effective_from`` has come supersedes every other
+  approved row of its scope (also one that came into force after the proposal was made, and a scheduled one, which
+  would otherwise replace it later); a future-dated approval supersedes the scheduled rows dated at or after it. An
+  approval re-checks the value against its definition and, for a quality key, the rules between keys against the
+  approved rows read in its transaction (409 ``cross_check``; S279 L2 review).
 
 Every write leaves one acp_shared.audit_log row in its transaction (settings.value_proposed / _approved / _rejected,
 tenant_id = the row's tenant or NULL, details: before / after / reason / evidence). The reader of this process is
@@ -42,6 +49,7 @@ TWO_PERSON_KEY = "cis.settings.two_person_approval"
 APPS = ("cis", "tripplanner", "booking", "crm")
 NOT_MIGRATED = "The settings registry is not available yet: the database update (CIS 407) is not applied"
 REASON_MIN = 20  # technical-constant: mirrors the CHECK of CIS 407 (one break-glass minimum for the platform)
+PAST_GRACE_S = 300  # technical-constant: clock skew and the form's minute picker; an older time is refused
 
 
 class SettingsError(Exception):
@@ -85,7 +93,7 @@ _ROW_COLS = """v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS val
 _LATEST_SQL = f"""
     SELECT DISTINCT ON (v.key) {_ROW_COLS}
       FROM shared.setting_value v
-     WHERE v.key LIKE $1 AND v.tenant_id IS NULL AND v.status IN ('approved', 'rejected', 'superseded')
+     WHERE v.key LIKE $1 AND v.tenant_id IS NULL AND v.status IN ('approved', 'superseded')
      ORDER BY v.key, v.decided_at DESC
 """
 _OPEN_SQL = f"SELECT {_ROW_COLS} FROM shared.setting_value v WHERE v.key LIKE $1 AND v.status = 'proposed' " \
@@ -98,6 +106,20 @@ _TENANT_SQL = """
       FROM shared.setting_value v
      WHERE v.tenant_id IS NOT NULL AND v.status = 'approved' AND v.effective_from <= now()
      ORDER BY v.key, v.tenant_id, v.effective_from DESC, v.version DESC
+"""
+# S280 UX fix round: the approved platform version in force of every key (the change form's base version, also under an
+# env override or a refused stored value, where the resolved version is None) and the scheduled approvals (every scope).
+_IN_FORCE_SQL = """
+    SELECT DISTINCT ON (v.key) v.key, v.version
+      FROM shared.setting_value v
+     WHERE v.key LIKE $1 AND v.tenant_id IS NULL AND v.status = 'approved' AND v.effective_from <= now()
+     ORDER BY v.key, v.effective_from DESC, v.version DESC
+"""
+_SCHEDULED_SQL = """
+    SELECT v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text, v.version, v.effective_from
+      FROM shared.setting_value v
+     WHERE v.key LIKE $1 AND v.status = 'approved' AND v.effective_from > now()
+     ORDER BY v.key, v.effective_from, v.version
 """
 _HISTORY_SQL = f"""
     SELECT {_ROW_COLS} FROM shared.setting_value v
@@ -163,6 +185,25 @@ def _app_definitions(app: Optional[str], area: Optional[str]) -> list[Definition
     return out
 
 
+def _by_key(rows: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["key"], []).append(r)
+    return out
+
+
+async def _list_rows(conn: Any, defs: list[Definition]) -> dict[str, dict]:
+    """The stored rows the list shows, by kind and key."""
+    latest = {r["key"]: _row_out(r) for r in await conn.fetch(_LATEST_SQL, "%")}
+    open_rows = _by_key([_row_out(r) for r in await conn.fetch(_OPEN_SQL, "%")])
+    await _actor_names(conn, [*latest.values(), *(r for rs in open_rows.values() for r in rs)])
+    scheduled = _by_key([{"key": r["key"], "tenant_id": r["tenant_id"], "value": _json(r["value_text"]),
+                          "version": r["version"], "effective_from": _iso(r["effective_from"])}
+                         for r in await conn.fetch(_SCHEDULED_SQL, "%")])
+    return {"latest": latest, "open": open_rows, "tenants": await _tenant_values(conn, defs), "scheduled": scheduled,
+            "in_force": {r["key"]: r["version"] for r in await conn.fetch(_IN_FORCE_SQL, "%")}}
+
+
 async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional[str] = None) -> dict:
     if app is not None and app not in APPS:
         raise SettingsError(422, f"app must be one of {list(APPS)}", "bad_app")
@@ -170,12 +211,7 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
     try:
         await settings.READER.refresh(force=True, pool=pool)
         async with pool.acquire() as conn:
-            latest = {r["key"]: _row_out(r) for r in await conn.fetch(_LATEST_SQL, "%")}
-            open_rows: dict[str, list] = {}
-            for r in await conn.fetch(_OPEN_SQL, "%"):
-                open_rows.setdefault(r["key"], []).append(_row_out(r))
-            tenant_rows = await _tenant_values(conn, defs)
-            await _actor_names(conn, [*latest.values(), *(r for rs in open_rows.values() for r in rs)])
+            stored = await _list_rows(conn, defs)
     except asyncpg.exceptions.UndefinedTableError:
         raise SettingsError(503, NOT_MIGRATED, "not_migrated") from None
     rows = []
@@ -185,9 +221,11 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
         rows.append({
             **_definition_out(d),
             "value": res.value, "source": res.source, "version": res.version,
+            "approved_version": stored["in_force"].get(d.key, 0),
             "overridden_by_env": res.source == "env", "env_ignored": env_ignored if env_set else None,
-            "refused": res.refused, "last_change": latest.get(d.key), "proposals": open_rows.get(d.key, []),
-            "tenant_overrides": tenant_rows.get(d.key, []) if d.tenant_scoped else [],
+            "refused": res.refused, "last_change": stored["latest"].get(d.key),
+            "proposals": stored["open"].get(d.key, []), "scheduled": stored["scheduled"].get(d.key, []),
+            "tenant_overrides": stored["tenants"].get(d.key, []) if d.tenant_scoped else [],
         })
     areas = sorted({d.area for d in defs})
     return {"app": app, "areas": areas, "settings": rows, "two_person_approval": bool(settings.get(TWO_PERSON_KEY)),
@@ -272,6 +310,37 @@ def _resource_id(key: str, tenant_id: Optional[str]) -> str:
     return key if tenant_id is None else f"{key}@{tenant_id}"
 
 
+def effective_start(effective_from: Optional[datetime], *, now: Optional[datetime] = None) -> Optional[datetime]:
+    """The ``effective_from`` a change is stored with (S280 UX fix round): None = from the moment it is approved; a time
+    within ``PAST_GRACE_S`` before now counts as now (None); an older time is refused (422 ``effective_in_past``), since
+    the reader would rank it under the value in force and the approval would never take effect. A time without a zone
+    is UTC. The CRM relay applies the same rule before it relays a change (crm_settings_relay.propose)."""
+    if effective_from is None:
+        return None
+    if effective_from.tzinfo is None:
+        effective_from = effective_from.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    if effective_from > now:
+        return effective_from
+    if (now - effective_from).total_seconds() <= PAST_GRACE_S:
+        return None
+    raise SettingsError(422, "Effective from is in the past: leave it empty to apply the change when it is approved, "
+                             "or pick a later time", "effective_in_past")
+
+
+def _check_tenant_scope(d: Definition, tenant_id: Optional[str]) -> None:
+    """A tenant value needs a tenant-scoped key, and has no effect while the key's env override is in force (the reader
+    puts env before tenant): refuse it then (409 ``env_override_active``, the CRM rule)."""
+    if tenant_id is None:
+        return
+    if not d.tenant_scoped:
+        raise SettingsError(422, f"{d.label} has no per-tenant value", "not_tenant_scoped")
+    res = settings.resolve(d.key)
+    if res.source == "env":
+        raise SettingsError(409, f"{d.label}: the env var {res.env_name} overrides every tenant's value in this "
+                                 "environment; remove it from the environment first", "env_override_active")
+
+
 async def propose(pool: Any, key: str, *, value: Any, reason: str, actor: str, base_version: Optional[int],
                   evidence_ref: Optional[str] = None, effective_from: Optional[datetime] = None,
                   tenant_id: Optional[str] = None, apply: bool = False, can_approve: bool = False) -> dict:
@@ -283,8 +352,8 @@ async def propose(pool: Any, key: str, *, value: Any, reason: str, actor: str, b
     evidence_ref = (evidence_ref or "").strip() or None
     if d.evidence_required and not evidence_ref:
         raise SettingsError(422, f"{d.label} needs an evidence link (an eval or replay run)", "evidence_required")
-    if tenant_id is not None and not d.tenant_scoped:
-        raise SettingsError(422, f"{d.label} has no per-tenant value", "not_tenant_scoped")
+    _check_tenant_scope(d, tenant_id)
+    effective_from = effective_start(effective_from)
     if apply and not can_approve:
         raise SettingsError(403, "You may propose this change, not approve it", "approve_not_allowed")
     try:
@@ -402,6 +471,7 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
         raise SettingsError(409, "This proposal was decided meanwhile", "already_decided")
     out = _row_out(row)
     before = None
+    superseded: list = []
     if approve:
         prior = await conn.fetchrow(
             """SELECT value::text AS value_text FROM shared.setting_value
@@ -409,12 +479,7 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
                   AND effective_from <= now() ORDER BY effective_from DESC, version DESC LIMIT 1""",
             out["key"], out["tenant_id"], out["id"])
         before = _json(prior["value_text"]) if prior else d.default_value
-        # the new value supersedes the older approved rows once it is in force (a future-dated one waits)
-        await conn.execute(
-            """UPDATE shared.setting_value SET status = 'superseded'
-                WHERE key = $1 AND tenant_id IS NOT DISTINCT FROM $2::uuid AND status = 'approved' AND id <> $3::uuid
-                  AND $4::timestamptz <= now() AND effective_from <= $4::timestamptz""",
-            out["key"], out["tenant_id"], out["id"], row["effective_from"])
+        superseded = await _supersede(conn, out, row["effective_from"])
         if self_approved and d.impact == "high":
             from shared import ops_alerts
 
@@ -424,8 +489,35 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
     logger.info("setting_value_decided", key=out["key"], status=status, version=out["version"],
                 self_approved=self_approved)
     action = PlatformAuditAction.SETTING_APPROVED if approve else PlatformAuditAction.SETTING_REJECTED
-    return out, (action, {"value_id": out["id"], "version": out["version"], "before": before, "after": out["value"],
-                          "self_approved": self_approved, "note": note, "proposed_by": out["proposed_by"]})
+    details = {"value_id": out["id"], "version": out["version"], "before": before, "after": out["value"],
+               "self_approved": self_approved, "note": note, "proposed_by": out["proposed_by"],
+               **_superseded_details(superseded)}
+    return out, (action, details)
+
+
+def _superseded_details(superseded: list) -> dict:
+    """The audit details of the rows an approval superseded (none: no field)."""
+    if not superseded:
+        return {}
+    return {"superseded_versions": [r["version"] for r in superseded],
+            "cancelled_scheduled_versions": [r["version"] for r in superseded if r["scheduled"]]}
+
+
+# S280 UX fix round: the newest decision wins. An approval in force now (its effective_from has come) supersedes every
+# other approved row of its scope: the rows in force (also one that came into force after the proposal was made, which
+# the reader would otherwise rank above it) and the scheduled ones (which would replace it on their date). A
+# future-dated approval supersedes the scheduled rows dated at or after it; the earlier ones stay and give way on its
+# date (the reader picks the latest effective_from in force).
+_SUPERSEDE_SQL = """
+    UPDATE shared.setting_value SET status = 'superseded'
+     WHERE key = $1 AND tenant_id IS NOT DISTINCT FROM $2::uuid AND status = 'approved' AND id <> $3::uuid
+       AND ($4::timestamptz <= now() OR effective_from >= $4::timestamptz)
+    RETURNING version, effective_from > now() AS scheduled
+"""
+
+
+async def _supersede(conn: Any, out: dict, effective_from: datetime) -> list:
+    return list(await conn.fetch(_SUPERSEDE_SQL, out["key"], out["tenant_id"], out["id"], effective_from))
 
 
 # ── tighten-only (tech lead S279 Q1) ─────────────────────────────────────────────────────────────────────────────
@@ -483,5 +575,6 @@ def refuse_loosening(role: Optional[str], before: Optional[dict], after: dict, *
         raise PermissionError(f"{TIGHTEN_ONLY}: {', '.join(worse)}")
 
 
-__all__ = ["APPS", "NOT_MIGRATED", "RESOURCE", "SettingsError", "TIGHTEN_ONLY", "TWO_PERSON_KEY", "decide",
-           "history", "list_settings", "loosened", "propose", "refuse_loosening", "tighten_only", "two_person_on"]
+__all__ = ["APPS", "NOT_MIGRATED", "PAST_GRACE_S", "RESOURCE", "SettingsError", "TIGHTEN_ONLY", "TWO_PERSON_KEY",
+           "decide", "effective_start", "history", "list_settings", "loosened", "propose", "refuse_loosening",
+           "tighten_only", "two_person_on"]

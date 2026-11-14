@@ -177,3 +177,77 @@ def test_the_console_reaches_only_the_settings_routes():
     assert not crm_console.is_allowed("POST", "/settings/cis.publish.daily_limit_default/changes")
     assert not crm_console.is_allowed("DELETE", "/settings")
     assert not crm_console.is_allowed("POST", "/settings/changes/not-a-uuid/approve")
+
+
+# ── S280 UX fix round ────────────────────────────────────────────────────────────────────────────────────────────
+class _NamesPool:
+    """pool.acquire() whose connection answers the staff-name read (cognito_sub -> name)."""
+
+    def __init__(self, names: dict):
+        self.names, self.asked = names, []
+
+    def acquire(self):
+        pool = self
+
+        class _Conn:
+            async def fetch(self, _sql, subs):
+                pool.asked.append(list(subs))
+                return [{"cognito_sub": s, "name": pool.names[s]} for s in subs if s in pool.names]
+
+        class _Ctx:
+            async def __aenter__(self):
+                return _Conn()
+
+            async def __aexit__(self, *a):
+                return False
+        return _Ctx()
+
+
+def _request_with_pool(pool):
+    req = _request()
+    req.app.state.pool = pool
+    return req
+
+
+@pytest.mark.asyncio
+async def test_the_crm_list_names_the_staff_and_says_who_may_write(crm):
+    setting = {"key": "crm.rate.ai_per_minute", "app": "crm", "area": "rate_limit", "last_change": _row(),
+               "pending": [_row(status="proposed", proposed_by="platform:zz-other", decided_by=None)]}
+    crm["answers"][("GET", "/settings")] = (200, {"app": "crm", "areas": ["rate_limit"], "settings": [setting],
+                                                  "two_person_approval": False, "reader_error": None})
+    crm["answers"][("GET", "/console")] = (200, {"can_write": False})
+    pool = _NamesPool({"zz-staff": "Zz Staff Member"})
+    out = await router.list_registry(_request_with_pool(pool), app="crm", area=None)
+    row = out["settings"][0]
+    last = row["last_change"]
+    assert (last["proposed_by_name"], last["decided_by_name"]) == ("Zz Staff Member", "Zz Staff Member")
+    assert row["proposals"][0]["proposed_by_name"] is None and row["proposals"][0]["decided_by_name"] is None
+    assert pool.asked == [["zz-other", "zz-staff"]] and out["can_write"] is False
+    crm["answers"][("GET", "/console")] = (503, {"detail": "crm_unavailable"})
+    assert (await router.list_registry(_request_with_pool(pool), app="crm", area=None))["can_write"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_crm_history_names_the_staff_and_a_broken_name_read_never_fails_it(crm):
+    crm["answers"][("GET", "/settings/crm.rate.ai_per_minute/history")] = (
+        200, {"key": "crm.rate.ai_per_minute", "tenant_id": None, "definition": {}, "history": [_row()]})
+    names = _NamesPool({"zz-staff": "Zz Staff"})
+    out = await router.key_history(_request_with_pool(names), "crm.rate.ai_per_minute", tenant_id=None)
+    assert out["history"][0]["decided_by_name"] == "Zz Staff"
+    out = await router.key_history(_request(), "crm.rate.ai_per_minute", tenant_id=None)   # pool = object(): no names
+    assert out["history"][0]["decided_by_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_crm_change_dated_in_the_past_is_refused_before_the_relay(crm):
+    from datetime import datetime, timedelta, timezone
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    with pytest.raises(HTTPException) as e:
+        await router.propose(_request(), "crm.rate.ai_per_minute",
+                             router.ProposalBody(value=7, reason=REASON, base_version=1, effective_from=past))
+    assert e.value.status_code == 422 and e.value.detail["code"] == "effective_in_past" and crm["calls"] == []
+    crm["answers"][("POST", "/settings/crm.rate.ai_per_minute/changes")] = (201, _row(status="proposed"))
+    just_now = datetime.now(timezone.utc) - timedelta(seconds=30)        # the form's minute picker: counts as now
+    await router.propose(_request(), "crm.rate.ai_per_minute",
+                         router.ProposalBody(value=7, reason=REASON, base_version=1, effective_from=just_now))
+    assert crm["calls"][-1][3]["effective_from"] is None

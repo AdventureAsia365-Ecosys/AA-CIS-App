@@ -1902,6 +1902,16 @@ relayed to the CRM tab), the TripPlanner keys and Booking's policy parameters (`
 shrink-only baseline `tests/unit/snapshots/aa1096_settings_guide_baseline.json` is empty; adding a key to it needs the
 tech lead's OK in review.
 
+**Change rules (AA-1096 S280 UX fix round).** A change may not be dated in the past (`settings_registry.effective_start`:
+422 `effective_in_past`, five minutes of grace count as now; the CRM relay applies it before relaying), and the newest
+decision wins: an approval in force supersedes every other approved row of its scope, scheduled ones included (the
+audit row lists `superseded_versions` / `cancelled_scheduled_versions`); a future-dated approval supersedes the
+schedules dated at or after it. A tenant value is refused while the key's env override is in force (409
+`env_override_active`, the CRM rule). The list carries `approved_version` (the base version of a platform change) and
+`scheduled`; "Last change" is an approved change only. The CRM tab's list adds `can_write` (the CRM's `/console`
+answer: only `crm-platform-admin` writes) and names the CRM staff actor (`platform:<sub>`) from `shared.admin_users`
+by Cognito sub.
+
 ## Deploy & CI
 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
