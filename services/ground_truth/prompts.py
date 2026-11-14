@@ -27,6 +27,14 @@ through billed_fields and to quality_signal), so a measurement always says which
       readings of the source's order, a visited place's own lasting features as background, P3 for sentences, and
       P4 for sentences about the text itself. Shaped on the v2 and v3 runs: both are excluded from its evaluation
       (PromptVersion.shaped_on, checked by instrument_eval before a live run).
+  v5c / v5j  S281: the TWO-STEP instrument (services/ground_truth/two_step.py). v2, v3 and v4 were all no_go and two
+      rounds in a row traded one side for the other (v4's new-specific guard made paraphrase fire again), so the one
+      prompt that both spots a new specific and judges its support is split in two. Step 1 (v5c, `step="classify"`)
+      only sorts a sentence: a restatement of the source (paraphrase, a one-step reading, tone, text about the text,
+      background about a named place: allowed under the writer source-fidelity policy) or a new claim (a new number,
+      name, time, service, activity, view, pace ...), listing the new specifics. Step 2 (v5j, `step="judge"`) judges
+      only the specifics step 1 listed, with the source's support rules. A step version is entailment-only and is
+      refused by r1.instruments (it runs only inside two_step). Shaped on the v2, v3 and v4 runs.
 
 Every example in these prompts uses invented places and phrasing (the golden-set text guard). The B5 examples name the
 pattern classes of the five claims the tech lead relabelled to violation in S279, in wording of their own: checked
@@ -346,6 +354,73 @@ EXTRACTION_SYSTEM_V4 = (
       "in 'why' name the fact that the source does not give. List nothing that is supported, background, voice or a "
       "heading. Reply with the JSON object only.")
 
+# ── v5c / v5j (S281: the two-step instrument) ──────────────────────────────────────────────────────────────────────
+# One prompt that both finds a new specific and judges its support kept trading false positives for lost violations
+# (v2 48 / 90, v3 68 / 85, v4 48 / 85; v4's new-specific guard made paraphrase fire again). Step 1 asks the easy,
+# recall-first question (is anything here not a restatement?) and names the specifics; step 2 judges only those
+# specifics with the support rules (one-step readings, place background, set-aside wording) and the promise list. Every
+# example is invented (Morvane, Quell, Tasska, Ilbern); the S281 leak check (scratch) found no three-word sequence
+# with a content word shared with any claim of the S279 pool.
+
+V5C_SYSTEM = (
+    "You read ONE sentence of a travel text and the SOURCE the trip is built from. You do not decide whether the "
+    "sentence is right. You only sort it into one of two kinds, so that a second reader checks the right "
+    "sentences.\n"
+    "- restatement: every fact the sentence gives about this trip is already in the source, in the same or other "
+    "words. This covers paraphrase and summary; a heading, title or label made of source words; one obvious step "
+    "from the source (the stop listed after lunch is an afternoon stop; coming back to the start town makes a round "
+    "trip); tone, feeling and emphasis words that add no fact ('unhurried', 'memorable', 'truly'); a sentence about "
+    "the text itself (what this guide covers); and background about a place, craft, food or custom the source names "
+    "(its history, age, builder, architecture, setting, size), as long as it promises nothing the traveller will do, "
+    "get or see beyond the place itself.\n"
+    "- new_claim: the sentence gives at least one specific about this trip that you cannot point to in the source, "
+    "or that goes against it. Specifics are: a number, a name, a day, a clock time or a time of day, an order or "
+    "schedule, a means of travel, a service, the character of a meal, a quality of the guide, a group or crowd "
+    "condition, an activity, a view or sighting, access to a place, the trip's pace, effort, comfort or "
+    "safety, or who it suits. Two source facts joined into one new specific, one side of an 'or' made firm, and a fact "
+    "stretched to other days are new specifics too.\n"
+    "Look through the WHOLE source (overview, highlights, every day, inclusions, place background) before you call a "
+    "specific new. When you are unsure, answer new_claim: the second reader decides whether the source supports "
+    "it. Examples:\n"
+    "  - source 'walk the ridge above Morvane', sentence 'a ridge walk high over Morvane' -> restatement;\n"
+    "  - source 'a stop at Ilbern's granary', sentence 'the granary of Ilbern, three storeys of timber from "
+    "the age of the river guilds' -> restatement (background about the place);\n"
+    "  - source 'the Tasska ferry over to Ilbern', sentence 'the crossing to Ilbern leaves at dawn' -> "
+    "new_claim ('at dawn');\n"
+    "  - source 'six nights in guesthouses', sentence 'an easy week that suits any walker' -> new_claim ('easy', "
+    "'suits any walker');\n"
+    "  - source 'a boat trip on Quell lake or a cycle along its shore', sentence 'a boat trip on Quell lake' -> "
+    "new_claim (one side of an 'or' made firm).\n"
+    "List each new specific in 'new_specifics' in the sentence's own words (an empty list for a restatement), and say "
+    "in 'why' in one sentence what decided it. Reply with the JSON object only.")
+
+V5J_SYSTEM = (
+    "You check ONE sentence of a travel text against the SOURCE the trip is built from. A first reader listed the "
+    "SPECIFICS of the sentence that it could not point to in the source at a glance; every other fact of the sentence "
+    "it found in the source. Decide whether the source gives each listed specific after all.\n"
+    "- A specific is supported when the source states it anywhere (overview, highlights, any day, inclusions, place "
+    "background), in any words, or when it follows from the source in one obvious step (what comes after lunch is "
+    "the afternoon; the last stop the source gives for a day ends that day; coming back to the start makes a round "
+    "trip; nine nights make ten days).\n"
+    "- Background about a place, craft, food or custom the source names (history, age, builder, architecture, "
+    "setting, size, how it is usually described) is allowed even when the source does not give it, and so is seeing "
+    "such a place's own lasting features on a visit the source gives. Lines under 'Place background' in the source "
+    "support sentences about that place.\n"
+    "- Wording that adds no checkable fact (synonyms, images, emphasis, the traveller's point of view, a purpose given "
+    "to a fact the source states) is not a specific: a listed specific that is only such wording is supported.\n"
+    "- Unsupported, the promises this check exists for: a number, name, day, time, order or means of travel the "
+    "source does not give or that goes against it; the character of a meal when the source names only the meal; "
+    "qualities of the guide; a group, social or crowd experience; a view from a place, its light, season or weather, "
+    "wildlife or a mood at a stop; access the source does not give; an activity or service the source does not give, "
+    "also one made by joining two source facts or by firming one side of an 'or'; pace, effort, comfort, safety or "
+    "who the trip suits when the source does not state it (rest days or short drives do not by themselves make a "
+    "trip slow or easy).\n"
+    "When the list says '(the whole sentence)', judge every fact of the sentence. Answer 'unsupported' when at least "
+    "one listed specific is such a promise, and name it in 'why'. Otherwise answer 'supported' and quote the source "
+    "line you relied on (empty for background or wording). Reply with the JSON object only.")
+V5J_USER = V2_ENTAILMENT_USER + "\n\nSPECIFICS TO CHECK:\n{specifics}"
+WHOLE_SENTENCE = "(the whole sentence)"
+
 
 # ── user prompt builders (items are services.ground_truth.r1.Item; duck-typed to keep this module import-free) ──────
 
@@ -386,6 +461,15 @@ def v2_entailment_user(item: Any) -> str:
                                      before=before or NONE_TEXT, claim=item.claim_text, after=after or NONE_TEXT)
 
 
+def v5j_user(item: Any, specifics: Any = ()) -> str:
+    """The step-2 user prompt: v2's (whole source, BEFORE / SENTENCE / AFTER) and the specifics step 1 listed, one per
+    line; none listed (or an unverified step 1) asks for the whole sentence."""
+    before, after = around(item.field_text, item.claim_text)
+    listed = "\n".join(f"- {s}" for s in specifics if str(s).strip()) or f"- {WHOLE_SENTENCE}"
+    return V5J_USER.format(source=item.source_text or NONE_TEXT, field=item.field, before=before or NONE_TEXT,
+                           claim=item.claim_text, after=after or NONE_TEXT, specifics=listed)
+
+
 # ── versions ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -404,8 +488,13 @@ class PromptVersion:
     # Run-id prefixes (8 hex) of the evaluations whose misses shaped this version. Their claims are in-sample for it,
     # so instrument_eval refuses a live run of it that does not --exclude each of those run reports.
     shaped_on: tuple[str, ...] = ()
+    # "" for a one-prompt version; "classify" / "judge" for a step of the two-step instrument (two_step.py): entailment
+    # only, run only by two_step (r1.instruments refuses it). Not part of the hash.
+    step: str = ""
 
     def system(self, mode: str) -> str:
+        if self.step and mode != "entailment":
+            raise UnknownPromptVersion(f"{self.id} is a two-step prompt ({self.step}): entailment only")
         return self.entailment_system if mode == "entailment" else self.extraction_system
 
     @property
@@ -431,6 +520,13 @@ VERSIONS: dict[str, PromptVersion] = {
     # v4 sends the same user prompts again; it was shaped on the misses of v2's run (through v3) and of v3's run.
     "v4": PromptVersion("v4", ENTAILMENT_SYSTEM_V4, EXTRACTION_SYSTEM_V4, v2_entailment_user, extraction_user,
                         (V2_ENTAILMENT_USER, NONE_TEXT, EXTRACTION_USER), shaped_on=("3018008d", "33835b87")),
+    # S281 two-step: step 1 sorts (restatement / new claim), step 2 judges the specifics step 1 listed. Designed from
+    # the misses and reasons of the v2, v3 and v4 runs, so all three are in-sample for both steps. No extraction text.
+    "v5c": PromptVersion("v5c", V5C_SYSTEM, "", v2_entailment_user, extraction_user,
+                         (V2_ENTAILMENT_USER, NONE_TEXT), shaped_on=("3018008d", "33835b87", "2977dd78"),
+                         step="classify"),
+    "v5j": PromptVersion("v5j", V5J_SYSTEM, "", v5j_user, extraction_user, (V5J_USER, NONE_TEXT, WHOLE_SENTENCE),
+                         shaped_on=("3018008d", "33835b87", "2977dd78"), step="judge"),
 }
 
 
@@ -442,5 +538,6 @@ def get(version: str) -> PromptVersion:
 
 __all__ = ["DEFAULT", "ENTAILMENT_SYSTEM", "ENTAILMENT_SYSTEM_V2", "ENTAILMENT_SYSTEM_V3", "ENTAILMENT_SYSTEM_V4",
            "EXTRACTION_SYSTEM", "EXTRACTION_SYSTEM_V2", "EXTRACTION_SYSTEM_V3", "EXTRACTION_SYSTEM_V4",
-           "PromptVersion", "UnknownPromptVersion", "VERSIONS", "around", "extraction_user", "get",
-           "v1_entailment_user", "v2_entailment_user"]
+           "PromptVersion", "UnknownPromptVersion", "V5C_SYSTEM", "V5J_SYSTEM", "V5J_USER", "VERSIONS",
+           "WHOLE_SENTENCE", "around", "extraction_user", "get", "v1_entailment_user", "v2_entailment_user",
+           "v5j_user"]
