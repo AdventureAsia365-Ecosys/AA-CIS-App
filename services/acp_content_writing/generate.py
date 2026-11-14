@@ -407,12 +407,13 @@ class ExtendRepairError(Exception):
 def extend_sections(
     *, sections: list[dict], facts: list[str], voice: str | None = None, channel: str = "blog",
     tenant_id: str | None = None, angle_gate_request_id: str | None = None, content_piece_id: str | None = None,
-    stage: str = "t9_write", attempt: int | None = 2, max_tokens: int = _MAX_TOKENS,
+    stage: str = "t9_write", attempt: int | None = 2, max_tokens: int = _MAX_TOKENS, step: str | None = None,
 ) -> tuple[list[str], float, str | None]:
     """AA-1077 — one call: a paragraph to add per section. `sections` items carry "heading", "text" and "words" (the
     words to add); `facts` are the seed's untold fact sentences (quality_gates.unused_source_facts). Returns
     (additions in section order, cost, model). Raises ExtendRepairError on a reply that is cut or does not parse into
-    one string per section. Logged on `stage` (the writer, as the sentence repair) with mode `length_extend`."""
+    one string per section. Logged on `stage` (the writer, as the sentence repair) with mode `length_extend`; `step`
+    (S280: "post_normalizer", the pass after the normalizer) is added to the quality signal when given."""
     numbered_facts = "\n".join(f"{i}. {f}" for i, f in enumerate(facts, 1))
     numbered_sections = "\n\n".join(
         f"SECTION {i} (add about {s['words']} words"
@@ -423,7 +424,8 @@ def extend_sections(
             + f"SECTIONS:\n{numbered_sections}")
     request = LLMRequest(system_prompt=_EXTEND_SYSTEM, user_prompt=user, stage=stage, max_tokens=max_tokens)
     signal = {"channel": channel, "attempt": attempt, "mode": "length_extend", "sections": len(sections),
-              "facts": len(facts), "words_asked": sum(int(s.get("words") or 0) for s in sections)}
+              "facts": len(facts), "words_asked": sum(int(s.get("words") or 0) for s in sections),
+              **({"step": step} if step else {})}
     # The reply is a JSON patch, never tenant-facing text: it must not stream into the T9 live view (AA-668).
     with stream_sink.suppressed():
         reply = generate_with_budget_retry(LLMClient().generate, request)

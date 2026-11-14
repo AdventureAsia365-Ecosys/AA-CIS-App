@@ -153,7 +153,7 @@ def test_t9_runs_it_on_blogs_after_the_trim_and_before_the_gates():
     from services.acp_content_writing import service
     src = inspect.getsource(service.run_write_background)
     trim, drop, gates = (src.index('step_guard("length_trim"'), src.index("repeat_drop.drop_repeats("),
-                         src.index("run_quality_gates, content_text=content_text"))
+                         src.index("gates, content_text=content_text"))   # S280: the piece's run_quality_gates partial
     assert trim < drop < gates
     assert 'if channel == "blog" and repeat_drop.enabled():' in src[trim:drop]
     assert 'step_guard("repeat_drop"' in src[drop:gates]

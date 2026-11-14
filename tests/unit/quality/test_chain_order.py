@@ -1,7 +1,9 @@
 """AA-925 (Q-2) — chain order guards (design §4.4 point 5): no fixer runs after the last integrity pass.
 
 * T9 (`service.run_write_background`): no assignment to ``content_text`` after the ``_final_integrity(...)``
-  call — the text it checks is the text that is stored. (``strip_citation_tags(discarded_attempt[...])`` after
+  call — the text it checks is the text that is stored. AA-1077 S280: the post-normalizer lengthen pass
+  (``length_recheck.lengthen_after_normalizer``) may replace the normalizer's result; it runs the final integrity pass
+  and every gate on the text it returns. (``strip_citation_tags(discarded_attempt[...])`` after
   it rewrites the DISCARDED attempt, not the stored text, so the check is on assignments to the name.)
   ``_cut_truth_items`` (inside the loop) and ``_enforce_authenticity`` run after the in-loop
   ``text_integrity.final_pass``; that is why ``_final_integrity`` is the real last pass.
@@ -95,6 +97,24 @@ def test_t9_post_loop_fixers_sit_between_final_pass_and_final_integrity():
         lines = _call_lines(norm_tree, fixer)
         assert lines, f"{fixer} is no longer called — update this test and design §4.4"
         assert max(lines) < final, fixer
+
+
+def test_t9_post_normalizer_lengthen_re_gates_the_text_it_returns():
+    """AA-1077 S280: the one step after the normalizer that may change the stored text (a loop-approved blog a
+    mandatory cut took under the floor gets one lengthen pass) runs the final integrity pass and then every gate on
+    that text before it returns it, and sits between the normalizer and the unpack of its result."""
+    from services.acp_content_writing import length_recheck
+    tree = _tree(length_recheck._attempt)
+
+    def threaded(name: str) -> list[int]:   # asyncio.to_thread(<name>, ...)
+        return sorted(n.lineno for n in ast.walk(tree) if isinstance(n, ast.Call) and n.args
+                      and (getattr(n.args[0], "id", None) == name or getattr(n.args[0], "attr", None) == name))
+    extend, final_pass, gates = threaded("extend"), _call_lines(tree, "final_pass"), threaded("gates")
+    assert extend and final_pass and gates and max(extend) < min(final_pass) < min(gates)
+    run = _tree(service.run_write_background)
+    norm, post = _call_lines(run, "_normalize_final_text"), _call_lines(run, "lengthen_after_normalizer")
+    contract = _call_lines(run, "_t9_final_contract")
+    assert len(post) == 1 and norm[0] < post[0] < contract[0]
 
 
 def test_t9_final_contract_checks_the_stored_text():

@@ -37,6 +37,10 @@ job's trial flag `T9_LENGTH_EXTEND` (quality.trial_flags, one audit-tenant job) 
 own first step is the env var `T9_LENGTH_EXTEND` (the old switch, now the definition's emergency override for one
 release; scripts/aa1077/extend_trial.py sets it in its own process). Off = main's full rewrite, byte for byte (lesson
 S272: a change of the writing loop that has not had its measured trial ships behind a switch whose default is main).
+
+After the normalizer (S280, `length_recheck.lengthen_after_normalizer`): a loop-approved blog a MANDATORY normalizer cut
+took under the floor gets one more `plan_after_repair` + `extend` pass on the stored text, with the same pinned switch,
+then the final integrity pass and every gate again.
 """
 from __future__ import annotations
 
