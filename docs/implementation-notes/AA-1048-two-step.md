@@ -70,6 +70,25 @@ paid call:
   Varek. The S281 leak check (scratch, the v2-v4 rule) finds no three-word sequence with a content word shared with any
   of the 286 S279 pool claims. The first draft shared common phrases with 9 claims and was reworded to 0.
 
+- **Review fixes (S281 fix pass).** Two review findings were real and are fixed in code:
+  - *Out of sample for the pool, not only the runs.* A live run now needs `--fresh`; `--exclude` alone only drops
+    the claims of the shaping run reports and is refused for a live run (it stays for a DRY RUN reading of an older
+    pool). The S279 pool's digest (`sha256[:16]` of the pool file, the value `fresh_pool eligible --exclude-pool`
+    writes) is pinned as `PromptVersion.shaped_on_pools` on v5c / v5j and in the pre-registration
+    (`shaped_on_pools`, compared with the code like `shaped_on`). `fresh_check` refuses unless the manifest's
+    `excluded_pools` holds it, or the pool is a train-split pool: manifest split `train` AND every pool claim
+    `train` (the split is frozen per tour; the S279 pool is all held-out). With `--fresh`, the shaping runs must be
+    in the manifest itself (piece level); `--exclude` runs are reported as `cli_excluded_runs` and no longer count.
+  - *The stop rule is code.* Every ledger row of a two-step run carries `prereg`, `run_kind` (`trial` / `full`)
+    and `pool` (the pool file digest) in its quality signal. Before a gated (`--limit`) live run, `prior_runs`
+    reads `shared.llm_call_log` (stage `adhoc_aa1048`, issue AA-1048, rows with a run kind) and `stop_rule`
+    refuses when a gated run of this pre-registration exists on any pool, or a gated run of the same step-1 prompt
+    on the same pool under another id (a re-roll), or the ledger cannot be read (fail closed). A stopped gated run
+    counts. A live run reads only the committed pre-registration file (`--preregistration` is DRY RUN only), so the
+    id cannot be changed in a scratch copy.
+  - *Not taken:* stopping the gated run on a trial's step bar. A 3-claim trial holds one or two violations; a 95 %
+    bar on them is noise, and it would change the registered protocol. The trial stays a plumbing check.
+
 ## Changed (vs. the lane brief)
 
 - The brief's "hard cap read from settings" reuses `cis.spend.instrument_eval_cap_usd` (and the claim and trial
@@ -109,6 +128,9 @@ paid call:
   7. the two-step DRY RUN;
   8. the trial;
   9. one gated run.
+- **Stop-rule residual risk.** The record is the ledger row. If a ledger write failed for every call of a gated run,
+  that run would leave no record and a second gated run would pass. The gateway writes the row on the call path, so
+  this needs a ledger outage during a paid run; the run report (`run_kind`, `stop_rule`) is the second record.
 - **Privacy.** The pool, candidates, sheets, sources and any `--with-reasons` report hold real or model text and stay
   in `.tmp-session/`. Outputs are refused inside a git work tree unless ignored there (`scripts/aa1048/outpath.py`).
   Only counts go to the root audit.

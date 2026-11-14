@@ -56,6 +56,9 @@ def test_step_prompts_are_registered_with_pinned_tags_and_old_tags_are_unchanged
     assert pr.get("v2").tag == "aa1048-r1-v2@ddaab8c279ef" and pr.get("v4").tag == "aa1048-r1-v4@5cd34821af82"
     assert pr.get("v5c").step == "classify" and pr.get("v5j").step == "judge" and pr.get("v4").step == ""
     assert set(pr.get("v5c").shaped_on) == {"3018008d", "33835b87", "2977dd78"} == set(pr.get("v5j").shaped_on)
+    # the S279 pool shaped both steps (through v2); the field is not part of the tag
+    assert pr.get("v5c").shaped_on_pools == (pr.S279_POOL,) == pr.get("v5j").shaped_on_pools
+    assert pr.get("v4").shaped_on_pools == ()
 
 
 def test_step_prompts_are_entailment_only_and_never_run_as_one_prompt():
@@ -267,6 +270,7 @@ def test_the_preregistration_names_the_code_prompts_and_the_settings_defaults():
     insts = _insts()
     assert prereg["prompt_versions"] == {s: insts[s].prompt_version.tag for s in ts.STEPS}
     assert sorted(prereg["shaped_on"]) == ts.shaped_on(insts) and prereg["candidate"] == CAND
+    assert prereg["shaped_on_pools"] == ts.shaped_on_pools(insts) == [pr.S279_POOL]
     # the settings' defaults are the registered bars (CIS 417 + 430), so a fresh Dev matches the pre-registration
     for name, key in prereg["bars_settings"].items():
         assert float(settings.definition(key).default_value) == prereg["bars"][name]
@@ -283,6 +287,11 @@ def test_a_changed_bar_prompt_or_vote_count_is_not_the_preregistered_run():
                                            prereg["prompt_versions"]["judge"]}}
     assert any("classify prompt" in d for d in ts.preregistration_check(other, LIM, SLIM, insts, 3)["differences"])
     assert any(d.startswith("votes") for d in ts.preregistration_check(prereg, LIM, SLIM, insts, 5)["differences"])
+    no_pool = {**prereg, "shaped_on_pools": []}
+    assert any(d.startswith("shaped_on_pools") for d in
+               ts.preregistration_check(no_pool, LIM, SLIM, insts, 3)["differences"])
+    fewer = {**prereg, "shaped_on": ["3018008d"]}
+    assert any(d.startswith("shaped_on:") for d in ts.preregistration_check(fewer, LIM, SLIM, insts, 3)["differences"])
 
 
 def test_fresh_check_enforces_the_pool_file_the_shaping_runs_and_the_excluded_pieces():
@@ -298,6 +307,80 @@ def test_fresh_check_enforces_the_pool_file_the_shaping_runs_and_the_excluded_pi
     assert hit["pieces_on_excluded"] == 1 and "excluded as in-sample" in ts.oos_refusal(hit)
 
 
+POOLS = ["487bf4847b6136fe"]
+
+
+@pytest.mark.parametrize("extra,split_of_first,side", [
+    ({"excluded_pools": POOLS, "split": "held_out"}, "held_out", "excluded"),     # the shaping pool named
+    ({"excluded_pools": [], "split": "train"}, "train", "train_split"),           # every claim train
+    ({"excluded_pools": [], "split": "held_out"}, "held_out", None),              # held-out, pool not excluded
+    ({"excluded_pools": [], "split": "all"}, "train", None),                      # a mixed split is not train
+    ({"excluded_pools": [], "split": "train"}, "held_out", None),                 # a held-out claim in a "train" pool
+    ({"excluded_pools": ["f" * 16], "split": "held_out"}, "held_out", None),      # another pool excluded
+])
+def test_fresh_check_keeps_the_pools_the_steps_were_shaped_on_out(extra, split_of_first, side):
+    first = ev.PoolItem(r1.Item(_h(1), "t2", "fact.embellish", "violation", "representative", "c" * 64,
+                                "itineraries", "A claim.", FIELD, SOURCE, (), split_of_first), "tp")
+    pool = [first, _pi(2, "fp_paraphrase", piece="d")]
+    text = "pool text"
+    shaped = ["2977dd78", "3018008d", "33835b87"]
+    manifest = {"pool_sha256": ts.pool_sha256(text), "excluded_runs": shaped, "excluded_pieces": [], **extra}
+    oos = ts.fresh_check(manifest, text, pool, shaped, POOLS)
+    assert oos["pool_side"] == side
+    why = ts.oos_refusal(oos)
+    assert (why is None) if side else ("487bf4847b6136fe" in why and "train-split" in why)
+
+
+def test_the_pinned_shaping_pool_is_the_s279_digest():
+    assert POOLS == [pr.S279_POOL] == ts.shaped_on_pools(_insts())
+
+
+def test_an_exclude_only_oos_never_passes_a_live_run():
+    oos = {"kind": "exclude", "shaped_on": ["3018008d"], "excluded_runs": ["3018008d"], "missing": []}
+    assert "needs --fresh" in ts.oos_refusal(oos)
+
+
+# ── stop rule ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+V5C = "aa1048-r1-v5c@50704a977e52"
+
+
+def _prior(run, kind, prereg="aa1048-two-step-v5", pool="a" * 16, pv=V5C):
+    return {"run_id": run * 8 + "-x", "prereg": prereg, "pool": pool, "run_kind": kind, "prompt_version": pv,
+            "first_at": "2026-11-15T10:00:00+00:00", "calls": 3}
+
+
+def _stop(prior, kind="full", pool="a" * 16):
+    return ts.stop_rule(prior, kind=kind, prereg_id="aa1048-two-step-v5", pool=pool, classify_tag=V5C)
+
+
+def test_stop_rule_allows_the_first_gated_run_and_any_trial():
+    assert _stop([])["refused"] is None
+    trials = [_prior("1", "trial"), _prior("2", "trial")]
+    rec = _stop(trials)
+    assert rec["refused"] is None and rec["prior_trials"] == 2 and rec["prior_gated_runs"] == []
+    assert _stop([_prior("3", "full")], kind="trial")["refused"] is None
+    assert _stop(None, kind="trial")["refused"] is None and _stop(None, kind="trial")["ledger_read"] is None
+
+
+def test_stop_rule_refuses_a_second_gated_run_of_the_preregistration_on_any_pool():
+    rec = _stop([_prior("1", "trial"), _prior("4", "full", pool="b" * 16)])
+    assert "one gated run" in rec["refused"] and "44444444" in rec["refused"]
+    assert rec["prior_gated_runs"][0]["pool"] == "b" * 16
+
+
+def test_stop_rule_refuses_a_reroll_under_a_new_preregistration_id_on_the_same_pool():
+    assert _stop([_prior("5", "full", prereg="aa1048-two-step-v5-again")])["refused"]
+    # another step-1 prompt on another pool under another id is another evaluation
+    other = _prior("6", "full", prereg="another", pool="b" * 16, pv="aa1048-r1-v6c@feedfacecafe")
+    assert _stop([other])["refused"] is None
+
+
+def test_stop_rule_refuses_a_gated_run_when_the_ledger_cannot_be_read():
+    rec = _stop(None)
+    assert rec["ledger_read"] is False and "cannot be read" in rec["refused"]
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -309,7 +392,8 @@ def _pool_file(tmp_path, n_tp=3, n_fp=3):
     manifest = tmp_path / "fresh.json"
     manifest.write_text(json.dumps({"pool_sha256": ts.pool_sha256(path.read_text(encoding="utf-8")),
                                     "excluded_runs": ["3018008d", "33835b87", "2977dd78"],
-                                    "excluded_pieces": ["e" * 16], "step1_gold": {}}), encoding="utf-8")
+                                    "excluded_pieces": ["e" * 16], "excluded_pools": [pr.S279_POOL],
+                                    "split": "train", "step1_gold": {}}), encoding="utf-8")
     return str(path), str(manifest)
 
 
@@ -329,11 +413,29 @@ def test_live_refuses_without_out_of_sample_or_with_another_preregistration(tmp_
     monkeypatch.setattr(ev, "refresh_settings", lambda: False)
     monkeypatch.setattr(ts, "_caller", lambda *a: pytest.fail("a refused run makes no call"))
     base = ["run", "--pool", pool, "--trial", "2", "--live", "--confirm-spend"]
-    assert ts.main(base) == 2 and "shaped on" in json.loads(capsys.readouterr().out)["refused"]
+    assert ts.main(base) == 2 and "needs --fresh" in json.loads(capsys.readouterr().out)["refused"]
+    # --exclude of every shaping run report on an older pool is still not out of sample for the pool the panel read
+    reports = []
+    for run in ("3018008d", "33835b87", "2977dd78"):
+        rp = tmp_path / f"{run}.json"
+        rp.write_text(json.dumps({"run_id": run + "-0000", "votes": {"f" * 16: [True]}}), encoding="utf-8")
+        reports += ["--exclude", str(rp)]
+    assert ts.main(base + reports) == 2 and "needs --fresh" in json.loads(capsys.readouterr().out)["refused"]
     other = tmp_path / "prereg.json"
     other.write_text(json.dumps({**ts.load_preregistration(), "votes": 5}), encoding="utf-8")
     assert ts.main(base + ["--fresh", manifest, "--preregistration", str(other)]) == 2
+    assert "committed pre-registration only" in json.loads(capsys.readouterr().out)["refused"]
+    monkeypatch.setattr(ts, "PREREGISTRATION", other)
+    assert ts.main(base + ["--fresh", manifest, "--preregistration", str(other)]) == 2
     assert "not the pre-registered one" in json.loads(capsys.readouterr().out)["refused"]
+    monkeypatch.undo()
+    monkeypatch.setattr(ev, "refresh_settings", lambda: False)
+    monkeypatch.setattr(ts, "_caller", lambda *a: pytest.fail("a refused run makes no call"))
+    held = tmp_path / "held.json"
+    held.write_text(json.dumps({**json.loads(open(manifest).read()), "excluded_pools": [], "split": "held_out"}),
+                    encoding="utf-8")
+    assert ts.main(base + ["--fresh", str(held)]) == 2
+    assert "shaped on pool(s)" in json.loads(capsys.readouterr().out)["refused"]
     assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--live", "--confirm-spend"]) == 2
     assert "--trial N or --limit N" in json.loads(capsys.readouterr().out)["refused"]
     assert ts.main(base + ["--fresh", manifest, "--trial", "9"]) == 2                 # over the trial setting
@@ -343,6 +445,7 @@ def test_live_trial_runs_both_steps_and_replays_at_zero_cost(tmp_path, monkeypat
     pool, manifest = _pool_file(tmp_path)
     monkeypatch.setattr(ev, "refresh_settings", lambda: False)
     monkeypatch.setattr(ts, "_probe", lambda since: (lambda: 0.0))
+    monkeypatch.setattr(ts, "_prior_runs", lambda: pytest.fail("a trial does not read the stop-rule ledger"))
 
     def caller(inst, system, user, schema):
         if inst.prompt == "v5c":
@@ -359,5 +462,48 @@ def test_live_trial_runs_both_steps_and_replays_at_zero_cost(tmp_path, monkeypat
     rep = json.loads(capsys.readouterr().out)
     assert rc == 0 and rep["mode"] == "live" and rep["calls"] == 18 and rep["score"]["verdict"] == "trial"
     assert set(rep["votes"]) == {"classify", "judge"} and "reasons" not in rep and len(rows) == 18
+    digest = ts.pool_sha256(open(pool, encoding="utf-8").read())[:16]
+    assert rep["run_kind"] == "trial" and rep["pool_sha256"] == digest and rep["stop_rule"]["ledger_read"] is None
+    assert {(r["quality_signal"]["prereg"], r["quality_signal"]["run_kind"], r["quality_signal"]["pool"])
+            for r in rows} == {("aa1048-two-step-v5", "trial", digest)}
     assert ts.main(["score", "--pool", pool, "--report", str(out)]) == 0
     assert json.loads(capsys.readouterr().out)["matches_stored"] is True
+
+
+def _gated(tmp_path, monkeypatch, prior):
+    pool, manifest = _pool_file(tmp_path)
+    monkeypatch.setattr(ev, "refresh_settings", lambda: False)
+    monkeypatch.setattr(ts, "_probe", lambda since: (lambda: 0.0))
+    monkeypatch.setattr(ts, "_prior_runs", lambda: prior)
+    calls = []
+
+    def caller(inst, system, user, schema):
+        calls.append(inst.prompt)
+        return _resp({"kind": "restatement", "new_specifics": [], "why": "x"})
+    monkeypatch.setattr(ts, "_caller", caller)
+    from shared.llm_client import call_log
+
+    rows = []
+    monkeypatch.setattr(call_log, "record_call_sync", lambda **kw: rows.append(kw))
+    rc = ts.main(["run", "--pool", pool, "--fresh", manifest, "--limit", "6", "--live", "--confirm-spend"])
+    return rc, calls, rows, pool
+
+
+def test_a_gated_run_refuses_when_the_ledger_holds_one_of_this_preregistration(tmp_path, monkeypatch, capsys):
+    rc, calls, rows, _ = _gated(tmp_path, monkeypatch, [_prior("7", "full", pool="c" * 16)])
+    assert rc == 2 and calls == [] and rows == []
+    assert "one gated run" in json.loads(capsys.readouterr().out)["refused"]
+
+
+def test_a_gated_run_refuses_when_the_ledger_cannot_be_read(tmp_path, monkeypatch, capsys):
+    rc, calls, _, _ = _gated(tmp_path, monkeypatch, None)
+    assert rc == 2 and calls == [] and "cannot be read" in json.loads(capsys.readouterr().out)["refused"]
+
+
+def test_the_first_gated_run_runs_and_marks_every_ledger_row_full(tmp_path, monkeypatch, capsys):
+    rc, calls, rows, pool = _gated(tmp_path, monkeypatch, [_prior("8", "trial")])
+    rep = json.loads(capsys.readouterr().out)
+    assert rc == 0 and rep["run_kind"] == "full" and rep["stop_rule"]["prior_trials"] == 1
+    assert calls == ["v5c"] * 18 and len(rows) == 18                                 # all restated: no step 2
+    digest = ts.pool_sha256(open(pool, encoding="utf-8").read())[:16]
+    assert {(r["quality_signal"]["run_kind"], r["quality_signal"]["pool"]) for r in rows} == {("full", digest)}

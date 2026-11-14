@@ -488,6 +488,10 @@ class PromptVersion:
     # Run-id prefixes (8 hex) of the evaluations whose misses shaped this version. Their claims are in-sample for it,
     # so instrument_eval refuses a live run of it that does not --exclude each of those run reports.
     shaped_on: tuple[str, ...] = ()
+    # Digests (sha256 of the pool file, first 16 hex, as fresh_pool.py writes them into a manifest's excluded_pools) of
+    # the labelled pools a panel read to shape this version. two_step refuses a live run of a step whose fresh manifest
+    # does not exclude each of them (or is not a train-split pool). Not part of the hash.
+    shaped_on_pools: tuple[str, ...] = ()
     # "" for a one-prompt version; "classify" / "judge" for a step of the two-step instrument (two_step.py): entailment
     # only, run only by two_step (r1.instruments refuses it). Not part of the hash.
     step: str = ""
@@ -509,6 +513,10 @@ class PromptVersion:
         return f"aa1048-r1-{self.id}@{self.sha}"
 
 
+# The S279 pool (the 286 R1-fired claims of the held-out split, pool-v2.jsonl): the S279 panel read its whole
+# false-positive side to write v2, and every version since builds on v2.
+S279_POOL = "487bf4847b6136fe"
+
 VERSIONS: dict[str, PromptVersion] = {
     "v1": PromptVersion("v1", ENTAILMENT_SYSTEM, EXTRACTION_SYSTEM, v1_entailment_user, extraction_user,
                         (V1_ENTAILMENT_USER, NO_LINE, EXTRACTION_USER)),
@@ -524,9 +532,9 @@ VERSIONS: dict[str, PromptVersion] = {
     # the misses and reasons of the v2, v3 and v4 runs, so all three are in-sample for both steps. No extraction text.
     "v5c": PromptVersion("v5c", V5C_SYSTEM, "", v2_entailment_user, extraction_user,
                          (V2_ENTAILMENT_USER, NONE_TEXT), shaped_on=("3018008d", "33835b87", "2977dd78"),
-                         step="classify"),
+                         shaped_on_pools=(S279_POOL,), step="classify"),
     "v5j": PromptVersion("v5j", V5J_SYSTEM, "", v5j_user, extraction_user, (V5J_USER, NONE_TEXT, WHOLE_SENTENCE),
-                         shaped_on=("3018008d", "33835b87", "2977dd78"), step="judge"),
+                         shaped_on=("3018008d", "33835b87", "2977dd78"), shaped_on_pools=(S279_POOL,), step="judge"),
 }
 
 
@@ -538,6 +546,6 @@ def get(version: str) -> PromptVersion:
 
 __all__ = ["DEFAULT", "ENTAILMENT_SYSTEM", "ENTAILMENT_SYSTEM_V2", "ENTAILMENT_SYSTEM_V3", "ENTAILMENT_SYSTEM_V4",
            "EXTRACTION_SYSTEM", "EXTRACTION_SYSTEM_V2", "EXTRACTION_SYSTEM_V3", "EXTRACTION_SYSTEM_V4",
-           "PromptVersion", "UnknownPromptVersion", "V5C_SYSTEM", "V5J_SYSTEM", "V5J_USER", "VERSIONS",
+           "PromptVersion", "S279_POOL", "UnknownPromptVersion", "V5C_SYSTEM", "V5J_SYSTEM", "V5J_USER", "VERSIONS",
            "WHOLE_SENTENCE", "around", "extraction_user", "get", "v1_entailment_user", "v2_entailment_user",
            "v5j_user"]

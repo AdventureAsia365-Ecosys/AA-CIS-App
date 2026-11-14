@@ -9,6 +9,7 @@ import pytest
 
 from services.ground_truth import fresh_pool as fp
 from services.ground_truth import instrument_eval as ev
+from services.ground_truth import prompts as pr
 from services.ground_truth import r1
 from services.ground_truth import two_step as ts
 
@@ -203,8 +204,14 @@ def test_import_builds_a_pool_that_two_step_accepts_as_fresh(tmp_path, capsys):
     assert {p.group for p in pool} == {"tp", "fp_paraphrase"}
     manifest = json.loads((tmp_path / "fresh.json").read_text())
     assert set(manifest["step1_gold"].values()) == {"new_claim", "restatement"}
-    oos = ts.fresh_check(manifest, pool_text, pool, ["2977dd78", "3018008d", "33835b87"])
-    assert ts.oos_refusal(oos) is None and oos["excluded_pieces"] == 1
+    shaped = ["2977dd78", "3018008d", "33835b87"]
+    oos = ts.fresh_check(manifest, pool_text, pool, shaped, [pr.S279_POOL])
+    # a train-split pool (the default split) keeps the held-out S279 pool out without naming it
+    assert ts.oos_refusal(oos) is None and oos["excluded_pieces"] == 1 and oos["pool_side"] == "train_split"
+    assert manifest["split"] == "train" and oos["pool_splits"] == {"train": n}
+    named = ts.fresh_check({**manifest, "excluded_pools": [pr.S279_POOL]}, pool_text, pool, shaped, [pr.S279_POOL])
+    assert named["pool_side"] == "excluded" and ts.oos_refusal(named) is None
+    assert "S279" not in json.dumps(manifest) and "487bf4847b6136fe" not in json.dumps(manifest)
 
 
 def test_import_refuses_a_sheet_of_another_sample(tmp_path, capsys):

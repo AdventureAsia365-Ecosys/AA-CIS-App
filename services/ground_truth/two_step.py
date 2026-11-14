@@ -20,10 +20,15 @@ an instrument "<model>@<connection>:entailment#v5c|v5j" with its own tag in ever
       [--measured <two-step report>] [--with-reasons] [--out <json>]
       DRY RUN by default: the subset, the plan and its cost estimate (step 2 priced as if every claim reached it), the
       pre-registration check and the out-of-sample check; no client, no call. A paid run needs --live, --confirm-spend
-      and exactly one of --trial / --limit within the settings below, a pre-registration that matches the settings,
-      prompts, candidate and votes in force, and a pool that is out of sample for both steps: a fresh pool
-      (services/ground_truth/fresh_pool.py) whose manifest matches the pool file, names every run the steps were shaped
-      on and shares no piece with them, or --exclude of each of those run reports on an older pool.
+      and exactly one of --trial / --limit within the settings below, the committed pre-registration matching the
+      settings, prompts, candidate and votes in force, and a FRESH pool (--fresh; services/ground_truth/fresh_pool.py)
+      that is out of sample for both steps: its manifest matches the pool file, names every run the steps were shaped
+      on, shares no piece with them, and excludes every pool the steps were shaped on (the S279 pool; or it is a
+      train-split pool: manifest split train and every claim train). --exclude only leaves claims out (DRY RUN reading
+      of an older pool); it never makes a live run out of sample.
+      Stop rule (in code): a gated run (--limit) refuses when the ledger shows a gated run of the same pre-registration,
+      or of the same step-1 prompt on the same pool (every ledger row carries prereg, run_kind and the pool digest),
+      or when the ledger cannot be read; a trial (--trial) is free to repeat.
       --measured prices the plan from a finished live two-step run (each step's measured cost per call, scaled by the
       prompt length); the live gate still charges every call's worst case.
   python -m services.ground_truth.two_step score --pool <pool.jsonl> --report <report.json>
@@ -66,6 +71,13 @@ STEPS = ("classify", "judge")
 STEP_PROMPT = {"classify": "v5c", "judge": "v5j"}
 MODE = "entailment"
 PREREGISTRATION = Path(__file__).with_name("preregistration") / "aa1048_two_step_v5.json"
+# The gated runs and trials of the two-step instrument already in the ledger: one row per run and prompt version.
+PRIOR_RUNS_SQL = (
+    "SELECT quality_signal->>'run_id' AS run_id, quality_signal->>'prereg' AS prereg, "
+    "quality_signal->>'pool' AS pool, quality_signal->>'run_kind' AS run_kind, "
+    "quality_signal->>'prompt_version' AS prompt_version, MIN(created_at) AS first_at, COUNT(*)::int AS calls "
+    "FROM shared.llm_call_log WHERE stage = $1 AND quality_signal->>'issue' = 'AA-1048' "
+    "AND quality_signal->>'run_kind' IS NOT NULL GROUP BY 1, 2, 3, 4, 5 ORDER BY first_at")
 CLASSIFY_SCHEMA = {"name": "claim_restatement", "schema": {
     "type": "object", "additionalProperties": False, "required": ["kind", "new_specifics", "why"],
     "properties": {"kind": {"type": "string", "enum": ["restatement", "new_claim"]},
@@ -250,6 +262,9 @@ def preregistration_check(prereg: dict, lim: ev.Limits, slim: StepLimits, insts:
         tag = (prereg.get("prompt_versions") or {}).get(step)
         if tag != insts[step].prompt_version.tag:
             diffs.append(f"{step} prompt: registered {tag!r}, code {insts[step].prompt_version.tag!r}")
+    for key, have in (("shaped_on", shaped_on(insts)), ("shaped_on_pools", shaped_on_pools(insts))):
+        if sorted(str(x) for x in prereg.get(key) or []) != have:
+            diffs.append(f"{key}: registered {prereg.get(key)!r}, code {have!r}")
     cand = f"{insts['classify'].model_key}@{insts['classify'].connection}"
     for key, have in (("candidate", cand), ("votes", votes), ("stage", r1.STAGE), ("role", r1.ROLE)):
         if prereg.get(key) != have:
@@ -262,30 +277,107 @@ def shaped_on(insts: dict[str, r1.Instrument]) -> list[str]:
     return sorted({r for i in insts.values() for r in i.prompt_version.shaped_on})
 
 
+def shaped_on_pools(insts: dict[str, r1.Instrument]) -> list[str]:
+    return sorted({p for i in insts.values() for p in i.prompt_version.shaped_on_pools})
+
+
 def pool_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def fresh_check(manifest: dict, pool_text: str, pool: list[ev.PoolItem], shaped: list[str]) -> dict:
+def fresh_check(manifest: dict, pool_text: str, pool: list[ev.PoolItem], shaped: list[str],
+                shaped_pools: Iterable[str] = ()) -> dict:
     """A fresh pool is out of sample by construction (fresh_pool.py): its manifest is the one of this pool file, it
-    names every run the steps were shaped on as excluded, and no claim of the pool sits on an excluded piece."""
+    names every run the steps were shaped on as excluded, no claim of the pool sits on an excluded piece, and the
+    pools the steps were shaped on are kept out: each is in the manifest's excluded_pools, or the pool is a train-split
+    pool (manifest split train and every claim train: the split is frozen per tour, the shaping pools are held-out)."""
     excluded_runs = sorted({str(r)[:8].lower() for r in manifest.get("excluded_runs") or []})
     pieces = {str(p)[:16].lower() for p in manifest.get("excluded_pieces") or []}
     overlap = sorted({p.item.content_sha256[:16] for p in pool if p.item.content_sha256[:16].lower() in pieces})
+    excluded_pools = {str(p)[:16].lower() for p in manifest.get("excluded_pools") or []}
+    pools_missing = [p for p in sorted(shaped_pools) if p.lower() not in excluded_pools]
+    splits = Counter(p.item.split for p in pool)
+    train_only = manifest.get("split") == "train" and bool(pool) and set(splits) == {"train"}
     return {"kind": "fresh", "pool_sha_matches": manifest.get("pool_sha256") == pool_sha256(pool_text),
             "shaped_on": shaped, "excluded_runs": excluded_runs,
             "missing": [r for r in shaped if r not in excluded_runs], "excluded_pieces": len(pieces),
-            "pieces_on_excluded": len(overlap)}
+            "pieces_on_excluded": len(overlap), "shaped_on_pools": sorted(shaped_pools),
+            "excluded_pools": sorted(excluded_pools), "pools_missing": pools_missing,
+            "split": manifest.get("split"), "pool_splits": dict(sorted(splits.items())),
+            "pool_side": "excluded" if not pools_missing else "train_split" if train_only else None}
 
 
 def oos_refusal(oos: dict) -> Optional[str]:
+    if oos.get("kind") != "fresh":
+        return ("a live two-step run needs --fresh <manifest> (fresh_pool.py): the steps were shaped on runs and on "
+                "pools that --exclude cannot leave out (it drops claims of run reports, not the pool the panel read)")
     if oos["missing"]:
         return f"the steps were shaped on run(s) {', '.join(oos['missing'])}: the pool is in-sample for them"
     if oos.get("kind") == "fresh" and not oos["pool_sha_matches"]:
         return "the fresh manifest is not the manifest of this pool file (sha256 differs)"
     if oos.get("pieces_on_excluded"):
         return f"{oos['pieces_on_excluded']} piece(s) of the pool were excluded as in-sample"
+    if oos.get("pool_side") is None:
+        return (f"the steps were shaped on pool(s) {', '.join(oos['pools_missing'])}: the fresh manifest must exclude "
+                "each (fresh_pool eligible --exclude-pool) or be a train-split pool (split train, every claim train)")
     return None
+
+
+def prior_runs(stage: str = r1.STAGE) -> Optional[list[dict]]:
+    """The two-step runs already in the ledger (PRIOR_RUNS_SQL): run id, pre-registration id, pool digest, run kind,
+    prompt version, first call and calls. None when the ledger cannot be read (the stop rule then refuses a gated
+    run)."""
+    import asyncio
+
+    async def _q() -> list[dict]:
+        import asyncpg
+
+        from shared.secrets import get_database_url
+
+        conn = await asyncpg.connect(get_database_url().strip(), ssl="require")
+        try:
+            return [dict(r) for r in await conn.fetch(PRIOR_RUNS_SQL, stage)]
+        finally:
+            await conn.close()
+    try:
+        rows = asyncio.run(_q())
+    except Exception:                                        # noqa: BLE001 — unreadable: the caller refuses
+        return None
+    return [{**r, "first_at": r["first_at"].isoformat() if hasattr(r.get("first_at"), "isoformat")
+             else r.get("first_at")} for r in rows]
+
+
+def stop_rule(prior: Optional[list[dict]], *, kind: str, prereg_id: str, pool: str, classify_tag: str) -> dict:
+    """The pre-registered stop rule, in code: one gated run. A gated ("full") run is refused when the ledger already
+    holds a gated run of this pre-registration (any pool), or of the same step-1 prompt on the same pool (a re-roll
+    under a new id), or when the ledger cannot be read (a gated run that cannot prove it is the first). A trial is not
+    gated (its verdict is always "trial") and may repeat; a stopped gated run counts (its votes were seen)."""
+    read = prior is not None if kind == "full" else None    # a trial does not read the ledger
+    rec: dict[str, Any] = {"kind": kind, "prereg": prereg_id, "pool": pool, "ledger_read": read,
+                           "prior_gated_runs": [], "prior_trials": 0, "refused": None}
+    if prior is None:
+        if kind == "full":
+            rec["refused"] = ("the ledger cannot be read, so this gated run cannot prove it is the first of its "
+                              "pre-registration (stop rule)")
+        return rec
+    gated = {}
+    for r in prior:
+        rid = str(r.get("run_id") or "")[:8]
+        if r.get("run_kind") == "trial":
+            continue
+        same_id = r.get("prereg") == prereg_id
+        reroll = r.get("pool") == pool and r.get("prompt_version") == classify_tag
+        if same_id or reroll:
+            gated.setdefault(rid, {"run": rid, "prereg": r.get("prereg"), "pool": r.get("pool"),
+                                   "first_at": r.get("first_at")})
+    rec["prior_trials"] = len({str(r.get("run_id") or "")[:8] for r in prior
+                               if r.get("run_kind") == "trial" and r.get("prereg") == prereg_id})
+    rec["prior_gated_runs"] = sorted(gated.values(), key=lambda g: str(g["first_at"]))
+    if kind == "full" and gated:
+        rec["refused"] = (f"the stop rule allows one gated run: the ledger already holds gated run(s) "
+                          f"{', '.join(sorted(gated))} of pre-registration {prereg_id} or of the same step-1 prompt "
+                          "on this pool; a no_go is read at $0, a new run needs a new pre-registration")
+    return rec
 
 
 # ── live ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -295,11 +387,13 @@ def run(items: list[r1.Item], insts: dict[str, r1.Instrument], *, cap: float, vo
         caller: Optional[r1.Caller] = None,
         log: Callable[[Any, dict, Optional[dict], Optional[Exception]], None] = r1._log,
         spend_probe: Optional[r1.SpendProbe] = None,
-        attempts_of: Optional[Callable[[r1.Instrument], int]] = None) -> dict:
+        attempts_of: Optional[Callable[[r1.Instrument], int]] = None,
+        signal_extra: Optional[dict] = None) -> dict:
     """Both steps, live: every step-1 vote of every claim, then every step-2 vote of the claims step 1 sent on. One
     hard budget (r1.Budget) for both: a call starts only when the spend so far plus its worst case fits the cap; a
     caller error is charged the worst case and stops the run (the votes so far stay). Never raises on a caller
-    error. Returns the step votes (None = no vote), the merged specifics, spend per step and the stop reason."""
+    error. `signal_extra` (prereg, run_kind, pool) goes into every ledger row's signal: the stop rule reads it back.
+    Returns the step votes (None = no vote), the merged specifics, spend per step and the stop reason."""
     if attempts_of is None:
         attempts_of = r1.route_attempts if caller is None else (lambda _inst: 1)
     caller = caller or r1.gateway_call
@@ -356,7 +450,8 @@ def run(items: list[r1.Item], insts: dict[str, r1.Instrument], *, cap: float, vo
             state["stopped"] = (f"reply attempt_no {attempt} passed the {reserved[inst.id]} reserved attempt(s) of "
                                 f"{inst.id}, after {budget.calls} calls: stopped, report partial")
         signal = {"app": "cis", "issue": "AA-1048", "run_id": run_id, "instrument": inst.id, "step": step,
-                  "vote": vote, "prompt_version": inst.prompt_version.tag, "claims": [item.claim_hash[:16]]}
+                  "vote": vote, "prompt_version": inst.prompt_version.tag, "claims": [item.claim_hash[:16]],
+                  **(signal_extra or {})}
         try:
             parsed = json.loads(getattr(resp, "content", "") or "")
             if not isinstance(parsed, dict):
@@ -473,6 +568,7 @@ def replay(pool: list[ev.PoolItem], report: dict, lim: ev.Limits, slim: StepLimi
 
 _caller: Optional[r1.Caller] = None                     # tests put a fake here; None = the Model Gateway
 _probe: Callable[[Any], r1.SpendProbe] = r1.ledger_probe
+_prior_runs: Callable[[], Optional[list[dict]]] = prior_runs   # tests put a fake here
 
 
 def _read(path: str) -> str:
@@ -503,19 +599,28 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
     runs = sorted({r for r in map(ev.run_of, texts) if r})
     manifest = json.loads(_read(a.fresh)) if a.fresh else {}
     if a.fresh:
-        oos = fresh_check(manifest, pool_text, pool, shaped)
-        oos["excluded_runs"] = sorted(set(oos["excluded_runs"]) | set(runs))
-        oos["missing"] = [r for r in shaped if r not in oos["excluded_runs"]]
+        # the manifest alone proves the pool is out of sample (piece level); --exclude only drops claims
+        oos = {**fresh_check(manifest, pool_text, pool, shaped, shaped_on_pools(insts)), "cli_excluded_runs": runs}
     else:
         oos = {"kind": "exclude", "shaped_on": shaped, "excluded_runs": runs,
-               "missing": [r for r in shaped if r not in runs]}
-    prereg = preregistration_check(load_preregistration(Path(a.preregistration)), lim, slim, insts, a.votes)
+               "missing": [r for r in shaped if r not in runs], "shaped_on_pools": shaped_on_pools(insts)}
+    prereg_file = load_preregistration(Path(a.preregistration))
+    prereg = preregistration_check(prereg_file, lim, slim, insts, a.votes)
+    kind = "trial" if a.trial is not None else "full"
+    pool_digest = pool_sha256(pool_text)[:16]
+    stop = None
     if a.live:
         why = oos_refusal(oos)
         if why:
             raise TwoStepRefused(why)
+        if Path(a.preregistration).resolve() != PREREGISTRATION.resolve():
+            raise TwoStepRefused("a live run reads the committed pre-registration only (drop --preregistration)")
         if not prereg["matches"]:
             raise TwoStepRefused("the run is not the pre-registered one: " + "; ".join(prereg["differences"]))
+        stop = stop_rule(_prior_runs() if kind == "full" else None, kind=kind, prereg_id=str(prereg_file.get("id")),
+                         pool=pool_digest, classify_tag=insts["classify"].prompt_version.tag)
+        if stop["refused"]:
+            raise TwoStepRefused(stop["refused"])
     expected_of, measured = (measured_expectation(json.loads(_read(a.measured)), insts) if a.measured
                              else (None, None))
     subset = _subset(pool, a, n, lim)
@@ -524,7 +629,8 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
     rep = {"mode": "live" if a.live else "dry_run", "instruments": {s: i.id for s, i in insts.items()},
            "prompt_versions": {s: i.prompt_version.tag for s, i in insts.items()}, "settings_refreshed": fresh,
            "limits": asdict(lim), "step_limits": asdict(slim), "preregistration": prereg, "excluded": excluded,
-           "out_of_sample": oos, "measured": measured, "subset": ev.composition(subset), "plan": the_plan}
+           "out_of_sample": oos, "run_kind": kind, "pool_sha256": pool_digest, "stop_rule": stop,
+           "measured": measured, "subset": ev.composition(subset), "plan": the_plan}
     if not the_plan["fits_cap"]:
         return 3, {"ok": False, "refused": "the plan does not fit the cap", **rep}
     if not a.live:
@@ -534,7 +640,8 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
         return 0, {"ok": True, **rep}
     run_id = str(uuid.uuid4())
     res = run([p.item for p in subset], insts, cap=cap, votes=a.votes, run_id=run_id, caller=_caller,
-              spend_probe=_probe(datetime.now(timezone.utc)))
+              spend_probe=_probe(datetime.now(timezone.utc)),
+              signal_extra={"prereg": str(prereg_file.get("id")), "run_kind": kind, "pool": pool_digest})
     live = {"run_id": run_id, "spent_usd": res["spent_usd"], "ledger_usd": res["ledger_usd"], "calls": res["calls"],
             "stopped": res["stopped"], "caller_errors": res["caller_errors"],
             "identity_mismatches": res["identity_mismatches"], "reserved_attempts": res["reserved_attempts"],

@@ -2,7 +2,8 @@
 
 Registered 15/11/2026, before any data of the run exists. The machine-readable copy is
 `services/ground_truth/preregistration/aa1048_two_step_v5.json`; `python -m services.ground_truth.two_step run --live`
-refuses while the settings, prompt texts, candidate or vote count in force differ from it. Root ADR 0020 W2.
+reads only that committed file and refuses while the settings, prompt texts, shaping runs and pools, candidate or vote
+count in force differ from it. Root ADR 0020 W2.
 
 ## Question
 
@@ -46,8 +47,13 @@ train piece shares no tour with the held-out S279 pool.
 The labels come from the agent panel sheet (`docs/calibration/aa1048-two-step-panel-brief.md`, three lenses, majority).
 A stored label counts only when it agrees with the panel majority. A disagreement, a split panel or an "unsure"
 majority leaves the claim out. The builder records the excluded runs and pieces, the salt and the file digests
-(`services/ground_truth/fresh_pool.py`). The runner checks that the manifest belongs to the pool file and that no claim
-sits on an excluded piece.
+(`services/ground_truth/fresh_pool.py`). A live run needs `--fresh` (`--exclude` alone drops claims of run reports,
+not the pool the panel read). The runner checks that:
+
+- the manifest belongs to the pool file;
+- it names every shaping run, and no claim sits on an excluded piece;
+- the S279 pool (digest `487bf4847b6136fe`, pinned in the prompt versions and in this registration) is in the
+  manifest's excluded pools, or the pool is a train-split pool (manifest split `train` and every claim `train`).
 
 ## Subset and score
 
@@ -83,5 +89,11 @@ sits on an excluded piece.
 ## Stop rule
 
 The evaluation is one gated run (after a trial). A no_go is read at $0 with the stored reasons (`--with-reasons`) and
-is never re-run on the same pool with a changed prompt. A go is narrow evidence. It leads to a proposed full held-out
+is never re-run on the same pool with a changed prompt.
+
+The runner enforces it. Every ledger row of a run carries the registration id, the run kind (`trial` or `full`) and the
+pool digest. A gated run (`--limit`) is refused when `shared.llm_call_log` already holds a gated run of this
+registration (any pool), or of the same step-1 prompt on the same pool, or when the ledger cannot be read. A stopped
+gated run counts, because its votes were seen. A trial may repeat: its verdict is always `trial`. A trial does not stop
+the gated run on a step bar, because 3 claims hold one or two violations and a 95 % bar on them is noise. A go is narrow evidence. It leads to a proposed full held-out
 R1 on the two-step instrument (the tech lead's spend yes) before any shadow or pin.
