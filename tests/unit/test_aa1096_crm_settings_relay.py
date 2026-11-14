@@ -177,3 +177,120 @@ def test_the_console_reaches_only_the_settings_routes():
     assert not crm_console.is_allowed("POST", "/settings/cis.publish.daily_limit_default/changes")
     assert not crm_console.is_allowed("DELETE", "/settings")
     assert not crm_console.is_allowed("POST", "/settings/changes/not-a-uuid/approve")
+
+
+# ── S280 UX fix round ────────────────────────────────────────────────────────────────────────────────────────────
+class _NamesPool:
+    """pool.acquire() whose connection answers the staff-name read (cognito_sub -> name)."""
+
+    def __init__(self, names: dict):
+        self.names, self.asked = names, []
+
+    def acquire(self):
+        pool = self
+
+        class _Conn:
+            async def fetch(self, _sql, subs):
+                pool.asked.append(list(subs))
+                return [{"cognito_sub": s, "name": pool.names[s]} for s in subs if s in pool.names]
+
+        class _Ctx:
+            async def __aenter__(self):
+                return _Conn()
+
+            async def __aexit__(self, *a):
+                return False
+        return _Ctx()
+
+
+def _request_with_pool(pool):
+    req = _request()
+    req.app.state.pool = pool
+    return req
+
+
+@pytest.mark.asyncio
+async def test_the_crm_list_names_the_staff_and_says_who_may_write(crm):
+    setting = {"key": "crm.rate.ai_per_minute", "app": "crm", "area": "rate_limit", "last_change": _row(),
+               "pending": [_row(status="proposed", proposed_by="platform:zz-other", decided_by=None)]}
+    crm["answers"][("GET", "/settings")] = (200, {"app": "crm", "areas": ["rate_limit"], "settings": [setting],
+                                                  "two_person_approval": False, "reader_error": None})
+    crm["answers"][("GET", "/console")] = (200, {"can_write": False})
+    pool = _NamesPool({"zz-staff": "Zz Staff Member"})
+    out = await router.list_registry(_request_with_pool(pool), app="crm", area=None)
+    row = out["settings"][0]
+    last = row["last_change"]
+    assert (last["proposed_by_name"], last["decided_by_name"]) == ("Zz Staff Member", "Zz Staff Member")
+    assert row["proposals"][0]["proposed_by_name"] is None and row["proposals"][0]["decided_by_name"] is None
+    assert pool.asked == [["zz-other", "zz-staff"]] and out["can_write"] is False
+    crm["answers"][("GET", "/console")] = (503, {"detail": "crm_unavailable"})
+    assert (await router.list_registry(_request_with_pool(pool), app="crm", area=None))["can_write"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_crm_history_names_the_staff_and_a_broken_name_read_never_fails_it(crm):
+    crm["answers"][("GET", "/settings/crm.rate.ai_per_minute/history")] = (
+        200, {"key": "crm.rate.ai_per_minute", "tenant_id": None, "definition": {}, "history": [_row()]})
+    names = _NamesPool({"zz-staff": "Zz Staff"})
+    out = await router.key_history(_request_with_pool(names), "crm.rate.ai_per_minute", tenant_id=None)
+    assert out["history"][0]["decided_by_name"] == "Zz Staff"
+    out = await router.key_history(_request(), "crm.rate.ai_per_minute", tenant_id=None)   # pool = object(): no names
+    assert out["history"][0]["decided_by_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_crm_change_dated_in_the_past_is_refused_before_the_relay(crm):
+    from datetime import datetime, timedelta, timezone
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    with pytest.raises(HTTPException) as e:
+        await router.propose(_request(), "crm.rate.ai_per_minute",
+                             router.ProposalBody(value=7, reason=REASON, base_version=1, effective_from=past))
+    assert e.value.status_code == 422 and e.value.detail["code"] == "effective_in_past" and crm["calls"] == []
+    crm["answers"][("POST", "/settings/crm.rate.ai_per_minute/changes")] = (201, _row(status="proposed"))
+    just_now = datetime.now(timezone.utc) - timedelta(seconds=30)        # the form's minute picker: counts as now
+    await router.propose(_request(), "crm.rate.ai_per_minute",
+                         router.ProposalBody(value=7, reason=REASON, base_version=1, effective_from=just_now))
+    assert crm["calls"][-1][3]["effective_from"] is None
+
+
+# S280 fix round, second pass: the CRM's agency rows (crm.ops.v1 1.14) reach the page as tenant values and proposals,
+# named by the CRM, so an agency's open change can be reviewed and decided on the CRM tab.
+@pytest.mark.asyncio
+async def test_the_crm_agencies_values_and_open_changes_reach_the_page(crm):
+    other = "00000000-0000-4000-8000-0000000000b2"
+    setting = {"key": "crm.rate.intake_form_per_hour", "app": "crm", "area": "rate_limit", "approved_version": 3,
+               "scheduled": [], "pending": [_row(status="proposed")],
+               "agency_overrides": [_row(tenant_id=AGENCY, value=900, version=2, agency_name="Zz Alpha Tours")],
+               "agency_pending": [_row(id="v-b", tenant_id=other, status="proposed", value=300, version=1,
+                                       agency_name="Zz Beta Travel")]}
+    crm["answers"][("GET", "/settings")] = (200, {"app": "crm", "areas": ["rate_limit"], "settings": [setting],
+                                                  "two_person_approval": False, "reader_error": None})
+    row = (await router.list_registry(_request(), app="crm", area=None))["settings"][0]
+    assert "agency_overrides" not in row and "agency_pending" not in row and row["approved_version"] == 3
+    assert row["tenant_overrides"] == [{"tenant_id": AGENCY, "value": 900, "version": 2,
+                                        "effective_from": "2026-11-13T05:00:00+00:00", "agency_name": "Zz Alpha Tours"}]
+    assert [(p["tenant_id"], p.get("agency_name")) for p in row["proposals"]] == [(None, None),
+                                                                                 (other, "Zz Beta Travel")]
+    # an older CRM (before 1.14) sends neither: the page keeps its fallbacks
+    old = {"key": "crm.rate.ai_per_minute", "app": "crm", "area": "rate_limit", "pending": []}
+    crm["answers"][("GET", "/settings")] = (200, {"app": "crm", "areas": [], "settings": [old],
+                                                  "two_person_approval": False, "reader_error": None})
+    row = (await router.list_registry(_request(), app="crm", area=None))["settings"][0]
+    assert "tenant_overrides" not in row and row["proposals"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_crm_approval_records_what_it_superseded_in_the_cis_audit(crm):
+    crm["answers"][("POST", f"/settings/changes/{VID}/approve")] = (
+        200, _row(self_approved=False, superseded_versions=[1, 3], cancelled_scheduled_versions=[3]))
+    await router.approve(_request(), VID, router.DecisionBody(app="crm"))
+    details = crm["audits"][-1]["details"]
+    assert (details["superseded_versions"], details["cancelled_scheduled_versions"]) == ([1, 3], [3])
+    crm["answers"][("POST", "/settings/crm.rate.ai_per_minute/changes")] = (201, _row(superseded_versions=[1]))
+    await router.propose(_request(), "crm.rate.ai_per_minute",
+                         router.ProposalBody(value=7, reason=REASON, base_version=1, apply=True))
+    proposed, approved = (a["details"] for a in crm["audits"][-2:])
+    assert "superseded_versions" not in proposed and approved["superseded_versions"] == [1]
+    crm["answers"][("POST", f"/settings/changes/{VID}/reject")] = (200, _row(status="rejected"))
+    await router.reject(_request(), VID, router.DecisionBody(note="not now", app="crm"))
+    assert "superseded_versions" not in crm["audits"][-1]["details"]

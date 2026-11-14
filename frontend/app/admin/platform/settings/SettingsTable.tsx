@@ -8,12 +8,15 @@
 // to the area tab. The box is wide on a desktop (a long key fits) and full width on a phone.
 // S280 (lane cis-other): `initialQuery` fills the box when the page opens (`?key=<setting key>`, e.g. the link from
 // Catalogue settings › Pipeline gates to the A1 pass line).
+// S280 UX fix round: the area tabs and the Area column show the area's name in the page's language (messages.ts
+// areaName), and the area tab list has its own accessible name ("Areas"), apart from the app tabs.
 
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge, DataTable, Input, K, Tabs, useT, type ColumnDef } from "../../../_kit";
 import { groupByArea, searchSettings, type SettingApp, type SettingItem } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
+import { useSettingWords } from "./useSettingWords";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 
@@ -35,6 +38,7 @@ export function SettingsTable({ app, settings, initialArea, initialQuery, column
   columns: ColumnDef<SettingItem, unknown>[];
 }) {
   const t = useT(SETTINGS);
+  const { area: areaName } = useSettingWords();
   const groups = useMemo(() => groupByArea(settings), [settings]);
   const [area, setArea] = useState(initialArea);
   const [query, setQuery] = useState(() => initialQuery ?? "");
@@ -42,9 +46,9 @@ export function SettingsTable({ app, settings, initialArea, initialQuery, column
   const searching = query.trim() !== "";
   const cols = useMemo<ColumnDef<SettingItem, unknown>[]>(() => searching ? [
     { id: "area", header: t("colArea"), accessorKey: "area",
-      cell: ({ getValue }) => <Badge tone="neutral" dot={false}>{String(getValue())}</Badge> },
+      cell: ({ getValue }) => <Badge tone="neutral" dot={false}>{areaName(String(getValue()))}</Badge> },
     ...columns,
-  ] : columns, [searching, columns, t]);
+  ] : columns, [searching, columns, t, areaName]);
   if (groups.length === 0) return null;
   const activeArea = groups.some((g) => g.area === area) ? area : groups[0].area;
   const rows = searching ? found : groups.find((g) => g.area === activeArea)?.items ?? [];
@@ -54,8 +58,9 @@ export function SettingsTable({ app, settings, initialArea, initialQuery, column
       {searching
         ? <div style={small} aria-live="polite" data-testid="settings-search-count">
           {found.length ? t("searchResults", found.length, query.trim()) : t("searchNone", query.trim())}</div>
-        : <Tabs variant="underline" ariaLabel={t("title")} active={activeArea} onChange={setArea}
-          tabs={groups.map((g) => ({ key: g.area, label: g.area, count: g.items.length }))} testId="settings-areas" />}
+        : <Tabs variant="underline" ariaLabel={t("areasLabel")} active={activeArea} onChange={setArea}
+          tabs={groups.map((g) => ({ key: g.area, label: areaName(g.area), count: g.items.length }))}
+          testId="settings-areas" />}
       {rows.length > 0 && (
         <DataTable<SettingItem> tableId={`settings-${app}-${searching ? "search" : activeArea}`} data={rows}
           columns={cols} getRowId={(s) => s.key} searchable={false} paginate={false} tableMinWidth={980} />
