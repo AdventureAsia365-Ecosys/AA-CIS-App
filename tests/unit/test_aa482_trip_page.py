@@ -169,3 +169,39 @@ def test_page_query_selects_the_catalogue_key_of_the_row():
     """AA-1094: source_id is the catalog.v_tour key of the page's own raw row (CIS 258 source_key rule)."""
     sql = " ".join(v1_trip_page._PAGE_DATA_SQL.split())
     assert "(COALESCE(rt.source_group_id, rt.tour_id))::text AS source_id" in sql
+
+
+# ── AA-1089: the partner CRM links a tour by its catalogue key (/trip/<source_id>) ───────────────────────────────────
+_GROUP = "5f1e0c2a-7d3b-4c9e-8a61-2b4d6f8e0a13"
+
+
+@pytest.mark.asyncio
+async def test_a_served_catalogue_key_redirects_to_its_current_version():
+    request, conn = _make_pool()
+    conn.fetchrow = AsyncMock(side_effect=[
+        None,                                                                  # no page under this id
+        None,                                                                  # no raw tour has this id
+        {"state": "served", "reason": None, "current_tour_id": _TOUR_ROW["tour_id"]},  # but it is a catalogue key
+        _TOUR_ROW,                                                             # whose current version has a page
+    ])
+    resp = await v1_trip_page.get_trip_page(_GROUP.upper(), request)
+    assert resp.status_code == 301 and resp.headers["location"] == f"/v1/trip/{_TOUR_ROW['tour_id']}"
+    key_call = conn.fetchrow.await_args_list[2]
+    assert "v_tour_liveness" in key_call.args[0] and key_call.args[1] == _GROUP   # keys are stored lower case
+
+
+@pytest.mark.asyncio
+async def test_a_retired_catalogue_key_is_gone_and_an_unknown_one_404():
+    from fastapi import HTTPException
+    request, conn = _make_pool()
+    conn.fetchrow = AsyncMock(side_effect=[None, None, {"state": "retired", "reason": "source_deleted",
+                                                        "current_tour_id": _TOUR_ROW["tour_id"]}])
+    with pytest.raises(HTTPException) as gone:
+        await v1_trip_page.get_trip_page(_GROUP, request)
+    assert gone.value.status_code == 410
+
+    request, conn = _make_pool(fetch_page_row=None)
+    with pytest.raises(HTTPException) as missing:
+        await v1_trip_page.get_trip_page(_GROUP, request)
+    assert missing.value.status_code == 404
+    assert conn.fetchrow.await_count == 3                                       # page, raw tour, catalogue key

@@ -2,7 +2,7 @@
 it runs in the api container. Each test runs in one transaction that is rolled back (the store's own transactions
 become savepoints).
 
-DRY RUN writes nothing; --apply --publish creates the 28 seed items and publishes 27 (one prep pack VI kept as a
+DRY RUN writes nothing; --apply --publish creates the 30 seed items and publishes 29 (one prep pack VI kept as a
 draft: rule R, never served); a second run is a no-op; --expect refuses a different count; --edit-demo publishes v2 of
 a pack while v1 stays fetchable with the same hash (rule E).
 """
@@ -68,7 +68,7 @@ async def _count(conn):
 async def test_dry_run_writes_nothing(conn):
     code, out = await _go(conn)
     assert code == 0 and "created" not in out
-    assert out["plan"]["counts"]["to_create"] == 28 and out["plan"]["counts"]["to_publish"] == 27
+    assert out["plan"]["counts"]["to_create"] == 30 and out["plan"]["counts"]["to_publish"] == 29
     assert out["plan"]["kept_draft"] == ["prep-pack-bhutan:vi"]
     assert await _count(conn) == 0
 
@@ -82,14 +82,14 @@ async def test_expect_mismatch_refuses_before_writing(conn):
 
 @pytest.mark.asyncio
 async def test_apply_publish_then_rerun_is_a_no_op(conn):
-    code, out = await _go(conn, apply=True, publish=True, expect=28)
+    code, out = await _go(conn, apply=True, publish=True, expect=30)
     assert code == 0 and out["failed"] == []
-    assert len(out["created"]) == 28 and len(out["published"]) == 27
+    assert len(out["created"]) == 30 and len(out["published"]) == 29
     assert all(p["version"] == 1 and p["content_hash"].startswith("sha256:") for p in out["published"])
     assert [k["item"] for k in out["kept_draft"]] == ["prep-pack-bhutan:vi"]
 
     rows = await conn.fetch("SELECT created_by, count(*) AS n FROM gold_aa_internal.aa_content_item GROUP BY 1")
-    assert [(r["created_by"], r["n"]) for r in rows] == [("seed:AA-977", 28)]
+    assert [(r["created_by"], r["n"]) for r in rows] == [("seed:AA-977", 30)]
 
     # Served: 10 EN prep packs, 9 VI (the kept draft is never served: rule R), templates and blocks in both.
     assert len(await _served(conn, "prep_pack", "en")) == 10
@@ -97,13 +97,13 @@ async def test_apply_publish_then_rerun_is_a_no_op(conn):
     kept_id = out["kept_draft"][0]["content_id"]
     assert len(vi) == 9 and kept_id not in vi
     assert await reader.get_published_version(conn, uuid.UUID(kept_id), 1) is None
-    assert len(await _served(conn, "starter_template", "en")) == 2
+    assert len(await _served(conn, "starter_template", "en")) == 3
     assert len(await _served(conn, "campaign_block", "vi")) == 2
 
     code, again = await _go(conn, apply=True, publish=True)
     assert code == 0 and again["created"] == [] and again["published"] == []
     assert again["plan"]["counts"]["to_create"] == 0
-    assert len(again["skipped_publish"]) == 27 and await _count(conn) == 28
+    assert len(again["skipped_publish"]) == 29 and await _count(conn) == 30
 
 
 @pytest.mark.asyncio
