@@ -8200,14 +8200,14 @@
    "key": "cis.tripplanner.custom_domain_edge_max",
    "app": "cis",
    "area": "tripplanner",
-   "label": "Trip planner: own domains on the shared edge",
-   "description": "The most custom hosts of all agencies together on the TripPlanner CloudFront distribution. Every attached host is one name on the one certificate the distribution serves, and ACM allows 10 names per certificate unless AWS raises the account quota; the base names (the wildcard of our zone) take the rest. Tenant 360 refuses a new host beyond this number. Read by the Tenant 360 custom-domain editor and the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "label": "Trip planner: own domains on the agency edge",
+   "description": "The most custom hosts of all agencies together on the TripPlanner agency CloudFront distribution (a distribution of its own, apart from the public TripPlanner host). Every attached host is one name on the one certificate that distribution serves, and ACM allows 10 names per certificate unless AWS raises the account quota (up to 100). Tenant 360 refuses a new host beyond this number. Read by the Tenant 360 custom-domain editor and the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
    "value_type": "int",
    "unit": "domains",
    "min_value": 0,
-   "max_value": 98,
+   "max_value": 100,
    "allowed_values": null,
-   "default_value": 8,
+   "default_value": 10,
    "scope_kind": "platform",
    "impact": "high",
    "approval": "maker_checker",
@@ -8217,18 +8217,54 @@
    "enforced": false,
    "guide": {
     "en": {
-     "what": "How many agency web addresses, all agencies together, the trip planner can serve. All of them share one security certificate, and Amazon allows a limited number of names on one certificate (10 unless Amazon raises it for our account); our own address takes the remaining places.",
+     "what": "How many agency web addresses, all agencies together, the trip planner can serve. All of them share one security certificate, and Amazon allows a limited number of names on one certificate (10 unless Amazon raises it for our account). Our own planner address is not on it.",
      "raise": "More agencies can use their own address, but only after Amazon has raised the names-per-certificate limit for our account; above that limit a new address fails when it is attached.",
      "lower": "No new agency address is accepted once the number in use reaches it; addresses already served keep working.",
-     "when": "Raise it only after Amazon confirmed a higher names-per-certificate limit, to that limit minus two; lower it to stop new addresses while the edge is reworked.",
-     "example": "With the default of 8, the ninth agency address is refused until one of the eight is removed."
+     "when": "Raise it only after Amazon confirmed a higher names-per-certificate limit, at most to that limit; lower it to stop new addresses while the edge is reworked.",
+     "example": "With the default of 10, the eleventh agency address is refused until one of the ten is removed."
     },
     "vi": {
-     "what": "Số địa chỉ web của đại lý, tính chung mọi đại lý, mà trang lập lịch trình phục vụ được. Tất cả dùng chung một chứng chỉ bảo mật, và Amazon chỉ cho một số tên có hạn trên một chứng chỉ (10, trừ khi Amazon nâng cho tài khoản của chúng ta); địa chỉ của chính chúng ta chiếm các chỗ còn lại.",
+     "what": "Số địa chỉ web của đại lý, tính chung mọi đại lý, mà trang lập lịch trình phục vụ được. Tất cả dùng chung một chứng chỉ bảo mật, và Amazon chỉ cho một số tên có hạn trên một chứng chỉ (10, trừ khi Amazon nâng cho tài khoản của chúng ta). Địa chỉ planner của chính chúng ta không nằm trên chứng chỉ này.",
      "raise": "Nhiều đại lý dùng được địa chỉ riêng hơn, nhưng chỉ sau khi Amazon đã nâng giới hạn số tên trên một chứng chỉ cho tài khoản của chúng ta; vượt giới hạn đó thì địa chỉ mới bị lỗi lúc gắn.",
      "lower": "Không nhận thêm địa chỉ đại lý nào khi số đang dùng chạm mức này; các địa chỉ đang chạy vẫn hoạt động.",
-     "when": "Chỉ tăng sau khi Amazon xác nhận giới hạn số tên cao hơn, tới giới hạn đó trừ hai; giảm để dừng nhận địa chỉ mới trong lúc sửa lại phần biên.",
-     "example": "Với mặc định 8, địa chỉ đại lý thứ chín bị từ chối cho tới khi gỡ một trong tám địa chỉ."
+     "when": "Chỉ tăng sau khi Amazon xác nhận giới hạn số tên cao hơn, tối đa bằng giới hạn đó; giảm để dừng nhận địa chỉ mới trong lúc sửa lại phần biên.",
+     "example": "Với mặc định 10, địa chỉ đại lý thứ mười một bị từ chối cho tới khi gỡ một trong mười địa chỉ."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_edge_pending_hours",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: hours an agency-edge certificate may wait",
+   "description": "When an agency host is added or removed, the tripplanner_custom_domain job requests a new certificate for the agency CloudFront distribution naming every attached host; ACM issues it within minutes while each host's validation record is still in that agency's DNS. If it is still pending validation after this many hours, the job fails and detaches the hosts whose record ACM cannot find (failure code validation_record_gone, a staff alert) and requests the certificate again without them, so one agency's missing record never blocks the others. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 24,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How long the system waits for a new shared certificate of the agency addresses before it decides that an agency removed its DNS record, takes that agency's address off line and goes on without it.",
+     "raise": "An agency whose DNS is briefly broken gets more time before its address is taken off line, but other agencies' new or removed addresses wait as long.",
+     "lower": "Other agencies' changes go through sooner, but an agency with a short DNS problem loses its address sooner and staff must retry it.",
+     "when": "Keep the default; lower it if a change for one agency is held up by another agency's DNS.",
+     "example": "With the default of 6, an address added at 09:00 that waits for another agency's missing record goes live by about 15:00 without that agency's address."
+    },
+    "vi": {
+     "what": "Thời gian hệ thống chờ chứng chỉ dùng chung mới của các địa chỉ đại lý, trước khi kết luận một đại lý đã xoá bản ghi DNS, đưa địa chỉ của đại lý đó ra khỏi trạng thái chạy và làm tiếp mà không có nó.",
+     "raise": "Đại lý bị lỗi DNS ngắn có thêm thời gian trước khi địa chỉ bị gỡ, nhưng việc thêm hoặc gỡ địa chỉ của đại lý khác cũng phải chờ lâu như vậy.",
+     "lower": "Thay đổi của đại lý khác đi qua nhanh hơn, nhưng đại lý bị lỗi DNS ngắn mất địa chỉ sớm hơn và nhân viên phải thử lại.",
+     "when": "Giữ mặc định; giảm nếu thay đổi của một đại lý bị kẹt vì DNS của đại lý khác.",
+     "example": "Với mặc định 6, địa chỉ thêm lúc 09:00 mà phải chờ bản ghi bị thiếu của đại lý khác sẽ chạy khoảng 15:00, không còn địa chỉ của đại lý kia."
     }
    }
   },
@@ -8301,6 +8337,42 @@
      "lower": "Địa chỉ chạy sớm hơn sau khi bản ghi xuất hiện, đổi lại nhiều lần kiểm tra (miễn phí) với Amazon hơn.",
      "when": "Giảm trong lúc hướng dẫn đại lý cài đặt qua điện thoại; tăng nếu danh sách job có nhiều lượt kiểm tra đang chờ.",
      "example": "Với mặc định 120, địa chỉ có bản ghi xuất hiện lúc 10:00 sẽ được nhận ra chậm nhất lúc 10:02."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_renewal_grace_days",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: days before expiry to drop an agency domain that blocks renewal",
+   "description": "ACM renews the agency-edge certificate by itself only while every agency keeps its validation record. The daily edge check of the tripplanner_custom_domain job reads the renewal status: when a host blocks renewal it raises a staff alert at once, and once the certificate expires within this many days it fails and detaches that host (failure code validation_record_gone) and replaces the certificate without it, so the other agencies never serve an expired certificate. ACM starts renewal 60 days before expiry. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 7,
+   "max_value": 59,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How close to the expiry of the shared certificate of the agency addresses the system waits for an agency to put back a missing DNS record, before it takes that agency's address off line so the certificate can be renewed for everyone else.",
+     "raise": "The address of an agency with a missing record is taken off line sooner, with more time left to renew the certificate for the others.",
+     "lower": "An agency gets longer to fix its record after the alert, with less time left before the certificate expires.",
+     "when": "Keep the default; raise it if renewals have come close to the expiry date.",
+     "example": "With the default of 30, an agency whose record went missing gets an alert at once and its address is taken off line 30 days before the certificate expires if the record is still missing."
+    },
+    "vi": {
+     "what": "Hệ thống chờ đại lý đặt lại bản ghi DNS bị thiếu tới khi chứng chỉ dùng chung của các địa chỉ đại lý còn bao nhiêu ngày thì hết hạn, trước khi gỡ địa chỉ của đại lý đó để gia hạn chứng chỉ cho mọi đại lý khác.",
+     "raise": "Địa chỉ của đại lý thiếu bản ghi bị gỡ sớm hơn, còn nhiều thời gian hơn để gia hạn chứng chỉ cho các đại lý khác.",
+     "lower": "Đại lý có thêm thời gian sửa bản ghi sau cảnh báo, đổi lại còn ít thời gian hơn trước khi chứng chỉ hết hạn.",
+     "when": "Giữ mặc định; tăng nếu các lần gia hạn từng sát ngày hết hạn.",
+     "example": "Với mặc định 30, đại lý bị thiếu bản ghi nhận cảnh báo ngay và địa chỉ bị gỡ 30 ngày trước khi chứng chỉ hết hạn nếu vẫn thiếu bản ghi."
     }
    }
   },

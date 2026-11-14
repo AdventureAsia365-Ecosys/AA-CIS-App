@@ -92,7 +92,8 @@ def test_the_trash_window_is_badged_not_enforced():
 
 # AA-1090 (CIS 427): the TripPlanner custom-domain limits, until the editor and the tripplanner_custom_domain job are deployed.
 TP_DOMAIN_KEYS = ("cis.tripplanner.custom_domain_max_per_tenant", "cis.tripplanner.custom_domain_edge_max",
-                  "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds")
+                  "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds",
+                  "cis.tripplanner.custom_domain_edge_pending_hours", "cis.tripplanner.custom_domain_renewal_grace_days")
 
 NOT_ENFORCED = ("cis.content.trash_retention_days", "cis.learn.learner_retention_days", *TP_DOMAIN_KEYS)
 

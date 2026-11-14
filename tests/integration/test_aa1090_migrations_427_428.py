@@ -1,13 +1,13 @@
 """AA-1090 TripPlanner R8 (S281) — migrations 427 and 428: the custom hosts of a tenant's TripPlanner site.
 
-427 (shared.tenant_tripplanner_domain + the four custom-domain settings) is replayed by conftest like any file, so the
+427 (shared.tenant_tripplanner_domain + the six custom-domain settings) is replayed by conftest like any file, so the
 table exists here before this module runs. 428 (custom_domains appended to catalog.v_tenant_tripplanner_v1, catalog
 recipe) is skipped by the replay; this module builds on the 390 module's fixtures (Dev after 244 + 245, db_migrator),
 applies 379, 390 and 428 as db_migrator (errors NOT swallowed), 427 and 428 twice. Teardown drops what 428 added and
 undoes 390 + 379, so later modules see the replay state.
 
   * 427: registered once; RLS off (rule a allowlist, like the site table); grants (cis_app only); the domain,
-    status, certificate and target CHECKs refuse bad values; one host is one site (unique); the four settings exist
+    status, certificate and target CHECKs refuse bad values; one host is one site (unique); the six settings exist
     with enforced = false until the code reads them;
   * 428: the view's exact columns and types, owner catalog_owner, security_barrier, tripplanner only; catalog_owner
     reads exactly tenant_id, domain, status of the domain table; tripplanner holds
@@ -43,7 +43,8 @@ DEMO = t379.DEMO
 COLUMNS = t390.COLUMNS + ", custom_domains text[]"
 DOMAIN_COLUMNS = ("tenant_id", "domain", "status")
 SETTINGS = ("cis.tripplanner.custom_domain_max_per_tenant", "cis.tripplanner.custom_domain_edge_max",
-            "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds")
+            "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds",
+            "cis.tripplanner.custom_domain_edge_pending_hours", "cis.tripplanner.custom_domain_renewal_grace_days")
 # The SELECT of AA-TripPlanner-Web backend/browse/tenant_site.py HOST_SQL (column names, never *).
 TP_HOST_SQL = (f"SELECT tenant_id, slug, name, kind, in_service, served, tp_launcher, tp_branding, theme, locale "
                f"FROM {VIEW} WHERE %s = ANY (custom_domains)")
@@ -164,7 +165,7 @@ def test_a_valid_row_and_one_host_is_one_site(cur):
         _host(cur, b, "trip.ottervale.example.invalid", "pending")
 
 
-def test_the_four_settings_are_defined_not_enforced(cur):
+def test_the_six_settings_are_defined_not_enforced(cur):
     cur.execute("SELECT key, enforced, area FROM shared.setting_definition WHERE key = ANY(%s) ORDER BY key",
                 (list(SETTINGS),))
     rows = cur.fetchall()
