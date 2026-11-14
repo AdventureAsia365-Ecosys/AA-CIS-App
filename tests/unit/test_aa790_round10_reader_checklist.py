@@ -34,7 +34,7 @@ def blog(seed=SEED, **kw):
 
 def test_flag_off_by_default_keeps_the_round9_fixture_hash(monkeypatch):
     monkeypatch.delenv(rc.MODE_ENV, raising=False)
-    monkeypatch.delenv(bg.MODE_ENV, raising=False)
+    monkeypatch.delenv("T9_BRIEF_GROUNDING_MODE", raising=False)
     assert fixture_sha() == ROUND6_FIXTURE_SHA
 
 
@@ -221,3 +221,11 @@ def test_harness_reads_the_whole_blog_block():
     block = rp.checklist_seen(prompts.build_user_prompt(**rp.writer_args(row, 0, None, "off", "r10")))
     assert block.splitlines()[0].startswith("READER CHECKLIST (")
     assert block.splitlines()[-1].startswith("- Say each fact once")
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

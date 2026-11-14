@@ -9,7 +9,7 @@ Per stored blog piece (acp_shared.content_piece, channel blog, created at or aft
   t9_words   the seed words the writer actually got (writer_input `seed` + `route_moments`), the same word rule;
   chars      the stored length as F4 reads it (`length_contract.measure`) and its side of the band;
   ratio      chars / t7_words (t9_words when the estimate is 0): blog characters per seed word;
-  verdict    what the floor in force (env + registry, `blog_seed.seed_floor()` with the flat MIN_SEED) and the floor at
+  verdict    what the floor in force (the settings, `blog_seed.seed_floor()` with the flat MIN_SEED) and the floor at
              the MEASURED ratio say about the pick: keep, or the skip reason (seed_below_min / seed_below_length_floor).
 Per Subject (tenant x subject) the newest piece decides.
 
@@ -37,8 +37,8 @@ Env
   TENANTS   (optional) comma-separated tenant slugs; default the four AA-741 audit tenants.
   MIN_SEED  (optional) the flat Blog minimum seed to evaluate (default the setting cis.t7.blog_min_seed_words, else
             600).
-  RATIO     (optional) chars per seed word for the "configured" floor (default T7_BLOG_CHARS_PER_SEED_WORD, else the
-            registry value).
+  RATIO     (optional) chars per seed word for the "configured" floor (default the setting
+            cis.t7.blog_chars_per_seed_word).
   TARGET_TOURS   (optional) comma-separated tour id prefixes to print a verdict for (default ac574bfe).
   TARGET_PIECES  (optional) comma-separated piece id prefixes to print a verdict for (default none).
 """
@@ -201,6 +201,7 @@ def target_verdicts(verdict: dict, tours: list[str], pieces: list[str]) -> dict:
 
 def summarize(lines: list[dict], flat: int, configured_ratio: float, *, target_tours: Optional[list[str]] = None,
               target_pieces: Optional[list[str]] = None) -> dict:
+    from services.acp_shared import blog_seed
     m = measured_ratio(lines)
     subs = subjects(lines)
     out = {"pieces": len(lines), "subjects": len(subs), "measured": m,
@@ -208,8 +209,9 @@ def summarize(lines: list[dict], flat: int, configured_ratio: float, *, target_t
            "flat_only": verdicts(subs, floor_at(flat, None))}
     if m["ratio"]:
         out["at_measured"] = verdicts(subs, floor_at(flat, m["ratio"]))
-        out["recommended_env"] = {"T7_BLOG_CHARS_PER_SEED_WORD": m["ratio"],
-                                  "sized_min_seed_words": out["at_measured"]["floor"]["sized"]}
+        # the value to propose on Platform › Settings (evidence: this replay); CIS 424 retired the env override
+        out["recommended_setting"] = {blog_seed.RATIO_SETTING: m["ratio"],
+                                      "sized_min_seed_words": out["at_measured"]["floor"]["sized"]}
     tours = [t.lower() for t in (target_tours if target_tours is not None else [DEFAULT_TARGET_TOURS])]
     pieces = [x.lower() for x in (target_pieces or [])]
     out["target"] = {"tours": tours, "pieces": pieces}

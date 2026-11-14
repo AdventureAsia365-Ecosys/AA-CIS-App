@@ -167,13 +167,16 @@ async def _run(ctx, calls, *, ext_side_effect=_call, fail_second_with=None):
 
 @pytest.mark.asyncio
 async def test_a_floor_crossing_cut_gets_one_pass_and_is_approved(_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     ctx, calls = _ctx(), []
     ext, kw = await _run(ctx, calls)
     ext.assert_called_once()
     assert ext.call_args.kwargs["step"] == lr.STEP and ext.call_args.kwargs["attempt"] == 2
-    asked = {s["heading"] for s in ext.call_args.kwargs["sections"]}
-    assert asked <= set(CUT) and all(s.get("hole_chars") for s in ext.call_args.kwargs["sections"])  # the cut first
+    secs = ext.call_args.kwargs["sections"]
+    assert {s["heading"] for s in secs if s.get("hole_chars")} == set(CUT)              # the cut sections first
+    # S281 (cis.t9.blog_extend_shrink_sections, default 3): the cut shrank the blog, so one more section is asked
+    assert len(secs) == 3 and sum(1 for s in secs if not s.get("hole_chars")) == 1
+    asked = set(CUT)        # the stand-in writer has a paragraph for the cut sections only (the extra one: empty)
     assert len(calls) == 2                                          # the loop's gates, then every gate again
     assert calls[1]["content_text"] == kw["content_text"] and calls[1]["stock_blocking"] is False
     assert calls[1]["atom_text"] == calls[0]["atom_text"] and calls[1]["cta"] == calls[0]["cta"]
@@ -193,7 +196,7 @@ async def test_a_floor_crossing_cut_gets_one_pass_and_is_approved(_stubs, monkey
 
 @pytest.mark.asyncio
 async def test_switch_off_keeps_the_hold_unchanged(_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "off")
+    monkeypatch.setenv(le.EXTEND_FLAG, "off")
     ctx, calls = _ctx(), []
     ext, kw = await _run(ctx, calls)
     ext.assert_not_called()
@@ -206,7 +209,7 @@ async def test_switch_off_keeps_the_hold_unchanged(_stubs, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_pass_that_fails_a_gate_is_held_as_before(_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     ctx, calls = _ctx(), []
     ext, kw = await _run(ctx, calls, fail_second_with=F17_FAIL)
     ext.assert_called_once()
@@ -221,7 +224,7 @@ async def test_a_pass_that_fails_a_gate_is_held_as_before(_stubs, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_nothing_added_keeps_the_hold(_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     ctx, calls = _ctx(), []
 
     def empty(*, sections, facts, voice=None, **kw):
@@ -234,7 +237,7 @@ async def test_nothing_added_keeps_the_hold(_stubs, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_attempt_left_in_the_budget_keeps_the_hold(_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     monkeypatch.setattr(service, "max_attempts", lambda: 1)       # the loop approved on its last budgeted attempt
     ctx, calls = _ctx(), []
     ext, kw = await _run(ctx, calls)
@@ -264,7 +267,7 @@ async def _run_approved_at_attempt_two(ctx, calls):
 async def test_stop_and_label_approval_at_attempt_two_has_no_paid_attempt_left(_stubs, monkeypatch):
     """Review S280: the default mode's third step is the $0 label (root ADR 0020 D6, setting cis.t9.max_attempts), so
     a blog approved at attempt 2 gets no paid extend call, whatever the setting says (default 3)."""
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     monkeypatch.delenv(service.LAST_ATTEMPT_MODE_ENV, raising=False)
     assert service.max_attempts() == 3
     ctx, calls = _ctx(), []
@@ -279,7 +282,7 @@ async def test_stop_and_label_approval_at_attempt_two_has_no_paid_attempt_left(_
 @pytest.mark.asyncio
 async def test_legacy_mode_approval_at_attempt_two_keeps_its_paid_third_attempt(_stubs, monkeypatch):
     """Legacy mode keeps a paid attempt 3 (setting at 3): the pass may use it, logged as attempt 3."""
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
     ctx, calls = _ctx(), []
     ext, kw = await _run_approved_at_attempt_two(ctx, calls)
@@ -366,3 +369,11 @@ def test_the_replay_uses_the_paid_budget_so_a_stop_and_label_attempt_two_approva
     assert rp.replay_piece(row, source_of=lambda wi, r: SOURCE)["post_normalizer"]["reason"] == "no_attempt_left"
     assert rp.replay_piece(row, source_of=lambda wi, r: SOURCE, paid_attempts=3)["post_normalizer"]["reason"] == (
         "lengthen")
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

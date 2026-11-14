@@ -25,7 +25,7 @@ from tests.unit.test_aa1081_blog_topic_coverage import TOUR_A, TOUR_B, _Conn, _i
 @pytest.fixture
 def no_seed_env(monkeypatch):
     monkeypatch.delenv("T7_BLOG_MIN_SEED_WORDS", raising=False)
-    monkeypatch.delenv(blog_seed.RATIO_ENV, raising=False)
+    monkeypatch.delenv("T7_BLOG_CHARS_PER_SEED_WORD", raising=False)
     return monkeypatch
 
 
@@ -36,7 +36,7 @@ def test_setting_default_is_one_word_per_seed_word():
     from shared import settings
     assert blog_seed.DEFAULT_CHARS_PER_SEED_WORD == settings.definition(blog_seed.RATIO_SETTING).default_value \
         == lc.CHARS_PER_WORD
-    assert settings.definition(blog_seed.RATIO_SETTING).env_override == blog_seed.RATIO_ENV
+    assert settings.definition(blog_seed.RATIO_SETTING).env_override is None          # CIS 424: retired
     assert settings.definition(blog_seed.MIN_SEED_SETTING).env_override is None   # S279 review: no hidden override
 
 
@@ -44,7 +44,7 @@ def test_setting_default_is_one_word_per_seed_word():
                                           ("-3", 5.8), ("abc", 5.8), ("inf", 5.8), ("nan", 5.8)])
 def test_ratio_setting(no_seed_env, raw, expected):
     if raw is not None:
-        no_seed_env.setenv(blog_seed.RATIO_ENV, raw)
+        no_seed_env.setenv("T7_BLOG_CHARS_PER_SEED_WORD", raw)
     assert blog_seed.chars_per_seed_word() == expected
 
 
@@ -67,7 +67,7 @@ def test_seed_floor(no_seed_env, flat, ratio, expected):
     if flat is not None:
         set_min_seed(no_seed_env, flat)
     if ratio is not None:
-        no_seed_env.setenv(blog_seed.RATIO_ENV, ratio)
+        no_seed_env.setenv("T7_BLOG_CHARS_PER_SEED_WORD", ratio)
     f = blog_seed.seed_floor()
     assert (f["min_seed_words"], f["flat"], f["sized"]) == expected
     assert f["floor_chars"] == 4700
@@ -131,7 +131,7 @@ async def test_a_seed_that_clears_600_but_not_the_length_floor_is_skipped(no_see
 @pytest.mark.asyncio
 async def test_sizing_off_keeps_the_flat_floor_alone(no_seed_env):
     set_min_seed(no_seed_env, 600)
-    no_seed_env.setenv(blog_seed.RATIO_ENV, "0")
+    no_seed_env.setenv("T7_BLOG_CHARS_PER_SEED_WORD", "0")
     out, _measured = await _short([_seg("s1", "Corvane Fort", 1, [TOUR_A])], {"atom-s1": 640})
     assert out == {"blog": frozenset()}
 
@@ -139,7 +139,7 @@ async def test_sizing_off_keeps_the_flat_floor_alone(no_seed_env):
 @pytest.mark.asyncio
 async def test_flat_floor_off_reads_nothing_whatever_the_ratio(no_seed_env):
     set_min_seed(no_seed_env, 0)
-    no_seed_env.setenv(blog_seed.RATIO_ENV, "5.8")
+    no_seed_env.setenv("T7_BLOG_CHARS_PER_SEED_WORD", "5.8")
     conn = MagicMock()
     conn.fetch = AsyncMock()
     out = await slate._fetch_short_blog_seeds(uuid4(), conn, [_seg("s1", "Corvane Fort", 1, [TOUR_A])],
@@ -204,3 +204,11 @@ def test_the_workers_old_env_var_is_not_read(no_seed_env):
     it is no longer an override: the setting alone decides."""
     no_seed_env.setenv("T7_BLOG_MIN_SEED_WORDS", "0")
     assert blog_seed.min_seed_words() == 600
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

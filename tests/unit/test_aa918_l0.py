@@ -293,3 +293,11 @@ def test_run_quality_gates_takes_stored_f9_without_a_judge_call(monkeypatch):
                                    channel="facebook", brand_pack=dict(fs.PACK), f9_results=f9)
     by = {g["gate"]: g for g in out["gate_ledger"]}
     assert by[qr.F9_CTA_FACT]["violations"] == ["stored verdict"] and not out["passed"]
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

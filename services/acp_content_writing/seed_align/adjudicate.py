@@ -19,7 +19,7 @@ VIOLATION or OK per item, with two verbatim quotes: words of the sentence and wo
 dropped unless both quotes are found (piece quote in the sentence, seed quote in the excerpt it was sent and in the
 seed). Any model error, an unusable reply or the deadline → nothing changes (fail open).
 
-It never holds a piece. Modes, per class (env `T10_ADJ_MODE`, `T10_ADJ_MODE_<CLASS>`), default off:
+It never holds a piece. Modes, per class (settings cis.quality_modes.t10_adjudicate[_<class>]), default off:
 - `off`: no trigger, no call; the gate ledger and the outcome are what they were.
 - `shadow`: the call runs; verified findings are recorded only (`writer_input.seed_align[*].tier2`, next to tier 1's
   record of the same attempt), never in the ledger.
@@ -55,7 +55,6 @@ logger = structlog.get_logger()
 
 STAGE = "t10_adjudicate"
 ROLE = "judge"
-MODE_ENV = "T10_ADJ_MODE"
 OFF, SHADOW, REPAIR = "off", "shadow", "repair"
 MODES = (OFF, SHADOW, REPAIR)
 # A tier-2 finding reads `sa:t2.<class>: …`: the `sa:` prefix is tier 1's routing and never-hold path.
@@ -101,7 +100,7 @@ ACTIONS = ("repair", "cut")
 def class_mode(cls: str) -> str:
     """The class's own setting (cis.quality_modes.t10_adjudicate_<class>, unless `inherit`), else the mode of every
     class (cis.quality_modes.t10_adjudicate), default off; anything but off / shadow / repair reads as off (S279 L2;
-    the env vars T10_ADJ_MODE_<CLASS> / T10_ADJ_MODE stay their emergency overrides for one release)."""
+    their env overrides retired by CIS 424)."""
     from services.quality import settings_keys as keys
     from shared import settings
 
@@ -574,7 +573,7 @@ def run(content_text: str, *, tier1=None, trip_ctx=None, hygiene_ctx=None, brief
     return out
 
 
-__all__ = ["STAGE", "ROLE", "MODE_ENV", "OFF", "SHADOW", "REPAIR", "MODES", "CLASS_TAG", "CLASSES", "CLASS_GATE",
+__all__ = ["STAGE", "ROLE", "OFF", "SHADOW", "REPAIR", "MODES", "CLASS_TAG", "CLASSES", "CLASS_GATE",
            "REASONS", "MAX_ITEMS", "Trigger", "class_mode", "active_modes", "finding_text", "tier2_only_failure",
            "tier1_skip_set",
            "find_triggers", "SYSTEM_PROMPT", "SCHEMA", "build_user_prompt", "build_request", "parse_verdicts",

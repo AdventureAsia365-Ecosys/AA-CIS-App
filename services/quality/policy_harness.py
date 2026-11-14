@@ -109,7 +109,7 @@ def _body(ex: dict, out: Outcome, seed: str, grounding: str, cta: str) -> None:
         out.verdicts[g["gate"]], out.notes[g["gate"]] = _sev_of_gate(g), g["violations"]
     hyg = hygiene.HygieneContext(seed=seed, scope=ex.get("scope"), trip_name="Velmora Highlands Walk",
                                  brand_name=BRAND, cta=cta, trip_places=tuple(ex.get("trip_places") or ()))
-    with mock.patch.dict("os.environ", {qg.F12_SCOPE_MODE_ENV: "block"}):
+    with mock.patch.object(qg, "f12_scope_mode", return_value=qg.BLOCK_MODE):
         f12 = qg.gate_scope(text, hyg)       # the policy's severity (block class), whatever the run-time mode
     out.verdicts["F12_scope"], out.notes["F12_scope"] = _sev_of_gate(f12), f12["violations"]
     # the admin sentence edit / suggest check (sentence_repair.check_replacement): the same sentence must not be

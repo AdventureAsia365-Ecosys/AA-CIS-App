@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """AA-788 — the expected effect of the three T10 promotions on recent T9 pieces. Read-only, $0, no model call.
 
-Measured before anyone sets a promoted mode (they all default to today's behaviour):
-  T10_F12_SCOPE_MODE=block        a body F12_scope finding blocks (one sentence repair), held when it is left;
-  T10_F9_BRAND_STYLE_MODE=repair  attempt 1's F9_brand_style blocks for one sentence repair, never a hold;
-  T10_F14_FLOOR_MODE              the AA-780 under-floor block (already on; `warn` is its kill switch).
+Measured before anyone sets a promoted mode (they all default to today's behaviour; settings cis.quality_modes.*):
+  t10_f12_scope = block           a body F12_scope finding blocks (one sentence repair), held when it is left;
+  t10_f9_brand_style = repair     attempt 1's F9_brand_style blocks for one sentence repair, never a hold;
+  t10_f14_floor                   the AA-780 under-floor block (already on; `warn` is its kill switch).
 
 Two readings per piece (`acp_shared.content_piece`, status approved / held, the last DAYS days, newest LIMIT):
   stored   the check results the gates wrote: the final `gate_ledger` and attempt 1's ledger (its discarded attempt,
@@ -35,7 +35,7 @@ import os
 import re
 import sys
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -44,8 +44,11 @@ sys.path.insert(0, os.getcwd())
 DEFAULT_DAYS = 60
 DEFAULT_LIMIT = 400
 LIGHT_LABELS = frozenset({"as_is", "light"})
-PROMOTED_ENV = {"T10_F12_SCOPE_MODE": "block", "T10_F9_BRAND_STYLE_MODE": "repair"}
-DEFAULT_ENV = {"T10_F12_SCOPE_MODE": "warn", "T10_F9_BRAND_STYLE_MODE": "warn"}
+# The check modes of each run, by their setting (cis.quality_modes.<mode>). CIS 424 retired the env overrides the
+# script used to set, so `modes()` lays them over the mode readers of quality_gates for the run instead.
+PROMOTED_MODES = {"t10_f12_scope": "block", "t10_f9_brand_style": "repair"}
+DEFAULT_MODES = {"t10_f12_scope": "warn", "t10_f9_brand_style": "warn"}
+_MODE_READERS = {"t10_f12_scope": "f12_scope_mode", "t10_f9_brand_style": "f9_brand_style_mode"}
 _SEO_PREFIXES = ("title ", "meta ")
 _PLACE_RE = re.compile(r"^(?:title |meta )?names '([^']+)'")
 
@@ -217,17 +220,15 @@ def first_blocking(ledger: list) -> Optional[str]:
 
 
 @contextmanager
-def env(values: dict):
-    old = {k: os.environ.get(k) for k in values}
-    os.environ.update(values)
-    try:
+def modes(values: dict):
+    """Run the body with these check modes ({mode: value}), whatever the settings in force; restored after."""
+    from unittest import mock
+
+    from services.acp_content_writing import quality_gates as qg
+    with ExitStack() as stack:
+        for mode, value in values.items():
+            stack.enter_context(mock.patch.object(qg, _MODE_READERS[mode], return_value=value))
         yield
-    finally:
-        for k, v in old.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
 
 
 def replay_piece(piece: dict, run: Callable[[str, list, bool], list]) -> Optional[dict]:
@@ -241,9 +242,9 @@ def replay_piece(piece: dict, run: Callable[[str, list, bool], list]) -> Optiona
     final = _j(piece.get("gate_ledger")) or []
     stock = int(piece.get("attempt_number") or 1) == 1
     try:
-        with env(DEFAULT_ENV):
+        with modes(DEFAULT_MODES):
             base = run(piece.get("content_text") or "", final, stock)
-        with env(PROMOTED_ENV):
+        with modes(PROMOTED_MODES):
             promoted = run(piece.get("content_text") or "", final, stock)
         out["base_hold"] = (qg.hold_failure(base) or {}).get("gate")
         out["promoted_hold"] = (qg.hold_failure(promoted) or {}).get("gate")
@@ -251,9 +252,9 @@ def replay_piece(piece: dict, run: Callable[[str, list, bool], list]) -> Optiona
         if stock:  # the final text IS attempt 1
             b1, p1 = base, promoted
         elif a1_text and a1_ledger:
-            with env(DEFAULT_ENV):
+            with modes(DEFAULT_MODES):
                 b1 = run(a1_text, a1_ledger, True)
-            with env(PROMOTED_ENV):
+            with modes(PROMOTED_MODES):
                 p1 = run(a1_text, a1_ledger, True)
         else:
             return out
@@ -303,7 +304,7 @@ async def main() -> int:
             row["replay"] = {"error": f"inputs: {type(e).__name__}: {str(e)[:160]}"}
         rows.append(row)
     report = {"name": "aa788-promotion-replay", "created_at": datetime.now(timezone.utc).isoformat(),
-              "days": days, "limit": limit, "modes_promoted": PROMOTED_ENV, **summarize(rows, labels)}
+              "days": days, "limit": limit, "modes_promoted": PROMOTED_MODES, **summarize(rows, labels)}
     print(json.dumps(report, indent=1, default=str))
     return 0
 
