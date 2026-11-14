@@ -157,6 +157,7 @@
     "GET /admin/platform/crm/agencies/{tenant_id}/members",
     "GET /admin/platform/crm/agencies/{tenant_id}/usage",
     "GET /admin/platform/crm/console",
+    "GET /admin/platform/infra",
     "GET /admin/platform/staff",
     "GET /admin/platform/staff-directory/health",
     "GET /admin/platform/staff/{staff_id}",

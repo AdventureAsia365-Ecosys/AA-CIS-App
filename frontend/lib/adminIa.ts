@@ -28,7 +28,7 @@ export type NavIcon =
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
-  | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs" | "uiKit"
+  | "staff" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit"
   | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
 
 export interface IaItem {
@@ -140,6 +140,9 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/platform/alerts", label: "Alert recipients", icon: "alerts" },
     // S279 thresholds L1: every threshold, limit and cap, editable by the administrator (the settings registry).
     { href: "/admin/platform/settings", label: "Settings", icon: "settings" },
+    // AA-1096: the limits that stay in Terraform (WAF, API Gateway throttles, Lambda concurrency, AWS budgets, alarm
+    // thresholds), read-only, each with where it is changed.
+    { href: "/admin/platform/infra", label: "Infra limits", icon: "infra" },
     { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
     { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
     { href: "/admin/docs", label: "Docs", icon: "docs" },
