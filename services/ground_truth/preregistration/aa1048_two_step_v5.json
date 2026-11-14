@@ -1,0 +1,37 @@
+{
+ "id": "aa1048-two-step-v5",
+ "issue": "AA-1048",
+ "registered_on": "2026-11-15",
+ "doc": "docs/calibration/aa1048-two-step-preregistration.md",
+ "question": "Does the two-step claim instrument (step 1 v5c sorts restatement / new claim, step 2 v5j judges only the new specifics) drop the false positives of the R1 fired claims and keep the stored violations, on a pool that is out of sample for both steps?",
+ "candidate": "gpt-6-luna-openai@openai-direct",
+ "votes": 3,
+ "stage": "adhoc_aa1048",
+ "role": "judge",
+ "prompt_versions": {
+  "classify": "aa1048-r1-v5c@50704a977e52",
+  "judge": "aa1048-r1-v5j@0c3529d50a55"
+ },
+ "shaped_on": ["3018008d", "33835b87", "2977dd78"],
+ "shaped_on_pools": ["487bf4847b6136fe"],
+ "shaped_on_pools_note": "the S279 pool file (286 held-out R1-fired claims), sha256 first 16 hex as fresh_pool writes excluded_pools; a live run needs a fresh manifest that excludes it or a train-split pool",
+ "pool": "fresh: R1 (gpt-6-luna-openai extraction, prompt v1) fired claims on pieces outside the S279 pool and outside every claim of the runs above, labelled by the agent panel sheet (fresh_pool.py); the stored label wins only when it agrees with the panel majority, a disagreement is left out",
+ "subset": "instrument_eval.select: half false positives (paraphrase, verbatim, background in proportion), half stored violations in proportion per writer, claim-hash order",
+ "verdict_rule": "a claim is cleared when the step-1 majority is restatement; otherwise its verdict is the step-2 majority (unsupported = flagged, none = unverified); go needs every bar below",
+ "bars": {
+  "fp_dropped_min_pct": 60.0,
+  "tp_kept_min_pct": 90.0,
+  "route_tp_min_pct": 95.0,
+  "judge_tp_kept_min_pct": 95.0,
+  "judge_fp_dropped_min_pct": 40.0
+ },
+ "bars_settings": {
+  "fp_dropped_min_pct": "cis.quality.instrument_eval_fp_drop_min_pct",
+  "tp_kept_min_pct": "cis.quality.instrument_eval_tp_keep_min_pct",
+  "route_tp_min_pct": "cis.quality.claim_two_step_route_tp_min_pct",
+  "judge_tp_kept_min_pct": "cis.quality.claim_two_step_judge_tp_keep_min_pct",
+  "judge_fp_dropped_min_pct": "cis.quality.claim_two_step_judge_fp_drop_min_pct"
+ },
+ "stop_rule": "one gated run; a no_go is read at $0 with the stored reasons and is never re-run on the same pool with a changed prompt",
+ "stop_rule_enforced": "two_step run --limit refuses when shared.llm_call_log (stage adhoc_aa1048) holds a gated run of this id, or of the same step-1 prompt on the same pool, or cannot be read; every ledger row of a run carries prereg, run_kind and pool"
+}

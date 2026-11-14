@@ -85,7 +85,7 @@ def test_parity_of_the_switched_readers(no_env):
     assert windows["retention_job"] == {"succeeded": 30, "failed": 90}
     assert {k: s.windows() for k, s in policy.SPECS.items()} == windows
     assert cost_incidents.llm_raw_retention_days() == cost_incidents.LLM_RAW_RETENTION_DAYS == 180
-    assert erasure_job.tenant_retention_days() == erasure_job.tenant_retention_days({}) == 30
+    assert erasure_job.tenant_retention_days() == 30
 
 
 def test_a_served_value_reaches_each_reader(served):
@@ -129,7 +129,6 @@ def test_a_served_value_reaches_each_reader(served):
     assert policy.SPECS["retention_llm_call_log"].windows() == {"raw": 180}     # the compiled default stays
     assert cost_incidents.llm_raw_retention_days() == 365
     assert erasure_job.tenant_retention_days() == 45
-    assert erasure_job.tenant_retention_days({"ERASURE_TENANT_RETENTION_DAYS": "0"}) == 0
     served["cis.t9.max_attempts"] = 9                                   # never above the loop's structural ceiling
     assert t9.max_attempts() == 3
 

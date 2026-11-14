@@ -82,8 +82,8 @@ def test_list_returns_every_report_with_its_due_state(api):
     assert len(body["reports"]) == body["registry"]["reports"] >= 60
     ex04 = next(x for x in body["reports"] if x["id"] == "EX-04")
     assert ex04["runnable"] is True and ex04["due"]["state"] in ("due", "overdue")
-    fi07 = next(x for x in body["reports"] if x["id"] == "FI-07")
-    assert fi07["runnable"] is False and fi07["due"]["state"] == "not_automated"
+    fi09 = next(x for x in body["reports"] if x["id"] == "FI-09")
+    assert fi09["runnable"] is False and fi09["due"]["state"] == "not_automated"
     fi01 = next(x for x in body["reports"] if x["id"] == "FI-01")       # R3: monthly, generated here
     assert fi01["runnable"] is True and fi01["due"]["state"] in ("ok", "due", "overdue")
     assert body["latest_kpi_day"] == "2026-10-28"
@@ -116,7 +116,7 @@ def test_run_queues_ex04_for_the_default_day(api):
 
 def test_run_refusals(api):
     assert api.post("/admin/reports/ZZ-01/run", json={}, headers=_staff()).status_code == 404
-    assert api.post("/admin/reports/FI-07/run", json={}, headers=_staff()).status_code == 409
+    assert api.post("/admin/reports/FI-09/run", json={}, headers=_staff()).status_code == 409
     today = periods.today_ict().isoformat()
     assert api.post("/admin/reports/EX-04/run", json={"period_end": today}, headers=_staff()).status_code == 422
     assert api.post("/admin/reports/EX-04/run", json={"period_start": "2025-01-01"},

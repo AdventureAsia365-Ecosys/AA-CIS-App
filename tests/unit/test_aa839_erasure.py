@@ -259,12 +259,15 @@ def test_apply_refusals(dry, tenant, needle):
     assert any(needle in r for r in out), out
 
 
-def test_retention_window_is_config_with_a_safe_default():
-    assert ej.tenant_retention_days({}) == 30
-    assert ej.tenant_retention_days({"ERASURE_TENANT_RETENTION_DAYS": "0"}) == 0
-    assert ej.tenant_retention_days({"ERASURE_TENANT_RETENTION_DAYS": "junk"}) == 30
-    env = dict(ON, ERASURE_TENANT_RETENTION_DAYS="0")
-    assert ej.apply_refusals(_apply_payload(), _dry_job(), {"cancelled_at": NOW - timedelta(days=3)}, NOW, env) == []
+def test_retention_window_is_a_setting_with_a_safe_default(monkeypatch):
+    from tests.unit.settings_serve import serve
+    assert ej.tenant_retention_days() == 30
+    monkeypatch.setenv("ERASURE_TENANT_RETENTION_DAYS", "0")      # CIS 424: the old env override changes nothing
+    assert ej.tenant_retention_days() == 30
+    with serve({ej.TENANT_RETENTION_SETTING: 0}):                 # the Dev drill sets 0 on Platform › Settings
+        assert ej.tenant_retention_days() == 0
+        assert ej.apply_refusals(_apply_payload(), _dry_job(), {"cancelled_at": NOW - timedelta(days=3)}, NOW,
+                                 ON) == []
 
 
 def test_kind_is_registered_background_without_retries():

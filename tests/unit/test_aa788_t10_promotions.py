@@ -57,7 +57,7 @@ def _entry(outcome: dict, gate: str) -> dict:
 
 @pytest.fixture
 def modes(monkeypatch):
-    for env in (qg.F12_SCOPE_MODE_ENV, qg.F9_BRAND_STYLE_MODE_ENV, qg.F14_FLOOR_MODE_ENV):
+    for env in ("T10_F12_SCOPE_MODE", "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE"):
         monkeypatch.delenv(env, raising=False)
 
     def set_(**kw):
@@ -278,3 +278,11 @@ def test_f14_floor_rewrite_feedback_lists_unused_source_facts(modes):
     assert writing_service._repair_feedback([floor], "linkedin") == fb[:1]
     warn = qg.gate_social_shape(SHORT_POST, linkedin_spec(TRAIL))
     assert writing_service._repair_feedback([warn], "linkedin", source=SEED, content_text=SHORT_POST) == []
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

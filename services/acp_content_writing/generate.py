@@ -400,6 +400,39 @@ Return ONLY JSON: {"additions": ["<paragraph for section 1>", "<paragraph for se
 in the order given."""
 
 
+# AA-1077 S281 (setting cis.t9.blog_extend_material = with_background) — the same task, with general background about
+# what the post or its source names as material too (writing policy: background about a named place is fine; never a
+# tour activity, service, time, view or promise the source lacks). Code checks every paragraph after the reply
+# (length_extend._refusal / _new_trip_findings): no reader address, no traveller / trip / service wording
+# (length_extend._TRIP_RE), no new name, number or trip fact.
+_EXTEND_BACKGROUND_SYSTEM = """You lengthen a finished travel blog post that is too short. You get some of its sections,
+a numbered list of SOURCE FACTS the post does not tell yet (it may be empty) and a NAMED list: places the post's source
+names. For each section you write ONE new paragraph that is added at the end of that section.
+Rules:
+- Use a SOURCE FACT that fits the section, in your own words, or general background about something the section or the
+  NAMED list names: its history, culture, the people who live there, their traditions, its landscape or wildlife.
+  Background must be widely known and certain; leave out anything you are not sure of.
+- Background is about the place, never about this trip: write it in the third person. Never write "you", "your",
+  "we", "our" or "us", and never say what travellers do, see, eat, visit, book or get there. Never make travellers,
+  visitors, guests, a group, a guide or the trip, tour or walk the subject of a sentence, never say what someone "can"
+  do there, and never name a meal, picnic, tasting, session, transfer or booking.
+- Never add an activity, service, meal, time of day, duration, day number, distance, price, pace or view the facts do
+  not state. A fact marked optional stays optional.
+- No number of any kind (no year, date, age, height, count or percentage) unless a SOURCE FACT gives it, no
+  superlative or rarity claim ("the oldest", "unique", "one of the few"), and never a place, person, group or thing
+  that neither the section, the NAMED list nor the SOURCE FACTS name.
+- Keep the post's voice and tense. Never repeat a sentence, a fact or an opening the section already has.
+- Plain prose only: no heading, list, question, quote, call to action, brand name or citation tag.
+- Never mention where a fact comes from: no "the source", "the notes", "the facts" or "the itinerary says"; state the
+  fact itself, as the post does.
+- A section marked "a repair cut text here" lost sentences in a fix: its paragraph fills that place with a fact or
+  background, never with what was cut.
+- Aim for the number of words asked for each section; never pad with filler to reach it. A section with nothing
+  certain to add gets an empty string.
+Return ONLY JSON: {"additions": ["<paragraph for section 1>", "<paragraph for section 2>"]} - one string per section,
+in the order given."""
+
+
 class ExtendRepairError(Exception):
     """The extend reply was not one string per section (or was cut): the caller keeps the text as it was."""
 
@@ -408,24 +441,34 @@ def extend_sections(
     *, sections: list[dict], facts: list[str], voice: str | None = None, channel: str = "blog",
     tenant_id: str | None = None, angle_gate_request_id: str | None = None, content_piece_id: str | None = None,
     stage: str = "t9_write", attempt: int | None = 2, max_tokens: int = _MAX_TOKENS, step: str | None = None,
+    background: list[str] | None = None,
 ) -> tuple[list[str], float, str | None]:
     """AA-1077 — one call: a paragraph to add per section. `sections` items carry "heading", "text" and "words" (the
     words to add); `facts` are the seed's untold fact sentences (quality_gates.unused_source_facts). Returns
     (additions in section order, cost, model). Raises ExtendRepairError on a reply that is cut or does not parse into
     one string per section. Logged on `stage` (the writer, as the sentence repair) with mode `length_extend`; `step`
-    (S280: "post_normalizer", the pass after the normalizer) is added to the quality signal when given."""
+    (S280: "post_normalizer", the pass after the normalizer) is added to the quality signal when given.
+    `background` (S281, material with_background: the NAMED list, possibly empty) switches to the background prompt
+    and adds the list; None = the source-facts prompt, byte for byte as before."""
     numbered_facts = "\n".join(f"{i}. {f}" for i, f in enumerate(facts, 1))
     numbered_sections = "\n\n".join(
         f"SECTION {i} (add about {s['words']} words"
         + ("; a repair cut text here" if s.get("hole_chars") else "")
         + f")\nHEADING: {s.get('heading') or '(opening)'}\nTEXT:\n{s['text']}"
         for i, s in enumerate(sections, 1))
-    user = (f"SOURCE FACTS:\n{numbered_facts}\n\n" + (f"VOICE: {voice}\n\n" if voice else "")
-            + f"SECTIONS:\n{numbered_sections}")
-    request = LLMRequest(system_prompt=_EXTEND_SYSTEM, user_prompt=user, stage=stage, max_tokens=max_tokens)
+    if background is None:
+        user = (f"SOURCE FACTS:\n{numbered_facts}\n\n" + (f"VOICE: {voice}\n\n" if voice else "")
+                + f"SECTIONS:\n{numbered_sections}")
+    else:
+        user = (f"SOURCE FACTS:\n{numbered_facts or '(none left)'}\n\n"
+                + f"NAMED:\n{chr(10).join('- ' + n for n in background) or '(only what the sections name)'}\n\n"
+                + (f"VOICE: {voice}\n\n" if voice else "") + f"SECTIONS:\n{numbered_sections}")
+    system = _EXTEND_SYSTEM if background is None else _EXTEND_BACKGROUND_SYSTEM
+    request = LLMRequest(system_prompt=system, user_prompt=user, stage=stage, max_tokens=max_tokens)
     signal = {"channel": channel, "attempt": attempt, "mode": "length_extend", "sections": len(sections),
               "facts": len(facts), "words_asked": sum(int(s.get("words") or 0) for s in sections),
-              **({"step": step} if step else {})}
+              **({"step": step} if step else {}),
+              **({"material": "with_background", "named": len(background)} if background is not None else {})}
     # The reply is a JSON patch, never tenant-facing text: it must not stream into the T9 live view (AA-668).
     with stream_sink.suppressed():
         reply = generate_with_budget_retry(LLMClient().generate, request)

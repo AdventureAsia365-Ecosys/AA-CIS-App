@@ -39,14 +39,13 @@ def apply_enabled() -> bool:
     return setting(APPLY_SETTING) is True
 
 
-def windows(mode: str, env: Optional[dict] = None) -> dict[str, timedelta]:
-    """The exit window per app: 0 for a drill; else stage 1 = the CIS tenant retention, stage 2 = the CRM window.
-    ``env`` (tests): passed to erasure_job.tenant_retention_days (its emergency override)."""
+def windows(mode: str) -> dict[str, timedelta]:
+    """The exit window per app: 0 for a drill; else stage 1 = the CIS tenant retention, stage 2 = the CRM window."""
     if mode == "drill":
         return {app: timedelta(0) for app in APPS}
     from services.jobs import erasure_job as ej   # lazy: loading a router must not import every job module
 
-    others = timedelta(days=ej.tenant_retention_days(env))
+    others = timedelta(days=ej.tenant_retention_days())
     return {"cis": others, "booking": others, "tripplanner": others,
             "crm": timedelta(days=int(setting(CRM_WINDOW_SETTING)))}
 
