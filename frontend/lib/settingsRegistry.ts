@@ -472,6 +472,25 @@ export function searchSettings<T extends Pick<SettingDefinition, "key" | "label"
   return items.filter(hit).sort((a, b) => a.area.localeCompare(b.area) || a.label.localeCompare(b.label));
 }
 
+/** AA-1096 (S280, tech lead: "the groups disappear while I search"): the areas that hold matches of the search, each
+ *  with its number of matches, sorted by area (the order of the area tabs). Pure. */
+export function searchAreaCounts(found: Pick<SettingDefinition, "area">[]): { area: string; count: number }[] {
+  const by = new Map<string, number>();
+  for (const s of found) by.set(s.area, (by.get(s.area) ?? 0) + 1);
+  return [...by.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([area, count]) => ({ area, count }));
+}
+
+/** The area chip in force: the picked area while it still holds a match, else null (the "All" chip). Pure. */
+export function searchAreaPicked(found: Pick<SettingDefinition, "area">[], area: string | null): string | null {
+  return area !== null && found.some((s) => s.area === area) ? area : null;
+}
+
+/** The matches shown under the area chips: those of the chip in force (searchAreaPicked), or all of them. Pure. */
+export function matchesInArea<T extends Pick<SettingDefinition, "area">>(found: T[], area: string | null): T[] {
+  const picked = searchAreaPicked(found, area);
+  return picked === null ? found : found.filter((s) => s.area === picked);
+}
+
 /** The POST body of an approve / reject. A CRM row is decided in the CRM (AA-1096 L4: the CIS API relays it there),
  *  an agency's own row names its agency (the CRM sees that row only in the agency's context). */
 export function decisionBody(item: Pick<SettingDefinition, "app">, row: Pick<SettingRow, "tenant_id">, note: string) {
