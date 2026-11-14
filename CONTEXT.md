@@ -3521,6 +3521,16 @@ five S279 relabels for v2) are in-sample: reported apart, never in the TP-kept b
 whose misses shaped the next version are in-sample for it too: `--exclude <report>` keeps them out of its subset.
 `score` replays a finished run from its stored votes at $0; `--measured <report>` prices the plan from a measured run
 (the live gate still charges every call's worst case).
+**Two-step instrument (AA-1048, S281)**: after v2-v4 were no_go, `services/ground_truth/two_step.py` splits the question
+in two registered step versions: `v5c` (step `classify`: restatement of the source or new claim, listing the new
+specifics) and `v5j` (step `judge`: is each listed specific supported). A claim is cleared when the step-1 majority is
+a restatement; otherwise the step-2 majority decides (an unverified step 1 never clears). A step version is
+entailment-only and refused by `r1.instruments`. The evaluation is pre-registered
+(`services/ground_truth/preregistration/aa1048_two_step_v5.json`, `docs/calibration/aa1048-two-step-preregistration.md`):
+a live run refuses unless the settings bars (CIS 417 overall + CIS 423 step bars), prompt tags, candidate and votes
+equal the file, and unless the pool is out of sample for both steps: a fresh pool (`services/ground_truth/
+fresh_pool.py`: R1-fired claims on pieces no earlier round touched, the agent panel's sheet, a manifest with the pool
+digest and the excluded runs and pieces) or `--exclude` of the shaping runs.
 _Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:

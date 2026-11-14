@@ -137,9 +137,12 @@ class Instrument:
 def instruments(candidates: Iterable[tuple[str, str]] = DEFAULT_CANDIDATES,
                 modes: Iterable[str] = MODES, prompt: str = pr.DEFAULT) -> list[Instrument]:
     try:
-        pr.get(prompt)
+        version = pr.get(prompt)
     except pr.UnknownPromptVersion as e:
         raise R1Refused(str(e)) from e
+    if version.step:
+        raise R1Refused(f"{prompt} is a step of the two-step instrument ({version.step}): run it with "
+                        "services.ground_truth.two_step")
     out = []
     for model, conn in candidates:
         for mode in modes:
