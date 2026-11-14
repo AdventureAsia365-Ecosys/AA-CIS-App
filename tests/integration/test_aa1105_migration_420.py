@@ -77,7 +77,7 @@ async def test_420_registered_with_the_design_tables_and_keys(conn):
     by = {r["t"]: r for r in rows}
     assert set(by) == set(TABLES)
     for t in TENANT_TABLES:
-        assert by[t]["rls"] is True and by[t]["force"] is False, t           # the CIS template: ENABLE, not FORCE
+        assert by[t]["rls"] is True and by[t]["force"] is True, t            # the CIS template: ENABLE + FORCE
     assert by["content_review_item"]["rls"] is False                        # no tenant column, no learner data
     pks = {r["t"]: list(r["cols"]) for r in await conn.fetch(
         "SELECT c.conrelid::regclass::text AS t, array_agg(a.attname::text ORDER BY k.ord) AS cols "
@@ -103,8 +103,9 @@ async def test_rls_template_and_grants(conn):
         pol = {r["policyname"]: r for r in await conn.fetch(
             "SELECT policyname, roles::text[] AS roles, qual, with_check FROM pg_policies "
             "WHERE schemaname = 'learn' AND tablename = $1", t)}
-        assert set(pol) == {f"{t}_cis_app_all", "tenant_isolation"}, t
+        assert set(pol) == {f"{t}_cis_app_all", f"{t}_cis_owner_all", "tenant_isolation"}, t
         assert pol[f"{t}_cis_app_all"]["roles"] == ["cis_app"] and pol[f"{t}_cis_app_all"]["qual"] == "true"
+        assert pol[f"{t}_cis_owner_all"]["roles"] == ["cis_owner"] and pol[f"{t}_cis_owner_all"]["qual"] == "true"
         iso = pol["tenant_isolation"]
         assert iso["roles"] == ["aa_app_user"] and "NULLIF" in iso["qual"] and "app.tenant_id" in iso["qual"], t
         assert "NULLIF" in iso["with_check"], t

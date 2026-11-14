@@ -624,7 +624,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: certificate checks per minute",
-   "description": "ADR 0022 decision 3: how many public certificate verify requests one client address may make per minute on /learn/public/v1/certificates/{code}; more answer 429. Slows down guessing codes (128-bit, stored as SHA-256). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "ADR 0022 decision 6 (proposed, S280): how many public certificate verify requests one client address may make per minute on /learn/public/v1/certificates/{code}; more answer 429. Slows down guessing codes (128-bit, stored as SHA-256). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
    "value_type": "int",
    "unit": "requests",
    "min_value": 5,

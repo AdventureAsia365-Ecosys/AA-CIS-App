@@ -26,9 +26,12 @@
 --        certificate        one per learner and path; Open Badges 3.0 fields in badge; code_sha256 = SHA-256 of the
 --                           128-bit verification code (never the code); revoked_* by an administrator.
 --        content_review_item  a stale lesson source for its module owner (research section 6.4); no tenant column.
---      Every table with tenant_id gets the CIS row-level security template: ENABLE (not FORCE; cis_owner, the owner,
---      is exempt), a tenant_isolation policy TO aa_app_user on NULLIF(current_setting('app.tenant_id', true), '')::uuid
---      and a <table>_cis_app_all policy TO cis_app (X1 parity, CIS 244). aa_app_user holds no privilege until P7.
+--      Every table with tenant_id gets the CIS row-level security template of every CIS tenant table since 277 (360,
+--      386, 407): ENABLE + FORCE, the X1 parity policies <table>_cis_app_all TO cis_app and <table>_cis_owner_all TO
+--      cis_owner (data standards SEC-7: FORCE waited only for the X1 role split, done since X1 S18), and a
+--      tenant_isolation policy TO aa_app_user on NULLIF(current_setting('app.tenant_id', true), '')::uuid (the research
+--      section 7 rule: agency rows carry tenant_id under the RLS template with FORCE RLS). aa_app_user holds no
+--      privilege until P7.
 --      cis_app: SELECT, INSERT, UPDATE, DELETE on every table, plus default privileges FOR ROLE cis_owner IN SCHEMA
 --      learn (tables, sequences, functions), the shape the isolation probe expects (owners.yaml schemas_from 420).
 --      DM-6.1 tags: learner.iss / sub pii:online_id, learner.display_name pii:name, certificate.revoke_reason and
@@ -46,8 +49,8 @@
 -- Behaviour on apply. None for running code: empty tables, nothing reads them until the learning API is deployed.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): a new schema, REVOKE / ALTER DEFAULT
--- PRIVILEGES and a DO post-check are outside the expand set, and the tenant tables are ENABLE-only RLS by design (the
--- CIS template above, ADR 0022 open point "RLS form"). On Dev: Infra Migration Apply once every job table is idle
+-- PRIVILEGES and a DO post-check are outside the expand set (the tenant tables take the ENABLE + FORCE template
+-- above). On Dev: Infra Migration Apply once every job table is idle
 -- (root ADR 0017a). Retention rows (DM-7.1): root data standards Part B section 7, merged before the Infra copy (the
 -- Infra retention-row check reads the learn tables of the cis dir). Ownership registry: AA-CIS-Infra db/owners.yaml
 -- lists learn under cis (merged before the Infra copy: the Copy Guard ownership lint reads it).
@@ -331,66 +334,98 @@ DROP TRIGGER IF EXISTS statement_no_truncate_trg ON learn.statement;
 CREATE TRIGGER statement_no_truncate_trg BEFORE TRUNCATE ON learn.statement
     FOR EACH STATEMENT EXECUTE FUNCTION learn.statement_append_only();
 
--- Row-level security: the CIS template on every table with a tenant_id (CIS 229 / 244 shape) ──────────────────────
+-- Row-level security: the CIS template on every table with a tenant_id (ENABLE + FORCE, X1 parity as CIS 360 / 407) 
 ALTER TABLE learn.learner ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.learner FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS learner_cis_app_all ON learn.learner;
 CREATE POLICY learner_cis_app_all ON learn.learner AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS learner_cis_owner_all ON learn.learner;
+CREATE POLICY learner_cis_owner_all ON learn.learner AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.learner;
 CREATE POLICY tenant_isolation ON learn.learner AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.enrollment ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.enrollment FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS enrollment_cis_app_all ON learn.enrollment;
 CREATE POLICY enrollment_cis_app_all ON learn.enrollment AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS enrollment_cis_owner_all ON learn.enrollment;
+CREATE POLICY enrollment_cis_owner_all ON learn.enrollment AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.enrollment;
 CREATE POLICY tenant_isolation ON learn.enrollment AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.statement ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.statement FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS statement_cis_app_all ON learn.statement;
 CREATE POLICY statement_cis_app_all ON learn.statement AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS statement_cis_owner_all ON learn.statement;
+CREATE POLICY statement_cis_owner_all ON learn.statement AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.statement;
 CREATE POLICY tenant_isolation ON learn.statement AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.lesson_progress ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.lesson_progress FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lesson_progress_cis_app_all ON learn.lesson_progress;
 CREATE POLICY lesson_progress_cis_app_all ON learn.lesson_progress AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS lesson_progress_cis_owner_all ON learn.lesson_progress;
+CREATE POLICY lesson_progress_cis_owner_all ON learn.lesson_progress AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.lesson_progress;
 CREATE POLICY tenant_isolation ON learn.lesson_progress AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.quiz_attempt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.quiz_attempt FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS quiz_attempt_cis_app_all ON learn.quiz_attempt;
 CREATE POLICY quiz_attempt_cis_app_all ON learn.quiz_attempt AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS quiz_attempt_cis_owner_all ON learn.quiz_attempt;
+CREATE POLICY quiz_attempt_cis_owner_all ON learn.quiz_attempt AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.quiz_attempt;
 CREATE POLICY tenant_isolation ON learn.quiz_attempt AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.review_card ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.review_card FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS review_card_cis_app_all ON learn.review_card;
 CREATE POLICY review_card_cis_app_all ON learn.review_card AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS review_card_cis_owner_all ON learn.review_card;
+CREATE POLICY review_card_cis_owner_all ON learn.review_card AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.review_card;
 CREATE POLICY tenant_isolation ON learn.review_card AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.lab_run ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.lab_run FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_run_cis_app_all ON learn.lab_run;
 CREATE POLICY lab_run_cis_app_all ON learn.lab_run AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS lab_run_cis_owner_all ON learn.lab_run;
+CREATE POLICY lab_run_cis_owner_all ON learn.lab_run AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.lab_run;
 CREATE POLICY tenant_isolation ON learn.lab_run AS PERMISSIVE FOR ALL TO aa_app_user
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ALTER TABLE learn.certificate ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learn.certificate FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS certificate_cis_app_all ON learn.certificate;
 CREATE POLICY certificate_cis_app_all ON learn.certificate AS PERMISSIVE FOR ALL TO cis_app
+    USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS certificate_cis_owner_all ON learn.certificate;
+CREATE POLICY certificate_cis_owner_all ON learn.certificate AS PERMISSIVE FOR ALL TO cis_owner
     USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS tenant_isolation ON learn.certificate;
 CREATE POLICY tenant_isolation ON learn.certificate AS PERMISSIVE FOR ALL TO aa_app_user
@@ -423,7 +458,7 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
 {"key": "cis.learn.learner_retention_days", "app": "cis", "area": "learn", "label": "Academy: keep learning records after an account ends", "description": "Decision D11 (data standards DM-7.1 learn rows): learning records are kept while the account is active, and deleted this many days after the staff account was deactivated or removed, by the learn_retention job (its first run is a DRY RUN). A change of this window is a DM-7.5 amendment. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.", "value_type": "int", "unit": "days", "min_value": 30, "max_value": 1825, "allowed_values": null, "default_value": 365, "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": true, "env_override": null, "cache_s": 60, "enforced": false, "guide": {"en": {"what": "How long the learning records of a person (progress, quiz results, review cards, certificates) are kept after their account is closed.", "raise": "Records and certificates of people who left stay longer, which keeps history but holds personal data longer.", "lower": "Personal data goes sooner, but a person who comes back starts over and their certificates stop verifying sooner.", "when": "Change it only with the data protection owner, and record the reason; the default follows the approved privacy decision.", "example": "With the default of 365, the records of someone whose account closed on 1 January are deleted the next January."}, "vi": {"what": "Thời gian giữ hồ sơ học tập của một người (tiến độ, kết quả kiểm tra, thẻ ôn tập, chứng chỉ) sau khi tài khoản của họ đóng.", "raise": "Hồ sơ và chứng chỉ của người đã nghỉ được giữ lâu hơn, giữ được lịch sử nhưng giữ dữ liệu cá nhân lâu hơn.", "lower": "Dữ liệu cá nhân bị xoá sớm hơn, nhưng người quay lại phải học lại từ đầu và chứng chỉ của họ ngừng xác minh sớm hơn.", "when": "Chỉ đổi khi đã bàn với người phụ trách bảo vệ dữ liệu và ghi lý do; mặc định theo quyết định quyền riêng tư đã duyệt.", "example": "Với mặc định 365, hồ sơ của người có tài khoản đóng ngày 1 tháng 1 bị xoá vào tháng 1 năm sau."}}},
 {"key": "cis.learn.review_target_retention", "app": "cis", "area": "learn", "label": "Academy: review recall target", "description": "Research section 5.4 (spaced review with FSRS, ts-fsrs in the browser): the share of review cards a learner should still recall when a card comes due. The browser schedules with it; the API returns it with the due cards. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.", "value_type": "numeric", "unit": "ratio", "min_value": 0.7, "max_value": 0.97, "allowed_values": null, "default_value": 0.9, "scope_kind": "platform", "impact": "low", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 60, "enforced": false, "guide": {"en": {"what": "How sure the review schedule wants to be that a learner still remembers a missed question when it comes back.", "raise": "Questions come back sooner and more often: better memory, more review time.", "lower": "Questions come back later and less often: less review time, more forgetting.", "when": "Lower it if learners say the review queue takes too long; raise it for paths where recall must be near perfect.", "example": "With the default of 0.9, a question is shown again when there is about a 90% chance it is still remembered."}, "vi": {"what": "Mức chắc chắn mà lịch ôn tập muốn có rằng người học vẫn nhớ một câu từng trả lời sai khi nó quay lại.", "raise": "Câu hỏi quay lại sớm và thường hơn: nhớ tốt hơn, tốn thời gian ôn hơn.", "lower": "Câu hỏi quay lại muộn và ít hơn: ít thời gian ôn hơn, quên nhiều hơn.", "when": "Giảm nếu người học thấy hàng ôn tập quá lâu; tăng cho lộ trình cần nhớ gần như tuyệt đối.", "example": "Với mặc định 0,9, một câu hiện lại khi còn khoảng 90% khả năng người học vẫn nhớ."}}},
 {"key": "cis.learn.review_max_cards_per_day", "app": "cis", "area": "learn", "label": "Academy: review cards per day", "description": "Research section 4.3: the most spaced-review cards the due list returns to one learner per day; the rest wait for the next day. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.", "value_type": "int", "unit": "cards", "min_value": 5, "max_value": 200, "allowed_values": null, "default_value": 20, "scope_kind": "platform", "impact": "low", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 60, "enforced": false, "guide": {"en": {"what": "How many review questions one learner gets at most in a day.", "raise": "Learners clear their backlog faster, but a long daily queue can feel like a chore.", "lower": "Each day is short, but missed questions pile up and come back late.", "when": "Raise it after a large module change that suspended many questions; lower it if learners skip their reviews.", "example": "With the default of 20, a learner with 35 due cards sees 20 today and 15 tomorrow."}, "vi": {"what": "Số câu ôn tập tối đa một người học nhận trong một ngày.", "raise": "Người học xử lý hết phần tồn nhanh hơn, nhưng hàng ôn dài mỗi ngày có thể thành gánh nặng.", "lower": "Mỗi ngày ngắn, nhưng các câu sai dồn lại và quay lại muộn.", "when": "Tăng sau một thay đổi module lớn làm tạm ngưng nhiều câu; giảm nếu người học bỏ qua phần ôn.", "example": "Với mặc định 20, người có 35 thẻ đến hạn thấy 20 thẻ hôm nay và 15 thẻ ngày mai."}}},
-{"key": "cis.learn.verify_requests_per_minute", "app": "cis", "area": "learn", "label": "Academy: certificate checks per minute", "description": "ADR 0022 decision 3: how many public certificate verify requests one client address may make per minute on /learn/public/v1/certificates/{code}; more answer 429. Slows down guessing codes (128-bit, stored as SHA-256). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.", "value_type": "int", "unit": "requests", "min_value": 5, "max_value": 600, "allowed_values": null, "default_value": 30, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 60, "enforced": false, "guide": {"en": {"what": "How many times per minute one visitor may check certificates on the public verify page.", "raise": "Partners who check many certificates at once are not slowed down, but guessing codes gets a little easier.", "lower": "Guessing codes gets harder, but a visitor checking many certificates quickly is told to wait.", "when": "Raise it if a partner checks a batch of certificates and is refused; lower it if the logs show code guessing.", "example": "With the default of 30, the 31st check within one minute from the same address waits until the minute ends."}, "vi": {"what": "Số lần mỗi phút một người truy cập được kiểm chứng chỉ trên trang xác minh công khai.", "raise": "Đối tác kiểm nhiều chứng chỉ cùng lúc không bị chậm, nhưng việc đoán mã dễ hơn một chút.", "lower": "Đoán mã khó hơn, nhưng người kiểm nhiều chứng chỉ nhanh sẽ được báo chờ.", "when": "Tăng nếu một đối tác kiểm cả loạt chứng chỉ và bị từ chối; giảm nếu nhật ký cho thấy có người đoán mã.", "example": "Với mặc định 30, lần kiểm thứ 31 trong một phút từ cùng một địa chỉ phải chờ hết phút đó."}}}
+{"key": "cis.learn.verify_requests_per_minute", "app": "cis", "area": "learn", "label": "Academy: certificate checks per minute", "description": "ADR 0022 decision 6 (proposed, S280): how many public certificate verify requests one client address may make per minute on /learn/public/v1/certificates/{code}; more answer 429. Slows down guessing codes (128-bit, stored as SHA-256). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.", "value_type": "int", "unit": "requests", "min_value": 5, "max_value": 600, "allowed_values": null, "default_value": 30, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 60, "enforced": false, "guide": {"en": {"what": "How many times per minute one visitor may check certificates on the public verify page.", "raise": "Partners who check many certificates at once are not slowed down, but guessing codes gets a little easier.", "lower": "Guessing codes gets harder, but a visitor checking many certificates quickly is told to wait.", "when": "Raise it if a partner checks a batch of certificates and is refused; lower it if the logs show code guessing.", "example": "With the default of 30, the 31st check within one minute from the same address waits until the minute ends."}, "vi": {"what": "Số lần mỗi phút một người truy cập được kiểm chứng chỉ trên trang xác minh công khai.", "raise": "Đối tác kiểm nhiều chứng chỉ cùng lúc không bị chậm, nhưng việc đoán mã dễ hơn một chút.", "lower": "Đoán mã khó hơn, nhưng người kiểm nhiều chứng chỉ nhanh sẽ được báo chờ.", "when": "Tăng nếu một đối tác kiểm cả loạt chứng chỉ và bị từ chối; giảm nếu nhật ký cho thấy có người đoán mã.", "example": "Với mặc định 30, lần kiểm thứ 31 trong một phút từ cùng một địa chỉ phải chờ hết phút đó."}}}
 ]$seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
                       min_value numeric, max_value numeric, allowed_values jsonb, default_value jsonb, scope_kind text,
                       impact text, approval text, evidence_required boolean, env_override text, cache_s integer,
@@ -440,12 +475,13 @@ BEGIN
       FROM unnest(ARRAY['learner', 'enrollment', 'statement', 'lesson_progress', 'quiz_attempt', 'review_card',
                         'lab_run', 'certificate']) AS t
      WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-                        WHERE n.nspname = 'learn' AND c.relname = t AND c.relrowsecurity)
+                        WHERE n.nspname = 'learn' AND c.relname = t AND c.relrowsecurity
+                          AND c.relforcerowsecurity)
         OR (SELECT count(*) FROM pg_catalog.pg_policies p
              WHERE p.schemaname = 'learn' AND p.tablename = t
-               AND p.policyname IN (t || '_cis_app_all', 'tenant_isolation')) <> 2;
+               AND p.policyname IN (t || '_cis_app_all', t || '_cis_owner_all', 'tenant_isolation')) <> 3;
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 420: RLS or its two policies missing on learn.%', bad;
+        RAISE EXCEPTION 'migration 420: RLS (ENABLE + FORCE) or its three policies missing on learn.%', bad;
     END IF;
     SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO bad
       FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace

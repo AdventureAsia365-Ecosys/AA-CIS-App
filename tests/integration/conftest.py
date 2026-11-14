@@ -106,6 +106,8 @@ X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_share
 # test know only the 244-time set: x1_244_ci_shape takes their RLS and their cis_app policy off around 244 (the
 # 262 / 265 / 266 state minus what 244 must not see; the other policies stay, inert while RLS is off),
 # x1_244_ci_unshape puts both back.
+X1_420_LEARN_RLS = tuple(f"learn.{t}" for t in ("learner", "enrollment", "statement", "lesson_progress", "quiz_attempt",
+                                                 "review_card", "lab_run", "certificate"))
 X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.quarter_plan_version",
                    "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms",
@@ -130,10 +132,8 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    # 394 (AA-1063), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.eval_claim_proposal", "shared.eval_claim_relabel",
                    "shared.eval_golden_split",  # 400 (AA-1051), FORCE: also X1_POST_245_FORCE_RLS
-                   # 407 (S279 thresholds L1), FORCE: also X1_POST_245_FORCE_RLS
-                   "shared.setting_definition", "shared.setting_value",  # 420 (AA-1105): ENABLE only
-                   *(f"learn.{t}" for t in ("learner", "enrollment", "statement", "lesson_progress", "quiz_attempt",
-                                            "review_card", "lab_run", "certificate")))
+                   # 407 (S279 thresholds L1) and 420 (AA-1105), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.setting_definition", "shared.setting_value", *X1_420_LEARN_RLS)
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
 # own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
 # FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
@@ -146,7 +146,7 @@ X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared
                          "acp_shared.tenant_tour_notice", "acp_shared.tour_retirement_policy",
                          "acp_shared.fact_sheet", "shared.eval_claim_label", "shared.claim_shadow_verdict",
                          "shared.eval_claim_proposal", "shared.eval_claim_relabel", "shared.eval_golden_split",
-                         "shared.setting_definition", "shared.setting_value")
+                         "shared.setting_definition", "shared.setting_value", *X1_420_LEARN_RLS)
 
 # AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
 # missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
