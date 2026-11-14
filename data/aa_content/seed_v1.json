@@ -225,6 +225,21 @@
    }
   },
   {
+   "group_key": "template-booking-confirmed",
+   "kind": "starter_template",
+   "applies_to": {},
+   "items": {
+    "en": {
+     "title": "Booking confirmed",
+     "body_markdown": "Hi {{traveller_first_name}},\n\nGood news: your booking is confirmed.\n\n- Trip: {{trip_name}}\n- Departure: {{departure_date}}\n- Destination: {{destination}}\n\nWhat happens next:\n\n1. When you booked, you accepted our booking terms, including the cancellation policy. Reply to this message if you would like another copy.\n2. About six weeks before departure we send your final itinerary and the Before you go guide.\n3. A week before you leave we confirm your airport pickup and your guide's contact details.\n\nIf any traveller's details change (names, passports, flights or dietary needs), reply to this message and we will update your booking.\n\nThank you for travelling with us.\n\n{{agent_name}}\n{{agency_name}}"
+    },
+    "vi": {
+     "title": "Xác nhận đặt tour",
+     "body_markdown": "Chào {{traveller_first_name}},\n\nTin vui: chuyến đi của bạn đã được xác nhận.\n\n- Chuyến đi: {{trip_name}}\n- Ngày khởi hành: {{departure_date}}\n- Điểm đến: {{destination}}\n\nCác bước tiếp theo:\n\n1. Khi đặt tour, bạn đã đồng ý với điều khoản đặt tour, gồm cả chính sách huỷ. Nếu cần bản sao, bạn chỉ cần trả lời thư này.\n2. Khoảng sáu tuần trước ngày khởi hành, bạn nhận lịch trình cuối cùng và cẩm nang Trước khi đi.\n3. Một tuần trước khi đi, chúng tôi xác nhận xe đón sân bay và thông tin liên lạc của hướng dẫn viên.\n\nNếu thông tin của người đi thay đổi (họ tên, hộ chiếu, chuyến bay hay chế độ ăn), hãy trả lời thư này để chúng tôi cập nhật.\n\nCảm ơn bạn đã đồng hành cùng chúng tôi.\n\n{{agent_name}}\n{{agency_name}}"
+    }
+   }
+  },
+  {
    "group_key": "campaign-newsletter-intro",
    "kind": "campaign_block",
    "applies_to": {},
