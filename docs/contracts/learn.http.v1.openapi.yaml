@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: learn.http.v1 (AA-CIS-App → AA-Partner CRM web academy host; the AA Academy learning API)
-  version: "1.0"
+  version: "1.1"
   description: >-
     The AA Academy learning API (root ADR 0022; research docs/research/lms/README.md §4.3, §5.4, §7.2, §7.4;
     decisions D1-D17). CIS owns the courses as read from the learn bundle (manifest format 1 under the docs reader
@@ -315,15 +315,36 @@ paths:
       description: >-
         The code is 128-bit random (22 URL-safe base64 characters); CIS stores only its SHA-256. 404 for an unknown
         code, a rotated code or a certificate whose learner was deleted by the retention job.
+        Rate limits (1.1). CIS counts the calls of each client address per minute (setting
+        cis.learn.verify_requests_per_minute); over it the answer is 429 with Retry-After. A caller that fronts many
+        visitors from one address (the academy web's server) must limit each of its own visitors to the
+        X-Learn-Visitor-Limit value that every answer carries, or one visitor would use up the shared address limit.
       security: []
       responses:
         "200":
           description: Certificate
+          headers:
+            X-Learn-Visitor-Limit: {$ref: "#/components/headers/VisitorLimit"}
           content:
             application/json:
               schema: {$ref: "#/components/schemas/CertificateVerify"}
-        "404": {$ref: "#/components/responses/Problem"}
-        "429": {$ref: "#/components/responses/Problem"}
+        "404":
+          description: Unknown, rotated or deleted code
+          headers:
+            X-Learn-Visitor-Limit: {$ref: "#/components/headers/VisitorLimit"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many checks from this address this minute
+          headers:
+            X-Learn-Visitor-Limit: {$ref: "#/components/headers/VisitorLimit"}
+            Retry-After:
+              description: Seconds until the minute window ends.
+              schema: {type: integer, minimum: 1, maximum: 60}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Problem"}
 components:
   securitySchemes:
     academy:
@@ -352,6 +373,13 @@ components:
       in: path
       required: true
       schema: {type: string, pattern: "^[A-Z][0-9]{1,2}-[0-9]{2}$"}
+  headers:
+    VisitorLimit:
+      description: >-
+        The certificate checks per minute one visitor of a caller that fronts many visitors from one address may make
+        (setting cis.learn.verify_visitor_requests_per_minute), never more than cis.learn.verify_requests_per_minute
+        minus one, so one visitor cannot use up the address limit. Sent on every verify answer, including 404 and 429.
+      schema: {type: integer, minimum: 1}
   responses:
     Problem:
       description: Error

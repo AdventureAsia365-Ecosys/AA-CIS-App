@@ -2424,7 +2424,9 @@ presigned GET URLs; the academy web fetches the `.vtt` captions server side and 
 bucket CORS change). **Public verify** `GET /learn/public/v1/certificates/{code}`: SHA-256 lookup, holder display name,
 rate limited per client address (rightmost global X-Forwarded-For entry, `login_throttle.client_ip`: API Gateway
 appends the real source, the NLB adds nothing, the ALB appends a private address), limit
-`cis.learn.verify_requests_per_minute`, Redis window with an in-process fallback. Labs answer 409 `lab_closed` until
+`cis.learn.verify_requests_per_minute`, Redis window with an in-process fallback; every verify answer carries
+`X-Learn-Visitor-Limit` (contract 1.1: setting `cis.learn.verify_visitor_requests_per_minute`, CIS 429, at most the
+address limit minus one), the limit the academy web applies to each of its visitors. Labs answer 409 `lab_closed` until
 P4b. Tests: `tests/unit/test_aa1105_learn_api.py` (bodies validated against the contract copy
 `docs/contracts/learn.http.v1.openapi.yaml`, pinned by sha256), `tests/unit/test_aa1105_learn_rules.py`,
 `tests/integration/test_aa1105_learn_store.py`.
