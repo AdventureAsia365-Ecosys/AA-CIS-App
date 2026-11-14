@@ -25,7 +25,7 @@ import { Tenant360Members } from "./Tenant360Members";
 import { Tenant360Subscription } from "./Tenant360Subscription";
 import { Tenant360BookingBilling } from "./Tenant360BookingBilling";
 import { ViewAsStart } from "./ViewAsStart";
-import { fmtDailyPublishLimit } from "./tenant360";
+import { dailyPublishDefault, fmtDailyPublishLimit } from "./tenant360";
 import { T360_WORDS_MESSAGES } from "./tenant360.messages";
 import type { Tenant } from "./tenantRow";
 import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
@@ -564,7 +564,7 @@ export function TenantDetail({ tenant, onChanged }: {
           // just also surfaced at header level so an admin doesn't need to open that tab for it.
           // AA-766: plan / RPM from the list row, which reloads after a Settings save.
           [tr("rateLimit"),  tr("perMin", tenant.rate_limit_rpm),   K.body],
-          [tr("publishLimit"), fmtDailyPublishLimit(tenant.daily_publish_limit, dplWords), K.body], // AA-819
+          [tr("publishLimit"), fmtDailyPublishLimit(tenant.daily_publish_limit, dplWords, dailyPublishDefault(tenant)), K.body], // AA-819
           [tr("plan"),       tenant.plan_tier,                      K.body],
           [tr("memberSince"), s.member_since,                       K.muted],
         ] as [string, string, string][]).map(([l, v, c]) => (
@@ -604,7 +604,7 @@ export function TenantDetail({ tenant, onChanged }: {
       {tab === "audit"    && <AuditTabContent    tenantId={tenantId} />}
       {tab === "settings" && (
         <Tenant360Settings tenantId={tenantId} planTier={tenant.plan_tier} rateLimitRpm={tenant.rate_limit_rpm}
-          dailyPublishLimit={tenant.daily_publish_limit}
+          dailyPublishLimit={tenant.daily_publish_limit} dailyPublishDefault={dailyPublishDefault(tenant)}
           status={tenant.status ?? (tenant.is_active ? "active" : "suspended")} onChanged={onChanged} />
       )}
     </div>

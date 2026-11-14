@@ -46,6 +46,15 @@ export const T360_SUB = defineMessages(
     perMinute: (v: string) => `${v} a minute`,
     seats: (v: string) => `${v} seats`,
     days: (v: string) => `${v} days`,
+    unit_usdMonth: "USD a month",
+    unit_perMinute: "requests a minute",
+    unit_seats: "seats",
+    unit_days: "days",
+    unit_perMonth: "a month",
+    limitUnit: (unit: string) => `Unit: ${unit}.`,
+    inForceNow: (value: string, source: string) => `In force now: ${value} (${source}).`,
+    readOnlyView: "Your role can see this override but not change it; an administrator can.",
+    staffMember: "a staff member",
     ovTitle: "Overrides",
     ovHint: "Staff exceptions to the plan for this tenant: turn an on/off feature off, grant one, or set another limit "
       + "(0 stops it). The request rate is set in the tenant's settings. A reason is required and every change is "
@@ -180,6 +189,15 @@ export const T360_SUB = defineMessages(
     perMinute: (v: string) => `${v} mỗi phút`,
     seats: (v: string) => `${v} người dùng`,
     days: (v: string) => `${v} ngày`,
+    unit_usdMonth: "USD mỗi tháng",
+    unit_perMinute: "yêu cầu mỗi phút",
+    unit_seats: "người dùng",
+    unit_days: "ngày",
+    unit_perMonth: "mỗi tháng",
+    limitUnit: (unit: string) => `Đơn vị: ${unit}.`,
+    inForceNow: (value: string, source: string) => `Đang áp dụng: ${value} (${source}).`,
+    readOnlyView: "Vai trò của bạn xem được ngoại lệ này nhưng không sửa được; quản trị viên sửa được.",
+    staffMember: "một nhân viên",
     ovTitle: "Ngoại lệ",
     ovHint: "Ngoại lệ của nhân viên so với gói, cho riêng đại lý này: tắt một tính năng bật/tắt, cấp thêm, hoặc đặt "
       + "giới hạn khác (0 là dừng). Tốc độ gọi API đặt ở phần cài đặt của đại lý. Bắt buộc ghi lý do và mọi thay đổi "

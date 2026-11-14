@@ -18,6 +18,7 @@ const ts = require("typescript");
 
 let dir;
 let D; // DataTable module
+let S; // dataTableSearch module (S280)
 let React;
 let render;
 
@@ -35,6 +36,7 @@ before(async () => {
     writeFileSync(join(dir, name.replace(/\.(ts|tsx)$/, ".mjs")), out);
   }
   D = await import(pathToFileURL(join(dir, "DataTable.mjs")).href);
+  S = await import(pathToFileURL(join(dir, "dataTableSearch.mjs")).href);
   React = require("react");
   ({ renderToStaticMarkup: render } = require("react-dom/server"));
 });
@@ -61,4 +63,29 @@ test("rowTestId names every row; data-kit-row stays on each", () => {
 test("without rowTestId the rows keep the kit test id", () => {
   const html = table();
   assert.equal((html.match(/data-testid="kit-datatable-row" data-kit-row=""/g) ?? []).length, 2);
+});
+
+// S280 (AA-1096): the search box has an accessible name; `searchText` lets it match what the cells do not show (a
+// tenant slug, a request id); `initialSearch` opens the table filtered.
+
+test("the search box is named for a screen reader", () => {
+  const html = table({ searchable: true });
+  assert.match(html, /<input[^>]*aria-label="Search this table"/);
+  assert.match(table({ searchable: true, searchLabel: "Search requests" }), /aria-label="Search requests"/);
+});
+
+test("searchText matches values the cells do not show", () => {
+  const rows = (html) => (html.match(/data-kit-row=""/g) ?? []).length;
+  const extra = (r) => (r.id === "b2" ? "beta-slug req-42" : "alpha-slug");
+  assert.equal(rows(table({ searchable: true, initialSearch: "req-42", searchText: extra })), 1);
+  assert.equal(rows(table({ searchable: true, initialSearch: "beta", searchText: extra })), 1);
+  assert.equal(rows(table({ searchable: true, initialSearch: "req-42" })), 0);   // without it the slug is not searched
+  assert.equal(rows(table({ searchable: true, initialSearch: "", searchText: extra })), 2);
+});
+
+test("dataTableSearchMatch: extra text or a text/number cell, case-insensitive", () => {
+  assert.equal(S.dataTableSearchMatch("Lotus lotus-trails", "x", "LOTUS-T"), true);
+  assert.equal(S.dataTableSearchMatch(null, 42, "4"), true);
+  assert.equal(S.dataTableSearchMatch(null, { a: 1 }, "a"), false);
+  assert.equal(S.dataTableSearchMatch(undefined, undefined, "  "), true);
 });

@@ -372,6 +372,12 @@ export function can(role: string | null | undefined, capability: Capability): bo
   return isStaffRole(role) && ROLE_PERMS[role].includes(capability);
 }
 
+/** S280 (AA-1096): a staff role that may only tighten caps (lower, add, harden; never raise or remove): any role
+ *  without settings.write, as the backend's settings_registry.tighten_only (S279). UI hint only. */
+export function isTightenOnly(role: string | null | undefined): boolean {
+  return isStaffRole(role) && !can(role, "settings.write");
+}
+
 // AA-816 C6 — staff.write is not a role capability (so it is not in Capability / ROLE_PERMS): it needs the
 // owner flag (shared.admin_users.is_owner) AND a verified Cognito session. Neither is in a cookie, so the staff
 // directory list returns who is looking (`viewer`) and the page shows the write controls from that. UI only:

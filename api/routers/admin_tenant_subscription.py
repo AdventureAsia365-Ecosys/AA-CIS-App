@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
+import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 
@@ -64,9 +65,26 @@ async def get_subscription(tenant_id: uuid.UUID, request: Request, x_admin_secre
     verify_admin_secret(x_admin_secret)
     async with request.app.state.pool.acquire() as conn:
         out = await sub.snapshot(conn, str(tenant_id))
+        if out is not None:
+            await _name_override_actors(conn, out["overrides"])
     if out is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
     return out
+
+
+async def _name_override_actors(conn, overrides: list[dict]) -> None:
+    """S280 (AA-1096): each override's ``granted_by`` ("admin:<staff id>") also as a person (``granted_by_name`` /
+    ``granted_by_kind``, ai_gateway.actor_view), so the table names who granted it instead of a raw id. Best effort:
+    a failed name read leaves the names empty."""
+    from api.services import ai_gateway
+
+    try:
+        names = await ai_gateway.actor_names(conn, [o.get("granted_by") for o in overrides])
+    except asyncpg.PostgresError:
+        names = {}
+    for o in overrides:
+        view = ai_gateway.actor_view(o.get("granted_by"), names)
+        o["granted_by_kind"], o["granted_by_name"] = view["updated_by_kind"], view["updated_by_name"]
 
 
 @router.put("/tenants/{tenant_id}/entitlement-overrides/{feature_key}",

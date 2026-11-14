@@ -42,12 +42,33 @@ function useRefresh() {
   };
 }
 
+// S280 (AA-1096): the placeholder says "no alert" (it showed 5.00, read as an alert in force), the stored value is shown
+// beside the field, Save needs a change, and a tighten-only role (S279: lowering or removing a low-balance alert
+// loosens it) is told so before the API refuses it.
+function thresholdState(text: string, stored: number | null | undefined, tightenOnly: boolean) {
+  const value = thresholdValue(text);
+  const now = stored ?? null;
+  const changed = value !== undefined && value !== now;
+  // A tighten-only role may raise the alert floor only (S279: lowering or removing it loosens the alert).
+  const loosens = tightenOnly && now != null && value !== undefined && (value === null || value < now);
+  return { value, changed, loosens };
+}
+
+function useThresholdHint(stored: number | null | undefined, tightenOnly: boolean): string {
+  const t = useT(CREDIT);
+  const now = t("thresholdNow", stored == null ? t("noAlert") : usd(stored));
+  return `${now} ${tightenOnly && stored != null ? t("thresholdTighten") : t("thresholdHint")}`;
+}
+
 function ThresholdForm({ c }: { c: CreditConnection }) {
   const t = useT(CREDIT);
   const toast = useToast();
   const refresh = useRefresh();
+  const { tightenOnly } = usePageAccess();
   const [text, setText] = useState(c.low_balance_usd == null ? "" : String(c.low_balance_usd));
   const [error, setError] = useState("");
+  const { value, changed, loosens } = thresholdState(text, c.low_balance_usd, tightenOnly);
+  const hint = useThresholdHint(c.low_balance_usd, tightenOnly);
   const mut = useMutation({
     mutationFn: (value: number | null) => apiSend(`/api/admin/llm-connections/${encodeURIComponent(c.connection_key)}`,
       { method: "PATCH", body: { low_balance_usd: value }, admin: true }),
@@ -55,18 +76,18 @@ function ThresholdForm({ c }: { c: CreditConnection }) {
     onError: (e) => setError(e instanceof Error ? e.message : t("saveFailed")),
   });
   function save() {
-    const v = thresholdValue(text);
-    if (v === undefined) { setError(t("thresholdBad")); return; }
-    mut.mutate(v);
+    if (value === undefined) { setError(t("thresholdBad")); return; }
+    if (loosens) { setError(t("thresholdTighten")); return; }
+    mut.mutate(value);
   }
   return (
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-      <Field label={t("threshold")} hint={t("thresholdHint")} style={{ flex: "0 1 220px" }}>
-        <Input type="number" min={0} step="0.01" value={text} inputMode="decimal" placeholder="5.00"
+      <Field label={t("threshold")} style={{ flex: "0 1 240px" }} hint={hint}>
+        <Input type="number" min={0} step="0.01" value={text} inputMode="decimal" placeholder={t("noAlert")}
           onChange={(e) => setText(e.target.value)} disabled={mut.isPending} style={{ fontFamily: mono }}
           data-testid={`credit-threshold-${c.connection_key}`} />
       </Field>
-      <Button variant="secondary" disabled={mut.isPending} onClick={save}>
+      <Button variant="secondary" disabled={mut.isPending || !changed || loosens} onClick={save}>
         {mut.isPending ? <Spinner size={12} /> : null}{t("saveThreshold")}
       </Button>
       {error && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{error}</span>}

@@ -11,6 +11,9 @@
 // an error toast if the server refuses. AA-994: text in the UI language (tenant360.messages.ts).
 // AA-1035 (directory capability UI): the plan select is disabled for a role that may not send plan_tier (neither
 // tenant.write nor billing.write, e.g. customer_success, whose PATCH may still change the RPM); lib/tenantDirectory.ts.
+// S280 (AA-1096): the daily publish default is the one the API reports (setting cis.publish.daily_limit_default), not
+// a number in the UI; a tighten-only role (customer_success, S279) is told it can lower the RPM, the publish limit and
+// the posts per week only, and a raise is blocked here with that reason instead of a 403.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,13 +26,15 @@ import {
   ChipButton,
 } from "../../../_kit";
 import {
-  DAILY_PUBLISH_LIMIT_DEFAULT, DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
-  SEO_SUPPORTED_MARKETS, type TenantConfig, fmtDailyPublishLimit, parseDailyPublishLimit,
+  DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
+  SEO_SUPPORTED_MARKETS, type TenantConfig, dailyPublishDefaultText, fmtDailyPublishLimit, parseDailyPublishLimit,
   parseMarkets, validateConfig, validateDailyPublishLimit, validateRpm,
 } from "./tenant360";
 import { T360, T360_WORDS_MESSAGES } from "./tenant360.messages";
 import { useContentTiers } from "./useContentTiers";
 import { canPatchBillingFields } from "@/lib/tenantDirectory";
+import { isTightenOnly } from "@/lib/rbac";
+import { anyOf } from "@/lib/capTighten";
 
 
 const labelStyle: React.CSSProperties = {
@@ -51,6 +56,25 @@ function FieldError({ msg }: { msg?: string | null }) {
   );
 }
 
+// ── S280: tighten-only roles (no settings.write) may lower these limits only ──────────────────────────────────────
+
+/** True when a tighten-only role's valid new value raises the limit now in force. */
+function raisesLimit(tightenOnly: boolean, error: string | null | undefined, next: number, now: number): boolean {
+  return tightenOnly && !error && next > now;
+}
+
+/** A field's error, else (S280) for a tighten-only role the limit now in force and that it may lower it only, or that
+ *  a raise needs an administrator. */
+function LimitFieldNote({ error, raise, show, nowText }: {
+  error: string | null | undefined; raise: boolean; show: boolean; nowText: string;
+}) {
+  const t = useT(T360);
+  if (error) return <FieldError msg={error} />;
+  if (raise) return <FieldError msg={t("tightenRaise")} />;
+  if (!show) return null;
+  return <div style={{ marginTop: 5, fontSize: 11.5, color: K.muted }}>{t("tightenNow", nowText)}</div>;
+}
+
 // ── Plan & rate limit ─────────────────────────────────────────────────────────
 
 interface PatchResult { changed: string[]; plan_tier: string; rate_limit_rpm: number }
@@ -69,7 +93,11 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   const rpmDirty = Number(rpm) !== saved.rpm;
   // AA-1028 R1 slice 3: the tiers of the plan catalogue (live public content plans), plus the tenant's own
   const { tiers: choices } = useContentTiers(saved.plan);
-  const mayChangePlan = canPatchBillingFields(useAdminIdentity().role);
+  const role = useAdminIdentity().role;
+  const mayChangePlan = canPatchBillingFields(role);
+  // S280: a tighten-only role may lower the RPM only (admin.py PATCH; a plan change is not open to it).
+  const tightenOnly = isTightenOnly(role);
+  const rpmRaise = raisesLimit(tightenOnly, rpmError, Number(rpm), saved.rpm);
 
   const m = useMutation({
     mutationFn: (body: { plan_tier?: string; rate_limit_rpm?: number }) =>
@@ -93,7 +121,7 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   });
 
   function save() {
-    if (rpmError || (!planDirty && !rpmDirty)) return;
+    if (rpmError || rpmRaise || (!planDirty && !rpmDirty)) return;
     const body: { plan_tier?: string; rate_limit_rpm?: number } = {};
     if (planDirty) body.plan_tier = plan;
     if (rpmDirty) body.rate_limit_rpm = Number(rpm);
@@ -115,12 +143,12 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
           <Input id={`rpm-${tenantId}`} type="number" min={1} max={RATE_LIMIT_RPM_MAX} value={rpm}
             disabled={locked || m.isPending} onChange={e => setRpm(e.target.value)}
             aria-invalid={!!rpmError} style={{ ...inputStyle, width: 130 }} />
-          <FieldError msg={rpmError} />
+          <LimitFieldNote error={rpmError} raise={rpmRaise} show={tightenOnly} nowText={t("perMin", saved.rpm)} />
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" onClick={save}
-          disabled={locked || m.isPending || !!rpmError || (!planDirty && !rpmDirty)}>
+          disabled={anyOf(locked, m.isPending, rpmError, rpmRaise, !planDirty && !rpmDirty)}>
           {m.isPending ? <><Spinner size={12} /> {t("saving")}</> : t("savePlan")}
         </Button>
         {(planDirty || rpmDirty) && !m.isPending && (
@@ -140,11 +168,26 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
 // key may be absent, so fall back to what was sent.
 interface PublishLimitPatchResult { changed: string[]; daily_publish_limit?: number | null }
 
-function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
-  tenantId: string; dailyPublishLimit: number | null | undefined; locked: boolean; onChanged: () => void;
+/** S280: whether a tighten-only role's change raises the publish limit in force (null = the platform default), and
+ *  whether "Use default" would. An unknown default (older API) counts as a raise, as the API may refuse it. */
+function publishRaises(tightenOnly: boolean, saved: number | null, next: number | null, defaultLimit: number | null) {
+  if (!tightenOnly) return { raise: false, defaultRaises: false };
+  const raises = (v: number | null) => {
+    const now = saved ?? defaultLimit;
+    const after = v ?? defaultLimit;
+    return now == null || after == null || after > now;
+  };
+  return { raise: next !== saved && raises(next), defaultRaises: saved != null && raises(null) };
+}
+
+function PublishLimitForm({ tenantId, dailyPublishLimit, defaultLimit, locked, onChanged }: {
+  tenantId: string; dailyPublishLimit: number | null | undefined; defaultLimit: number | null; locked: boolean;
+  onChanged: () => void;
 }) {
   const t = useT(T360);
   const words = T360_WORDS_MESSAGES[useLang()];
+  const tightenOnly = isTightenOnly(useAdminIdentity().role);
+  const dflt = dailyPublishDefaultText(defaultLimit, words);
   const toast = useToast();
   // undefined = GET /admin/tenants does not return the key: the AA-819 backend is not deployed, so
   // there is no limit to show or set yet. Keep the field read-only rather than let a save 422.
@@ -153,6 +196,8 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
   const [value, setValue] = useState(dailyPublishLimit == null ? "" : String(dailyPublishLimit));
   const error = validateDailyPublishLimit(value, words);
   const dirty = !error && parseDailyPublishLimit(value) !== saved;
+  const { raise, defaultRaises } = publishRaises(tightenOnly, saved, dirty ? parseDailyPublishLimit(value) : saved,
+    defaultLimit);
 
   const m = useMutation({
     mutationFn: (limit: number | null) =>
@@ -179,25 +224,26 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
 
   return (
     <Section title={t("dplTitle")}
-      description={supported ? t("dplHint", DAILY_PUBLISH_LIMIT_DEFAULT) : t("dplUnsupported")}>
+      description={supported ? t("dplHint", dflt) : t("dplUnsupported")}>
       <div>
         <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>{t("dplLabel")}</label>
         <Input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
-          placeholder={t("dplPlaceholder", DAILY_PUBLISH_LIMIT_DEFAULT)}
+          placeholder={t("dplPlaceholder", dflt)}
           disabled={!supported || locked || m.isPending} onChange={e => setValue(e.target.value)}
           aria-invalid={!!error} style={{ ...inputStyle, width: 160 }} />
-        <FieldError msg={error} />
+        <LimitFieldNote error={error} raise={raise} show={tightenOnly && supported}
+          nowText={fmtDailyPublishLimit(saved, words, defaultLimit)} />
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" onClick={() => m.mutate(parseDailyPublishLimit(value))}
-          disabled={!supported || locked || m.isPending || !!error || !dirty}>
+          disabled={anyOf(!supported, locked, m.isPending, error, !dirty, raise)}>
           {m.isPending ? <><Spinner size={12} /> {t("saving")}</> : t("saveLimit")}
         </Button>
-        {supported && saved != null && !m.isPending && (
+        {supported && saved != null && !m.isPending && !defaultRaises && (
           <Button variant="ghost" size="sm" disabled={locked} onClick={() => m.mutate(null)}>{t("useDefault")}</Button>
         )}
         <span style={{ fontSize: 11.5, color: K.muted2 }}>
-          {t("current")} <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined, words)}</span>
+          {t("current")} <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined, words, defaultLimit)}</span>
         </span>
       </div>
     </Section>
@@ -225,6 +271,9 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
     || [...channels].sort().join(",") !== [...server.channels].sort().join(",")
     || Number(ppw) !== server.posts_per_week;
   const notResearched = markets.filter(mk => /^[A-Z]{2}$/.test(mk) && !SEO_SUPPORTED_MARKETS.includes(mk));
+  // S280: a tighten-only role may lower the posts per week only (admin.py PUT …/config).
+  const tightenOnly = isTightenOnly(useAdminIdentity().role);
+  const ppwRaise = raisesLimit(tightenOnly, errors.posts_per_week, Number(ppw), server.posts_per_week);
 
   const m = useMutation({
     mutationFn: (body: Omit<TenantConfig, "tenant_id">) =>
@@ -283,11 +332,12 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
           <Input id={`ppw-${tenantId}`} type="number" min={1} max={14} value={ppw}
             disabled={locked || m.isPending} onChange={e => setPpw(e.target.value)}
             aria-invalid={!!errors.posts_per_week} style={{ ...inputStyle, width: 100 }} />
-          <FieldError msg={errors.posts_per_week} />
+          <LimitFieldNote error={errors.posts_per_week} raise={ppwRaise} show={tightenOnly}
+            nowText={t("perWeek", server.posts_per_week)} />
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
-        <Button variant="primary" size="sm" disabled={locked || m.isPending || !valid || !dirty}
+        <Button variant="primary" size="sm" disabled={anyOf(locked, m.isPending, !valid, !dirty, ppwRaise)}
           onClick={() => m.mutate({ markets, channels, posts_per_week: Number(ppw) })}>
           {m.isPending ? <><Spinner size={12} /> {t("saving")}</> : t("saveConfig")}
         </Button>
@@ -305,7 +355,8 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
   );
 }
 
-function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, status, onChanged }: Tenant360SettingsProps) {
+function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, dailyPublishDefault = null, status,
+  onChanged }: Tenant360SettingsProps) {
   const t = useT(T360);
   const locked = status === "offboarded";
   const cfg = useQuery({
@@ -320,7 +371,8 @@ function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, st
         </div>
       )}
       <PlanForm tenantId={tenantId} planTier={planTier} rateLimitRpm={rateLimitRpm} locked={locked} onChanged={onChanged} />
-      <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit} locked={locked} onChanged={onChanged} />
+      <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit} defaultLimit={dailyPublishDefault}
+        locked={locked} onChanged={onChanged} />
       {cfg.isLoading ? (
         <div style={{ fontSize: 12, color: K.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingConfig")}</div>
       ) : cfg.isError || !cfg.data ? (
@@ -342,6 +394,8 @@ export interface Tenant360SettingsProps {
   /** AA-819 — null: no override, the code default applies; undefined: the server does not
    *  report the field yet (backend not deployed), so the editor stays read-only. */
   dailyPublishLimit?: number | null;
+  /** S280 — the platform default in force (tenant360 dailyPublishDefault); null when the API did not report it. */
+  dailyPublishDefault?: number | null;
   status: "active" | "suspended" | "offboarded";
   onChanged: () => void;
 }

@@ -230,9 +230,13 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
 
 
 def page_access(principal: StaffPrincipal) -> dict:
-    """{read_only, actions: {control: allowed}} for one caller (pure; tests/unit/test_aa1025_providers_access.py)."""
+    """{read_only, tighten_only, actions: {control: allowed}} for one caller (pure;
+    tests/unit/test_aa1025_providers_access.py). ``tighten_only`` (S280, AA-1096): the caller's role may only tighten
+    a cap (settings_registry.tighten_only, S279), so the page hides Remove and says a raise needs an administrator."""
     actions = {key: denial_reason(principal, method, route) is None for key, (method, route) in PAGE_WRITES.items()}
-    return {"read_only": not any(actions.values()), "actions": actions}
+    return {"read_only": not any(actions.values()),
+            "tighten_only": principal.kind == "staff" and settings_registry.tighten_only(principal.role),
+            "actions": actions}
 
 
 @router.get("/access", summary="Which write controls of the AI providers page the caller may use (UI hint, $0)")

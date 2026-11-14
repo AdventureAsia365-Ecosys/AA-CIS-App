@@ -316,11 +316,13 @@ export function StageRouteEditor({ row, readOnly = false }: { row: StageConfigRo
                 type="number"
                 min={0}
                 max={100}
+                step={1}
                 value={samplePct}
                 disabled={mut.isPending}
                 onChange={(e) => {
+                  // S280: the API takes a whole percentage (shadow_sample_pct: int); 12.5 used to come back as a 422.
                   const v = Number(e.target.value);
-                  setSamplePct(Number.isNaN(v) ? 0 : Math.max(0, Math.min(100, v)));
+                  setSamplePct(Number.isNaN(v) ? 0 : Math.round(Math.max(0, Math.min(100, v))));
                 }}
                 style={{ width: 76 }}
               />

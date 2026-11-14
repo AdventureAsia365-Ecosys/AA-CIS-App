@@ -14,6 +14,7 @@ export const T360_WORDS_MESSAGES = defineMessages(T360_WORDS, {
   dplRange: (max: number) => `Giới hạn đăng mỗi ngày phải là số nguyên từ 1 đến ${max}, hoặc để trống để dùng mặc định.`,
   perDayDefault: (n: number) => `${n}/ngày (mặc định)`,
   perDay: (n: number) => `${n}/ngày`,
+  platformDefault: "mặc định của nền tảng",
 });
 
 export const T360 = defineMessages(
@@ -37,10 +38,13 @@ export const T360 = defineMessages(
     perMin: (n: number) => `${n}/min`,
     dplNotSaved: (msg: string) => `Daily publish limit not saved: ${msg}`,
     dplTitle: "Daily publish limit",
-    dplHint: (n: number) => `Publishes this tenant can make per UTC day. Leave empty to use the default (${n}/day).`,
+    dplHint: (dflt: string) => `Publishes this tenant can make per UTC day. Leave empty to use the default (${dflt}), `
+      + "the platform setting on Platform › Settings.",
     dplUnsupported: "Not available yet: the server does not report a daily publish limit for this tenant.",
     dplLabel: "Publishes per day (override)",
-    dplPlaceholder: (n: number) => `default ${n}`,
+    dplPlaceholder: (dflt: string) => `default: ${dflt}`,
+    tightenNow: (now: string) => `Now ${now}. Your role can lower it only.`,
+    tightenRaise: "Your role cannot raise this limit. Ask an administrator.",
     saveLimit: "Save limit",
     useDefault: "Use default",
     configNotSaved: (msg: string) => `Planning config not saved: ${msg}`,
@@ -160,10 +164,13 @@ export const T360 = defineMessages(
     perMin: (n: number) => `${n}/phút`,
     dplNotSaved: (msg: string) => `Chưa lưu được giới hạn đăng mỗi ngày: ${msg}`,
     dplTitle: "Giới hạn đăng mỗi ngày",
-    dplHint: (n: number) => `Số lần đăng đại lý này được làm mỗi ngày UTC. Để trống để dùng mặc định (${n}/ngày).`,
+    dplHint: (dflt: string) => `Số lần đăng đại lý này được làm mỗi ngày UTC. Để trống để dùng mặc định (${dflt}), `
+      + "là cài đặt nền tảng ở Nền tảng › Cài đặt.",
     dplUnsupported: "Chưa dùng được: máy chủ chưa báo giới hạn đăng mỗi ngày cho đại lý này.",
     dplLabel: "Số lần đăng mỗi ngày (ghi đè)",
-    dplPlaceholder: (n: number) => `mặc định ${n}`,
+    dplPlaceholder: (dflt: string) => `mặc định: ${dflt}`,
+    tightenNow: (now: string) => `Hiện là ${now}. Vai trò của bạn chỉ được giảm.`,
+    tightenRaise: "Vai trò của bạn không được nâng giới hạn này. Nhờ quản trị viên.",
     saveLimit: "Lưu giới hạn",
     useDefault: "Dùng mặc định",
     configNotSaved: (msg: string) => `Chưa lưu được cấu hình lập kế hoạch: ${msg}`,

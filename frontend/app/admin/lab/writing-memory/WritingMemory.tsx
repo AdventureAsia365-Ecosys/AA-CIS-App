@@ -460,6 +460,30 @@ function CandidatesTab() {
 
 // ── page ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** S280 (AA-1096): the Mine rules texts from the caps in force (the summary; the month cap is a Platform › Settings
+ *  value), "—" until the summary has loaded: never a number copied into the UI. */
+function useMineText(s: Summary | undefined) {
+  const t = useT(M);
+  const n = mineNumbers(s);
+  return {
+    title: t("mineRulesTitle", n.calls, n.runCap, n.monthCap),
+    body: t("mineBody", n.calls, n.runCap),
+    spent: n.spent,
+    rest: t("spentRest", n.monthCap, n.runs),
+  };
+}
+
+const DASH = "—";
+
+function mineNumbers(s: Summary | undefined) {
+  const b = s?.budget;
+  const runs = s?.mine_trigger?.thresholds?.max_runs_per_month;
+  const runsText = runs == null ? DASH : String(runs);
+  if (!b) return { calls: DASH, runCap: DASH, monthCap: DASH, spent: DASH, runs: runsText };
+  return { calls: String(b.max_calls_per_run), runCap: usd(b.run_cap_usd), monthCap: usd(b.month_cap_usd),
+    spent: usd(b.month_spent_usd), runs: runsText };
+}
+
 export default function WritingMemory() {
   const toast = useToast();
   const qc = useQueryClient();
@@ -484,7 +508,7 @@ export default function WritingMemory() {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmMine, setConfirmMine] = useState(false);
   const summary = useQuery({ queryKey: ["wm", "summary"], queryFn: () => apiGet<Summary>(`${WM_API}/summary`) });
-  const budget = summary.data?.budget;
+  const mine = useMineText(summary.data);
   // AA-1035 R2 slice 2: ai_ops reads the tenant text here through lab.tenant_text.read; the API logs each read.
   const role = useAdminIdentity().role;
   const loggedRead = can(role, "lab.tenant_text.read") && !can(role, "tenant_content.read");
@@ -517,7 +541,7 @@ export default function WritingMemory() {
           <Button onClick={() => run("fact_filter")} disabled={!!busy}>{t("runFactFilter")}</Button>
           <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy} title={t("r0BaselineTitle")}>
             {t("r0Baseline")}</Button>
-          <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={t("mineRulesTitle")}>
+          <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={mine.title}>
             <Play size={14} /> {t("mineRules")}</Button>
         </>} />
       {loggedRead && (
@@ -530,9 +554,8 @@ export default function WritingMemory() {
       <ConfirmModal open={confirmMine} onClose={() => setConfirmMine(false)} onConfirm={() => run("mine")}
         busy={busy === "mine"} title={t("mineConfirmTitle")} confirmLabel={t("mineRules")}
         body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>
-          <p style={{ margin: "0 0 8px" }}>{t("mineBody", budget?.max_calls_per_run ?? 50, usd(budget?.run_cap_usd ?? 1))}</p>
-          <p style={{ margin: 0 }}>{t("spentLead")}<strong>{usd(budget?.month_spent_usd ?? 0)}</strong>
-            {t("spentRest", usd(budget?.month_cap_usd ?? 25))}</p>
+          <p style={{ margin: "0 0 8px" }}>{mine.body}</p>
+          <p style={{ margin: 0 }}>{t("spentLead")}<strong>{mine.spent}</strong>{mine.rest}</p>
         </div>} />
       {summary.data && <SummaryBar s={summary.data} />}
       {summary.data?.last_jobs && (

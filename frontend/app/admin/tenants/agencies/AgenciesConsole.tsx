@@ -48,8 +48,8 @@ import {
   type TenantPage,
   type TenantSummary,
 } from "@/lib/crmConsole";
-import type { TenantRef } from "@/lib/tenants";
-import { TenantSelect } from "../../_components/TenantSelect";
+import { tenantSearchText, type TenantRef } from "@/lib/tenants";
+import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import AgencyDrawer from "./AgencyDrawer";
 import { Field, InlineError, fieldStyle, noteStyle } from "./consoleUi";
 import { AGENCIES } from "./messages";
@@ -97,6 +97,8 @@ export default function AgenciesConsole() {
   const isProd = consoleQ.data?.environment === "prod";
   const feed = crm.platformFeed(rows);
 
+  // S280: the filter also finds an agency by its CIS tenant slug or id.
+  const { byId: tenantsById } = useTenants();
   const columns = useMemo<ColumnDef<TenantSummary, unknown>[]>(() => [
     {
       accessorKey: "agency_name", header: t("colAgency"),
@@ -185,6 +187,7 @@ export default function AgenciesConsole() {
             onRetry={refresh}
             searchable
             searchPlaceholder={t("filterPlaceholder")}
+            searchText={(r) => tenantSearchText(r.tenant_id, tenantsById)}
             paginate={false}
             emptyTitle={t("emptyTitle")}
             emptyDescription={canWrite ? t("emptyWrite") : t("emptyRead")}

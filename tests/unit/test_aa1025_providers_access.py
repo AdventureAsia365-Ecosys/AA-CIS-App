@@ -40,7 +40,7 @@ def test_dev_e2e_admin_is_read_only_like_the_api():
     for method, route in router_mod.PAGE_WRITES.values():
         assert staff_authz.denial_reason(principal, method, route) is not None
     out = router_mod.page_access(principal)
-    assert out == {"read_only": True, "actions": {k: False for k in ALL_ACTIONS}}
+    assert out == {"read_only": True, "tighten_only": False, "actions": {k: False for k in ALL_ACTIONS}}
 
 
 def test_viewer_and_content_roles_get_no_control():
@@ -74,3 +74,12 @@ def test_the_credit_view_writes_share_one_answer():
 def test_route_returns_the_callers_access():
     out = asyncio.run(router_mod.get_access(principal=_principal("admin", e2e_read_only=True)))
     assert out["read_only"] is True
+
+
+def test_tighten_only_follows_settings_write(monkeypatch):
+    """S280 (AA-1096): a role with spend.write but not settings.write may only tighten caps; the page is told so it
+    hides Remove and explains the rule, instead of letting the API answer 403. The administrator is not."""
+    assert router_mod.page_access(_principal("admin"))["tighten_only"] is False
+    perms = frozenset({staff_authz.SPEND_READ, staff_authz.SPEND_WRITE})
+    monkeypatch.setitem(staff_authz.ROLE_PERMS, "money-only", perms)
+    assert router_mod.page_access(_principal("money-only"))["tighten_only"] is True

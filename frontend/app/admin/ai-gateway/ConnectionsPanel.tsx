@@ -25,6 +25,7 @@ import {
 import { CONNECTIONS } from "./connections.messages";
 import { useErrorClassText } from "./useErrorClassText";
 import { usePageAccess } from "./usePageAccess";
+import { useRefusalText } from "./useRefusalText";
 import { type CatalogRow } from "./llmShared";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -194,6 +195,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
   const toast = useToast();
   const qc = useQueryClient();
   const locked = !usePageAccess().can("connections");
+  const refusal = useRefusalText();   // S280: a tighten-only refusal in the UI language
   const [form, setForm] = useState<EditForm>(() => formOf(conn));
   const [apiError, setApiError] = useState("");
   const { body, errors } = patchBody(conn, form);
@@ -209,7 +211,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
       qc.invalidateQueries({ queryKey: ["llm-connections"] });
       qc.invalidateQueries({ queryKey: ["llm-connection-costs"] });
     },
-    onError: (e) => setApiError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => setApiError(refusal(e)),
   });
 
   const errorText = (f: EditField) => {

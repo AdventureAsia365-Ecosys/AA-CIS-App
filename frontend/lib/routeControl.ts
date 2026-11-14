@@ -129,6 +129,9 @@ export interface RouteVersion {
   version: number;
   created_at: string | null;
   created_by: string;
+  /** S280: who made it, as a person (ai_gateway.actor_view); absent from an older API. */
+  created_by_name?: string | null;
+  created_by_kind?: "staff" | "migration" | "login" | "other" | "none";
   action: "baseline" | "save" | "preset" | "revert" | "external";
   preset: string | null;
   reverted_from: number | null;

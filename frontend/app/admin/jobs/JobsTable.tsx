@@ -61,6 +61,15 @@ export interface JobsTableProps {
   onRetry: () => void;
 }
 
+/** The text the client search matches beyond the cells: the job id, and the tenant / tour / version the payload names. */
+function jobSearchText(j: Job): string {
+  const p = j.payload ?? {};
+  const ids = ["tenant_id", "tour_id", "published_tour_id", "version_id", "piece_id"]
+    .map((k) => p[k])
+    .filter((v): v is string | number => typeof v === "string" || typeof v === "number");
+  return [j.id, ...ids].join(" ");
+}
+
 export default function JobsTable(props: JobsTableProps) {
   const {
     jobs, kinds, etas, now, maxReleases, busyId,
@@ -223,6 +232,8 @@ export default function JobsTable(props: JobsTableProps) {
       error={error}
       onRetry={onRetry}
       searchable={!supportsServer}
+      // S280: the client search (fallback API only) also matches the job id and the tenant / tour the payload names.
+      searchText={jobSearchText}
       searchPlaceholder={t("searchPage")}
       enableSavedViews
       enableCsv

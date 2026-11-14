@@ -10,6 +10,9 @@
 // (Tenant360AddOnRequests: approve runs the same saga, decline needs a reason). AA-1038 follow-up: the TripPlanner
 // lead route sits below the overrides (Tenant360LeadRoute). AA-1086 G2: "End pilot" next to the pilot badge
 // (Tenant360EndPilot, admin only) asks for a reason and calls POST …/pilot/end, which clears the pilot marker.
+// S280 (AA-1096): the writes (add-on, cancel, override PUT / DELETE) need tenant.write, so finance and
+// customer_success (who read the tab) see no write button and a clicked override opens read-only; an override value
+// reads in its own unit; the limit field names its unit and the value in force; "By" names a person.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,11 +23,12 @@ import {
 import type { Translator } from "../../../_kit/core/i18n";
 import {
   DEFAULT_OVERRIDE_RULES, FEATURES_API, LIVE_STATUSES, PLANS_KEY, defaultOverrideMode, limitText, newRequestKey,
-  overrideBody, overrideDraftOf, overrideFeatures, overrideModes, overridePath, runSaga, sagaFailed, sendJson,
-  sourceTone, statusTone, subscriptionKey, subscriptionPath,
+  overrideBody, overrideDraftOf, overrideFeatures, overrideModes, overridePath, overrideUnit, runSaga, sagaFailed,
+  sendJson, sourceTone, statusTone, subscriptionKey, subscriptionPath, unitText,
   type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow, type OverrideRules,
   type Product, type SubscriptionResp, type SubscriptionRow,
 } from "@/lib/tenantPlans";
+import { actorLabel } from "@/lib/aiGateway";
 import { can } from "@/lib/rbac";
 import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { T360_SUB } from "./subscription.messages";
@@ -38,6 +42,16 @@ function words(t: Translator<typeof T360_SUB.en>) {
   return { on: t("on"), noLimit: t("noLimit"), perMonth: (v: string) => t("perMonth", v),
            usdMonth: (v: string) => t("usdMonth", v), perMinute: (v: string) => t("perMinute", v),
            seats: (v: string) => t("seats", v), days: (v: string) => t("days", v) };
+}
+
+/** The columns, without the write actions column for a role that may not write. */
+function withoutActions<R>(canWrite: boolean, cols: ColumnDef<R, unknown>[]): ColumnDef<R, unknown>[] {
+  return canWrite ? cols : cols.filter((c) => c.id !== "actions");
+}
+
+function unitWords(t: Translator<typeof T360_SUB.en>) {
+  return { usdMonth: t("unit_usdMonth"), perMinute: t("unit_perMinute"), seats: t("unit_seats"), days: t("unit_days"),
+           perMonth: t("unit_perMonth") };
 }
 
 function FeatureCell({ description, featureKey }: { description?: string; featureKey: string }) {
@@ -120,8 +134,43 @@ const OV_ERR = {
   offLimit: "err_offLimit", limitRequired: "err_limitRequired", notOverridable: "err_notOverridable",
 } as const satisfies Record<OverrideDraftError, keyof typeof T360_SUB.en>;
 
-function OverrideDrawer({ tenantId, existing, catalogue, rules, onClose }: {
-  tenantId: string; existing: OverrideRow | null; catalogue: Feature[]; rules: OverrideRules; onClose: () => void;
+/** S280: the limit field's hint: its unit and what is in force now (plan, trial or this override), so a number is
+ *  never a guess between dollars, calls and seats. */
+function useLimitHint(feature: Feature | undefined, inForce: EntitlementRow | undefined): string {
+  const t = useT(T360_SUB);
+  const w = useMemo(() => words(t), [t]);
+  const unit = feature && feature.value_kind !== "flag" ? t("limitUnit", unitText(feature.unit, unitWords(t))) : "";
+  const now = inForce ? t("inForceNow", limitText(inForce.value_kind, inForce.unit, inForce.limit_value, w),
+    t(`source_${inForce.source}`)) : "";
+  return [unit, now, t("fieldLimitHint")].filter(Boolean).join(" ");
+}
+
+/** The override drawer's buttons: Remove and Save only for a role that writes (S280: others read the override). */
+function OverrideFooter({ canRemove, canSave, busy, saving, removing, blocked, onRemove, onSave, onClose }: {
+  canRemove: boolean; canSave: boolean; busy: boolean; saving: boolean; removing: boolean; blocked: boolean;
+  onRemove: () => void; onSave: () => void; onClose: () => void;
+}) {
+  const t = useT(T360_SUB);
+  return (
+    <div style={{ display: "flex", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+      <span>{canRemove && <Button variant="ghost" disabled={busy} onClick={onRemove}>{t("remove")}</Button>}</span>
+      <span style={{ display: "inline-flex", gap: 8 }}>
+        <Button variant="ghost" onClick={onClose} disabled={saving || removing}>{t("close")}</Button>
+        {canSave && (
+          <Button variant="primary" disabled={blocked || busy} testId="override-save" onClick={onSave}>
+            {saving ? t("working") : t("save")}</Button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** The draft errors shown under their own field (the others show under the form). */
+const FIELD_ERRORS = new Set<OverrideDraftError | null | undefined>(["limit", "expires"]);
+
+function OverrideDrawer({ tenantId, existing, catalogue, rules, entitlements, readOnly, onClose }: {
+  tenantId: string; existing: OverrideRow | null; catalogue: Feature[]; rules: OverrideRules;
+  entitlements: EntitlementRow[]; readOnly: boolean; onClose: () => void;
 }) {
   const t = useT(T360_SUB);
   const toast = useToast();
@@ -148,7 +197,8 @@ function OverrideDrawer({ tenantId, existing, catalogue, rules, onClose }: {
     onSuccess: () => done(t("removed")),
     onError: (e) => { setRemoving(false); setApiError(t("failed", e instanceof Error ? e.message : String(e))); },
   });
-  const busy = save.isPending || remove.isPending;
+  const busy = save.isPending || remove.isPending || readOnly;
+  const limitHint = useLimitHint(feature, entitlements.find((e) => e.feature_key === d.feature_key));
   // the first error the user can act on (a missing reason only once a feature is chosen)
   const shown = error && (error !== "reason" || d.reason !== "") ? t(OV_ERR[error]) : "";
   const modes = overrideModes(feature, rules);
@@ -158,17 +208,11 @@ function OverrideDrawer({ tenantId, existing, catalogue, rules, onClose }: {
 
   return (
     <Drawer open onClose={onClose} width={480} title={existing ? t("ovEditTitle", existing.feature_key) : t("ovNewTitle")}
-      footer={
-        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
-          <span>{existing && <Button variant="ghost" disabled={busy} onClick={() => setRemoving(true)}>{t("remove")}</Button>}</span>
-          <span style={{ display: "inline-flex", gap: 8 }}>
-            <Button variant="ghost" onClick={onClose} disabled={busy}>{t("close")}</Button>
-            <Button variant="primary" disabled={!body || busy} testId="override-save"
-              onClick={() => { setApiError(""); save.mutate(); }}>{save.isPending ? t("working") : t("save")}</Button>
-          </span>
-        </div>
-      }>
+      footer={<OverrideFooter canRemove={!!existing && !readOnly} canSave={!readOnly} busy={busy}
+        saving={save.isPending} removing={remove.isPending} blocked={!body} onRemove={() => setRemoving(true)}
+        onSave={() => { setApiError(""); save.mutate(); }} onClose={onClose} />}>
       <div data-testid="override-drawer" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {readOnly && <p style={small}>{t("readOnlyView")}</p>}
         <Field label={t("fieldFeature")}>
           <Select value={d.feature_key} disabled={!!existing || busy} placeholder={t("err_feature")}
             onChange={(e) => set({ feature_key: e.target.value, limit: "",
@@ -183,7 +227,7 @@ function OverrideDrawer({ tenantId, existing, catalogue, rules, onClose }: {
               .map((m) => ({ value: m, label: modeLabel(m) }))} />
         </Field>
         {d.mode === "limit" && (
-          <Field label={t("fieldLimit")} hint={t("fieldLimitHint")}
+          <Field label={t("fieldLimit")} hint={limitHint}
             error={error === "limit" ? t("err_limit") : undefined}>
             <Input inputMode="decimal" value={d.limit} placeholder={t("noLimit")} disabled={busy}
               onChange={(e) => set({ limit: e.target.value })} data-testid="override-limit" />
@@ -196,7 +240,7 @@ function OverrideDrawer({ tenantId, existing, catalogue, rules, onClose }: {
           <Input type="date" value={d.expires} disabled={busy} onChange={(e) => set({ expires: e.target.value })} />
         </Field>
         {feature && feature.product !== "content" && feature.product !== "platform" && <p style={small}>{t("appliesNote")}</p>}
-        {shown && error !== "limit" && error !== "expires" && <span style={{ fontSize: 12, color: K.muted }}>{shown}</span>}
+        {!readOnly && shown && !FIELD_ERRORS.has(error) && <span style={{ fontSize: 12, color: K.muted }}>{shown}</span>}
         {apiError && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{apiError}</span>}
       </div>
       {existing && (
@@ -231,6 +275,9 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
   const [override, setOverride] = useState<{ row: OverrideRow | null } | null>(null);
   const w = useMemo(() => words(t), [t]);
   const { role } = useAdminIdentity();
+  // S280: every write of this tab (add-on saga, cancel, override PUT / DELETE) needs tenant.write (admin only).
+  const canWrite = can(role, "tenant.write");
+  const writeAction = (node: React.ReactNode) => (canWrite ? node : undefined);
 
   const cancel = useMutation({
     mutationFn: (row: SubscriptionRow) => runSaga(`/api/admin/tenants/${tenantId}/provision/cancel`,
@@ -245,7 +292,7 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
     onError: (e) => { setCancelling(null); toast.error(t("failed", e instanceof Error ? e.message : String(e))); },
   });
 
-  const subCols = useMemo<ColumnDef<SubscriptionRow, unknown>[]>(() => [
+  const subCols = useMemo<ColumnDef<SubscriptionRow, unknown>[]>(() => withoutActions(canWrite, [
     { accessorKey: "product", header: t("colProduct"), cell: (c) => t(`product_${c.row.original.product}`) },
     {
       accessorKey: "plan_key", header: t("colPlan"),
@@ -279,7 +326,7 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         );
       },
     },
-  ], [t]);
+  ]), [t, canWrite]);
 
   const entCols = useMemo<ColumnDef<EntitlementRow, unknown>[]>(() => [
     { accessorKey: "feature_key", header: t("colFeature"),
@@ -297,10 +344,18 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
       cell: (c) => <FeatureCell featureKey={c.row.original.feature_key} /> },
     { id: "value", header: t("colValue"),
       cell: (c) => (!c.row.original.enabled ? <Badge tone="danger" dot={false}>{t("off")}</Badge>
-        : limitText(c.row.original.value_kind, null, c.row.original.limit_value, w)) },
+        : limitText(c.row.original.value_kind, overrideUnit(c.row.original, featuresQ.data),
+          c.row.original.limit_value, w)) },
     { accessorKey: "reason", header: t("colReason") },
-    { accessorKey: "granted_by", header: t("colBy"),
-      cell: (c) => <span style={{ fontFamily: mono, fontSize: 11 }}>{c.row.original.granted_by}</span> },
+    { id: "granted_by", header: t("colBy"),
+      accessorFn: (r) => r.granted_by_name ?? r.granted_by,
+      cell: (c) => {
+        const r = c.row.original;
+        return <span style={{ fontSize: 12 }} title={r.granted_by}>
+          {actorLabel({ updated_by: r.granted_by, updated_by_kind: r.granted_by_kind, updated_by_name: r.granted_by_name },
+            t("staffMember")) ?? "—"}
+        </span>;
+      } },
     { accessorKey: "expires_at", header: t("colExpires"),
       cell: (c) => (
         <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
@@ -310,7 +365,7 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
           </Badge>
         </span>
       ) },
-  ], [t, w]);
+  ], [t, w, featuresQ.data]);
 
   if (q.isPending) return <div style={{ padding: "12px 0", fontSize: 12, color: K.muted }}>{t("loading")}</div>;
   if (q.error || !q.data) {
@@ -338,8 +393,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         canDecide={can(role, "tenant.write") || can(role, "tenant.book.write")} />
 
       <Section title={t("subsTitle")} description={t("subsHint")} padded={false} testId="tenant-subscriptions"
-        actions={<Button size="sm" variant="secondary" onClick={() => setAddOn({ start: null })}
-          testId="addon-add">{t("addAddOn")}</Button>}>
+        actions={writeAction(<Button size="sm" variant="secondary" onClick={() => setAddOn({ start: null })}
+          testId="addon-add">{t("addAddOn")}</Button>)}>
         <DataTable<SubscriptionRow> tableId={`tenant-subs-${tenantId}`} data={data.subscriptions} columns={subCols}
           getRowId={(r) => r.product} paginate={false} compact tableMinWidth={720} />
       </Section>
@@ -350,8 +405,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
       </Section>
 
       <Section title={t("ovTitle")} description={t("ovHint")} padded={false} testId="tenant-overrides"
-        actions={<Button size="sm" variant="secondary" disabled={!featuresQ.data} testId="override-add"
-          onClick={() => setOverride({ row: null })}>{t("addOverride")}</Button>}>
+        actions={writeAction(<Button size="sm" variant="secondary" disabled={!featuresQ.data} testId="override-add"
+          onClick={() => setOverride({ row: null })}>{t("addOverride")}</Button>)}>
         <DataTable<OverrideRow> tableId={`tenant-ovs-${tenantId}`} data={data.overrides} columns={ovCols}
           getRowId={(r) => r.feature_key} paginate={false} compact tableMinWidth={720}
           emptyTitle={t("noOverrides")} onRowClick={(r) => featuresQ.data && setOverride({ row: r })} />
@@ -363,7 +418,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
       {addOn && <AddOnDrawer tenantId={tenantId} data={data} start={addOn.start} onClose={() => setAddOn(null)} />}
       {override && featuresQ.data && (
         <OverrideDrawer tenantId={tenantId} existing={override.row} catalogue={featuresQ.data}
-          rules={data.override_rules ?? DEFAULT_OVERRIDE_RULES} onClose={() => setOverride(null)} />
+          rules={data.override_rules ?? DEFAULT_OVERRIDE_RULES} entitlements={data.entitlements}
+          readOnly={!canWrite} onClose={() => setOverride(null)} />
       )}
       <ConfirmModal open={!!cancelling} onClose={() => setCancelling(null)}
         onConfirm={() => cancelling && cancel.mutate(cancelling)}

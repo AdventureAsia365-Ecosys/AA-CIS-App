@@ -24,6 +24,16 @@ export const T360_BUDGET = defineMessages(
     staffMember: "a staff member",
     staffLogin: (ref: string) => `staff (${ref})`,
     readOnlySession: "This is a read-only session: nothing was saved.",
+    overrideWins: "An override on the Subscription tab sets this tenant's AI budget now. A change here has no effect "
+      + "while that override lasts; change or remove it on the Subscription tab.",
+    tightenOnlyNote: "Your role can tighten this budget only: lower the amount or the percentages, or hold new jobs. "
+      + "Raising or removing it needs an administrator.",
+    tightenMonthlyHint: (now: string) => `Now ${now}. Your role can lower it only; empty means no amount and is a raise.`,
+    tightenPctHint: (now: number) => `Now ${now} %. Your role can lower it only.`,
+    tightenStopHint: "Your role cannot stop holding jobs.",
+    tightenWorse: (fields: string) => `Your role cannot loosen this budget (${fields}). Ask an administrator.`,
+    tightenOnlyRefused: "Your role may only tighten this budget. An administrator can raise or remove it. Nothing was "
+      + "saved.",
     thisTenant: "this tenant",
     set: "Set a budget",
     edit: "Edit",
@@ -85,6 +95,15 @@ export const T360_BUDGET = defineMessages(
     staffMember: "một nhân viên",
     staffLogin: (ref: string) => `nhân viên (${ref})`,
     readOnlySession: "Phiên này chỉ được xem: chưa lưu gì.",
+    overrideWins: "Một ngoại lệ ở tab Gói đăng ký đang đặt ngân sách AI của đại lý này. Sửa ở đây không có tác dụng "
+      + "khi ngoại lệ đó còn hiệu lực; hãy sửa hoặc gỡ nó ở tab Gói đăng ký.",
+    tightenOnlyNote: "Vai trò của bạn chỉ được siết ngân sách này: giảm số tiền hoặc các %, hoặc giữ job mới. Nâng hay "
+      + "bỏ ngân sách cần quản trị viên.",
+    tightenMonthlyHint: (now: string) => `Hiện là ${now}. Vai trò của bạn chỉ được giảm; để trống là không đặt số tiền, tức là nâng.`,
+    tightenPctHint: (now: number) => `Hiện là ${now} %. Vai trò của bạn chỉ được giảm.`,
+    tightenStopHint: "Vai trò của bạn không được thôi giữ job.",
+    tightenWorse: (fields: string) => `Vai trò của bạn không được nới ngân sách này (${fields}). Nhờ quản trị viên.`,
+    tightenOnlyRefused: "Vai trò của bạn chỉ được siết ngân sách này. Quản trị viên mới nâng hoặc bỏ được. Chưa lưu gì.",
     thisTenant: "đại lý này",
     set: "Đặt ngân sách",
     edit: "Sửa",

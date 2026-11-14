@@ -22,8 +22,10 @@ import {
   appProfilePath, isReadOnlyRefusal, usd, type AppProfile, type AppProfileDraft, type AppProfilesResp,
   type DegradeMode,
 } from "@/lib/aiGateway";
+import { isTightenOnlyRefusal } from "@/lib/capTighten";
 import { DEGRADE, PROFILE_APP, PROFILES } from "./appProfiles.messages";
 import { usePageAccess } from "./usePageAccess";
+import { useRefusalText } from "./useRefusalText";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 // The table's own minimum width: below it the kit DataTable scrolls inside its card (never the page).
@@ -41,6 +43,7 @@ function useDegradeText(): (mode: string) => string {
 
 function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () => void }) {
   const t = useT(PROFILES);
+  const refusal = useRefusalText();
   const toast = useToast();
   const qc = useQueryClient();
   const appName = useAppName();
@@ -61,7 +64,8 @@ function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () 
     },
     onError: (e) => {
       setConfirming(false);
-      setApiError(isReadOnlyRefusal(e) ? t("readOnly") : e instanceof Error ? e.message : String(e));
+      setApiError(isTightenOnlyRefusal(e) ? refusal(e)
+        : isReadOnlyRefusal(e) ? t("readOnly") : e instanceof Error ? e.message : String(e));
     },
   });
 

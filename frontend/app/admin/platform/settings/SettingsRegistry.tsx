@@ -306,7 +306,7 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
   );
 }
 
-function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: string }) {
+function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; initialArea: string; initialQuery: string }) {
   const t = useSettingsT();
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
@@ -381,7 +381,7 @@ function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: strin
         </div>
       )}
       {q.data && items.length === 0 && <Section><div style={small}>{t("noneYet")}</div></Section>}
-      <SettingsTable app={app} settings={items} initialArea={initialArea} columns={columns} />
+      <SettingsTable app={app} settings={items} initialArea={initialArea} initialQuery={initialQuery} columns={columns} />
       {editing && (
         <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={isAdmin} valueOf={valueOf}
           onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); }} />
@@ -395,20 +395,21 @@ function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: strin
 }
 
 /** AA-1106: the app tab and area asked by `?app=&area=` (an unknown app opens CIS); picking another tab drops the
- *  asked area. */
+ *  asked area. S280: `&key=<setting key>` opens the app with the search box filled with that key. */
 function useAskedTab() {
   const params = useSearchParams();
   const asked = params.get("app");
   const [app, setApp] = useState<SettingApp>(
     (APPS as readonly string[]).includes(asked ?? "") ? (asked as SettingApp) : "cis");
   const [askedArea, setAskedArea] = useState(params.get("area") ?? "");
-  const pick = (k: string) => { setApp(k as SettingApp); setAskedArea(""); };
-  return { app, askedArea, pick };
+  const [askedKey, setAskedKey] = useState(params.get("key") ?? "");
+  const pick = (k: string) => { setApp(k as SettingApp); setAskedArea(""); setAskedKey(""); };
+  return { app, askedArea, askedKey, pick };
 }
 
 export default function SettingsRegistry() {
   const t = useSettingsT();
-  const { app, askedArea, pick } = useAskedTab();
+  const { app, askedArea, askedKey, pick } = useAskedTab();
   return (
     <PageFrame>
       <PageHeader
@@ -419,7 +420,7 @@ export default function SettingsRegistry() {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
         <Tabs ariaLabel={t("title")} active={app} onChange={pick} testId="settings-apps"
           tabs={APPS.map((a) => ({ key: a, label: t(APP_LABEL[a]) }))} />
-        <AppSettings key={app} app={app} initialArea={askedArea} />
+        <AppSettings key={app} app={app} initialArea={askedArea} initialQuery={askedKey} />
       </div>
     </PageFrame>
   );

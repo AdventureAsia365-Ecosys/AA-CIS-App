@@ -59,6 +59,11 @@ export const PLANS = defineMessages(
     featuresHint: "Tick what the plan gives. A limit left empty means no limit. A limit the plan has cannot be "
       + "unticked; AI budget and notice days go on content plans only.",
     limitPlaceholder: "no limit",
+    unit_usdMonth: "USD a month",
+    unit_perMinute: "requests a minute",
+    unit_seats: "seats",
+    unit_days: "days",
+    unit_perMonth: "a month",
     subscribersNote: (n: number) => (n === 0 ? "No tenant holds this plan."
       : n === 1 ? "1 tenant holds this plan: saving changes what it may do at once."
         : `${n} tenants hold this plan: saving changes what they may do at once.`),
@@ -146,6 +151,11 @@ export const PLANS = defineMessages(
     featuresHint: "Đánh dấu những gì gói cho. Giới hạn để trống là không giới hạn. Giới hạn gói đang có thì không "
       + "bỏ đánh dấu được; ngân sách AI và số ngày báo trước chỉ đặt ở gói Content.",
     limitPlaceholder: "không giới hạn",
+    unit_usdMonth: "USD mỗi tháng",
+    unit_perMinute: "yêu cầu mỗi phút",
+    unit_seats: "người dùng",
+    unit_days: "ngày",
+    unit_perMonth: "mỗi tháng",
     subscribersNote: (n: number) => (n === 0 ? "Chưa đại lý nào dùng gói này."
       : `${n} đại lý đang dùng gói này: lưu sẽ đổi ngay những gì họ được dùng.`),
     frozen: "Gói đã ngừng thì không sửa được. Đại lý đang dùng giữ gói tới khi được chuyển.",
