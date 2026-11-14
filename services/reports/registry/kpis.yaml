@@ -120,15 +120,16 @@ kpis:
   used_by:
   - BK-03
 - id: K-AR-AGING
-  version: 2
+  version: 3
   name: Aging buckets
-  definition: 'Open agency invoice balance (booking.agency_invoice total, status issued, minus approved booking.agency_payment
-    amounts) by days past due_date bucket, per currency (v2: agency billing; the B2C customer invoice tables are retired)'
+  definition: 'Agencies by the age of their oldest overdue invoice (booking.v_tenant_billing_status.oldest_overdue_days) in
+    the buckets current, 1-30, 31-60, 61-90 and > 90 days; status red when an agency is past its suspend days, amber past
+    its warn days (Booking billing_terms, set by finance). v3: read through the contract view; the per-invoice balance
+    buckets (booking.agency_invoice minus approved booking.agency_payment) stay on the Booking billing page'
   unit: status
-  threshold: '> 60 days = 0'
+  threshold: no agency past its suspend days
   sources:
-  - booking.agency_invoice
-  - booking.agency_payment
+  - booking.v_tenant_billing_status
   defined_in: BK-03
   used_by:
   - BK-03
@@ -143,16 +144,15 @@ kpis:
   used_by:
   - BK-03
 - id: K-AR-OVERDUE
-  version: 2
+  version: 3
   name: AR overdue
-  definition: 'sum booking.v_tenant_billing_status.overdue_amount / open agency invoice balance, per currency (v2: agency
-    billing; the B2C customer invoice tables are retired)'
+  definition: 'Overdue agency invoices (SaaS fees and settlements): sum booking.v_tenant_billing_status.overdue_invoices,
+    with overdue_amount per currency; red when an agency is past its suspend days, amber past its warn days (Booking
+    billing_terms). v3: the share of the open balance needs the invoice tables, which are staff-only in Booking'
   unit: count
-  threshold: Red > 10 %
+  threshold: 0 agencies past their suspend days
   sources:
   - booking.v_tenant_billing_status
-  - booking.agency_invoice
-  - booking.agency_payment
   defined_in: BK-03
   used_by:
   - BK-03
@@ -288,12 +288,14 @@ kpis:
   used_by:
   - BK-01
 - id: K-BK-CANCEL
-  version: 1
+  version: 2
   name: Cancellation rate
-  definition: Cases reaching 'cancelled' / (confirmed + cancelled) in the period
+  definition: 'Cases first reaching cancelled / (first confirmed + first cancelled) in the period, from the per-day
+    first-reach counts of booking.v_ops_funnel_daily (ops.overview.v1)'
   unit: ratio
-  threshold: Flag > 10 %
-  sources: []
+  threshold: Trend on Dev; a flag level becomes an admin setting before it colours a report
+  sources:
+  - booking.v_ops_funnel_daily
   defined_in: FI-07
   used_by:
   - FI-07
@@ -321,13 +323,15 @@ kpis:
   used_by:
   - EX-04
 - id: K-BK-CONFIRMED
-  version: 1
+  version: 2
   name: Confirmed bookings
-  definition: Trip cases whose first booking.trip_case_status_history row with to_status 'confirmed' falls in the period
+  definition: Trip cases whose first booking.trip_case_status_history row with to_status 'confirmed' falls in the period;
+    CIS reads the per-day first-reach count of metric confirmed in booking.v_ops_funnel_daily (ops.overview.v1)
   unit: count
   threshold: Business owner target at go-live
   sources:
   - booking.trip_case_status_history
+  - booking.v_ops_funnel_daily
   defined_in: FI-07
   used_by:
   - FI-07
@@ -1749,6 +1753,7 @@ kpis:
   defined_in: FI-03
   used_by:
   - FI-03
+  - FI-08
 - id: K-MKT-CONV
   version: 1
   name: Source conversion
@@ -2325,6 +2330,38 @@ kpis:
   defined_in: BK-04
   used_by:
   - BK-04
+- id: K-TEN-AICAP
+  version: 1
+  name: Tenants past their AI alert threshold
+  definition: Tenants whose AI spend in the period (shared.llm_call_daily rolled days + shared.llm_call_log raw days,
+    shadow out) is at or past the alert % of the AI budget the gateway applies now (resolved ai.budget_usd_monthly in
+    shared.tenant_entitlement, else shared.tenant_ai_budget, else the plan's included spend); red when one is at or past
+    its approval %, amber when past its alert %
+  unit: count
+  threshold: 0; each tenant's own alert % and approval % (AI providers > Budgets, Tenant 360)
+  sources:
+  - shared.llm_call_daily
+  - shared.llm_call_log
+  - shared.tenant_entitlement
+  - shared.tenant_ai_budget
+  defined_in: FI-08
+  used_by:
+  - FI-08
+- id: K-TEN-AINOCAP
+  version: 1
+  name: Tenants with AI spend and no cap
+  definition: Tenants with AI spend in the period and no AI budget in force (no resolved ai.budget_usd_monthly, no
+    shared.tenant_ai_budget amount, no included spend in the plan); amber when any
+  unit: count
+  threshold: '0'
+  sources:
+  - shared.llm_call_daily
+  - shared.llm_call_log
+  - shared.tenant_entitlement
+  - shared.tenant_ai_budget
+  defined_in: FI-08
+  used_by:
+  - FI-08
 - id: K-TEN-DELIVERED
   version: 1
   name: Delivered pieces
@@ -2347,6 +2384,17 @@ kpis:
   defined_in: CIS-03
   used_by:
   - CIS-03
+- id: K-TEN-LIVE
+  version: 1
+  name: Tenants with a live subscription
+  definition: Tenants with a shared.tenant_subscription row in status trialing, active or past_due (any product), by kind
+  unit: count
+  threshold: Trend; business owner sets targets at go-live
+  sources:
+  - shared.tenant_subscription
+  defined_in: FI-08
+  used_by:
+  - FI-08
 - id: K-TEN-PIECECOST
   version: 1
   name: LLM cost per delivered piece

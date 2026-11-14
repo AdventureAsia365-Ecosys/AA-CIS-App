@@ -172,8 +172,11 @@ async def test_a_floor_crossing_cut_gets_one_pass_and_is_approved(_stubs, monkey
     ext, kw = await _run(ctx, calls)
     ext.assert_called_once()
     assert ext.call_args.kwargs["step"] == lr.STEP and ext.call_args.kwargs["attempt"] == 2
-    asked = {s["heading"] for s in ext.call_args.kwargs["sections"]}
-    assert asked <= set(CUT) and all(s.get("hole_chars") for s in ext.call_args.kwargs["sections"])  # the cut first
+    secs = ext.call_args.kwargs["sections"]
+    assert {s["heading"] for s in secs if s.get("hole_chars")} == set(CUT)              # the cut sections first
+    # S281 (cis.t9.blog_extend_shrink_sections, default 3): the cut shrank the blog, so one more section is asked
+    assert len(secs) == 3 and sum(1 for s in secs if not s.get("hole_chars")) == 1
+    asked = set(CUT)        # the stand-in writer has a paragraph for the cut sections only (the extra one: empty)
     assert len(calls) == 2                                          # the loop's gates, then every gate again
     assert calls[1]["content_text"] == kw["content_text"] and calls[1]["stock_blocking"] is False
     assert calls[1]["atom_text"] == calls[0]["atom_text"] and calls[1]["cta"] == calls[0]["cta"]

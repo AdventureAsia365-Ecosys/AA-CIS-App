@@ -428,12 +428,15 @@ reports:
     5
   schedule: weekly
   channel: New Booking staff page Finance reports (month picker, CSV/XLSX, PDF of the close) stored under the booking/ prefix
-    of the reports bucket; only aggregate totals reach CIS through a new bk-NNN contract view
+    of the reports bucket; only aggregate totals reach CIS through a new bk-NNN contract view. Since R5 the CIS
+    engine renders a counts-only weekly flash in /admin/reports from booking.v_ops_funnel_daily and v_ops_case_status
+    (ops.overview.v1); GMV, margin and cash stay on the Booking page until Booking publishes aggregate totals
   automation: auto
   status: partial
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
-  generator: null
+  generator: cis
+  automated_from: 2026-11-16
   kpis:
   - K-BK-CONFIRMED
   - K-BK-GMV
@@ -452,6 +455,36 @@ reports:
   - '7. Monthly close checklist: unverified payments, unmatched supplier bills, voided items'
   - 8. Departures next month
   - 9. Five-line Vietnamese summary
+- id: FI-08
+  family: finops
+  name_en: Tenant entitlements and AI spend against the cap
+  name_vi: Quyền sử dụng theo gói và chi phí AI của từng tenant so với trần
+  audience: business owner, tech lead, AA staff managing partners
+  owner_role: tech lead (prepares); business owner (decides plan and cap changes)
+  decision: Which tenants use their entitlements, which tenant's AI spend is near or past the cap the gateway enforces,
+    who spends AI with no cap, and which trial or plan change to make?
+  cadence: 'monthly: business day 2 for the previous month; on demand for any closed period (for example month to date)'
+  schedule: monthly
+  channel: /admin/reports (Markdown + JSON in shared.report_run); tenants shown by id prefix and kind, never by name
+  automation: auto
+  status: partial
+  priority: P2
+  template: null
+  generator: cis
+  automated_from: 2026-11-16
+  kpis:
+  - K-TEN-LIVE
+  - K-LLM-TENANT
+  - K-TEN-AICAP
+  - K-TEN-AINOCAP
+  sections:
+  - '1. AI spend against the cap per tenant: the cap the gateway applies (Tenant 360 override, tenant budget row or the
+    plan''s included spend), each tenant''s own alert % and approval %, spend in the period, used %, state, calls and
+    refused calls'
+  - 2. Tenant-attributed spend by app and the platform work (no tenant)
+  - '3. Entitlements in force (tenant.entitlements.v1): live subscriptions with plan and status, flags, limits and
+    seats, sources (plan, trial, override), earliest expiry'
+  - 4. Trials and their end dates
 - id: FI-09
   family: finops
   name_en: Tenant billing run
@@ -853,12 +886,16 @@ reports:
     pay?
   cadence: weekly Monday 01:30 UTC + month-end statement business day 2; overdue items also in BK-01 daily
   schedule: weekly
-  channel: Booking billing page Aging tab with CSV; weekly e-mail to Booking admin
+  channel: Booking billing page Aging tab with CSV; weekly e-mail to Booking admin. Since R5 the CIS engine renders
+    the agency receivables view in /admin/reports from booking.v_tenant_billing_status (agency SaaS and settlement
+    invoices, with status, overdue count and amount and the oldest overdue age); per-invoice balances, payments and
+    AP stay in Booking
   automation: auto
-  status: missing
+  status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
-  generator: null
+  generator: cis
+  automated_from: 2026-11-16
   kpis:
   - K-AR-OVERDUE
   - K-AR-AGING
