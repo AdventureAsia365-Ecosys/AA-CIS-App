@@ -3432,13 +3432,19 @@ _Avoid_: class group, family (a set family is a label set id family, `claims.SET
 The texts an R1 claim instrument sends (`services/ground_truth/prompts.py`): `v1` = the S272-S278 prompt (the default;
 `claim_shadow` and every R1 record use it), `v2` = the S279 panel's changes B1-B5 (whole sentences, paraphrase and
 one-step inference allowed, place background allowed until it becomes a trip promise, the seed's "Place background"
-lines as support, headings / FAQ questions judged with their answer, the confirmed promise patterns kept). A version
+lines as support, headings / FAQ questions judged with their answer, the confirmed promise patterns kept), `v3` = the
+S280 restatement test for paraphrase (set aside wording that adds no checkable fact and fire only on a fact the
+instrument can name; trip-wide facts support one day; a label made of source words and an inferred day start are
+paraphrase; an unstated order and a number bound to the wrong thing stay unsupported). A version
 other than v1 is part of the instrument id (`...:entailment#v2`), and every call records `aa1048-r1-<id>@<sha>` in
 `shared.llm_call_log.prompt_version`. A new version is measured first by the gated evaluation
 (`python -m services.ground_truth.instrument_eval`, DRY RUN default; a stratified subset of the claims R1 fired on;
 cap, claim limits and go / no-go bars in the settings registry, `cis.spend.instrument_eval_*`,
 `cis.quality.instrument_eval_*`, CIS 417); it never writes a label. Claims a version's examples were drawn from (the
-five S279 relabels for v2) are in-sample: reported apart, never in the TP-kept bar.
+five S279 relabels for v2) are in-sample: reported apart, never in the TP-kept bar. Claims of an earlier evaluation
+whose misses shaped the next version are in-sample for it too: `--exclude <report>` keeps them out of its subset.
+`score` replays a finished run from its stored votes at $0; `--measured <report>` prices the plan from a measured run
+(the live gate still charges every call's worst case).
 _Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:

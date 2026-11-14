@@ -14,8 +14,13 @@ ones?
       fp_other, fp_disputed), and the B3 check (do the seed's "Place background" lines draw R1's fire?).
   python -m services.ground_truth.instrument_eval run --pool <pool.jsonl> [--prompt v2] [--mode entailment]
       [--candidate <model>@<connection>] [--trial N | --limit N] [--live --confirm-spend] [--cap USD] [--out <json>]
+      [--exclude <report.json | prefixes.json> ...] [--measured <report.json>]
       DRY RUN by default: the subset, the plan and its cost estimate; no client, no call. A paid run needs --live,
-      --confirm-spend and exactly one of --trial / --limit, within the settings below.
+      --confirm-spend and exactly one of --trial / --limit, within the settings below. --exclude leaves out the
+      claims an earlier evaluation voted on (a version shaped on that run's misses is in-sample there; the relabels
+      stay, never gated); --measured takes the plan's expected cost from a finished live run (measured_expectation).
+  python -m services.ground_truth.instrument_eval score --pool <pool.jsonl> --report <report.json>
+      $0: score a finished run again from the votes in its report (replay; no model call).
 
 Settings (Platform > Settings; CIS migration 412; read after a refresh from the database before a paid run):
   cis.spend.instrument_eval_cap_usd           the run's hard cap (also never above r1.HARD_CAP_USD)
@@ -47,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 import uuid
 from collections import Counter, defaultdict
@@ -56,6 +62,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from services.ground_truth import claims as cl
 from services.ground_truth import panel as pn
+from services.ground_truth import prompts as pr
 from services.ground_truth import r1
 from shared import settings
 
@@ -351,6 +358,103 @@ def composition(subset: list[PoolItem]) -> dict:
             "by_writer": dict(Counter(p.item.writer for p in subset))}
 
 
+# ── out-of-sample subsets, replay and a measured cost ($0) ─────────────────────────────────────────────────────────
+
+MIN_PREFIX = 8
+TAG_RE = re.compile(r"^aa1048-r1-(?P<id>[^@]+)@(?P<sha>[0-9a-f]{12})$")
+
+
+def prefixes_from(text: str) -> set[str]:
+    """Claim hash prefixes from a run report (the keys of its "votes") or from a JSON list of prefixes. A prefix
+    shorter than MIN_PREFIX hex characters is refused (it could match claims nobody meant)."""
+    try:
+        obj = json.loads(text)
+    except ValueError as e:
+        raise EvalRefused(f"an exclude file is a run report or a JSON list of hash prefixes ({e})") from e
+    keys = obj.get("votes") if isinstance(obj, dict) else obj
+    if not isinstance(keys, (dict, list)) or not keys:
+        raise EvalRefused("an exclude file needs a non-empty 'votes' object or a list of hash prefixes")
+    out = {str(k).lower() for k in keys}
+    short = sorted(k for k in out if len(k) < MIN_PREFIX or not re.fullmatch(r"[0-9a-f]+", k))
+    if short:
+        raise EvalRefused(f"exclude prefixes must be >= {MIN_PREFIX} hex characters: {short[:3]}")
+    return out
+
+
+def exclude(pool: list[PoolItem], prefixes: set[str]) -> tuple[list[PoolItem], dict]:
+    """The pool without the claims a prompt version was shaped on (an earlier evaluation's subset, whose misses its
+    rules were written from), so the next subset is out-of-sample. The relabelled claims stay: they are in-sample for
+    every version since v2 and never gated on."""
+    lengths = sorted({len(x) for x in prefixes})
+    kept, dropped = [], Counter()
+    for p in pool:
+        hit = any(p.item.claim_hash[:n] in prefixes for n in lengths)
+        if hit and p.group != "tp_relabel":
+            dropped[p.group] += 1
+        else:
+            kept.append(p)
+    return kept, {"prefixes": len(prefixes), "by_group": dict(sorted(dropped.items())), "claims": sum(dropped.values())}
+
+
+def report_votes(report: dict) -> dict[str, list[Optional[bool]]]:
+    votes = report.get("votes")
+    if not isinstance(votes, dict) or not votes:
+        raise EvalRefused("the run report has no votes (only a live run's full report carries them)")
+    return {str(k): list(v) for k, v in votes.items()}
+
+
+def replay(pool: list[PoolItem], report: dict, lim: Limits) -> dict:
+    """Score a finished run again from its stored votes, at $0: the subset is the pool claims the report voted on.
+    Reproduces a live verdict without a call (and scores it under the current bars)."""
+    votes = by_prefix([p.item.claim_hash for p in pool], report_votes(report))
+    subset = [p for p in pool if p.item.claim_hash in votes]
+    if len(subset) != len(report["votes"]):
+        raise EvalRefused(f"{len(report['votes']) - len(subset)} voted claims of the report are not in the pool")
+    trial = (report.get("score") or {}).get("verdict") == "trial"
+    sc = score(subset, votes, lim, trial=trial, stopped=report.get("stopped"))
+    stored = (report.get("score") or {}).get("verdict")
+    return {"replayed_run": str(report.get("run_id", ""))[:8], "instrument": report.get("instrument"),
+            "prompt_version": report.get("prompt_version"), "subset": composition(subset), "score": sc,
+            "stored_verdict": stored, "matches_stored": stored == sc["verdict"]}
+
+
+def measured_expectation(pool: list[PoolItem], report: dict,
+                         inst: r1.Instrument) -> tuple[Callable[[r1.Instrument, str], float], dict]:
+    """One call's expected cost from a finished live run of the same model, connection and mode: the run's measured
+    cost per call, scaled by how much larger this call's prompt is than that run's mean prompt (both on r1's
+    conservative input estimate). The model estimate assumes 6,000 reasoning tokens per reply; GPT-6 Luna billed
+    about 250 output tokens per entailment reply in S279, so the model plan prices a run at about 16x its real
+    spend. The live gate is unchanged: every call is still charged its worst case against the cap."""
+    if report.get("mode") != "live" or report.get("stopped") or not report.get("calls"):
+        raise EvalRefused("--measured needs a finished live run report (mode live, not stopped, calls > 0)")
+    spent = report.get("spent_usd")
+    if not isinstance(spent, (int, float)) or not spent > 0:
+        raise EvalRefused("--measured: the run report has no positive spent_usd")
+    base = str(report.get("instrument", "")).split("#", 1)[0]
+    if base != inst.id.split("#", 1)[0]:
+        raise EvalRefused(f"--measured: the report measured {base!r}, not {inst.id.split('#', 1)[0]!r}")
+    m = TAG_RE.match(str(report.get("prompt_version", "")))
+    try:
+        old_prompt = pr.get(m.group("id")) if m else None
+    except pr.UnknownPromptVersion:
+        old_prompt = None
+    if old_prompt is None or old_prompt.sha != m.group("sha"):
+        raise EvalRefused("--measured: the report's prompt version is unknown here or its texts changed since")
+    votes = by_prefix([p.item.claim_hash for p in pool], report_votes(report))
+    old_items = [p.item for p in pool if p.item.claim_hash in votes]
+    if len(old_items) != len(report["votes"]):
+        raise EvalRefused("--measured: some voted claims of the report are not in the pool")
+    old = r1.Instrument(inst.model_key, inst.connection, inst.mode, old_prompt.id)
+    estimates = [r1.call_cost(old, u, 0) for u, _ in r1.calls(old_items, old)]
+    per_call = float(spent) / int(report["calls"])
+    old_mean = sum(estimates) / len(estimates)
+
+    def expected(i: r1.Instrument, user: str) -> float:
+        return per_call * r1.call_cost(i, user, 0) / old_mean
+    return expected, {"run": str(report.get("run_id", ""))[:8], "prompt_version": report.get("prompt_version"),
+                      "measured_usd_per_call": round(per_call, 6), "calls": int(report["calls"])}
+
+
 # ── score ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -482,7 +586,7 @@ def _live(subset: list[PoolItem], inst: r1.Instrument, a: argparse.Namespace, ca
     votes = result["votes"].get(inst.id) or {}
     return {"run_id": run_id, "spent_usd": result["spent_usd"], "ledger_usd": result["ledger_usd"],
             "calls": result["calls"], "stopped": result["stopped"], "caller_errors": result["caller_errors"],
-            "identity_mismatches": result["identity_mismatches"],
+            "identity_mismatches": result["identity_mismatches"], "reserved_attempts": result.get("reserved_attempts"),
             "score": score(subset, votes, lim, trial=a.trial is not None, stopped=result["stopped"]),
             "votes": {h[:16]: v for h, v in sorted(votes.items())}}
 
@@ -494,15 +598,21 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
     lim = limits()
     n = gate(a, lim)
     inst = _instrument(a)
-    subset = _subset(read_pool(_read(a.pool)), a, n, lim)
+    full = read_pool(_read(a.pool))
+    pool, excluded = (exclude(full, set().union(*(prefixes_from(_read(f)) for f in a.exclude))) if a.exclude
+                      else (full, None))
+    # the measured run's claims are read from the whole pool: they are usually the ones --exclude just left out
+    expected_of, measured = (measured_expectation(full, json.loads(_read(a.measured)), inst) if a.measured
+                             else (None, None))
+    subset = _subset(pool, a, n, lim)
     cap = a.cap if a.cap is not None else lim.cap_usd
     try:
-        the_plan = r1.plan([p.item for p in subset], [inst], votes=a.votes, cap=cap)
+        the_plan = r1.plan([p.item for p in subset], [inst], votes=a.votes, cap=cap, expected_of=expected_of)
     except r1.R1Refused as e:
         raise EvalRefused(str(e)) from e
     rep = {"mode": "live" if a.live else "dry_run", "instrument": inst.id,
            "prompt_version": inst.prompt_version.tag, "settings_refreshed": fresh, "limits": asdict(lim),
-           "subset": composition(subset), "plan": the_plan}
+           "excluded": excluded, "measured": measured, "subset": composition(subset), "plan": the_plan}
     if not the_plan["fits_cap"]:
         return 3, {"ok": False, "refused": "the plan does not fit the cap", **rep}
     if not a.live:
@@ -512,6 +622,10 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
         return 0, {"ok": True, **rep}
     live = _live(subset, inst, a, cap, lim)
     return (0 if not live["stopped"] else 3), {"ok": not live["stopped"], **rep, **live}
+
+
+def cmd_score(a: argparse.Namespace) -> dict:
+    return {"ok": True, **replay(read_pool(_read(a.pool)), json.loads(_read(a.report)), limits())}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -539,7 +653,13 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--dry-run", action="store_true", help="the default; never paid")
     r.add_argument("--live", action="store_true", help="PAID: make the calls")
     r.add_argument("--confirm-spend", action="store_true", help="required with --live")
+    r.add_argument("--exclude", action="append", default=[],
+                   help="leave out the claims of this run report (or JSON list of hash prefixes): out-of-sample")
+    r.add_argument("--measured", help="expected cost from this finished live run report (same model and mode)")
     r.add_argument("--out", help="write the report (counts, groups and hash prefixes only) here too")
+    s = sub.add_parser("score", help="$0: score a finished run again from the votes in its report")
+    s.add_argument("--pool", required=True)
+    s.add_argument("--report", required=True)
     return ap
 
 
@@ -548,7 +668,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.cmd == "run" and a.dry_run and a.live:
         a.live = False                                      # --dry-run wins: never pay by accident
     try:
-        rc, rep = (0, cmd_pool(a)) if a.cmd == "pool" else cmd_run(a)
+        rc, rep = ((0, cmd_pool(a)) if a.cmd == "pool" else (0, cmd_score(a)) if a.cmd == "score"
+                   else cmd_run(a))
     except (EvalRefused, r1.R1Refused) as e:
         print(json.dumps({"ok": False, "refused": str(e)}))
         return 2

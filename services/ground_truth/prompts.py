@@ -14,6 +14,13 @@ through billed_fields and to quality_signal), so a measurement always says which
       judged with the text that follows them (B4), and the confirmed B-promise patterns stay as positive examples so
       recall holds (B5). Entailment v2 reads the whole source and the text around the sentence, not only the aligned
       lines (support the instrument did not see was one cause of false fires).
+  v3  S280: v2's evaluation (run 3018008d) dropped 48% of the sampled false positives, under the 60% bar; most of
+      the rest are paraphrase. v3 replaces B1 with a restatement test (find the source statements, set aside wording
+      that adds no checkable fact, fire only on a fact the instrument can name: P1), lets a trip-wide fact support
+      one day (P2), widens B2 to crafts and customs (P2b), treats a label made of source words and an inferred day
+      start as paraphrase (P3), and adds an unstated order and a number bound to the wrong thing to B5. Same user
+      prompts as v2. The claims of v2's evaluation subset shaped v3, so they are in-sample for it: instrument_eval
+      --exclude keeps them out of v3's subset.
 
 Every example in these prompts uses invented places and phrasing (the golden-set text guard). The B5 examples name the
 pattern classes of the five claims the tech lead relabelled to violation in S279, in wording of their own: checked
@@ -115,6 +122,93 @@ V2_ENTAILMENT_USER = ("SOURCE:\n{source}\n\nTEXT AROUND THE SENTENCE ({field}):\
                       "AFTER: {after}")
 NONE_TEXT = "(none)"
 
+# ── v3 (S280: paraphrase, the cause of most v2 false fires) ────────────────────────────────────────────────────────
+# v2 dropped 12 of 25 sampled false positives; 10 of the 13 it still fired on restate the source in other words with
+# a style word, a viewpoint, a framing verb, a trip-wide fact placed on one day, a descriptive label or the writer's
+# reading of the facts (S279 run 3018008d + the panel's reasons). v3 replaces B1 with a restatement test that sets
+# that wording aside and fires only on a fact it can name (P1), adds trip-wide facts (P2), descriptive labels and day
+# headings (P3), and widens B2 to crafts and customs (P2b). B3 and B4 are v2's texts unchanged. The B5 list keeps
+# every v2 item and adds an unstated order and a number bound to the wrong thing (the two stored violations v2 lost).
+# All examples are invented (Karsk, Brellin, Ostra): no example shares a three-word sequence with a
+# content word with any claim of the evaluation pool (checked before S280 shipped; the pool stays in .tmp-session/).
+
+_V3_RULES = (
+    # P1 (replaces B1): the restatement test.
+    "Judge the whole sentence the way a careful editor would, never fragment by fragment or word by word, in three "
+    "steps.\n"
+    "  1. Find the source statements the sentence restates. Look through the WHOLE source (overview, highlights, "
+    "every day, inclusions, place background), not only the lines next to it.\n"
+    "  2. Set aside wording that adds no checkable fact: synonyms and summaries; images and figures of speech ('a "
+    "wall of peaks' for a mountain view); the traveller's point of view ('from the boat', 'underfoot'); emphasis "
+    "('entirely', 'truly', 'simply'); framing verbs ('is built around', 'centres on', 'belongs to', 'ties together'); "
+    "and the writer's reading of what the source facts mean for the reader. Wording about the trip's meals, guide, "
+    "group, crowds or what the traveller will see, hear or feel at a stop is NOT style: it is a fact (list below).\n"
+    "  3. What is left are the sentence's facts. The sentence is supported when the source states each of them in any "
+    "words, or when each follows from the source in one obvious step.\n"
+    "Answer 'unsupported' only when you can name a concrete fact left after step 2 that the whole source does not "
+    "give. If you cannot name one, the sentence is supported. Examples, all supported:\n"
+    "  - source 'the ride lasts one to two hours, depending on the riders', sentence 'the riders alone decide how "
+    "long the ride lasts' (paraphrase with emphasis);\n"
+    "  - source 'olive groves grow along the road to Ostra', sentence 'olive groves roll past the window on the drive "
+    "to Ostra' (point of view);\n"
+    "  - source 'the cable car up Karsk hill and the hilltop fort', sentence 'the cable car lifts you "
+    "toward the fort, so the two make one trip' (the writer's reading; the fort stands on the hilltop);\n"
+    "  - source 'the afternoon is open for a swim, a nap or a stroll', sentence 'some guests swim while others rest' "
+    "(the source's own options as choices; no option added);\n"
+    "  - source 'the canoe trip runs through Brellin marsh, home to herons and otters', sentence 'the canoe trip is "
+    "planned around the herons and otters of Brellin marsh' (a framing verb; no sighting promised).",
+    # P2 (new): trip-wide facts support one day.
+    "A fact the source states for the whole trip or the whole route (beech woods beside the path, guesthouses of one "
+    "kind at every stop, vineyards along the road) supports the same fact on one day or at one stop, unless the "
+    "source says something else for that one day.",
+    # P2b (B2 widened): place background, crafts and customs.
+    "Background about a place the source names (its history, age, builder, architecture, nickname, region, position "
+    "relative to another place, how it is usually described or compared) is allowed even when the source does not "
+    "state it, and so is background about a craft, food or custom the source names (how it is made, how long it has "
+    "belonged to the region). A sentence that joins such background to a visit the source gives is supported. It "
+    "needs the source only when the background becomes a promise about this trip: a view, an activity, a service, a "
+    "time or a condition the traveller will meet.",
+    _V2_RULES[2],                                                        # B3 unchanged
+    _V2_RULES[3],                                                        # B4 unchanged
+    # P3 (new): descriptive labels and day headings.
+    "A label made only of source words for something the source describes is a paraphrase, with capitals or "
+    "without: 'the Karsk Valley Lodge' when the source says the nights are at a lodge in the Karsk valley. A name "
+    "with a word the source does not give ('the Karsk Royal Lodge') is a new name and unsupported. A day heading that "
+    "names where a day begins and ends is supported when the start is where the trip already is (the last "
+    "night's stop, the arrival town, or the town the trip returns to at the end) and the end and the means of travel "
+    "are in the source.",
+    # B5 extended: the promises this check exists for.
+    "Still unsupported, the promises this check exists for (the source must state them):\n"
+    "  - the character of a meal ('a family-style dinner', 'recipes handed down for generations') when the source "
+    "names only a restaurant or a meal break;\n"
+    "  - qualities of the guide ('a guide who grew up in the valley') when the source says only that a guide "
+    "leads;\n"
+    "  - a group or social experience ('new friends by the end of the week') when the source speaks of one "
+    "traveller or says nothing about other travellers;\n"
+    "  - an arrival or crowd atmosphere ('the plaza is deserted for us', 'before the coach parties') the source "
+    "does not give;\n"
+    "  - an experience at a stop (scenery seen, a sound heard, a mood felt there) the source does not describe;\n"
+    "  - an order, sequence or schedule the source does not give ('the ferry comes first and the market second' when "
+    "the source only names both);\n"
+    "  - a number or measure bound to the wrong thing: read 'it', 'there' and 'this' as the thing named just BEFORE; "
+    "a size, height, date or count the source gives for another place, or not at all, is unsupported;\n"
+    "  - a number, name, day, order or direction that contradicts the source.",
+)
+ENTAILMENT_SYSTEM_V3 = (
+    "You check ONE sentence of a travel text against the SOURCE the trip is built from: is the reader promised "
+    "anything about THIS trip that the source does not give?\n"
+    + "\n".join(f"- {r}" for r in _V3_RULES)
+    + "\nAnswer 'unsupported' only for such a promise or contradiction, and in 'why' name the fact that the source "
+      "does not give. Otherwise answer 'supported' and quote the source line you relied on (empty when the sentence "
+      "is voice, background or a heading). Reply with the JSON object only.")
+EXTRACTION_SYSTEM_V3 = (
+    "You read a travel TEXT and the SOURCE it was written from, and list every sentence of the TEXT that promises "
+    "something about THIS trip that the SOURCE does not give.\n"
+    + "\n".join(f"- {r}" for r in _V3_RULES)
+    + "\nQuote each such sentence whole, exactly as it appears in the TEXT, name its class from the list given, and "
+      "in 'why' name the fact that the source does not give. List nothing that is supported, background, voice or a "
+      "heading. Reply with the JSON object only.")
+
 
 # ── user prompt builders (items are services.ground_truth.r1.Item; duck-typed to keep this module import-free) ──────
 
@@ -191,6 +285,9 @@ VERSIONS: dict[str, PromptVersion] = {
                         (V1_ENTAILMENT_USER, NO_LINE, EXTRACTION_USER)),
     "v2": PromptVersion("v2", ENTAILMENT_SYSTEM_V2, EXTRACTION_SYSTEM_V2, v2_entailment_user, extraction_user,
                         (V2_ENTAILMENT_USER, NONE_TEXT, EXTRACTION_USER)),
+    # v3 sends v2's user prompts (whole source, BEFORE / SENTENCE / AFTER); only the system texts change.
+    "v3": PromptVersion("v3", ENTAILMENT_SYSTEM_V3, EXTRACTION_SYSTEM_V3, v2_entailment_user, extraction_user,
+                        (V2_ENTAILMENT_USER, NONE_TEXT, EXTRACTION_USER)),
 }
 
 
@@ -200,6 +297,7 @@ def get(version: str) -> PromptVersion:
     return VERSIONS[version]
 
 
-__all__ = ["DEFAULT", "ENTAILMENT_SYSTEM", "ENTAILMENT_SYSTEM_V2", "EXTRACTION_SYSTEM", "EXTRACTION_SYSTEM_V2",
+__all__ = ["DEFAULT", "ENTAILMENT_SYSTEM", "ENTAILMENT_SYSTEM_V2", "ENTAILMENT_SYSTEM_V3", "EXTRACTION_SYSTEM",
+           "EXTRACTION_SYSTEM_V2", "EXTRACTION_SYSTEM_V3",
            "PromptVersion", "UnknownPromptVersion", "VERSIONS", "around", "extraction_user", "get",
            "v1_entailment_user", "v2_entailment_user"]

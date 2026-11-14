@@ -34,7 +34,8 @@ flag and a cap <= HARD_CAP_USD, and the cap is HARD (review S272):
 Every reply goes through the Model Gateway (LLMClient.generate) on stage STAGE, role judge, and writes one
 shared.llm_call_log row with **billed_fields(resp) (an unusable reply writes its billed_unusable row before the error
 is raised). The row names the instrument's prompt version and the hash of its texts (prompt_version column and
-quality_signal; services/ground_truth/prompts.py: v1 the S272-S278 prompt and the default, v2 the S279 panel's B1-B5).
+quality_signal; services/ground_truth/prompts.py: v1 the S272-S278 prompt and the default, v2 the S279 panel's B1-B5,
+v3 the S280 restatement test for paraphrase).
 
 Measurement. Precision is the instrument's over EVERY fire on one writer surface (an entailment or extraction
 instrument does not know the class at run time: a hold acts on any fire; it does know the writer, and holds act per
@@ -323,10 +324,13 @@ def billed_cost(inst: Instrument, user_prompt: str, resp: Any) -> tuple[float, l
 
 
 def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap: float = HARD_CAP_USD,
-         attempts_of: Optional[Callable[[Instrument], int]] = None) -> dict:
+         attempts_of: Optional[Callable[[Instrument], int]] = None,
+         expected_of: Optional[Callable[[Instrument, str], float]] = None) -> dict:
     """The DRY RUN plan: calls and estimated cost per instrument, and whether the whole run fits the cap. The worst
     case reserves `attempts_of(inst)` attempts per call (default 1: a DRY RUN reads no registry; the live run gates on
-    route_attempts)."""
+    route_attempts). `expected_of(inst, user_prompt)` replaces the model estimate of one call's expected cost (default:
+    call_cost at expected_out; instrument_eval --measured scales a measured run instead). The live gate never reads
+    the expectation: it always charges each call's worst case against the cap."""
     if not items:
         raise R1Refused("no labelled violation / ok claims to calibrate on")
     if not 0 < cap <= HARD_CAP_USD:
@@ -335,10 +339,13 @@ def plan(items: list[Item], insts: list[Instrument], *, votes: int = VOTES, cap:
     for inst in insts:
         cs = calls(items, inst)
         attempts = attempts_of(inst) if attempts_of else 1
-        expected = sum(call_cost(inst, u, expected_out(inst)) for u, _ in cs) * votes
+        one = expected_of or (lambda i, u: call_cost(i, u, expected_out(i)))
+        expected = sum(one(inst, u) for u, _ in cs) * votes
         worst = sum(worst_call_cost(inst, u, attempts) for u, _ in cs) * votes
         rows.append({"instrument": inst.id, "calls": len(cs) * votes, "expected_usd": round(expected, 4),
+                     "expected_from": "model" if expected_of is None else "measured",
                      "reserved_attempts": attempts,
+                     "worst_call_usd_max": round(max(worst_call_cost(inst, u, attempts) for u, _ in cs), 4),
                      "expected_out_tokens": expected_out(inst), "ceiling": ceiling(inst.model_key),
                      "retry_ceiling": retry_ceiling(inst.model_key), "worst_case_usd": round(worst, 4)})
     total = round(sum(r["expected_usd"] for r in rows), 4)
