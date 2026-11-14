@@ -21,7 +21,7 @@ import {
 } from "../../../_kit";
 import {
   CATALOGUE_PATH, CONDITION_KINDS, EXTERNAL, STATUSES, conditionKinds, docHref, graphEdges, graphLayout, localName,
-  localSummary, matchesFeature, matchesIntegration, roleOptions, settingHref, summaryCounts,
+  localSummary, matchesFeature, matchesIntegration, roleOptions, settingHref, shortName, summaryCounts,
   type CatalogueFeature, type CatalogueIntegration, type CatalogueResp, type CatalogueStatus, type ConditionKind,
   type Conditions, type IntegrationKind,
 } from "@/lib/productCatalogue";
@@ -51,8 +51,9 @@ function useCatalogueT() {
 }
 type CT = ReturnType<typeof useCatalogueT>;
 
-function Code({ children }: { children: React.ReactNode }) {
-  return <code style={{ fontFamily: mono, fontSize: 11.5, color: K.ink, wordBreak: "break-all" }}>{children}</code>;
+function Code({ children, nowrap = false }: { children: React.ReactNode; nowrap?: boolean }) {
+  return <code style={{ fontFamily: mono, fontSize: 11.5, color: K.ink, overflowWrap: "anywhere",
+    ...(nowrap ? { whiteSpace: "nowrap", flexShrink: 0 } : {}) }}>{children}</code>;
 }
 
 function StatusBadge({ status }: { status: CatalogueStatus }) {
@@ -60,12 +61,22 @@ function StatusBadge({ status }: { status: CatalogueStatus }) {
   return <Badge tone={STATUS_TONE[status] ?? "neutral"}>{t(STATUS_LABEL[status] ?? "statusplanned")}</Badge>;
 }
 
-function AppName({ id, data }: { id: string; data: CatalogueResp }) {
+function AppName({ id, data, short = false }: { id: string; data: CatalogueResp; short?: boolean }) {
   const t = useCatalogueT();
   const lang = useLang();
   if (id === EXTERNAL) return <>{t("external")}</>;
   const app = data.apps.find((a) => a.id === id);
-  return <>{app ? localName(app, lang) : id}</>;
+  const name = app ? localName(app, lang) : id;
+  return <>{short ? shortName(name) : name}</>;
+}
+
+function FromTo({ i, data }: { i: CatalogueIntegration; data: CatalogueResp }) {
+  return (
+    <span style={{ ...small, display: "inline-flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+      <AppName id={i.producer} data={data} short /> <ArrowRight size={11} />
+      {i.consumers.map((c, n) => <span key={c}><AppName id={c} data={data} short />{n < i.consumers.length - 1 && ","}</span>)}
+    </span>
+  );
 }
 
 function ConditionChips({ c }: { c: Conditions }) {
@@ -163,8 +174,8 @@ function FeatureDrawer({ f, data, onClose, openFeature, openLink }: {
       <div style={{ display: "grid", gap: 16 }} data-testid="catalogue-feature-drawer">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <StatusBadge status={f.status} />
-          <span style={small}><AppName id={f.app} data={data} /> · {t("module")} <Code>{f.module}</Code> · {t("owner")}{" "}
-            <Code>{f.owner}</Code></span>
+          <span style={small}><AppName id={f.app} data={data} /> · {t("module")} <Code nowrap>{f.module}</Code> ·{" "}
+            {t("owner")} <Code nowrap>{f.owner}</Code></span>
         </div>
         <Field label={t("summary")}>{f.summary}</Field>
         <Field label={t("colRoles")}><span style={chipRow}>{f.roles.map((r) => <IdChip key={r} id={r} />)}</span></Field>
@@ -189,7 +200,7 @@ function FeatureDrawer({ f, data, onClose, openFeature, openLink }: {
             <span style={{ display: "grid", gap: 4 }}>
               {f.uat.map((id) => (
                 <span key={id} style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                  <Code>{id}</Code><span style={small}>{data.scenarios[id]?.story ?? ""}</span>
+                  <Code nowrap>{id}</Code><span style={small}>{data.scenarios[id]?.story ?? ""}</span>
                 </span>
               ))}
             </span>
@@ -223,7 +234,7 @@ function FeaturesTab({ data, onOpen }: { data: CatalogueResp; onOpen: (id: strin
         </div>
       ) },
     { id: "app", header: t("colApp"), accessorKey: "app",
-      cell: ({ row: { original: f } }) => <span style={small}><AppName id={f.app} data={data} /></span> },
+      cell: ({ row: { original: f } }) => <span style={small}><AppName id={f.app} data={data} short /></span> },
     { id: "status", header: t("colStatus"), accessorKey: "status",
       cell: ({ row: { original: f } }) => <StatusBadge status={f.status} /> },
     { id: "roles", header: t("colRoles"), accessorFn: (f) => f.roles.join(", "),
@@ -246,7 +257,7 @@ function FeaturesTab({ data, onOpen }: { data: CatalogueResp; onOpen: (id: strin
           options: CONDITION_KINDS.map((k: ConditionKind) => ({ value: k, label: t(COND_LABEL[k]) })), width: 170 },
       ]} />
       <DataTable<CatalogueFeature> tableId="catalogue-features" data={rows} columns={columns} getRowId={(f) => f.id}
-        rowTestId={(f) => `catalogue-feature-${f.id}`} onRowClick={(f) => onOpen(f.id)} paginate={false}
+        rowTestId={(f) => `catalogue-feature-${f.id}`} onRowClick={(f) => onOpen(f.id)} paginate={false} searchable={false}
         tableMinWidth={900} emptyTitle={t("noRows")} enableCsv csvFilename="product-features.csv" />
     </div>
   );
@@ -270,7 +281,7 @@ function LinkDrawer({ i, data, onClose, openFeature }: {
         <Field label={t("colFromTo")}>
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <strong><AppName id={i.producer} data={data} /></strong> <ArrowRight size={13} />
-            {i.consumers.map((c, n) => <span key={c}>{n > 0 && ", "}<AppName id={c} data={data} /></span>)}
+            {i.consumers.map((c, n) => <span key={c}><AppName id={c} data={data} />{n < i.consumers.length - 1 && ","}</span>)}
           </span>
         </Field>
         <Field label={t("contracts")}>
@@ -312,12 +323,7 @@ function LinksTab({ data, onOpen }: { data: CatalogueResp; onOpen: (id: string) 
         </div>
       ) },
     { id: "fromTo", header: t("colFromTo"), accessorFn: (i) => `${i.producer} ${i.consumers.join(" ")}`,
-      cell: ({ row: { original: i } }) => (
-        <span style={{ ...small, display: "inline-flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-          <AppName id={i.producer} data={data} /> <ArrowRight size={11} />
-          {i.consumers.map((c, n) => <span key={c}>{n > 0 && ", "}<AppName id={c} data={data} /></span>)}
-        </span>
-      ) },
+      cell: ({ row: { original: i } }) => <FromTo i={i} data={data} /> },
     { id: "kind", header: t("colKind"), accessorKey: "kind",
       cell: ({ row: { original: i } }) => <span style={small}>{t(KIND_LABEL[i.kind] ?? "kindm2m")}</span> },
     { id: "contract", header: t("colContract"), accessorFn: (i) => i.contracts.map((c) => c.file).join(" "),
@@ -343,7 +349,7 @@ function LinksTab({ data, onOpen }: { data: CatalogueResp; onOpen: (id: string) 
           options: KINDS.map((k) => ({ value: k, label: t(KIND_LABEL[k]) })), width: 190 },
       ]} />
       <DataTable<CatalogueIntegration> tableId="catalogue-links" data={rows} columns={columns} getRowId={(i) => i.id}
-        rowTestId={(i) => `catalogue-link-${i.id}`} onRowClick={(i) => onOpen(i.id)} paginate={false}
+        rowTestId={(i) => `catalogue-link-${i.id}`} onRowClick={(i) => onOpen(i.id)} paginate={false} searchable={false}
         tableMinWidth={1000} emptyTitle={t("noRows")} enableCsv csvFilename="product-links.csv" />
     </div>
   );
@@ -361,7 +367,7 @@ function JourneysTab({ data, openFeature, openLink }: {
     <div style={{ display: "grid", gap: 12 }}>
       {data.journeys.map((j) => (
         <Section key={j.id} testId={`catalogue-journey-${j.id}`}
-          title={<span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}><Code>{j.id}</Code>
+          title={<span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}><Code nowrap>{j.id}</Code>
             {localName(j, lang)}</span>}
           description={localSummary(j, lang)} bodyStyle={{ display: "grid", gap: 12 }}>
           <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 10 }}>
@@ -398,9 +404,9 @@ function GraphTab({ data }: { data: CatalogueResp }) {
   }, [data, edges]);
   const W = 720;
   const H = 520;
-  const pos = graphLayout(nodes, W, H);
+  const pos = graphLayout(nodes, W, H, "cis");
   const label = (id: string) => (id === EXTERNAL ? t("external")
-    : localName(data.apps.find((a) => a.id === id) ?? { name: id }, lang).split(" (")[0]);
+    : shortName(localName(data.apps.find((a) => a.id === id) ?? { name: id }, lang)));
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
       <Section bodyStyle={{ display: "grid", gap: 8 }} testId="catalogue-graph">

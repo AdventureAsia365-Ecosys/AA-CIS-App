@@ -207,17 +207,27 @@ export function graphEdges(integrations: CatalogueIntegration[]): GraphEdge[] {
   return [...map.values()].sort((a, b) => (a.from + a.to).localeCompare(b.from + b.to));
 }
 
-/** Node positions on a circle (apps first, the outside world last), in a width x height box. */
-export function graphLayout(nodes: string[], width: number, height: number): Record<string, { x: number; y: number }> {
+/** Node positions in a width x height box: `center` (the hub most links touch) in the middle when given, the other
+ *  nodes on a circle around it, the first one on top. */
+export function graphLayout(nodes: string[], width: number, height: number,
+  center?: string): Record<string, { x: number; y: number }> {
   const out: Record<string, { x: number; y: number }> = {};
   const cx = width / 2;
   const cy = height / 2;
-  const r = Math.min(width, height) / 2 - 60;
-  nodes.forEach((n, idx) => {
-    const angle = -Math.PI / 2 + (2 * Math.PI * idx) / Math.max(nodes.length, 1);
-    out[n] = { x: Math.round(cx + r * Math.cos(angle)), y: Math.round(cy + r * Math.sin(angle)) };
+  const ring = center && nodes.includes(center) ? nodes.filter((n) => n !== center) : nodes;
+  if (center && ring.length !== nodes.length) out[center] = { x: Math.round(cx), y: Math.round(cy) };
+  const rx = width / 2 - 80;
+  const ry = height / 2 - 40;
+  ring.forEach((n, idx) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * idx) / Math.max(ring.length, 1);
+    out[n] = { x: Math.round(cx + rx * Math.cos(angle)), y: Math.round(cy + ry * Math.sin(angle)) };
   });
   return out;
+}
+
+/** An app's short name for tables and the graph: the part before " (". */
+export function shortName(name: string): string {
+  return name.split(" (")[0];
 }
 
 /** Counts for the header tiles. */

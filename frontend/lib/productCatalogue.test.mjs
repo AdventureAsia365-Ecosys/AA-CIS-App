@@ -16,6 +16,7 @@ import {
   matchesIntegration,
   roleOptions,
   settingHref,
+  shortName,
   summaryCounts,
 } from "./productCatalogue.ts";
 
@@ -96,6 +97,20 @@ test("graph layout puts the first node on top, inside the box", () => {
   assert.equal(pos.a.x, 200);
   assert.ok(pos.a.y < 150);
   for (const p of Object.values(pos)) assert.ok(p.x >= 0 && p.x <= 400 && p.y >= 0 && p.y <= 300);
+});
+
+test("graph layout puts the hub in the middle and the rest around it", () => {
+  const pos = graphLayout(["hub", "a", "b", "c"], 400, 300, "hub");
+  assert.deepEqual(pos.hub, { x: 200, y: 150 });
+  assert.equal(pos.a.x, 200);
+  assert.ok(pos.a.y < 150);
+  assert.equal(Object.keys(pos).length, 4);
+  assert.deepEqual(graphLayout(["a"], 400, 300, "missing"), { a: { x: 200, y: 40 } });
+});
+
+test("short name drops the part in brackets", () => {
+  assert.equal(shortName("AA-CIS (content system)"), "AA-CIS");
+  assert.equal(shortName("Plain"), "Plain");
 });
 
 test("summary counts", () => {
