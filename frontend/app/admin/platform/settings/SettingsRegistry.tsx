@@ -19,6 +19,11 @@
 // with the whole guide, the same guide at the top of the change dialog; who changed a value is shown by name.
 // AA-1106: `?app=<app>&area=<area>` opens that app tab and area (the Product map links a setting named in a condition
 // here); an unknown value falls back to the first tab / area.
+// AA-1096 (S280): a key that allows a tenant value changes the platform or one tenant (SettingScope.tsx; the row
+// counts the tenant values, the history dialog shows each tenant's value and history); the search box searches every
+// area of the app by key, label and description (SettingsTable.tsx).
+//   GET  /api/admin/settings/registry/{key}/history?tenant_id=   one tenant's rows
+//   POST .../proposals {..., tenant_id?}                         a tenant value
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, History, Pencil, SlidersHorizontal } from "lucide-react";
@@ -28,13 +33,16 @@ import {
   Badge, Button, Checkbox, DataTable, DateText, ErrorState, Field, Input, K, Modal, PageFrame, PageHeader, Section,
   Select, Tabs, Textarea, apiGet, mono, useT, useToast, type ColumnDef, type Tone,
 } from "../../../_kit";
+import { HistoryScope, ScopeCurrent, ScopeFields, TenantCount } from "./SettingScope";
+import { SettingsTable } from "./SettingsTable";
 import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import { staffErrorMessage } from "@/lib/rbac";
 import {
-  APPS, badgesOf, boundsText, decisionBody, decisionPath, draftProblem, draftText, formatValue, groupByArea,
-  historyPath, proposalBody, proposalPath, registryPath, valuesInForce, type BadgeKey, type HistoryResp,
-  type ProposalDraft, type RegistryResp, type SettingApp, type SettingItem, type SettingRow, type ValueOf,
+  APPS, PLATFORM_SCOPE, badgesOf, boundsText, decisionBody, decisionPath, draftProblem, draftText, formatValue,
+  historyPath, historyTenant, proposalBody, proposalPath, registryPath, scopeReady, scopeTarget, scopeTenant,
+  valuesInForce, type BadgeKey, type HistoryResp, type ProposalDraft, type RegistryResp, type ScopeChoice,
+  type SettingApp, type SettingItem, type SettingRow, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
 import { ActorName, DraftNow, GuideDetails, SettingCell } from "./SettingGuide";
@@ -105,6 +113,41 @@ function sourceText(item: SettingItem, t: ST): string {
   return t("sourceDefault");
 }
 
+/** The value input of the change dialog, by value type. */
+function ValueInput({ item, text, onText }: { item: SettingItem; text: string; onText: (text: string) => void }) {
+  const t = useSettingsT();
+  if (item.value_type === "bool") {
+    return (
+      <Field label={t("newValue")}>
+        <Select value={text} onChange={(e) => onText(e.target.value)}
+          options={[{ value: "on", label: t("on") }, { value: "off", label: t("off") }]} />
+      </Field>
+    );
+  }
+  if (item.value_type === "enum") {
+    return (
+      <Field label={t("newValue")}>
+        <Select value={text} onChange={(e) => onText(e.target.value)}
+          options={(item.allowed_values ?? []).map((v) => ({ value: String(v), label: String(v) }))} />
+      </Field>
+    );
+  }
+  if (item.value_type === "json" || item.value_type === "list") {
+    return (
+      <Field label={t("newValue")} hint={t("jsonHint")}>
+        <Textarea rows={7} value={text} onChange={(e) => onText(e.target.value)}
+          style={{ fontFamily: mono, fontSize: 12 }} />
+      </Field>
+    );
+  }
+  return (
+    <Field label={item.unit ? `${t("newValue")} (${item.unit})` : t("newValue")} hint={boundsText(item) || undefined}>
+      <Input inputMode="decimal" value={text} onChange={(e) => onText(e.target.value)}
+        data-testid="settings-propose-value" />
+    </Field>
+  );
+}
+
 function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
   item: SettingItem; twoPerson: boolean; canWrite: boolean; valueOf: ValueOf; onClose: () => void; onDone: () => void;
 }) {
@@ -113,15 +156,22 @@ function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
   const [draft, setDraft] = useState<ProposalDraft>({
     text: draftText(item, item.value), reason: "", evidence: "", effectiveFrom: "", apply: !twoPerson,
   });
+  const [scope, setScope] = useState<ScopeChoice>(PLATFORM_SCOPE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const problem = draftProblem(item, draft);
+  const target = scopeTarget(item, scopeTenant(scope));
   const set = (patch: Partial<ProposalDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  // AA-1096 (S280): the form starts from the value in force at the picked scope.
+  const pickScope = (c: ScopeChoice) => {
+    setScope(c);
+    set({ text: draftText(item, scopeTarget(item, scopeTenant(c)).value) });
+  };
   const submit = async () => {
-    if (problem || busy) return;
+    if (problem || busy || !scopeReady(scope)) return;
     setBusy(true);
     setError(null);
-    const out = await post(proposalPath(item.key), proposalBody(item, item, draft), t);
+    const out = await post(proposalPath(item.key), proposalBody(item, target, draft, scopeTenant(scope)), t);
     setBusy(false);
     if (!out.ok) {
       setError(out.message);
@@ -130,12 +180,12 @@ function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
     toast.success(draft.apply ? t("applied", item.label) : t("proposed", item.label), 6000);
     onDone();
   };
-  const bounds = boundsText(item);
   return (
     <Modal open onClose={onClose} title={t("proposeTitle", item.label)} width={560} pinFooter testId="settings-propose"
       footer={<>
         <Button variant="secondary" onClick={onClose}>{t("cancel")}</Button>
-        <Button variant="primary" disabled={!!problem || busy || !canWrite} onClick={() => void submit()}
+        <Button variant="primary" disabled={!!problem || busy || !canWrite || !scopeReady(scope)}
+          onClick={() => void submit()}
           testId="settings-propose-submit">
           {busy ? t("saving") : draft.apply ? t("proposeApply") : t("propose")}
         </Button>
@@ -144,31 +194,9 @@ function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
         <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 10, background: K.bg }}>
           <GuideDetails item={item} testId="settings-propose-guide" valueOf={valueOf} />
         </div>
-        <div style={small}>
-          {t("current")}: <strong style={{ fontFamily: mono }}>{formatValue(item.value, item)}</strong>
-          {bounds && <> · {t("colBounds")}: {bounds}</>}
-        </div>
-        {item.value_type === "bool" ? (
-          <Field label={t("newValue")}>
-            <Select value={draft.text} onChange={(e) => set({ text: e.target.value })}
-              options={[{ value: "on", label: t("on") }, { value: "off", label: t("off") }]} />
-          </Field>
-        ) : item.value_type === "enum" ? (
-          <Field label={t("newValue")}>
-            <Select value={draft.text} onChange={(e) => set({ text: e.target.value })}
-              options={(item.allowed_values ?? []).map((v) => ({ value: String(v), label: String(v) }))} />
-          </Field>
-        ) : item.value_type === "json" || item.value_type === "list" ? (
-          <Field label={t("newValue")} hint={t("jsonHint")}>
-            <Textarea rows={7} value={draft.text} onChange={(e) => set({ text: e.target.value })}
-              style={{ fontFamily: mono, fontSize: 12 }} />
-          </Field>
-        ) : (
-          <Field label={item.unit ? `${t("newValue")} (${item.unit})` : t("newValue")} hint={bounds || undefined}>
-            <Input inputMode="decimal" value={draft.text} onChange={(e) => set({ text: e.target.value })}
-              data-testid="settings-propose-value" />
-          </Field>
-        )}
+        <ScopeFields item={item} value={scope} onChange={pickScope} />
+        <ScopeCurrent item={item} scope={scope} />
+        <ValueInput item={item} text={draft.text} onText={(text) => set({ text })} />
         <DraftNow item={item} text={draft.text} valueOf={valueOf} />
         <Field label={t("reason")} required hint={t("reasonHint")}>
           <Textarea rows={3} value={draft.reason} onChange={(e) => set({ reason: e.target.value })}
@@ -185,7 +213,7 @@ function ProposeModal({ item, twoPerson, canWrite, valueOf, onClose, onDone }: {
           <Checkbox checked={draft.apply} onChange={(e) => set({ apply: e.target.checked })}
             label={item.approval === "maker_checker" ? t("applySelf") : t("applyNow")} />
         )}
-        {problem && (draft.reason || draft.text !== draftText(item, item.value)) &&
+        {problem && (draft.reason || draft.text !== draftText(item, target.value)) &&
           <div role="alert" style={{ ...small, color: K.danger }}>{problem}</div>}
         {error && <div role="alert" style={{ ...small, color: K.danger }}>{error}</div>}
       </div>
@@ -198,7 +226,10 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
 }) {
   const t = useSettingsT();
   const toast = useToast();
-  const q = useQuery({ queryKey: ["settings-history", item.key], queryFn: () => apiGet<HistoryResp>(historyPath(item.key)) });
+  // AA-1096 (S280): whose rows (the platform, or one tenant); Review opens on the scope of the open proposal.
+  const [tenant, setTenant] = useState<string | null>(() => historyTenant(item));
+  const q = useQuery({ queryKey: ["settings-history", item.key, tenant],
+    queryFn: () => apiGet<HistoryResp>(historyPath(item.key, tenant)) });
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -256,6 +287,7 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
         <div style={small}>{t("keyLabel")}: <span style={{ fontFamily: mono }}>{item.key}</span>
           {item.env_override && <> · {t("envLabel", item.env_override)}</>}</div>
+        <HistoryScope item={item} tenant={tenant} onTenant={setTenant} />
         {q.isError && <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`}
           onRetry={() => void q.refetch()} />}
         {q.data && q.data.history.length === 0 && <div style={small}>{t("noHistory")}</div>}
@@ -279,13 +311,10 @@ function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: strin
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
   const q = useQuery({ queryKey: ["settings-registry", app], queryFn: () => apiGet<RegistryResp>(registryPath(app)) });
-  const groups = useMemo(() => groupByArea(q.data?.settings ?? []), [q.data]);
-  const valueOf = useMemo(() => valuesInForce(q.data?.settings ?? []), [q.data]);
-  const [area, setArea] = useState<string>(initialArea);
+  const items = useMemo(() => q.data?.settings ?? [], [q.data]);
+  const valueOf = useMemo(() => valuesInForce(items), [items]);
   const [editing, setEditing] = useState<SettingItem | null>(null);
   const [viewing, setViewing] = useState<SettingItem | null>(null);
-  const activeArea = groups.some((g) => g.area === area) ? area : groups[0]?.area ?? "";
-  const rows = groups.find((g) => g.area === activeArea)?.items ?? [];
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["settings-registry", app] });
     void qc.invalidateQueries({ queryKey: ["settings-history"] });
@@ -294,7 +323,10 @@ function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: strin
     { id: "setting", header: t("colSetting"), accessorKey: "label",
       cell: ({ row: { original: s } }) => (
         <SettingCell item={s} badges={<Badges item={s} />} valueOf={valueOf}
-          extra={s.env_ignored && <span style={{ ...small, color: K.danger }}>{t("envIgnored", s.env_ignored)}</span>} />
+          extra={<>
+            <TenantCount item={s} />
+            {s.env_ignored && <span style={{ ...small, color: K.danger }}>{t("envIgnored", s.env_ignored)}</span>}
+          </>} />
       ) },
     { id: "value", header: t("colValue"), accessorFn: (s) => formatValue(s.value, s),
       cell: ({ row: { original: s } }) => (
@@ -348,15 +380,8 @@ function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: strin
           {q.data.reader_error && <><br /><span style={{ color: K.danger }}>{t("readerError", q.data.reader_error)}</span></>}
         </div>
       )}
-      {q.data && groups.length === 0 && <Section><div style={small}>{t("noneYet")}</div></Section>}
-      {groups.length > 0 && (
-        <Tabs variant="underline" ariaLabel={t("title")} active={activeArea} onChange={setArea}
-          tabs={groups.map((g) => ({ key: g.area, label: g.area, count: g.items.length }))} testId="settings-areas" />
-      )}
-      {rows.length > 0 && (
-        <DataTable<SettingItem> tableId={`settings-${app}-${activeArea}`} data={rows} columns={columns}
-          getRowId={(s) => s.key} searchable paginate={false} tableMinWidth={980} />
-      )}
+      {q.data && items.length === 0 && <Section><div style={small}>{t("noneYet")}</div></Section>}
+      <SettingsTable app={app} settings={items} initialArea={initialArea} columns={columns} />
       {editing && (
         <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={isAdmin} valueOf={valueOf}
           onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); }} />

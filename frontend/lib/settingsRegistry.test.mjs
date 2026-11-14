@@ -10,7 +10,8 @@ import { test } from "node:test";
 import {
   actorLabel, actorText, badgesOf, boundsText, decisionBody, decisionPath, directionWords, draftProblem, draftText,
   formatValue, groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath,
-  registryPath, valuesInForce, withValue,
+  registryPath, valuesInForce, withValue, PLATFORM_SCOPE, historyTenant, scopeOptions, scopeReady, scopeTarget,
+  scopeTenant, searchSettings, tenantScoped,
 } from "./settingsRegistry.ts";
 import { canReadAdminPath, canWriteAdminPath } from "./rbac.ts";
 import { ADMIN_IA } from "./adminIa.ts";
@@ -202,4 +203,78 @@ test("the in-force line of the repeat cleanup and the blog length aim; other key
   assert.equal(nowExample("cis.t9.repeat_drop_near_exact", valuesInForce([]), "en"), null);
   assert.equal(nowExample("cis.t7.blog_chars_per_seed_word", withValue(IN_FORCE, "cis.t9.blog_chars_min", "x"), "en"),
     null);
+});
+
+// ── AA-1096 (S280): the tenant scope of a change and the search over every area ─────────────────────────────────
+const EXTEND = { ...MODE, key: "cis.t9.blog_length_extend", area: "content", label: "Blog length: lengthen a short blog",
+  description: "A tenant value turns it on for one agency only.", allowed_values: ["off", "on"], default_value: "off",
+  scope_kind: "platform+tenant", evidence_required: true };
+const T1 = "11111111-1111-4111-8111-111111111111";
+const T2 = "22222222-2222-4222-8222-222222222222";
+
+test("scope options: Platform only, unless the definition allows a tenant value (never a CRM key)", () => {
+  assert.deepEqual(scopeOptions(INT), ["platform"]);
+  assert.deepEqual(scopeOptions(EXTEND), ["platform", "tenant"]);
+  assert.deepEqual(scopeOptions({ ...EXTEND, app: "crm" }), ["platform"]);
+  assert.deepEqual(scopeOptions({ ...EXTEND, app: "tripplanner" }), ["platform", "tenant"]);
+  assert.equal(tenantScoped(INT), false);
+  assert.equal(tenantScoped(EXTEND), true);
+  assert.equal(scopeTenant(PLATFORM_SCOPE), null);
+  assert.equal(scopeTenant({ kind: "tenant", tenantId: "" }), null);
+  assert.equal(scopeTenant({ kind: "tenant", tenantId: T1 }), T1);
+  assert.equal(scopeTenant({ kind: "platform", tenantId: T1 }), null);
+  assert.equal(scopeReady(PLATFORM_SCOPE), true);
+  assert.equal(scopeReady({ kind: "tenant", tenantId: "" }), false);
+  assert.equal(scopeReady({ kind: "tenant", tenantId: T1 }), true);
+});
+
+test("scope target: the platform value, a tenant's own value, or what the tenant inherits (version 0)", () => {
+  const it = item(EXTEND, { value: "off", version: 3, source: "platform",
+    tenant_overrides: [{ tenant_id: T1, value: "on", version: 2, effective_from: null }] });
+  assert.deepEqual(scopeTarget(it, null), { value: "off", version: 3, inherited: false });
+  assert.deepEqual(scopeTarget(it, T1), { value: "on", version: 2, inherited: false });
+  assert.deepEqual(scopeTarget(it, T2), { value: "off", version: 0, inherited: true });
+  assert.deepEqual(scopeTarget(item(INT), null), { value: 20, version: 0, inherited: false });
+  // an older API (or the CRM relay) sends no tenant_overrides
+  assert.deepEqual(scopeTarget(item(EXTEND), T1), { value: "off", version: 0, inherited: true });
+});
+
+test("a tenant proposal names its tenant and the tenant's version; a platform one sends no tenant_id", () => {
+  const draft = { text: "on", reason: "trial the lengthening on the audit tenant only", evidence: "replay:zz-1",
+    effectiveFrom: "", apply: false };
+  const body = proposalBody(EXTEND, { version: 2 }, draft, T1);
+  assert.equal(body.tenant_id, T1);
+  assert.equal(body.base_version, 2);
+  assert.equal("tenant_id" in proposalBody(EXTEND, { version: 3 }, draft, null), false);
+  assert.equal("tenant_id" in proposalBody(EXTEND, { version: 3 }, draft), false);
+  assert.equal(historyPath(EXTEND.key, T1), `/api/admin/settings/registry/cis.t9.blog_length_extend/history?tenant_id=${T1}`);
+});
+
+test("the history dialog opens on the tenant of the open proposal only when no platform proposal is open", () => {
+  assert.equal(historyTenant(item(EXTEND)), null);
+  assert.equal(historyTenant(item(EXTEND, { proposals: [{ tenant_id: T1 }] })), T1);
+  assert.equal(historyTenant(item(EXTEND, { proposals: [{ tenant_id: T1 }, { tenant_id: null }] })), null);
+});
+
+test("search: key, label and description across every area, each word must match, sorted by area then label", () => {
+  const all = [item(INT), item(RATIO), item(MODE), item(EXTEND),
+    item({ ...INT, key: "cis.erasure.saga_apply_enabled", area: "tenants", label: "Erasure: apply the saga",
+      description: "Run the data erasure saga for real." })];
+  assert.deepEqual(searchSettings(all, ""), []);
+  assert.deepEqual(searchSettings(all, "   "), []);
+  // a full key, in any case, found outside the area tab
+  assert.deepEqual(searchSettings(all, "CIS.erasure.saga_apply_enabled").map((s) => s.key),
+    ["cis.erasure.saga_apply_enabled"]);
+  // label words
+  assert.deepEqual(searchSettings(all, "daily publish").map((s) => s.key).sort(),
+    ["cis.billing.rewrite_over_quota_mode", "cis.publish.daily_limit_default"]);
+  // description words
+  assert.deepEqual(searchSettings(all, "one agency").map((s) => s.key), ["cis.t9.blog_length_extend"]);
+  // every word must match
+  assert.deepEqual(searchSettings(all, "erasure ratio"), []);
+  // across areas, sorted by area then label
+  assert.deepEqual(searchSettings(all, "cis.").map((s) => s.area), ["content", "content", "publish", "publish",
+    "tenants"]);
+  assert.deepEqual(searchSettings(all, "cis.").slice(0, 2).map((s) => s.label),
+    ["Blog length: lengthen a short blog", "Ratio"]);
 });
