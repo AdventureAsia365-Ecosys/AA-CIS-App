@@ -86,6 +86,7 @@ def test_the_trash_window_is_badged_not_enforced():
     # proof caps and minimum samples likewise, until the proof code that reads them is deployed. AA-1105 (CIS 420): the
     # twelve AA Academy settings likewise, until the learning API that reads them is deployed (CIS 425's thirteenth too). AA-1048 (CIS 423): the
     # two-step evaluation's three step bars and the fresh-pool sheet size likewise, until the two-step code is deployed.
+    # AA-1048 (CIS 426): the R1 firing sample size of unlabelled claims likewise, until the firing code is deployed.
     assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted([
         "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
         "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",
@@ -94,7 +95,7 @@ def test_the_trash_window_is_badged_not_enforced():
         "cis.spend.writer_proof_null_run_cap_usd", "cis.spend.writer_proof_t9_cap_usd", "cis.spend.writer_proof_s1_cap_usd",
         "cis.spend.writer_proof_t2_cap_usd", "cis.spend.writer_proof_total_cap_usd", "cis.quality.writer_proof_null_run_min_items",
         "cis.quality.writer_proof_t9_min_items", "cis.quality.writer_proof_s1_min_items", "cis.quality.writer_proof_t2_min_items",
-        *LEARN_KEYS, *TWO_STEP_KEYS])
+        *LEARN_KEYS, *TWO_STEP_KEYS, "cis.quality.claim_fire_sample_max"])
 
 
 TWO_STEP_KEYS = ("cis.quality.claim_two_step_route_tp_min_pct", "cis.quality.claim_two_step_judge_tp_keep_min_pct",
