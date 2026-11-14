@@ -38,6 +38,10 @@ WRITER_AIMS: dict[str, tuple[str, str]] = {
     "t2": ("cis.seo.aim_t2_meta_min", "cis.seo.aim_t2_meta_max"),
 }
 T9_BLOG_CHARS = ("cis.t9.blog_chars_min", "cis.t9.blog_chars_max")
+# AA-1077 (CIS 418): the switch of the blog lengthening repair (services/acp_content_writing/length_extend.py),
+# off | on, platform + tenant scope (a tenant value runs the trial on one audit tenant). Not one of the CIS 412
+# quality keys (ALL_KEYS): it is a writing-loop mode of the content area, like cis.t9.max_attempts.
+T9_BLOG_LENGTH_EXTEND = "cis.t9.blog_length_extend"
 
 # gate modes (worker env vars before L2; the env var stays the definition's emergency override)
 MODES: dict[str, str] = {
