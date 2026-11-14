@@ -145,12 +145,35 @@ function DomainHeader({ d }: { d: CustomDomain }) {
   );
 }
 
+type DomainActions = ReturnType<typeof useDomainActions>;
+
+// The row's buttons: Retry (a failed host), Remove (any host not being removed), Retry removal (a stuck removal).
+function DomainButtons({ d, actions, onRemove }: { d: CustomDomain; actions: DomainActions; onRemove: () => void }) {
+  const t = useT(T360_DOMAIN);
+  const { remove, retry } = actions;
+  return (
+    <span style={{ display: "inline-flex", gap: 6, marginLeft: "auto" }}>
+      {d.status === "failed" && (
+        <Button size="sm" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
+          {t("retry")}
+        </Button>
+      )}
+      {d.status !== "removing" && <Button size="sm" variant="ghost" onClick={onRemove}>{t("remove")}</Button>}
+      {removalStuck(d) && (
+        <Button size="sm" variant="secondary" disabled={remove.isPending} onClick={() => remove.mutate()}>
+          {t("retryRemoval")}
+        </Button>
+      )}
+    </span>
+  );
+}
+
 function DomainRow({ d, tenantId, canEdit }: { d: CustomDomain; tenantId: string; canEdit: boolean }) {
   const t = useT(T360_DOMAIN);
   const [confirm, setConfirm] = useState(false);
-  const { remove, retry, failText } = useDomainActions(tenantId, d, () => setConfirm(false));
-  const stuck = removalStuck(d);
-  const showFailure = (d.status === "failed" || stuck) && !!d.failure_message;
+  const actions = useDomainActions(tenantId, d, () => setConfirm(false));
+  const { remove, failText } = actions;
+  const showFailure = (d.status === "failed" || removalStuck(d)) && !!d.failure_message;
   const showRecords = d.status !== "active" && d.status !== "removing";
 
   return (
@@ -158,23 +181,7 @@ function DomainRow({ d, tenantId, canEdit }: { d: CustomDomain; tenantId: string
       paddingBottom: 12, borderBottom: `1px solid ${K.line}` }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", minWidth: 0 }}>
         <DomainHeader d={d} />
-        {canEdit && (
-          <span style={{ display: "inline-flex", gap: 6, marginLeft: "auto" }}>
-            {d.status === "failed" && (
-              <Button size="sm" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
-                {t("retry")}
-              </Button>
-            )}
-            {d.status !== "removing" && (
-              <Button size="sm" variant="ghost" onClick={() => setConfirm(true)}>{t("remove")}</Button>
-            )}
-            {stuck && (
-              <Button size="sm" variant="secondary" disabled={remove.isPending} onClick={() => remove.mutate()}>
-                {t("retryRemoval")}
-              </Button>
-            )}
-          </span>
-        )}
+        {canEdit && <DomainButtons d={d} actions={actions} onRemove={() => setConfirm(true)} />}
       </div>
       {showFailure && <p style={{ ...small, color: K.danger }} role="status">{d.failure_message}</p>}
       {showRecords && <DnsRecords d={d} />}

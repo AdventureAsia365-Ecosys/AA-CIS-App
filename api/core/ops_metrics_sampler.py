@@ -639,10 +639,8 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         out["tenant_billing_tick_error"] = _err(e)
 
     # AA-1090 R8: at most one idempotent INSERT a day, only with the agency distribution configured, same short budget
-    try:
-        await asyncio.wait_for(_tripplanner_domain_health_part(pool, kinds, ts, out), timeout=5.0)
-    except Exception as e:
-        out["tripplanner_custom_domain_health_error"] = _err(e)
+    await _guarded_part(_tripplanner_domain_health_part(pool, kinds, ts, out), out,
+                        "tripplanner_custom_domain_health_error", timeout=5.0)
 
     # AA-1045: at most two idempotent INSERTs a quarter hour (database only), same short budget
     try:
