@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,9 +23,9 @@ from tests.unit.aa1105_learn_fake import ACADEMY, QUIZZES, SUB, Harness, WORKFOR
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "learn.http.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/learn.http.v1.openapi.yaml (info.version 1.0). Update the root file first, copy it
+# sha256 of AA-Ecosys docs/contracts/learn.http.v1.openapi.yaml (info.version 1.1). Update the root file first, copy it
 # here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "1ec8dfc84e87ae4b970f12235728a8e9b2dd37e98fd427c0f44cc72f7030f9d9"
+ROOT_CONTRACT_SHA256 = "35a5184b78a4ac0adb6e2f3f8b454407ae536c879ae3db0df1290f2d2b34e562"
 FIXED_ID = "11050000-0000-4000-8000-000000000001"
 
 
@@ -289,6 +290,7 @@ def test_final_quiz_issues_a_verifiable_certificate(h):
     view = h.client.get(f"/learn/public/v1/certificates/{code}")
     assert view.status_code == 200
     conforms(view.json(), "CertificateVerify")
+    assert view.headers[learn_router.VISITOR_LIMIT_HEADER] == "6"     # the per-visitor limit rides on a 200 too
     assert view.json()["holder_display_name"] == "Sample Learner"
     paths = {p["id"]: p for p in h.get("/v1/paths").json()["paths"]}
     assert paths["sample-path"]["completed"] is True and paths["sample-path"]["certificate_status"] == "valid"
@@ -416,3 +418,56 @@ def test_verify_limit_is_the_setting(h, monkeypatch):
     monkeypatch.setattr(settings, "aget", aget)
     codes = [h.client.get("/learn/public/v1/certificates/AAAAAAAAAAAAAAAAAAAAAA").status_code for _ in range(3)]
     assert codes == [404, 404, 429]
+
+
+def _with_settings(monkeypatch, **values):
+    from shared import settings
+    real = settings.aget
+
+    async def aget(key, tenant_id=None):
+        return values[key] if key in values else await real(key, tenant_id)
+    monkeypatch.setattr(settings, "aget", aget)
+
+
+def test_contract_names_the_visitor_limit_header_on_every_verify_answer():
+    op = DOC["paths"]["/public/v1/certificates/{code}"]["get"]["responses"]
+    for status in ("200", "404", "429"):
+        assert learn_router.VISITOR_LIMIT_HEADER in op[status]["headers"], status
+    assert "Retry-After" in op["429"]["headers"]
+
+
+def test_every_verify_answer_carries_the_visitor_limit(h):
+    """S281 review: the academy web limits each of its visitors from this header, so it must arrive on the answers a
+    visitor reloading in a loop gets (404 and 429), not only on a 200; the default is the setting's (6)."""
+    path = "/learn/public/v1/certificates/AAAAAAAAAAAAAAAAAAAAAA"
+    first = h.client.get(path)
+    assert first.status_code == 404 and first.headers[learn_router.VISITOR_LIMIT_HEADER] == "6"
+    for _ in range(29):
+        h.client.get(path)
+    over = h.client.get(path)
+    assert over.status_code == 429 and over.headers[learn_router.VISITOR_LIMIT_HEADER] == "6"
+    assert h.client.get("/learn/public/v1/certificates/short").headers[learn_router.VISITOR_LIMIT_HEADER] == "6"
+
+
+@pytest.mark.parametrize("visitor,per_address,sent", [
+    (6, 30, "6"),      # the setting, below the address limit
+    (12, 40, "12"),    # an administrator's value
+    (30, 30, "29"),    # never the whole address budget: the address limit minus one
+    (300, 5, "4"),     # the lowest address limit the registry allows
+])
+def test_visitor_limit_is_the_setting_below_the_address_limit(h, monkeypatch, visitor, per_address, sent):
+    _with_settings(monkeypatch, **{"cis.learn.verify_visitor_requests_per_minute": visitor,
+                                   "cis.learn.verify_requests_per_minute": per_address})
+    r = h.client.get("/learn/public/v1/certificates/AAAAAAAAAAAAAAAAAAAAAA")
+    assert r.headers[learn_router.VISITOR_LIMIT_HEADER] == sent
+
+
+def test_unavailable_store_still_sends_the_visitor_limit(h, monkeypatch):
+    @asynccontextmanager
+    async def down(_request):
+        raise OSError("database down")
+        yield  # pragma: no cover
+    monkeypatch.setattr(learn_router, "open_store", down)
+    r = h.client.get("/learn/public/v1/certificates/BBBBBBBBBBBBBBBBBBBBBB")
+    assert r.status_code == 503 and r.headers[learn_router.VISITOR_LIMIT_HEADER] == "6"
+
