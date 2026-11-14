@@ -383,6 +383,127 @@ def stop_rule(prior: Optional[list[dict]], *, kind: str, prereg_id: str, pool: s
 # ── live ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+class _Run:
+    """The state of one live two-step run: one hard budget for both steps, the per-step bookkeeping, the stop
+    reason and the counters `run` returns."""
+
+    def __init__(self, insts: dict[str, r1.Instrument], *, cap: float, run_id: str, caller: r1.Caller,
+                 log: Callable[[Any, dict, Optional[dict], Optional[Exception]], None],
+                 spend_probe: Optional[r1.SpendProbe], reserved: dict[str, int],
+                 signal_extra: Optional[dict]) -> None:
+        self.insts, self.cap, self.run_id = insts, cap, run_id
+        self.caller, self.log, self.spend_probe = caller, log, spend_probe
+        self.reserved, self.signal_extra = reserved, signal_extra
+        self.budget = r1.Budget(cap)
+        self.by_step = {s: {"instrument": insts[s].id, "prompt_version": insts[s].prompt_version.tag, "calls": 0,
+                            "charged_usd": 0.0, "prompt_chars": 0} for s in STEPS}
+        self.stopped: Optional[str] = None
+        self.mismatches: Counter = Counter()
+        self.errors: list[dict] = []
+        self.worst_notes: Counter = Counter()
+
+    def _blocked(self, worst: float) -> bool:
+        """The budget/stop gate: True (and the stop reason set) when the next call may not start."""
+        budget = self.budget
+        if not self.stopped and self.spend_probe is not None:
+            try:
+                budget.observe_ledger(self.spend_probe())
+            except Exception:                               # noqa: BLE001 — the probe only ever raises the spend
+                pass
+        if not self.stopped and budget.ledger_unreadable:
+            self.stopped = f"ledger spend reading is not a finite number, after {budget.calls} calls"
+        if self.stopped or not budget.allows(worst):
+            self.stopped = self.stopped or (
+                f"cap {self.cap} USD: spent {budget.spent:.4f} + the next call's worst case {worst:.4f} would pass "
+                f"it, after {budget.calls} calls")
+            return True
+        return False
+
+    def _charge(self, step: str, inst: r1.Instrument, user: str, amount: float, worst: float) -> None:
+        self.budget.charge(amount, worst)
+        rec = self.by_step[step]
+        rec["calls"] += 1
+        rec["charged_usd"] += amount
+        rec["prompt_chars"] += _chars(inst, user)
+
+    def _caller_error(self, step: str, vote: int, inst: r1.Instrument, user: str, worst: float,
+                      e: Exception) -> None:
+        """Paid attempts may have run: charge the worst case and stop clean (the votes so far stay)."""
+        self._charge(step, inst, user, worst, worst)
+        self.worst_notes["caller_error_worst_case"] += 1
+        self.errors.append({"step": step, "vote": vote, "error": type(e).__name__, "detail": str(e)[:200]})
+        self.stopped = (f"caller error after {self.budget.calls} calls ({type(e).__name__}): stopped, report "
+                        "partial")
+
+    def _check_attempt(self, inst: r1.Instrument, resp: Any) -> None:
+        attempt = getattr(resp, "attempt_no", None)
+        if (not self.stopped and isinstance(attempt, int) and not isinstance(attempt, bool)
+                and attempt > self.reserved[inst.id]):
+            self.stopped = (f"reply attempt_no {attempt} passed the {self.reserved[inst.id]} reserved attempt(s) "
+                            f"of {inst.id}, after {self.budget.calls} calls: stopped, report partial")
+
+    def _parse(self, inst: r1.Instrument, resp: Any, signal: dict) -> Optional[dict]:
+        """The parsed reply when it is a JSON object of the pinned model, else None (no vote); always logged."""
+        try:
+            parsed = json.loads(getattr(resp, "content", "") or "")
+            if not isinstance(parsed, dict):
+                raise ValueError("reply is not a JSON object")
+        except Exception as e:                               # noqa: BLE001 — logged as billed_unusable, no vote
+            self.log(resp, signal, None, e)
+            return None
+        self.log(resp, signal, parsed, None)
+        if not r1._identity_ok(inst, resp):
+            self.mismatches[inst.id] += 1
+            return None
+        return parsed
+
+    def one(self, step: str, vote: int, item: r1.Item, user: str) -> Optional[dict]:
+        """One call; the parsed reply when it is a vote of the pinned model, else None (no vote)."""
+        inst = self.insts[step]
+        worst = r1.worst_call_cost(inst, user, self.reserved[inst.id])
+        if self._blocked(worst):
+            return None
+        try:
+            resp = self.caller(inst, inst.prompt_version.system(MODE), user, SCHEMA[step])
+        except Exception as e:                               # noqa: BLE001 — paid attempts may have run: stop clean
+            self._caller_error(step, vote, inst, user, worst, e)
+            return None
+        amount, notes = r1.billed_cost(inst, user, resp)
+        self._charge(step, inst, user, amount, worst)
+        self.worst_notes.update(n.split(":", 1)[0] for n in notes)
+        self._check_attempt(inst, resp)
+        signal = {"app": "cis", "issue": "AA-1048", "run_id": self.run_id, "instrument": inst.id, "step": step,
+                  "vote": vote, "prompt_version": inst.prompt_version.tag, "claims": [item.claim_hash[:16]],
+                  **(self.signal_extra or {})}
+        return self._parse(inst, resp, signal)
+
+    def finish_by_step(self) -> dict:
+        for rec in self.by_step.values():
+            rec["mean_prompt_chars"] = round(rec["prompt_chars"] / rec["calls"], 1) if rec["calls"] else None
+            rec["charged_usd"] = round(rec["charged_usd"], 6)
+        return self.by_step
+
+
+def _step1_votes(state: _Run, items: list[r1.Item], votes: int, step_votes: dict, reasons: dict,
+                 spec_votes: dict) -> None:
+    for vote in range(votes):
+        for item in items:
+            parsed = state.one("classify", vote, item, step1_user(item))
+            v = classify_vote(parsed) if parsed is not None else None
+            step_votes["classify"][item.claim_hash].append(v)
+            reasons["classify"][item.claim_hash].append(str((parsed or {}).get("why") or "")[:r1.REASON_CHARS])
+            spec_votes[item.claim_hash].append((v, specifics_of(parsed) if parsed is not None else []))
+
+
+def _step2_votes(state: _Run, sent: list[r1.Item], votes: int, specifics: dict, step_votes: dict,
+                 reasons: dict) -> None:
+    for vote in range(votes):
+        for item in sent:
+            parsed = state.one("judge", vote, item, step2_user(item, specifics[item.claim_hash]))
+            step_votes["judge"][item.claim_hash].append(judge_vote(parsed) if parsed is not None else None)
+            reasons["judge"][item.claim_hash].append(str((parsed or {}).get("why") or "")[:r1.REASON_CHARS])
+
+
 def run(items: list[r1.Item], insts: dict[str, r1.Instrument], *, cap: float, votes: int = r1.VOTES, run_id: str,
         caller: Optional[r1.Caller] = None,
         log: Callable[[Any, dict, Optional[dict], Optional[Exception]], None] = r1._log,
@@ -397,97 +518,24 @@ def run(items: list[r1.Item], insts: dict[str, r1.Instrument], *, cap: float, vo
     if attempts_of is None:
         attempts_of = r1.route_attempts if caller is None else (lambda _inst: 1)
     caller = caller or r1.gateway_call
-    budget = r1.Budget(cap)
     reserved = {inst.id: max(1, int(attempts_of(inst))) for inst in insts.values()}
+    state = _Run(insts, cap=cap, run_id=run_id, caller=caller, log=log, spend_probe=spend_probe, reserved=reserved,
+                 signal_extra=signal_extra)
     step_votes: dict[str, dict[str, list]] = {s: defaultdict(list) for s in STEPS}
     reasons: dict[str, dict[str, list]] = {s: defaultdict(list) for s in STEPS}
     spec_votes: dict[str, list[tuple[Optional[bool], list[str]]]] = defaultdict(list)
-    by_step = {s: {"instrument": insts[s].id, "prompt_version": insts[s].prompt_version.tag, "calls": 0,
-                   "charged_usd": 0.0, "prompt_chars": 0} for s in STEPS}
-    state: dict[str, Any] = {"stopped": None}
-    mismatches: Counter = Counter()
-    errors: list[dict] = []
-    worst_notes: Counter = Counter()
-
-    def one(step: str, vote: int, item: r1.Item, user: str) -> Optional[dict]:
-        """One call; the parsed reply when it is a vote of the pinned model, else None (no vote)."""
-        inst = insts[step]
-        worst = r1.worst_call_cost(inst, user, reserved[inst.id])
-        if not state["stopped"] and spend_probe is not None:
-            try:
-                budget.observe_ledger(spend_probe())
-            except Exception:                               # noqa: BLE001 — the probe only ever raises the spend
-                pass
-        if not state["stopped"] and budget.ledger_unreadable:
-            state["stopped"] = f"ledger spend reading is not a finite number, after {budget.calls} calls"
-        if state["stopped"] or not budget.allows(worst):
-            state["stopped"] = state["stopped"] or (
-                f"cap {cap} USD: spent {budget.spent:.4f} + the next call's worst case {worst:.4f} would pass it, "
-                f"after {budget.calls} calls")
-            return None
-        rec = by_step[step]
-        try:
-            resp = caller(inst, inst.prompt_version.system(MODE), user, SCHEMA[step])
-        except Exception as e:                               # noqa: BLE001 — paid attempts may have run: stop clean
-            budget.charge(worst, worst)
-            rec["calls"] += 1
-            rec["charged_usd"] += worst
-            rec["prompt_chars"] += _chars(inst, user)
-            worst_notes["caller_error_worst_case"] += 1
-            errors.append({"step": step, "vote": vote, "error": type(e).__name__, "detail": str(e)[:200]})
-            state["stopped"] = (f"caller error after {budget.calls} calls ({type(e).__name__}): stopped, report "
-                                "partial")
-            return None
-        amount, notes = r1.billed_cost(inst, user, resp)
-        budget.charge(amount, worst)
-        rec["calls"] += 1
-        rec["charged_usd"] += amount
-        rec["prompt_chars"] += _chars(inst, user)
-        worst_notes.update(n.split(":", 1)[0] for n in notes)
-        attempt = getattr(resp, "attempt_no", None)
-        if (not state["stopped"] and isinstance(attempt, int) and not isinstance(attempt, bool)
-                and attempt > reserved[inst.id]):
-            state["stopped"] = (f"reply attempt_no {attempt} passed the {reserved[inst.id]} reserved attempt(s) of "
-                                f"{inst.id}, after {budget.calls} calls: stopped, report partial")
-        signal = {"app": "cis", "issue": "AA-1048", "run_id": run_id, "instrument": inst.id, "step": step,
-                  "vote": vote, "prompt_version": inst.prompt_version.tag, "claims": [item.claim_hash[:16]],
-                  **(signal_extra or {})}
-        try:
-            parsed = json.loads(getattr(resp, "content", "") or "")
-            if not isinstance(parsed, dict):
-                raise ValueError("reply is not a JSON object")
-        except Exception as e:                               # noqa: BLE001 — logged as billed_unusable, no vote
-            log(resp, signal, None, e)
-            return None
-        log(resp, signal, parsed, None)
-        if not r1._identity_ok(inst, resp):
-            mismatches[inst.id] += 1
-            return None
-        return parsed
-
-    for vote in range(votes):
-        for item in items:
-            parsed = one("classify", vote, item, step1_user(item))
-            v = classify_vote(parsed) if parsed is not None else None
-            step_votes["classify"][item.claim_hash].append(v)
-            reasons["classify"][item.claim_hash].append(str((parsed or {}).get("why") or "")[:r1.REASON_CHARS])
-            spec_votes[item.claim_hash].append((v, specifics_of(parsed) if parsed is not None else []))
+    _step1_votes(state, items, votes, step_votes, reasons, spec_votes)
     sent = [i for i in items if routed(step_votes["classify"][i.claim_hash])]
     specifics = {i.claim_hash: merge_specifics(s for v, s in spec_votes[i.claim_hash] if v is True) for i in sent}
-    for vote in range(votes):
-        for item in sent:
-            parsed = one("judge", vote, item, step2_user(item, specifics[item.claim_hash]))
-            step_votes["judge"][item.claim_hash].append(judge_vote(parsed) if parsed is not None else None)
-            reasons["judge"][item.claim_hash].append(str((parsed or {}).get("why") or "")[:r1.REASON_CHARS])
-    for rec in by_step.values():
-        rec["mean_prompt_chars"] = round(rec["prompt_chars"] / rec["calls"], 1) if rec["calls"] else None
-        rec["charged_usd"] = round(rec["charged_usd"], 6)
+    _step2_votes(state, sent, votes, specifics, step_votes, reasons)
+    by_step = state.finish_by_step()
+    budget = state.budget
     return {"votes": {s: dict(v) for s, v in step_votes.items()}, "specifics": specifics,
             "reasons": {s: dict(v) for s, v in reasons.items()}, "by_step": by_step,
             "spent_usd": round(budget.spent, 6), "charged_usd": round(budget.charged, 6),
             "ledger_usd": round(budget.ledger, 6) if budget.ledger is not None else None, "calls": budget.calls,
-            "stopped": state["stopped"], "identity_mismatches": dict(mismatches), "caller_errors": errors,
-            "worst_case_charges": dict(worst_notes), "reserved_attempts": reserved}
+            "stopped": state.stopped, "identity_mismatches": dict(state.mismatches), "caller_errors": state.errors,
+            "worst_case_charges": dict(state.worst_notes), "reserved_attempts": reserved}
 
 
 # ── score ──────────────────────────────────────────────────────────────────────────────────────────────────────────
