@@ -182,7 +182,7 @@ def test_campaign_plans_every_proof_in_the_d12_order_and_sums_the_estimates(fake
     assert out["order"] == list(runner.CAMPAIGN_ORDER) and [r["prereg"] for r in out["proofs"]] == out["order"]
     assert all(not r["ready_for_live"] for r in out["proofs"])                       # the shipped files are drafts
     assert all(r["stage"] == cfg.W5_STAGE for r in out["proofs"])
-    assert out["d12_total_cap_usd"] == pr.TOTAL_CAP_USD and out["fits_d12_total"]
+    assert out["d12_total_cap_usd"] == pr.total_cap() == 33.0 and out["fits_d12_total"]
     assert not fakes["estimates"]                                                   # drafts: nothing estimated
 
 
@@ -228,3 +228,25 @@ def test_the_shipped_lock_and_the_registered_files_agree():
             files[doc["id"]] = pr.sha256_of(doc)
     assert {k: lock.get(k) for k in files} == files
     assert set(lock) <= set(files), f"lock entries without their registered file: {sorted(set(lock) - set(files))}"
+
+
+# ── the D12 caps and minimum samples are settings (CIS 419) ─────────────────────────────────────────────────────
+
+def test_caps_and_minimum_samples_come_from_the_settings_registry(monkeypatch):
+    from shared import settings
+    defaults = {"null": (5.0, 12), "t9": (15.0, 12), "s1": (8.0, 25), "t2": (5.0, 20)}
+    assert {w: (pr.workflow_cap(w), pr.min_items(w)) for w in pr.WORKFLOWS} == defaults
+    for w, spec in pr.WORKFLOWS.items():
+        assert settings.definition(spec["cap_setting"]).default_value == defaults[w][0]
+        assert settings.definition(spec["min_items_setting"]).default_value == defaults[w][1]
+    doc = dict(_pre().doc)                          # valid under the defaults
+    real = settings.get
+    lowered = {"cis.spend.w5_null_run_cap_usd": 3.0, "cis.quality.w5_null_run_min_items": 20,
+               "cis.spend.w5_total_cap_usd": 10.0}
+    monkeypatch.setattr(settings, "get", lambda key, tenant_id=None: lowered.get(key, real(key, tenant_id)))
+    p = pr.problems(doc)
+    assert any("cap_usd must be in (0, 3.0]" in x for x in p) and any("needs >= 20 sample ids" in x for x in p)
+    from services.writer_proof import spend
+    out = spend.refusals(workflow="t9", prereg_cap=15.0, cap_usd=12.0, confirm=spend.CONFIRM_TOKEN,
+                         spent_workflow=0.0, spent_total=0.0, estimate_usd=1.0)
+    assert any("passes the D12 total 10.0" in x for x in out)

@@ -4435,10 +4435,13 @@ A small paid run that measures one writer change on a pre-registered fixed GATE 
 change, must come out non_inferior), T9, S1 and T2. A proof is one or two R2 runs (arm B, optional repeat arm A') under
 stage `adhoc_aa1051`, queued by `python -m services.writer_proof.runner run --live --confirm CONFIRM --cap-usd <n>`
 only when its **pre-registration** (`services/writer_proof/prereg/<id>.json`: metrics, fixed sample ids, an absolute
-non-inferiority margin, the pinned judge, the cap) is registered and unchanged since its first result (the run rows
-carry its sha), the power check from the R1 vote variance is adequate, and the D12 caps hold (null $5, T9 $15, S1 $8,
-T2 $5, $33 in total, read from the ledger). `runner report` gives the pre-registered verdict, the targets and the cost
-and requests per object from `shared.llm_call_log`.
+non-inferiority margin, the pinned judge, the cap) is registered and matches its locked sha
+(`prereg/registered.lock.json`; the run rows carry it too), the power check from the R1 vote variance is adequate, the
+estimate (the larger of R2's and the pinned judge priced from `shared.llm_model_catalog`) fits, a null run with the same
+judge and golden version came out non_inferior first (T9 / S1 / T2), and the D12 caps hold (settings
+`cis.spend.w5_*_cap_usd`, defaults null $5, T9 $15, S1 $8, T2 $5, $33 in total, read against the ledger; minimum
+samples `cis.quality.w5_*_min_items`). `runner campaign` is the DRY plan of all four in order. `runner report` gives the
+pre-registered verdict, the targets and the cost and requests per object from `shared.llm_call_log`.
 _Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
 
 **Scope (writing memory)**:

@@ -104,13 +104,13 @@ def _doc(**over) -> dict:
 def test_shipped_drafts_are_valid_drafts_within_d12(pid):
     pre = pr.load(pid)
     assert not pre.registered and pre.doc["eval_split"] == "gate"
-    assert pre.doc["cap_usd"] == pr.WORKFLOWS[pre.workflow]["cap_usd"]
+    assert pre.doc["cap_usd"] == pr.workflow_cap(pre.workflow)
     with pytest.raises(pr.PreregRefused, match="draft"):
         pr.require_registered(pre)
 
 
 def test_d12_caps_add_up_to_the_total():
-    assert sum(w["cap_usd"] for w in pr.WORKFLOWS.values()) == pr.TOTAL_CAP_USD == 33.0
+    assert sum(pr.workflow_cap(w) for w in pr.WORKFLOWS) == pr.total_cap() == 33.0
     assert spend.W5_STAGE == cfg.W5_STAGE
     from services.jobs.writing_memory_job import R2
     assert spend.R2_JOB_KIND == R2 and spend.R2_RUN_CAP_USD == cfg.R2_RUN_CAP_USD

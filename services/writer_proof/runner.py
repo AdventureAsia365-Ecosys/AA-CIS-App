@@ -105,11 +105,13 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
                cap_usd: Optional[float] = None) -> dict:
     """The DRY RUN of a proof ($0, reads only). `blocking` lists what would refuse a live run (besides --confirm)."""
     from services.writing_memory import r2
+    from shared import settings
+    await settings.ensure_fresh(pool)           # S280: the D12 caps and minimum samples in force (CIS 419)
     blocking: list[str] = []
     out: dict[str, Any] = {"prereg": pre.id, "sha256": pre.sha256, "workflow": pre.workflow, "writer": pre.writer,
                            "status": pre.doc.get("status"), "samples": len(pre.doc.get("sample_ids") or []),
                            "noise_samples": len(pre.doc.get("noise_sample_ids") or []),
-                           "d12_cap_usd": pr.WORKFLOWS[pre.workflow]["cap_usd"], "prereg_cap_usd": pre.doc["cap_usd"]}
+                           "d12_cap_usd": pr.workflow_cap(pre.workflow), "prereg_cap_usd": pre.doc["cap_usd"]}
     if not pre.registered:
         blocking.append("status is draft (fill the sample with `draft`, register it in a reviewed PR)")
     store = r2.PgStore(pool, stages=(spend.W5_STAGE,))
@@ -243,7 +245,7 @@ async def campaign(pool, *, ids: tuple[str, ...] = CAMPAIGN_ORDER, r1_report: Op
                      "prereg_cap_usd": p["prereg_cap_usd"], "d12_cap_usd": p["d12_cap_usd"],
                      "ready_for_live": p["ready_for_live"], "blocking": p["blocking"]})
     return {"mode": "dry_run", "order": list(ids), "proofs": rows, "estimated_usd_max_total": round(total, 4),
-            "d12_total_cap_usd": pr.TOTAL_CAP_USD, "fits_d12_total": total <= pr.TOTAL_CAP_USD + 1e-9,
+            "d12_total_cap_usd": pr.total_cap(), "fits_d12_total": total <= pr.total_cap() + 1e-9,
             "note": "estimates only; the measured cost comes from the ledger after each run (runner report)"}
 
 
@@ -327,7 +329,7 @@ async def report(pool, pre: pr.Prereg) -> dict:
                            "run's") if reruns else None,
             "decision": verdict,
             "computed": computed, "targets": decision.targets(pre.doc, computed), "cost": cost,
-            "d12": {"workflow_cap_usd": pr.WORKFLOWS[pre.workflow]["cap_usd"], "total_cap_usd": pr.TOTAL_CAP_USD}}
+            "d12": {"workflow_cap_usd": pr.workflow_cap(pre.workflow), "total_cap_usd": pr.total_cap()}}
 
 
 async def draft(pool, pre: pr.Prereg, *, n: Optional[int], noise: int) -> dict:
