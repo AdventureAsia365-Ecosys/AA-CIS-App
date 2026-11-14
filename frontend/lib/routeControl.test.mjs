@@ -99,7 +99,7 @@ test("the tab is wired into the page and its writes follow the route_control acc
 
 test("the messages have the same keys in English and Vietnamese and name no issue ids", () => {
   const src = read("../app/admin/ai-gateway/routeControl.messages.ts");
-  assert.doesNotMatch(src.replace(/^\/\/.*$/gm, ""), /AA-\d+/);
+  assert.doesNotMatch(src.replace(/^\s*\/\/.*$/gm, ""), /AA-\d+/);   // comments (also indented) are not UI text
   const at = src.indexOf("\n  {\n", src.indexOf("defineMessages("));
   const split = src.indexOf("\n  {\n", at + 1);
   const keys = (part) => [...part.matchAll(/^ {4}([A-Za-z_]+):/gm)].map((m) => m[1]).sort();

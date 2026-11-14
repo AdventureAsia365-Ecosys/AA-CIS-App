@@ -25,6 +25,9 @@
 // column's label row label in phone card mode (an actions column: the button says what it does). `paginate={false}` shows every row and no pager,
 // for a page that loads more rows itself (keyset "load older") — one paging mechanism, not two.
 //
+// S280 (AA-1096): `searchText` (row → extra text the search matches: a slug, an id), `searchLabel` (the box's accessible
+// name) and `initialSearch` (the box's text on mount); dataTableSearch.ts.
+//
 // Client-side by default (filter/sort/paginate the rows it is given). AA-739: pass
 // `serverPagination` when the page holds only one server page of a larger set — the pager and the
 // page-size select then drive the server (pageIndex/pageSize/total come from the caller). Search
@@ -44,17 +47,7 @@ import {
   type RowSelectionState,
   type Table as RTable,
 } from "@tanstack/react-table";
-import {
-  ArrowDown,
-  ArrowLeftRight,
-  ArrowUp,
-  ChevronLeft,
-  ChevronRight,
-  Columns3,
-  Download,
-  Save,
-  Search,
-} from "lucide-react";
+import { ArrowDown, ArrowLeftRight, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, Save, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadCsv, toCsv } from "./csv";
 import { K, RADIUS, sans } from "./tokens";
@@ -62,12 +55,8 @@ import { EmptyState, SkeletonBar, SkeletonStyle, TableSkeleton } from "./primiti
 import { useIsPhone } from "./useMediaQuery";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
-import {
-  deleteView,
-  listViews,
-  saveView,
-  type SavedView,
-} from "./savedViews";
+import { deleteView, listViews, saveView, type SavedView } from "./savedViews";
+import { searchBoxText, searchFilterState, searchOptions, searchQueryOf } from "./dataTableSearch";
 
 type PersistedState = {
   sorting: SortingState;
@@ -94,6 +83,9 @@ export type DataTableProps<T> = {
   // Search
   searchable?: boolean;
   searchPlaceholder?: string;
+  searchLabel?: string; // S280: the box's accessible name (default "Search this table")
+  searchText?: (row: T) => string | null | undefined; // S280: extra text a row matches (a slug, an id)
+  initialSearch?: string; // S280: the box's text on mount
 
   // Selection + bulk
   enableSelection?: boolean;
@@ -184,6 +176,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
     onRetry,
     searchable = true,
     searchPlaceholder: searchPlaceholderProp,
+    searchLabel: searchLabelProp,
+    searchText,
+    initialSearch,
     enableSelection = false,
     bulkActions,
     pageSize = 25,
@@ -208,7 +203,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     manualSorting = false,
   } = props;
   const t = useT(KIT_MESSAGES);
-  const searchPlaceholder = searchPlaceholderProp ?? t("search");
+  const box = searchBoxText(t, searchPlaceholderProp, searchLabelProp);
   const emptyTitle = emptyTitleProp ?? t("emptyTitle");
 
   const [internalSorting, setInternalSorting] = useState<SortingState>([]);
@@ -219,7 +214,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const setSorting = sortingControlled ? undefined : setInternalSorting;
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const [globalFilter, setGlobalFilter] = useState("");
+  const [globalFilter, setGlobalFilter] = useState(() => initialSearch ?? "");
+  // S280: with `searchText`, the filter state keys on the rows' search texts (dataTableSearch.searchFilterState, a
+  // string compared by value): a page's lookup that loads after the query was typed re-runs the search.
+  const tableGlobalFilter = searchFilterState(data, searchText, globalFilter);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [showCols, setShowCols] = useState(false);
   const [showViews, setShowViews] = useState(false);
@@ -294,7 +292,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     data,
     columns: allColumns,
     state: {
-      sorting, columnFilters, columnVisibility, globalFilter, rowSelection,
+      sorting, columnFilters, columnVisibility, globalFilter: tableGlobalFilter, rowSelection,
       ...(sp ? { pagination: { pageIndex: sp.pageIndex, pageSize: sp.pageSize } } : {}),
     },
     ...(sp
@@ -319,8 +317,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
     },
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
-    onGlobalFilterChange: setGlobalFilter,
+    onGlobalFilterChange: (u) => setGlobalFilter((cur) => searchQueryOf(typeof u === "function" ? u(cur) : u)),
     onRowSelectionChange: setRowSelection,
+    ...searchOptions(searchText), // S280: dataTableSearch.ts
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -430,7 +429,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
             <input
               value={globalFilter}
               onChange={(e) => setGlobalFilter(e.target.value)}
-              placeholder={searchPlaceholder}
+              placeholder={box.placeholder}
+              aria-label={box.label}
               style={{
                 padding: "7px 12px 7px 32px",
                 borderRadius: RADIUS.pill,

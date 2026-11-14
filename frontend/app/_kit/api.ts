@@ -24,16 +24,56 @@ export function adminHeaders(json = false): Record<string, string> {
   return h;
 }
 
+/** S280 (AA-1096) — a readable message from a failed call's JSON body. FastAPI sends `detail` as a string, as an
+ *  object (`{code, message}` from a router's HTTPException) or, for a pydantic 422, as a list of `{loc, msg}`; the
+ *  old `body.detail || body.message` turned the last two into "[object Object]". A list item reads
+ *  "<field>: <msg>" (the last part of `loc`, so "shadow_sample_pct: Input should be a valid integer"). */
+export function apiErrorMessage(body: unknown, status: number): string {
+  const fallback = `Request failed (${status})`;
+  if (typeof body === "string") return body || fallback;
+  if (!body || typeof body !== "object") return fallback;
+  const b = body as { detail?: unknown; message?: unknown };
+  return firstText(b.detail) ?? listText(b.detail) ?? objectText(b.detail) ?? firstText(b.message) ?? fallback;
+}
+
+/** A non-empty string, else null. */
+function firstText(v: unknown): string | null {
+  return typeof v === "string" && v ? v : null;
+}
+
+/** One pydantic error item as "<field>: <msg>" (the last part of `loc` that is not body / query / path). */
+function itemText(item: unknown): string {
+  if (typeof item === "string") return item;
+  const it = (item ?? {}) as { loc?: unknown; msg?: unknown };
+  const msg = firstText(it.msg);
+  if (!msg) return "";
+  const loc = Array.isArray(it.loc) ? it.loc.filter((x) => x !== "body" && x !== "query" && x !== "path") : [];
+  return loc.length ? `${String(loc[loc.length - 1])}: ${msg}` : msg;
+}
+
+/** A list detail (pydantic 422) as "<field>: <msg>; …", else null. */
+function listText(d: unknown): string | null {
+  if (!Array.isArray(d)) return null;
+  const parts = d.map(itemText).filter(Boolean);
+  return parts.length ? parts.join("; ") : null;
+}
+
+/** An object detail (`{code, message}` from a router) as its message, else null. */
+function objectText(d: unknown): string | null {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+  const o = d as { message?: unknown; msg?: unknown; detail?: unknown };
+  return firstText(o.message) ?? firstText(o.msg) ?? firstText(o.detail);
+}
+
 async function parseOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let detail = "";
+    let body: unknown = null;
     try {
-      const body = await res.json();
-      detail = body?.detail || body?.message || "";
+      body = await res.json();
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(detail || `Request failed (${res.status})`, res.status);
+    throw new ApiError(apiErrorMessage(body, res.status), res.status);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

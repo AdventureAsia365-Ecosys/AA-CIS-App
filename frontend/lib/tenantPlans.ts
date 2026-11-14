@@ -86,6 +86,15 @@ export function limitOutOfBounds(f: Pick<Feature, "feature_key" | "unit">, v: st
   return f.feature_key === "content.rate_limit_rpm" && n > RATE_LIMIT_RPM_MAX;
 }
 
+/** S280 (AA-1096): the values a plan's limit box takes, as words (the client copy of planBody's checks): a whole
+ *  number for a count, seats, days or per-minute unit (the request rate at most RATE_LIMIT_RPM_MAX), else an amount of
+ *  0 or more with at most 2 decimals. Pure. */
+export function limitRangeText(f: Pick<Feature, "feature_key" | "unit">,
+  w: { whole: string; wholeMax: (max: string) => string; decimal: string }): string {
+  if (!f.unit || !WHOLE_UNITS.has(f.unit)) return w.decimal;
+  return f.feature_key === "content.rate_limit_rpm" ? w.wholeMax(String(RATE_LIMIT_RPM_MAX)) : w.whole;
+}
+
 /** Limits a tiered content plan always lists (the API's enforced_limit_required): "no row" would mean no limit for
  * every tenant on the plan. The AI budget needs a number except on AA's own (internal) tier. */
 export const ENFORCED_CONTENT_KEYS = ["ai.budget_usd_monthly", "content.rewrite", "content.rate_limit_rpm"];
@@ -208,6 +217,11 @@ export interface EntitlementRow {
 export interface OverrideRow {
   feature_key: string; product: FeatureProduct; value_kind: ValueKind; limit_value: string | null; enabled: boolean;
   reason: string; granted_by: string; expires_at: string | null; updated_at: string | null; active: boolean;
+  /** S280: the feature's unit (absent from an older API: the page looks it up in the feature catalogue). */
+  unit?: string | null;
+  /** S280: who granted it, as a person (ai_gateway.actor_view); absent from an older API. */
+  granted_by_name?: string | null;
+  granted_by_kind?: "staff" | "migration" | "login" | "other" | "none";
 }
 export interface SubscriptionResp {
   tenant: { tenant_id: string; name: string; plan_tier: string; account_status: string;
@@ -320,6 +334,26 @@ export function statusTone(status: string): "success" | "warning" | "danger" | "
 
 export function sourceTone(source: EntitlementRow["source"]): "neutral" | "info" | "purple" {
   return source === "override" ? "purple" : source === "trial" ? "info" : "neutral";
+}
+
+/** S280 (AA-1096): the unit of a limit as people read it next to an input ("USD a month", "a minute", "seats",
+ *  "days", else "a month"), so "50" is never ambiguous between dollars, calls and seats. Same cases as limitText. */
+export function unitText(unit: string | null | undefined,
+                         w: { usdMonth: string; perMinute: string; seats: string; days: string; perMonth: string }): string {
+  switch (unit) {
+    case "usd_month": return w.usdMonth;
+    case "rpm": return w.perMinute;
+    case "seats": return w.seats;
+    case "days": return w.days;
+    default: return w.perMonth;
+  }
+}
+
+/** The unit of an override row: its own (newer API), else the feature catalogue's. */
+export function overrideUnit(row: Pick<OverrideRow, "feature_key" | "unit">,
+                             catalogue: readonly Pick<Feature, "feature_key" | "unit">[] | undefined): string | null {
+  if (row.unit !== undefined) return row.unit;
+  return catalogue?.find((f) => f.feature_key === row.feature_key)?.unit ?? null;
 }
 
 /** "200 a month", "USD 15.00 a month", "300 a minute", "4 seats", "7 days", "on" / "no limit". */

@@ -123,7 +123,10 @@ async def test_tenant_budget_write_read_and_clear(pool):
     assert one["ready"] and one["budget"]["monthly_usd"] == 5.0 and one["budget"]["state"] == "alert"
     assert one["budget"]["used_pct"] == 80.0 and one["budget"]["updated_by"] == "admin:probe"
     tier = await tb.read_tier(pool, now=NOW)
-    assert [r["tenant_id"] for r in tier["rows"] if r["tenant_id"] in (TENANT, OTHER)] == [TENANT]
+    mine = [r for r in tier["rows"] if r["tenant_id"] in (TENANT, OTHER)]
+    assert [r["tenant_id"] for r in mine if r["has_row"]] == [TENANT]
+    # S280: a tenant without a row is listed only when its plan / override gives it a budget in force
+    assert all(r["effective"] and r["effective"]["monthly_usd"] is not None for r in mine if not r["has_row"])
     assert (await tb.upsert(pool, TENANT, {"monthly_usd": None}, actor="admin:probe"))["created"] is False
     assert (await tb.clear(pool, TENANT, actor="admin:probe")) == {"tenant_id": TENANT, "deleted": True}
     assert (await tb.clear(pool, TENANT, actor="admin:probe"))["deleted"] is False

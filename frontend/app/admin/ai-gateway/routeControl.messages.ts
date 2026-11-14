@@ -72,6 +72,9 @@ export const RC = defineMessages(
     saving: "Saving…",
     saved: (v: number) => `Saved as version ${v}`,
     conflict: "Someone saved a change since you opened this tab. Reload, then check the preview again.",
+    evidenceMissing: (min: number) => `Confirm unlocks with an eval run id, or a break-glass reason of at least ${min} `
+      + "characters.",
+    staffMember: "a staff member",
     evidenceNeeded: (stages: string) => `A writer, judge or writing-path stage changes its chain or the model and `
       + `provider that serves it (${stages}): name the eval run that backs it, or say why it cannot wait (break glass).`,
     // AA-1052 W6: such a change is refused while a rerun wave is open
@@ -176,6 +179,9 @@ export const RC = defineMessages(
     saving: "Đang lưu…",
     saved: (v: number) => `Đã lưu thành phiên bản ${v}`,
     conflict: "Đã có người lưu thay đổi từ lúc bạn mở tab này. Tải lại rồi kiểm tra lại bản xem trước.",
+    evidenceMissing: (min: number) => `Nút Xác nhận mở khi có mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} `
+      + "ký tự.",
+    staffMember: "một nhân viên",
     evidenceNeeded: (stages: string) => `Stage writer, judge hoặc một bước trên đường viết nội dung đổi chuỗi hoặc `
       + `đổi model và nhà cung cấp phục vụ (${stages}): ghi eval run làm căn cứ, hoặc lý do không thể chờ (break glass).`,
     frozenByWaves: (waves: string) => `Đang có đợt chạy lại (wave) mở (${waves}): thay đổi này bị từ chối tới khi `

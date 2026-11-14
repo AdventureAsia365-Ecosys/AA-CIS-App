@@ -354,7 +354,9 @@ async def test_budgets_queries_run_on_the_real_schema(pool):
         assert job and job[0]["job_kind"] == KIND and job[0]["per_run_usd"] == 0.75
         assert job[0]["state"] == "no_daily_cap"
         assert all(r["scope"] == "global" for r in out["tiers"]["provider"])
-        assert out["tiers"]["tenant"] == []
+        # S280 settings audit: the tenant tier lists every tenant with the budget in force; with no budget row
+        # a tenant shows has_row False (no tenant_ai_budget row in this replay).
+        assert all(r["has_row"] is False for r in out["tiers"]["tenant"]), out["tiers"]["tenant"]
         assert set(out["spent_today_usd"]) == set(out["providers"])
         assert out["tiers"]["connection"], "the seeded connections are listed"
         assert {c["tier"] for c in out["coverage"]} >= {"provider"}

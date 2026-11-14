@@ -319,6 +319,11 @@ export interface PolicyBody {
   notes: string | null;
 }
 
+/** The ranges of the route alert policy fields (the API's RoutePolicyBody); the editor's error messages quote them. */
+export const POLICY_LIMITS = {
+  pct: [1, 100], minRequests: [1, 10000], cost: [0.01, 10000], notes: 500,
+} as const;
+
 function wholeIn(s: string, lo: number, hi: number): number | null | "bad" {
   const t = s.trim();
   if (t === "") return null;
@@ -329,18 +334,18 @@ function wholeIn(s: string, lo: number, hi: number): number | null | "bad" {
 
 /** The PUT body of a draft, or the first field that is not valid. */
 export function policyBody(d: PolicyDraft): PolicyBody | PolicyField {
-  const pctV = wholeIn(d.fallback_alert_pct, 1, 100);
+  const pctV = wholeIn(d.fallback_alert_pct, ...POLICY_LIMITS.pct);
   if (pctV === "bad") return "fallback_alert_pct";
-  const minV = wholeIn(d.min_requests, 1, 10000);
+  const minV = wholeIn(d.min_requests, ...POLICY_LIMITS.minRequests);
   if (minV === "bad") return "min_requests";
   let cost: number | null = null;
   const c = d.cost_shift_usd.trim();
   if (c !== "") {
     if (!/^\d+(\.\d{1,2})?$/.test(c)) return "cost_shift_usd";
     cost = Number(c);
-    if (cost < 0.01 || cost > 10000) return "cost_shift_usd";
+    if (cost < POLICY_LIMITS.cost[0] || cost > POLICY_LIMITS.cost[1]) return "cost_shift_usd";
   }
-  if (d.notes.length > 500) return "notes";
+  if (d.notes.length > POLICY_LIMITS.notes) return "notes";
   return {
     fallback_alert_pct: pctV, min_requests: minV, cost_shift_usd: cost,
     alert_last_rung: boolOf(d.alert_last_rung), hold_fallback_writes: boolOf(d.hold_fallback_writes),

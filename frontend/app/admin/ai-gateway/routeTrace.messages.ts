@@ -119,7 +119,14 @@ export const RT = defineMessages(
     markOption: "Mark only",
     onOption: "On",
     offOption: "Off",
-    invalid: "Check this value.",
+    errWhole: (lo: number, hi: number) => `A whole number from ${lo} to ${hi.toLocaleString("en-US")}, or empty to `
+      + "use the default.",
+    errCost: (lo: number, hi: number) => `An amount in USD from ${lo} to ${hi.toLocaleString("en-US")}, at most 2 `
+      + "decimals, or empty to use the default.",
+    errNotes: (max: number) => `At most ${max} characters.`,
+    errCount: (max: number) => `A whole number from 1 to ${max}.`,
+    resetBody: "The stage's own alert settings are deleted and it uses the defaults again. There is no undo: to go "
+      + "back, set the values again.",
     cancel: "Cancel",
     save: "Save",
     saving: "Saving…",
@@ -248,7 +255,14 @@ export const RT = defineMessages(
     markOption: "Chỉ đánh dấu",
     onOption: "Bật",
     offOption: "Tắt",
-    invalid: "Kiểm lại giá trị này.",
+    errWhole: (lo: number, hi: number) => `Một số nguyên từ ${lo} đến ${hi.toLocaleString("vi-VN")}, hoặc để trống `
+      + "để dùng mặc định.",
+    errCost: (lo: number, hi: number) => `Một số tiền USD từ ${lo} đến ${hi.toLocaleString("vi-VN")}, tối đa 2 chữ `
+      + "số thập phân, hoặc để trống để dùng mặc định.",
+    errNotes: (max: number) => `Tối đa ${max} ký tự.`,
+    errCount: (max: number) => `Một số nguyên từ 1 đến ${max}.`,
+    resetBody: "Cài đặt cảnh báo riêng của stage này bị xoá và nó dùng lại mặc định. Không hoàn tác được: muốn quay "
+      + "lại thì đặt lại các giá trị.",
     cancel: "Huỷ",
     save: "Lưu",
     saving: "Đang lưu…",

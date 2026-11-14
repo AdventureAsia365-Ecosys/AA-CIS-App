@@ -302,9 +302,13 @@ test("the end-pilot route and reason bound match the backend", () => {
 });
 
 test("the End pilot button is admin only and confirms with a required reason", () => {
-  const src = readFileSync(fileURLToPath(new URL("../app/admin/tenants/_components/Tenant360Subscription.tsx",
+  // The button lives in Tenant360EndPilot (Subscription renders it next to the pilot badge).
+  const sub = readFileSync(fileURLToPath(new URL("../app/admin/tenants/_components/Tenant360Subscription.tsx",
     import.meta.url)), "utf8");
-  assert.match(src, /acct\.is_pilot && can\(role, "tenant\.write"\)/);
+  assert.match(sub, /<Tenant360EndPilot tenantId=\{tenantId\} tenantName=\{acct\.name\} isPilot=\{acct\.is_pilot\} \/>/);
+  const src = readFileSync(fileURLToPath(new URL("../app/admin/tenants/_components/Tenant360EndPilot.tsx",
+    import.meta.url)), "utf8");
+  assert.match(src, /if \(!isPilot \|\| !can\(role, "tenant\.write"\)\) return null;/);
   assert.match(src, /reason=\{\{ label: t\("endPilotReason"\), required: true/);
   assert.match(src, /testId="end-pilot-confirm"/);
 });

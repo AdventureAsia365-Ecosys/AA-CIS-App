@@ -74,6 +74,12 @@ export const PROFILES = defineMessages(
     saveTitle: (app: string) => `Save the profile of ${app}?`,
     saveBody: "The change is audited.",
     readOnly: "Read-only session: the profile cannot be changed from this account.",
+    tightenNote: "Your role may only tighten this profile: switch AI off, pause bulk work, or set or lower the "
+      + "default budget. An administrator can loosen it.",
+    tightenAiLocked: "AI is off. Your role cannot switch it back on; ask an administrator.",
+    tightenBulkLocked: "Bulk work is paused. Your role cannot resume it; ask an administrator.",
+    tightenBudgetHint: (now: string) => `Now ${now}. Your role can lower it only (not raise or clear it).`,
+    tightenWorse: (fields: string) => `Your role cannot loosen: ${fields}. Change it back or ask an administrator.`,
   },
   {
     title: "Hồ sơ ứng dụng",
@@ -129,5 +135,11 @@ export const PROFILES = defineMessages(
     saveTitle: (app: string) => `Lưu hồ sơ của ${app}?`,
     saveBody: "Thay đổi được ghi nhật ký kiểm toán.",
     readOnly: "Phiên chỉ xem: tài khoản này không sửa được hồ sơ.",
+    tightenNote: "Vai trò của bạn chỉ được siết hồ sơ này: tắt AI, tạm dừng tác vụ hàng loạt, hoặc đặt / giảm ngân "
+      + "sách mặc định. Quản trị viên mới nới được.",
+    tightenAiLocked: "AI đang tắt. Vai trò của bạn không bật lại được; nhờ quản trị viên.",
+    tightenBulkLocked: "Tác vụ hàng loạt đang tạm dừng. Vai trò của bạn không chạy lại được; nhờ quản trị viên.",
+    tightenBudgetHint: (now: string) => `Hiện là ${now}. Vai trò của bạn chỉ được giảm (không nâng, không xoá).`,
+    tightenWorse: (fields: string) => `Vai trò của bạn không được nới: ${fields}. Đổi lại hoặc nhờ quản trị viên.`,
   },
 );

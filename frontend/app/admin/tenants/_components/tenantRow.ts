@@ -20,6 +20,8 @@ export interface Tenant {
   country: string | null;
   rate_limit_rpm: number;
   daily_publish_limit?: number | null; // AA-819 — per-tenant override; null = code default, absent = backend not deployed
+  daily_publish_limit_effective?: number; // AA-819 — the limit in force
+  daily_publish_limit_default?: number;   // S280 — the platform default in force (setting cis.publish.daily_limit_default)
   is_active: boolean;
   status: TenantStatus;           // AA-797 — derived by GET /admin/tenants
   cancelled_at: string | null;

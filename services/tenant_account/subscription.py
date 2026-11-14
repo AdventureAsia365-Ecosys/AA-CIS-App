@@ -58,7 +58,7 @@ ENTITLEMENTS_SQL = """
               r.feature_key
 """
 OVERRIDES_SQL = """
-    SELECT o.feature_key, f.product, f.value_kind, o.limit_value::text AS limit_value, o.enabled, o.reason,
+    SELECT o.feature_key, f.product, f.value_kind, f.unit, o.limit_value::text AS limit_value, o.enabled, o.reason,
            o.granted_by, o.expires_at, o.updated_at, (o.expires_at IS NULL OR o.expires_at > now()) AS active
       FROM shared.tenant_entitlement_override o
       JOIN shared.entitlement_feature f ON f.feature_key = o.feature_key
@@ -104,8 +104,9 @@ async def snapshot(conn, tenant_id: str) -> Optional[dict]:
         "entitlements": [{**{k: r[k] for k in ("feature_key", "product", "value_kind", "unit", "limit_value",
                                                "source", "plan_key", "description")},
                           "expires_at": _iso(r["expires_at"])} for r in ents],
-        "overrides": [{**{k: r[k] for k in ("feature_key", "product", "value_kind", "limit_value", "enabled", "reason",
-                                            "granted_by", "active")},
+        # S280 (AA-1096): the unit, so an RPM / seats / USD override does not read "N a month"
+        "overrides": [{**{k: r[k] for k in ("feature_key", "product", "value_kind", "unit", "limit_value", "enabled",
+                                            "reason", "granted_by", "active")},
                        "expires_at": _iso(r["expires_at"]), "updated_at": _iso(r["updated_at"])} for r in overrides],
         "add_on_plans": [dict(r) for r in plans],
         # what the override drawer may offer (set_override refuses the rest)

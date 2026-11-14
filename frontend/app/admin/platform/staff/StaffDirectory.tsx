@@ -268,6 +268,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           loading={list.isLoading}
           searchable
           searchPlaceholder={t("searchPlaceholder")}
+          searchText={(r) => [r.id, roleLabel(r.role), r.booking_role ? bookingRoleLabel(r.booking_role) : ""].join(" ")}
           enableCsv
           csvFilename="cis-staff.csv"
           emptyTitle={t("emptyTitle")}
