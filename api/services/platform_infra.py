@@ -28,7 +28,7 @@ commit, ``doc.generated_at`` the bundle time.
 (storage error) or "owner_tier" (the page is not staff tier: never read here) leaves ``groups`` empty. A group or key
 of the output that this catalog does not know is still shown (``known`` false, a generic explanation), so a new
 Terraform value never disappears; ``missing_keys`` lists catalog keys the page no longer has (renamed or removed in
-Terraform: update :data:`CATALOG`). Names in the answer are display names (:func:`display_key`: the acc1 / acc2 / acc3
+Terraform: update :data:`CATALOG`). Names in the answer are display names (:func:`display_key`: the numbered account
 account label of an output name is dropped, the admin UI never shows those labels); matching uses the raw names.
 Values are strings exactly as the generator wrote them (numbers, "on" / "off", lists joined by ", "); they are values
 only, never an ID, ARN or host name (the output's rule; the bundle builder and the reader redact account ids again).
@@ -51,7 +51,7 @@ _ROW = re.compile(r"^\|\s*`([^`|]+)`\s*\|\s*`([^`|]*)`\s*\|\s*$")
 _TF_SHA = re.compile(r"AA-CIS-Infra@([0-9a-f]{7,40})\b")
 _H2 = re.compile(r"^##\s+(.+?)\s*$")
 _H3 = re.compile(r"^###\s+(.+?)\s*$")
-# Account labels (acc1 / acc2 / acc3) never reach the admin UI (rule: show runtime account IDs, never the labels).
+# Numbered account labels (accN) never reach the admin UI (rule: show runtime account IDs, never the labels).
 # Some Terraform output names carry one (``acc2_total_monthly_usd``); the raw name is kept for matching only.
 _ACC_TOKEN = re.compile(r"(?:^|(?<=[._]))acc\d+(?:_|(?=[.]|$))")
 _ACC_ANY = re.compile(r"acc\d+", re.IGNORECASE)
