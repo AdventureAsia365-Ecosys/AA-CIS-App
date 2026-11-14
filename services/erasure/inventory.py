@@ -411,7 +411,7 @@ TENANT_CHECKLIST: tuple[ChecklistItem, ...] = (
                   "runbook section 4: the 7-day exports/ rule deletes them; an erasure inside 7 days of a backup "
                   "removes the prefix by hand after the DB apply (WRITE)"),
     ChecklistItem("AA-Partner (crm)", "the tenant's CRM rows (DM-6.8 hard delete on offboarding)",
-                  "stage 2 of the tenant erasure saga (AA-1093): the CRM job crm_tenant_erase erases, crypto-shreds "
+                  "stage 2 of the tenant erasure saga: the CRM job crm_tenant_erase erases, crypto-shreds "
                   "and reports its census to CIS; cis_app has no grant on crm.*"),
     ChecklistItem("Cognito", "tenant portal users (once built)", "runbook section 4"),
     ChecklistItem("Sentry", "events tagged with the tenant id", "runbook section 4"),

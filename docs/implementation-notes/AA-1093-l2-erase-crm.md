@@ -31,5 +31,5 @@ showed in CIS's own plan: schema `learn` (CIS 420, AA-1105) was not part of the 
 
 ## Should know
 
-- No migration in this PR. Tests: `tests/unit/test_aa839_erasure.py` (learn entries, the purge flag before the
-  deletes), `tests/integration/test_aa839_erasure_job.py::test_offboarding_erases_the_tenants_learn_records_and_no_staff_learner`.
+- No migration in this PR. Tests: `tests/unit/test_aa1093_learn_erasure.py` (learn entries, the purge flag before the
+  deletes), `tests/integration/test_aa1093_learn_erasure_db.py`.
