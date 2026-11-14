@@ -1854,7 +1854,9 @@ role may write them. Source: the AA-CIS-Infra root output `platform_limits`, ren
 section "Edge, budget and alarm limits" of the root page `docs/generated/alarms.md` (OPS-07) and published by Docs sync;
 `api/services/platform_infra.py` reads that page through the docs reader (no AWS or Terraform state access, $0) and
 adds, per value, a plain label in English and Vietnamese, its unit and the Terraform variable or resource that sets it
-(`CATALOG`; a value it does not know is still shown, a catalog key the page lost is listed as stale). A change is an
+(`CATALOG`; a value it does not know is still shown, a catalog key the page lost is listed as stale). Names on the page
+are display names: the account label of an output name (`acc2_total_monthly_usd`) is dropped (`display_key`), since
+the admin UI never shows acc1 / acc2 / acc3; matching keeps the raw name. A change is an
 AA-CIS-Infra PR + apply; the page shows it after the next docs run is merged into the root repo.
 
 ### Settings registry: every key ships its guide (AA-1096, CIS 407 / 416)

@@ -3,6 +3,8 @@ Terraform, read from the generated alarms page (OPS-07) of the docs reader bundl
 root docs/generated/alarms.md on 14/11/2026 (AA-CIS-Infra output platform_limits). No S3, no DB."""
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -99,6 +101,41 @@ def test_an_unknown_group_or_key_is_still_shown():
                    "label": pi._UNKNOWN_LABEL, "known": False}
     assert groups[1]["title"] == {"en": "shield", "vi": "shield"}
     assert "waf.alb_acl_rate_limit_per_5min_per_ip" in missing
+
+
+_ACC_LABEL = re.compile(r"acc[0-9]", re.IGNORECASE)
+
+
+@pytest.mark.parametrize("raw, shown", [
+    ("acc2_total_monthly_usd", "total_monthly_usd"),
+    ("acc2_per_app_monthly_usd.cis", "per_app_monthly_usd.cis"),
+    ("cost_acc3_alert", "cost_alert"),
+    ("cost_acc3", "cost"),
+    ("myacc1x", "myaccountx"),
+    ("rds_cpu_percent_above", "rds_cpu_percent_above"),
+])
+def test_the_display_key_drops_the_account_label(raw, shown):
+    assert pi.display_key(raw) == shown
+
+
+def test_the_live_answer_never_shows_an_account_label():
+    """Admin rule: never print acc1 / acc2 / acc3. The live budgets rows are named acc2_* in Terraform."""
+    groups, missing = pi.build_groups(pi.parse_section(FIXTURE))
+    budgets = {i["key"]: i for g in groups if g["group"] == "budgets" for i in g["items"]}
+    assert budgets["total_monthly_usd"]["known"] and budgets["per_app_monthly_usd.cis"]["value"] == "90"
+    keys = [i["key"] for g in groups for i in g["items"]] + [g["group"] for g in groups]
+    assert not [k for k in keys if _ACC_LABEL.search(k)]
+    assert not _ACC_LABEL.search(json.dumps(groups, ensure_ascii=False))
+    _, missing = pi.build_groups({"budgets": [("acc3_new_alert", "1")], "acc1_things": [("acc1_x", "2")]})
+    assert missing and not [k for k in missing if _ACC_LABEL.search(k)]
+    assert "budgets.total_monthly_usd" in missing
+
+
+def test_an_unknown_group_or_key_with_an_account_label_is_shown_without_it():
+    groups, _ = pi.build_groups({"acc1_things": [("acc1_x", "2"), ("acc3_x", "3")]})
+    g = groups[0]
+    assert g["group"] == "things" and g["title"] == {"en": "things", "vi": "things"}
+    assert [i["key"] for i in g["items"]] == ["x", "x (2)"]
 
 
 # ── read ─────────────────────────────────────────────────────────────────────────────────────────────────────────

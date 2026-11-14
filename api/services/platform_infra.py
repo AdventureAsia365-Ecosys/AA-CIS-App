@@ -28,9 +28,11 @@ commit, ``doc.generated_at`` the bundle time.
 (storage error) or "owner_tier" (the page is not staff tier: never read here) leaves ``groups`` empty. A group or key
 of the output that this catalog does not know is still shown (``known`` false, a generic explanation), so a new
 Terraform value never disappears; ``missing_keys`` lists catalog keys the page no longer has (renamed or removed in
-Terraform: update :data:`CATALOG`). Values are strings exactly as the generator wrote them (numbers, "on" / "off",
-lists joined by ", "); they are values only, never an ID, ARN or host name (the output's rule; the bundle builder and
-the reader redact account ids again). $0: one S3 read through the docs reader cache.
+Terraform: update :data:`CATALOG`). Names in the answer are display names (:func:`display_key`: the acc1 / acc2 / acc3
+account label of an output name is dropped, the admin UI never shows those labels); matching uses the raw names.
+Values are strings exactly as the generator wrote them (numbers, "on" / "off", lists joined by ", "); they are values
+only, never an ID, ARN or host name (the output's rule; the bundle builder and the reader redact account ids again).
+$0: one S3 read through the docs reader cache.
 """
 from __future__ import annotations
 
@@ -49,6 +51,10 @@ _ROW = re.compile(r"^\|\s*`([^`|]+)`\s*\|\s*`([^`|]*)`\s*\|\s*$")
 _TF_SHA = re.compile(r"AA-CIS-Infra@([0-9a-f]{7,40})\b")
 _H2 = re.compile(r"^##\s+(.+?)\s*$")
 _H3 = re.compile(r"^###\s+(.+?)\s*$")
+# Account labels (acc1 / acc2 / acc3) never reach the admin UI (rule: show runtime account IDs, never the labels).
+# Some Terraform output names carry one (``acc2_total_monthly_usd``); the raw name is kept for matching only.
+_ACC_TOKEN = re.compile(r"(?:^|(?<=[._]))acc\d+(?:_|(?=[.]|$))")
+_ACC_ANY = re.compile(r"acc\d+", re.IGNORECASE)
 
 # Units: the page translates these codes (frontend app/admin/platform/infra/messages.ts).
 UNITS = ("per_5min_ip", "per_5min", "rps", "requests", "executions", "usd_month", "usd", "percent", "seconds",
@@ -363,34 +369,62 @@ def terraform_sha(markdown: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def display_key(raw: str) -> str:
+    """The name shown on the page for a raw Terraform output name: the account label token is dropped
+    (``acc2_total_monthly_usd`` -> ``total_monthly_usd``, ``acc2_per_app_monthly_usd.cis`` ->
+    ``per_app_monthly_usd.cis``), and any label left inside a word reads "account". Pure; never matches /acc[0-9]/."""
+    shown = _ACC_TOKEN.sub("", raw).strip("._")
+    return _ACC_ANY.sub("account", shown) or "value"
+
+
+def _unique_keys(raw_keys: list[str]) -> list[str]:
+    """Display keys of one group, made unique (row ids) when two raw names differ only by an account label."""
+    seen: dict[str, int] = {}
+    out = []
+    for raw in raw_keys:
+        shown = display_key(raw)
+        seen[shown] = seen.get(shown, 0) + 1
+        out.append(shown if seen[shown] == 1 else f"{shown} ({seen[shown]})")
+    return out
+
+
 def build_groups(parsed: dict[str, list[tuple[str, str]]]) -> tuple[list[dict], list[str]]:
     """(groups, missing_keys) for the response. Pure. Catalog groups first in :data:`GROUPS` order, then any other
-    group of the page in page order."""
+    group of the page in page order. Matching uses the raw output names; every name in the answer (item ``key``, an
+    unknown group's id and title, ``missing_keys``) is its :func:`display_key`."""
     order = [g for g in GROUPS if g in parsed] + [g for g in parsed if g not in GROUPS]
     out = []
     for g in order:
         meta = GROUPS.get(g, _UNKNOWN_GROUP)
+        shown_group = g if g in GROUPS else display_key(g)
         items = []
-        for key, value in parsed[g]:
+        rows = parsed[g]
+        for (key, value), shown in zip(rows, _unique_keys([k for k, _ in rows])):
             limit = CATALOG.get(f"{g}.{key}")
             items.append({
-                "key": key, "value": value,
+                "key": shown, "value": value,
                 "unit": limit.unit if limit else "text",
                 "source": limit.source if limit else None,
                 "label": _t(limit.en, limit.vi) if limit else _UNKNOWN_LABEL,
                 "known": limit is not None,
             })
         out.append({
-            "group": g,
-            "title": meta["title"] or _t(g, g),
+            "group": shown_group,
+            "title": meta["title"] or _t(shown_group, shown_group),
             "what": meta["what"], "why": meta["why"],
             "change": _t(_CHANGE_EN, _CHANGE_VI),
             "editable": meta["editable"], "editable_href": meta["editable_href"],
             "items": items,
         })
     present = {f"{g}.{k}" for g, rows in parsed.items() for k, _ in rows}
-    missing = sorted(k for k in CATALOG if k not in present)
+    missing = sorted(_join_shown(k) for k in CATALOG if k not in present)
     return out, missing
+
+
+def _join_shown(catalog_key: str) -> str:
+    """``<group>.<key>`` of a catalog key with the key part as displayed."""
+    group, _, key = catalog_key.partition(".")
+    return f"{group}.{display_key(key)}"
 
 
 # ── read ─────────────────────────────────────────────────────────────────────────────────────────────────────────

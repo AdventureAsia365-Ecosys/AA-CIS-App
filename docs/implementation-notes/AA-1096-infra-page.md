@@ -24,6 +24,15 @@ published them as the root output `platform_limits`, rendered on the generated a
   `messages.ts`. A unit parity test keeps the backend `UNITS` equal to the page's `InfraUnit`.
 - **Never lose a value:** a group or key of the output the catalog does not know is still listed ("Not described
   yet", the key shown); a catalog key the page no longer has is listed as stale (renamed or removed in Terraform).
+- **No account labels on the page (review fix).** The admin UI never prints acc1 / acc2 / acc3, but four budget
+  output names of `platform_limits` carry one (`acc2_total_monthly_usd`, `acc2_total_alerts`,
+  `acc2_cost_anomaly_alert_usd`, `acc2_per_app_monthly_usd.<app>`: 9 rows live). `display_key()` drops the label token
+  (`total_monthly_usd`, `per_app_monthly_usd.cis`) and turns any label left inside a word into "account"; every name in
+  the answer (item `key`, an unknown group's id and title, `missing_keys`) is a display name, while `CATALOG` matching
+  keeps the raw output name. Two raw names that differ only by the label get a " (2)" suffix so row ids stay unique.
+  Renaming the outputs in AA-CIS-Infra was the alternative; it changes a public Terraform output and the generated root
+  page for a cosmetic reason, so the CIS side strips it instead. A test asserts no item key, group or missing key of
+  the live fixture (and of synthetic acc-named rows) matches /acc[0-9]/.
 - **Missing page = 200 with a reason** (`not_published`, `unavailable`, `owner_tier`), so the page explains instead of
   failing.
 - **Route under `/admin/platform/*`** (`admin_platform_ops.py`, ops.read): the BFF's `platform` read rule already makes
@@ -37,6 +46,7 @@ published them as the root output `platform_limits`, rendered on the generated a
   and `docs/api/openapi.json` regenerated (additions only).
 - Tests: `tests/unit/test_aa1096_platform_infra.py` with the live section of 14/11/2026 as fixture
   (`tests/unit/fixtures/aa1096_ops07_alarms.md`).
+- Review fix: `display_key()` in `platform_infra.py` (names in the answer without account labels) plus three tests.
 - Frontend: `app/admin/platform/infra/{page.tsx,InfraLimits.tsx,messages.ts}`, `lib/platformInfra.ts` + test,
   `lib/adminIa.ts` (nav entry), `app/_kit/adminNav.tsx` (icon; not a vendored file), `app/_kit/nav.messages.ts` (EN/VI
   label), visual page list and UI smoke list.
