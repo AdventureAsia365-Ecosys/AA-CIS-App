@@ -363,16 +363,22 @@ def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx,
     if added:
         return "new specifics: " + "; ".join(added[:3])
     if known is not None:
-        from services.quality.repair_contract import new_names  # lazy: repair_contract imports hygiene
-        reader = _READER_RE.search(add)
-        if reader:   # S281 — background is about the place, never what the reader or the group does
-            return f"addresses the reader or the group ('{reader.group(0)}'): background is third person"
-        trip = _TRIP_RE.search(add)
-        if trip:   # S281 review — the travellers, the trip or a service as the subject is a trip claim, not background
-            return f"speaks of the trip, its travellers or a service ('{trip.group(0)}'): background is about the place"
-        names = new_names(known, add, source)
-        if names:
-            return "names what neither the post nor its source names: " + ", ".join(names[:3])
+        return _background_refusal(add, source=source, known=known)
+    return None
+
+
+def _background_refusal(add: str, *, source: str, known: str) -> Optional[str]:
+    """S281 — the background-material checks of a paragraph: third person, about the place, no new name."""
+    from services.quality.repair_contract import new_names  # lazy: repair_contract imports hygiene
+    reader = _READER_RE.search(add)
+    if reader:   # S281 — background is about the place, never what the reader or the group does
+        return f"addresses the reader or the group ('{reader.group(0)}'): background is third person"
+    trip = _TRIP_RE.search(add)
+    if trip:   # S281 review — the travellers, the trip or a service as the subject is a trip claim, not background
+        return f"speaks of the trip, its travellers or a service ('{trip.group(0)}'): background is about the place"
+    names = new_names(known, add, source)
+    if names:
+        return "names what neither the post nor its source names: " + ", ".join(names[:3])
     return None
 
 
