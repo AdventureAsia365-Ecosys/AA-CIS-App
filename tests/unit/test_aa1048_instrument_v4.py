@@ -27,6 +27,8 @@ def test_earlier_versions_keep_the_hash_their_records_name():
     assert pr.get("v1").tag == "aa1048-r1-v1@bf496005d329"
     assert pr.get("v2").tag == "aa1048-r1-v2@ddaab8c279ef"
     assert pr.get("v3").tag == "aa1048-r1-v3@7e4923a09780"
+    # v4's evaluation run records this tag: an edit to its texts must come with a new version, not a silent new hash
+    assert pr.get("v4").tag == "aa1048-r1-v4@5cd34821af82"
     assert pr.DEFAULT == "v1" and ev.DEFAULT_PROMPT == "v2"
 
 
@@ -66,7 +68,8 @@ def test_v4_adds_the_rules_drawn_from_v3s_misses():
         assert "crowds, pace, effort, comfort, safety or who it suits" in system and "is NOT style" in system
         assert "pace, effort, comfort, safety or who the trip suits" in system                         # B5 item
         assert "do not\nby themselves" not in system and "do not by themselves make a trip slow or easy" in system
-        assert "A restatement must not add a new specific: a number, name, time, service, activity or view" in system
+        assert "A restatement must not add a new specific about this trip: a number, name, time, service" in system
+        assert "is not such a specific" in system                       # the place rule is the guard's exception
         assert "Joining two source facts into one new specific adds one" in system
         assert "firming one side of an 'or'" in system
         # false fires: a purpose, the day's order, lasting features, sentences, text about the text
@@ -78,6 +81,18 @@ def test_v4_adds_the_rules_drawn_from_v3s_misses():
         assert "A day heading or a sentence that names where the trip or a day begins" in system           # P3
         assert "A sentence about the text itself" in system and "still unsupported" in system              # P4
     assert pr.ENTAILMENT_SYSTEM_V4.count("\n- ") == len(pr._V4_RULES) == 8
+
+
+def test_v4_numbers_follow_one_rule_for_place_background():
+    # P2b lets a visited place's size and age stand as background; B5 must not call the same number unsupported.
+    # Only a number about the trip, or one the source gives for another place, stays a promise.
+    for system in (pr.ENTAILMENT_SYSTEM_V4, pr.EXTRACTION_SYSTEM_V4):
+        assert "the size of what stands there" in system and "age, builder" in system                    # P2b
+        assert "for another place, or not at all" not in system
+        assert "a size, height, date or count the source gives for another place is unsupported" in system
+        assert "a number about this trip (a distance, duration, time, price or group size)" in system
+        assert "age or date that describes a place the source names is background" in system
+    assert "for another place, or not at all" in pr.ENTAILMENT_SYSTEM_V3                       # v3 stays frozen
 
 
 def test_v4_examples_use_invented_places_only():

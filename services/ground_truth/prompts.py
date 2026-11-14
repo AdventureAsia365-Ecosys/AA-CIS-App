@@ -217,17 +217,20 @@ EXTRACTION_SYSTEM_V3 = (
 
 # ── v4 (S280: v3's recall losses and its remaining false fires) ───────────────────────────────────────────────────
 # v3 (run 33835b87) dropped 17 of 25 sampled false positives (bar 60%: pass) but kept 17 of 20 stored violations (bar
-# 90%: fail). Two of the three it lost are pace promises ('moves slowly', 'at a slow pace'): P1 set aside "the writer's
+# 90%: fail). Two of the three it lost are pace promises (the trip called slow-moving): P1 set aside "the writer's
 # reading" and its recall guard had no pace item (v1's "pace ... only as the source states it" was dropped in v2).
-# The third joins two source facts into one new activity (a ride offered 'by canoe or motor boat' plus canoeing on a
-# lake, written as one canoe trip). Its 8 remaining false fires: a purpose given to a source fact ('by design'), a
+# The third joins two source facts into one new activity (a ride the source offers by two kinds of boat plus paddling
+# on a lake, written as one paddling trip). Its 8 remaining false fires: a purpose given to a source fact, a
 # part of the day that follows from the source's order, a day said to end at its last listed stop, a sentence about
 # the article itself, a trip start that P3 allowed in headings only, and three lasting features of a visited monument
-# (inlay, a ridge, half-submerged floors) that read as "scenery seen". v4 keeps v3's restatement test and adds:
+# (its decoration, its setting, its lower floors) that read as "scenery seen". v4 keeps v3's restatement test and adds:
 # pace, effort and suitability to the facts (P1 step 2, B5); the new-specific guard (P1); two one-step examples (P1);
 # a visited place's own lasting features as background (P2b, B5); sentences in P3; and P4 for text about the text.
 # P2, B3 and B4 are v3's strings unchanged. Every example is invented (Karsk, Brellin, Ostra, Velm, Tarro), and the
 # S280 leak check found no three-word sequence with a content word shared with any claim of the evaluation pool.
+# S280 fix round: v4's first draft named a visited place's size and age as background (P2b) while its B5 item still
+# called a size or date the source does not give unsupported; B5 now keeps that only for a number about the trip or
+# one bound to another place, and the P1 guard names the place rule as an exception.
 
 _V4_P1 = (
     "Judge the whole sentence the way a careful editor would, never fragment by fragment or word by word, in three "
@@ -243,11 +246,12 @@ _V4_P1 = (
     "stop, is NOT style: it is a fact (list below).\n"
     "  3. What is left are the sentence's facts. The sentence is supported when the source states each of them in any "
     "words, or when each follows from the source in one obvious step.\n"
-    "A restatement must not add a new specific: a number, name, time, service, activity or view that the whole "
-    "source does not give and that does not follow from it in one obvious step. Joining two source facts into one "
-    "new specific adds one ('kayaking through the reed beds of Velm' when the source has the reed beds 'by kayak or "
-    "launch' and the kayaking on Velm lake), and so do firming one side of an 'or' the source leaves open and "
-    "stretching a fact to days or nights the source gives to something else.\n"
+    "A restatement must not add a new specific about this trip: a number, name, time, service, activity or view "
+    "that the whole source does not give and that does not follow from it in one obvious step (background about a "
+    "place, craft or custom the source names, as the place rule below allows it, is not such a specific). Joining "
+    "two source facts into one new specific adds one ('kayaking through the reed beds of Velm' when the source has "
+    "the reed beds 'by kayak or launch' and the kayaking on Velm lake), and so do firming one side of an 'or' the "
+    "source leaves open and stretching a fact to days or nights the source gives to something else.\n"
     "Answer 'unsupported' only when you can name a concrete fact left after step 2 that the whole source does not "
     "give. If you cannot name one, the sentence is supported. Examples, all supported:\n"
     "  - source 'the ride lasts one to two hours, depending on the riders', sentence 'the riders alone decide how "
@@ -311,7 +315,10 @@ _V4_B5 = (
     "  - an order, sequence or schedule the source does not give ('the ferry comes first and the market second' when "
     "the source only names both);\n"
     "  - a number or measure bound to the wrong thing: read 'it', 'there' and 'this' as the thing named just BEFORE; "
-    "a size, height, date or count the source gives for another place, or not at all, is unsupported;\n"
+    "a size, height, date or count the source gives for another place is unsupported, and so is a number about "
+    "this trip (a distance, duration, time, price or group size) that the source does not give; a size, height, "
+    "age or date that describes a place the source names is background under the place rule above, even when "
+    "the source does not give it;\n"
     "  - a number, name, day, order or direction that contradicts the source.")
 
 _V4_RULES = (

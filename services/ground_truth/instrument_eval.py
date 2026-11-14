@@ -685,7 +685,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--measured", help="expected cost from this finished live run report (same model and mode)")
     r.add_argument("--with-reasons", action="store_true",
                    help="add each entailment reply's 'why' to the report (model text: keep it in .tmp-session/)")
-    r.add_argument("--out", help="write the report (counts, groups and hash prefixes only) here too")
+    r.add_argument("--out", help="write the report here too (counts, groups and hash prefixes; with "
+                                "--with-reasons also the model's reasons, which can quote tour text)")
     s = sub.add_parser("score", help="$0: score a finished run again from the votes in its report")
     s.add_argument("--pool", required=True)
     s.add_argument("--report", required=True)
