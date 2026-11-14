@@ -56,7 +56,7 @@ _FALLBACK_PRICE_IN_PER_MTOK = 0.042          # used only if the catalog row cann
 _TIMEOUT_S = 3.0
 _MAX_ATTEMPTS = 3
 _RETRY_STATUS = {429, 500, 502, 503, 504, 529}
-_CONFIG_TTL_S = 20.0
+_CONFIG_TTL_S = 20.0  # technical-constant: in-process cache refresh of a read
 # AA-1017 (registry v2, migration 322): Jev's connection row (shared.llm_provider_connection 'typesafe', seeded with the
 # values above) gives the base URL, the timeout and the retries; JEV_URL / _TIMEOUT_S / _MAX_ATTEMPTS answer when there
 # is no row or a field is NULL (row -> env TYPESAFE_BASE_URL -> constant). Read with the question config (same TTL).
@@ -829,7 +829,7 @@ async def clear_outcome(conn_or_pool, question_key: str, subject_key: str, sourc
 # good read fails open (logged), like connection_budget.
 # hard_stop false = alert only. Alerts: cost_guard.maybe_alert (one bell + e-mail per provider per 24 h) on refresh.
 JEV_BUDGET_EXCEEDED = "budget_exceeded"
-_JEV_BUDGET_TTL_S = 60.0
+_JEV_BUDGET_TTL_S = 60.0  # technical-constant: in-process cache refresh of a read
 _JEV_BUDGET_KIND = "decide"          # load_run_budget label: reads jev/global (and jev/job:decide if ever seeded)
 _jev_budget = None                   # cost_guard.RunBudget of the last refresh (None = never read / unreadable)
 _jev_budget_read_at = float("-inf")  # time.monotonic() of the last refresh attempt

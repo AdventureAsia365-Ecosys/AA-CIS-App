@@ -36,8 +36,8 @@ from . import connections
 logger = structlog.get_logger()
 
 SWITCH_ENV = "LLM_CONNECTION_BUDGETS"
-CACHE_TTL_SECONDS = 60.0
-_FAILURE_TTL_SECONDS = 60.0
+CACHE_TTL_SECONDS = 60.0  # technical-constant: in-process cache refresh of a read
+_FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 
 _state: dict[str, cost_guard.ConnectionBudget] = {}
 _loaded_for: tuple = ()

@@ -76,7 +76,7 @@ logger = structlog.get_logger()
 
 SUPPORTED_FORMAT = 1
 DEFAULT_PREFIX = "docs-reader"
-CACHE_TTL_S = 300
+CACHE_TTL_S = 300  # technical-constant: in-process cache refresh of a read
 MIN_REFRESH_S = 30                 # ?refresh=1 re-reads S3 at most this often per process
 MAX_MANIFEST_BYTES = 5 * 1024 * 1024
 MAX_PAGE_BYTES = 2 * 1024 * 1024   # the builder skips pages over 1 MB; refuse anything absurd

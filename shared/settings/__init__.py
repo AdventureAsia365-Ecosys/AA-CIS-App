@@ -11,7 +11,8 @@ The API (lifespan) and the worker (``shared/jobs/worker._main``) install their p
 (``/admin/settings/registry``, api/routers/admin_settings_registry.py).
 
 A value read here is the platform's policy: never copy it into a module constant at import time (the CI guard
-tests/unit/test_s279_settings_lint.py fails on a new policy-looking constant in the governed modules).
+tests/unit/test_s279_settings_lint.py fails on a new policy-looking constant in the governed modules, and on
+one beyond its shrink-only baseline in the rest of api/, services/, shared/ and worker/).
 """
 from __future__ import annotations
 

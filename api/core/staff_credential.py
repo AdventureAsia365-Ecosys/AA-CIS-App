@@ -51,8 +51,8 @@ PREVIEW_ROLE = "viewer"
 
 CRED_PREVIEW = "preview"
 
-_PREVIEW_TTL_S = 300.0          # re-read every 5 min: a rotation lands without a deploy
-_PREVIEW_FAILURE_TTL_S = 60.0   # missing / unreadable: ask again after a minute
+_PREVIEW_TTL_S = 300.0  # technical-constant: re-read every 5 min: a rotation lands without a deploy
+_PREVIEW_FAILURE_TTL_S = 60.0  # technical-constant: missing / unreadable: ask again after a minute
 _SM_CONNECT_TIMEOUT_S = 2
 _SM_READ_TIMEOUT_S = 3
 _SM_MAX_ATTEMPTS = 2

@@ -32,7 +32,7 @@ logger = structlog.get_logger()
 
 SUPPORTED_FORMAT = 1
 DEFAULT_PREFIX = "data-model/erd"
-CACHE_TTL_S = 300
+CACHE_TTL_S = 300  # technical-constant: in-process cache refresh of a read
 # ?refresh=1 re-reads S3 at most this often per process (the page's Reload button), so it can not drive an S3 loop.
 MIN_REFRESH_S = 30
 MAX_OBJECT_BYTES = 20 * 1024 * 1024   # erd.json is ~650 KB today; refuse anything absurd rather than load it

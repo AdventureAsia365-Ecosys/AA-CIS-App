@@ -77,7 +77,7 @@ MAX_TOUR_JOBS = gw.TOUR_JOBS_LIMIT
 # The highest uuid: a CRM keyset cursor that keeps every CRM row of time T ("crm:" sorts first at equal T).
 _MAX_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 # At most this many crm.ops.v1 /llm/calls reads per Calls page (only a provider filter makes a CRM page short).
-CRM_MAX_PAGES = 5
+CRM_MAX_PAGES = 5  # technical-constant: pagination loop guard
 
 _APP_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
 _STAGE_RE = re.compile(r"^[a-z0-9_]{1,64}$")

@@ -67,8 +67,8 @@ DIGEST_WINDOW = timedelta(hours=24)
 BASELINE_WINDOW = timedelta(days=7)
 BASELINE_MIN = 3
 STATE_LOOKBACK = timedelta(days=7)
-CACHE_TTL_SECONDS = 30.0
-FAILURE_TTL_SECONDS = 60.0
+CACHE_TTL_SECONDS = 30.0  # technical-constant: in-process cache refresh of a read
+FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 DIGEST_MAX_STAGES = 25
 POLICY_FIELDS = ("fallback_alert_pct", "min_requests", "alert_last_rung", "cost_shift_usd", "hold_fallback_writes")
 DEFAULT_STAGE = "*"

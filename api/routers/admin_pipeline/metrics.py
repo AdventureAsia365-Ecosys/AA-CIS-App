@@ -395,7 +395,7 @@ async def get_spot_workers(request: Request, x_admin_secret: str = Header(None))
 # current one (i-05363515303ef7c21, tag Name=aa-cis-dev-nat-instance) is the
 # default here, override-able via NAT_INSTANCE_ID like the other resource IDs.
 _INFRA_STATUS_CACHE_KEY = "admin:infra_status:v1"
-_INFRA_STATUS_CACHE_TTL_S = 60
+_INFRA_STATUS_CACHE_TTL_S = 60  # technical-constant: cache refresh of a read (Redis TTL)
 
 
 @router.get("/infra/status")

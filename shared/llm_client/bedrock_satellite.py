@@ -198,7 +198,7 @@ def get_satellite_client(service_name: str = "bedrock-runtime", account: str = D
 
 
 # AA-642 A3: botocore makes ONE attempt per request on every runtime client the gateway builds.
-SDK_MAX_ATTEMPTS = 1
+SDK_MAX_ATTEMPTS = 1  # technical-constant: the gateway owns retries
 
 
 # AA-642 A3 (review S263): the read timeout of the acc3 InvokeModel client (invoke_claude) when the connection's

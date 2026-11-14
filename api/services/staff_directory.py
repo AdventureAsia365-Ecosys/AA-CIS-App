@@ -99,9 +99,9 @@ logger = structlog.get_logger()
 STAFF_EMAIL_DOMAIN = "adventure.asia"
 # Same local-part rule as the bootstrap tool (AA-CIS-Infra tools/identity/workforce_bootstrap.py EMAIL_LOCAL_RE).
 EMAIL_LOCAL_RE = re.compile(r"^[a-z0-9._%+-]+$")
-MAX_EMAIL_LEN = 254
+MAX_EMAIL_LEN = 254  # technical-constant: RFC 5321 address length
 MAX_DISPLAY_NAME_LEN = 120
-MAX_USERNAME_LEN = 100            # shared.admin_users.username varchar(100)
+MAX_USERNAME_LEN = 100  # technical-constant: shared.admin_users.username varchar(100)
 _USERNAME_SUFFIX_TRIES = 50
 
 # shared.admin_role minus 'viewer' (AA-878, migration 249: the read-only E2E role is never assigned from here) and minus

@@ -50,7 +50,7 @@ logger = structlog.get_logger()
 
 CACHE_KEY = "admin_platform_apps:v5"   # v2 (S243): probe / traffic / health; v3 (AA-936): + crm; v4 (AA-804): tp ai;
 #                                        v5 (AA-1015): tp stage caps + near_cap
-CACHE_TTL_S = 60
+CACHE_TTL_S = 60  # technical-constant: cache refresh of a read (Redis TTL)
 HTTP_TIMEOUT_S = 2.0
 TP_WARN_PCT = 80.0
 

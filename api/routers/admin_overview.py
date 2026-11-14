@@ -38,7 +38,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/admin/overview", tags=["admin-overview"], dependencies=[Depends(staff_policy)])
 
 _CACHE_KEY = "admin:overview:v1"
-_CACHE_TTL_S = 60
+_CACHE_TTL_S = 60  # technical-constant: cache refresh of a read (Redis TTL)
 
 # Master Content is owned by the aa_internal sentinel tenant.
 _AA_INTERNAL = "00000000-0000-0000-0000-000000000001"

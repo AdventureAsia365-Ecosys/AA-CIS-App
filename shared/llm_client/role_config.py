@@ -29,7 +29,7 @@ from . import data_scope, route_evidence, route_versions
 
 logger = structlog.get_logger()
 
-_CACHE_TTL_SECONDS = 20.0
+_CACHE_TTL_SECONDS = 20.0  # technical-constant: in-process cache refresh of a read
 
 # AA-686 — admin LLM-ops changes are audited in acp_shared.audit_log in the SAME transaction as
 # the config update (a lost audit row is a silent gap, the same reasoning as

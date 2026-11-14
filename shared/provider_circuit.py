@@ -68,7 +68,7 @@ CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, OTHER)
 ROW_MODEL = "*"                 # the breaker's Health needs a model key; a provider circuit has none
 
 ERROR_CHARS = 300
-READ_TTL_S = 10.0
+READ_TTL_S = 10.0  # technical-constant: in-process cache refresh of a read
 OK_WRITE_INTERVAL_S = 60.0
 DB_RETRY_S = 30.0
 DB_MISSING_RETRY_S = 300.0
