@@ -190,22 +190,23 @@ function DocGroup({
 
 // ── list ────────────────────────────────────────────────────────────────────────────────────────
 
-/** The open groups, remembered per viewer; the selected page's group opens when the selection changes. */
-function useOpenGroups(numbered: NumberedGroup[], selectedSection: string | null) {
+/** The open groups, remembered per viewer; the open page's group opens each time a new page is opened. */
+function useOpenGroups(numbered: NumberedGroup[], openedPath: string | null, selectedSection: string | null) {
   const raw = useSyncExternalStore(subscribeOpenGroups, readOpenGroupsRaw, () => null);
   const stored = useMemo(() => parseOpenGroups(raw), [raw]);
   const open = useMemo(
     () => stored ?? defaultOpenGroups(numbered, selectedSection),
     [stored, numbered, selectedSection],
   );
-  // Once per newly opened page (not on every toggle, so the viewer can still fold that group).
+  // Once per newly opened page, keyed on the page (not its folder): opening another page of a folded group opens
+  // that group again, while folding it afterwards still sticks.
   const handled = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedSection || handled.current === selectedSection) return;
-    handled.current = selectedSection;
-    const current = parseOpenGroups(readOpenGroupsRaw());
-    if (current && !current.includes(selectedSection)) writeOpenGroups(withOpenGroup(current, selectedSection));
-  }, [selectedSection]);
+    if (!openedPath || !selectedSection || handled.current === openedPath) return;
+    handled.current = openedPath;
+    const stored = parseOpenGroups(readOpenGroupsRaw());
+    if (stored && !stored.includes(selectedSection)) writeOpenGroups(withOpenGroup(stored, selectedSection));
+  }, [openedPath, selectedSection]);
   return open;
 }
 
@@ -237,7 +238,7 @@ export function DocsList({
   );
   const shownCount = useMemo(() => groups.reduce((n, g) => n + g.pages.length, 0), [groups]);
   const selectedSection = sectionOfPath(numbered, current);
-  const open = useOpenGroups(numbered, selectedSection);
+  const open = useOpenGroups(numbered, current ? `${selectedRepo}/${current}` : null, selectedSection);
 
   // Groups folded during the current search; a new query starts with none.
   const [folded, setFolded] = useState<{ query: string; sections: string[] }>({ query: "", sections: [] });
@@ -269,10 +270,10 @@ export function DocsList({
       >
         <span>{t("countOf", shownCount, pages.length)}</span>
         <span style={{ display: "inline-flex", gap: 6 }}>
-          <Button variant="ghost" size="sm" onClick={() => setAll(true)} ariaLabel={t("expandAllAria")} testId="docs-expand-all">
+          <Button variant="ghost" size="sm" onClick={() => setAll(true)} testId="docs-expand-all">
             {t("expandAll")}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setAll(false)} ariaLabel={t("collapseAllAria")} testId="docs-collapse-all">
+          <Button variant="ghost" size="sm" onClick={() => setAll(false)} testId="docs-collapse-all">
             {t("collapseAll")}
           </Button>
         </span>
