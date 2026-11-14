@@ -591,6 +591,10 @@
     "capability": "audit.read",
     "module": "api.routers.admin_platform_ops"
   },
+  "GET /admin/platform/catalogue": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_product_catalogue"
+  },
   "GET /admin/platform/cost": {
     "capability": "spend.read",
     "module": "api.routers.admin_platform_ops"

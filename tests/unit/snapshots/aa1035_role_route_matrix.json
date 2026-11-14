@@ -148,6 +148,7 @@
     "GET /admin/platform/apps/{app_id}",
     "GET /admin/platform/audit",
     "GET /admin/platform/audit/verify",
+    "GET /admin/platform/catalogue",
     "GET /admin/platform/cost",
     "GET /admin/platform/crm/agencies",
     "GET /admin/platform/crm/agencies/{tenant_id}",

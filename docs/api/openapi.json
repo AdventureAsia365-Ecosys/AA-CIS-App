@@ -33309,6 +33309,81 @@
         ]
       }
     },
+    "/admin/platform/catalogue": {
+      "get": {
+        "operationId": "get_catalogue_admin_platform_catalogue_get",
+        "parameters": [
+          {
+            "description": "re-read storage (at most every 30 s)",
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "re-read storage (at most every 30 s)",
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The product catalogue: features, links between the apps and their conditions, journeys",
+        "tags": [
+          "admin-product-catalogue"
+        ]
+      }
+    },
     "/admin/platform/cost": {
       "get": {
         "operationId": "get_cost_admin_platform_cost_get",
