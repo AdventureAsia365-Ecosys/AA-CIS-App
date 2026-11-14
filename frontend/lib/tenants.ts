@@ -53,3 +53,15 @@ export function filterTenants(tenants: readonly TenantRef[], query: string): Ten
     .slice()
     .sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug));
 }
+
+/** S280 (AA-1096) — the text a kit DataTable `searchText` matches for a row that names a tenant: its name, slug and
+ *  id (from the tenant list), plus any extra values of the row (a request id, an e-mail). Staff search by the slug or
+ *  an id they were sent, not only by the display name the cell shows. */
+export function tenantSearchText(
+  tenantId: string | null | undefined,
+  byId: ReadonlyMap<string, Pick<TenantRef, "name" | "slug">> | undefined,
+  ...extra: (string | number | null | undefined)[]
+): string {
+  const t = tenantId ? byId?.get(tenantId) : undefined;
+  return [t?.name, t?.slug, tenantId, ...extra].filter((v) => v != null && v !== "").join(" ");
+}

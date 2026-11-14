@@ -15,7 +15,8 @@ spend (alert 80 %, approval 100 %, hard stop on when the tenant has no row). Thi
 whole story, so ``read_one`` also answers ``effective``: what the gateway applies and where it comes from.
 
 Readers and writers:
-  - ``read_tier``  — every budget row with its month spend, for AI providers › Budgets (tier "tenant");
+  - ``read_tier``  — every budget row with its month spend and effective budget, plus the active tenants whose plan or
+                     Subscription override gives a budget without a row (S280), for AI providers › Budgets;
   - ``read_one``   — one tenant's row (or none), its month spend and the effective budget, for Tenant 360 › Cost;
   - ``upsert``     — create or change the row (PUT), one ``acp_shared.audit_log`` row with before / after;
   - ``clear``      — delete the row (the tenant falls back to its plan's included spend, or to no budget when its
@@ -77,6 +78,11 @@ MONTH_SPEND_SQL = """
 """
 
 TENANT_EXISTS_SQL = "SELECT name FROM shared.tenants WHERE tenant_id = $1::uuid"
+
+# S280 (AA-1096): the active tenants, whose budget in force may come from their plan or a Subscription override even
+# without a row here (read_tier lists them with their effective budget).
+ACTIVE_TENANTS_SQL = ("SELECT tenant_id::text AS tenant_id, name AS tenant_name FROM shared.tenants "
+                      "WHERE is_active AND cancelled_at IS NULL ORDER BY name, tenant_id")
 
 # Where the effective budget comes from (CIS 353 / 356 resolver, rank: override > this row > plan): the resolved
 # source and the tenant's active override of the key, if any (a disabled one is served as 0 USD by cost_guard).
@@ -179,17 +185,41 @@ def _with_actor(view: dict, names: dict) -> dict:
     return {**view, **ai_gateway.actor_view(view.get("updated_by"), names)}
 
 
+def tier_row_without_budget_row(tenant: dict, effective: dict, spend: Optional[tuple[float, int]]) -> dict:
+    """A Budgets-tab row for a tenant with no row here whose budget in force comes from its plan or a Subscription
+    override (S280): the stored fields are empty (``has_row`` False), the state and thresholds are the effective ones.
+    Pure."""
+    usd, calls = spend or (0.0, 0)
+    return {"tenant_id": tenant["tenant_id"], "tenant_name": tenant.get("tenant_name"), "has_row": False,
+            "monthly_usd": None, "alert_pct": effective.get("alert_pct"), "approval_pct": effective.get("approval_pct"),
+            "hard_stop": effective.get("hard_stop"), "notes": None, "updated_at": None, "updated_by": None,
+            "month_spent_usd": round(float(usd), 4), "month_calls": int(calls), "used_pct": effective.get("used_pct"),
+            "state": effective.get("state"), "effective": effective}
+
+
 async def read_tier(pool, *, now: Optional[datetime] = None) -> dict:
-    """{ready, rows}: every tenant budget with its month spend (Budgets tab). Before 321: ready False, no rows."""
+    """{ready, rows}: every tenant budget row with its month spend (Budgets tab), each with ``effective`` (what the
+    gateway applies: source, amount, thresholds, state; None before CIS 353) and ``has_row``. S280 (AA-1096): an active
+    tenant with no row whose plan or Subscription override gives it a budget is listed too (``has_row`` False), since
+    the gateway enforces the resolved budget, not only this table. Before 321: ready False, no rows."""
     now = now or datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         try:
             rows = [dict(r) for r in await conn.fetch(TIER_SQL)]
         except _MISSING:
             return {"ready": False, "rows": []}
-        spend = await _month_spend(conn, [r["tenant_id"] for r in rows], now)
+        with_row = {r["tenant_id"] for r in rows}
+        others = [dict(r) for r in await conn.fetch(ACTIVE_TENANTS_SQL) if r["tenant_id"] not in with_row]
+        effective = {t["tenant_id"]: await _effective(conn, t["tenant_id"]) for t in [*rows, *others]}
+        others = [t for t in others
+                  if effective.get(t["tenant_id"]) and effective[t["tenant_id"]].get("monthly_usd") is not None]
+        spend = await _month_spend(conn, [r["tenant_id"] for r in [*rows, *others]], now)
         names = await _names(conn, rows)
-    return {"ready": True, "rows": [_with_actor(budget_view(r, spend.get(r["tenant_id"])), names) for r in rows]}
+    out = [{**_with_actor(budget_view(r, spend.get(r["tenant_id"])), names), "has_row": True,
+            "effective": effective.get(r["tenant_id"])} for r in rows]
+    out += [tier_row_without_budget_row(t, effective[t["tenant_id"]], spend.get(t["tenant_id"])) for t in others]
+    out.sort(key=lambda r: ((r.get("tenant_name") or "").lower(), r["tenant_id"]))
+    return {"ready": True, "rows": out}
 
 
 def effective_source(resolved_source: Optional[str], override_enabled: Optional[bool], has_row: bool) -> str:
@@ -206,13 +236,19 @@ def effective_source(resolved_source: Optional[str], override_enabled: Optional[
     return "none"
 
 
-async def _effective(conn, tenant_id: str) -> Optional[dict]:
+async def _effective(conn, tenant_id: str, *, savepoint: bool = False) -> Optional[dict]:
     """What the gateway applies to ``tenant_id`` this month (``cost_guard.tenant_budget_check``) and its source; None
-    before CIS 353 (no resolver: the row alone decides, as ``budget`` shows)."""
+    before CIS 353 (no resolver: the row alone decides, as ``budget`` shows). ``savepoint``: the caller is inside a
+    transaction (``upsert``), so the resolver read runs in a savepoint and a missing view rolls back only that read,
+    never the caller's write (S280 review: an aborted transaction would fail the next statement)."""
     from shared import cost_guard
 
     try:
-        src = await conn.fetchrow(EFFECTIVE_SOURCE_SQL, tenant_id)
+        if savepoint:
+            async with conn.transaction():
+                src = await conn.fetchrow(EFFECTIVE_SOURCE_SQL, tenant_id)
+        else:
+            src = await conn.fetchrow(EFFECTIVE_SOURCE_SQL, tenant_id)
     except _MISSING:
         return None
     b = await cost_guard.tenant_budget_check(conn, tenant_id)
@@ -274,7 +310,14 @@ async def upsert(pool, tenant_id: str, values: dict, *, actor: str, tighten_only
                 if tighten_only:   # S279 thresholds L1 (tech lead Q1): ai_ops may only tighten a tenant's budget
                     from api.services.settings_registry import TIGHTEN_ONLY, loosened
 
-                    worse = loosened(before, after, caps=("monthly_usd",), stops=("hard_stop",),
+                    # S280 (AA-1096): with no row the tenant's budget in force is its plan's (or an override's);
+                    # a first row is compared with that, so "no amount" or a higher amount cannot loosen it.
+                    base = before
+                    if base is None:
+                        eff = await _effective(conn, tenant_id, savepoint=True)
+                        if eff and eff.get("monthly_usd") is not None:
+                            base = {k: eff.get(k) for k in ("monthly_usd", "alert_pct", "approval_pct", "hard_stop")}
+                    worse = loosened(base, after, caps=("monthly_usd",), stops=("hard_stop",),
                                      up_is_looser=("alert_pct", "approval_pct"))
                     if worse:
                         raise PermissionError(f"{TIGHTEN_ONLY}: {', '.join(worse)}")

@@ -344,6 +344,7 @@ class TestAdminOverride:
         out = await self._patch(conn, {"daily_publish_limit": None})
         assert out["changed"] == ["daily_publish_limit"]
         assert out["daily_publish_limit"] is None and out["daily_publish_limit_effective"] == 20
+        assert out["daily_publish_limit_default"] == 20      # S280: the default in force, for the Settings tab
         upd = [c for c in conn.execute.call_args_list if "SET daily_publish_limit = $2" in c.args[0]]
         assert upd[0].args[1:] == (TENANT_ID, None)
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -149,9 +150,27 @@ async def post_preset(body: _WriteMeta, request: Request,
     return out
 
 
+async def _name_authors(request: Request, rows: list[dict]) -> None:
+    """S280 (AA-1096): each version's ``created_by`` ("admin:<staff id>") also as a person (``created_by_name`` /
+    ``created_by_kind``, ai_gateway.actor_view), so the history says who changed the route instead of a raw id. Best
+    effort: a failed name read leaves the names empty."""
+    from api.services import ai_gateway
+
+    try:
+        async with _pool(request).acquire() as conn:
+            names = await ai_gateway.actor_names(conn, [r.get("created_by") for r in rows])
+    except asyncpg.PostgresError:
+        names = {}
+    for r in rows:
+        view = ai_gateway.actor_view(r.get("created_by"), names)
+        r["created_by_kind"], r["created_by_name"] = view["updated_by_kind"], view["updated_by_name"]
+
+
 @router.get("/versions", summary="The newest route config versions with who, when and the diff ($0)")
 async def get_versions(request: Request, limit: int = Query(50, ge=1, le=200)) -> dict:
-    return await _guarded(rc.list_versions(_pool(request), limit))
+    out = await _guarded(rc.list_versions(_pool(request), limit))
+    await _name_authors(request, out["versions"])
+    return out
 
 
 @router.get("/versions/{version}", summary="One route config version with its snapshot ($0)")
@@ -159,6 +178,7 @@ async def get_version(request: Request, version: int = Path(..., ge=1)) -> dict:
     out = await _guarded(rc.read_version(_pool(request), version))
     if out is None:
         raise HTTPException(status_code=404, detail=f"no route config version {version}")
+    await _name_authors(request, [out])
     return out
 
 

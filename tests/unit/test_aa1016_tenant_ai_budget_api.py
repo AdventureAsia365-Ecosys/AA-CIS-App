@@ -45,8 +45,9 @@ class FakeConn:
     fragment (the table before migration 321); ``denied`` raises InsufficientPrivilegeError."""
 
     def __init__(self, *, tenant_name="Lotus Trails", row=None, spend=None, missing=(), denied=(), prev=None,
-                 source=None, gateway=None):
+                 source=None, gateway=None, active=None):
         self.tenant_name = tenant_name
+        self.active = active or []          # S280: ACTIVE_TENANTS_SQL (tenants without a row)
         self.row = row
         # AA-1028 slice 3: the effective budget (EFFECTIVE_SOURCE_SQL, then cost_guard's read)
         self.source = source or {"resolved_source": None, "override_enabled": None, "has_row": row is not None}
@@ -75,6 +76,8 @@ class FakeConn:
             return [self.row] if self.row else []
         if sql == tb.MONTH_SPEND_SQL:
             return self.spend
+        if sql == tb.ACTIVE_TENANTS_SQL:
+            return self.active
         if sql == gw.ACTOR_NAMES_SQL:
             return [{"id": i, "name": "Mai Tran"} for i in args[0] if i == STAFF]
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
@@ -331,6 +334,31 @@ def test_tier_rows_and_not_ready():
     assert out == {"ready": False, "rows": []}
 
 
+def test_tier_lists_the_budget_in_force_of_tenants_without_a_row():
+    """S280 (AA-1096): the gateway enforces the resolved budget (override > row > plan), so the Budgets tab lists an
+    active tenant whose plan gives it a budget even without a row (has_row False, effective source plan), and keeps
+    a tenant with no budget at all out of the list."""
+    other = "5d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a"
+    conn = FakeConn(row=None, spend=[{"tenant_id": other, "calls": 2, "cost_usd": 6.0}],
+                    source={"resolved_source": "plan", "override_enabled": None, "has_row": False},
+                    gateway=_gw(15, 6.0), active=[{"tenant_id": other, "tenant_name": "Bamboo Roads"}])
+    out = asyncio.run(tb.read_tier(FakePool(conn), now=NOW))
+    (row,) = out["rows"]
+    assert row["tenant_id"] == other and row["has_row"] is False and row["monthly_usd"] is None
+    assert row["effective"]["source"] == "plan" and row["effective"]["monthly_usd"] == 15.0
+    assert row["month_spent_usd"] == 6.0 and row["state"] == row["effective"]["state"]
+    none = FakeConn(row=None, gateway=None, active=[{"tenant_id": other, "tenant_name": "Bamboo Roads"}])
+    assert asyncio.run(tb.read_tier(FakePool(none), now=NOW))["rows"] == []
+
+
+def test_tier_row_carries_the_effective_budget():
+    conn = FakeConn(row=ROW, spend=[], source={"resolved_source": "override", "override_enabled": True,
+                                                "has_row": True},
+                    gateway=_gw(0.01, 0.0, alert=100, approval=150, stop=False, source="override"))
+    (row,) = asyncio.run(tb.read_tier(FakePool(conn), now=NOW))["rows"]
+    assert row["has_row"] is True and row["effective"]["source"] == "subscription_override"
+
+
 # ── PUT / DELETE ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def _audit(conn):
@@ -450,3 +478,39 @@ def test_experiments_never_writes():
     for sql in (exp.PROMPT_VERSIONS_SQL, exp.EVAL_RUNS_SQL):
         assert not any(w in sql.upper() for w in ("INSERT", "UPDATE ", "DELETE"))
     assert "prompt_text" not in exp.PROMPT_VERSIONS_SQL
+
+
+@pytest.mark.parametrize("values,ok", [
+    ({"monthly_usd": None, "alert_pct": 80, "approval_pct": 100, "hard_stop": True}, False),   # no amount = unlimited
+    ({"monthly_usd": 20.0, "alert_pct": 80, "approval_pct": 100, "hard_stop": True}, False),   # above the plan's 15
+    ({"monthly_usd": 10.0, "alert_pct": 80, "approval_pct": 100, "hard_stop": True}, True),    # lower: tightens
+    ({"monthly_usd": 10.0, "alert_pct": 90, "approval_pct": 100, "hard_stop": True}, False),   # later bell
+])
+def test_tighten_only_first_row_is_compared_with_the_plan_budget(values, ok):
+    """S280 (AA-1096): a tenant without a row is held by its plan's included spend, so a tighten-only role's first row
+    must not loosen that (before: any first row with the hard stop passed, even "no amount")."""
+    conn = FakeConn(row=None, prev=None, source={"resolved_source": "plan", "override_enabled": None,
+                                                  "has_row": False}, gateway=_gw(15, 3.0))
+    if ok:
+        assert asyncio.run(tb.upsert(FakePool(conn), TENANT, values, actor="admin:x", tighten_only=True))["created"]
+    else:
+        with pytest.raises(PermissionError):
+            asyncio.run(tb.upsert(FakePool(conn), TENANT, values, actor="admin:x", tighten_only=True))
+
+
+def test_tighten_only_first_row_reads_the_resolver_in_a_savepoint():
+    """S280 review: upsert reads the budget in force inside its own transaction; before CIS 353 that read fails, and
+    without a savepoint the aborted transaction would fail the UPSERT (a 500). The read runs in a nested transaction
+    (a savepoint) and a missing resolver falls back to the no-row rule (only the stop flag counts)."""
+    entered: list[int] = []
+
+    class CountingConn(FakeConn):
+        def transaction(self):
+            entered.append(1)
+            return _Tx()
+
+    conn = CountingConn(row=None, prev=None, missing=("v_tenant_entitlement_resolved",))
+    out = asyncio.run(tb.upsert(FakePool(conn), TENANT, {"monthly_usd": 50.0, "hard_stop": True}, actor="admin:x",
+                                tighten_only=True))
+    assert out["created"] and len(entered) == 2           # the write's transaction + the resolver's savepoint
+    assert conn.ran(tb.UPSERT_SQL)

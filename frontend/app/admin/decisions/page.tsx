@@ -11,12 +11,14 @@ import {
   Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Input, Select,
   K, sans, mono, Section, Eyebrow, LoadingScreen, CHART_TOOLTIP,
   DataTable, Tabs, TONE, type Tone, type ColumnDef,
-  Badge,
+  Badge, ConfirmModal, Field, apiSend, useAdminIdentity,
 } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
 import { traceHref } from "@/lib/aiGateway";
 import { pageSortProps } from "@/lib/tableSort";
+import { questionBody, type FloorProblem } from "@/lib/decisionFloors";
+import { can } from "@/lib/rbac";
 import { DEC } from "./messages";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
@@ -202,41 +204,109 @@ function Guide() {
 }
 
 // ── Question editor ────────────────────────────────────────────────────────────────────────────
-function QuestionEditor({ q, onSaved }: { q: Question; onSaved: () => void }) {
+// S280 (AA-1096): the floors are checked here (a probability 0..1, a comma accepted, reject below accept, what enforce
+// needs) instead of NaN silently clearing a floor; Enforce is confirmed in the kit ConfirmModal; an API refusal reads as
+// its message (apiSend), not "[object Object]"; a role without ai.admin sees the values and no Save (the PUT is
+// ai.admin).
+const FLOOR_ERROR = {
+  accept: "errAccept", reject: "errReject", order: "errOrder", enforceCalibration: "errEnforceCalibration",
+  enforceFloor: "errEnforceFloor", calibrationLong: "errCalibrationLong",
+} as const satisfies Record<FloorProblem, keyof typeof DEC.en>;
+
+/** Which field shows each floor problem ("enforceFloor" shows under the fields). */
+const FIELD_PROBLEMS: Record<"accept" | "reject" | "calibration", readonly FloorProblem[]> = {
+  accept: ["accept", "order"], reject: ["reject"], calibration: ["enforceCalibration", "calibrationLong"],
+};
+
+function fieldError(problem: FloorProblem | null, text: string | null, field: keyof typeof FIELD_PROBLEMS) {
+  return problem && FIELD_PROBLEMS[field].includes(problem) ? text : undefined;
+}
+
+/** The editor's fields, seeded from the question, and the PUT body or the first problem (lib/decisionFloors). */
+function useQuestionDraft(q: Question) {
   const t = useT(DEC);
   const [mode, setMode] = useState<Mode>(q.mode);
   const [accept, setAccept] = useState(q.accept_floor?.toString() ?? "");
   const [reject, setReject] = useState(q.reject_ceiling?.toString() ?? "");
   const [calib, setCalib] = useState(q.calibration_ref ?? "");
+  const checked = questionBody({ mode, accept, reject, calibration: calib });
+  const problem = "error" in checked ? checked.error : null;
+  return {
+    mode, setMode, accept, setAccept, reject, setReject, calib, setCalib, problem,
+    body: "body" in checked ? checked.body : null, problemText: problem ? t(FLOOR_ERROR[problem]) : null,
+  };
+}
+
+/** Save (or, for a role without ai.admin, a read-only note) and the problems under the fields. */
+function EditorFooter({ canEdit, saving, problem, problemText, err, onSave }: {
+  canEdit: boolean; saving: boolean; problem: FloorProblem | null; problemText: string | null; err: string | null;
+  onSave: () => void;
+}) {
+  const t = useT(DEC);
+  const line = { width: "100%", fontSize: 12 } as const;
+  return (
+    <>
+      {canEdit
+        ? <Button variant="primary" onClick={onSave} disabled={saving || !!problem} style={{ marginTop: 18 }}>
+            {saving ? t("saving") : t("save")}</Button>
+        : <div style={{ ...line, color: K.muted }}>{t("readOnlyEditor")}</div>}
+      {problem === "enforceFloor" && <div role="alert" style={{ ...line, color: K.danger }}>{problemText}</div>}
+      {err && <div role="alert" style={{ ...line, color: K.danger }}>{err}</div>}
+    </>
+  );
+}
+
+function QuestionEditor({ q, canEdit, onSaved }: { q: Question; canEdit: boolean; onSaved: () => void }) {
+  const t = useT(DEC);
+  const d = useQuestionDraft(q);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const toNum = (s: string) => (s.trim() === "" ? null : Number(s));
-  async function save() {
-    if (mode === "enforce" && !window.confirm(t("confirmEnforce", q.question_key, q.stage))) return;
+  const [confirming, setConfirming] = useState(false);
+  async function send() {
+    if (!d.body) return;
     setSaving(true); setErr(null);
     try {
-      const r = await fetch(`/api/admin/decisions/questions/${encodeURIComponent(q.question_key)}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, accept_floor: toNum(accept), reject_ceiling: toNum(reject), calibration_ref: calib.trim() || null }),
-      });
-      if (!r.ok) { const b = await r.json().catch(() => ({})); setErr(String(b.detail ?? r.status)); return; }
+      await apiSend(`/api/admin/decisions/questions/${encodeURIComponent(q.question_key)}`,
+        { method: "PUT", body: d.body, admin: true });
+      setConfirming(false);
       onSaved();
+    } catch (e) {
+      setConfirming(false);
+      setErr(e instanceof Error ? e.message : String(e));
     } finally { setSaving(false); }
   }
+  const save = () => {
+    if (d.problem) return;
+    if (d.mode === "enforce") { setConfirming(true); return; }
+    void send();
+  };
+  const ro = !canEdit || saving;
   return (
-    <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label style={{ fontSize: 11.5, color: K.muted }}>{t("mode")}<br />
-        <Select value={mode} onChange={e => setMode(e.target.value as Mode)} style={input}>
+    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <Field label={t("mode")}>
+        <Select value={d.mode} onChange={e => d.setMode(e.target.value as Mode)} style={input} disabled={ro}>
           <option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option>
         </Select>
-      </label>
-      <label style={{ fontSize: 11.5, color: K.muted }}>{t("acceptFloor")}<br /><Input value={accept} onChange={e => setAccept(e.target.value)} placeholder="0.95" style={{ ...input, width: 90 }} /></label>
-      <label style={{ fontSize: 11.5, color: K.muted }}>{t("rejectCeiling")}<br /><Input value={reject} onChange={e => setReject(e.target.value)} placeholder="0.30" style={{ ...input, width: 90 }} /></label>
-      <label style={{ fontSize: 11.5, color: K.muted, flex: 1, minWidth: 240 }}>{t("calibrationRecord")}<br />
-        <Input value={calib} onChange={e => setCalib(e.target.value)} placeholder="docs/calibration/<question>.md" style={{ ...input, width: "100%" }} />
-      </label>
-      <Button variant="primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("save")}</Button>
-      {err && <div style={{ width: "100%", color: K.danger, fontSize: 12 }}>{err}</div>}
+      </Field>
+      <Field label={t("acceptFloor")} hint={t("floorHint")} error={fieldError(d.problem, d.problemText, "accept")}>
+        <Input value={d.accept} onChange={e => d.setAccept(e.target.value)} placeholder="0.95" inputMode="decimal"
+          disabled={ro} style={{ ...input, width: 110 }} />
+      </Field>
+      <Field label={t("rejectCeiling")} hint={t("floorHint")} error={fieldError(d.problem, d.problemText, "reject")}>
+        <Input value={d.reject} onChange={e => d.setReject(e.target.value)} placeholder="0.30" inputMode="decimal"
+          disabled={ro} style={{ ...input, width: 110 }} />
+      </Field>
+      <div style={{ flex: 1, minWidth: 240 }}>
+        <Field label={t("calibrationRecord")} error={fieldError(d.problem, d.problemText, "calibration")}>
+          <Input value={d.calib} onChange={e => d.setCalib(e.target.value)} placeholder="docs/calibration/<question>.md"
+            disabled={ro} style={{ ...input, width: "100%" }} />
+        </Field>
+      </div>
+      <EditorFooter canEdit={canEdit} saving={saving} problem={d.problem} problemText={d.problemText} err={err}
+        onSave={save} />
+      <ConfirmModal open={confirming} onClose={() => setConfirming(false)} onConfirm={() => void send()}
+        busy={saving} title={t("modeEnforce")} body={t("confirmEnforce", q.question_key, q.stage)}
+        confirmLabel={t("save")} />
     </div>
   );
 }
@@ -250,6 +320,8 @@ const PAGE = 50;
 
 export default function DecisionsPage() {
   const t = useT(DEC);
+  // S280: the question PUT is ai.admin; other roles read the settings only.
+  const canEditQuestions = can(useAdminIdentity().role, "ai.admin");
   const { formatDateTime: when } = useFormat();
   const [tab, setTab] = useState<Tab>("overview");
   const [days, setDays] = useState(7);
@@ -523,7 +595,7 @@ export default function DecisionsPage() {
                                 <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setVQuestion(q.question_key); setVPage(0); setTab("verdicts"); }}>{t("seeVerdicts")}</Button>
                               </div>
                             </div>
-                            <div style={{ marginTop: 16 }}><Eyebrow>{t("settings")}</Eyebrow><QuestionEditor q={q} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
+                            <div style={{ marginTop: 16 }}><Eyebrow>{t("settings")}</Eyebrow><QuestionEditor q={q} canEdit={canEditQuestions} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
                                           </Section>
               ); })()}
             </>

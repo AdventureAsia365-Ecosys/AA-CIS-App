@@ -37,7 +37,6 @@ export const BUDGETS = defineMessages(
     tenantNoneTitle: "No tenant has an AI budget",
     tenantNoneBody: "Without a budget a tenant's AI spend is capped only by the provider and job caps above. Set one "
       + "on the tenant: Tenants › the tenant › Cost.",
-    tenantStoredOnly: "A budget is stored and shown now; holding new jobs for approval comes with the gateway check.",
     colTenant: "Tenant",
     colLevels: "Alert / approval",
     levels: (alert: number, approval: number) => `bell at ${alert} % · approval at ${approval} %`,
@@ -105,6 +104,28 @@ export const BUDGETS = defineMessages(
     loadError: "The budgets could not be loaded",
     sourceErrors: "Some sources could not be read; their sections are empty.",
     emptyRows: "No cap of this kind yet.",
+    colInForce: "Budget in force",
+    colStored: "Set on the tenant",
+    notStored: "none (plan or override)",
+    sourcePlan: "from the plan",
+    sourceRow: "set on the tenant",
+    sourceOverride: "Subscription override",
+    sourceNone: "no budget",
+    tightenOnlyNote: "Your role can tighten caps only: lower an amount, lower the alert %, or turn the hard stop on. "
+      + "Raising or removing a cap needs an administrator.",
+    tightenCapHint: (now: string) => `Now ${now}. Your role can lower it only; empty means no cap and is a raise.`,
+    tightenStopHint: "Your role cannot switch a hard stop off.",
+    tightenAlertHint: (now: string) => `Now ${now} %. Your role can lower it only.`,
+    tightenWorse: (fields: string) => `Your role cannot loosen this cap (${fields}). Ask an administrator.`,
+    tightenOnlyRefused: "Your role may only tighten this cap (lower it or turn the hard stop on). An administrator "
+      + "can raise or remove it. Nothing was saved.",
+    fieldPerMonthName: "per month",
+    fieldPerRunName: "per run",
+    fieldPerDayName: "per day",
+    fieldStopName: "the hard stop",
+    fieldAlertName: "the alert %",
+    newCapStops: "A new cap stops at the cap (the API's default for a provider cap: fail closed on money).",
+    jobKindUnknown: "No LLM call site lists this job kind: check the spelling, or the cap guards nothing.",
   },
   {
     intro: "Mọi mức trần chi tiêu ở một chỗ. Trần được kiểm tra trước mỗi lượt gọi trả phí. Dừng ở trần kết thúc lượt "
@@ -130,7 +151,6 @@ export const BUDGETS = defineMessages(
     tenantNoneTitle: "Chưa đại lý nào có ngân sách AI",
     tenantNoneBody: "Không có ngân sách, chi tiêu AI của đại lý chỉ bị giới hạn bởi trần nhà cung cấp và trần job ở "
       + "trên. Đặt ngân sách tại đại lý: Đại lý › đại lý đó › Chi phí.",
-    tenantStoredOnly: "Ngân sách được lưu và hiển thị từ bây giờ; việc giữ job mới chờ duyệt sẽ có khi cổng AI bắt đầu kiểm ngân sách.",
     colTenant: "Đại lý",
     colLevels: "Cảnh báo / duyệt",
     levels: (alert: number, approval: number) => `chuông ở ${alert} % · duyệt ở ${approval} %`,
@@ -198,6 +218,28 @@ export const BUDGETS = defineMessages(
     loadError: "Không tải được ngân sách",
     sourceErrors: "Không đọc được vài nguồn; phần của chúng để trống.",
     emptyRows: "Chưa có trần loại này.",
+    colInForce: "Ngân sách đang áp dụng",
+    colStored: "Đặt tại đại lý",
+    notStored: "không có (theo gói hoặc ngoại lệ)",
+    sourcePlan: "theo gói",
+    sourceRow: "đặt tại đại lý",
+    sourceOverride: "ngoại lệ ở Gói đăng ký",
+    sourceNone: "không có ngân sách",
+    tightenOnlyNote: "Vai trò của bạn chỉ được siết trần: giảm số tiền, giảm % cảnh báo hoặc bật dừng ở trần. Nâng "
+      + "hay gỡ trần cần quản trị viên.",
+    tightenCapHint: (now: string) => `Hiện là ${now}. Vai trò của bạn chỉ được giảm; để trống là không trần, tức là nâng.`,
+    tightenStopHint: "Vai trò của bạn không được tắt dừng ở trần.",
+    tightenAlertHint: (now: string) => `Hiện là ${now} %. Vai trò của bạn chỉ được giảm.`,
+    tightenWorse: (fields: string) => `Vai trò của bạn không được nới trần này (${fields}). Nhờ quản trị viên.`,
+    tightenOnlyRefused: "Vai trò của bạn chỉ được siết trần này (giảm hoặc bật dừng ở trần). Quản trị viên mới nâng "
+      + "hoặc gỡ được. Chưa lưu gì.",
+    fieldPerMonthName: "mỗi tháng",
+    fieldPerRunName: "mỗi lượt",
+    fieldPerDayName: "mỗi ngày",
+    fieldStopName: "dừng ở trần",
+    fieldAlertName: "% cảnh báo",
+    newCapStops: "Trần mới dừng ở trần (mặc định của API cho trần nhà cung cấp: an toàn về tiền).",
+    jobKindUnknown: "Không điểm gọi LLM nào có loại job này: kiểm lại chính tả, nếu không trần sẽ không chặn gì.",
   },
 );
 
@@ -252,6 +294,8 @@ export const CENTRAL = defineMessages(
     switchedOff: "switched off",
     tileCovered: "Call sites under a central cap",
     tileCoveredHint: (n: number) => `of ${n} call sites`,
+    targetUnknown: "No known call site has this name: check the spelling, or the cap guards nothing.",
+    newCentralTightenOnly: "Your role may add a cap that stops at the cap only.",
   },
   {
     group: "Trần LLM chung",
@@ -302,5 +346,7 @@ export const CENTRAL = defineMessages(
     switchedOff: "đang tắt",
     tileCovered: "Điểm gọi có trần chung",
     tileCoveredHint: (n: number) => `trên ${n} điểm gọi`,
+    targetUnknown: "Không điểm gọi nào có tên này: kiểm lại chính tả, nếu không trần sẽ không chặn gì.",
+    newCentralTightenOnly: "Vai trò của bạn chỉ được thêm trần có dừng ở trần.",
   },
 );

@@ -23,7 +23,8 @@ import {
   phaseTone, prefixMatches, shortHash, stepOf, stepStatus,
   type App, type SagaDetail, type SagaList, type SagaRequest, type StepMode,
 } from "@/lib/tenantErasure";
-import { TenantName, TenantSelect } from "../../_components/TenantSelect";
+import { TenantName, TenantSelect, useTenants } from "../../_components/TenantSelect";
+import { tenantSearchText } from "@/lib/tenants";
 import { Facts, Notice, Section, hintStyle, inputStyle, labelStyle } from "./erasureUi";
 import { TO } from "./offboarding.messages";
 
@@ -376,6 +377,10 @@ export default function TenantOffboarding({ active = true }: { active?: boolean 
   });
   const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: ["tenant-erasure-requests"] }), [qc]);
   const columns = useRequestColumns(setSelected);
+  // S280: staff find a request by the tenant's slug or id, or by the request id, not only by the name shown.
+  const { byId } = useTenants();
+  const requestSearch = useCallback(
+    (r: SagaRequest) => tenantSearchText(r.tenant_id, byId, r.tenant_name, r.request_id), [byId]);
   const onDrillStarted = (requestId: string | undefined) => {
     if (requestId) setSelected(requestId);
     refresh();
@@ -391,7 +396,7 @@ export default function TenantOffboarding({ active = true }: { active?: boolean 
 
       <Section title={t("requestsTitle")} testId="tenant-erasure-requests">
         <DataTable tableId="tenant-erasure-requests" data={list.data?.requests ?? []} columns={columns}
-          getRowId={(r) => r.request_id} paginate={false} tableMinWidth={860}
+          getRowId={(r) => r.request_id} paginate={false} tableMinWidth={860} searchText={requestSearch}
           emptyTitle={t("empty")} emptyDescription={t("emptyDesc")} />
       </Section>
 

@@ -443,6 +443,7 @@ async def list_tenants(
         if scope is not None:
             rows = [r for r in rows if str(r["tenant_id"]) in scope]
         publish_limits = await _publish_limit_overrides(conn)
+    publish_default = daily_limit.platform_default_limit()
     # AA-1035 (S267 review): support reaches its book and the pool, but never the money columns (null for it). Only a
     # scoped staff call (scope is not None) can lose them; the machine and the "all" roles keep them.
     money = scope is None or sees_tenant_money(request.headers.get("x-admin-role"))
@@ -462,8 +463,8 @@ async def list_tenants(
                 "rate_limit_rpm": r["rate_limit_rpm"],
                 # AA-819 — the publish/day override (null = the code default) and the limit in force
                 "daily_publish_limit": publish_limits.get(r["tenant_id"]),
-                "daily_publish_limit_effective": publish_limits.get(r["tenant_id"],
-                                                                    daily_limit.platform_default_limit()),
+                "daily_publish_limit_effective": publish_limits.get(r["tenant_id"], publish_default),
+                "daily_publish_limit_default": publish_default,   # S280: setting cis.publish.daily_limit_default
                 "is_active":      r["is_active"],
                 "status":         tenant_status(r["is_active"], r["cancelled_at"]),
                 "cancelled_at":   r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
@@ -623,8 +624,8 @@ async def get_tenant_usage(
             "rate_limit_rpm":    tenant["rate_limit_rpm"],
             "tours_per_month":   tours_quota,  # AA-640: shared.membership_plans
             "daily_publish_limit": publish_override,  # AA-819: null = the code default
-            "daily_publish_limit_effective": (publish_override if publish_override is not None
-                                              else daily_limit.platform_default_limit()),
+            "daily_publish_limit_default": (dflt := daily_limit.platform_default_limit()),   # S280: the setting
+            "daily_publish_limit_effective": dflt if publish_override is None else publish_override,
             "publishes_today": publishes_today,
         },
         "t2_versions": t2["versions"],
@@ -796,8 +797,8 @@ async def update_tenant(
         "rate_limit_rpm": body.rate_limit_rpm if body.rate_limit_rpm is not None else rpm_now,
         # AA-819 — only when the request set it (the override; null = the code default)
         **({"daily_publish_limit": publish_limit_now,
-            "daily_publish_limit_effective": (publish_limit_now if publish_limit_now is not None
-                                              else daily_limit.platform_default_limit())}
+            "daily_publish_limit_default": (dflt := daily_limit.platform_default_limit()),   # S280: the setting
+            "daily_publish_limit_effective": dflt if publish_limit_now is None else publish_limit_now}
            if set_publish_limit else {}),
     }
 

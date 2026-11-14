@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
 from api.core.staff_authz import staff_policy
-from services.quality.registry import threshold
+from services.quality.registry import threshold, threshold_setting
 
 # AA-882 (GĐ1): PATCH /admin/settings/seo needs content.settings.write (api/core/staff_authz.py POLICY).
 router = APIRouter(prefix="/admin", tags=["admin-settings"], dependencies=[Depends(staff_policy)])
@@ -29,8 +29,12 @@ PIPELINE_GATES = {
 
 
 def pipeline_gates() -> dict:
-    """PIPELINE_GATES with the A1 pass line in force (thresholds.yaml a1.min_quality -> the settings registry)."""
-    return {"brand_audit_threshold": threshold("a1.min_quality"), **PIPELINE_GATES}
+    """PIPELINE_GATES with the A1 pass line in force (thresholds.yaml a1.min_quality -> the settings registry) and,
+    since S280 (AA-1096), the registry key that holds it, so the page links to where it is changed (Platform ›
+    Settings)."""
+    setting = threshold_setting("a1.min_quality")
+    return {"brand_audit_threshold": threshold("a1.min_quality"),
+            "brand_audit_threshold_setting": setting if isinstance(setting, str) else None, **PIPELINE_GATES}
 
 
 def verify_admin(x_admin_secret: str = Header(None)):

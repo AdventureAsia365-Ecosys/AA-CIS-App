@@ -6,6 +6,8 @@
 // sits above the area tabs and searches every area of the app by key, label and description (lib searchSettings);
 // while a query is typed the table shows the matches of all areas, each tagged with its area, and clearing it returns
 // to the area tab. The box is wide on a desktop (a long key fits) and full width on a phone.
+// S280 (lane cis-other): `initialQuery` fills the box when the page opens (`?key=<setting key>`, e.g. the link from
+// Catalogue settings › Pipeline gates to the A1 pass line).
 
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -28,13 +30,14 @@ function SearchBox({ value, onChange }: { value: string; onChange: (q: string) =
   );
 }
 
-export function SettingsTable({ app, settings, initialArea, columns }: {
-  app: SettingApp; settings: SettingItem[]; initialArea: string; columns: ColumnDef<SettingItem, unknown>[];
+export function SettingsTable({ app, settings, initialArea, initialQuery, columns }: {
+  app: SettingApp; settings: SettingItem[]; initialArea: string; initialQuery?: string;
+  columns: ColumnDef<SettingItem, unknown>[];
 }) {
   const t = useT(SETTINGS);
   const groups = useMemo(() => groupByArea(settings), [settings]);
   const [area, setArea] = useState(initialArea);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => initialQuery ?? "");
   const found = useMemo(() => searchSettings(settings, query), [settings, query]);
   const searching = query.trim() !== "";
   const cols = useMemo<ColumnDef<SettingItem, unknown>[]>(() => searching ? [

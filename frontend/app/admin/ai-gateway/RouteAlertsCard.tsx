@@ -24,8 +24,8 @@ import {
 import { holdChangeNeedsEvidence } from "@/lib/editGate";
 import { isReadOnlyRefusal, usd } from "@/lib/aiGateway";
 import {
-  DEFAULT_STAGE, ROUTE_KEY, ROUTE_POLICY_API, ROUTE_TEST_API, ROUTE_WATCH_API, TEST_MAX_REQUESTS, policyBody,
-  policyDraft, policyPath, rungLabel, type Inherit, type PolicyDraft, type PolicyValues, type RoutePolicyResp,
+  DEFAULT_STAGE, POLICY_LIMITS, ROUTE_KEY, ROUTE_POLICY_API, ROUTE_TEST_API, ROUTE_WATCH_API, TEST_MAX_REQUESTS,
+  policyBody, policyDraft, policyPath, rungLabel, type Inherit, type PolicyDraft, type PolicyValues, type RoutePolicyResp,
   type RouteTestResp, type StagePolicy,
 } from "@/lib/routeTrace";
 import {
@@ -87,20 +87,20 @@ function PolicyEditor({ row, onClose }: { row: Row; onClose: () => void }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
           gap: 12 }}>
           <Field label={t("fieldPct")} hint={t("fieldPctHint")}
-            error={bad === "fallback_alert_pct" ? t("invalid") : undefined}>
+            error={bad === "fallback_alert_pct" ? t("errWhole", ...POLICY_LIMITS.pct) : undefined}>
             <Input inputMode="numeric" value={draft.fallback_alert_pct} disabled={mut.isPending}
               placeholder={String(row.effective.fallback_alert_pct)} style={{ fontFamily: mono }}
               onChange={(e) => set({ fallback_alert_pct: e.target.value })} data-testid="route-policy-pct" />
           </Field>
           <Field label={t("fieldMin")} hint={t("fieldMinHint")}
-            error={bad === "min_requests" ? t("invalid") : undefined}>
+            error={bad === "min_requests" ? t("errWhole", ...POLICY_LIMITS.minRequests) : undefined}>
             <Input inputMode="numeric" value={draft.min_requests} disabled={mut.isPending}
               placeholder={String(row.effective.min_requests)} style={{ fontFamily: mono }}
               onChange={(e) => set({ min_requests: e.target.value })} />
           </Field>
         </div>
         <Field label={t("fieldCost")} hint={t("fieldCostHint")}
-          error={bad === "cost_shift_usd" ? t("invalid") : undefined}>
+          error={bad === "cost_shift_usd" ? t("errCost", ...POLICY_LIMITS.cost) : undefined}>
           <Input inputMode="decimal" value={draft.cost_shift_usd} disabled={mut.isPending}
             placeholder={row.effective.cost_shift_usd.toFixed(2)} style={{ fontFamily: mono }}
             onChange={(e) => set({ cost_shift_usd: e.target.value })} />
@@ -115,7 +115,7 @@ function PolicyEditor({ row, onClose }: { row: Row; onClose: () => void }) {
             onChange={(e) => set({ hold_fallback_writes: e.target.value as Inherit })}
             options={tri(t("holdOption"), t("markOption"))} />
         </Field>
-        <Field label={t("fieldNotes")} error={bad === "notes" ? t("invalid") : undefined}>
+        <Field label={t("fieldNotes")} error={bad === "notes" ? t("errNotes", POLICY_LIMITS.notes) : undefined}>
           <Textarea rows={2} maxLength={500} value={draft.notes} disabled={mut.isPending}
             onChange={(e) => set({ notes: e.target.value })} />
         </Field>
@@ -172,7 +172,7 @@ function RouteTestDrawer({ stages, onClose, onOpenRequest }: {
               options={stages.map((s) => ({ value: s, label: s }))} style={{ maxWidth: "100%", minWidth: 0 }}
               data-testid="route-test-stage" />
           </Field>
-          <Field label={t("testCount")} error={okCount ? undefined : t("invalid")}>
+          <Field label={t("testCount")} error={okCount ? undefined : t("errCount", TEST_MAX_REQUESTS)}>
             <Input inputMode="numeric" value={count} onChange={(e) => setCount(e.target.value)}
               disabled={mut.isPending} style={{ fontFamily: mono }} />
           </Field>
@@ -223,6 +223,37 @@ function valuesCells(t: T, v: PolicyValues) {
   };
 }
 
+/** AA-1052 W6 / S280: every reset is confirmed (it deletes the stage's own row and has no undo); a reset that clears
+ *  the hold switch of a writing-path stage also asks for its evidence (an eval run or a break-glass reason). */
+function ResetConfirm({ row, onClose, onReset }: {
+  row: Row; onClose: () => void; onReset: (stage: string, proof?: ChangeEvidence) => void;
+}) {
+  const t = useT(RT);
+  const needsEvidence = holdChangeNeedsEvidence(row.stage, row.row?.hold_fallback_writes, null);
+  const [evidence, setEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
+  const [error, setError] = useState<string | null>(null);
+  const confirm = () => {
+    if (!needsEvidence) { onReset(row.stage); onClose(); return; }
+    if (!evidenceReady(evidence)) { setError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS)); return; }
+    onReset(row.stage, evidence);
+    onClose();
+  };
+  return (
+    <ConfirmModal open onClose={onClose} onConfirm={confirm} destructive confirmLabel={t("resetConfirm")}
+      title={t("resetTitle", row.isDefault ? t("defaultsRow") : row.stage)}
+      body={
+        <div data-testid="route-policy-reset-confirm">
+          <p style={{ ...small, marginTop: 0 }}>{t("resetBody")}</p>
+          {needsEvidence && <>
+            <p style={{ ...small, marginTop: 0 }}>{t("holdEvidenceHint")}</p>
+            <ChangeEvidenceFields stage={`policy-reset-${row.stage}`} value={evidence} error={error}
+              onChange={(next) => { setEvidence(next); setError(null); }} />
+          </>}
+        </div>
+      } />
+  );
+}
+
 export default function RouteAlertsCard({ onOpenRequest }: {
   onOpenRequest: (traceId: string, at: string | null) => void;
 }) {
@@ -234,10 +265,8 @@ export default function RouteAlertsCard({ onOpenRequest }: {
   const canTest = access.can("route_test");
   const [editing, setEditing] = useState<Row | null>(null);
   const [testing, setTesting] = useState(false);
-  // AA-1052 W6: a reset that clears the hold switch of a writing-path stage waits here for its evidence.
+  // AA-1052 W6 / S280: every reset waits here for its confirm (ResetConfirm).
   const [resetting, setResetting] = useState<Row | null>(null);
-  const [resetEvidence, setResetEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
-  const [resetError, setResetError] = useState<string | null>(null);
   const q = useQuery({
     queryKey: [...POLICY_KEY],
     queryFn: () => apiGet<RoutePolicyResp>(ROUTE_POLICY_API, { admin: true }),
@@ -250,7 +279,6 @@ export default function RouteAlertsCard({ onOpenRequest }: {
     },
     onSuccess: (_d, { stage }) => {
       toast.success(t("resetDone", stage === DEFAULT_STAGE ? t("defaultsRow") : stage));
-      setResetEvidence(EMPTY_EVIDENCE);
       qc.invalidateQueries({ queryKey: [...POLICY_KEY] });
     },
     onError: (e) => toast.error(isReadOnlyRefusal(e) ? t("readOnly") : e instanceof Error ? e.message : String(e)),
@@ -293,9 +321,7 @@ export default function RouteAlertsCard({ onOpenRequest }: {
         cell: ({ row: { original: r } }) => (
           <span style={{ display: "inline-flex", gap: 6, whiteSpace: "nowrap" }}>
             <LinkButton onClick={() => setEditing(r)}><Pencil size={12} /> {t("edit")}</LinkButton>
-            {r.row && <LinkButton tone="muted" disabled={reset.isPending} onClick={() => (
-              holdChangeNeedsEvidence(r.stage, r.row?.hold_fallback_writes, null)
-                ? setResetting(r) : reset.mutate({ stage: r.stage }))}>
+            {r.row && <LinkButton tone="muted" disabled={reset.isPending} onClick={() => setResetting(r)}>
               {t("reset")}</LinkButton>}
           </span>
         ) });
@@ -321,29 +347,8 @@ export default function RouteAlertsCard({ onOpenRequest }: {
           tableMinWidth={820} paginate={rows.length > 25} />
       )}
       {editing && <PolicyEditor row={editing} onClose={() => setEditing(null)} />}
-      <ConfirmModal
-        open={resetting !== null}
-        onClose={() => { setResetting(null); setResetError(null); }}
-        onConfirm={() => {
-          if (!resetting) return;
-          if (!evidenceReady(resetEvidence)) {
-            setResetError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
-            return;
-          }
-          reset.mutate({ stage: resetting.stage, proof: resetEvidence });
-          setResetting(null);
-          setResetError(null);
-        }}
-        title={resetting ? t("resetTitle", resetting.isDefault ? t("defaultsRow") : resetting.stage) : ""}
-        confirmLabel={t("resetConfirm")}
-        body={resetting ? (
-          <div data-testid="route-policy-reset-confirm">
-            <p style={{ ...small, marginTop: 0 }}>{t("holdEvidenceHint")}</p>
-            <ChangeEvidenceFields stage={`policy-reset-${resetting.stage}`} value={resetEvidence} error={resetError}
-              onChange={(next) => { setResetEvidence(next); setResetError(null); }} />
-          </div>
-        ) : null}
-      />
+      {resetting && <ResetConfirm row={resetting} onClose={() => setResetting(null)}
+        onReset={(stage, proof) => reset.mutate(proof ? { stage, proof } : { stage })} />}
       {testing && <RouteTestDrawer stages={stages} onClose={() => setTesting(false)}
         onOpenRequest={(id, at) => { setTesting(false); onOpenRequest(id, at); }} />}
     </Section>

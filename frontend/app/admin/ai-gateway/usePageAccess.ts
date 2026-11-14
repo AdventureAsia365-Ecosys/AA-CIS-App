@@ -7,16 +7,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { apiGet, useAdminIdentity } from "../../_kit";
-import { ACCESS_API, ACTION_CAPABILITY, mayUse, type PageAccess, type PageAction } from "@/lib/aiGateway";
-import { can } from "@/lib/rbac";
+import { ACCESS_API, ACTION_CAPABILITY, mayUse, type PageAction } from "@/lib/aiGateway";
+import type { PageAccessHint } from "@/lib/capTighten";
+import { can, isTightenOnly } from "@/lib/rbac";
 
 export const ACCESS_KEY = ["ai-gateway", "access"] as const;
 
-export function usePageAccess(): { can: (action: PageAction) => boolean; readOnly: boolean } {
+export function usePageAccess(): { can: (action: PageAction) => boolean; readOnly: boolean; tightenOnly: boolean } {
   const role = useAdminIdentity().role;
   const q = useQuery({
     queryKey: ACCESS_KEY,
-    queryFn: () => apiGet<PageAccess>(ACCESS_API, { admin: true }),
+    queryFn: () => apiGet<PageAccessHint>(ACCESS_API, { admin: true }),
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -24,5 +25,6 @@ export function usePageAccess(): { can: (action: PageAction) => boolean; readOnl
     (action: PageAction) => mayUse(q.data, action, q.isError, (a) => can(role, ACTION_CAPABILITY[a])),
     [q.data, q.isError, role],
   );
-  return { can: allowed, readOnly: q.data?.read_only === true };
+  const tightenOnly = typeof q.data?.tighten_only === "boolean" ? q.data.tighten_only : isTightenOnly(role);
+  return { can: allowed, readOnly: q.data?.read_only === true, tightenOnly };
 }

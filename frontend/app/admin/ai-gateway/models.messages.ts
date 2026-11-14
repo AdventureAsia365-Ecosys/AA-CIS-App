@@ -204,6 +204,10 @@ export const MODELS = defineMessages(
       "A model change of a writer, judge or writing-path stage needs the eval run that backs it. When no eval can run (an outage), give a break-glass reason instead: it is kept in the audit log and raises an admin alert. While a rerun wave is open these changes are refused.",
     evalRunId: "Eval run id",
     evalRunPlaceholder: "ID of a finished eval run",
+    evalRunRule: "It must be a writing-memory eval run that passed and completed, or another eval run that did not "
+      + "fail and found no regression. Copy its id from",
+    evalRunWhere: "Writing memory › Releases",
+    evalRunPick: (n: number) => `or pick one of the ${n} recent qualifying runs offered in the box.`,
     breakGlass: "Break-glass reason",
     breakGlassPlaceholder: "Why this change cannot wait for an eval run",
     evidenceMissing: (min: number) => `Give an eval run id, or a break-glass reason of at least ${min} characters.`,
@@ -421,6 +425,10 @@ export const MODELS = defineMessages(
       "Đổi model của một bước viết, chấm hoặc một bước trên đường viết nội dung cần lượt đánh giá (eval run) làm căn cứ. Khi không chạy được đánh giá (sự cố), hãy ghi lý do khẩn cấp: lý do được lưu trong nhật ký kiểm tra và tạo một cảnh báo cho quản trị. Khi đang có một đợt chạy lại (wave), các thay đổi này bị từ chối.",
     evalRunId: "Mã lượt đánh giá",
     evalRunPlaceholder: "Mã của một lượt đánh giá đã xong",
+    evalRunRule: "Phải là một lượt đánh giá writing-memory đã đạt (pass) và chạy hết, hoặc một lượt đánh giá khác "
+      + "không thất bại và không phát hiện thoái lui. Chép mã của nó từ",
+    evalRunWhere: "Bộ nhớ viết › Bản phát hành",
+    evalRunPick: (n: number) => `hoặc chọn một trong ${n} lượt đạt gần đây được gợi ý trong ô.`,
     breakGlass: "Lý do khẩn cấp",
     breakGlassPlaceholder: "Vì sao thay đổi này không chờ được lượt đánh giá",
     evidenceMissing: (min: number) => `Nhập mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} ký tự.`,

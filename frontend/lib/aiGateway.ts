@@ -878,6 +878,7 @@ export interface TenantBudgetRow {
   month_calls: number;
   used_pct: number | null;
   state: TenantBudgetState;
+  has_row?: boolean; effective?: TenantBudgetEffective | null; // S280 Budgets tab: stored row? budget in force
 }
 
 /** GET /api/admin/ai-gateway/tenant-budgets/{tenant_id} (Tenant 360 › Cost). */
@@ -1535,7 +1536,6 @@ export function stagesByDataClass(
   }
   return out;
 }
-
 
 // ── AA-1076: the Batches tab (the gateway batch lane) ──────────────────────────────────────────────────────────────
 // GET /api/admin/ai-gateway/batches (backend api/services/ai_gateway_batches.py): one row per gateway batch (an

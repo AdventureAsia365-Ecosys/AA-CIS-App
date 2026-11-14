@@ -168,13 +168,14 @@ export const M = defineMessages(
     r0BaselineTitle: "R0 sanity check, $0: re-runs the gates on stored T9 texts and compares with their stored "
       + "ledgers. CPU-heavy on the worker for up to ~20 minutes: run it outside a wave",
     mineRules: "Mine rules",
-    mineRulesTitle: "A paid run: at most 50 calls and $1, within the $25 month cap",
+    mineRulesTitle: (calls: string, runCap: string, monthCap: string) =>
+      `A paid run: at most ${calls} calls and ${runCap}, within the ${monthCap} month cap`,
     mineConfirmTitle: "Start a paid mining run?",
-    mineBody: (calls: number, runCap: string) =>
+    mineBody: (calls: string, runCap: string) =>
       `One run drafts a rule per cluster over threshold on the judge model: at most ${calls} calls and ${runCap}.`,
     spentLead: "Spent this month: ",
-    spentRest: (cap: string) => ` of the ${cap} cap. A run is refused when 3 runs already ran this month. Over the `
-      + "month cap, the run stops before its first paid call but still counts as one of the 3.",
+    spentRest: (cap: string, runs: string) => ` of the ${cap} cap. A run is refused when ${runs} runs already ran this `
+      + `month. Over the month cap, the run stops before its first paid call but still counts as one of the ${runs}.`,
   },
   {
     loggedReadNotice: "Vai trò của bạn chỉ đọc nội dung của tenant trên trang này, và mỗi lần đọc đều được ghi vào nhật "
@@ -319,12 +320,13 @@ export const M = defineMessages(
     r0BaselineTitle: "Kiểm tra R0, $0: chạy lại các gate trên văn bản T9 đã lưu và so với sổ gate đã lưu. Tốn CPU "
       + "của worker tới ~20 phút: chạy ngoài lúc có wave",
     mineRules: "Khai thác quy tắc",
-    mineRulesTitle: "Lần chạy tính phí: tối đa 50 lượt gọi và $1, trong trần $25 mỗi tháng",
+    mineRulesTitle: (calls: string, runCap: string, monthCap: string) =>
+      `Lần chạy tính phí: tối đa ${calls} lượt gọi và ${runCap}, trong trần ${monthCap} mỗi tháng`,
     mineConfirmTitle: "Bắt đầu một lần khai thác tính phí?",
-    mineBody: (calls: number, runCap: string) =>
+    mineBody: (calls: string, runCap: string) =>
       `Mỗi lần chạy soạn một quy tắc cho mỗi cụm vượt ngưỡng bằng model judge: tối đa ${calls} lượt gọi và ${runCap}.`,
     spentLead: "Đã chi tháng này: ",
-    spentRest: (cap: string) => ` trên trần ${cap}. Lần chạy bị từ chối khi tháng này đã chạy 3 lần. Khi vượt trần `
-      + "tháng, lần chạy dừng trước lượt gọi tính phí đầu tiên nhưng vẫn tính là một trong 3 lần.",
+    spentRest: (cap: string, runs: string) => ` trên trần ${cap}. Lần chạy bị từ chối khi tháng này đã chạy ${runs} `
+      + `lần. Khi vượt trần tháng, lần chạy dừng trước lượt gọi tính phí đầu tiên nhưng vẫn tính là một trong ${runs} lần.`,
   },
 );

@@ -28,7 +28,7 @@
       "sha256": "c75447387b3598f64c6c89ee8045fe2b4e410de0d2140f3c74cb052ec3e7f7fc"
     },
     "DataTable.tsx": {
-      "sha256": "156ff6d7ad8796fe71c071bca6cabb85edc3eb923301a0774870d009e6c5d6a0"
+      "sha256": "f50d7c2d859f6992b30abde601dda85e0c1c33532200987c65d7b3ff174aaae8"
     },
     "DateField.tsx": {
       "sha256": "89fb1df19fd09b1fe1f1348d506b714aee238c17fb7e05590a254ac82a9369e3"
@@ -105,6 +105,9 @@
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
     },
+    "dataTableSearch.ts": {
+      "sha256": "6f78eb3a60a81ac4a6c59e7ed52ce8d4006f0e10eb4dc16bccec92450e050c85"
+    },
     "eslint-kit.mjs": {
       "sha256": "d48d0070d126524dab68dc1dd5478ff985119d7b8ecc04dd95d695d4dfe99934"
     },
@@ -118,7 +121,7 @@
       "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
     },
     "kit.messages.ts": {
-      "sha256": "8bed1617d7020509551e894090261339e49a0f058077c7eea8bbe877073eccd0"
+      "sha256": "a79b0e789e5d92bbfd54b696968733a0f01d229db8125dcdacb936292177fb49"
     },
     "kitGallery.messages.ts": {
       "sha256": "227e0c13d57e7cd7f06fc3875cd467671406801571daf9f399c0eeea6d4a1043"

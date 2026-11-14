@@ -11,6 +11,7 @@ import {
 } from "../../../_kit";
 import {
   DEFAULT_UNIT, PLANS_API, PLANS_KEY, PRODUCTS, TIERS, featuresFor, lockedLimitKeys, planBody, planDraftOf, sendJson,
+  limitRangeText, unitText,
   type Feature, type Plan, type PlanDraft, type PlanDraftError, type Product,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
@@ -29,6 +30,14 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
   plan: Plan | null; product: Product; catalogue: Feature[]; onClose: () => void;
 }) {
   const t = useT(PLANS);
+  const units = useMemo(() => ({ usdMonth: t("unit_usdMonth"), perMinute: t("unit_perMinute"), seats: t("unit_seats"),
+    days: t("unit_days"), perMonth: t("unit_perMonth") }), [t]);
+  const ranges = useMemo(() => ({ whole: t("range_whole"), wholeMax: (m: string) => t("range_wholeMax", m),
+    decimal: t("range_decimal") }), [t]);
+  const rangeOf = (key: string) => {
+    const f = catalogue.find((x) => x.feature_key === key);
+    return f ? limitRangeText(f, ranges) : ranges.decimal;
+  };
   const toast = useToast();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<PlanDraft>(() => planDraftOf(plan, product));
@@ -41,7 +50,7 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
   const locked = useMemo(() => lockedLimitKeys(plan, catalogue), [plan, catalogue]);
   const err = (k: PlanDraftError) => {
     if (error !== k) return undefined;
-    if (k === "limit") return t("err_limit", field ?? "");
+    if (k === "limit") return t("err_limit", field ?? "", rangeOf(field ?? ""));
     if (k === "enforcedRequired") return t("err_enforcedRequired", field ?? "");
     if (k === "limitRemoved") return t("err_limitRemoved", field ?? "");
     return t(ERR[k]);
@@ -170,7 +179,7 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
                 && field === f.feature_key;
               const keep = on && locked.has(f.feature_key);
               return (
-                <div key={f.feature_key} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 140px",
+                <div key={f.feature_key} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 150px",
                   gap: 10, alignItems: "center", padding: "6px 8px", borderRadius: 8,
                   background: on ? K.panel : "transparent", border: `1px solid ${bad ? K.danger : K.line}` }}>
                   <Checkbox checked={on} disabled={lock || keep} title={keep ? t("limitLocked") : undefined}
@@ -183,9 +192,17 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
                       </span>
                     } />
                   {f.value_kind !== "flag" ? (
-                    <Input size="sm" inputMode="decimal" aria-label={f.feature_key} placeholder={t("limitPlaceholder")}
-                      disabled={lock || !on} value={draft.features[f.feature_key] ?? ""} invalid={bad}
-                      onChange={(e) => setDraft((d) => ({ ...d, features: { ...d.features, [f.feature_key]: e.target.value } }))} />
+                    // S280: the unit and the values it takes under the box ("USD a month · 0 or more…", "requests a
+                    // minute · a whole number up to 10000") and the feature's description as the box's name, so "50"
+                    // is never a guess between dollars, calls and seats.
+                    <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                      <Input size="sm" inputMode="decimal" aria-label={`${f.description} (${unitText(f.unit, units)})`}
+                        placeholder={t("limitPlaceholder")}
+                        disabled={lock || !on} value={draft.features[f.feature_key] ?? ""} invalid={bad}
+                        onChange={(e) => setDraft((d) => ({ ...d, features: { ...d.features, [f.feature_key]: e.target.value } }))} />
+                      <span style={{ fontSize: 11, color: K.muted }}>
+                        {unitText(f.unit, units)} · {limitRangeText(f, ranges)}</span>
+                    </span>
                   ) : <span />}
                 </div>
               );

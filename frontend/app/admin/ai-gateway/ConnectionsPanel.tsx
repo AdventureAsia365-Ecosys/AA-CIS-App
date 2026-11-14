@@ -14,6 +14,8 @@
 // AA-1025 C1 follow-up: every write control (on / off, Save, Run test, Check now) shows only when GET
 // /api/admin/ai-gateway/access says this session may use it (usePageAccess); a read-only session sees the values as
 // text and the form read-only.
+// S280 (AA-1096): a tighten-only role (no settings.write) sees each limit now in force, the budget stop locked while
+// on, and what its change would loosen before Save (tightenHints.tsx); a refusal reads in the UI language.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +27,8 @@ import {
 import { CONNECTIONS } from "./connections.messages";
 import { useErrorClassText } from "./useErrorClassText";
 import { usePageAccess } from "./usePageAccess";
+import { useRefusalText } from "./useRefusalText";
+import { AlertLine, NoteLine, useConnectionTighten } from "./tightenHints";
 import { type CatalogRow } from "./llmShared";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -194,6 +198,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
   const toast = useToast();
   const qc = useQueryClient();
   const locked = !usePageAccess().can("connections");
+  const refusal = useRefusalText();   // S280: a tighten-only refusal in the UI language
   const [form, setForm] = useState<EditForm>(() => formOf(conn));
   const [apiError, setApiError] = useState("");
   const { body, errors } = patchBody(conn, form);
@@ -209,8 +214,11 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
       qc.invalidateQueries({ queryKey: ["llm-connections"] });
       qc.invalidateQueries({ queryKey: ["llm-connection-costs"] });
     },
-    onError: (e) => setApiError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => setApiError(refusal(e)),
   });
+  // S280: a tighten-only role (no settings.write) sees each limit now in force and what its change would loosen
+  // before Save (llm_connections._refuse_loosening refuses it with a 403); tightenHints.tsx.
+  const tc = useConnectionTighten(conn, body, locked, mut.isPending);
 
   const errorText = (f: EditField) => {
     const e = errors[f];
@@ -222,7 +230,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
   };
   const set = (f: EditField) => (e: { target: { value: string } }) => setForm((x) => ({ ...x, [f]: e.target.value }));
   const num = (f: EditField, label: string) => (
-    <Field label={label} error={errorText(f)} hint={t("emptyMeansDefault")}>
+    <Field label={label} error={errorText(f)} hint={tc.hintOf(f)}>
       <Input inputMode="decimal" value={form[f]} onChange={set(f)} disabled={mut.isPending || locked}
              data-testid={`conn-field-${f}`} />
     </Field>
@@ -231,6 +239,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <p style={{ ...small, margin: 0 }}>{t("editIntro")}</p>
+      <NoteLine text={tc.note} testId="conn-tighten-note" />
       {takesSecret(conn) && (
         <Field label={t("secretName")} hint={`${t("secretHint")} ${t("viaMigration")}`} locked>
           <Input value={conn.secret_name ?? ""} readOnly spellCheck={false} autoComplete="off"
@@ -252,8 +261,8 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
         {conn.cost_policy && num("budget_alert_pct", t("alertPct"))}
       </div>
       {conn.cost_policy && (
-        <Field label={t("hardStop")} hint={t("hardStopHint")}>
-          <Select value={form.budget_hard_stop} disabled={mut.isPending || locked}
+        <Field label={t("hardStop")} hint={tc.stopHint}>
+          <Select value={form.budget_hard_stop} disabled={tc.stopDisabled}
                   onChange={(e) => setForm((x) => ({ ...x, budget_hard_stop: e.target.value === "false" ? "false" : "true" }))}
                   options={[{ value: "true", label: t("hardStopYes") }, { value: "false", label: t("hardStopNo") }]}
                   style={{ maxWidth: "100%", minWidth: 0 }} />
@@ -274,12 +283,13 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
       <Field label={t("notes")}>
         <Textarea value={form.notes} onChange={set("notes")} disabled={mut.isPending || locked} rows={2} />
       </Field>
+      <AlertLine text={tc.worse} testId="conn-loosened" />
       {apiError && <span data-testid="conn-save-error" style={{ fontSize: 12, color: K.danger }}>{apiError}</span>}
       {locked ? (
         <span role="status" data-testid="conn-save-read-only" style={small}>{t("readOnly")}</span>
       ) : (
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <Button variant="primary" size="sm" disabled={!changed || hasErrors || mut.isPending} onClick={() => mut.mutate()}>
+          <Button variant="primary" size="sm" disabled={!changed || hasErrors || tc.blocked} onClick={() => mut.mutate()}>
             {mut.isPending ? t("saving") : t("save")}
           </Button>
           {!changed && <span style={small}>{t("noChange")}</span>}

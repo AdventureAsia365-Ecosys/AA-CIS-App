@@ -15,6 +15,7 @@ export const T360_WORDS = {
   dplRange: (max: number) => `Daily publish limit must be an integer from 1 to ${max}, or empty for the default.`,
   perDayDefault: (n: number) => `${n}/day (default)`,
   perDay: (n: number) => `${n}/day`,
+  platformDefault: "the platform default",
 };
 export type T360Words = { [K in keyof typeof T360_WORDS]: (typeof T360_WORDS)[K] };
 
@@ -76,9 +77,19 @@ export function validateRpm(rpm: string, w: T360Words = T360_WORDS): string | nu
   return null;
 }
 
-/** AA-819 — mirrors the code default in api/routers/v1_publish.py publish() (used while
- *  shared.tenants.daily_publish_limit is NULL, or before migration 230 is applied). */
-export const DAILY_PUBLISH_LIMIT_DEFAULT = 20;
+/** S280 (AA-1096): the platform default in force, as the API reports it (the setting
+ *  cis.publish.daily_limit_default, editable on Platform › Settings): `daily_publish_limit_default`, else the limit in
+ *  force when the tenant has no override; null when the API reports neither (an older API). Never a number copied
+ *  into the UI (it used to be a constant 20). */
+export function dailyPublishDefault(row: {
+  daily_publish_limit?: number | null; daily_publish_limit_effective?: number; daily_publish_limit_default?: number;
+}): number | null {
+  if (typeof row.daily_publish_limit_default === "number") return row.daily_publish_limit_default;
+  if (row.daily_publish_limit === null && typeof row.daily_publish_limit_effective === "number") {
+    return row.daily_publish_limit_effective;
+  }
+  return null;
+}
 /** AA-819 — a typo guard for the override, not a commercial limit. */
 export const DAILY_PUBLISH_LIMIT_MAX = 1000;
 
@@ -97,12 +108,20 @@ export function parseDailyPublishLimit(value: string): number | null {
   return value.trim() === "" ? null : Number(value);
 }
 
-/** "20/day (default)" when there is no override (null), "5/day" when there is, and "—" when the
+/** "N/day (default)" when there is no override (null; N = the default in force, "the platform default" when the API
+ *  did not report it), "5/day" when there is, and "—" when the
  *  server does not report the field at all (undefined: the AA-819 backend is not deployed yet, so
  *  no limit is enforced and claiming "20/day" would be false). */
-export function fmtDailyPublishLimit(limit: number | null | undefined, w: T360Words = T360_WORDS): string {
+export function fmtDailyPublishLimit(limit: number | null | undefined, w: T360Words = T360_WORDS,
+  defaultLimit: number | null = null): string {
   if (limit === undefined) return "—";
-  return limit === null ? w.perDayDefault(DAILY_PUBLISH_LIMIT_DEFAULT) : w.perDay(limit);
+  if (limit !== null) return w.perDay(limit);
+  return defaultLimit == null ? w.platformDefault : w.perDayDefault(defaultLimit);
+}
+
+/** The default as the hint and placeholder print it: "12/day", or "the platform default" when unknown. */
+export function dailyPublishDefaultText(defaultLimit: number | null, w: T360Words = T360_WORDS): string {
+  return defaultLimit == null ? w.platformDefault : w.perDay(defaultLimit);
 }
 
 // ── Cost ──────────────────────────────────────────────────────────────────────

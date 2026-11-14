@@ -9,6 +9,8 @@
 // read-only session sees the values only. The PATCH sends only what changed (lib/aiGateway appProfileBody). A backend
 // without the table (migration 345) answers 503: a clean notice instead of an error.
 // Built on the kit only (Section, DataTable, Badge, Drawer, Field / Select / Input / Textarea, ConfirmModal, Toast).
+// S280 (AA-1096): a tighten-only role (no settings.write) sees the budget now in force, AI off and bulk pause locked
+// while on, and what its change would loosen before Save (tightenHints.tsx); a refusal reads in the UI language.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +26,8 @@ import {
 } from "@/lib/aiGateway";
 import { DEGRADE, PROFILE_APP, PROFILES } from "./appProfiles.messages";
 import { usePageAccess } from "./usePageAccess";
+import { useRefusalText } from "./useRefusalText";
+import { AlertLine, NoteLine, useProfileTighten } from "./tightenHints";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 // The table's own minimum width: below it the kit DataTable scrolls inside its card (never the page).
@@ -41,6 +45,7 @@ function useDegradeText(): (mode: string) => string {
 
 function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () => void }) {
   const t = useT(PROFILES);
+  const refusal = useRefusalText();
   const toast = useToast();
   const qc = useQueryClient();
   const appName = useAppName();
@@ -61,15 +66,18 @@ function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () 
     },
     onError: (e) => {
       setConfirming(false);
-      setApiError(isReadOnlyRefusal(e) ? t("readOnly") : e instanceof Error ? e.message : String(e));
+      setApiError(isReadOnlyRefusal(e) ? t("readOnly") : refusal(e));
     },
   });
+  // S280: a tighten-only role (no settings.write) may switch AI off, pause bulk work and set or lower the budget only
+  // (admin_ai_gateway._check_profile_tighten_only); what it may not loosen is shown before Save (tightenHints.tsx).
+  const tg = useProfileTighten(profile, body, mut.isPending);
 
   const switching = draft.ai_enabled !== profile.ai_enabled;
   const confirmTitle = switching ? (draft.ai_enabled ? t("onTitle", name) : t("offTitle", name)) : t("saveTitle", name);
   const confirmBody = switching ? (draft.ai_enabled ? t("onBody") : t("offBody")) : t("saveBody");
   const confirmLabel = switching ? (draft.ai_enabled ? t("onConfirm") : t("offConfirm")) : t("save");
-  const blocked = typeof body === "string" || mut.isPending;
+  const blocked = typeof body === "string" || tg.blocked;
 
   return (
     <Drawer open onClose={onClose} title={t("editTitle", name)} width={520}
@@ -82,8 +90,9 @@ function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () 
         </div>
       }>
       <div data-testid="app-profile-editor" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <Field label={t("fieldAi")}>
-          <Select value={draft.ai_enabled ? "on" : "off"} disabled={mut.isPending} data-testid="app-profile-ai"
+        <NoteLine text={tg.note} testId="app-profile-tighten-note" />
+        <Field label={t("fieldAi")} hint={tg.aiHint}>
+          <Select value={draft.ai_enabled ? "on" : "off"} disabled={tg.aiDisabled} data-testid="app-profile-ai"
             onChange={(e) => set({ ai_enabled: e.target.value === "on" })}
             options={[{ value: "on", label: t("aiOnOption") }, { value: "off", label: t("aiOffOption") }]} />
         </Field>
@@ -95,12 +104,12 @@ function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () 
           </Field>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 12 }}>
-          <Field label={t("fieldBulk")} hint={t("bulkHint")}>
-            <Select value={draft.bulk_paused ? "paused" : "running"} disabled={mut.isPending}
+          <Field label={t("fieldBulk")} hint={tg.bulkHint}>
+            <Select value={draft.bulk_paused ? "paused" : "running"} disabled={tg.bulkDisabled}
               onChange={(e) => set({ bulk_paused: e.target.value === "paused" })}
               options={[{ value: "running", label: t("bulkRun") }, { value: "paused", label: t("bulkPause") }]} />
           </Field>
-          <Field label={t("fieldBudget")} hint={t("budgetHint")} error={body === "budget" ? t("budgetBad") : undefined}>
+          <Field label={t("fieldBudget")} hint={tg.budgetHint} error={body === "budget" ? t("budgetBad") : undefined}>
             <Input inputMode="decimal" value={draft.budget} placeholder={t("noBudget")} disabled={mut.isPending}
               onChange={(e) => set({ budget: e.target.value })} style={{ fontFamily: mono }}
               data-testid="app-profile-budget" />
@@ -112,6 +121,7 @@ function ProfileEditor({ profile, onClose }: { profile: AppProfile; onClose: () 
             options={DEGRADE_MODES.map((m) => ({ value: m, label: degradeText(m) }))} />
         </Field>
         {body === "unchanged" && <span style={small}>{t("unchanged")}</span>}
+        <AlertLine text={tg.worse} testId="app-profile-loosened" />
         {apiError && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{apiError}</span>}
       </div>
       <ConfirmModal open={confirming} onClose={() => setConfirming(false)} onConfirm={() => mut.mutate()}

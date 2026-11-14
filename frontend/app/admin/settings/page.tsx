@@ -44,12 +44,21 @@ interface SettingsData {
   } | null;
   pipeline_gates: {
     brand_audit_threshold: number;
+    /** S280: the Platform › Settings key that holds it (absent from an older API). */
+    brand_audit_threshold_setting?: string | null;
     dedup_key: string;
     pipeline_flow: string[];
   };
 }
 
 // ─── Pipeline Gates Tab ───────────────────────────────────────────────────────
+
+/** Platform › Settings opened on the CIS tab, searched for the key when the API names it. */
+function thresholdSettingHref(key: string | null | undefined): string {
+  const qs = new URLSearchParams({ app: "cis" });
+  if (key) qs.set("key", key);
+  return `/admin/platform/settings?${qs.toString()}`;
+}
 
 function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) {
   const t = useT(SETTINGS);
@@ -62,10 +71,14 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
             {gates.brand_audit_threshold.toFixed(1)}
           </span>
           <span style={{ fontSize: 14, color: K.muted }}>/&nbsp;10</span>
-          <Badge tone="warning">{t("hardcoded")}</Badge>
+          {/* S280: a registry setting since S279 L2 (it said "hardcoded"): changed on Platform › Settings. */}
+          <Badge tone="info" dot={false}>{t("settingBadge")}</Badge>
         </div>
         <p style={{ fontSize: 12, color: K.muted2, marginTop: 8, fontFamily: sans }}>
-          {t("thresholdHelp")}
+          {t("thresholdHelp")}{" "}
+          <a href={thresholdSettingHref(gates.brand_audit_threshold_setting)}
+            style={{ color: K.accentDeep, fontWeight: 600 }} data-testid="settings-threshold-link">
+            {t("changeOnPlatformSettings")}</a>
         </p>
       </Section>
 

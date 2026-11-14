@@ -27,8 +27,9 @@ import {
   type RoutePreview, type RouteVersion, type RouteVersionsResp,
 } from "@/lib/routeControl";
 import {
-  ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, type ChangeEvidence,
+  BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, type ChangeEvidence,
 } from "./ChangeEvidenceFields";
+import { actorLabel } from "@/lib/aiGateway";
 import { STAGE_GROUPS, STAGE_LABELS } from "./llmShared";
 import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
 import { RC } from "./routeControl.messages";
@@ -264,6 +265,10 @@ function VersionsSection({ current, canEdit, modelLabel, onRevert }: {
     retry: false,
   });
   const actionText = (v: RouteVersion) => t(`action_${v.action}` as "action_save");
+  // S280: "By" names a person (the API's created_by_name), never a raw "admin:<id>".
+  const byText = (v: RouteVersion) => actorLabel(
+    { updated_by: v.created_by, updated_by_kind: v.created_by_kind, updated_by_name: v.created_by_name },
+    t("staffMember")) ?? "—";
   const columns = useMemo<ColumnDef<RouteVersion>[]>(() => [
     { accessorKey: "version", header: t("colVersion"), enableSorting: false,
       cell: (x) => (
@@ -275,7 +280,8 @@ function VersionsSection({ current, canEdit, modelLabel, onRevert }: {
     { accessorKey: "created_at", header: t("colWhen"), enableSorting: false,
       cell: (x) => <span style={small}><DateText value={x.row.original.created_at} relative /></span> },
     { accessorKey: "created_by", header: t("colBy"), enableSorting: false,
-      cell: (x) => <span style={{ ...small, overflowWrap: "anywhere" }}>{x.row.original.created_by}</span> },
+      cell: (x) => <span style={{ ...small, overflowWrap: "anywhere" }} title={x.row.original.created_by}>
+        {byText(x.row.original)}</span> },
     { accessorKey: "action", header: t("colAction"), enableSorting: false,
       cell: (x) => {
         const v = x.row.original;
@@ -318,7 +324,7 @@ function VersionsSection({ current, canEdit, modelLabel, onRevert }: {
           footer={<div style={{ display: "flex", justifyContent: "flex-end" }}>
             <Button variant="ghost" onClick={() => setViewing(null)}>{t("close")}</Button></div>}>
           <div style={{ display: "grid", gap: 10 }}>
-            <div style={small}>{actionText(viewing)} · {viewing.created_by} · <DateText value={viewing.created_at} /></div>
+            <div style={small}>{actionText(viewing)} · {byText(viewing)} · <DateText value={viewing.created_at} /></div>
             {viewing.note && <div style={{ fontSize: 13, color: K.ink }}>{viewing.note}</div>}
             <DiffList diff={viewing.diff} modelLabel={modelLabel} />
           </div>
@@ -334,6 +340,11 @@ type Pending =
   | { kind: "save" }
   | { kind: "preset"; preset: PresetKey; label: string }
   | { kind: "revert"; version: number };
+
+/** S280: the evidence block's message while Confirm stays off (the evidence is not enough yet), else none. */
+function missingEvidence(evidence: ChangeEvidence, text: string): string | null {
+  return evidenceReady(evidence) ? null : text;
+}
 
 export default function RouteControlTab() {
   const t = useRc();
@@ -563,7 +574,9 @@ export default function RouteControlTab() {
               {needsEv && (
                 <>
                   <div style={{ fontSize: 12.5, color: K.ink }}>{t("evidenceNeeded", shown.evidence_stages.join(", "))}</div>
-                  <ChangeEvidenceFields stage="route-control" value={evidence} onChange={setEvidence} />
+                  {/* S280: Confirm stays off until the evidence is enough; say what is missing meanwhile. */}
+                  <ChangeEvidenceFields stage="route-control" value={evidence} onChange={setEvidence}
+                    error={missingEvidence(evidence, t("evidenceMissing", BREAK_GLASS_MIN_CHARS))} />
                 </>
               )}
             </>

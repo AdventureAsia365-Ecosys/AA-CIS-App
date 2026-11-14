@@ -7,8 +7,15 @@
 // sits in the confirm dialog of both editors. Kit controls only.
 // AA-1052 W6: the same block backs a catalog switch of a model that serves a gated stage (CatalogTable) and a hold
 // switch change of a gated stage's route policy (RouteAlertsCard); a gated edit is refused (409) during a rerun wave.
+// S280 (AA-1096): the eval run field says which run qualifies (a passed, completed writing-memory run, or a run without
+// a regression), links to Writing memory › Releases and offers the recent qualifying runs (GET …/experiments, the
+// same read as Models & trials › Experiments) as suggestions; typing an id stays possible.
 
-import { Field, Input, K, Textarea, useT } from "../../_kit";
+import { useQuery } from "@tanstack/react-query";
+import { useId } from "react";
+import { Field, Input, K, Textarea, apiGet, useT } from "../../_kit";
+import { EXPERIMENTS_API, type ExperimentsResp } from "@/lib/aiGateway";
+import { qualifyingEvalRuns } from "@/lib/capTighten";
 import { isGatedStage } from "@/lib/editGate";
 import { MODELS } from "./models.messages";
 
@@ -50,15 +57,36 @@ export function ChangeEvidenceFields({ stage, value, onChange, error }: {
   error?: string | null;
 }) {
   const t = useT(MODELS);
+  const listId = useId();
+  const runs = useQuery({
+    queryKey: ["ai-gateway", "experiments"],
+    queryFn: () => apiGet<ExperimentsResp>(EXPERIMENTS_API, { admin: true }),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const choices = qualifyingEvalRuns(runs.data?.eval_runs?.rows ?? []).slice(0, 20);
   return (
     <div data-testid={`llm-evidence-${stage}`} style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
       <div>
         <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink2 }}>{t("evidenceTitle")}</div>
         <div style={{ fontSize: 12, color: K.muted, lineHeight: 1.5 }}>{t("evidenceHint")}</div>
       </div>
-      <Field label={t("evalRunId")}>
+      <Field label={t("evalRunId")}
+        hint={<>
+          {t("evalRunRule")}{" "}
+          <a href="/admin/lab/writing-memory?tab=releases" target="_blank" rel="noopener noreferrer"
+            style={{ color: K.accentDeep }}>{t("evalRunWhere")}</a>
+          {choices.length > 0 ? ` ${t("evalRunPick", choices.length)}` : ""}
+        </>}>
         <Input size="sm" data-testid={`llm-evidence-run-${stage}`} value={value.evalRunId} maxLength={64}
+          list={listId} spellCheck={false} autoComplete="off"
           placeholder={t("evalRunPlaceholder")} onChange={(e) => onChange({ ...value, evalRunId: e.target.value })} />
+        <datalist id={listId}>
+          {choices.map((r) => (
+            <option key={r.id} value={r.id}
+              label={`${r.pipeline} · ${r.prompt_version}${r.writer ? ` · ${r.writer}` : ""} · ${r.verdict ?? "—"}`} />
+          ))}
+        </datalist>
       </Field>
       <Field label={t("breakGlass")} error={error || undefined}>
         <Textarea data-testid={`llm-evidence-reason-${stage}`} value={value.breakGlass} rows={2}

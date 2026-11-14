@@ -32,7 +32,7 @@ import {
   jobTenant, subjectLabel, totalsSentence,
   type ErasureJob, type ErasureSettings, type ErasureWords, type JobsPage, type TenantOption,
 } from "@/lib/dataErasure";
-import { TENANTS_API, TENANTS_QUERY_KEY } from "@/lib/tenants";
+import { TENANTS_API, TENANTS_QUERY_KEY, tenantSearchText } from "@/lib/tenants";
 import { TenantName } from "../../_components/TenantSelect";
 import ApplyPanel, { type SendResult } from "./ApplyPanel";
 import ErasurePlan from "./ErasurePlan";
@@ -459,6 +459,7 @@ export default function DataErasure() {
           data={history.data?.jobs ?? []}
           columns={columns}
           getRowId={(j) => j.id}
+          searchText={(j) => tenantSearchText(jobTenant(j), tenantById, j.id, j.created_by)}
           loading={history.isLoading}
           error={history.error ? (history.error as Error).message : null}
           onRetry={() => void history.refetch()}
