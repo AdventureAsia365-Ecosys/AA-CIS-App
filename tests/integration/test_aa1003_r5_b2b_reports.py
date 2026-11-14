@@ -6,6 +6,7 @@ tenant provisioning saga). Tenants are provisioned with invented names; their AI
 other test writes. The Booking contract views (bk-017, bk-042) are not part of the CIS replay: when they are missing,
 stand-in views with the contract's columns are created inside the transaction.
 """
+import json
 import os
 import sys
 import uuid
@@ -95,15 +96,16 @@ async def test_fi08_reads_subscriptions_entitlements_ledger_and_caps(conn):
     facts = await b2b_ops.collect_fi08(conn, MAR1, MAR31)
     assert _unread(facts) == {}, facts
     out = b2b_ops.render_fi08(reg, reg.report("FI-08"), MAR1, MAR31, facts, NOW)
-    rows = {r["tenant_id"]: r for r in out.output["tenants"]["rows"]}
-    assert {spender, quiet} <= set(rows)
-    s = rows[spender]
+    rows = {r["tenant"]: r for r in out.output["tenants"]["rows"]}
+    assert {spender[:8], quiet[:8]} <= set(rows)
+    assert spender not in json.dumps(out.output, default=str)       # stored output: id prefix only
+    s = rows[spender[:8]]
     assert s["spend_usd"] == pytest.approx(13.0) and s["calls"] == 2 and s["refused_calls"] == 1
     assert s["cap"]["monthly_usd"] == pytest.approx(15.0) and s["cap"]["source"] == "plan"
     assert s["state"] == "alert" and s["used_pct"] == pytest.approx(86.7)
     assert s["subscriptions"] and s["subscriptions"][0]["product"] == "content"
     assert s["entitlements"]["total"] >= 1
-    assert rows[quiet]["spend_usd"] == 0 and rows[quiet]["state"] == "ok"
+    assert rows[quiet[:8]]["spend_usd"] == 0 and rows[quiet[:8]]["state"] == "ok"
     assert out.output["tenants"]["platform_usd"] >= 2.5
     k = {x["id"]: x for x in out.output["kpis"]}
     assert k["K-TEN-AICAP"]["status"] in ("amber", "red") and k["K-TEN-AICAP"]["value"] >= 1
@@ -124,7 +126,8 @@ async def test_bk03_and_fi07_read_the_booking_contract_views(conn):
     assert _unread(bk) == {}, bk
     out = b2b_ops.render_bk03(reg, reg.report("BK-03"), MON, SUN, bk, NOW)
     assert out.output["report_id"] == "BK-03" and out.output["receivables"]["rows"]
-    mine = [r for r in out.output["receivables"]["rows"] if r["tenant_id"] == tid]
+    assert tid not in json.dumps(out.output, default=str)           # stored output: id prefix only
+    mine = [r for r in out.output["receivables"]["rows"] if r["tenant"] == tid[:8]]
     if mine:                                                       # the stand-in view (a real one has other rows)
         assert mine[0]["overdue_amount"] == {"USD": "240.50"} and mine[0]["bucket"] == "1-30"
         assert mine[0]["kind"] is not None

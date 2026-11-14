@@ -134,12 +134,13 @@ def _fi08(facts=None):
 def test_fi08_spend_against_each_tenants_own_cap():
     out = _fi08()
     _assert_lists_registry_kpis(out, "FI-08")
-    rows = {r["tenant_id"]: r for r in out.output["tenants"]["rows"]}
-    assert set(rows) == {T_A, T_B, T_C}                    # T_D: canceled and no spend
-    assert rows[T_A]["spend_usd"] == 8.5 and rows[T_A]["used_pct"] == 85.0 and rows[T_A]["state"] == "alert"
-    assert rows[T_A]["by_app"] == {"cis": 7.0, "crm": 1.5}
-    assert rows[T_B]["state"] == "approval" and rows[T_B]["refused_calls"] == 4   # 100 % >= its own 90 %
-    assert rows[T_C]["state"] == "unlimited"
+    rows = {r["tenant"]: r for r in out.output["tenants"]["rows"]}
+    assert set(rows) == {T_A[:8], T_B[:8], T_C[:8]}                    # T_D: canceled and no spend
+    a, b, c = rows[T_A[:8]], rows[T_B[:8]], rows[T_C[:8]]
+    assert a["spend_usd"] == 8.5 and a["used_pct"] == 85.0 and a["state"] == "alert"
+    assert a["by_app"] == {"cis": 7.0, "crm": 1.5}
+    assert b["state"] == "approval" and b["refused_calls"] == 4   # 100 % >= its own 90 %
+    assert c["state"] == "unlimited"
     assert out.output["tenants"]["platform_usd"] == 30.0 and out.output["tenants"]["tenant_usd"] == 14.25
     k = _kpis(out)
     assert k["K-TEN-AICAP"]["value"] == 2 and k["K-TEN-AICAP"]["status"] == "red"
@@ -150,11 +151,11 @@ def test_fi08_spend_against_each_tenants_own_cap():
 
 def test_fi08_entitlements_and_trials_are_listed():
     out = _fi08()
-    rows = {r["tenant_id"]: r for r in out.output["tenants"]["rows"]}
-    assert rows[T_A]["entitlements"] == {"total": 7, "flag": 5, "limit": 1, "seats": 1,
+    rows = {r["tenant"]: r for r in out.output["tenants"]["rows"]}
+    assert rows[T_A[:8]]["entitlements"] == {"total": 7, "flag": 5, "limit": 1, "seats": 1,
                                          "sources": ["override", "plan"], "next_expiry": None}
-    assert rows[T_B]["entitlements"]["next_expiry"] == "2026-11-20"
-    assert [s["plan_key"] for s in rows[T_A]["subscriptions"]] == ["content.pro", "crm.core"]
+    assert rows[T_B[:8]]["entitlements"]["next_expiry"] == "2026-11-20"
+    assert [s["plan_key"] for s in rows[T_A[:8]]["subscriptions"]] == ["content.pro", "crm.core"]
     assert "content.starter trial ends 2026-11-20" in out.markdown
     assert "## Entitlements in force (tenant.entitlements.v1)" in out.markdown
 
@@ -163,6 +164,14 @@ def test_fi08_shows_tenants_by_id_prefix_never_by_name():
     out = _fi08()
     assert "aaaaaaaa (pilot)" in out.markdown and T_A not in out.markdown
     assert all(len(r["tenant"]) == b2b_ops.ID_PREFIX for r in out.output["tenants"]["rows"])
+
+
+def test_fi08_and_bk03_store_no_full_tenant_id():
+    # The stored output (shared.report_run.output) is copied to the public root repo: id prefix only, like FI-03.
+    for out in (_fi08(), _bk03()):
+        dumped = json.dumps(out.output, default=str)
+        assert not any(t in dumped for t in (T_A, T_B, T_C, T_D)), out.output["report_id"]
+        assert '"tenant_id"' not in dumped
 
 
 def test_fi08_all_tenants_ok_is_green():
@@ -174,8 +183,8 @@ def test_fi08_all_tenants_ok_is_green():
 
 def test_fi08_a_zero_budget_means_no_ai_and_stops():
     facts = _fi08_facts(caps={T_A: _cap(0.0), T_B: _cap(5.0), T_C: _cap(10.0)})
-    rows = {r["tenant_id"]: r for r in _fi08(facts).output["tenants"]["rows"]}
-    assert rows[T_A]["state"] == "approval"
+    rows = {r["tenant"]: r for r in _fi08(facts).output["tenants"]["rows"]}
+    assert rows[T_A[:8]]["state"] == "approval"
 
 
 def test_fi08_unreadable_caps_are_no_data_not_green():

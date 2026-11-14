@@ -180,7 +180,7 @@ def tenant_rows(facts: dict) -> dict:
         else:
             used, state = None, ("unknown" if cap is None else "unlimited")
         rows.append({
-            "tenant": short(tid), "tenant_id": tid, "kind": t.get("kind"), "account_status": t.get("account_status"),
+            "tenant": short(tid), "kind": t.get("kind"), "account_status": t.get("account_status"),
             "pilot": bool(t.get("is_pilot")),
             "subscriptions": [{"product": s["product"], "plan_key": s["plan_key"], "status": s["status"],
                                "trial_ends_at": _day(s.get("trial_ends_at")),
@@ -382,7 +382,7 @@ def receivables(facts: dict) -> dict:
         age = r.get("oldest_overdue_days") if overdue else None
         name = bucket(age)
         a = agencies.get(tid, {})
-        rows.append({"tenant": short(tid), "tenant_id": tid, "kind": a.get("kind"),
+        rows.append({"tenant": short(tid), "kind": a.get("kind"),
                      "account_status": a.get("account_status"), "status": r["status"], "overdue_invoices": overdue,
                      "oldest_overdue_days": age, "bucket": name, "overdue_amount": amounts,
                      "paid_through": _day(r.get("paid_through")), "warn_after_days": r.get("warn_after_days"),
