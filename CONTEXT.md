@@ -3532,7 +3532,7 @@ equal the file, and unless the pool is out of sample for both steps: a fresh poo
 fresh_pool.py`: R1-fired claims on pieces no earlier round touched, the agent panel's sheet, a manifest with the pool
 digest and the excluded runs and pieces) or `--exclude` of the shaping runs. The R1 firing run that feeds the fresh
 pool (`services/ground_truth/r1_fire.py`) fires the R1 extraction instrument on a salted, writer-proportional sample of
-the eligible claims whatever their label (size: CIS 429 `cis.quality.claim_fire_sample_max`; cap: CIS 417), refuses an
+the eligible claims whatever their label (size: CIS 426 `cis.quality.claim_fire_sample_max`; cap: CIS 417), refuses an
 eligible file that is in-sample for the steps, and writes a text-free fire report that `fresh_pool sample` reads.
 _Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
 

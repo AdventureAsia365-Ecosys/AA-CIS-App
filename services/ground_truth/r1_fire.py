@@ -21,7 +21,7 @@ Out of sample (refused in every mode). The eligible manifest (fresh_pool eligibl
 (listed in excluded_pools, or a train-split manifest whose every claim is train), and no claim may sit on an excluded
 piece or off the manifest's split.
 
-Sample. At most N claims (default and ceiling: the setting cis.quality.claim_fire_sample_max, CIS 429), spread over the
+Sample. At most N claims (default and ceiling: the setting cis.quality.claim_fire_sample_max, CIS 426), spread over the
 writers in proportion and ordered by sha256(salt + claim hash) (fresh_pool.pick), with the salt "aa1048-fire:" + the
 eligible file's sha256 prefix: deterministic, unrelated to the text, and not the salt fresh_pool sample orders the fired
 claims by. The digest of the drawn hashes is printed; --expect-sample refuses a run whose sample differs (the settings

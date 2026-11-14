@@ -33,7 +33,7 @@ makes no paid call.
   No claim may sit on an excluded piece or off the manifest's split. A DRY RUN of an in-sample file has no use, so it
   is refused as well, rather than reported as in `two_step`.
 - **Settings.**
-  - The sample size is the new `cis.quality.claim_fire_sample_max` (CIS 429, default 600, 1..3000, maker-checker,
+  - The sample size is the new `cis.quality.claim_fire_sample_max` (CIS 426, default 600, 1..3000, maker-checker,
     `enforced = false` until this code is deployed).
   - The cap is the existing `cis.spend.instrument_eval_cap_usd` (CIS 417, never above `r1.HARD_CAP_USD`): `--cap`
     defaults to it and may not pass it.
@@ -65,7 +65,7 @@ makes no paid call.
 - `services/ground_truth/fresh_pool.py`: `FIRE_REPORT_KIND`, `fire_report_check`, the sample manifest fields above,
   and the docstrings.
 - `CONTEXT.md`: one sentence in the two-step glossary entry.
-- Migration CIS 429, in its own PR (MIG-4): the setting row, `compiled_defaults.json`, the seed-parity list and its
+- Migration CIS 426, in its own PR (MIG-4): the setting row, `compiled_defaults.json`, the seed-parity list and its
   integration test.
 
 ## Tradeoffs
@@ -81,7 +81,7 @@ makes no paid call.
 
 ## Should know
 
-- Known red before the chain: until CIS 429 has merged, the unit tests that read the new setting fail with KeyError,
+- Known red before the chain: until CIS 426 has merged, the unit tests that read the new setting fail with KeyError,
   and so does settings-lint rule 2 ("a `settings.get` literal must be a compiled key"). The same was true of the
   two-step PR before CIS 423 merged.
 - Follow-up: a later migration marks `cis.quality.claim_fire_sample_max` enforced, together with the CIS 417 and 423
