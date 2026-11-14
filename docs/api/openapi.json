@@ -1565,6 +1565,28 @@
         "title": "CapacityLimitBody",
         "type": "object"
       },
+      "Caption": {
+        "properties": {
+          "lang": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Lang",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lang",
+          "url"
+        ],
+        "title": "Caption",
+        "type": "object"
+      },
       "CatalogAaAppliesTo": {
         "additionalProperties": false,
         "properties": {
@@ -2262,6 +2284,175 @@
         "title": "CatalogTourSummary",
         "type": "object"
       },
+      "Certificate": {
+        "properties": {
+          "certificate_id": {
+            "title": "Certificate Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "issued_at": {
+            "title": "Issued At",
+            "type": "string"
+          },
+          "module_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedModule"
+            },
+            "title": "Module Versions",
+            "type": "array"
+          },
+          "path_id": {
+            "title": "Path Id",
+            "type": "string"
+          },
+          "path_title": {
+            "title": "Path Title",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "expired",
+              "renewal_due",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "certificate_id",
+          "path_id",
+          "path_title",
+          "issued_at",
+          "expires_at",
+          "status",
+          "module_versions"
+        ],
+        "title": "Certificate",
+        "type": "object"
+      },
+      "CertificateCode": {
+        "properties": {
+          "certificate_id": {
+            "title": "Certificate Id",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "path_id": {
+            "title": "Path Id",
+            "type": "string"
+          },
+          "verify_path": {
+            "title": "Verify Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "certificate_id",
+          "path_id",
+          "code",
+          "verify_path"
+        ],
+        "title": "CertificateCode",
+        "type": "object"
+      },
+      "CertificateList": {
+        "properties": {
+          "certificates": {
+            "items": {
+              "$ref": "#/components/schemas/Certificate"
+            },
+            "title": "Certificates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "certificates"
+        ],
+        "title": "CertificateList",
+        "type": "object"
+      },
+      "CertificateVerify": {
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "holder_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holder Display Name"
+          },
+          "issued_at": {
+            "title": "Issued At",
+            "type": "string"
+          },
+          "module_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedModule"
+            },
+            "title": "Module Versions",
+            "type": "array"
+          },
+          "path_id": {
+            "title": "Path Id",
+            "type": "string"
+          },
+          "path_title": {
+            "title": "Path Title",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "expired",
+              "renewal_due",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path_id",
+          "path_title",
+          "holder_display_name",
+          "issued_at",
+          "expires_at",
+          "status",
+          "module_versions"
+        ],
+        "title": "CertificateVerify",
+        "type": "object"
+      },
       "ChangeRolesBody": {
         "additionalProperties": false,
         "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant, ``\"crm_roles\": []``\n(or null) removes every CRM role. ``\"preset\": \"platform_owner\"`` (AA-1031) is sent alone and sets CIS admin +\nBooking admin + CRM Agency admin; ``\"preset\": \"pricing_team\"`` (AA-1091) gives CIS customer_success + Booking\ncontracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than\nreplace another role).",
@@ -2355,6 +2546,53 @@
           "idx"
         ],
         "title": "ChooseBody",
+        "type": "object"
+      },
+      "CitedSection": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "body_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Md"
+          },
+          "kind": {
+            "enum": [
+              "doc",
+              "adr",
+              "skill",
+              "steering",
+              "context"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ref",
+          "kind",
+          "stale",
+          "available",
+          "body_md"
+        ],
+        "title": "CitedSection",
         "type": "object"
       },
       "ClaimLabelBody": {
@@ -3458,6 +3696,45 @@
         "title": "EnqueueBody",
         "type": "object"
       },
+      "Enrollment": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "enrolled_at": {
+            "title": "Enrolled At",
+            "type": "string"
+          },
+          "path_id": {
+            "title": "Path Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "completed",
+              "withdrawn"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path_id",
+          "status",
+          "enrolled_at"
+        ],
+        "title": "Enrollment",
+        "type": "object"
+      },
       "ErasureRequestItem": {
         "description": "One request as the CRM sees it (contract ErasureRequest).",
         "properties": {
@@ -4110,6 +4387,133 @@
         "title": "FactPatch",
         "type": "object"
       },
+      "FsrsCard": {
+        "additionalProperties": false,
+        "properties": {
+          "difficulty": {
+            "minimum": 0.0,
+            "title": "Difficulty",
+            "type": "number"
+          },
+          "due": {
+            "maxLength": 40,
+            "title": "Due",
+            "type": "string"
+          },
+          "elapsed_days": {
+            "minimum": 0.0,
+            "title": "Elapsed Days",
+            "type": "number"
+          },
+          "lapses": {
+            "minimum": 0.0,
+            "title": "Lapses",
+            "type": "integer"
+          },
+          "last_review": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Review"
+          },
+          "learning_steps": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Steps"
+          },
+          "reps": {
+            "minimum": 0.0,
+            "title": "Reps",
+            "type": "integer"
+          },
+          "scheduled_days": {
+            "minimum": 0.0,
+            "title": "Scheduled Days",
+            "type": "number"
+          },
+          "stability": {
+            "minimum": 0.0,
+            "title": "Stability",
+            "type": "number"
+          },
+          "state": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "State",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "due",
+          "stability",
+          "difficulty",
+          "elapsed_days",
+          "scheduled_days",
+          "reps",
+          "lapses",
+          "state",
+          "last_review"
+        ],
+        "title": "FsrsCard",
+        "type": "object"
+      },
+      "GradedItem": {
+        "properties": {
+          "chosen": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Chosen",
+            "type": "array"
+          },
+          "correct": {
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "correct_choices": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Correct Choices",
+            "type": "array"
+          },
+          "explain": {
+            "title": "Explain",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "source_ref": {
+            "title": "Source Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "correct",
+          "chosen",
+          "correct_choices",
+          "explain",
+          "source_ref"
+        ],
+        "title": "GradedItem",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -4324,6 +4728,52 @@
         "title": "KeepBody",
         "type": "object"
       },
+      "LabResult": {
+        "properties": {
+          "module_id": {
+            "title": "Module Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "status"
+        ],
+        "title": "LabResult",
+        "type": "object"
+      },
+      "LabState": {
+        "properties": {
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "none",
+              "closed",
+              "open",
+              "passed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "present",
+          "state"
+        ],
+        "title": "LabState",
+        "type": "object"
+      },
       "LeadRouteIn": {
         "properties": {
           "lead_channel": {
@@ -4366,6 +4816,166 @@
           "lead_channel"
         ],
         "title": "LeadRouteIn",
+        "type": "object"
+      },
+      "Lesson": {
+        "properties": {
+          "body_md": {
+            "title": "Body Md",
+            "type": "string"
+          },
+          "draft": {
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "has_video": {
+            "title": "Has Video",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lang": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Lang",
+            "type": "string"
+          },
+          "languages": {
+            "items": {
+              "enum": [
+                "en",
+                "vi"
+              ],
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "minutes": {
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "module_id": {
+            "title": "Module Id",
+            "type": "string"
+          },
+          "module_version": {
+            "title": "Module Version",
+            "type": "string"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/CitedSection"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "not_started",
+              "opened",
+              "completed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "reading",
+              "walkthrough",
+              "worked-example"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "module_id",
+          "module_version",
+          "title",
+          "type",
+          "minutes",
+          "objective",
+          "lang",
+          "languages",
+          "body_md",
+          "stale",
+          "draft",
+          "has_video",
+          "status",
+          "sources"
+        ],
+        "title": "Lesson",
+        "type": "object"
+      },
+      "LessonSummary": {
+        "properties": {
+          "has_video": {
+            "title": "Has Video",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "minutes": {
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "not_started",
+              "opened",
+              "completed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "reading",
+              "walkthrough",
+              "worked-example"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "type",
+          "minutes",
+          "stale",
+          "has_video",
+          "status"
+        ],
+        "title": "LessonSummary",
         "type": "object"
       },
       "LlmCatalogPatch": {
@@ -4934,6 +5544,50 @@
         "title": "ManualShapeRequest",
         "type": "object"
       },
+      "Me": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "is_test": {
+            "title": "Is Test",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "staff",
+              "partner"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "learner_id": {
+            "title": "Learner Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "learner_id",
+          "kind",
+          "display_name",
+          "preview",
+          "is_test"
+        ],
+        "title": "Me",
+        "type": "object"
+      },
       "MediumBackfillRequest": {
         "properties": {
           "country": {
@@ -5324,6 +5978,85 @@
         "title": "MetricsRunBody",
         "type": "object"
       },
+      "Module": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "draft": {
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lab": {
+            "$ref": "#/components/schemas/LabState"
+          },
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/LessonSummary"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "objectives": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Objectives",
+            "type": "array"
+          },
+          "prerequisites": {
+            "items": {
+              "$ref": "#/components/schemas/Prerequisite"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "quiz": {
+            "$ref": "#/components/schemas/QuizState"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "draft"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "version",
+          "status",
+          "draft",
+          "stale",
+          "objectives",
+          "prerequisites",
+          "complete",
+          "lessons",
+          "quiz",
+          "lab"
+        ],
+        "title": "Module",
+        "type": "object"
+      },
       "MoveToDraftResult": {
         "properties": {
           "external_url": {
@@ -5592,6 +6325,155 @@
         "title": "PartnerTenantSession",
         "type": "object"
       },
+      "PathList": {
+        "properties": {
+          "bundle_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Sha"
+          },
+          "paths": {
+            "items": {
+              "$ref": "#/components/schemas/PathSummary"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bundle_sha",
+          "paths"
+        ],
+        "title": "PathList",
+        "type": "object"
+      },
+      "PathModule": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "draft",
+              "planned"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "required",
+          "status",
+          "complete"
+        ],
+        "title": "PathModule",
+        "type": "object"
+      },
+      "PathSummary": {
+        "properties": {
+          "certificate_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "valid",
+                  "expired",
+                  "renewal_due",
+                  "revoked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Certificate Status"
+          },
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "enrolled": {
+            "title": "Enrolled",
+            "type": "boolean"
+          },
+          "final_quiz": {
+            "title": "Final Quiz",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "modules": {
+            "items": {
+              "$ref": "#/components/schemas/PathModule"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "planned": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Planned",
+            "type": "array"
+          },
+          "tier": {
+            "enum": [
+              "staff",
+              "partner"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "tier",
+          "enrolled",
+          "completed",
+          "final_quiz",
+          "certificate_status",
+          "modules"
+        ],
+        "title": "PathSummary",
+        "type": "object"
+      },
       "PieceLabelBody": {
         "properties": {
           "defects": {
@@ -5635,6 +6517,24 @@
           "label"
         ],
         "title": "PieceLabelBody",
+        "type": "object"
+      },
+      "PinnedModule": {
+        "properties": {
+          "module_id": {
+            "title": "Module Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "version"
+        ],
+        "title": "PinnedModule",
         "type": "object"
       },
       "PlaceCardBuild": {
@@ -6153,6 +7053,29 @@
         "title": "PrefilterBody",
         "type": "object"
       },
+      "Prerequisite": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "complete",
+              "open",
+              "planned"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ],
+        "title": "Prerequisite",
+        "type": "object"
+      },
       "PreviewBody": {
         "additionalProperties": false,
         "properties": {
@@ -6228,6 +7151,38 @@
           }
         },
         "title": "PreviewBody",
+        "type": "object"
+      },
+      "ProgressAccepted": {
+        "properties": {
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "module_complete": {
+            "title": "Module Complete",
+            "type": "boolean"
+          },
+          "statement_id": {
+            "title": "Statement Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "opened",
+              "completed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statement_id",
+          "lesson_id",
+          "status",
+          "module_complete"
+        ],
+        "title": "ProgressAccepted",
         "type": "object"
       },
       "ProposalBody": {
@@ -6827,6 +7782,216 @@
           "mode"
         ],
         "title": "QuestionUpdate",
+        "type": "object"
+      },
+      "QuizAttempt": {
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QuizItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pass_mark_pct": {
+            "title": "Pass Mark Pct",
+            "type": "integer"
+          },
+          "scope": {
+            "enum": [
+              "module",
+              "final"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "scope",
+          "target_id",
+          "started_at",
+          "pass_mark_pct",
+          "items"
+        ],
+        "title": "QuizAttempt",
+        "type": "object"
+      },
+      "QuizItem": {
+        "properties": {
+          "choices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "single",
+              "multiple"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "prompt",
+          "choices"
+        ],
+        "title": "QuizItem",
+        "type": "object"
+      },
+      "QuizResult": {
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "certificate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CertificateCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GradedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "module_complete": {
+            "title": "Module Complete",
+            "type": "boolean"
+          },
+          "pass_mark_pct": {
+            "title": "Pass Mark Pct",
+            "type": "integer"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "retake_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retake At"
+          },
+          "scope": {
+            "enum": [
+              "module",
+              "final"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "score_pct": {
+            "title": "Score Pct",
+            "type": "number"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "scope",
+          "target_id",
+          "score_pct",
+          "pass_mark_pct",
+          "passed",
+          "retake_at",
+          "module_complete",
+          "items",
+          "certificate"
+        ],
+        "title": "QuizResult",
+        "type": "object"
+      },
+      "QuizState": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "best_score_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Score Pct"
+          },
+          "items_per_attempt": {
+            "title": "Items Per Attempt",
+            "type": "integer"
+          },
+          "pass_mark_pct": {
+            "title": "Pass Mark Pct",
+            "type": "integer"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "retake_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retake At"
+          }
+        },
+        "required": [
+          "available",
+          "items_per_attempt",
+          "pass_mark_pct",
+          "best_score_pct",
+          "passed",
+          "retake_at"
+        ],
+        "title": "QuizState",
         "type": "object"
       },
       "Quota": {
@@ -7948,6 +9113,53 @@
         "title": "ReviewApproveBody",
         "type": "object"
       },
+      "ReviewCard": {
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/FsrsCard"
+          },
+          "item": {
+            "$ref": "#/components/schemas/QuizItem"
+          },
+          "module_id": {
+            "title": "Module Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "item",
+          "card"
+        ],
+        "title": "ReviewCard",
+        "type": "object"
+      },
+      "ReviewDue": {
+        "properties": {
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewCard"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "daily_cap": {
+            "title": "Daily Cap",
+            "type": "integer"
+          },
+          "target_retention": {
+            "title": "Target Retention",
+            "type": "number"
+          }
+        },
+        "required": [
+          "daily_cap",
+          "target_retention",
+          "cards"
+        ],
+        "title": "ReviewDue",
+        "type": "object"
+      },
       "ReviewReasonBody": {
         "description": "AA-916 WM-06 — optional body of reject / dismiss: why (one-click chip). An unknown code is a 422.",
         "properties": {
@@ -7974,6 +9186,41 @@
           }
         },
         "title": "ReviewReasonBody",
+        "type": "object"
+      },
+      "ReviewResult": {
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/FsrsCard"
+          },
+          "correct": {
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "correct_choices": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Correct Choices",
+            "type": "array"
+          },
+          "explain": {
+            "title": "Explain",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "correct",
+          "correct_choices",
+          "explain",
+          "card"
+        ],
+        "title": "ReviewResult",
         "type": "object"
       },
       "RewriteRequest": {
@@ -10617,6 +11864,32 @@
           "action"
         ],
         "title": "VersionActionRequest",
+        "type": "object"
+      },
+      "VideoUrls": {
+        "properties": {
+          "captions": {
+            "items": {
+              "$ref": "#/components/schemas/Caption"
+            },
+            "title": "Captions",
+            "type": "array"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at",
+          "captions"
+        ],
+        "title": "VideoUrls",
         "type": "object"
       },
       "WaveCreate": {
@@ -54619,6 +55892,603 @@
           }
         },
         "summary": "Health Ready"
+      }
+    },
+    "/learn/public/v1/certificates/{code}": {
+      "get": {
+        "operationId": "verify_certificate_learn_public_v1_certificates__code__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateVerify"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public verify view of a certificate (rate limited, no sign-in)",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/certificates": {
+      "get": {
+        "operationId": "list_certificates_learn_v1_certificates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The learner's certificates",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/certificates/{certificate_id}/code": {
+      "post": {
+        "operationId": "rotate_certificate_code_learn_v1_certificates__certificate_id__code_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "certificate_id",
+            "required": true,
+            "schema": {
+              "title": "Certificate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateCode"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A new verification code for the learner's own valid certificate",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/lessons/{lesson_id}": {
+      "get": {
+        "operationId": "get_lesson_learn_v1_lessons__lesson_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "title": "Lang",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Lesson"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lesson body and its cited sections",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/lessons/{lesson_id}/video": {
+      "get": {
+        "operationId": "get_lesson_video_learn_v1_lessons__lesson_id__video_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoUrls"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Presigned lesson video URLs",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/me": {
+      "get": {
+        "operationId": "get_me_learn_v1_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The signed-in learner",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/modules/{module_id}": {
+      "get": {
+        "operationId": "get_module_learn_v1_modules__module_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "title": "Module Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Module"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One module with the learner's state",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/modules/{module_id}/lab/check": {
+      "post": {
+        "operationId": "lab_check_learn_v1_modules__module_id__lab_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "title": "Module Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run the module's lab check",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/modules/{module_id}/quiz/attempts": {
+      "post": {
+        "operationId": "start_module_quiz_learn_v1_modules__module_id__quiz_attempts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "title": "Module Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizAttempt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start a module quiz attempt",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/paths": {
+      "get": {
+        "operationId": "list_paths_learn_v1_paths_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PathList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Learning paths with progress",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/paths/{path_id}/enroll": {
+      "post": {
+        "operationId": "enroll_path_learn_v1_paths__path_id__enroll_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path_id",
+            "required": true,
+            "schema": {
+              "title": "Path Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Enrollment"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Enrollment"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enroll in a path (idempotent)",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/paths/{path_id}/final-quiz/attempts": {
+      "post": {
+        "operationId": "start_final_quiz_learn_v1_paths__path_id__final_quiz_attempts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path_id",
+            "required": true,
+            "schema": {
+              "title": "Path Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizAttempt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start the path's final quiz",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/progress": {
+      "post": {
+        "operationId": "post_progress_learn_v1_progress_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressAccepted"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "summary": "Record a learning event (idempotent on statement_id)",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/quiz/attempts/{attempt_id}/submit": {
+      "post": {
+        "operationId": "submit_quiz_learn_v1_quiz_attempts__attempt_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit and grade",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/review/due": {
+      "get": {
+        "operationId": "review_due_learn_v1_review_due_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Due spaced-review cards",
+        "tags": [
+          "learn"
+        ]
+      }
+    },
+    "/learn/v1/review/{item_id}/result": {
+      "post": {
+        "operationId": "review_result_learn_v1_review__item_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grade one review answer",
+        "tags": [
+          "learn"
+        ]
       }
     },
     "/tenant/membership/v1/events": {

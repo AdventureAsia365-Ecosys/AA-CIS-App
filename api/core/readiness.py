@@ -91,7 +91,9 @@ REQUIRED_CIS_SCHEMA = 322
 # (408); the offboard / restore hooks emit account.erasure_requested, which the feed's CHECK allows only from 409; the
 # saga reads its three settings (411; without it the reader serves the compiled defaults); each path skips or answers
 # 503 without 408). 410 (the Booking / TripPlanner contract view) is not needed by this code.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411)
+# 420 (AA-1105 — the AA Academy learning API, /learn/v1, reads and writes schema learn and its cis.learn.* settings;
+# each route answers 503 without it). 421 (the learn child-tenant triggers) is not needed by this code.
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
