@@ -1439,12 +1439,7 @@ async def estimate(pool, conf: R2Config) -> dict:
             "calibration_judged_items": len(calib_all),
             "prereg": ({"id": conf.prereg_id, "sha256": conf.prereg_sha256, "prior_runs": prereg_prior}
                        if conf.prereg_id else None),
-            "null_check": null_check,
-            # AA-1051 (S280): the call counts behind estimated_usd_max, so writer_proof.price can re-price the pinned
-            # judge from the catalog (calibration + one judge call per written item for the control and one for the
-            # candidate; a seeded fault writes nothing)
-            "calls": {"judge": len(calib_all) + 2 * n_written,
-                      "writer_items": 0 if conf.seed_fault else n_written}}
+            "null_check": null_check}
 
 
 def _parse(argv=None) -> tuple[R2Config, argparse.Namespace]:

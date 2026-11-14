@@ -13,7 +13,8 @@ Per judge call:
   bound    no profile (a writer never judged): the evidence caps of the judge (SOURCE_CHARS + OUTPUT_CHARS + the
            prompt's own text) at a conservative chars-per-token, and the whole first output ceiling (MAX_TOKENS raised
            to the model's reasoning floor). An upper bound, flagged as such.
-Per arm: judge calls x the judge call + written items x R2's own per-item writer estimate (the ledger median of past
+Per arm (`calls_of`: the counts behind R2's figure): judge calls x the judge call + written items x R2's own per-item
+writer estimate (the ledger median of past
 candidate items, R2's `item_estimate`). Every figure here is an ESTIMATE; the measured cost comes from the ledger after
 the run (cost_report.py).
 
@@ -149,13 +150,26 @@ def judge_call(model_key: str, catalog_row: dict, deployment_row: Optional[dict]
             "source": source, "pricing": basis, "samples": (profile or {}).get("samples", 0)}
 
 
+def calls_of(r2_estimate: dict) -> Optional[dict]:
+    """{judge, writer_items}: the calls behind R2's estimated_usd_max, from the fields r2.estimate returns (the same
+    formula: every calibration item judged once, and each written item judged twice, the control and the candidate;
+    a calibrate-only run writes nothing). None when a field is missing. A proof never seeds a fault. Pure.
+    tests/unit/writer_proof/test_aa1051_s280_price_null_lock.py rebuilds R2's figure from these counts, so a change
+    of R2's formula fails there."""
+    plan, judged = r2_estimate.get("plan"), r2_estimate.get("calibration_judged_items")
+    if not isinstance(plan, dict) or not isinstance(judged, int) or isinstance(judged, bool):
+        return None
+    written = 0 if r2_estimate.get("calibrate_only") else sum(int(v or 0) for v in plan.values())
+    return {"judge": judged + 2 * written, "writer_items": written}
+
+
 def arm_estimate(r2_estimate: dict, judge_call_usd: float) -> dict:
     """{price_usd_max, judge_calls, writer_items, r2_usd_max, usd_max}: one arm re-priced with the catalog judge call
     and R2's own per-item writer estimate; `usd_max` = the larger of R2's and this one. Pure.
 
-    `r2_estimate["calls"]` (r2.estimate, AA-1051 S280) holds the call counts; without it the arm is re-priced from
-    nothing and only R2's figure stands, flagged `calls_missing`."""
-    calls = r2_estimate.get("calls") if isinstance(r2_estimate.get("calls"), dict) else None
+    Without the call counts (`calls_of` is None) the arm is re-priced from nothing and only R2's figure stands, flagged
+    `calls_missing` (the runner blocks on it)."""
+    calls = calls_of(r2_estimate)
     r2_usd = _num(r2_estimate.get("estimated_usd_max")) or 0.0
     if calls is None:
         return {"price_usd_max": None, "judge_calls": None, "writer_items": None, "r2_usd_max": r2_usd,
@@ -197,9 +211,10 @@ async def check(pool, *, model_key: str, connection: Optional[str], writer: str,
     for arm, est in arms.items():
         out["arms"][arm] = arm_estimate(est, jc["usd"])
         if out["arms"][arm]["calls_missing"]:
-            blocking.append(f"{arm}: the R2 estimate gives no call counts, the catalog price check cannot run")
+            blocking.append(f"{arm}: the R2 estimate gives no call counts (plan / calibration_judged_items), the "
+                            "catalog price check cannot run")
     return out
 
 
 __all__ = ["CATALOG_SQL", "CHARS_PER_TOKEN", "DEPLOYMENT_SQL", "JUDGE_TOKENS_SQL", "PROFILE_ROWS", "arm_estimate",
-           "bound_tokens", "call_quote", "catalog_problems", "check", "judge_call", "read", "token_profile"]
+           "bound_tokens", "call_quote", "calls_of", "catalog_problems", "check", "judge_call", "read", "token_profile"]

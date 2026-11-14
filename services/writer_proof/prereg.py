@@ -63,16 +63,16 @@ LOCK_FILE = PREREG_DIR / "registered.lock.json"
 # S280 (CIS 419): the caps and the minimum samples are settings (Platform › Settings, tech lead S279: a cap is a
 # setting, never a code literal); the defaults are those numbers. Read them with workflow_cap / min_items / total_cap.
 WORKFLOWS: dict[str, dict[str, Any]] = {
-    "null": {"writer": "t9_blog", "cap_setting": "cis.spend.w5_null_run_cap_usd",
-             "min_items_setting": "cis.quality.w5_null_run_min_items"},
-    "t9": {"writer": "t9_blog", "cap_setting": "cis.spend.w5_t9_proof_cap_usd",
-           "min_items_setting": "cis.quality.w5_t9_proof_min_items"},
-    "s1": {"writer": "a1", "cap_setting": "cis.spend.w5_s1_proof_cap_usd",
-           "min_items_setting": "cis.quality.w5_s1_proof_min_items"},
-    "t2": {"writer": "t2", "cap_setting": "cis.spend.w5_t2_proof_cap_usd",
-           "min_items_setting": "cis.quality.w5_t2_proof_min_items"},
+    "null": {"writer": "t9_blog", "cap_setting": "cis.spend.writer_proof_null_run_cap_usd",
+             "min_items_setting": "cis.quality.writer_proof_null_run_min_items"},
+    "t9": {"writer": "t9_blog", "cap_setting": "cis.spend.writer_proof_t9_cap_usd",
+           "min_items_setting": "cis.quality.writer_proof_t9_min_items"},
+    "s1": {"writer": "a1", "cap_setting": "cis.spend.writer_proof_s1_cap_usd",
+           "min_items_setting": "cis.quality.writer_proof_s1_min_items"},
+    "t2": {"writer": "t2", "cap_setting": "cis.spend.writer_proof_t2_cap_usd",
+           "min_items_setting": "cis.quality.writer_proof_t2_min_items"},
 }
-TOTAL_CAP_SETTING = "cis.spend.w5_total_cap_usd"
+TOTAL_CAP_SETTING = "cis.spend.writer_proof_total_cap_usd"
 
 
 def workflow_cap(workflow: str) -> float:

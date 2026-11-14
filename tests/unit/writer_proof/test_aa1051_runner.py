@@ -146,8 +146,9 @@ def fakes(monkeypatch):
         seen["estimates"].append(conf)
         out = {"estimated_usd_max": seen["est"], "would_refuse": list(seen["would_refuse"]),
                "item_estimate": {"item_usd": seen["item_usd"]}}
-        if seen["calls"] is not None:
-            out["calls"] = dict(seen["calls"])
+        if seen["calls"] is not None:             # the R2 fields price.calls_of reads (30 judge calls, 12 written)
+            out["plan"] = {"probe": 3, "tune": seen["calls"]["writer_items"] - 3, "holdout": 0}
+            out["calibration_judged_items"] = seen["calls"]["judge"] - 2 * seen["calls"]["writer_items"]
         return out
 
     real_null_gate = runner.null_gate

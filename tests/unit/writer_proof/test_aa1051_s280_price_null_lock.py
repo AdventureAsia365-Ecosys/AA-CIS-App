@@ -70,28 +70,33 @@ def test_judge_call_from_the_profile_and_the_upper_bound_without_one():
 
 
 def test_arm_estimate_is_the_larger_of_r2_and_the_catalog_price():
-    est = {"estimated_usd_max": 2.0, "calls": {"judge": 30, "writer_items": 12}, "item_estimate": {"item_usd": 0.1}}
+    est = {"estimated_usd_max": 2.0, "plan": {"probe": 3, "tune": 7, "holdout": 2}, "calibration_judged_items": 6,
+           "item_estimate": {"item_usd": 0.1}}
     cheap = price.arm_estimate(est, 0.001)
     assert cheap["price_usd_max"] == 1.23 and cheap["usd_max"] == 2.0
     dear = price.arm_estimate(est, 0.1)
     assert dear["price_usd_max"] == 4.2 and dear["usd_max"] == 4.2
     missing = price.arm_estimate({"estimated_usd_max": 2.0}, 0.1)
     assert missing["calls_missing"] and missing["usd_max"] == 2.0
+    assert price.calls_of({**est, "calibrate_only": True}) == {"judge": 6, "writer_items": 0}
 
 
 # ── R2's call counts (the numbers the catalog check re-prices) ───────────────────────────────────────────────────
 
-def test_r2_estimate_reports_the_call_counts_behind_its_figure(monkeypatch):
+def test_the_call_counts_rebuild_r2s_own_figure(monkeypatch):
+    """Guard: price.calls_of mirrors r2.estimate's formula; if R2 changes how it counts calls, this fails."""
     from tests.unit.test_aa900_w0_eval_interim import FakeStore, _estimate_on, golden
     est = _estimate_on(FakeStore(golden(), cost_samples=[0.134] * 10), monkeypatch, r2.R2Config(writer="a1"))
-    calls = est["calls"]
+    calls = price.calls_of(est)
     assert calls["writer_items"] == sum(est["plan"].values()) > 0
     assert calls["judge"] == est["calibration_judged_items"] + 2 * calls["writer_items"]
     rebuilt = calls["judge"] * cfg.JUDGE_CALL_ESTIMATE_USD + calls["writer_items"] * est["item_estimate"]["item_usd"]
     assert est["estimated_usd_max"] == pytest.approx(rebuilt, abs=1e-3)
     cal = _estimate_on(FakeStore(golden(), cost_samples=[0.134] * 10), monkeypatch,
                        r2.R2Config(writer="a1", calibrate_only=True))
-    assert cal["calls"]["writer_items"] == 0 and cal["calls"]["judge"] == cal["calibration_judged_items"]
+    cal_calls = price.calls_of(cal)
+    assert cal_calls["writer_items"] == 0 and cal_calls["judge"] == cal["calibration_judged_items"]
+    assert cal["estimated_usd_max"] == pytest.approx(cal_calls["judge"] * cfg.JUDGE_CALL_ESTIMATE_USD, abs=1e-3)
 
 
 # ── the runner's plan with the catalog check ─────────────────────────────────────────────────────────────────────
@@ -241,8 +246,8 @@ def test_caps_and_minimum_samples_come_from_the_settings_registry(monkeypatch):
         assert settings.definition(spec["min_items_setting"]).default_value == defaults[w][1]
     doc = dict(_pre().doc)                          # valid under the defaults
     real = settings.get
-    lowered = {"cis.spend.w5_null_run_cap_usd": 3.0, "cis.quality.w5_null_run_min_items": 20,
-               "cis.spend.w5_total_cap_usd": 10.0}
+    lowered = {"cis.spend.writer_proof_null_run_cap_usd": 3.0, "cis.quality.writer_proof_null_run_min_items": 20,
+               "cis.spend.writer_proof_total_cap_usd": 10.0}
     monkeypatch.setattr(settings, "get", lambda key, tenant_id=None: lowered.get(key, real(key, tenant_id)))
     p = pr.problems(doc)
     assert any("cap_usd must be in (0, 3.0]" in x for x in p) and any("needs >= 20 sample ids" in x for x in p)

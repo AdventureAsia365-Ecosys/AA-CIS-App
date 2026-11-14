@@ -101,6 +101,22 @@ def arm_caps(cap: Any, estimates: dict[str, float]) -> dict[str, float]:
     return {arm: min(share, cfg.R2_RUN_CAP_USD) for arm, share in spend.split_cap(c, estimates).items()}
 
 
+async def _price_and_null_run(pool, pre: pr.Prereg, out: dict, estimates: dict[str, float]) -> list[str]:
+    """S280, part of `plan`: the pinned judge priced from the catalog (each arm's estimate becomes the larger of R2's
+    and the catalog one, in place) and the null-run-first gate. Fills out[r2_estimated_usd_max, price_check,
+    estimated_usd_max, null_run]; returns the blocking lines."""
+    out["r2_estimated_usd_max"] = round(sum(estimates.values()), 4) if estimates else None
+    judge = pre.doc["judge"]
+    out["price_check"] = await price.check(pool, model_key=judge["model_key"], connection=judge.get("connection"),
+                                           writer=pre.writer, arms=out["arms"])
+    for arm, pc in out["price_check"]["arms"].items():
+        estimates[arm] = max(estimates[arm], float(pc["usd_max"]))
+    out["estimated_usd_max"] = round(sum(estimates.values()), 4) if estimates else None
+    out["null_run"] = await null_gate(pool, pre)          # root ADR 0020 W5: the null run proves the eval stable first
+    return list(out["price_check"]["blocking"]) + ([out["null_run"]["blocking"]] if out["null_run"].get("blocking")
+                                                   else [])
+
+
 async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrument: Optional[str] = None,
                cap_usd: Optional[float] = None) -> dict:
     """The DRY RUN of a proof ($0, reads only). `blocking` lists what would refuse a live run (besides --confirm)."""
@@ -153,20 +169,8 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
             out["arms"][arm] = est
     else:
         blocking.append("no sample ids")
-    # S280: the pinned judge priced from the catalog; each arm is gated on the larger of R2's and this estimate
-    out["r2_estimated_usd_max"] = round(sum(estimates.values()), 4) if estimates else None
-    out["price_check"] = await price.check(pool, model_key=pre.doc["judge"]["model_key"],
-                                           connection=pre.doc["judge"].get("connection"), writer=pre.writer,
-                                           arms=out["arms"])
-    blocking.extend(out["price_check"]["blocking"])
-    for arm, pc in out["price_check"]["arms"].items():
-        estimates[arm] = max(estimates[arm], float(pc["usd_max"]))
-    total_est = round(sum(estimates.values()), 4) if estimates else None
-    out["estimated_usd_max"] = total_est
-    # S280: root ADR 0020 W5, the null run proves the eval stable first
-    out["null_run"] = await null_gate(pool, pre)
-    if out["null_run"].get("blocking"):
-        blocking.append(out["null_run"]["blocking"])
+    blocking.extend(await _price_and_null_run(pool, pre, out, estimates))
+    total_est = out["estimated_usd_max"]
     gate_cap = cap_usd if cap_usd is not None else pre.doc["cap_usd"]
     out["spend_gate_preview"] = spend.refusals(
         workflow=pre.workflow, prereg_cap=float(pre.doc["cap_usd"]), cap_usd=gate_cap, confirm=spend.CONFIRM_TOKEN,
