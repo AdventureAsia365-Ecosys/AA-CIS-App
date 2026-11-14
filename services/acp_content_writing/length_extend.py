@@ -43,15 +43,17 @@ took under the floor gets one more `plan_after_repair` + `extend` pass on the st
 then the final integrity pass and every gate again.
 
 S281 (paid trial 5: a repair round shrank a blog 4,988 → 4,669 chars, the expand then added nothing: the writer left
-both sections empty, "no fitting fact"). Two settings (CIS 426), platform + tenant, read once per piece with the switch
+both sections empty, "no fitting fact"). Two settings (CIS 422), platform + tenant, read once per piece with the switch
 (`pin`) and only while it is on:
 - `cis.t9.blog_extend_material` (source_facts | with_background, default source_facts = the repair above). With
   background, a paragraph may also give general background about a place, people, tradition or history the post or its
   source names (`background_names`: the seed's moment names), in the third person (writing policy: background about a
   named place is fine; never a tour activity, service, time, view or promise the source lacks). A plan no longer needs
   an untold fact. Each background paragraph gets three more code checks before it stands: no reader / group address
-  (`_READER_RE`: "you", "we", "our": background is about the place, not what the trip does), no name the post and its
-  source lack (`repair_contract.new_names`), and no NEW F17 trip-fact or F18 rarity finding on the spliced text
+  (`_READER_RE`: "you", "we", "our": background is about the place, not what the trip does), no traveller, trip or
+  service wording in the third person either (`_TRIP_RE`: travellers / visitors / the group as subject, trip / tour /
+  "this walk", a guide, a meal, a tasting, a booking, what someone "can" do there), no name the post and its source
+  lack (`repair_contract.new_names`), and no NEW F17 trip-fact or F18 rarity finding on the spliced text
   (`trip_facts.find_trip_fact_issues`, before vs after). F17 / F12 and every other gate still run on the whole text
   after the extend, as for any attempt.
 - `cis.t9.blog_extend_shrink_sections` (int 0..6, default 3): when the repair round itself made the blog shorter and
@@ -92,14 +94,30 @@ _LIST_LINE_RE = re.compile(r"^\s*(?:[-*•]\s|\d+[.)]\s)", re.M)
 
 
 EXTEND_SETTING = settings_keys.T9_BLOG_LENGTH_EXTEND   # "cis.t9.blog_length_extend" (CIS 418)
-MATERIAL_SETTING = settings_keys.T9_BLOG_EXTEND_MATERIAL               # CIS 426 (S281)
-SHRINK_SECTIONS_SETTING = settings_keys.T9_BLOG_EXTEND_SHRINK_SECTIONS  # CIS 426 (S281)
+MATERIAL_SETTING = settings_keys.T9_BLOG_EXTEND_MATERIAL               # CIS 422 (S281)
+SHRINK_SECTIONS_SETTING = settings_keys.T9_BLOG_EXTEND_SHRINK_SECTIONS  # CIS 422 (S281)
 MATERIAL_FACTS, MATERIAL_BACKGROUND = "source_facts", "with_background"
 # The options a piece runs with when the settings cannot be read: the repair before S281 (facts only, no shrink plan).
 MAIN_OPTIONS = {"material": MATERIAL_FACTS, "shrink_sections": 0}
 # S281 — a background paragraph is about the place, never about what the reader or the group does on the trip.
 _READER_RE = re.compile(r"\b(?:you(?:['’](?:ll|re|ve|d))?|your|yours|yourself|yourselves|we(?:['’](?:ll|re|ve|d))?|"
                         r"our|ours|us)\b", re.I)
+# S281 review — nor about the travellers, the trip or what it serves, in the third person either ("Visitors can take a
+# boat trip...", "Travellers on this walk visit...", "A private guide leads..."): the people who come as the subject,
+# the trip itself, a guide, a meal, a tasting or a booking, and what someone "can" do there. A background sentence that
+# needs one of these words is the trip's, not the place's; it is refused (one paragraph less, never a trip claim).
+_TRIP_RE = re.compile(
+    r"\b(?:"
+    r"travel(?:l)?ers?|visitors?|guests?|tourists?|walkers?|hikers?|trekkers?|cyclists?|participants?|"
+    r"(?:the|a|each|every|your|our|small|private)\s+groups?|"
+    r"trips?|tours?|touring|excursions?|itinerar(?:y|ies)|cruises?|packages?|"
+    r"(?:this|today['’]s|the\s+day['’]s)\s+(?:walk|hike|trek|day|route|ride|journey|outing|visit|stop)|"
+    r"guides?|guided|guiding|"
+    r"lunch(?:es)?|dinners?|breakfasts?|brunch|picnics?|meals?|tastings?|sessions?|workshops?|"
+    r"homestays?|overnight|transfers?|pick-?ups?|book(?:s|ed|ing|ings)?|reserv(?:e|ed|ation|ations)|tickets?|"
+    r"(?:can|could|may|will|get\s+to)\s+(?:also\s+)?(?:visit|taste|enjoy|join|book|stay|ride|dine|sample|try|"
+    r"explore|swim|kayak|meet|watch|see|hike|cycle|picnic|shop|buy|learn|take\s+part|take\s+a)"
+    r")\b", re.I)
 
 
 def mode(tenant_id: Optional[str] = None) -> str:
@@ -123,7 +141,7 @@ _PINNED_OPTS: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("l
 
 
 def options(tenant_id: Optional[str] = None) -> dict:
-    """S281 (CIS 426) — {"material": source_facts | with_background, "shrink_sections": int >= 0} for a piece of
+    """S281 (CIS 422) — {"material": source_facts | with_background, "shrink_sections": int >= 0} for a piece of
     `tenant_id` (tenant value, else platform value, else the default; shared.settings, never the database). A value
     that cannot be read gives MAIN_OPTIONS (the repair before S281), never an error in the writing loop."""
     tid = str(tenant_id) if tenant_id else None
@@ -349,6 +367,9 @@ def _refusal(add: str, asked: int, *, cta: Optional[str], source: str, trip_ctx,
         reader = _READER_RE.search(add)
         if reader:   # S281 — background is about the place, never what the reader or the group does
             return f"addresses the reader or the group ('{reader.group(0)}'): background is third person"
+        trip = _TRIP_RE.search(add)
+        if trip:   # S281 review — the travellers, the trip or a service as the subject is a trip claim, not background
+            return f"speaks of the trip, its travellers or a service ('{trip.group(0)}'): background is about the place"
         names = new_names(known, add, source)
         if names:
             return "names what neither the post nor its source names: " + ", ".join(names[:3])

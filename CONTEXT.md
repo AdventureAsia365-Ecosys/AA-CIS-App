@@ -4026,10 +4026,10 @@ on the stored text (`plan_after_repair`, the cut sections first), one `extend_se
 `step: post_normalizer`; a tenant-budget stop is re-raised), then `text_integrity.final_pass` and EVERY gate (the loop's
 `run_quality_gates` partial, attempt > 1) on that text; accepted (status approved, the re-run ledger) only when all pass,
 else the normalizer's result byte for byte. Recorded in `writer_input.length_trace.post_normalizer`. Switch off = main.
-AA-1077 S281 — two settings of the expand (CIS 426, platform + tenant, pinned with the switch once per piece, read only
+AA-1077 S281 — two settings of the expand (CIS 422, platform + tenant, pinned with the switch once per piece, read only
 while it is on): `cis.t9.blog_extend_material` (source_facts default | with_background: a paragraph may also give
 third-person general background about what the post or its source names, `_EXTEND_BACKGROUND_SYSTEM`; each background
-paragraph is refused in code on a reader / group address, a name the post and source lack, a new number / time, or a
+paragraph is refused in code on a reader / group address, traveller / trip / service wording (`_TRIP_RE`), a name the post and source lack, a new number / time, or a
 NEW F17 / F18 finding on the spliced text; a plan no longer needs an untold fact) and
 `cis.t9.blog_extend_shrink_sections` (default 3; 0 = deficit only): after a repair round or a mandatory normalizer cut
 that shrank the blog under the floor, the plan asks that many sections, the same words shared out.

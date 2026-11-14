@@ -23,7 +23,7 @@ would do with it, through the code of the checkout it runs in (the plan is the l
             approved at attempt 2 is never eligible), the step that crossed the floor, and what the piece itself
             recorded (`length_trace.post_normalizer`) when it ran with the switch on.
 
-S281 (CIS 426): the plan is replayed in two arms, `plan` with the material source_facts (the repair before S281) and
+S281 (CIS 422): the plan is replayed in two arms, `plan` with the material source_facts (the repair before S281) and
 `plan_background` with with_background (background about what the source names; facts optional), both with the shrink
 setting's sections when the piece's own repair round shrank it under the floor (`shrunk_by_repair`: its
 `length_net.shrank_under_floor`). Per arm: sections asked and facts / names offered.

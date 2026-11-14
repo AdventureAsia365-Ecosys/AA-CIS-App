@@ -403,7 +403,8 @@ in the order given."""
 # AA-1077 S281 (setting cis.t9.blog_extend_material = with_background) — the same task, with general background about
 # what the post or its source names as material too (writing policy: background about a named place is fine; never a
 # tour activity, service, time, view or promise the source lacks). Code checks every paragraph after the reply
-# (length_extend._refusal / _new_trip_findings): no reader address, no new name, number or trip fact.
+# (length_extend._refusal / _new_trip_findings): no reader address, no traveller / trip / service wording
+# (length_extend._TRIP_RE), no new name, number or trip fact.
 _EXTEND_BACKGROUND_SYSTEM = """You lengthen a finished travel blog post that is too short. You get some of its sections,
 a numbered list of SOURCE FACTS the post does not tell yet (it may be empty) and a NAMED list: places the post's source
 names. For each section you write ONE new paragraph that is added at the end of that section.
@@ -412,7 +413,9 @@ Rules:
   NAMED list names: its history, culture, the people who live there, their traditions, its landscape or wildlife.
   Background must be widely known and certain; leave out anything you are not sure of.
 - Background is about the place, never about this trip: write it in the third person. Never write "you", "your",
-  "we", "our" or "us", and never say what travellers do, see, eat, visit, book or get there.
+  "we", "our" or "us", and never say what travellers do, see, eat, visit, book or get there. Never make travellers,
+  visitors, guests, a group, a guide or the trip, tour or walk the subject of a sentence, never say what someone "can"
+  do there, and never name a meal, picnic, tasting, session, transfer or booking.
 - Never add an activity, service, meal, time of day, duration, day number, distance, price, pace or view the facts do
   not state. A fact marked optional stays optional.
 - No number of any kind (no year, date, age, height, count or percentage) unless a SOURCE FACT gives it, no

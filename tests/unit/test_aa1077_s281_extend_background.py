@@ -1,4 +1,4 @@
-"""AA-1077 (S281, CIS 426) — the two causes of paid trial 5's length hold, each behind a setting.
+"""AA-1077 (S281, CIS 422) — the two causes of paid trial 5's length hold, each behind a setting.
 
 Trial 5: a repair round shrank a blog from above the floor to under it, then the lengthening repair asked two sections
 and the writer left both empty ("no fitting fact"): the repair may only retell untold source facts.
@@ -8,8 +8,9 @@ and the writer left both empty ("no fitting fact"): the repair may only retell u
   deficit alone (the plan before S281).
 - cis.t9.blog_extend_material (default source_facts = the repair before S281): with_background lets a paragraph give
   general background about what the post or its source names, never a trip claim. Each background paragraph is
-  checked in code: no reader / group address, no new name, no number or time the source lacks, no new F17 trip-fact or
-  F18 rarity finding on the spliced text; the gates then run on the whole text as for any attempt.
+  checked in code: no reader / group address, no traveller / trip / service wording, no new name, no number or time
+  the source lacks, no new F17 trip-fact or F18 rarity finding on the spliced text; the gates then run on the whole
+  text as for any attempt.
 - the defaults keep the source-facts prompt byte for byte; the options are pinned once per piece with the switch.
 
 Invented places only (Vellmar Gorge, Tessaly, the Ast river); the model is always mocked; real settings reader with a
@@ -295,6 +296,15 @@ def test_the_background_call_gets_the_named_list():
      "names what neither"),
     ("Vellmar Gorge is the oldest canyon in the world and unlike any other gorge anywhere on earth today.",
      "trip fact"),
+    # S281 review: trip activity / service claims in the third person, which no gate of the loop catches in code
+    ("Visitors can take a boat trip across the lake to the shepherd huts and enjoy a picnic lunch on the shore.",
+     "speaks of the trip"),
+    ("Travellers on this walk visit the shepherd families and taste the sheep cheese at a private tasting session.",
+     "speaks of the trip"),
+    ("A private guide leads the walk along the rim and explains how the river carved the soft pale limestone.",
+     "speaks of the trip"),
+    ("At the market one can sample the sheep cheese and smoked trout brought down from the lake villages.",
+     "speaks of the trip"),
 ])
 def test_a_background_paragraph_with_a_trip_claim_number_or_new_name_is_refused(bad, why):
     adds = dict(BACKGROUND, **{"Tessaly": bad})
@@ -303,6 +313,15 @@ def test_a_background_paragraph_with_a_trip_claim_number_or_new_name_is_refused(
     assert entry["added"] == 1
     (refused,) = entry["refused"]
     assert why in refused["why"] and bad[:30] not in text
+
+
+@pytest.mark.parametrize("ok", [
+    "Shepherd families on the plateau have long moved their flocks to the high meadows when the snow melts.",
+    "The Ast river carries fine pale silt from the gorge walls, which is why its water looks milky after rain.",
+    "Markets of this kind grew where upland villages traded wool and cheese for fish from the lakeside.",
+])
+def test_plain_place_background_is_not_read_as_a_trip_claim(ok):
+    assert le._TRIP_RE.search(ok) is None and le._READER_RE.search(ok) is None
 
 
 def test_the_same_paragraph_is_not_checked_for_reader_address_with_source_facts():
@@ -355,7 +374,8 @@ def test_extend_sections_without_background_is_the_source_facts_prompt_byte_for_
 def test_the_background_prompt_forbids_trip_claims_numbers_and_new_names():
     p = generate._EXTEND_BACKGROUND_SYSTEM
     for rule in ("third person", "never say what travellers do", "No number of any kind", "superlative",
-                 "never a place, person, group or thing", "Never add an activity, service, meal, time of day"):
+                 "never a place, person, group or thing", "Never add an activity, service, meal, time of day",
+                 "a guide or the trip, tour or walk the subject", "never name a meal, picnic, tasting"):
         assert rule in p
 
 
