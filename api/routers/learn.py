@@ -230,7 +230,7 @@ async def post_progress(request: Request) -> JSONResponse:
     return await _answer(request, run)
 
 
-@router.post("/v1/modules/{module_id}/quiz/attempts", responses=_ok(m.QuizAttempt, 201),
+@router.post("/v1/modules/{module_id}/quiz/attempts", status_code=201, responses=_ok(m.QuizAttempt, 201),
              summary="Start a module quiz attempt")
 async def start_module_quiz(request: Request, module_id: str) -> JSONResponse:
     async def run(ctx: ac.Ctx):
@@ -239,7 +239,7 @@ async def start_module_quiz(request: Request, module_id: str) -> JSONResponse:
     return await _answer(request, run)
 
 
-@router.post("/v1/paths/{path_id}/final-quiz/attempts", responses=_ok(m.QuizAttempt, 201),
+@router.post("/v1/paths/{path_id}/final-quiz/attempts", status_code=201, responses=_ok(m.QuizAttempt, 201),
              summary="Start the path's final quiz")
 async def start_final_quiz(request: Request, path_id: str) -> JSONResponse:
     async def run(ctx: ac.Ctx):
