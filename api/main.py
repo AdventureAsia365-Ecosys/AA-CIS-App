@@ -104,7 +104,10 @@ from api.routers.tenant_addons import router as tenant_addons_router  # AA-1036 
 from api.routers.tenant_erasure import router as tenant_erasure_router  # AA-1093 L2 — tenant.erasure.v1
 from api.routers.admin_tenant_erasure import router as admin_tenant_erasure_router  # AA-1093 L2 — erasure saga (staff)
 from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
-from api.routers.learn import router as learn_router  # AA-1105 — AA Academy learning API (/learn, academy-web)
+from api.routers.learn import problem_handler as learn_problem_handler  # AA-1105 — AA Academy (/learn)
+from api.routers.learn import public_router as learn_public_router
+from api.routers.learn import router as learn_router
+from services.learn.academy import Problem as LearnProblem
 from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
 from api.middleware.view_as import ViewAsGateMiddleware  # AA-1035 R2 slice 2 — read-only view-as tokens
 from api.middleware.rate_limit import rate_limit_middleware
@@ -411,7 +414,8 @@ app.include_router(tenant_account_router)  # AA-1028 — /tenant/v1 (M2M cis.ten
 app.include_router(tenant_addons_router)  # AA-1036 R3 — /tenant/v1 add-ons (M2M cis.tenant/addons)
 app.include_router(tenant_erasure_router)  # AA-1093 L2 — /tenant/v1 erasure requests (M2M cis.tenant/erasure)
 app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
-app.include_router(learn_router)  # AA-1105 — /learn/v1 (WORKFORCE academy-web only), /learn/public/v1 verify
+app.include_router(learn_router)  # AA-1105 — /learn/v1 (WORKFORCE academy-web only)
+app.include_router(learn_public_router)  # AA-1105 — /learn/public/v1/certificates/{code} (public, rate limited)
 
 app.middleware("http")(rate_limit_middleware)
 # AA-979 P2b — registered after the rate limiter so it wraps it: a viewer / editor token refused for its Content studio
@@ -443,6 +447,8 @@ app.add_exception_handler(AtomReplaced, tour_not_served_handler)
 # AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
 # /tenant/membership/v1 and (AA-1028) /tenant/v1.
 app.add_exception_handler(CatalogProblem, catalog_problem_handler)
+# AA-1105 — a /learn/v1 sign-in refusal (router dependency) answers the learn.http.v1 Problem body.
+app.add_exception_handler(LearnProblem, learn_problem_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
 

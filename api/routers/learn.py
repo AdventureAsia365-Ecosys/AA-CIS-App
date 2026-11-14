@@ -46,7 +46,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 import asyncpg
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
@@ -64,7 +64,6 @@ from services.learn.store import PgStore
 from shared import settings
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/learn", tags=["learn"])
 
 ACQUIRE_TIMEOUT_S = 5.0  # technical-constant: pool acquire bound, as the other HTTP contracts
 NO_STORE = {"Cache-Control": "private, no-store"}
@@ -111,6 +110,24 @@ async def _principal(request: Request) -> Principal:
         raise ac.Problem(503, "unavailable", "Sign-in verification is unavailable; retry later.") from None
 
 
+async def require_academy_token(request: Request) -> Principal:
+    """Router dependency of /learn/v1 (the route-auth scan, tests/unit/test_s241_admin_routes_require_auth.py, sees
+    it): the verified academy-web principal, kept on request.state; a refusal raises :class:`ac.Problem`, which
+    :func:`problem_handler` answers with the contract's Problem body."""
+    principal = await _principal(request)
+    request.state.learn_principal = principal
+    return principal
+
+
+async def problem_handler(_request: Request, exc: ac.Problem) -> JSONResponse:
+    """App exception handler (api/main.py) for a refusal raised by :func:`require_academy_token`."""
+    return problem(exc.status, exc.error, exc.message, exc.retry_at, UNAUTHORIZED if exc.status == 401 else None)
+
+
+router = APIRouter(prefix="/learn", tags=["learn"], dependencies=[Depends(require_academy_token)])
+public_router = APIRouter(prefix="/learn", tags=["learn"])
+
+
 async def learner_ctx(store: Any, principal: Principal) -> ac.Ctx:
     """The staff learner behind a verified academy token (decision 7), its row refreshed from the directory."""
     staff = await store.staff_row(principal.iss, principal.sub)
@@ -141,16 +158,15 @@ open_store: Callable[[Request], Any] = _pg_store
 
 
 async def _answer(request: Request, handler: Handler, *, bundle: bool = True) -> JSONResponse:
+    principal = request.state.learn_principal
     try:
-        principal = await _principal(request)
         loaded = await lb.load() if bundle else None
         async with open_store(request) as store:
             ctx = await learner_ctx(store, principal)
             ctx.bundle = loaded
             status, body = await handler(ctx)
     except ac.Problem as exc:
-        headers = UNAUTHORIZED if exc.status == 401 else None
-        return problem(exc.status, exc.error, exc.message, exc.retry_at, headers)
+        return await problem_handler(request, exc)
     except lb.LearnUnavailable as exc:
         return problem(503, "unavailable", str(exc), headers={"Retry-After": "30"})
     except _DB_DOWN as exc:
@@ -323,7 +339,7 @@ async def verify_count(request: Request) -> int:
     return _local_count(key)
 
 
-@router.get("/public/v1/certificates/{code}", responses=_ok(m.CertificateVerify),
+@public_router.get("/public/v1/certificates/{code}", responses=_ok(m.CertificateVerify),
             summary="Public verify view of a certificate (rate limited, no sign-in)")
 async def verify_certificate(request: Request, code: str) -> JSONResponse:
     limit = int(await settings.aget("cis.learn.verify_requests_per_minute"))

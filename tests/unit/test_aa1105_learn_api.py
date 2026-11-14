@@ -72,6 +72,7 @@ def test_every_contract_path_is_served():
     from fastapi import FastAPI
     app = FastAPI()
     app.include_router(learn_router.router)
+    app.include_router(learn_router.public_router)
     served = {p for p in app.openapi()["paths"]}
     assert {f"/learn{p}" for p in DOC["paths"]} == served
 

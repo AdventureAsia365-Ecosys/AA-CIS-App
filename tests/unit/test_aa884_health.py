@@ -162,7 +162,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # AA-1049 (S277): 398 (published_tours.master_status_reason 'policy_hold') too.
 # AA-1091 (S278): 402 (silver_aa_internal.tour_reference_price, the Reference prices routes) too.
 # AA-1093 L2 (S279): 408 / 409 / 411 (the tenant erasure saga tables, the feed event type, its settings) too.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 412) if k != 336]
+# AA-1105 (S281): 420 (schema learn, the AA Academy learning API) too.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 421) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():

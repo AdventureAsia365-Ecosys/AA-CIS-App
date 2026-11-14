@@ -276,6 +276,8 @@ class Harness:
         learn_router._window.clear()
         app = FastAPI()
         app.include_router(learn_router.router)
+        app.include_router(learn_router.public_router)
+        app.add_exception_handler(learn_router.ac.Problem, learn_router.problem_handler)
         app.state.redis = None
         self.app = app
         self.client = TestClient(app)
