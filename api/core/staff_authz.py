@@ -145,17 +145,12 @@ TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
 # team's CIS role). Never a selling price (root ADR 0005 d7).
 REFERENCE_PRICE_READ = "reference_price.read"
 REFERENCE_PRICE_WRITE = "reference_price.write"
-# S279 thresholds L1 (tech lead S279 Q1; CIS 407) — Platform › Settings, the admin-editable settings registry
-# (/admin/settings/registry): propose a new value of a threshold, limit, cap or policy value (settings.write) and
-# approve / reject a proposal (settings.approve). Admin role only; the delegated pages (finance billing, ai_ops
-# gateway) keep their own capabilities.
+# S279 thresholds L1 (tech lead S279 Q1; CIS 407) — Platform › Settings (/admin/settings/registry): propose a new value
+# of a threshold, limit, cap or policy value (settings.write), approve / reject it (settings.approve). Admin role only;
+# the delegated pages (finance billing, ai_ops gateway) keep their own capabilities.
 SETTINGS_WRITE = "settings.write"
 SETTINGS_APPROVE = "settings.approve"
-# AA-1105 (root ADR 0022, contract learn.http.v1) — AA Academy: a learner holding learn.preview sees the draft modules
-# (marked draft, never counted toward a certificate) on the academy host. Not a CIS admin route capability: the
-# learning API (/learn/v1, api/routers/learn.py) reads it for the learner's WORKFORCE group role. The module owners'
-# roles: admin (the tech lead) and content_lead.
-LEARN_PREVIEW = "learn.preview"
+LEARN_PREVIEW = "learn.preview"  # AA-1105: AA Academy draft modules (/learn/v1 reads it; admin and content_lead)
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 

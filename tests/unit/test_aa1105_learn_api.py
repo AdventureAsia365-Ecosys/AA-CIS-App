@@ -373,10 +373,11 @@ def test_verify_is_rate_limited_per_client_address(h):
 
 
 def test_verify_limit_is_the_setting(h, monkeypatch):
-    from services.learn import academy as ac
+    from shared import settings
+    real = settings.aget
 
-    async def setting(key):
-        return 2 if key == "cis.learn.verify_requests_per_minute" else await ac.settings.aget(key)
-    monkeypatch.setattr(ac, "setting", setting)
+    async def aget(key, tenant_id=None):
+        return 2 if key == "cis.learn.verify_requests_per_minute" else await real(key, tenant_id)
+    monkeypatch.setattr(settings, "aget", aget)
     codes = [h.client.get("/learn/public/v1/certificates/AAAAAAAAAAAAAAAAAAAAAA").status_code for _ in range(3)]
     assert codes == [404, 404, 429]

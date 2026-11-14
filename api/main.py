@@ -411,7 +411,7 @@ app.include_router(tenant_account_router)  # AA-1028 — /tenant/v1 (M2M cis.ten
 app.include_router(tenant_addons_router)  # AA-1036 R3 — /tenant/v1 add-ons (M2M cis.tenant/addons)
 app.include_router(tenant_erasure_router)  # AA-1093 L2 — /tenant/v1 erasure requests (M2M cis.tenant/erasure)
 app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
-app.include_router(learn_router)  # AA-1105 — /learn/v1 (WORKFORCE academy-web only), /learn/public/v1 certificate verify
+app.include_router(learn_router)  # AA-1105 — /learn/v1 (WORKFORCE academy-web only), /learn/public/v1 verify
 
 app.middleware("http")(rate_limit_middleware)
 # AA-979 P2b — registered after the rate limiter so it wraps it: a viewer / editor token refused for its Content studio

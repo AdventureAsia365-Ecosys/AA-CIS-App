@@ -39,7 +39,7 @@ class Problem(Exception):
     """A refusal with the contract's error code."""
 
     def __init__(self, status: int, error: str, message: str, retry_at: Optional[datetime] = None) -> None:
-        super().__init__(status, error, message)
+        super().__init__(status, error, message, retry_at)
         self.status, self.error, self.message, self.retry_at = status, error, message, retry_at
 
 
@@ -59,10 +59,6 @@ class Ctx:
     @property
     def learner_id(self) -> str:
         return self.learner["learner_id"]
-
-
-async def setting(key: str) -> Any:
-    return await settings.aget(key)
 
 
 # ── visibility ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -148,7 +144,7 @@ def last_failed_at(state: State, scope: str, target_id: str) -> Optional[datetim
 
 
 async def retake_at(state: State, scope: str, target_id: str) -> Optional[datetime]:
-    delay = await setting("cis.learn.quiz_retake_delay_hours")
+    delay = await settings.aget("cis.learn.quiz_retake_delay_hours")
     return g.retake_at(last_failed_at(state, scope, target_id), delay, g.now_utc())
 
 
@@ -224,9 +220,9 @@ def _lesson_summary(state: State, lesson: dict) -> dict:
 async def _quiz_state(ctx: Ctx, state: State, module: dict) -> dict:
     items = g.live_items(await lb.quiz(ctx.bundle, module)) if module.get("quiz") else []
     scores = [a["score_pct"] for a in _attempts(state, "module", module["id"]) if a.get("score_pct") is not None]
-    per_attempt = int(await setting("cis.learn.quiz_items_per_attempt"))
+    per_attempt = int(await settings.aget("cis.learn.quiz_items_per_attempt"))
     return {"available": bool(items), "items_per_attempt": min(per_attempt, len(items)),
-            "pass_mark_pct": int(await setting("cis.learn.quiz_pass_mark_pct")),
+            "pass_mark_pct": int(await settings.aget("cis.learn.quiz_pass_mark_pct")),
             "best_score_pct": max(scores) if scores else None, "passed": quiz_passed(state, module),
             "retake_at": g.iso(await retake_at(state, "module", module["id"]))}
 
@@ -278,7 +274,7 @@ async def get_video(ctx: Ctx, lesson_id: str) -> dict:
     video = lesson.get("video")
     if not video:
         raise not_found("The lesson video")
-    ttl = int(await setting("cis.learn.video_url_ttl_seconds"))
+    ttl = int(await settings.aget("cis.learn.video_url_ttl_seconds"))
     url = await lb.presign(video["key"], ttl, check=True)
     if url is None:
         raise not_found("The lesson video")
@@ -321,8 +317,8 @@ async def issue_certificate(ctx: Ctx, path: dict, final_attempt_id: Optional[str
     now = g.now_utc()
     versions = {m["id"]: str(m["version"]) for m in required_modules(ctx, path) if m is not None}
     expires = None
-    if path["id"] in (await setting("cis.learn.recert_paths") or []):
-        expires = g.add_months(now, int(await setting("cis.learn.recert_months")))
+    if path["id"] in (await settings.aget("cis.learn.recert_paths") or []):
+        expires = g.add_months(now, int(await settings.aget("cis.learn.recert_months")))
     code, sha = g.new_code()
     row = await ctx.store.issue_certificate(
         ctx.learner, path, sha, expires, versions, final_attempt_id, g.badge(path),

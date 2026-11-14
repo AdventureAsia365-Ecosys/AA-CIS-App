@@ -61,6 +61,7 @@ from services.learn import assessment as qa
 from services.learn import bundle as lb
 from services.learn import grading as g
 from services.learn.store import PgStore
+from shared import settings
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/learn", tags=["learn"])
@@ -325,7 +326,7 @@ async def verify_count(request: Request) -> int:
 @router.get("/public/v1/certificates/{code}", responses=_ok(m.CertificateVerify),
             summary="Public verify view of a certificate (rate limited, no sign-in)")
 async def verify_certificate(request: Request, code: str) -> JSONResponse:
-    limit = int(await ac.setting("cis.learn.verify_requests_per_minute"))
+    limit = int(await settings.aget("cis.learn.verify_requests_per_minute"))
     if await verify_count(request) > limit:
         retry = 60 - int(time.time()) % 60
         logger.info("learn_verify_throttled", ip=login_throttle.client_ip(request))

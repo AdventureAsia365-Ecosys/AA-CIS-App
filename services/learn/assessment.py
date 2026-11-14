@@ -11,6 +11,7 @@ from typing import Optional
 
 from services.learn import academy as ac
 from services.learn import bundle as lb
+from shared import settings
 from services.learn import grading as g
 from services.learn.academy import Ctx, Problem
 
@@ -56,9 +57,9 @@ async def start_module_quiz(ctx: Ctx, module_id: str) -> dict:
     if any(p["state"] == "open" for p in ac._prerequisites(ctx, state, module)):
         raise Problem(409, "prerequisites_open", "Complete the prerequisite modules first.")
     await _check_retake(state, "module", module["id"])
-    count = int(await ac.setting("cis.learn.quiz_items_per_attempt"))
+    count = int(await settings.aget("cis.learn.quiz_items_per_attempt"))
     items = g.draw(g.live_items(await lb.quiz(ctx.bundle, module)), count)
-    pass_mark = int(await ac.setting("cis.learn.quiz_pass_mark_pct"))
+    pass_mark = int(await settings.aget("cis.learn.quiz_pass_mark_pct"))
     return await _open_attempt(ctx, "module", module["id"], items, {module["id"]: str(module["version"])}, pass_mark)
 
 
@@ -70,13 +71,13 @@ async def start_final_quiz(ctx: Ctx, path_id: str) -> dict:
     if not ac.required_complete(ctx, state, path):
         raise Problem(409, "prerequisites_open", "Complete every required module of the path first.")
     await _check_retake(state, "final", path["id"])
-    per_module = int(await ac.setting("cis.learn.final_quiz_items_per_module"))
+    per_module = int(await settings.aget("cis.learn.final_quiz_items_per_module"))
     modules = [m for m in ac.required_modules(ctx, path) if m is not None]
     items: list[dict] = []
     for module in modules:
         items.extend(g.draw(g.live_items(await lb.quiz(ctx.bundle, module)), per_module))
     items = g.draw(items, len(items))       # mix the modules
-    pass_mark = int(await ac.setting("cis.learn.final_quiz_pass_mark_pct"))
+    pass_mark = int(await settings.aget("cis.learn.final_quiz_pass_mark_pct"))
     versions = {m["id"]: str(m["version"]) for m in modules}
     return await _open_attempt(ctx, "final", path["id"], items, versions, pass_mark)
 
@@ -130,7 +131,7 @@ async def submit(ctx: Ctx, attempt_id: str, submission: list[dict]) -> dict:
     state = await ac.load_state(ctx)
     certificate = await _after_pass(ctx, attempt, state) if passed else None
     target = ctx.bundle.modules.get(attempt["target_id"]) if attempt["scope"] == "module" else None
-    delay = await ac.setting("cis.learn.quiz_retake_delay_hours")
+    delay = await settings.aget("cis.learn.quiz_retake_delay_hours")
     return {"attempt_id": attempt_id, "scope": attempt["scope"], "target_id": attempt["target_id"],
             "score_pct": score, "pass_mark_pct": int(attempt["pass_mark_pct"]), "passed": passed,
             "retake_at": None if passed else g.iso(g.retake_at(submitted_at, delay, now)),
@@ -158,7 +159,7 @@ async def _review_item(ctx: Ctx, item_id: str, module_id: str) -> Optional[dict]
 
 
 async def due_reviews(ctx: Ctx) -> dict:
-    cap = int(await ac.setting("cis.learn.review_max_cards_per_day"))
+    cap = int(await settings.aget("cis.learn.review_max_cards_per_day"))
     now = g.now_utc()
     midnight = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
     left = max(0, cap - int(await ctx.store.reviews_since(ctx.learner_id, midnight)))
@@ -167,7 +168,7 @@ async def due_reviews(ctx: Ctx) -> dict:
         item = await _review_item(ctx, row["item_id"], row["module_id"])
         if item is not None:
             cards.append({"module_id": row["module_id"], "item": g.public_item(item), "card": _card(row["card"])})
-    return {"daily_cap": cap, "target_retention": float(await ac.setting("cis.learn.review_target_retention")),
+    return {"daily_cap": cap, "target_retention": float(await settings.aget("cis.learn.review_target_retention")),
             "cards": cards}
 
 

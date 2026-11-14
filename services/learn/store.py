@@ -217,7 +217,8 @@ class PgStore:
             "INSERT INTO learn.certificate (learner_id, tenant_id, path_id, path_title, code_sha256, expires_at, "
             "module_versions, final_attempt_id, badge, renewal_reason) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, "
             "$7::jsonb, $8::uuid, $9::jsonb, $10) ON CONFLICT (learner_id, path_id) DO UPDATE SET "
-            "path_title = EXCLUDED.path_title, code_sha256 = EXCLUDED.code_sha256, status = 'valid', issued_at = now(), "
+            "path_title = EXCLUDED.path_title, code_sha256 = EXCLUDED.code_sha256, status = 'valid', "
+            "issued_at = now(), "
             "expires_at = EXCLUDED.expires_at, module_versions = EXCLUDED.module_versions, "
             "final_attempt_id = EXCLUDED.final_attempt_id, badge = EXCLUDED.badge, "
             f"renewal_reason = EXCLUDED.renewal_reason RETURNING {CERT_COLS}",
