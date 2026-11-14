@@ -61,7 +61,7 @@ MAX_OPS_RECIPIENTS = 50         # SES: at most 50 recipients per message
 MAX_EMAIL_LEN = 254  # technical-constant: RFC 5321 address length
 MAX_NOTE_LEN = 80
 HISTORY_LIMIT = 20
-RECONCILE_TTL_S = 60  # technical-constant: in-process cache refresh of a read
+RECONCILE_TTL_S = 60  # technical-constant: cache refresh of a read (in-process + Redis TTL)
 RECONCILE_CACHE_KEY = "alert_recipients:reconcile"
 
 RESOURCE_TYPE = "alert_recipient"

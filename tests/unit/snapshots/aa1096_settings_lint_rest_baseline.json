@@ -24,6 +24,7 @@
   "api/core/view_as.py:MIN_MINUTES",
   "api/main.py:_STAFF_STATE_MAX",
   "api/main.py:_STAFF_STATE_TTL_S",
+  "api/middleware/rate_limit.py:_TENANT_META_TTL_S",
   "api/middleware/staff_audit.py:MAX_ACTOR",
   "api/middleware/staff_audit.py:MAX_RESOURCE_ID",
   "api/middleware/tenant_role.py:_MAX_PARTS",

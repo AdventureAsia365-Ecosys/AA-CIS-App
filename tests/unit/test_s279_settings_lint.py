@@ -24,8 +24,11 @@ value is a setting, never a code literal or an env var alone).
    ``<path>:<NAME>`` with no line number). The governed modules stay stricter: the rest baseline never lists one of
    them, so a new governed constant can only enter through rule 1 (a setting or the marker). AA-CIS-App holds no
    vendored copy; it is the owner of the copies the other repos vendor (:data:`COPY_SOURCES`: ``shared/aa_llm``, the
-   identity verifier, the settings reader), so those are scanned here and their findings sit in the baseline: a
-   marker added to one changes the byte copy of every consumer, so it ships with the copy refresh, not on its own.
+   identity verifier, the settings reader, the job table shape). They are scanned like any other module (the job
+   table shape under rule 1, it sits in governed ``shared/jobs``; the rest under rule 4, their findings in the rest
+   baseline). A marker added to one changes the byte copy of every consumer, so it ships with the copy refresh, not
+   on its own: :data:`COPY_SOURCE_MARKS` pins the marked lines of the copy sources, and a new one fails until it is
+   listed there in the same change that refreshes the consumers' copies.
 
 No DB. Regenerate both baselines only to remove entries: ``python -m tests.unit.test_s279_settings_lint``. CI: the
 "Unit Tests" job runs this file."""
@@ -60,7 +63,12 @@ SCANNED = ("api", "services", "shared", "worker")
 EXCLUDED_PARTS = frozenset({"tests", "scripts", "migrations", "__pycache__"})
 # The canonical sources of the byte copies vendored by AA-Booking, AA-Partner and AA-TripPlanner-Web (their
 # check_vendored_copies / *.lock.json): scanned here, never marked on their own (see rule 4).
-COPY_SOURCES = ("shared/aa_llm/", "api/core/identity_verifier.py", "shared/settings/reader.py")
+COPY_SOURCES = ("shared/aa_llm/", "api/core/identity_verifier.py", "shared/settings/reader.py",
+                "shared/jobs/job_table_shape.py")
+# The marked lines of the copy sources on 14/11/2026, keyed ``<path>:<NAME>`` (see rule 4). Grows only with a copy
+# refresh in every consumer (AA-Booking, AA-Partner, AA-TripPlanner-Web) in the same change.
+COPY_SOURCE_MARKS = frozenset({"shared/settings/reader.py:REFRESH_TIMEOUT_S"})
+_ASSIGNED_NAME = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]*)?=")
 READ_CALL = re.compile(r"""\b(?:settings|_settings|platform_settings|_platform_settings)"""
                        r"""\.(?:get|aget|definition|resolve)\(\s*["'](cis\.[a-z0-9_.]+)["']""")
 
@@ -166,6 +174,35 @@ def test_the_rest_scope():
             "api/core/identity_verifier.py", "shared/aa_llm/budget.py"} <= rest
     assert not any(EXCLUDED_PARTS & set(r.split("/")) for r in rest), "tests, scripts or migrations scanned"
     assert all((REPO / src).exists() for src in COPY_SOURCES), "a copy source moved: update COPY_SOURCES"
+    assert "shared/jobs/job_table_shape.py" in governed, "the job table shape copy source left the governed modules"
+
+
+def _copy_source_files() -> list[Path]:
+    out: list[Path] = []
+    for src in COPY_SOURCES:
+        p = REPO / src
+        out.extend(sorted(p.rglob("*.py")) if p.is_dir() else [p] if p.is_file() else [])  # gone: test_the_rest_scope
+    return [p for p in out if "__pycache__" not in p.parts]
+
+
+def copy_source_marks() -> list[str]:
+    """Every line of a copy source carrying the marker, as ``<path>:<NAME>`` (the assigned name, else the line)."""
+    out = []
+    for path in _copy_source_files():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if MARK in line:
+                m = _ASSIGNED_NAME.match(line)
+                out.append(f"{path.relative_to(REPO).as_posix()}:{m.group(1) if m else line.strip()}")
+    return sorted(set(out))
+
+
+def test_no_copy_source_is_marked_on_its_own():
+    new = sorted(set(copy_source_marks()) - COPY_SOURCE_MARKS)
+    assert not new, ("a marker in a file the other repos vendor as a byte copy breaks their copy check: refresh the "
+                     f"copies in AA-Booking, AA-Partner and AA-TripPlanner-Web in the same change and list it in "
+                     f"COPY_SOURCE_MARKS, or leave the constant in the rest baseline: {new}")
+    gone = sorted(COPY_SOURCE_MARKS - set(copy_source_marks()))
+    assert not gone, f"remove these from COPY_SOURCE_MARKS: {gone}"
 
 
 def _code_text() -> str:
@@ -207,6 +244,18 @@ def test_the_rest_lint_catches_a_new_cap_outside_the_governed_modules(tmp_path, 
     monkeypatch.setattr(sys.modules[__name__], "GOVERNED", ("services/zz_lint",))
     assert rest_findings() == ["api/routers/zz.py:HOLD_DAYS", "shared/zz.py:HOLD_DAYS"]
     assert findings() == ["services/zz_lint/m.py:HOLD_DAYS"]
+
+
+def test_a_new_marker_in_a_copy_source_is_caught(tmp_path, monkeypatch):
+    (tmp_path / "shared" / "settings").mkdir(parents=True)
+    (tmp_path / "shared" / "settings" / "reader.py").write_text(
+        "REFRESH_TIMEOUT_S = 3.0  # technical-constant: x\nSNAPSHOT_TTL_S: float = 5.0  # technical-constant: y\n",
+        encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "COPY_SOURCES", ("shared/aa_llm/", "shared/settings/reader.py"))
+    assert copy_source_marks() == ["shared/settings/reader.py:REFRESH_TIMEOUT_S",
+                                   "shared/settings/reader.py:SNAPSHOT_TTL_S"]
+    assert set(copy_source_marks()) - COPY_SOURCE_MARKS == {"shared/settings/reader.py:SNAPSHOT_TTL_S"}
 
 
 if __name__ == "__main__":  # rewrite both baselines to the current findings (only to remove entries)

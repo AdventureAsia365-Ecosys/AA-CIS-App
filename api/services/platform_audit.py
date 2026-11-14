@@ -32,7 +32,7 @@ logger = structlog.get_logger()
 
 MAX_LIMIT = 200
 VERIFY_CACHE_KEY = "admin_platform_audit_verify:v1"
-VERIFY_CACHE_TTL_S = 60  # technical-constant: in-process cache refresh of a read
+VERIFY_CACHE_TTL_S = 60  # technical-constant: cache refresh of a read (Redis TTL)
 VERIFY_BATCH = 2000
 UNCHAINED_SAMPLE = 10
 
