@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 429_aa1048_claim_fire_sample_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -904,6 +904,42 @@
      "lower": "Khoảng rộng hơn: nhiều điểm được chấm lại hơn (thêm hai lượt chấm có phí mỗi bài), kết quả đạt hay trượt sát ngưỡng ổn định hơn.",
      "when": "Giảm khi bài ngay dưới ngưỡng lúc đạt lúc trượt khi chạy lại; tăng khi chi phí chấm thêm lớn hơn lợi ích. Không được vượt đầu cao. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
      "example": "Với mặc định 6,0 (khoảng 6,0 đến 8,0): điểm lần đầu 6,4 được chấm lại hai lần và lấy điểm giữa của ba lần."
+    }
+   }
+  },
+  {
+   "key": "cis.quality.claim_fire_sample_max",
+   "app": "cis",
+   "area": "quality",
+   "label": "Claim checker test: statements checked to find flagged ones",
+   "description": "The most unlabelled claims one R1 firing run may check (a deterministic, salted sample spread over the writers in proportion, drawn from claims on pieces no earlier claim-instrument evaluation touched). The fresh-pool sheet then draws its claims from the ones R1 fired on. It sets the paid calls of the firing run; the run's spending cap is cis.spend.instrument_eval_cap_usd. Read by the firing run from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "claims",
+   "min_value": 1,
+   "max_value": 3000,
+   "allowed_values": null,
+   "default_value": 600,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "Before a test run of the claim checker (the AI check that flags statements in written content that the source material does not back up), the current checker looks at a sample of statements nobody has labelled yet, from content no earlier test used. A review panel then labels only the statements it flagged. This is how many statements go into that sample.",
+     "raise": "More flagged statements come out, so the label sheet holds enough real problems and false alarms, but the run makes more paid AI calls.",
+     "lower": "The run costs less, but it may flag too few statements, so the label sheet holds too few real problems for the test run.",
+     "when": "Raise it when the label sheet ends up with fewer real problems than the test run needs; lower it when the sheet regularly holds far more flagged statements than it uses.",
+     "example": "With the default of 600, the checker looks at up to 600 statements; at a flag rate of about one in five that gives about 120 flagged statements for the panel."
+    },
+    "vi": {
+     "what": "Trước khi chạy thử bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được), bộ kiểm tra hiện tại xem một mẫu các câu chưa ai gán nhãn, lấy từ nội dung chưa lần thử nào dùng tới. Sau đó hội đồng duyệt chỉ gán nhãn những câu nó đã đánh dấu. Đây là số câu được đưa vào mẫu đó.",
+     "raise": "Có nhiều câu bị đánh dấu hơn, nên bảng gán nhãn đủ lỗi thật và báo động nhầm, nhưng lần chạy gọi AI trả phí nhiều hơn.",
+     "lower": "Lần chạy tốn ít tiền hơn, nhưng có thể đánh dấu quá ít câu, nên bảng gán nhãn có quá ít lỗi thật cho lần chạy thử.",
+     "when": "Tăng khi bảng gán nhãn có ít lỗi thật hơn mức lần chạy thử cần; giảm khi bảng thường xuyên có nhiều câu bị đánh dấu hơn hẳn số câu được dùng.",
+     "example": "Với mặc định 600, bộ kiểm tra xem tối đa 600 câu; với tỷ lệ đánh dấu khoảng một trên năm, hội đồng có khoảng 120 câu để gán nhãn."
     }
    }
   },
