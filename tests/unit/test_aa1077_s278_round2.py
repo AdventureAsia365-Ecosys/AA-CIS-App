@@ -285,7 +285,7 @@ def test_the_fixture_reproduces_the_trial_shape():
 
 
 def test_plan_after_repair_sizes_from_the_cut_text_and_fills_the_holes_first(monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     before = _text()
     after = before
     for c in CUTS:
@@ -303,7 +303,7 @@ def test_plan_after_repair_sizes_from_the_cut_text_and_fills_the_holes_first(mon
 @pytest.mark.parametrize("case, why", [("off", "off"), ("linkedin", "not_blog"), ("long", "at_or_over_floor"),
                                        ("no_facts", "no_untold_facts"), ("no_sections", "no_sections")])
 def test_plan_after_repair_says_why_not(case, why, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "off" if case == "off" else "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "off" if case == "off" else "on")
     text, channel, source = _text(), "blog", SOURCE
     if case == "linkedin":
         channel = "linkedin"
@@ -319,7 +319,7 @@ def test_plan_after_repair_says_why_not(case, why, monkeypatch):
 
 def test_the_extend_refuses_a_paragraph_that_names_its_source(monkeypatch):
     """Failure shape 2 at the expand step: a paragraph that says where its facts come from never stands."""
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     plan, _ = le.plan_after_repair(_text(), before=None, channel="blog", source=SOURCE)
 
     def call(*, sections, facts, voice=None, **kw):
@@ -430,7 +430,7 @@ async def test_six_cuts_on_a_short_blog_are_followed_by_an_expand_that_clears_th
     """Failure shape 1, switch on: the sentence repair applies the 6 cuts (each problem told to keep its sentence if
     it can), the expand then runs on the CUT text with the shortened sections first, and the net length the loop
     records ends over the floor; the F4 gate re-reads the final text and passes."""
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     calls: list[str] = []
     with patch.object(service, "write_content", return_value=(_text(), 0.05, {}, None)), \
             patch.object(service, "rewrite_with_feedback") as rewrite, \
@@ -460,7 +460,7 @@ async def test_six_cuts_on_a_short_blog_are_followed_by_an_expand_that_clears_th
 async def test_the_same_shape_with_the_switch_off_is_main(_loop_stubs, monkeypatch):
     """Default (switch unset): the full rewrite as on main, no expand, no length record; the rewrite feedback has the
     cuts first and the length last."""
-    monkeypatch.delenv(le.EXTEND_ENV, raising=False)
+    monkeypatch.delenv(le.EXTEND_FLAG, raising=False)
     calls: list[str] = []
     with patch.object(service, "write_content", return_value=(_text(), 0.05, {}, None)), \
             patch.object(service, "rewrite_with_feedback", return_value=(_text(), 0.05, {}, None)) as rewrite, \
@@ -480,7 +480,7 @@ async def test_the_same_shape_with_the_switch_off_is_main(_loop_stubs, monkeypat
 async def test_a_repair_that_leaves_nothing_to_expand_from_is_recorded_as_shrunk(_loop_stubs, monkeypatch):
     """No untold fact after the cuts: the expand cannot run; the round is recorded (shrank_under_floor) and F4 holds
     the piece, never a silent short pass."""
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     calls: list[str] = []
     real_plan_for = le.plan_for
     with patch.object(service, "write_content", return_value=(_text(), 0.05, {}, None)), \
@@ -620,7 +620,7 @@ def _two_adds(*, sections, facts, voice=None, **kw):
 
 @pytest.mark.asyncio
 async def test_attempt_three_cuts_never_take_a_just_expanded_blog_back_under_the_floor(_loop_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
     monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
     calls: list[str] = []
     _repair.calls = []
@@ -654,7 +654,7 @@ async def test_attempt_three_cuts_never_take_a_just_expanded_blog_back_under_the
 @pytest.mark.asyncio
 async def test_attempt_three_cuts_with_the_switch_off_are_main(_loop_stubs, monkeypatch):
     """Switch off: no keep hint, no put-back, no length record (main's loop byte for byte)."""
-    monkeypatch.delenv(le.EXTEND_ENV, raising=False)
+    monkeypatch.delenv(le.EXTEND_FLAG, raising=False)
     monkeypatch.setenv(service.LAST_ATTEMPT_MODE_ENV, service.LEGACY_LAST_ATTEMPT)
     _repair.calls = []
     with patch.object(service, "write_content", return_value=(_attempt_three_text(), 0.05, {}, None)), \
@@ -668,3 +668,11 @@ async def test_attempt_three_cuts_with_the_switch_off_are_main(_loop_stubs, monk
     assert all(lc.KEEP_NOT_CUT not in it["problem"] for call in _repair.calls for it in call)
     log = fin.call_args.kwargs["repair_log"]
     assert not any("length_net" in e or "length_floor_kept" in e for e in log)
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

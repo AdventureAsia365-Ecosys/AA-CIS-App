@@ -73,11 +73,10 @@ _TENANT_FLAGS_SQL = ("SELECT coalesce(is_pilot, false) AS is_pilot, (is_canary I
                      "AS is_synthetic FROM shared.tenants WHERE tenant_id = $1::uuid")
 
 
-async def create_request(conn, tenant_id: str, *, opened_at: datetime, mode: str, actor: str,
-                         env: Optional[dict] = None) -> dict:
+async def create_request(conn, tenant_id: str, *, opened_at: datetime, mode: str, actor: str) -> dict:
     """INSERT one request (phase dry_run, no app active until its not_before) and emit the event. Raises
     UniqueViolation when an open one exists."""
-    nb = saga.schedule(opened_at, mode, env)
+    nb = saga.schedule(opened_at, mode)
     flags = await conn.fetchrow(_TENANT_FLAGS_SQL, tenant_id)
     row = await conn.fetchrow(
         f"INSERT INTO shared.tenant_erasure_request (tenant_id, mode, opened_at, is_pilot, is_synthetic, "
@@ -91,7 +90,7 @@ async def create_request(conn, tenant_id: str, *, opened_at: datetime, mode: str
 
 
 async def on_offboard(conn, tenant_id: str, *, actor: str, offboarded_at: Optional[datetime] = None,
-                      is_pilot: Optional[bool] = None, env: Optional[dict] = None) -> dict:
+                      is_pilot: Optional[bool] = None) -> dict:
     """The T0 hook of POST /admin/tenants/{id}/offboard, inside its transaction (after the UPDATE that set
     cancelled_at; offboarded_at / is_pilot default to the tenant row). Returns what the route reports:
     {"status": "scheduled", ...} | {"status": "skipped", "reason": ...}. Never raises for a missing migration."""
@@ -104,7 +103,7 @@ async def on_offboard(conn, tenant_id: str, *, actor: str, offboarded_at: Option
         return {"status": "skipped", "reason": "pilot tenant: never scheduled by the saga (decision D8)"}
     try:
         async with conn.transaction():
-            req = await create_request(conn, tenant_id, opened_at=offboarded_at, mode="live", actor=actor, env=env)
+            req = await create_request(conn, tenant_id, opened_at=offboarded_at, mode="live", actor=actor)
     except NOT_MIGRATED:
         return {"status": "skipped", "reason": "erasure saga tables not migrated (CIS 408)"}
     except asyncpg.exceptions.UniqueViolationError:

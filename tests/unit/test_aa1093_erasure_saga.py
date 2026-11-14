@@ -23,6 +23,7 @@ import pytest
 from services.jobs import tenant_erasure_saga_job as sj
 from services.tenant_erasure import policy, saga
 from shared.jobs.registry import NonRetryable, get_kind
+from tests.unit.settings_serve import serve
 
 T0 = datetime(2026, 11, 13, 9, 0, tzinfo=timezone.utc)
 RID = "10930000-0000-4000-8000-0000000000a1"
@@ -31,7 +32,7 @@ H = {app: (c * 64) for app, c in zip(saga.APPS, "abcd")}
 
 
 def _request(**over) -> dict:
-    nb = saga.schedule(T0, "live", {})
+    nb = saga.schedule(T0, "live")
     req = {"request_id": RID, "tenant_id": TID, "mode": "live", "phase": "awaiting_approval", "round": 1,
            "opened_at": T0, "is_pilot": False, "is_synthetic": True, **{f"not_before_{a}": nb[a] for a in saga.APPS},
            "round_apps": ["cis", "booking", "tripplanner"], "done_apps": [],
@@ -43,18 +44,20 @@ def _request(**over) -> dict:
 # ── schedule and stages ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_crm_gets_90_days_and_the_others_the_retention_window():
-    nb = saga.schedule(T0, "live", {})
+    nb = saga.schedule(T0, "live")
     assert nb["crm"] == T0 + timedelta(days=90)
     assert nb["cis"] == nb["booking"] == nb["tripplanner"] == T0 + timedelta(days=30)
 
 
-def test_the_others_follow_the_cis_retention_window_setting():
-    nb = saga.schedule(T0, "live", {"ERASURE_TENANT_RETENTION_DAYS": "45"})
+def test_the_others_follow_the_cis_retention_window_setting(monkeypatch):
+    monkeypatch.setenv("ERASURE_TENANT_RETENTION_DAYS", "0")             # CIS 424: the env var is no override any more
+    with serve({"cis.erasure.tenant_retention_days": 45}):
+        nb = saga.schedule(T0, "live")
     assert nb["booking"] == T0 + timedelta(days=45) and nb["crm"] == T0 + timedelta(days=90)
 
 
 def test_a_drill_has_window_zero_for_every_app():
-    assert set(saga.schedule(T0, "drill", {}).values()) == {T0}
+    assert set(saga.schedule(T0, "drill").values()) == {T0}
 
 
 def test_stage_one_then_the_crm_alone():
@@ -338,29 +341,35 @@ def test_crm_report_rules():
                                apply_ok=False).code == "phase_mismatch"
 
 
+RETENTION = "cis.erasure.tenant_retention_days"   # read through erasure_job.tenant_retention_days (settings.get)
+
+
 # ── policy and the job ──────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_the_knobs_are_registry_settings_with_the_decided_defaults(monkeypatch):
     assert policy.apply_enabled() is False                                       # default off
     assert policy.approval_validity() == timedelta(hours=24)                    # D7
-    assert policy.windows("live", {})["crm"] == timedelta(days=90)              # D2
+    assert policy.windows("live")["crm"] == timedelta(days=90)              # D2
     seen = []
 
     def fake(key):
         seen.append(key)
-        return {policy.APPLY_SETTING: True, policy.APPROVAL_VALID_SETTING: 6, policy.CRM_WINDOW_SETTING: 120}[key]
+        return {policy.APPLY_SETTING: True, policy.APPROVAL_VALID_SETTING: 6, policy.CRM_WINDOW_SETTING: 120,
+                RETENTION: 30}[key]
     monkeypatch.setattr(policy._settings, "get", fake)
     assert policy.apply_enabled() is True and policy.approval_validity() == timedelta(hours=6)
-    assert policy.windows("live", {})["crm"] == timedelta(days=120)
-    assert set(seen) == {policy.APPLY_SETTING, policy.APPROVAL_VALID_SETTING, policy.CRM_WINDOW_SETTING}
+    assert policy.windows("live")["crm"] == timedelta(days=120)
+    assert set(seen) == {policy.APPLY_SETTING, policy.APPROVAL_VALID_SETTING, policy.CRM_WINDOW_SETTING, RETENTION}
 
 
 def test_a_build_without_the_compiled_key_keeps_the_decided_values(monkeypatch):
     def missing(key):
+        if key == RETENTION:            # CIS 407's key (the data_erasure job's window), not one of the saga's own
+            return 30
         raise KeyError(key)
     monkeypatch.setattr(policy._settings, "get", missing)
     assert policy.apply_enabled() is False and policy.approval_validity() == timedelta(hours=24)
-    assert policy.windows("live", {})["crm"] == timedelta(days=90)
+    assert policy.windows("live")["crm"] == timedelta(days=90)
 
 
 def test_job_payload_is_the_request_id_only():

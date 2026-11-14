@@ -1240,7 +1240,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     **Apply** is in the code but OFF: it needs `ERASURE_APPLY_ENABLED=true` (unset everywhere), a verified Cognito
     staff session, a succeeded DRY RUN of the same subject <= `ERASURE_DRY_RUN_MAX_AGE_HOURS` (24) old whose
     fingerprint is passed as `approved_fingerprint`, `approved_by`, `snapshot_id`, and for a tenant an offboard at
-    least `ERASURE_TENANT_RETENTION_DAYS` (default 30, Nghiệp sets it) ago. One transaction: recount = same
+    least `cis.erasure.tenant_retention_days` (setting, default 30; the Dev drill sets 0 on Platform › Settings) ago. One transaction: recount = same
     fingerprint, every statement touches exactly the approved rows, a recount finds 0, one `acp_shared.audit_log`
     row (`tenant.erased` / `dsar.cis_erased`, counts only); for a traveller the hash is then stripped from every
     `data_erasure` row holding it. Inside the transaction the tenant row is locked (`FOR UPDATE`) and its
@@ -1903,6 +1903,15 @@ relayed to the CRM tab), the TripPlanner keys and Booking's policy parameters (`
 shrink-only baseline `tests/unit/snapshots/aa1096_settings_guide_baseline.json` is empty; adding a key to it needs the
 tech lead's OK in review.
 
+**Env overrides live one release (AA-1096 l5, CIS 424).** A definition's `env_override` is an emergency switch for one
+release only (tech lead S279). CIS 424 retired the 25 the registry had (erasure retention, 21 quality modes, the blog
+seed ratio, the blog extend switch; list in `tests/unit/snapshots/aa1096_retired_env_overrides.json`): no definition
+names an env var, and the Dev erasure drill sets `cis.erasure.tenant_retention_days` to 0 on the page. The mechanism
+stays; `tests/unit/test_aa1096_settings_env_lint.py` refuses a retired override coming back, any runtime literal of a
+retired env name, and any new override without its window in `tests/unit/snapshots/aa1096_env_override_window.json`
+(at most 14 days; red once `remove_by` passes, until a `settings-edit` migration retires it). A migration changes
+fields of existing keys through a `settings-edit` block (`scripts/settings/gen_compiled_defaults.py`).
+
 **Change rules (AA-1096 S280 UX fix round).** A change may not be dated in the past (`settings_registry.effective_start`:
 422 `effective_in_past`, five minutes of grace count as now; the CRM relay applies it before relaying), and the newest
 decision wins: an approval in force supersedes every other approved row of its scope, scheduled ones included (the
@@ -2424,7 +2433,9 @@ presigned GET URLs; the academy web fetches the `.vtt` captions server side and 
 bucket CORS change). **Public verify** `GET /learn/public/v1/certificates/{code}`: SHA-256 lookup, holder display name,
 rate limited per client address (rightmost global X-Forwarded-For entry, `login_throttle.client_ip`: API Gateway
 appends the real source, the NLB adds nothing, the ALB appends a private address), limit
-`cis.learn.verify_requests_per_minute`, Redis window with an in-process fallback. Labs answer 409 `lab_closed` until
+`cis.learn.verify_requests_per_minute`, Redis window with an in-process fallback; every verify answer carries
+`X-Learn-Visitor-Limit` (contract 1.1: setting `cis.learn.verify_visitor_requests_per_minute`, CIS 425, at most the
+address limit minus one), the limit the academy web applies to each of its visitors. Labs answer 409 `lab_closed` until
 P4b. Tests: `tests/unit/test_aa1105_learn_api.py` (bodies validated against the contract copy
 `docs/contracts/learn.http.v1.openapi.yaml`, pinned by sha256), `tests/unit/test_aa1105_learn_rules.py`,
 `tests/integration/test_aa1105_learn_store.py`.
@@ -3743,9 +3754,9 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    Identity save), and the T2 keyword market is the agency's FIRST supported declared market
    (`seed_builder.first_supported_market`; before, the lowest MARKET_RANK, so US won for every list holding it).
 2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory signals before choosing. Since AA-1079
-   (S277) Debate RANKS ONLY by default (`T7_DEBATE_MODE` unset or `rank`): no candidate is dropped; a flagged one
+   (S277) Debate RANKS ONLY by default (setting `cis.quality_modes.t7_debate` = `rank`): no candidate is dropped; a flagged one
    carries `debate_flags` and is ordered after every unflagged candidate of its Channel queue, and the `t7_slate`
-   job result records the flags (`debate`, admin only). `T7_DEBATE_MODE=cut` brings back the cut below, for when the
+   job result records the flags (`debate`, admin only). The setting at `cut` brings back the cut below, for when the
    brand-fit judge is calibrated against the golden-set brand labels (`services/quality/brand_labels.py`,
    `scripts/quality/measure_aa1079_brand_fit.py`). The two signals:
    - _contested_: share of a keyword's SERP taken by "everywhere" domains (wikipedia,
@@ -3843,7 +3854,7 @@ S234 (AA-768): `services/acp_content_writing/hygiene.py` owns the deterministic 
 lexicon + out-of-scope gazetteer from the TRIP name and "other trips" lines, `LEAK_RE`,
 `SOCIAL_PROOF_RE`, repeats, hashtag spelling). It fixes what is safe in place before the gates
 (logged as the `F13_autofix` flag) and two gates report the rest: **F12_scope** (a place outside
-the SCOPE in title/meta/headings/body; warn by default — AA-788: `T10_F12_SCOPE_MODE=block` makes a body finding
+the SCOPE in title/meta/headings/body; warn by default — AA-788: setting `cis.quality_modes.t10_f12_scope` = block makes a body finding
 block for one sentence repair and hold when it is left, a title/meta-only finding stays a warning) and
 **F13_hygiene** (warn). Blogs also drop FAQ pairs the seed cannot answer (age, fitness, price…),
 logged under `F7_faq_autofix`.
@@ -3852,12 +3863,12 @@ consumer_social / editorial / warm_practical / observational, from the voice adj
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
 (each tag once — AA-780 S246) and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target (AA-788: the rewrite
-is also given the source's fact sentences the post does not tell yet; kill switch `T10_F14_FLOOR_MODE=warn`), and never
+is also given the source's fact sentences the post does not tell yet; kill switch: setting `cis.quality_modes.t10_f14_floor` = warn), and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
 generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired; stored as warn findings of F15_voice since AA-924, whose stock-list findings sit in F2_lexicon). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice. **F9_brand_style** (off-brand voice /
-generic AI wording, from the same judge call) warns by default; AA-788: `T10_F9_BRAND_STYLE_MODE=repair` makes an
+generic AI wording, from the same judge call) warns by default; AA-788: setting `cis.quality_modes.t10_f9_brand_style` = repair makes an
 attempt-1 failure whose flagged phrase sits in a body sentence block for one `t9_repair` sentence repair, never a hold
 (`STYLE_ONLY_GATES`). Each promoted check logs its decision (`t10_promoted_check`) when its mode is not the default;
 `scripts/aa788/promotion_replay.py` measures the expected hold rate on stored pieces ($0).
@@ -3904,7 +3915,7 @@ compare a sentence with the typed facts of its seed (`seed_graph.SeedGraph`: off
 relations, world figures, the seed's own superlatives, brief lines). A finding needs a spaCy dependency structure
 (`en_core_web_sm`, pinned, loaded lazily), a seed relation and a trigger word; any missing key abstains. Nine classes
 (optional told as planned, planned told as optional, near told as at, difficulty promise, world share, scopeless
-superlative, brief recipe, naming note, orphan opener). Each class has a mode (`T10_SA_MODE`, `T10_SA_MODE_<CLASS>`:
+superlative, brief recipe, naming note, orphan opener). Each class has a mode (settings `cis.quality_modes.t10_seed_align[_<class>]`:
 off / shadow / repair / hold, default off): shadow records candidates in `writer_input.seed_align` only; repair adds
 `sa:<class>: …` findings to the existing F17_trip_fact / F18_rarity / F13_leak / F13_repeat results (no new gate);
 `quality_gates.never_holds` keeps an `sa:`-only result from holding unless its class is in
@@ -3916,7 +3927,7 @@ alone (deterministic spaCy-free triggers; tier 1 must have run cleanly this atte
 excerpt, for four forms tier 1 cannot reach: paraphrased naming note (F13_leak), implicit-subject repeat (F13_repeat),
 open WHAT / WHY / HOW FAQ answer that does not answer (F13_repeat; answers of 2+ sentences only), hype such as "hard to
 overstate" (F18_rarity). A VIOLATION counts only when its piece quote is in the sentence and its seed quote in the
-excerpt and the seed. Modes `T10_ADJ_MODE` / `T10_ADJ_MODE_<CLASS>`: off (default; no call) / shadow (recorded in
+excerpt and the seed. Modes (settings `cis.quality_modes.t10_adjudicate[_<class>]`): off (default; no call) / shadow (recorded in
 `writer_input.seed_align[*].tier2`) / repair (at most ONE `sa:t2.<class>: …` finding per attempt → that gate's
 sentence repair or cut); any other value is off. It never holds (`t2.` classes are never hold-capable), and a
 result failed only by a tier-2 finding is no AA-528 regression (`service._regression_failures`); any model
@@ -4005,7 +4016,7 @@ A held piece always ends its `repair_log` with a label entry (`gate_targeted`/`r
 gate, `gate_eval.HOLD_REASON_CODES`, plus `detector_degraded`), `kept_attempt`, `cost_usd` 0 and `failing`.
 Every attempt's `repair_log` entry lists **every failing gate** (`failing`, `gate_eval.failing_gates`: gate,
 source, blocking, may_hold, n, F9 `classes`), not only the first one `held_reason` names. **Interim F9 policy**
-(`services/acp_content_writing/f9_policy.py`, declared diff, `T10_F9_POLICY_MODE=legacy` rolls back):
+(`services/acp_content_writing/f9_policy.py`, declared diff, setting `cis.quality_modes.t10_f9_policy` = legacy rolls back):
 F9_cta_fact holds only on a quoted body claim with a why_not_in_source that names a concrete trip activity,
 service, time or view (`trip_promise_kinds`, D1/D4/D15); its violations keep those claims only. Every other F9 class
 warns (`blocking: false`, in the flags): place background and other unsupported claims, CTA_NOT_REFLECTED,
@@ -4020,8 +4031,8 @@ blog floor …` / `length_long: … far beyond …`) and the hold reason code is
 of the stored blog text (`length_recheck.recheck_length`, service's `_recheck_length`: an approved piece under the floor is held) and
 `writer_input.length_trace` (chars after each step); its FAQ answer fit never drops a pair that would take the blog under the
 floor. **Extend repair** (`length_extend.py`; switch = the setting `cis.t9.blog_length_extend`, off | on, CIS 418,
-platform + tenant scope, resolved once per piece for its tenant (S280); a job `trial_flags` value first, the env var
-`T9_LENGTH_EXTEND` stays its emergency override; default off = the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
+platform + tenant scope, resolved once per piece for its tenant (S280); a job `trial_flags` value first, the
+setting next (no env override since CIS 424); default off = the full rewrite): attempt 2 of a blog short of the floor adds ONE paragraph to each of up to 3 thinnest body sections
 from the seed's untold fact sentences (one `t9_write` call, `generate.extend_sections`, mode `length_extend`), each
 checked in code (plain prose, size, `repair_contract.new_specifics`, seam integrity) before every gate re-runs; a gate
 needing the full rewrite still gets it. Scripts: `scripts/aa1077/remeasure_length.py` ($0) and `extend_trial.py`

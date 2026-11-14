@@ -100,7 +100,6 @@ def _trial_shape() -> tuple[str, str]:
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    monkeypatch.delenv(le.EXTEND_ENV, raising=False)
     monkeypatch.setattr(settings.READER, "_snapshot", {})
     le._PINNED.set(None)
     le._PINNED_OPTS.set(None)
@@ -421,7 +420,7 @@ async def test_the_loop_re_extends_a_blog_its_repair_shrank_under_the_floor(monk
     before, after = _trial_shape()
     cuts = _cut_sentences(before, after)
     assert cuts
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setattr(le.trial_flags, "active", lambda: {le.EXTEND_FLAG: "on"})   # CIS 424: no env path
     _values(monkeypatch, shrink__platform=shrink)
     deficit_plan, _ = le.plan_after_repair(after, before=before, channel="blog", source=SOURCE, switch="on",
                                            opts={"material": "source_facts", "shrink_sections": 0})

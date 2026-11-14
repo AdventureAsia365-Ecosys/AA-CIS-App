@@ -32,6 +32,8 @@ SETTINGS = {
     "cis.learn.learner_retention_days": 365, "cis.learn.review_target_retention": 0.9,
     "cis.learn.review_max_cards_per_day": 20, "cis.learn.verify_requests_per_minute": 30,
 }
+# cis.learn.* keys a later migration adds (each has its own test): CIS 425 (S281) the academy web's per-visitor limit.
+LATER_LEARN_KEYS = {"cis.learn.verify_visitor_requests_per_minute"}
 SHA = "a" * 64
 
 
@@ -213,7 +215,7 @@ async def test_settings_are_the_compiled_defaults(conn):
     rows = {r["key"]: r for r in await conn.fetch(
         "SELECT key, default_value, enforced, area, label, shared.setting_guide_complete(guide) AS guided "
         "FROM shared.setting_definition WHERE key LIKE 'cis.learn.%'")}
-    assert set(rows) == set(SETTINGS)
+    assert set(rows) == set(SETTINGS) | LATER_LEARN_KEYS
     for key, default in SETTINGS.items():
         assert json.loads(rows[key]["default_value"]) == default == settings.definition(key).default_value, key
         assert rows[key]["enforced"] is False and settings.definition(key).enforced is False, key
