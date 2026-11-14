@@ -95,6 +95,11 @@ export const CONNECTIONS = defineMessages(
     saving: "Saving…",
     noChange: "Nothing changed",
     readOnly: "Read-only session: these settings can be seen, not changed.",
+    tightenNote: "Your role may only tighten these limits: lower a limit or the budget, set one that is empty, "
+      + "lower the retries or the alert percent, or turn the stop on. An administrator can loosen them.",
+    tightenNow: (now: string) => `Now ${now}. Your role can lower it only.`,
+    tightenStopLocked: "The stop is on. Your role cannot switch it to alert only; ask an administrator.",
+    tightenWorse: (fields: string) => `Your role cannot loosen: ${fields}. Change it back or ask an administrator.`,
     saved: (name: string) => `${name} saved`,
     // test
     testTitle: "Test connection",
@@ -253,6 +258,11 @@ export const CONNECTIONS = defineMessages(
     saving: "Đang lưu…",
     noChange: "Không có gì thay đổi",
     readOnly: "Phiên này chỉ được xem: thấy các thiết lập này nhưng không đổi được.",
+    tightenNote: "Vai trò của bạn chỉ được siết các giới hạn này: giảm giới hạn hoặc ngân sách, đặt giới hạn đang "
+      + "trống, giảm số lần thử lại hoặc mức cảnh báo, hoặc bật dừng. Quản trị viên mới nới được.",
+    tightenNow: (now: string) => `Hiện là ${now}. Vai trò của bạn chỉ được giảm.`,
+    tightenStopLocked: "Đang bật dừng. Vai trò của bạn không chuyển về chỉ cảnh báo được; nhờ quản trị viên.",
+    tightenWorse: (fields: string) => `Vai trò của bạn không được nới: ${fields}. Đổi lại hoặc nhờ quản trị viên.`,
     saved: (name: string) => `Đã lưu ${name}`,
     testTitle: "Kiểm tra kết nối",
     testIntro:

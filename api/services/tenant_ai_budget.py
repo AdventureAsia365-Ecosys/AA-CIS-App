@@ -236,13 +236,19 @@ def effective_source(resolved_source: Optional[str], override_enabled: Optional[
     return "none"
 
 
-async def _effective(conn, tenant_id: str) -> Optional[dict]:
+async def _effective(conn, tenant_id: str, *, savepoint: bool = False) -> Optional[dict]:
     """What the gateway applies to ``tenant_id`` this month (``cost_guard.tenant_budget_check``) and its source; None
-    before CIS 353 (no resolver: the row alone decides, as ``budget`` shows)."""
+    before CIS 353 (no resolver: the row alone decides, as ``budget`` shows). ``savepoint``: the caller is inside a
+    transaction (``upsert``), so the resolver read runs in a savepoint and a missing view rolls back only that read,
+    never the caller's write (S280 review: an aborted transaction would fail the next statement)."""
     from shared import cost_guard
 
     try:
-        src = await conn.fetchrow(EFFECTIVE_SOURCE_SQL, tenant_id)
+        if savepoint:
+            async with conn.transaction():
+                src = await conn.fetchrow(EFFECTIVE_SOURCE_SQL, tenant_id)
+        else:
+            src = await conn.fetchrow(EFFECTIVE_SOURCE_SQL, tenant_id)
     except _MISSING:
         return None
     b = await cost_guard.tenant_budget_check(conn, tenant_id)
@@ -308,7 +314,7 @@ async def upsert(pool, tenant_id: str, values: dict, *, actor: str, tighten_only
                     # a first row is compared with that, so "no amount" or a higher amount cannot loosen it.
                     base = before
                     if base is None:
-                        eff = await _effective(conn, tenant_id)
+                        eff = await _effective(conn, tenant_id, savepoint=True)
                         if eff and eff.get("monthly_usd") is not None:
                             base = {k: eff.get(k) for k in ("monthly_usd", "alert_pct", "approval_pct", "hard_stop")}
                     worse = loosened(base, after, caps=("monthly_usd",), stops=("hard_stop",),

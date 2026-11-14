@@ -28,7 +28,7 @@
       "sha256": "c75447387b3598f64c6c89ee8045fe2b4e410de0d2140f3c74cb052ec3e7f7fc"
     },
     "DataTable.tsx": {
-      "sha256": "a83f1a3617bd7f0c4b26d39694242092728d498f75ec7e0c9dde357501ddb9a4"
+      "sha256": "f50d7c2d859f6992b30abde601dda85e0c1c33532200987c65d7b3ff174aaae8"
     },
     "DateField.tsx": {
       "sha256": "89fb1df19fd09b1fe1f1348d506b714aee238c17fb7e05590a254ac82a9369e3"
@@ -106,7 +106,7 @@
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
     },
     "dataTableSearch.ts": {
-      "sha256": "1f7ece75b9dc74f8500f2140d74aa89f68ff034754017f2c3260cf3c4fc718b2"
+      "sha256": "6f78eb3a60a81ac4a6c59e7ed52ce8d4006f0e10eb4dc16bccec92450e050c85"
     },
     "eslint-kit.mjs": {
       "sha256": "d48d0070d126524dab68dc1dd5478ff985119d7b8ecc04dd95d695d4dfe99934"

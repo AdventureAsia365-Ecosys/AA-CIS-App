@@ -38,6 +38,8 @@ import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { BUDGETS, BUDGET_STATE, CENTRAL } from "./budgets.messages";
 import { usePageAccess } from "./usePageAccess";
+import { LevelsCell, UsedOfCap } from "./tenantBudgetParts";
+import { tenantBudgetInForce } from "@/lib/tenantBudgetInForce";
 import {
   AlertLines, AlertPctField, AtCapField, CapField, NameOptions, TightenNote, anyOf, knownTargets, targetOptions,
   tightenState, unknownName, useJobKinds, useTighten,
@@ -336,7 +338,7 @@ const SOURCE_KEY = {
 
 /** The monthly amount in force: the gateway's effective budget, else (older API, before the resolver) the row. */
 function inForce(r: TenantBudgetRow): number | null {
-  return r.effective ? r.effective.monthly_usd : r.monthly_usd;
+  return tenantBudgetInForce(r).monthly_usd;
 }
 
 function TenantBudgetTable({ rows, loading }: { rows: TenantBudgetRow[]; loading: boolean }) {
@@ -378,19 +380,18 @@ function TenantBudgetTable({ rows, loading }: { rows: TenantBudgetRow[]; loading
           <span style={{ fontFamily: mono }}>{usd(c.row.original.month_spent_usd)}</span>
           <span style={small}>
             {t("calls", c.row.original.month_calls)}
-            {c.row.original.used_pct != null ? ` · ${t("ofCap", pct(c.row.original.used_pct))}` : ""}
+            <UsedOfCap used={tenantBudgetInForce(c.row.original).used_pct} />
           </span>
         </Lines>
       ) },
+    // S280: the thresholds, stop and state in force (an override's, not the stored row's, when the override wins).
     { id: "levels", header: t("colLevels"), enableSorting: false,
-      cell: (c) => inForce(c.row.original) == null ? <span style={small}>—</span> : (
-        <Lines>
-          <span style={small}>{t("levels", c.row.original.alert_pct, c.row.original.approval_pct)}</span>
-          <span style={small}>{c.row.original.hard_stop ? t("holdsJobs") : t("alertsOnly")}</span>
-        </Lines>
-      ) },
-    { id: "state", header: t("colState"), accessorKey: "state",
-      cell: (c) => <StateBadge state={c.row.original.state} tone={tenantBudgetTone(c.row.original.state)} /> },
+      cell: (c) => <LevelsCell r={tenantBudgetInForce(c.row.original)} /> },
+    { id: "state", header: t("colState"), accessorFn: (r) => tenantBudgetInForce(r).state,
+      cell: (c) => {
+        const state = tenantBudgetInForce(c.row.original).state;
+        return <StateBadge state={state} tone={tenantBudgetTone(state)} />;
+      } },
     { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
       cell: (c) => <ChangedCell row={c.row.original} /> },
   ], [t]);

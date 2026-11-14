@@ -86,6 +86,15 @@ export function limitOutOfBounds(f: Pick<Feature, "feature_key" | "unit">, v: st
   return f.feature_key === "content.rate_limit_rpm" && n > RATE_LIMIT_RPM_MAX;
 }
 
+/** S280 (AA-1096): the values a plan's limit box takes, as words (the client copy of planBody's checks): a whole
+ *  number for a count, seats, days or per-minute unit (the request rate at most RATE_LIMIT_RPM_MAX), else an amount of
+ *  0 or more with at most 2 decimals. Pure. */
+export function limitRangeText(f: Pick<Feature, "feature_key" | "unit">,
+  w: { whole: string; wholeMax: (max: string) => string; decimal: string }): string {
+  if (!f.unit || !WHOLE_UNITS.has(f.unit)) return w.decimal;
+  return f.feature_key === "content.rate_limit_rpm" ? w.wholeMax(String(RATE_LIMIT_RPM_MAX)) : w.whole;
+}
+
 /** Limits a tiered content plan always lists (the API's enforced_limit_required): "no row" would mean no limit for
  * every tenant on the plan. The AI budget needs a number except on AA's own (internal) tier. */
 export const ENFORCED_CONTENT_KEYS = ["ai.budget_usd_monthly", "content.rewrite", "content.rate_limit_rpm"];

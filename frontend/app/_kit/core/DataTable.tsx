@@ -56,7 +56,7 @@ import { useIsPhone } from "./useMediaQuery";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
 import { deleteView, listViews, saveView, type SavedView } from "./savedViews";
-import { searchBoxText, searchOptions } from "./dataTableSearch";
+import { searchBoxText, searchFilterState, searchOptions, searchQueryOf } from "./dataTableSearch";
 
 type PersistedState = {
   sorting: SortingState;
@@ -215,6 +215,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [globalFilter, setGlobalFilter] = useState(() => initialSearch ?? "");
+  // S280: with `searchText`, the filter state keys on the rows' search texts (dataTableSearch.searchFilterState, a
+  // string compared by value): a page's lookup that loads after the query was typed re-runs the search.
+  const tableGlobalFilter = searchFilterState(data, searchText, globalFilter);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [showCols, setShowCols] = useState(false);
   const [showViews, setShowViews] = useState(false);
@@ -289,7 +292,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     data,
     columns: allColumns,
     state: {
-      sorting, columnFilters, columnVisibility, globalFilter, rowSelection,
+      sorting, columnFilters, columnVisibility, globalFilter: tableGlobalFilter, rowSelection,
       ...(sp ? { pagination: { pageIndex: sp.pageIndex, pageSize: sp.pageSize } } : {}),
     },
     ...(sp
@@ -314,7 +317,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     },
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
-    onGlobalFilterChange: setGlobalFilter,
+    onGlobalFilterChange: (u) => setGlobalFilter((cur) => searchQueryOf(typeof u === "function" ? u(cur) : u)),
     onRowSelectionChange: setRowSelection,
     ...searchOptions(searchText), // S280: dataTableSearch.ts
     getCoreRowModel: getCoreRowModel(),

@@ -496,3 +496,21 @@ def test_tighten_only_first_row_is_compared_with_the_plan_budget(values, ok):
     else:
         with pytest.raises(PermissionError):
             asyncio.run(tb.upsert(FakePool(conn), TENANT, values, actor="admin:x", tighten_only=True))
+
+
+def test_tighten_only_first_row_reads_the_resolver_in_a_savepoint():
+    """S280 review: upsert reads the budget in force inside its own transaction; before CIS 353 that read fails, and
+    without a savepoint the aborted transaction would fail the UPSERT (a 500). The read runs in a nested transaction
+    (a savepoint) and a missing resolver falls back to the no-row rule (only the stop flag counts)."""
+    entered: list[int] = []
+
+    class CountingConn(FakeConn):
+        def transaction(self):
+            entered.append(1)
+            return _Tx()
+
+    conn = CountingConn(row=None, prev=None, missing=("v_tenant_entitlement_resolved",))
+    out = asyncio.run(tb.upsert(FakePool(conn), TENANT, {"monthly_usd": 50.0, "hard_stop": True}, actor="admin:x",
+                                tighten_only=True))
+    assert out["created"] and len(entered) == 2           # the write's transaction + the resolver's savepoint
+    assert conn.ran(tb.UPSERT_SQL)

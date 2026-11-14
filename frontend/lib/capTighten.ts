@@ -7,7 +7,7 @@
 // API refuses it, start a new cap on the side the role may add, and read the refusal as the page's own sentence. The
 // API stays the authority: everything here is a UI hint. Pure.
 
-import type { BudgetDraft, CentralDraft, EvalRunRow, PageAccess } from "./aiGateway.ts";
+import type { AppProfile, BudgetDraft, CentralDraft, EvalRunRow, PageAccess } from "./aiGateway.ts";
 
 /** GET /api/admin/ai-gateway/access with the S280 field: the role may only tighten caps (absent from an older API). */
 export type PageAccessHint = PageAccess & { tighten_only?: boolean };
@@ -35,11 +35,13 @@ export function tightHint<V>(on: boolean, now: V | null | undefined, tight: (v: 
 type Fields = Readonly<Record<string, unknown>>;
 
 /** The field groups of `loosenedFields`: `caps` (null = no cap; removing it or a higher value loosens), `stops`
- *  (true is the strict side), `upIsLooser` (a percentage where a higher number acts later). */
+ *  (true is the strict side), `upIsLooser` (a percentage where a higher number acts later), `downIsLooser` (an alert
+ *  floor where a lower number, or none, acts later). */
 export interface LooseKinds {
   caps?: readonly string[];
   stops?: readonly string[];
   upIsLooser?: readonly string[];
+  downIsLooser?: readonly string[];
 }
 
 const num = (v: unknown) => (v == null || v === "" ? null : Number(v));
@@ -60,6 +62,14 @@ function upLoosened(before: Fields, after: Fields, fields: readonly string[]): s
   });
 }
 
+function downLoosened(before: Fields, after: Fields, fields: readonly string[]): string[] {
+  return fields.filter((f) => {
+    const old = num(before[f]);
+    const now = num(after[f]);
+    return old != null && (now == null || now < old);
+  });
+}
+
 /** The fields `after` loosens against `before` (null = no row yet): the client copy of the backend's
  *  settings_registry.loosened. No row before: only a stop flag left off counts. */
 export function loosenedFields(beforeRow: object | null, afterRow: object, kinds: LooseKinds): string[] {
@@ -71,6 +81,7 @@ export function loosenedFields(beforeRow: object | null, afterRow: object, kinds
     ...capsLoosened(before, after, kinds.caps ?? []),
     ...stops.filter((f) => before[f] === true && after[f] === false),
     ...upLoosened(before, after, kinds.upIsLooser ?? []),
+    ...downLoosened(before, after, kinds.downIsLooser ?? []),
   ];
 }
 
@@ -84,13 +95,49 @@ export const TENANT_BUDGET_KINDS = {
   caps: ["monthly_usd"], stops: ["hard_stop"], upIsLooser: ["alert_pct", "approval_pct"],
 } as const;
 
-/** The backend's tighten-only refusal (settings_registry.TIGHTEN_ONLY, 403): the page shows its own sentence. */
+/** The field groups of an app profile (admin_ai_gateway._check_profile_tighten_only over _profile_limits): AI off and
+ *  the bulk pause are the strict sides, the default daily budget a cap. */
+export const APP_PROFILE_KINDS = { caps: ["default_daily_budget_usd"], stops: ["ai_off", "bulk_paused"] } as const;
+
+/** An app profile (or its PATCH body over it) as the backend's _profile_limits view. */
+export function profileLimits(p: Pick<AppProfile, "ai_enabled" | "bulk_paused" | "default_daily_budget_usd">,
+  body: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  const pick = <K extends keyof typeof p>(k: K) => (k in body ? body[k] : p[k]) as (typeof p)[K];
+  return { ai_off: !pick("ai_enabled"), bulk_paused: !!pick("bulk_paused"),
+    default_daily_budget_usd: pick("default_daily_budget_usd") };
+}
+
+/** The field groups of a connection and its cost policy (llm_connections TIGHTEN_CAPS / _STOPS / _UP_IS_LOOSER /
+ *  _DOWN_IS_LOOSER). */
+export const CONNECTION_KINDS = {
+  caps: ["rpm_limit", "max_concurrency", "monthly_budget_usd", "daily_credit_limit"], stops: ["budget_hard_stop"],
+  upIsLooser: ["max_retries", "budget_alert_pct"], downIsLooser: ["low_balance_usd"],
+} as const;
+
+/** The limits of a connection form as llm_connections._refuse_loosening reads them (no policy row: the default alert
+ *  percent, the stop on), with a PATCH body over them. Only the fields the settings form edits; timeout and notes are not limits. */
+export function connectionLimits(c: {
+  max_retries: number | null; max_concurrency: number | null; rpm_limit: number | null;
+  monthly_budget_usd: number | null; cost_policy?: { alert_pct: number; hard_stop: boolean } | null;
+}, defaultAlertPct: number, body: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  const before: Record<string, unknown> = {
+    max_retries: c.max_retries, max_concurrency: c.max_concurrency, rpm_limit: c.rpm_limit,
+    monthly_budget_usd: c.monthly_budget_usd, budget_alert_pct: c.cost_policy?.alert_pct ?? defaultAlertPct,
+    budget_hard_stop: c.cost_policy?.hard_stop ?? true,
+  };
+  for (const f of Object.keys(before)) if (f in body) before[f] = body[f];
+  return before;
+}
+
+/** The backend's tighten-only refusals (403): settings_registry.TIGHTEN_ONLY ("Your role may only tighten this cap…")
+ *  and admin.py's tenant-limit sentence ("Your role may only lower this limit…"). The page shows its own sentence. */
 export const TIGHTEN_ONLY_REFUSAL = "Your role may only tighten this cap";
+export const TIGHTEN_ONLY_REFUSALS: readonly string[] = [TIGHTEN_ONLY_REFUSAL, "Your role may only lower this limit"];
 
 export function isTightenOnlyRefusal(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const status = (e as Error & { status?: number }).status;
-  return e.message.startsWith(TIGHTEN_ONLY_REFUSAL) && (status === undefined || status === 403);
+  return TIGHTEN_ONLY_REFUSALS.some((p) => e.message.startsWith(p)) && (status === undefined || status === 403);
 }
 
 /** The eval runs that can back a gated route change, newest first (the client copy of

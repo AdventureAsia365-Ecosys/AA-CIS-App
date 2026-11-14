@@ -64,6 +64,9 @@ export const PLANS = defineMessages(
     unit_seats: "seats",
     unit_days: "days",
     unit_perMonth: "a month",
+    range_whole: "a whole number",
+    range_wholeMax: (max: string) => `a whole number up to ${max}`,
+    range_decimal: "0 or more, at most 2 decimals",
     subscribersNote: (n: number) => (n === 0 ? "No tenant holds this plan."
       : n === 1 ? "1 tenant holds this plan: saving changes what it may do at once."
         : `${n} tenants hold this plan: saving changes what they may do at once.`),
@@ -74,7 +77,7 @@ export const PLANS = defineMessages(
     err_seats: "A whole number from 0 to 100,000.",
     err_extraSeat: "A number with at most 2 decimals.",
     err_notes: "At most 1,000 characters.",
-    err_limit: (key: string) => `${key}: a number with at most 2 decimals, or empty.`,
+    err_limit: (key: string, range: string) => `${key}: ${range}, or empty.`,
     err_rpmRequired: "A content plan with a tier needs content.rate_limit_rpm (requests a minute).",
     err_enforcedRequired: (key: string) => key === "ai.budget_usd_monthly"
       ? "A content plan with a tier needs ai.budget_usd_monthly as a number (0 = no AI spend included)."
@@ -156,6 +159,9 @@ export const PLANS = defineMessages(
     unit_seats: "người dùng",
     unit_days: "ngày",
     unit_perMonth: "mỗi tháng",
+    range_whole: "một số nguyên",
+    range_wholeMax: (max: string) => `một số nguyên tối đa ${max}`,
+    range_decimal: "từ 0 trở lên, tối đa 2 chữ số thập phân",
     subscribersNote: (n: number) => (n === 0 ? "Chưa đại lý nào dùng gói này."
       : `${n} đại lý đang dùng gói này: lưu sẽ đổi ngay những gì họ được dùng.`),
     frozen: "Gói đã ngừng thì không sửa được. Đại lý đang dùng giữ gói tới khi được chuyển.",
@@ -165,7 +171,7 @@ export const PLANS = defineMessages(
     err_seats: "Một số nguyên từ 0 đến 100.000.",
     err_extraSeat: "Một số có tối đa 2 chữ số thập phân.",
     err_notes: "Tối đa 1.000 ký tự.",
-    err_limit: (key: string) => `${key}: một số có tối đa 2 chữ số thập phân, hoặc để trống.`,
+    err_limit: (key: string, range: string) => `${key}: ${range}, hoặc để trống.`,
     err_rpmRequired: "Gói Content có hạng cần content.rate_limit_rpm (số request mỗi phút).",
     err_enforcedRequired: (key: string) => key === "ai.budget_usd_monthly"
       ? "Gói Content có hạng cần ai.budget_usd_monthly là một số (0 = không kèm chi phí AI)."

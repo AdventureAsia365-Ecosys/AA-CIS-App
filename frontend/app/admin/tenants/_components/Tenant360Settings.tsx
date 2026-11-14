@@ -34,7 +34,7 @@ import { T360, T360_WORDS_MESSAGES } from "./tenant360.messages";
 import { useContentTiers } from "./useContentTiers";
 import { canPatchBillingFields } from "@/lib/tenantDirectory";
 import { isTightenOnly } from "@/lib/rbac";
-import { anyOf } from "@/lib/capTighten";
+import { anyOf, isTightenOnlyRefusal } from "@/lib/capTighten";
 
 
 const labelStyle: React.CSSProperties = {
@@ -57,6 +57,11 @@ function FieldError({ msg }: { msg?: string | null }) {
 }
 
 // ── S280: tighten-only roles (no settings.write) may lower these limits only ──────────────────────────────────────
+
+/** A refused save's text: the tighten-only 403 (admin.py TIGHTEN_ONLY) in the UI language, else the API's message. */
+function saveErrorText(err: unknown, tightenRaise: string): string {
+  return isTightenOnlyRefusal(err) ? tightenRaise : err instanceof Error ? err.message : String(err);
+}
 
 /** True when a tighten-only role's valid new value raises the limit now in force. */
 function raisesLimit(tightenOnly: boolean, error: string | null | undefined, next: number, now: number): boolean {
@@ -109,7 +114,7 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
     },
     onError: (err, _body, ctx) => {
       if (ctx) { setSaved(ctx.prev); setPlan(ctx.prev.plan); setRpm(String(ctx.prev.rpm)); }
-      toast.error(t("planNotSaved", (err as Error).message));
+      toast.error(t("planNotSaved", saveErrorText(err, t("tightenRaise"))));
     },
     onSuccess: (res) => {
       // A plan change without an explicit RPM applies that plan's default — show what was stored.
@@ -211,7 +216,7 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, defaultLimit, locked, o
     },
     onError: (err, _limit, ctx) => {
       if (ctx) { setSaved(ctx.prev); setValue(ctx.prev == null ? "" : String(ctx.prev)); }
-      toast.error(t("dplNotSaved", (err as Error).message));
+      toast.error(t("dplNotSaved", saveErrorText(err, t("tightenRaise"))));
     },
     onSuccess: (res, limit) => {
       const stored = res.daily_publish_limit === undefined ? limit : res.daily_publish_limit;
@@ -287,7 +292,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
     onError: (err, _body, ctx) => {
       // Roll the saved values back; the form keeps the admin's edits so they can retry.
       if (ctx?.prev) qc.setQueryData(key, ctx.prev);
-      toast.error(t("configNotSaved", (err as Error).message));
+      toast.error(t("configNotSaved", saveErrorText(err, t("tightenRaise"))));
     },
     onSuccess: (res) => {
       qc.setQueryData(key, res);

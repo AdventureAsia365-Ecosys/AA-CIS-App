@@ -89,3 +89,26 @@ test("dataTableSearchMatch: extra text or a text/number cell, case-insensitive",
   assert.equal(S.dataTableSearchMatch(null, { a: 1 }, "a"), false);
   assert.equal(S.dataTableSearchMatch(undefined, undefined, "  "), true);
 });
+
+test("searchFilterState keys the filter on the rows' search texts, by value", () => {
+  const extra = (r) => r.slug;
+  const rows = [{ slug: "lotus" }, { slug: "mekong" }];
+  assert.equal(S.searchFilterState(rows, undefined, "lo"), "lo");          // no searchText: the plain query
+  assert.equal(S.searchFilterState(rows, extra, "  "), "  ");              // no query: nothing to key
+  const a = S.searchFilterState(rows, extra, "lo");
+  assert.equal(a, S.searchFilterState(rows.map((r) => ({ ...r })), extra, "lo"));   // same texts: same state
+  assert.notEqual(a, S.searchFilterState([{ slug: "lotus-trails" }, { slug: "mekong" }], extra, "lo"));
+  assert.equal(S.searchQueryOf(a), "lo");
+  assert.equal(S.searchQueryOf("plain"), "plain");
+  assert.equal(S.searchQueryOf(undefined), "");
+  assert.equal(S.dataTableSearchMatch("lotus", "x", a), true);            // the match reads the query only
+  assert.equal(S.dataTableSearchMatch("mekong", "x", a), false);
+});
+
+test("a row text that changes after the query re-runs the search (a lookup loaded late)", () => {
+  const rows = (html) => (html.match(/data-kit-row=""/g) ?? []).length;
+  const before = (r) => r.id;                                   // the tenant map has not loaded yet
+  const after = (r) => (r.id === "b2" ? "b2 lotus-trails" : r.id);
+  assert.equal(rows(table({ searchable: true, initialSearch: "lotus", searchText: before })), 0);
+  assert.equal(rows(table({ searchable: true, initialSearch: "lotus", searchText: after })), 1);
+});
