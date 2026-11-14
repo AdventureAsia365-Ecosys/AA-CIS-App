@@ -42,8 +42,8 @@ from api import main
 from api.core import staff_authz, staff_secret
 from api.main import app
 from api.routers import (
-    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, tenant_account, tenant_addons, tenant_erasure,
-    tenant_membership, v1_pipeline, v1_tours,
+    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, learn, tenant_account, tenant_addons,
+    tenant_erasure, tenant_membership, v1_pipeline, v1_tours,
 )
 
 # Dependencies that admit staff only (the X-Admin-Secret held by the staff BFF).
@@ -72,6 +72,9 @@ M2M_DEPENDENCIES = {
     tenant_addons.require_addons,              # /tenant/v1 add-ons: CRM client + cis.tenant/addons (AA-1036, tenant.addons.v1)
     tenant_erasure.require_erasure,            # /tenant/v1 erasure requests: CRM client + cis.tenant/erasure (AA-1093)
 }
+# Dependencies that admit an AA Academy learner only: a WORKFORCE access token of the academy-web client, its own
+# verifier (AA-1105, root ADR 0022 decision 6). Never accepted on a staff-only path.
+LEARNER_DEPENDENCIES = {learn.require_academy_token}   # /learn/v1
 # Functions accepted as an inline staff check at the top of an endpoint body (identity, not name).
 STAFF_INLINE_CHECKS = {admin.verify_admin_secret, admin_settings.verify_admin}
 
@@ -102,6 +105,8 @@ ALLOWED_PUBLIC: dict[tuple[str, str], str] = {
     ("GET", "/v1/trip/{tour_id}"): "AA-482: public trip page data",
     ("GET", "/content/photos/{photo_id}"): "AA-708: public image redirect (TripPlanner, published pages)",
     ("GET", "/v1/angle-gate/goals"): "AA-449: static list of content goals",
+    ("GET", "/learn/public/v1/certificates/{code}"):
+        "AA-1105: public certificate verify view by its 128-bit code (SHA-256 lookup), rate limited per client address",
 }
 
 # Routes whose auth is an inline check the scan cannot prove (it branches). (METHOD, path) -> reason.
@@ -204,6 +209,11 @@ def _check_endpoint(method, path, route, inherited, problems):
         if not _is_staff_only(path):
             return
         problems.append(f"{where}: staff-only path accepts an M2M service token")
+        return
+    if calls & LEARNER_DEPENDENCIES:
+        if not _is_staff_only(path):
+            return
+        problems.append(f"{where}: staff-only path accepts an academy learner token")
         return
     problems.append(f"{where}: no auth check")
 

@@ -2404,6 +2404,31 @@ keeps it so (410 for any body, no key route, a source guard over `api/`, `servic
 sets `shared.tenants.api_key_hash` NULL; the column DROP is a separate destructive migration (DRY RUN, tech lead).
 The 30-day `audit_log` check before the removal found only synthetic E2E tenants signing in with a key.
 
+### AA Academy learning API (AA-1105, root ADR 0022, contract learn.http.v1)
+
+`/learn/v1/*` (`api/routers/learn.py`, logic `services/learn/`) serves the AA Academy host of the AA-Partner CRM web
+(`academy.<env domain>`), whose server side forwards the learner's token. **Its own route class:** only a WORKFORCE
+access token of the app client `academy-web` (`api/core/learn_identity.py`, its own verifier, Dev client id a code
+constant with the env override `COGNITO_ACADEMY_WEB_CLIENT_ID`); it is never a CIS staff client (a test keeps it out of
+`cis_staff_issuers`), and a `cis-admin`, `breakglass`, `crm-staff`, M2M token is 403 `forbidden`, a partner-pool token
+403 `partner_not_open` (P7). **The learner** is the ACTIVE `shared.admin_users` row bound to the verified `(iss, sub)`,
+any role (else 403 `not_a_learner`); `learn.learner` is upserted on every call with the directory's `display_name`
+(the certificate name; the client never writes it). Draft modules need `learn.preview` (`staff_authz`, admin and
+content_lead). A Dev-only E2E identity is a test learner (`is_test`), refused outside Dev.
+**Content** comes from the learn bundle under the docs reader prefix (`<prefix>/learn/`, `services/learn/bundle.py`,
+cached 5 min, objects read only by manifest keys); quiz answers stay server side until a submission is graded.
+**Records** live in schema `learn` (CIS 420; CIS 421 ties each child row's tenant to its learner's); every write passes
+the learner's tenant (NULL for staff). **Thresholds** are the `cis.learn.*` settings (pass marks, retake delay, items,
+recertification, video URL lifetime, review cap and target, verify rate). **Videos** (`learn-media/`, decision D8):
+presigned GET URLs; the academy web fetches the `.vtt` captions server side and serves them from its own origin (no
+bucket CORS change). **Public verify** `GET /learn/public/v1/certificates/{code}`: SHA-256 lookup, holder display name,
+rate limited per client address (rightmost global X-Forwarded-For entry, `login_throttle.client_ip`: API Gateway
+appends the real source, the NLB adds nothing, the ALB appends a private address), limit
+`cis.learn.verify_requests_per_minute`, Redis window with an in-process fallback. Labs answer 409 `lab_closed` until
+P4b. Tests: `tests/unit/test_aa1105_learn_api.py` (bodies validated against the contract copy
+`docs/contracts/learn.http.v1.openapi.yaml`, pinned by sha256), `tests/unit/test_aa1105_learn_rules.py`,
+`tests/integration/test_aa1105_learn_store.py`.
+
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
