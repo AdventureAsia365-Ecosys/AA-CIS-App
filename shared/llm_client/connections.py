@@ -50,12 +50,12 @@ from shared.secrets import get_database_url
 
 logger = structlog.get_logger()
 
-_CACHE_TTL_SECONDS = 300.0
-_FAILURE_TTL_SECONDS = 60.0
+_CACHE_TTL_SECONDS = 300.0  # technical-constant: in-process cache refresh of a read
+_FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 _CONNECT_TIMEOUT_SECONDS = 3.0
 # Design S1: a resolved key is kept 15 minutes (shared/secrets.py keeps its own secrets 1 hour); a 401 from the
 # provider drops it at once (invalidate_credential) so a rotated key is read again on the next call.
-_CREDENTIAL_TTL_SECONDS = 900.0
+_CREDENTIAL_TTL_SECONDS = 900.0  # technical-constant: in-process cache refresh of a read
 
 # The kinds the LLM dispatch may use (vendor_route, the breaker, budgets, the admin's LLM connections) ...
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
@@ -612,7 +612,7 @@ def resolve_usage_key(connection_key: str, usage_secret_name: Optional[str]) -> 
 # per change per process for a call, always (with ``last_probe_at``) for a probe.
 
 PROVIDER_SWITCH_KINDS = ("typesafe", "dataforseo", "geoapify")
-_PROVIDER_TTL_SECONDS = 30.0
+_PROVIDER_TTL_SECONDS = 30.0  # technical-constant: in-process cache refresh of a read
 _PROVIDER_STATE_RETRY_SECONDS = 60.0
 _provider_rows: dict[str, tuple[float, Optional[ProviderConnection]]] = {}
 _provider_state_written: dict[str, str] = {}

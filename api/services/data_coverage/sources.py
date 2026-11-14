@@ -61,7 +61,7 @@ TP_PLACES_STATEMENT_TIMEOUT = "15s"
 TP_PLACES_WAIT_S = 16.0
 FINAL_CATALOG_REASONS = ("tenant pool not configured",)
 S3_WAIT_S = 5.0
-S3_MAX_PAGES = 10
+S3_MAX_PAGES = 10  # technical-constant: pagination loop guard
 CRM_PASS_LIMIT_MIN = 120
 
 CONTRACT_ERRORS = (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.InvalidSchemaNameError,

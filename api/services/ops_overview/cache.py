@@ -24,9 +24,9 @@ logger = structlog.get_logger()
 
 KEY_PREFIX = "admin:overview:ops"
 KEY_VERSION = "v1"
-LOCK_TTL_S = 60
+LOCK_TTL_S = 60  # technical-constant: lock lease, frees a crashed holder
 LAST_GOOD_TTL_S = 24 * 3600
-ERROR_TTL_S = 60
+ERROR_TTL_S = 60  # technical-constant: back-off after a failed cache read
 
 
 def section_key(name: str, key_prefix: str = KEY_PREFIX) -> str:

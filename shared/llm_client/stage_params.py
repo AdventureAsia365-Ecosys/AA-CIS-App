@@ -47,8 +47,8 @@ from shared.secrets import get_database_url
 
 logger = structlog.get_logger()
 
-_CACHE_TTL_SECONDS = 300.0
-_FAILURE_TTL_SECONDS = 60.0
+_CACHE_TTL_SECONDS = 300.0  # technical-constant: in-process cache refresh of a read
+_FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 _CONNECT_TIMEOUT_SECONDS = 3.0
 SWITCH_ENV = "LLM_STAGE_PARAMS"
 

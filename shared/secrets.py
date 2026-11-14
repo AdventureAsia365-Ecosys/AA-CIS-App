@@ -15,7 +15,7 @@ import structlog
 logger = structlog.get_logger()
 
 _cache: dict = {}
-_TTL = 3600  # 1 hour refresh
+_TTL = 3600  # technical-constant: 1 hour refresh
 
 
 def _fetch_secret_sdk(secret_arn: str) -> str:

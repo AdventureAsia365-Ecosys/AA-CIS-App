@@ -61,7 +61,7 @@ TOLERANCE_USD = 0.05
 TOLERANCE_PCT = 5.0
 SETTLE_HOURS = 24
 HTTP_TIMEOUT_S = 30.0
-MAX_PAGES = 20
+MAX_PAGES = 20  # technical-constant: pagination loop guard
 
 ANTHROPIC_COST_URL = "https://api.anthropic.com/v1/organizations/cost_report"
 ANTHROPIC_VERSION = "2023-06-01"

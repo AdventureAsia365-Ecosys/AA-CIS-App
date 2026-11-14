@@ -35,7 +35,7 @@ from .. import connections
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_TIMEOUT_S = 300
-SDK_MAX_RETRIES = 0      # AA-642 A3: the gateway owns retries
+SDK_MAX_RETRIES = 0  # technical-constant: AA-642 A3: the gateway owns retries
 CONNECT_TIMEOUT_S = 10.0
 # Azure OpenAI data-plane API version (GA). A deployment may pin another one in request_defaults.api_version.
 AZURE_API_VERSION = "2024-10-21"

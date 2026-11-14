@@ -40,8 +40,8 @@ logger = structlog.get_logger()
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = Path(__file__).resolve().with_name("prompt_versions.json")
-CACHE_TTL_SECONDS = 600.0
-FAILURE_TTL_SECONDS = 300.0
+CACHE_TTL_SECONDS = 600.0  # technical-constant: in-process cache refresh of a read
+FAILURE_TTL_SECONDS = 300.0  # technical-constant: back-off after a failed cache read
 _SELECT_SQL = "SELECT stage, version, prompt_sha256 FROM shared.prompt_version"
 _SEPARATOR = "\n\x00\n"
 

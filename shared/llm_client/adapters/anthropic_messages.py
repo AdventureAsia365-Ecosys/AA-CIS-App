@@ -58,7 +58,7 @@ logger = structlog.get_logger()
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 DEFAULT_TIMEOUT_S = 300            # the Bedrock client's read timeout (client.py)
-SDK_MAX_RETRIES = 0                # AA-642 A3: the gateway owns retries
+SDK_MAX_RETRIES = 0  # technical-constant: AA-642 A3: the gateway owns retries
 CONNECT_TIMEOUT_S = 10.0
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")

@@ -51,10 +51,10 @@ logger = structlog.get_logger()
 
 PROVIDER = "llm"
 SWITCH_ENV = "LLM_CENTRAL_BUDGETS"
-ROWS_TTL_SECONDS = 60.0
-SPEND_TTL_SECONDS = 30.0
-FAILURE_TTL_SECONDS = 60.0
-JOB_KIND_TTL_SECONDS = 600.0
+ROWS_TTL_SECONDS = 60.0  # technical-constant: in-process cache refresh of a read
+SPEND_TTL_SECONDS = 30.0  # technical-constant: in-process cache refresh of a read
+FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
+JOB_KIND_TTL_SECONDS = 600.0  # technical-constant: in-process cache refresh of a read
 # The llm_call_log labels eval rows are written under (services/writing_memory/config.py EVAL_LOG_STAGES + SHADOW_STAGE;
 # a unit test keeps the two in step: shared/ must not import services/).
 EVAL_STAGES = ("writing_memory_eval", "adhoc_aa900", "adhoc_aa1051", "writing_memory_shadow")

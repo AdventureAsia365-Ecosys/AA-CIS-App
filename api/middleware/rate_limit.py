@@ -26,7 +26,7 @@ PLAN_RPM = {
 # 30s was picked as "fast enough to feel like revoke, slow enough that a normal
 # request pattern doesn't add a DB round-trip per call" — not load-tested; adjust
 # if it turns out to be too slow/fast in practice.
-_TENANT_META_TTL_S = 30
+_TENANT_META_TTL_S = 30  # technical-constant: in-process cache refresh of a read
 
 
 async def _get_tenant_meta(request: Request, tenant_id: str) -> dict | None:

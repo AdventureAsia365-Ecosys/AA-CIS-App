@@ -31,7 +31,7 @@ def _parse_json(value, default):
     except (json.JSONDecodeError, TypeError):
         return default
 
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 300  # technical-constant: 5 minutes
 
 
 @dataclass

@@ -32,8 +32,8 @@ from . import connections
 
 logger = structlog.get_logger()
 
-_CACHE_TTL_SECONDS = 60.0
-_FAILURE_TTL_SECONDS = 30.0
+_CACHE_TTL_SECONDS = 60.0  # technical-constant: in-process cache refresh of a read
+_FAILURE_TTL_SECONDS = 30.0  # technical-constant: back-off after a failed cache read
 
 ATOM_EMBEDDING = "acp_contract.atom_embedding.embedding"
 QUESTION_EMBEDDING = "acp_contract.question_embedding.embedding"

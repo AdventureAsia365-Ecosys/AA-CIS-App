@@ -61,7 +61,7 @@ logger = structlog.get_logger()
 STALE_AFTER = timedelta(hours=24)
 FINAL_AFTER = timedelta(days=3)          # CE stops revising a day ~48 h after it ends
 REFRESH_LOCK_KEY = "platform_cost:refresh_lock:v1"
-REFRESH_LOCK_TTL_S = 120
+REFRESH_LOCK_TTL_S = 120  # technical-constant: lock lease, frees a crashed holder
 ATTEMPT_MARKER_PREFIX = "platform_cost:attempted:v1"
 ATTEMPT_MARKER_TTL_S = int(STALE_AFTER.total_seconds())   # after a success (rows or none): once a day per window
 ATTEMPT_MARKER_ERROR_TTL_S = 6 * 3600                       # after an AWS error: retry in 6 h

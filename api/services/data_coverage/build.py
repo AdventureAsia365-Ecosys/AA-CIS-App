@@ -37,7 +37,7 @@ logger = structlog.get_logger()
 
 KEY_PREFIX = "admin:data-coverage"
 TIER_TTL_S = {"fast": 60, "slow": 600, "crm": 600}
-LOCK_TTL_S = 30
+LOCK_TTL_S = 30  # technical-constant: lock lease, frees a crashed holder
 REFRESH_MIN_AGE_S = 15
 TIER_DEADLINE_S = {"fast": 12.0, "slow": 20.0, "crm": 12.0}
 

@@ -70,8 +70,8 @@ CONTRACT = "catalog.tour.lifecycle.v1"
 SWEEP_WINDOW_S = 7200
 SWEEP_LAG_S = 30
 
-_SECRET_TTL_S = 600      # re-read the secret every 10 min (a rotation needs no deploy)
-_SECRET_FAILURE_TTL_S = 60
+_SECRET_TTL_S = 600  # technical-constant: re-read the secret every 10 min (a rotation needs no deploy)
+_SECRET_FAILURE_TTL_S = 60  # technical-constant: back-off after a failed cache read
 _SM_CONNECT_TIMEOUT_S = 2
 _SM_READ_TIMEOUT_S = 3
 

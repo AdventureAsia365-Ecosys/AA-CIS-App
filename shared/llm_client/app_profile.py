@@ -44,8 +44,8 @@ APPS = ("cis", "tripplanner", "crm", "booking")
 # llm_role_config's degrade_mode_check (326) plus 'none' (an app with no AI); migration 345's CHECK.
 DEGRADE_MODES = ("queue_retry", "basic_narration", "last_saved_text", "manual_reply_needed", "none")
 SWITCH_ENV = "LLM_APP_PROFILE"
-CACHE_TTL_SECONDS = 20.0
-FAILURE_TTL_SECONDS = 60.0
+CACHE_TTL_SECONDS = 20.0  # technical-constant: in-process cache refresh of a read
+FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 REASON_MAX = 500
 BUDGET_MAX_USD = 100_000.0
 EDITABLE = ("ai_enabled", "bulk_paused", "default_daily_budget_usd", "degrade_mode", "disabled_reason")

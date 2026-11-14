@@ -39,8 +39,8 @@ from .models import ANTHROPIC_API_LABEL_PREFIX
 
 logger = structlog.get_logger()
 
-_CACHE_TTL_SECONDS = 300.0
-_FAILURE_TTL_SECONDS = 60.0
+_CACHE_TTL_SECONDS = 300.0  # technical-constant: in-process cache refresh of a read
+_FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 _CONNECT_TIMEOUT_SECONDS = 3.0
 
 LEGACY_KEYS = frozenset({"haiku", "sonnet", "gpt-4.1"})

@@ -27,7 +27,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Optional
 
-HEALTH_TTL_S = 300
+HEALTH_TTL_S = 300  # technical-constant: in-process cache refresh of a read
 
 # CloudWatch app state (cloudwatch.app_state) -> app status. Firing alarms or a high 5xx share make an app
 # "degraded", not "down": the app still answers; "down" comes only from a failing health endpoint.

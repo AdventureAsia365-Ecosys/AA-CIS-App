@@ -56,14 +56,14 @@ logger = structlog.get_logger()
 
 SWITCH_ENV = "LLM_TENANT_BUDGETS"
 APPROVAL_REASON = "tenant_ai_budget_approval"
-TENANTS_TTL_SECONDS = 60.0
-CACHE_TTL_SECONDS = 60.0
-FAILURE_TTL_SECONDS = 60.0
+TENANTS_TTL_SECONDS = 60.0  # technical-constant: in-process cache refresh of a read
+CACHE_TTL_SECONDS = 60.0  # technical-constant: in-process cache refresh of a read
+FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 # AA-642 A8 (review S263): a T-stage call re-reads a failed counter after this many seconds. Must stay below the job
 # runner's first retry backoff (shared.jobs.queue.BACKOFF_BASE_SECONDS, 30 s; a unit test pins it), so a retried job
 # reads the counter again instead of burning its last attempt on the cached failure.
 UNREADABLE_RECHECK_SECONDS = 15.0
-MISSING_TABLE_TTL_SECONDS = 300.0
+MISSING_TABLE_TTL_SECONDS = 300.0  # technical-constant: back-off after a failed cache read
 # The Content studio stages (T0-T11, ADR 0006): t2_generate, t5_atomize, t9_write, t10_judge ...
 T_STAGE = re.compile(r"^t\d+_")
 ADHOC_STAGE_PREFIX = "adhoc_"

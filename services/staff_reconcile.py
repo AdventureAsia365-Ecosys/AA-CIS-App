@@ -84,7 +84,7 @@ CRM_GROUPS: tuple[str, ...] = tuple(g for g, _ in CRM_GROUP_ROLES)
 STAFF_GROUPS: tuple[str, ...] = CIS_GROUPS + BOOKING_GROUPS + CRM_GROUPS
 
 PAGE_LIMIT = 60          # ListUsers / ListUsersInGroup maximum page size
-MAX_PAGES = 100          # 6 000 users per listing: far above a staff pool; stops a token loop
+MAX_PAGES = 100  # technical-constant: 6 000 users per listing: far above a staff pool; stops a token loop
 CONFIRMED = "CONFIRMED"
 # Created by an admin and never signed in with a password. The staff create flow (C6) leaves invitees here
 # and staff sign in with an email code, so this is the normal state, not drift (review L1): reported apart,

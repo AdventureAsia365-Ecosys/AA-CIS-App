@@ -56,7 +56,7 @@ STREAM_PREFIX = "migrate/migrate/"
 # Either line (CloudWatch filter syntax: ?term ?term = OR). Quoted terms match the exact phrase.
 FILTER_PATTERN = '?"run-script: file=" ?"SCRIPT verdict"'
 LOG_RETENTION_DAYS = 30          # AA-CIS-Infra modules/ecs/main.tf aws_cloudwatch_log_group.ecs retention_in_days
-MAX_PAGES = 20                   # per slice; 1 MB / 10,000 events a page; a night has a handful of matching lines
+MAX_PAGES = 20  # technical-constant: per slice; 1 MB / 10,000 events a page; a night has a handful of matching lines
 # Every search of one day together, checked before each call (S259: the 20 s whole-day search was cut off). One call
 # normally answers in < 2 s; the client bounds a stuck one (2 s connect + 5 s read, 3 tries).
 FETCH_BUDGET_S = 12.0

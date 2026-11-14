@@ -41,8 +41,8 @@ ORDER_MODES = (MODEL_FIRST, AWS_FIRST)
 ROUTE_AWS_FIRST_ENV = "LLM_ROUTE_AWS_FIRST"
 _ON = ("1", "true", "on", "yes")
 
-_CACHE_TTL_SECONDS = 20.0
-_FAILURE_TTL_SECONDS = 20.0
+_CACHE_TTL_SECONDS = 20.0  # technical-constant: in-process cache refresh of a read
+_FAILURE_TTL_SECONDS = 20.0  # technical-constant: back-off after a failed cache read
 _SELECT_SQL = "SELECT order_mode, current_version FROM shared.llm_route_settings WHERE singleton"
 
 _state: Optional[tuple[str, int]] = None
