@@ -40,6 +40,7 @@ S272: a change of the writing loop that has not had its measured trial ships beh
 """
 from __future__ import annotations
 
+import contextvars
 import math
 import re
 from typing import Callable, Optional
@@ -78,6 +79,30 @@ def mode(tenant_id: Optional[str] = None) -> str:
     else:
         raw = settings.get(EXTEND_SETTING, str(tenant_id) if tenant_id else None)
     return EXTEND_ON if str(raw or "").strip().lower() == EXTEND_ON else EXTEND_OFF
+
+
+# The piece's switch, pinned ONCE per piece by service.run_write_background (`pin`) so a setting change mid-piece
+# never splits its repair rounds; the plans read it when the caller passes no `switch`. Cleared by `record`.
+_PINNED: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("length_extend_pinned", default=None)
+
+
+def mode_for(tenant_id: Optional[str], channel: Optional[str]) -> str:
+    """`mode(tenant_id)` for a blog; off for any other channel (no settings read)."""
+    return mode(tenant_id) if channel == "blog" else EXTEND_OFF
+
+
+def pin(tenant_id: Optional[str], channel: Optional[str]) -> str:
+    """Resolve the piece's switch (`mode_for`), pin it for the plans of this piece and return it."""
+    resolved = mode_for(tenant_id, channel)
+    _PINNED.set(resolved)
+    return resolved
+
+
+def record(context: dict, channel: Optional[str], switch: str) -> None:
+    """A blog's `length_trace` (writer_input, admin-only) records the piece's switch; the pin is cleared."""
+    if channel == "blog" and context.get("length_trace"):
+        context["length_trace"]["extend"] = switch
+    _PINNED.set(None)
 
 
 def _f4_short(gate_ledger: list) -> Optional[dict]:
@@ -120,8 +145,9 @@ def _insert_at(text: str, sec: dict, cta: Optional[str]) -> int:
 
 
 def _switch(switch: Optional[str], tenant_id: Optional[str]) -> str:
-    """The switch a plan reads: the value the caller resolved once for the piece (service.run_write_background), else
-    `mode(tenant_id)`."""
+    """The switch a plan reads: the caller's `switch`, else the piece's pinned one (`pin`), else `mode(tenant_id)`."""
+    if switch is None:
+        switch = _PINNED.get()
     return mode(tenant_id) if switch is None else switch
 
 
@@ -129,8 +155,7 @@ def plan_for(content_text: str, gate_ledger: list, *, channel: Optional[str], so
              tenant_id: Optional[str] = None, switch: Optional[str] = None) -> Optional[dict]:
     """The extend plan of one attempt, or None (the old path): {"ledger": the ledger with the short F4 entry passed,
     "only_length": no other blocking failure, "facts": the untold seed facts, "sections": the chosen sections with
-    the words to add, "deficit_chars", "target_chars"}. `switch` (the piece's resolved mode) or `tenant_id` (resolve
-    it here) decide whether it runs."""
+    the words to add, "deficit_chars", "target_chars"}. Runs when `_switch` is on."""
     if channel != "blog" or _switch(switch, tenant_id) != EXTEND_ON:
         return None
     f4 = _f4_short(gate_ledger)
@@ -268,4 +293,4 @@ def extend(content_text: str, plan: dict, *, call: Callable[..., tuple[list[str]
 
 
 __all__ = ["EXTEND_ENV", "EXTEND_SETTING", "EXTEND_ON", "EXTEND_OFF", "EXTEND_MODE", "SECTIONS_MAX", "FACTS_MAX",
-           "mode", "sections", "plan_for", "plan_after_repair", "extend"]
+           "mode", "mode_for", "pin", "record", "sections", "plan_for", "plan_after_repair", "extend"]

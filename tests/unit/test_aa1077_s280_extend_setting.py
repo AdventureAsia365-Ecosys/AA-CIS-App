@@ -2,7 +2,7 @@
 
 - `length_extend.mode(tenant_id)`: a job's trial flag first, then the settings reader (env override T9_LENGTH_EXTEND,
   then the tenant's value, then the platform value, then the default off); anything but 'on' is off.
-- the plans (`plan_for`, `plan_after_repair`) take the piece's resolved `switch`, or resolve it for `tenant_id`.
+- the plans (`plan_for`, `plan_after_repair`) take a `switch`, else the piece's pinned one, else resolve `tenant_id`.
 - the loop resolves the switch ONCE per piece for the piece's tenant, so a tenant value runs the trial on one audit
   tenant through the normal studio flow, and the blog's length trace records it.
 
@@ -29,9 +29,11 @@ OTHER = "00000000-0000-4000-8000-0000000000b2"
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    """No env override and an empty snapshot (= every key at its compiled default) unless a test sets one."""
+    """No env override, no pinned switch and an empty snapshot (= every key at its compiled default) unless a test
+    sets one."""
     monkeypatch.delenv(le.EXTEND_ENV, raising=False)
     monkeypatch.setattr(settings.READER, "_snapshot", {})
+    le._PINNED.set(None)                           # no piece's pin left over from another test
 
 
 def _values(monkeypatch, *, platform=None, **tenants):
@@ -100,6 +102,22 @@ def test_a_resolved_switch_decides_the_plans_without_a_settings_read(monkeypatch
         assert le.plan_after_repair(TEXT, before=TEXT, channel="blog", source=SOURCE, switch="off") == (None, "off")
 
 
+def test_the_pin_feeds_the_plans_until_record_clears_it(monkeypatch):
+    """`pin` resolves once (off for a non-blog, no settings read); the plans read it; `record` traces and clears it."""
+    _values(monkeypatch, trial="off")
+    assert le.pin(TRIAL, "social") == "off"
+    with patch.object(le, "mode", return_value="on"):
+        assert le.pin(TRIAL, "blog") == "on"
+    assert le.plan_for(TEXT, _short_ledger(), channel="blog", source=SOURCE, tenant_id=TRIAL) is not None
+    ctx = {"length_trace": {"attempt": 2}}
+    le.record(ctx, "blog", "on")
+    assert ctx["length_trace"]["extend"] == "on"
+    assert le.plan_for(TEXT, _short_ledger(), channel="blog", source=SOURCE, tenant_id=TRIAL) is None
+    other = {"length_trace": {"attempt": 2}}
+    le.record(other, "social", "off")
+    assert "extend" not in other["length_trace"]
+
+
 # ---------------------------------------------------------------- the loop
 
 REQUEST_ID, PIECE_ID = uuid.uuid4(), uuid.uuid4()
@@ -164,15 +182,18 @@ async def test_a_setting_change_mid_piece_does_not_split_its_rounds(monkeypatch)
         _values(monkeypatch, trial="off")
         return _call(GOOD)(**kw)
 
-    real_plan = le.plan_after_repair
+    real_plan, reasons = le.plan_after_repair, []
 
     def plan_after(*a, **kw):
         _values(monkeypatch, trial="off")          # flipped before the post-repair plan
-        return real_plan(*a, **kw)
+        out = real_plan(*a, **kw)
+        reasons.append(out[1])
+        return out
 
     with patch.object(service.length_extend, "plan_after_repair", side_effect=plan_after) as pa:
         rewrite, ext, fin = await _run(ctx, modes=modes, extend=flip_then_call)
-    assert pa.call_args.kwargs["switch"] == "on"
+    pa.assert_called_once()
+    assert "switch" not in pa.call_args.kwargs and reasons and reasons[0] != "off"   # read the piece's pinned 'on'
     ext.assert_called_once()
     assert modes == [TRIAL] and ctx["length_trace"]["extend"] == "on"
 
