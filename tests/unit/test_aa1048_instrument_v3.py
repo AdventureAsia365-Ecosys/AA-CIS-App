@@ -155,7 +155,7 @@ def test_measured_expectation_scales_the_measured_cost_per_call():
     ({"calls": 0}, "finished live run"),
     ({"spent_usd": 0}, "positive spent_usd"),
     ({"instrument": "llama4-maverick@acc2:entailment#v2"}, "measured 'llama4"),
-    ({"prompt_version": "aa1048-r1-v2@000000000000"}, "texts changed"),
+    ({"prompt_version": "aa1048-r1-v2@abcdefabcdef"}, "texts changed"),
     ({"prompt_version": "aa1048-r1-v9@ddaab8c279ef"}, "unknown here"),
     ({"votes": {"ffffffffffffffff": [True]}}, "not in the pool"),
 ])
