@@ -7,10 +7,11 @@
 // caches it 5 minutes. Admin only (lib/rbac.ts PAGE_RULES + API_READ_RULES "docs"; the backend re-checks, ops.read).
 // Owner-only pages (privacy / legal, infrastructure maps) appear only for a platform owner signed in with Cognito.
 //
-// What the page does: a list grouped by folder with search, type and audience filters (audience is navigation, not
-// access); the selected page (?path=…, so a link can be shared) is rendered as Markdown with a table of contents, its
-// catalog facts and the commit it came from. Links to other published pages open in the reader; anything not
-// published is plain text. No editing here: docs change by PR in git. This repo is public: no page content lives here.
+// What the page does: a list grouped by folder (AA-1104: numbered 1, 1.1…, groups fold, DocsList.tsx) with search, type
+// and audience filters (audience is navigation, not access); the selected page (?path=…, so a link can be shared) is
+// rendered as Markdown with a table of contents, its catalog facts and the commit it came from. Links to other
+// published pages open in the reader; anything not published is plain text. No editing here: docs change by PR in
+// git. This repo is public: no page content lives here.
 // Languages: English by default; a page with a published Vietnamese copy (<page>.vi.md, lang: vi, translation_of) gets
 // an EN / VI switch, remembered in this browser (localStorage "aa_docs_lang"); until the viewer picks one there, the
 // page language follows the admin UI language (AA-994: the topbar EN | VI). The list shows originals only; a page
@@ -46,6 +47,7 @@ import {
   IconButton, Input, Select,
 } from "../../_kit";
 import { M } from "./messages";
+import { DocsList } from "./DocsList";
 import { DOC_AUDIENCE_MESSAGES, DOC_LANG_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
 import { MarkdownView, scrollToHeading, type MarkdownLink } from "../../_kit/MarkdownView";
 import {
@@ -56,9 +58,7 @@ import {
   DOC_LANGS,
   DEFAULT_DOC_LANG,
   audienceOptions,
-  groupBySection,
   listedPages,
-  matchesFilter,
   originalOf,
   parseDocLang,
   pickLanguage,
@@ -115,57 +115,6 @@ function FilterSelect({
       options={options}
       style={{ flex: "1 1 120px" }}
     />
-  );
-}
-
-function DocRow({ doc, selected, onSelect }: { doc: DocEntry; selected: boolean; onSelect: () => void }) {
-  const t = useT(M);
-  const typeLabel = useT(DOC_TYPE_MESSAGES);
-  // A link, not a button: the row has a real URL (?path=…), so a middle click or "open in new tab" works too.
-  return (
-    <a
-      href={`/admin/docs?path=${encodeURIComponent(doc.path)}`}
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-        e.preventDefault();
-        onSelect();
-      }}
-      aria-current={selected ? "page" : undefined}
-      style={{
-        display: "block",
-        padding: "8px 14px 8px 11px",
-        background: selected ? K.accentTint : "transparent",
-        borderLeft: `3px solid ${selected ? K.accent : "transparent"}`,
-        fontFamily: sans,
-        color: K.ink,
-        textDecoration: "none",
-      }}
-    >
-      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, minWidth: 0 }}>
-        {doc.access === "owner" && <Lock size={12} style={{ color: K.muted, flexShrink: 0 }} aria-label={t("ownerOnly")} />}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.title}</span>
-      </span>
-      <span style={{ display: "block", fontSize: 11, color: K.muted, fontFamily: mono, marginTop: 2, overflowWrap: "anywhere" }}>
-        {doc.id} · {typeLabel(doc.type)}
-      </span>
-    </a>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: "0.06em",
-        textTransform: "uppercase",
-        color: K.muted,
-        padding: "12px 14px 4px",
-      }}
-    >
-      {children}
-    </div>
   );
 }
 
@@ -448,8 +397,6 @@ function DocsReaderPage() {
     [data, selectedRepo],
   );
   const selected = selectedPath ? originalOf(selectedPath, byPath) : undefined;
-  const shown = useMemo(() => pages.filter((p) => matchesFilter(p, { query, type, audience })), [pages, query, type, audience]);
-  const groups = useMemo(() => groupBySection(shown), [shown]);
 
   const open = useCallback(
     (path: string, hash = "") => {
@@ -539,29 +486,18 @@ function DocsReaderPage() {
 
   const list = (
     <Card style={{ overflow: "hidden" }}>
-      {filters}
-      <div style={{ padding: "8px 14px 0", fontSize: 12, color: K.muted }}>
-        {t("countOf", shown.length, pages.length)}
-      </div>
-      <div style={{ maxHeight: isPhone ? "none" : "calc(100vh - 290px)", overflowY: "auto", paddingBottom: 8 }}>
-        {groups.length ? (
-          groups.map((g) => (
-            <div key={g.section}>
-              <SectionLabel>{g.section}</SectionLabel>
-              {g.pages.map((d) => (
-                <DocRow
-                  key={`${d.repo}/${d.path}`}
-                  doc={d}
-                  selected={d.path === (selected?.path ?? selectedPath) && d.repo === selectedRepo}
-                  onSelect={() => open(d.path)}
-                />
-              ))}
-            </div>
-          ))
-        ) : (
-          <EmptyState title={t("noMatch")} description={t("noMatchBody")} />
-        )}
-      </div>
+      <DocsList
+        pages={pages}
+        query={query}
+        type={type}
+        audience={audience}
+        selected={selected}
+        selectedPath={selectedPath}
+        selectedRepo={selectedRepo}
+        onOpen={open}
+        filters={filters}
+        isPhone={isPhone}
+      />
     </Card>
   );
 
