@@ -1,4 +1,4 @@
--- Migration 429: AA-1105 (S281) — the per-visitor limit of the academy web's public certificate checks in the platform
+-- Migration 425: AA-1105 (S281) — the per-visitor limit of the academy web's public certificate checks in the platform
 -- settings registry (CIS 407; tech lead S279: a threshold, limit or cap is a setting on Platform › Settings, never a
 -- code literal or an env var alone).
 --
@@ -19,7 +19,7 @@
 --      The seed row carries its plain label and its EN + VI operator guide (CIS 416 rule). Seeded with enforced =
 --      false like the twelve other cis.learn.* keys (CIS 420): the learning API code that reads it ships in the next PR
 --      of this lane (MIG-4); the later migration that marks the learn keys enforced covers this one too.
---   2. Register 429.
+--   2. Register 425.
 --
 -- Behaviour on apply. None for running code: no value row is seeded, and the deployed learning API does not read the
 -- key yet; after the code PR it resolves to its default (6) until an administrator approves a change.
@@ -29,8 +29,8 @@
 -- job tables are idle (ADR 0017a), then the code PR. DM-7.1: no new table.
 --
 -- Number. 422 is the newest CIS migration on main (15/11/2026); other lanes of the S281 wave hold 423-428. If the
--- owner main max + 1 differs at merge, renumber (git grep '429_' and '429' here, in
--- tests/integration/test_aa1105_migration_429.py, tests/integration/test_aa1105_migration_420.py,
+-- owner main max + 1 differs at merge, renumber (git grep '425_' and '425' here, in
+-- tests/integration/test_aa1105_migration_425.py, tests/integration/test_aa1105_migration_420.py,
 -- compiled_defaults.json's _generated line and docs/implementation-notes/AA-1105.md).
 --
 -- Locks. One INSERT of one row (the definition guard trigger allows the file's role, cis_owner). lock_timeout 5s.
@@ -58,7 +58,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('429', now(), 'AA-1105: the academy web per-visitor certificate check limit (cis.learn.verify_visitor_requests_per_minute)')
+VALUES ('425', now(), 'AA-1105: the academy web per-visitor certificate check limit (cis.learn.verify_visitor_requests_per_minute)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

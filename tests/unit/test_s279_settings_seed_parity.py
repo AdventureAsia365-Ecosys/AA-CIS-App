@@ -85,7 +85,7 @@ def test_the_trash_window_is_badged_not_enforced():
     # evaluation's five limits likewise, until the evaluation code is deployed. AA-1051 (CIS 419): the nine W5 writer
     # proof caps and minimum samples likewise, until the proof code that reads them is deployed. AA-1105 (CIS 420): the
     # twelve AA Academy settings likewise
-    # (and CIS 429's thirteenth), until the learning API that reads them is deployed.
+    # (and CIS 425's thirteenth), until the learning API that reads them is deployed.
     assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted([
         "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
         "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",
@@ -102,7 +102,7 @@ LEARN_KEYS = ("cis.learn.quiz_pass_mark_pct", "cis.learn.final_quiz_pass_mark_pc
               "cis.learn.recert_paths", "cis.learn.video_url_ttl_seconds", "cis.learn.learner_retention_days",
               "cis.learn.review_target_retention", "cis.learn.review_max_cards_per_day",
               "cis.learn.verify_requests_per_minute",
-              # CIS 429 (AA-1105, S281): the academy web's per-visitor verify limit, like the twelve CIS 420 keys.
+              # CIS 425 (AA-1105, S281): the academy web's per-visitor verify limit, like the twelve CIS 420 keys.
               "cis.learn.verify_visitor_requests_per_minute")
 
 

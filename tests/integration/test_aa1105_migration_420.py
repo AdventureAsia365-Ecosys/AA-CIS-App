@@ -32,7 +32,7 @@ SETTINGS = {
     "cis.learn.learner_retention_days": 365, "cis.learn.review_target_retention": 0.9,
     "cis.learn.review_max_cards_per_day": 20, "cis.learn.verify_requests_per_minute": 30,
 }
-# cis.learn.* keys a later migration adds (each has its own test): CIS 429 (S281) the academy web's per-visitor limit.
+# cis.learn.* keys a later migration adds (each has its own test): CIS 425 (S281) the academy web's per-visitor limit.
 LATER_LEARN_KEYS = {"cis.learn.verify_visitor_requests_per_minute"}
 SHA = "a" * 64
 

@@ -1,4 +1,4 @@
-"""AA-1105 (S281) — CIS 429: the academy web's per-visitor certificate check limit
+"""AA-1105 (S281) — CIS 425: the academy web's per-visitor certificate check limit
 (cis.learn.verify_visitor_requests_per_minute) in shared.setting_definition (conftest replays every migration).
 Registered; the row equals the compiled default the reader serves (6 requests); bounds 1..300 and platform scope;
 no evidence, single approval, no env override; not enforced like the other cis.learn.* keys until a later migration;
@@ -19,7 +19,7 @@ from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 M429 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "429_aa1105_learn_verify_visitor_setting.sql")
+                    "425_aa1105_learn_verify_visitor_setting.sql")
 KEY = "cis.learn.verify_visitor_requests_per_minute"
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters') RETURNING id")
@@ -42,7 +42,7 @@ async def conn():
 
 @pytest.mark.asyncio
 async def test_429_registered_and_the_row_is_the_compiled_default(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '429'") == "429"
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '425'") == "425"
     r = await conn.fetchrow(ROW, KEY)
     d = settings.definition(KEY)
     assert json.loads(r["d"]) == 6 == d.default_value
