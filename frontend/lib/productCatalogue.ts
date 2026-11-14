@@ -36,6 +36,7 @@ export interface CatalogueFeature {
   name: string;
   name_vi?: string;
   summary: string;
+  summary_vi?: string;
   roles: string[];
   status: CatalogueStatus;
   owner: string;
@@ -135,7 +136,7 @@ export function matchesFeature(f: CatalogueFeature, filter: FeatureFilter): bool
   if (filter.cond && !conditionKinds(f.conditions).includes(filter.cond as ConditionKind)) return false;
   const q = filter.q?.trim().toLowerCase();
   if (!q) return true;
-  const hay = [f.id, f.name, f.name_vi ?? "", f.module, f.summary, ...f.surface, ...conditionNames(f.conditions)]
+  const hay = [f.id, f.name, f.name_vi ?? "", f.module, f.summary, f.summary_vi ?? "", ...f.surface, ...conditionNames(f.conditions)]
     .join(" ").toLowerCase();
   return hay.includes(q);
 }

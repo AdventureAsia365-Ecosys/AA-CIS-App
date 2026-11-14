@@ -56,6 +56,7 @@ test("feature filter: app, status, role, condition kind and search", () => {
   assert.ok(!matchesFeature(f, { cond: "secrets" }));
   assert.ok(matchesFeature(f, { q: "CIS.A" }), "searches condition names");
   assert.ok(matchesFeature(f, { q: "/admin/tours" }), "searches the surface");
+  assert.ok(matchesFeature(feature({ summary_vi: "Trang tour" }), { q: "trang tour" }), "searches the Vietnamese summary");
   assert.ok(!matchesFeature(f, { q: "nothing" }));
 });
 

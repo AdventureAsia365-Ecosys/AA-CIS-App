@@ -177,7 +177,7 @@ function FeatureDrawer({ f, data, onClose, openFeature, openLink }: {
           <span style={small}><AppName id={f.app} data={data} /> · {t("module")} <Code nowrap>{f.module}</Code> ·{" "}
             {t("owner")} <Code nowrap>{f.owner}</Code></span>
         </div>
-        <Field label={t("summary")}>{f.summary}</Field>
+        <Field label={t("summary")}>{localSummary(f, lang)}</Field>
         <Field label={t("colRoles")}><span style={chipRow}>{f.roles.map((r) => <IdChip key={r} id={r} />)}</span></Field>
         <Field label={t("needs")}><ConditionDetail c={f.conditions} data={data} /></Field>
         {f.surface.length > 0 && (
