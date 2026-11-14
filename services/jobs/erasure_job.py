@@ -18,7 +18,7 @@ Apply (destructive-ops.md: DRY RUN -> approval -> snapshot -> transaction -> ver
   - dry_run_job_id is a succeeded data_erasure DRY RUN of the same subject, at most ERASURE_DRY_RUN_MAX_AGE_HOURS
     old, whose fingerprint (v2, bound to the subject) equals approved_fingerprint (what Nghiệp approved),
   - approved_by and snapshot_id (the manual RDS snapshot) are given,
-  - tenant: offboarded (cancelled_at) at least ERASURE_TENANT_RETENTION_DAYS days ago, never the AA tenant,
+  - tenant: offboarded (cancelled_at) at least cis.erasure.tenant_retention_days days ago, never the AA tenant,
   - inside the apply transaction: the recount gives the same fingerprint and no blocker; every statement touches
     exactly the approved rows; a recount finds 0. Otherwise it raises and nothing is committed.
 It writes one acp_shared.audit_log row (counts only) and, for a traveller, strips the hash from every
@@ -86,20 +86,10 @@ def _int_env(name: str, default: int, env: Optional[dict] = None) -> int:
         return default
 
 
-def tenant_retention_days(env: Optional[dict] = None) -> int:
-    """S279 thresholds L1: the setting cis.erasure.tenant_retention_days (Platform › Settings); its env var
-    ERASURE_TENANT_RETENTION_DAYS stays an emergency override for one release (the Dev drill sets 0). ``env`` (tests):
-    a valid value there wins, an invalid one is ignored."""
-    if env is None:
-        return max(0, int(_settings.get(TENANT_RETENTION_SETTING)))
-    d = _settings.definition(TENANT_RETENTION_SETTING)
-    raw = str(env.get(d.env_override or "", "") or "").strip()
-    if raw:
-        value, problem = _settings.parse_text(d, raw)
-        if problem is None:
-            return max(0, int(value))
-    res = _settings.resolve(TENANT_RETENTION_SETTING)          # the stored value, never the process env here
-    return max(0, int(d.default_value if res.source == "env" else res.value))
+def tenant_retention_days() -> int:
+    """S279 thresholds L1: the setting cis.erasure.tenant_retention_days (Platform › Settings). Its env override
+    ERASURE_TENANT_RETENTION_DAYS was retired by CIS 424 (AA-1096 l5): the Dev drill sets 0 on the page for its run."""
+    return max(0, int(_settings.get(TENANT_RETENTION_SETTING)))
 
 
 def dry_run_max_age(env: Optional[dict] = None) -> timedelta:
@@ -198,11 +188,11 @@ def tenant_refusals(tenant_row: Optional[dict], now: datetime, env: Optional[dic
     if tenant_row is None:
         return ["the tenant row does not exist (already erased?)"]
     cancelled = tenant_row.get("cancelled_at")
-    days = tenant_retention_days(env)
+    days = tenant_retention_days()
     if cancelled is None:
         return ["the tenant is not offboarded (POST /admin/tenants/{id}/offboard first)"]
     if now - cancelled < timedelta(days=days):
-        return [f"the tenant was offboarded less than {days} days ago (ERASURE_TENANT_RETENTION_DAYS)"]
+        return [f"the tenant was offboarded less than {days} days ago (setting {TENANT_RETENTION_SETTING})"]
     return []
 
 
@@ -419,7 +409,7 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
         refusals = apply_refusals(payload, dry_job, tenant_row, now, env) if mode == "apply" else None
         result["apply"] = {
             "enabled": apply_enabled(env),
-            "tenant_retention_days": tenant_retention_days(env) if subject == "tenant" else None,
+            "tenant_retention_days": tenant_retention_days() if subject == "tenant" else None,
             "needs": ["approved_fingerprint = this fingerprint", "approved_by", "snapshot_id (manual RDS snapshot)",
                       "dry_run_job_id = this job", f"{APPLY_FLAG}=true", "a verified Cognito staff session"],
         }

@@ -48,13 +48,13 @@ def _short_ledger(extra=()):
 @pytest.fixture(autouse=True)
 def _extend_on(monkeypatch):
     """The extend repair ships off (= main); these tests measure it switched on."""
-    monkeypatch.setenv(le.EXTEND_ENV, "on")
+    monkeypatch.setenv(le.EXTEND_FLAG, "on")
 
 
 def test_the_default_is_main(monkeypatch):
-    monkeypatch.delenv(le.EXTEND_ENV)
+    monkeypatch.delenv(le.EXTEND_FLAG)
     assert le.mode() == "off" and le.plan_for(TEXT, _short_ledger(), channel="blog", source=SOURCE) is None
-    monkeypatch.setenv(le.EXTEND_ENV, "yes")
+    monkeypatch.setenv(le.EXTEND_FLAG, "yes")
     assert le.mode() == "off"
 
 
@@ -95,7 +95,7 @@ def test_plan_is_none_and_the_old_path_runs(case, monkeypatch):
     elif case == "no_facts":
         source = ""
     elif case == "off":
-        monkeypatch.setenv(le.EXTEND_ENV, "off")
+        monkeypatch.setenv(le.EXTEND_FLAG, "off")
     elif case == "passed":
         ledger = [{"gate": qr.F4_EXTREME_LENGTH, "passed": True, "violations": []}]
     else:
@@ -288,7 +288,7 @@ async def test_f4_short_with_a_gate_that_needs_the_rewrite_takes_the_rewrite(_lo
 
 @pytest.mark.asyncio
 async def test_f4_short_with_a_rewrite_gate_and_the_switch_off_is_main(_loop_stubs, monkeypatch):
-    monkeypatch.setenv(le.EXTEND_ENV, "off")
+    monkeypatch.setenv(le.EXTEND_FLAG, "off")
     cta_fail = {"gate": qr.F6_CTA_PRESENT, "passed": False, "blocking": True, "repairable": True,
                 "violations": ["the CTA is missing"]}
     passing = [{"gate": qr.F4_EXTREME_LENGTH, "passed": True, "violations": [], "blocking": True}]
@@ -347,3 +347,11 @@ async def test_an_f1_item_repaired_with_the_extend_is_cut_at_attempt_three(_loop
     log = fin.call_args.kwargs["repair_log"]
     assert any(e.get("repair_mode") == f"sentences+{le.EXTEND_MODE}" for e in log)
     assert any(e.get("repair_mode") == "truth_cut" for e in log)
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

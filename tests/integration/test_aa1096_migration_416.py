@@ -67,12 +67,29 @@ async def test_an_incomplete_guide_is_refused_and_null_is_allowed(conn):
     assert await conn.fetchval("SELECT guide IS NULL AS ok FROM shared.setting_definition WHERE key = $1", KEY)
 
 
+def _edited_later() -> set:
+    """Keys whose label / guide a later file changes (a settings-guide or settings-edit block after 416, e.g. CIS 424):
+    a replay of 416 alone puts its own text back on those, which the later file then owns."""
+    from scripts.settings import gen_compiled_defaults as gen
+    keys: set = set()
+    for path in sorted(gen.MIGRATIONS.glob("*.sql")):
+        m = gen.FILE_RE.match(path.name)
+        if not m or int(m.group(1)) <= 416:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for block in gen.GUIDE_RE.findall(text) + gen.EDIT_RE.findall(text):
+            keys |= {r["key"] for r in json.loads(block)}
+    return keys
+
+
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
     body = _body()
-    before = await conn.fetch("SELECT key, label, guide::text AS g FROM shared.setting_definition ORDER BY key")
+    later = _edited_later()
+    sql = "SELECT key, label, guide::text AS g FROM shared.setting_definition WHERE NOT key = ANY($1::text[]) ORDER BY key"
+    before = await conn.fetch(sql, sorted(later))
     await conn.execute(body)
-    after = await conn.fetch("SELECT key, label, guide::text AS g FROM shared.setting_definition ORDER BY key")
+    after = await conn.fetch(sql, sorted(later))
     assert [tuple(r) for r in after] == [tuple(r) for r in before]
 
 

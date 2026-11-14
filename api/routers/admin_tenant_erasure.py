@@ -75,7 +75,7 @@ def _rid(request_id: str) -> str:
 
 
 def settings_view(env: Optional[dict] = None) -> dict:
-    live = policy.windows("live", env)
+    live = policy.windows("live")
     return {
         "apply_enabled": policy.apply_enabled(),
         "apply_switch": policy.APPLY_SETTING,

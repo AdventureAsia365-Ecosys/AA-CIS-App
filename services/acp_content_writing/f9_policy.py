@@ -17,7 +17,8 @@ Interim rule (declared diff, mode `interim`, the default):
   for word by `hygiene.ensure_cta`), TEXT_INTEGRITY, a title / meta claim, a fact flag with no named claim.
 * the entry records what was decided in `f9_policy` (`version`, `classes`, `warned`, `blocking_before`).
 
-`T10_F9_POLICY_MODE=legacy` keeps the pre-W0 verdict (the rollback switch; a replay sets it to show the diff).
+The setting `cis.quality_modes.t10_f9_policy` = `legacy` keeps the pre-W0 verdict (the rollback switch; a replay sets it
+to show the diff).
 
 `violation_classes` / `entry_classes` classify a stored entry (any era: the pre-AA-925 "… treated as fail" outage
 text too), so counts can keep `judge_unavailable` and `text_integrity` apart from the fidelity classes.
@@ -35,7 +36,6 @@ from services.quality import registry as qr
 from services.quality import writing_policy as _wp
 
 POLICY_VERSION = "f9-interim-v1"
-F9_POLICY_MODE_ENV = "T10_F9_POLICY_MODE"
 INTERIM_MODE = "interim"
 LEGACY_MODE = "legacy"
 
@@ -192,7 +192,7 @@ def _claims_violation(status: str, claims: Iterable[dict]) -> str:
 
 
 def policy_mode() -> str:
-    """The setting cis.quality_modes.t10_f9_policy (S279 L2; env T10_F9_POLICY_MODE stays its emergency override)."""
+    """The setting cis.quality_modes.t10_f9_policy (S279 L2; its env override retired by CIS 424)."""
     from services.quality import settings_keys
     from shared import settings
 
@@ -248,7 +248,7 @@ def apply_policy(g: dict, lexicon=None, *, mode: Optional[str] = None) -> dict:
 
 
 __all__ = [
-    "POLICY_VERSION", "F9_POLICY_MODE_ENV", "INTERIM_MODE", "LEGACY_MODE", "F9_CLAIM_RE", "CLAIMS_MARK",
+    "POLICY_VERSION", "INTERIM_MODE", "LEGACY_MODE", "F9_CLAIM_RE", "CLAIMS_MARK",
     "NO_REASON_MARK", "TRIP_PROMISE", "UNSUPPORTED_OTHER", "FACT_CHECK_UNQUOTED", "SEO_FIELD_CLAIM",
     "CTA_NOT_REFLECTED", "TEXT_INTEGRITY", "JUDGE_UNAVAILABLE", "REASONLESS", "OTHER", "FIDELITY_CLASSES",
     "INFRASTRUCTURE_CLASSES", "hold_classes", "trip_promise_kinds", "parse_claims", "violation_items",

@@ -1,7 +1,6 @@
 """AA-788 — the $0 promotion replay script (scripts/aa788/promotion_replay.py): the stored reading, the default vs
 promoted replay through the real PieceReplay, and the summary. No DB, no LLM."""
 import json
-import os
 
 from scripts.aa788 import promotion_replay as pr
 from services.acp_content_writing import quality_gates as qg
@@ -57,12 +56,12 @@ def test_stored_stats_reads_each_check():
     assert s2["f9_style_attempt1_locatable"] is False
 
 
-def test_env_restores_the_environment(monkeypatch):
-    monkeypatch.delenv("T10_F12_SCOPE_MODE", raising=False)
-    monkeypatch.setenv("T10_F9_BRAND_STYLE_MODE", "warn")
-    with pr.env(pr.PROMOTED_ENV):
+def test_modes_lay_the_promoted_modes_over_the_settings_and_restore_them():
+    before = (qg.f12_scope_mode(), qg.f9_brand_style_mode())
+    assert before == ("warn", "warn")                               # the seeded settings
+    with pr.modes(pr.PROMOTED_MODES):
         assert qg.f12_scope_mode() == "block" and qg.f9_brand_style_mode() == "repair"
-    assert "T10_F12_SCOPE_MODE" not in os.environ and os.environ["T10_F9_BRAND_STYLE_MODE"] == "warn"
+    assert (qg.f12_scope_mode(), qg.f9_brand_style_mode()) == before
 
 
 def test_replay_finds_a_new_f12_hold_and_an_extra_style_repair():
