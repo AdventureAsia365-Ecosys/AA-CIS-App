@@ -1,0 +1,750 @@
+openapi: 3.1.0
+info:
+  title: learn.http.v1 (AA-CIS-App → AA-Partner CRM web academy host; the AA Academy learning API)
+  version: "1.0"
+  description: >-
+    The AA Academy learning API (root ADR 0022; research docs/research/lms/README.md §4.3, §5.4, §7.2, §7.4;
+    decisions D1-D17). CIS owns the courses as read from the learn bundle (manifest format 1 under the docs reader
+    prefix, built by tools/docs/build_learn_bundle.py) and the learner records in schema learn. The academy UI is
+    served by the AA-Partner CRM web on the academy host (academy.<env domain>, decision D17); its server side (BFF)
+    calls these routes with the learner's token, which never reaches the browser.
+    Route classes (ADR 0006 decision 8 rule 6, ADR 0006b decision 6). /learn/v1/* accepts only a WORKFORCE token
+    issued to the app client academy-web, verified by its own verifier; it is never accepted on another CIS route
+    class and no other client is accepted here. The learner is the active CIS staff directory row matched on the
+    verified (iss, sub), any staff role; anyone else gets 403 not_a_learner. Partner (agency) tokens get 403
+    partner_not_open until the agency academy (P7, decision D6). /learn/public/v1/* is public, rate limited and
+    returns the certificate verify view only.
+    Grading. Quiz answers never leave the server before a submission: an attempt returns the items without the
+    correct choices; the server grades the submission, and only then returns the correct choices and the
+    explanations. The pass marks, the retake delay, the number of items per attempt, the recertification period and
+    paths, the video URL lifetime and the review limits are CIS settings (cis.learn.* keys of the settings registry),
+    never literals; the routes return the values in force so the UI never computes them.
+    Drafts. A module with status draft is visible only to a learner holding the learn.preview capability, marked
+    draft, and never counts toward a certificate. A prerequisite that is only planned never blocks.
+    Personal data. The only personal-data field is the learner's display name (x-pii name), shown to the learner and
+    on the public verify view. No e-mail, no identity subject, no verification-code hash and no token crosses (CI
+    field policy).
+  x-aa-contract: learn.http.v1
+  x-aa-producer: AA-CIS-App
+  x-aa-consumers: [AA-Partner]
+  x-aa-issues: [AA-1105]
+servers:
+  - url: /learn
+security:
+  - academy: []
+paths:
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: The signed-in learner, created on first call from the verified identity
+      responses:
+        "200":
+          description: Learner
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Me"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+  /v1/paths:
+    get:
+      operationId: listPaths
+      summary: Learning paths of the learner's tier with enrollment, progress and certificate state
+      responses:
+        "200":
+          description: Paths
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PathList"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /v1/paths/{path_id}/enroll:
+    parameters:
+      - {$ref: "#/components/parameters/PathId"}
+    post:
+      operationId: enrollPath
+      summary: Enroll in a path (idempotent)
+      responses:
+        "200":
+          description: Already enrolled
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Enrollment"}
+        "201":
+          description: Enrolled
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Enrollment"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+  /v1/modules/{module_id}:
+    parameters:
+      - {$ref: "#/components/parameters/ModuleId"}
+    get:
+      operationId: getModule
+      summary: One module with its lessons, the learner's progress, the quiz state and the lab state
+      responses:
+        "200":
+          description: Module
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Module"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+  /v1/lessons/{lesson_id}:
+    parameters:
+      - {$ref: "#/components/parameters/LessonId"}
+    get:
+      operationId: getLesson
+      summary: Lesson body in the asked language (English when no translation exists) with its live cited sections
+      parameters:
+        - name: lang
+          in: query
+          required: false
+          schema: {type: string, enum: [en, vi], default: en}
+      responses:
+        "200":
+          description: Lesson
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Lesson"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+  /v1/lessons/{lesson_id}/video:
+    parameters:
+      - {$ref: "#/components/parameters/LessonId"}
+    get:
+      operationId: getLessonVideo
+      summary: Short-lived presigned GET URLs of the lesson video and its captions (decision D8)
+      description: >-
+        The browser plays the file straight from S3 (range requests for seeking); the API never streams video. The
+        lifetime is the cis.learn.video_url_ttl_seconds setting. 404 when the lesson has no video.
+      responses:
+        "200":
+          description: Video URLs
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VideoUrls"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+  /v1/progress:
+    post:
+      operationId: postProgress
+      summary: Record a learning event (lesson opened, check-yourself answered, lesson completed)
+      description: >-
+        Stored as an append-only statement plus the lesson progress row. Idempotent on statement_id: the same id
+        with the same body answers 200, with another body 409 conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ProgressStatement"}
+      responses:
+        "200":
+          description: Already recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProgressAccepted"}
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProgressAccepted"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+  /v1/modules/{module_id}/quiz/attempts:
+    parameters:
+      - {$ref: "#/components/parameters/ModuleId"}
+    post:
+      operationId: startModuleQuiz
+      summary: Start a module quiz attempt; the server draws non-suspended items and returns them without answers
+      responses:
+        "201":
+          description: Attempt started
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QuizAttempt"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+  /v1/paths/{path_id}/final-quiz/attempts:
+    parameters:
+      - {$ref: "#/components/parameters/PathId"}
+    post:
+      operationId: startFinalQuiz
+      summary: Start the path's final mixed quiz (only when every required module is complete)
+      responses:
+        "201":
+          description: Attempt started
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QuizAttempt"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+  /v1/quiz/attempts/{attempt_id}/submit:
+    parameters:
+      - name: attempt_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: submitQuizAttempt
+      summary: Submit an open attempt; graded on the server against the item set bound at start
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/QuizSubmission"}
+      responses:
+        "200":
+          description: Graded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QuizResult"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+  /v1/review/due:
+    get:
+      operationId: listDueReviewCards
+      summary: The learner's due spaced-review cards (missed quiz items), capped by cis.learn.review_max_cards_per_day
+      responses:
+        "200":
+          description: Due cards
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReviewDue"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+  /v1/review/{item_id}/result:
+    parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema: {type: string, pattern: "^[A-Z][0-9]{1,2}-Q[0-9]{1,3}$"}
+    post:
+      operationId: postReviewResult
+      summary: Grade one review answer on the server and store the browser's FSRS card state after checks
+      description: >-
+        The server grades the chosen choices itself; the card state the browser computed with ts-fsrs is stored only
+        when its due date is not earlier than the stored one and its last review is the submitted review time, so a
+        forged schedule only affects the learner's own reviews.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ReviewSubmission"}
+      responses:
+        "200":
+          description: Graded and stored
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReviewResult"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+  /v1/modules/{module_id}/lab/check:
+    parameters:
+      - {$ref: "#/components/parameters/ModuleId"}
+    post:
+      operationId: checkLab
+      summary: Run the module's lab check; answers 409 lab_closed until the lab provisioner exists (P4b)
+      responses:
+        "200":
+          description: Lab result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LabResult"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+  /v1/certificates:
+    get:
+      operationId: listCertificates
+      summary: The learner's certificates (the verification code itself is never stored, so it is not listed)
+      responses:
+        "200":
+          description: Certificates
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CertificateList"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+  /v1/certificates/{certificate_id}/code:
+    parameters:
+      - name: certificate_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: rotateCertificateCode
+      summary: Issue a new verification code for the learner's own valid certificate; the previous code stops working
+      responses:
+        "200":
+          description: New code, shown once
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CertificateCode"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+  /public/v1/certificates/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        schema: {type: string, pattern: "^[A-Za-z0-9_-]{22}$"}
+    get:
+      operationId: verifyCertificate
+      summary: Public verify view of a certificate by its code (rate limited; no sign-in)
+      description: >-
+        The code is 128-bit random (22 URL-safe base64 characters); CIS stores only its SHA-256. 404 for an unknown
+        code, a rotated code or a certificate whose learner was deleted by the retention job.
+      security: []
+      responses:
+        "200":
+          description: Certificate
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CertificateVerify"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+components:
+  securitySchemes:
+    academy:
+      type: oauth2
+      description: >-
+        Cognito WORKFORCE pool, app client academy-web (authorization code with PKCE, confidential). The CRM web BFF
+        holds the token server side and forwards it as a bearer token.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://staff-auth.example.invalid/oauth2/authorize
+          tokenUrl: https://staff-auth.example.invalid/oauth2/token
+          scopes: {}
+  parameters:
+    PathId:
+      name: path_id
+      in: path
+      required: true
+      schema: {type: string, pattern: "^[a-z][a-z0-9-]{1,40}$"}
+    ModuleId:
+      name: module_id
+      in: path
+      required: true
+      schema: {type: string, pattern: "^[A-Z][0-9]{1,2}$"}
+    LessonId:
+      name: lesson_id
+      in: path
+      required: true
+      schema: {type: string, pattern: "^[A-Z][0-9]{1,2}-[0-9]{2}$"}
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum: [unauthorized, forbidden, not_a_learner, partner_not_open, not_found, invalid, conflict, retake_wait,
+                 prerequisites_open, attempt_closed, lab_closed, rate_limited, unavailable]
+        message: {type: string, maxLength: 500}
+        retry_at: {type: [string, "null"], format: date-time, description: "retake_wait: when the next attempt opens"}
+    Me:
+      type: object
+      additionalProperties: false
+      required: [learner_id, kind, display_name, preview, is_test]
+      properties:
+        learner_id: {type: string, format: uuid}
+        kind: {type: string, enum: [staff, partner]}
+        display_name: {type: [string, "null"], maxLength: 200, x-pii: name}
+        preview: {type: boolean, description: "holds the learn.preview capability: draft modules are visible"}
+        is_test: {type: boolean, description: "a Dev E2E identity: its rows are kept out of team stats"}
+    PathList:
+      type: object
+      additionalProperties: false
+      required: [bundle_sha, paths]
+      properties:
+        bundle_sha: {type: [string, "null"], maxLength: 64}
+        paths:
+          type: array
+          items: {$ref: "#/components/schemas/PathSummary"}
+    PathSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, tier, modules, enrolled, completed, final_quiz, certificate_status]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        tier: {type: string, enum: [staff, partner]}
+        enrolled: {type: boolean}
+        completed: {type: boolean}
+        final_quiz: {type: boolean}
+        certificate_status: {type: [string, "null"], enum: [valid, expired, renewal_due, revoked, null]}
+        modules:
+          type: array
+          items: {$ref: "#/components/schemas/PathModule"}
+        planned:
+          type: array
+          items: {type: string}
+    PathModule:
+      type: object
+      additionalProperties: false
+      required: [id, title, required, status, complete]
+      properties:
+        id: {type: string}
+        title: {type: [string, "null"]}
+        required: {type: boolean}
+        status: {type: string, enum: [active, draft, planned]}
+        complete: {type: boolean}
+    Enrollment:
+      type: object
+      additionalProperties: false
+      required: [path_id, status, enrolled_at]
+      properties:
+        path_id: {type: string}
+        status: {type: string, enum: [active, completed, withdrawn]}
+        enrolled_at: {type: string, format: date-time}
+        completed_at: {type: [string, "null"], format: date-time}
+    Module:
+      type: object
+      additionalProperties: false
+      required: [id, title, version, status, draft, stale, objectives, prerequisites, lessons, quiz, lab, complete]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        version: {type: string}
+        status: {type: string, enum: [active, draft]}
+        draft: {type: boolean}
+        stale: {type: boolean}
+        objectives:
+          type: array
+          items: {type: string}
+        prerequisites:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, state]
+            properties:
+              id: {type: string}
+              state: {type: string, enum: [complete, open, planned]}
+        complete: {type: boolean}
+        lessons:
+          type: array
+          items: {$ref: "#/components/schemas/LessonSummary"}
+        quiz: {$ref: "#/components/schemas/QuizState"}
+        lab:
+          type: object
+          additionalProperties: false
+          required: [present, state]
+          properties:
+            present: {type: boolean}
+            state: {type: string, enum: [none, closed, open, passed]}
+    LessonSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, type, minutes, stale, has_video, status]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        type: {type: string, enum: [reading, walkthrough, worked-example]}
+        minutes: {type: integer}
+        stale: {type: boolean}
+        has_video: {type: boolean}
+        status: {type: string, enum: [not_started, opened, completed]}
+    QuizState:
+      type: object
+      additionalProperties: false
+      required: [available, items_per_attempt, pass_mark_pct, best_score_pct, passed, retake_at]
+      properties:
+        available: {type: boolean}
+        items_per_attempt: {type: integer, minimum: 0}
+        pass_mark_pct: {type: integer, minimum: 0, maximum: 100}
+        best_score_pct: {type: [number, "null"]}
+        passed: {type: boolean}
+        retake_at: {type: [string, "null"], format: date-time}
+    Lesson:
+      type: object
+      additionalProperties: false
+      required: [id, module_id, module_version, title, type, minutes, objective, lang, languages, body_md, stale,
+                 draft, sources, has_video, status]
+      properties:
+        id: {type: string}
+        module_id: {type: string}
+        module_version: {type: string}
+        title: {type: string}
+        type: {type: string, enum: [reading, walkthrough, worked-example]}
+        minutes: {type: integer}
+        objective: {type: string}
+        lang: {type: string, enum: [en, vi]}
+        languages:
+          type: array
+          items: {type: string, enum: [en, vi]}
+        body_md: {type: string}
+        stale: {type: boolean}
+        draft: {type: boolean}
+        has_video: {type: boolean}
+        status: {type: string, enum: [not_started, opened, completed]}
+        sources:
+          type: array
+          items: {$ref: "#/components/schemas/CitedSection"}
+    CitedSection:
+      type: object
+      additionalProperties: false
+      required: [ref, kind, stale, available, body_md]
+      properties:
+        ref: {type: string}
+        kind: {type: string, enum: [doc, adr, skill, steering, context]}
+        stale: {type: boolean}
+        available: {type: boolean}
+        body_md: {type: [string, "null"]}
+    VideoUrls:
+      type: object
+      additionalProperties: false
+      required: [url, expires_at, captions]
+      properties:
+        url: {type: string, format: uri}
+        expires_at: {type: string, format: date-time}
+        captions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [lang, url]
+            properties:
+              lang: {type: string, enum: [en, vi]}
+              url: {type: string, format: uri}
+    ProgressStatement:
+      type: object
+      additionalProperties: false
+      required: [statement_id, verb, lesson_id]
+      properties:
+        statement_id: {type: string, format: uuid, description: "client-made id for idempotency"}
+        verb: {type: string, enum: [opened, check_answered, completed]}
+        lesson_id: {type: string, pattern: "^[A-Z][0-9]{1,2}-[0-9]{2}$"}
+        lang: {type: string, enum: [en, vi]}
+    ProgressAccepted:
+      type: object
+      additionalProperties: false
+      required: [statement_id, lesson_id, status, module_complete]
+      properties:
+        statement_id: {type: string, format: uuid}
+        lesson_id: {type: string}
+        status: {type: string, enum: [opened, completed]}
+        module_complete: {type: boolean}
+    QuizAttempt:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, scope, target_id, started_at, pass_mark_pct, items]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        scope: {type: string, enum: [module, final]}
+        target_id: {type: string, description: "the module id (scope module) or the path id (scope final)"}
+        started_at: {type: string, format: date-time}
+        pass_mark_pct: {type: integer, minimum: 0, maximum: 100}
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/QuizItem"}
+    QuizItem:
+      type: object
+      additionalProperties: false
+      required: [id, kind, prompt, choices]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [single, multiple]}
+        prompt: {type: string}
+        choices:
+          type: array
+          items: {type: string}
+    QuizSubmission:
+      type: object
+      additionalProperties: false
+      required: [responses]
+      properties:
+        responses:
+          type: array
+          maxItems: 200
+          items: {$ref: "#/components/schemas/ItemResponse"}
+    ItemResponse:
+      type: object
+      additionalProperties: false
+      required: [item_id, chosen]
+      properties:
+        item_id: {type: string}
+        chosen:
+          type: array
+          maxItems: 20
+          items: {type: integer, minimum: 0}
+    QuizResult:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, scope, target_id, score_pct, pass_mark_pct, passed, retake_at, items, module_complete,
+                 certificate]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        scope: {type: string, enum: [module, final]}
+        target_id: {type: string}
+        score_pct: {type: number, minimum: 0, maximum: 100}
+        pass_mark_pct: {type: integer, minimum: 0, maximum: 100}
+        passed: {type: boolean}
+        retake_at: {type: [string, "null"], format: date-time}
+        module_complete: {type: boolean}
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/GradedItem"}
+        certificate:
+          oneOf:
+            - {type: "null"}
+            - {$ref: "#/components/schemas/CertificateCode"}
+    GradedItem:
+      type: object
+      additionalProperties: false
+      required: [item_id, correct, chosen, correct_choices, explain, source_ref]
+      properties:
+        item_id: {type: string}
+        correct: {type: boolean}
+        chosen:
+          type: array
+          items: {type: integer}
+        correct_choices:
+          type: array
+          items: {type: integer}
+        explain: {type: string}
+        source_ref: {type: string}
+    ReviewDue:
+      type: object
+      additionalProperties: false
+      required: [cards, daily_cap]
+      properties:
+        daily_cap: {type: integer, minimum: 0}
+        target_retention: {type: number, minimum: 0, maximum: 1}
+        cards:
+          type: array
+          items: {$ref: "#/components/schemas/ReviewCard"}
+    ReviewCard:
+      type: object
+      additionalProperties: false
+      required: [item, module_id, card]
+      properties:
+        module_id: {type: string}
+        item: {$ref: "#/components/schemas/QuizItem"}
+        card: {$ref: "#/components/schemas/FsrsCard"}
+    FsrsCard:
+      type: object
+      additionalProperties: false
+      description: The ts-fsrs Card fields, dates in ISO 8601.
+      required: [due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state, last_review]
+      properties:
+        due: {type: string, format: date-time}
+        stability: {type: number, minimum: 0}
+        difficulty: {type: number, minimum: 0}
+        elapsed_days: {type: number, minimum: 0}
+        scheduled_days: {type: number, minimum: 0}
+        learning_steps: {type: integer, minimum: 0}
+        reps: {type: integer, minimum: 0}
+        lapses: {type: integer, minimum: 0}
+        state: {type: integer, minimum: 0, maximum: 3}
+        last_review: {type: [string, "null"], format: date-time}
+    ReviewSubmission:
+      type: object
+      additionalProperties: false
+      required: [chosen, reviewed_at, card]
+      properties:
+        chosen:
+          type: array
+          maxItems: 20
+          items: {type: integer, minimum: 0}
+        reviewed_at: {type: string, format: date-time}
+        card: {$ref: "#/components/schemas/FsrsCard"}
+    ReviewResult:
+      type: object
+      additionalProperties: false
+      required: [item_id, correct, correct_choices, explain, card]
+      properties:
+        item_id: {type: string}
+        correct: {type: boolean}
+        correct_choices:
+          type: array
+          items: {type: integer}
+        explain: {type: string}
+        card: {$ref: "#/components/schemas/FsrsCard"}
+    LabResult:
+      type: object
+      additionalProperties: false
+      required: [module_id, status]
+      properties:
+        module_id: {type: string}
+        status: {type: string, enum: [passed, failed]}
+    CertificateList:
+      type: object
+      additionalProperties: false
+      required: [certificates]
+      properties:
+        certificates:
+          type: array
+          items: {$ref: "#/components/schemas/Certificate"}
+    Certificate:
+      type: object
+      additionalProperties: false
+      required: [certificate_id, path_id, path_title, issued_at, expires_at, status, module_versions]
+      properties:
+        certificate_id: {type: string, format: uuid}
+        path_id: {type: string}
+        path_title: {type: string}
+        issued_at: {type: string, format: date-time}
+        expires_at: {type: [string, "null"], format: date-time}
+        status: {type: string, enum: [valid, expired, renewal_due, revoked]}
+        module_versions:
+          type: array
+          items: {$ref: "#/components/schemas/PinnedModule"}
+    CertificateCode:
+      type: object
+      additionalProperties: false
+      required: [certificate_id, path_id, code, verify_path]
+      properties:
+        certificate_id: {type: string, format: uuid}
+        path_id: {type: string}
+        code: {type: string, pattern: "^[A-Za-z0-9_-]{22}$", description: "shown once; CIS keeps only its SHA-256"}
+        verify_path: {type: string, description: "/verify/<code> on the academy host"}
+    PinnedModule:
+      type: object
+      additionalProperties: false
+      required: [module_id, version]
+      properties:
+        module_id: {type: string}
+        version: {type: string}
+    CertificateVerify:
+      type: object
+      additionalProperties: false
+      required: [path_id, path_title, holder_display_name, issued_at, expires_at, status, module_versions]
+      properties:
+        path_id: {type: string}
+        path_title: {type: string}
+        holder_display_name: {type: [string, "null"], maxLength: 200, x-pii: name}
+        issued_at: {type: string, format: date-time}
+        expires_at: {type: [string, "null"], format: date-time}
+        status: {type: string, enum: [valid, expired, renewal_due, revoked]}
+        module_versions:
+          type: array
+          items: {$ref: "#/components/schemas/PinnedModule"}
