@@ -598,10 +598,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/reference-prices/import"): REFERENCE_PRICE_WRITE,
     # S279 thresholds L1 — Platform › Settings (the settings registry, CIS 407): admin only
     ("GET", "/admin/quality/thresholds"): any_of(CONTENT_READ, TENANT_BOOK_READ),   # S279 L2: every score view's bands
-    ("GET", "/admin/settings/registry"): OPS_READ,
-    ("GET", "/admin/settings/registry/{key}/history"): OPS_READ,
+    ("GET", "/admin/settings/registry"): OPS_READ, ("GET", "/admin/settings/registry/{key}/history"): OPS_READ,
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
     **{("POST", "/admin/settings/registry/proposals/{value_id}/" + a): SETTINGS_APPROVE for a in ("approve", "reject")},
+    ("GET", "/admin/platform/catalogue"): OPS_READ,  # AA-1106: Platform › Product map, the root product catalogue
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)
@@ -683,8 +683,6 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/platform/audit"): AUDIT_READ, ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
     ("GET", "/admin/platform/cost"): SPEND_READ,
     ("GET", "/admin/platform/infra"): OPS_READ,
-    # ── admin_product_catalogue (AA-1106) — Platform › Product map: the root repo product catalogue bundle, read only.
-    ("GET", "/admin/platform/catalogue"): OPS_READ,
     # ── admin_crm_console (AA-941, CRM-13a S-01) — the partner CRM's L1 console, relayed with the staff member's own
     # Cognito token; the CRM re-checks its own groups (cis-admin / crm-platform-admin read, crm-platform-admin writes).
     # AA-1035 R2 close-out (root ADR 0019 d4): the desk roles read the CRM L1 console of their book. CIS scopes the

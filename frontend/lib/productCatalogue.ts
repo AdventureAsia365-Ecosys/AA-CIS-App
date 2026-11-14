@@ -130,15 +130,23 @@ export interface FeatureFilter {
 /** Does a feature match the filter (empty fields match everything; q searches id, names, module, summary, surface
  *  and condition names, case-insensitive). */
 export function matchesFeature(f: CatalogueFeature, filter: FeatureFilter): boolean {
+  if (!featureFieldsMatch(f, filter)) return false;
+  const q = filter.q?.trim().toLowerCase();
+  return !q || featureSearchText(f).includes(q);
+}
+
+/** The app / status / role / condition part of matchesFeature (an empty field matches everything). */
+function featureFieldsMatch(f: CatalogueFeature, filter: FeatureFilter): boolean {
   if (filter.app && f.app !== filter.app) return false;
   if (filter.status && f.status !== filter.status) return false;
   if (filter.role && !f.roles.includes(filter.role)) return false;
-  if (filter.cond && !conditionKinds(f.conditions).includes(filter.cond as ConditionKind)) return false;
-  const q = filter.q?.trim().toLowerCase();
-  if (!q) return true;
-  const hay = [f.id, f.name, f.name_vi ?? "", f.module, f.summary, f.summary_vi ?? "", ...f.surface, ...conditionNames(f.conditions)]
-    .join(" ").toLowerCase();
-  return hay.includes(q);
+  return !filter.cond || conditionKinds(f.conditions).includes(filter.cond as ConditionKind);
+}
+
+/** Everything the feature search box looks in, lower case. */
+function featureSearchText(f: CatalogueFeature): string {
+  return [f.id, f.name, f.name_vi ?? "", f.module, f.summary, f.summary_vi ?? "", ...f.surface,
+    ...conditionNames(f.conditions)].join(" ").toLowerCase();
 }
 
 export interface LinkFilter {

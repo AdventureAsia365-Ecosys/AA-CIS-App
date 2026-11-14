@@ -274,7 +274,7 @@ function HistoryModal({ item, canApprove, onClose, onDone }: {
   );
 }
 
-function AppSettings({ app, initialArea = "" }: { app: SettingApp; initialArea?: string }) {
+function AppSettings({ app, initialArea }: { app: SettingApp; initialArea: string }) {
   const t = useSettingsT();
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
@@ -369,13 +369,21 @@ function AppSettings({ app, initialArea = "" }: { app: SettingApp; initialArea?:
   );
 }
 
-export default function SettingsRegistry() {
-  const t = useSettingsT();
+/** AA-1106: the app tab and area asked by `?app=&area=` (an unknown app opens CIS); picking another tab drops the
+ *  asked area. */
+function useAskedTab() {
   const params = useSearchParams();
   const asked = params.get("app");
   const [app, setApp] = useState<SettingApp>(
     (APPS as readonly string[]).includes(asked ?? "") ? (asked as SettingApp) : "cis");
   const [askedArea, setAskedArea] = useState(params.get("area") ?? "");
+  const pick = (k: string) => { setApp(k as SettingApp); setAskedArea(""); };
+  return { app, askedArea, pick };
+}
+
+export default function SettingsRegistry() {
+  const t = useSettingsT();
+  const { app, askedArea, pick } = useAskedTab();
   return (
     <PageFrame>
       <PageHeader
@@ -384,8 +392,7 @@ export default function SettingsRegistry() {
         description={t("intro")}
       />
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
-        <Tabs ariaLabel={t("title")} active={app} onChange={(k) => { setApp(k as SettingApp); setAskedArea(""); }}
-          testId="settings-apps"
+        <Tabs ariaLabel={t("title")} active={app} onChange={pick} testId="settings-apps"
           tabs={APPS.map((a) => ({ key: a, label: t(APP_LABEL[a]) }))} />
         <AppSettings key={app} app={app} initialArea={askedArea} />
       </div>

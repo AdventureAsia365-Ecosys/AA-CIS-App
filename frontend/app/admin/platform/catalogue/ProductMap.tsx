@@ -474,6 +474,44 @@ function GraphTab({ data }: { data: CatalogueResp }) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+function Kpis({ counts, t }: { counts: ReturnType<typeof summaryCounts>; t: CT }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 170px), 1fr))", gap: 10 }}>
+      <KpiTile label={t("kpiApps")} value={counts.apps} testId="catalogue-kpi-apps" />
+      <KpiTile label={t("kpiFeatures")} value={counts.features} hint={t("kpiLive", counts.live)} hintTone="success"
+        testId="catalogue-kpi-features" />
+      <KpiTile label={t("kpiLinks")} value={counts.links} testId="catalogue-kpi-links" />
+      <KpiTile label={t("kpiJourneys")} value={counts.journeys} />
+      <KpiTile label={t("kpiUat")} value={counts.uat} />
+    </div>
+  );
+}
+
+function TabBody({ tab, data, go, openFeature, openLink }: {
+  tab: Tab; data: CatalogueResp; go: (tab: Tab, app: string) => void; openFeature: (id: string) => void;
+  openLink: (id: string) => void;
+}) {
+  if (tab === "features") return <FeaturesTab data={data} onOpen={openFeature} />;
+  if (tab === "links") return <LinksTab data={data} onOpen={openLink} />;
+  if (tab === "journeys") return <JourneysTab data={data} openFeature={openFeature} openLink={openLink} />;
+  if (tab === "graph") return <GraphTab data={data} />;
+  return <AppsTab data={data} go={go} />;
+}
+
+function Drawers({ data, feature, link, openFeature, openLink, close }: {
+  data: CatalogueResp; feature: string | null; link: string | null; openFeature: (id: string) => void;
+  openLink: (id: string) => void; close: () => void;
+}) {
+  const f = feature ? data.features.find((x) => x.id === feature) : undefined;
+  const i = link ? data.integrations.find((x) => x.id === link) : undefined;
+  return (
+    <>
+      {f && <FeatureDrawer f={f} data={data} onClose={close} openFeature={openFeature} openLink={openLink} />}
+      {i && <LinkDrawer i={i} data={data} onClose={close} openFeature={openFeature} />}
+    </>
+  );
+}
+
 function Content({ data, t }: { data: CatalogueResp; t: CT }) {
   const { get, setMany } = useUrlFilters();
   const tab = (TABS as string[]).includes(get("tab")) ? (get("tab") as Tab) : "apps";
@@ -482,20 +520,12 @@ function Content({ data, t }: { data: CatalogueResp; t: CT }) {
   const counts = summaryCounts(data);
   const openFeature = (id: string) => { setLink(null); setFeature(id); };
   const openLink = (id: string) => { setFeature(null); setLink(id); };
-  const f = feature ? data.features.find((x) => x.id === feature) : undefined;
-  const i = link ? data.integrations.find((x) => x.id === link) : undefined;
+  const close = () => { setFeature(null); setLink(null); };
   const changeTab = (next: string) => setMany({ tab: next === "apps" ? null : next, q: null, app: null, status: null,
     role: null, cond: null, kind: null });
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 170px), 1fr))", gap: 10 }}>
-        <KpiTile label={t("kpiApps")} value={counts.apps} testId="catalogue-kpi-apps" />
-        <KpiTile label={t("kpiFeatures")} value={counts.features} hint={t("kpiLive", counts.live)} hintTone="success"
-          testId="catalogue-kpi-features" />
-        <KpiTile label={t("kpiLinks")} value={counts.links} testId="catalogue-kpi-links" />
-        <KpiTile label={t("kpiJourneys")} value={counts.journeys} />
-        <KpiTile label={t("kpiUat")} value={counts.uat} />
-      </div>
+      <Kpis counts={counts} t={t} />
       <Tabs ariaLabel={t("title")} active={tab} onChange={changeTab} testId="catalogue-tabs" tabs={[
         { key: "apps", label: t("tabApps"), count: counts.apps },
         { key: "features", label: t("tabFeatures"), count: counts.features },
@@ -503,47 +533,59 @@ function Content({ data, t }: { data: CatalogueResp; t: CT }) {
         { key: "journeys", label: t("tabJourneys"), count: counts.journeys },
         { key: "graph", label: t("tabGraph") },
       ]} />
-      {tab === "apps" && <AppsTab data={data} go={(next, app) => setMany({ tab: next, app })} />}
-      {tab === "features" && <FeaturesTab data={data} onOpen={openFeature} />}
-      {tab === "links" && <LinksTab data={data} onOpen={openLink} />}
-      {tab === "journeys" && <JourneysTab data={data} openFeature={openFeature} openLink={openLink} />}
-      {tab === "graph" && <GraphTab data={data} />}
-      {f && <FeatureDrawer f={f} data={data} onClose={() => setFeature(null)} openFeature={openFeature}
-        openLink={openLink} />}
-      {i && <LinkDrawer i={i} data={data} onClose={() => setLink(null)} openFeature={openFeature} />}
+      <TabBody tab={tab} data={data} go={(next, app) => setMany({ tab: next, app })} openFeature={openFeature}
+        openLink={openLink} />
+      <Drawers data={data} feature={feature} link={link} openFeature={openFeature} openLink={openLink} close={close} />
     </div>
   );
 }
 
-export default function ProductMap() {
-  const t = useCatalogueT();
-  const { formatDateTime } = useFormat();
+/** The bundle query, the refresh (?refresh=1 re-reads the bundle) and the error to show (refresh first). */
+function useCatalogue() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: KEY, queryFn: () => apiGet<CatalogueResp>(CATALOGUE_PATH), staleTime: 60_000 });
   const refresh = useMutation({
     mutationFn: () => apiGet<CatalogueResp>(`${CATALOGUE_PATH}?refresh=1`),
     onSuccess: (data) => qc.setQueryData(KEY, data),
   });
-  const data = q.data;
   const error = (refresh.error as Error | null) ?? (q.error as Error | null);
-  const status = (error as { status?: number } | null)?.status;
+  return { q, refresh, error, busy: q.isFetching || refresh.isPending };
+}
+
+function Description({ data, t }: { data: CatalogueResp | undefined; t: CT }) {
+  const { formatDateTime } = useFormat();
+  const sha = data?.source?.sha;
+  const when = data?.generated_at;
+  return (
+    <>
+      {t("description")}
+      {sha && <><br /><span style={small}>{t("source", sha.slice(0, 12), when ? formatDateTime(when) : "—")}</span></>}
+    </>
+  );
+}
+
+function LoadError({ error, t, onRetry }: { error: Error; t: CT; onRetry: () => void }) {
+  const status = (error as { status?: number }).status;
+  return status === 404
+    ? <EmptyState icon={<ExternalLink size={18} />} title={t("notPublished")} />
+    : <ErrorState message={`${t("loadError")}: ${error.message}`} onRetry={onRetry} />;
+}
+
+export default function ProductMap() {
+  const t = useCatalogueT();
+  const { q, refresh, error, busy } = useCatalogue();
+  const data = q.data;
   return (
     <PageFrame>
       <SkeletonStyle />
       <PageHeader
         title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><MapIcon size={18} /> {t("title")}</span>}
-        description={<>
-          {t("description")}
-          {data?.source?.sha && <><br /><span style={small}>{t("source", data.source.sha.slice(0, 12),
-            data.generated_at ? formatDateTime(data.generated_at) : "—")}</span></>}
-        </>}
+        description={<Description data={data} t={t} />}
         actions={<Button size="sm" variant="secondary" onClick={() => refresh.mutate()}
-          disabled={q.isFetching || refresh.isPending} testId="catalogue-refresh">
+          disabled={busy} testId="catalogue-refresh">
           <RefreshCw size={13} /> {t("refresh")}</Button>}
       />
-      {error && (status === 404
-        ? <EmptyState icon={<ExternalLink size={18} />} title={t("notPublished")} />
-        : <ErrorState message={`${t("loadError")}: ${error.message}`} onRetry={() => void q.refetch()} />)}
+      {error && <LoadError error={error} t={t} onRetry={() => void q.refetch()} />}
       {!data && !error && <KpiTile label={t("kpiFeatures")} value={undefined} />}
       {data && <Content data={data} t={t} />}
     </PageFrame>
