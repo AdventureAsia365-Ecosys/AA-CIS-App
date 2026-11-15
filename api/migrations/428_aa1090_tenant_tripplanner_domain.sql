@@ -1,4 +1,4 @@
--- Migration 427: AA-1090 (TripPlanner R8, root ADR 0019 b4 "higher tier = custom domain", tech lead S278 D10 / D13
+-- Migration 428: AA-1090 (TripPlanner R8, root ADR 0019 b4 "higher tier = custom domain", tech lead S278 D10 / D13
 -- NEW-D) — a tenant's own domain for its TripPlanner site: the table shared.tenant_tripplanner_domain and the six
 -- custom-domain settings of the platform settings registry.
 --
@@ -9,7 +9,7 @@
 -- and the CIS job tripplanner_custom_domain requests the ACM certificate (us-east-1, DNS validation), polls it, and
 -- attaches
 -- the host as an alternate domain name of the distribution (AA-CIS-Infra grants the CIS task role exactly that).
--- TripPlanner resolves a request's Host to the tenant through catalog.v_tenant_tripplanner_v1.custom_domains (CIS 428).
+-- TripPlanner resolves a request's Host to the tenant through catalog.v_tenant_tripplanner_v1.custom_domains (CIS 429).
 --
 -- What:
 --   1. shared.tenant_tripplanner_domain: one row per custom host of a tenant's TripPlanner site:
@@ -34,7 +34,7 @@
 --      catalogue rule a allowlist, tests/integration/rls_catalogue_rules.py; the 244 guard keeps the shared RLS table
 --      set fixed). Grants: REVOKE ALL first (the Dev default ACL of cis_owner in shared, CIS 245), then cis_app SELECT,
 --      INSERT, UPDATE, DELETE (the Tenant 360 editor, the job, the AA-839 tenant erasure). catalog_owner's column read
---      for the view is CIS 428.
+--      for the view is CIS 429.
 --   2. Six rows in shared.setting_definition, area tripplanner (seed block below, read by
 --      scripts/settings/gen_compiled_defaults.py into shared/settings/compiled_defaults.json in this PR), each with its
 --      plain label and EN + VI guide (CIS 416):
@@ -50,7 +50,7 @@
 --                                                              to expiry; alert at once)
 --      Seeded with enforced = false: the code that reads them ships in the next PR of this lane (MIG-4), and the
 --      settings-lint guard refuses an enforced key that no code reads. A later migration marks them enforced.
---   3. A post-check, then register 427.
+--   3. A post-check, then register 428.
 --
 -- Behaviour on apply. None for running code: an empty table, nothing reads it or the keys until the AA-1090 CIS code
 -- is deployed; then each key resolves to its default until an administrator approves a change.
@@ -58,13 +58,13 @@
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): a new table with a tenant_id and RLS off on
 -- purpose (rule a allowlist), REVOKE, config
 -- rows INSERTed into an existing table and a DO post-check are outside the expand set. MIG-4: a migration-only PR in
--- the wave's CIS migration batch (with 428); applied on Dev by Infra Migration Apply when the job tables are idle
+-- the wave's CIS migration batch (with 429); applied on Dev by Infra Migration Apply when the job tables are idle
 -- (ADR 0017a). DM-7.1: the retention row of shared.tenant_tripplanner_domain comes in a root PR that is on root master
--- before the Infra bot copy PR of 427.
+-- before the Infra bot copy PR of 428.
 --
--- Number. Main ends at 423 (15/11/2026) and this wave's other CIS lanes hold 424-426, so this lane takes 427 and 428.
--- If the owner main max + 1 differs at merge, renumber (git grep '427_' and '427' here, in
--- tests/integration/test_aa1090_migrations_427_428.py, compiled_defaults.json, the seed-parity test and 428's guard).
+-- Number. Main ends at 427 (15/11/2026, 427_aa1051_settings_enforced_keys), so this batch takes 428 and 429.
+-- If the owner main max + 1 differs at merge, renumber (git grep '428_' and '428' here, in
+-- tests/integration/test_aa1090_migrations_428_429.py, compiled_defaults.json, the seed-parity test and 429's guard).
 --
 -- Locks. One CREATE TABLE and its index, one INSERT of six rows into shared.setting_definition (the definition
 -- guard trigger allows the file's role, cis_owner). lock_timeout 5s, statement_timeout 1min. Idempotent (IF NOT EXISTS,
@@ -78,7 +78,7 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '1min';
-SELECT set_config('aa.actor', 'migration:427', true);
+SELECT set_config('aa.actor', 'migration:428', true);
 
 -- ── 1. The custom-domain table ───────────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS shared.tenant_tripplanner_domain (
@@ -122,15 +122,15 @@ CREATE TABLE IF NOT EXISTS shared.tenant_tripplanner_domain (
 CREATE INDEX IF NOT EXISTS tenant_tripplanner_domain_tenant_idx ON shared.tenant_tripplanner_domain (tenant_id);
 
 COMMENT ON TABLE shared.tenant_tripplanner_domain IS
-    'AA-1090 TripPlanner R8 (CIS 427, root ADR 0019 b4): the custom hosts of a tenant''s TripPlanner site. Staff add a '
+    'AA-1090 TripPlanner R8 (CIS 428, root ADR 0019 b4): the custom hosts of a tenant''s TripPlanner site. Staff add a '
     'host on Tenant 360; the CIS job tripplanner_custom_domain requests its ACM certificate (us-east-1), waits for the '
     'agency''s validation record and attaches the host to the TripPlanner CloudFront distribution. TripPlanner serves '
-    'an active host through catalog.v_tenant_tripplanner_v1.custom_domains (CIS 428). No personal data.';
+    'an active host through catalog.v_tenant_tripplanner_v1.custom_domains (CIS 429). No personal data.';
 COMMENT ON COLUMN shared.tenant_tripplanner_domain.status IS
-    'AA-1090 (427): pending | validating | attaching | active | removing | failed. Only active is served; removing '
+    'AA-1090 (428): pending | validating | attaching | active | removing | failed. Only active is served; removing '
     'rows are deleted by the job once the alias is detached and the certificate deleted.';
 COMMENT ON COLUMN shared.tenant_tripplanner_domain.updated_by IS
-    'AA-1090 (427): admin:<admin_users.id>, job:tripplanner_custom_domain:<job id> or migration:<n>. Never an e-mail.';
+    'AA-1090 (428): admin:<admin_users.id>, job:tripplanner_custom_domain:<job id> or migration:<n>. Never an e-mail.';
 
 -- ── Grants (REVOKE first: the Dev default ACL of cis_owner in shared, CIS 245) ─────────────────────────────────────
 REVOKE ALL ON shared.tenant_tripplanner_domain FROM PUBLIC, cis_app, aa_app_user;
@@ -166,12 +166,12 @@ DECLARE
     refused integer := 0;
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_class WHERE oid = t::regclass AND relrowsecurity) THEN
-        RAISE EXCEPTION 'migration 427: % has row-level security on (the 244 guard keeps the shared RLS set fixed)', t;
+        RAISE EXCEPTION 'migration 428: % has row-level security on (the 244 guard keeps the shared RLS set fixed)', t;
     END IF;
     IF NOT pg_catalog.has_table_privilege('cis_app', t, 'SELECT, INSERT, UPDATE, DELETE')
        OR pg_catalog.has_table_privilege('aa_app_user', t, 'SELECT')
        OR pg_catalog.has_table_privilege('public', t, 'SELECT') THEN
-        RAISE EXCEPTION 'migration 427: grants on % are not as designed', t;
+        RAISE EXCEPTION 'migration 428: grants on % are not as designed', t;
     END IF;
     IF (SELECT count(*) FROM shared.setting_definition
          WHERE key IN ('cis.tripplanner.custom_domain_max_per_tenant', 'cis.tripplanner.custom_domain_edge_max',
@@ -179,14 +179,14 @@ BEGIN
                        'cis.tripplanner.custom_domain_poll_seconds',
                        'cis.tripplanner.custom_domain_edge_pending_hours',
                        'cis.tripplanner.custom_domain_renewal_grace_days')) <> 6 THEN
-        RAISE EXCEPTION 'migration 427: the six custom-domain settings are not all defined';
+        RAISE EXCEPTION 'migration 428: the six custom-domain settings are not all defined';
     END IF;
     -- The domain CHECK refuses what is not a lower-case host name (no row is ever stored: each probe fails).
     FOREACH bad IN ARRAY ARRAY['Trip.Example.test', 'trip..example.test', '-trip.example.test', 'trip.example.',
                                'trip_x.example.test', 'https://trip.example.test', 'localhost', '10.0.0.1'] LOOP
         BEGIN
             INSERT INTO shared.tenant_tripplanner_domain (tenant_id, domain, updated_by)
-            VALUES ('00000000-0000-0000-0000-000000000000'::uuid, bad, 'migration:427');
+            VALUES ('00000000-0000-0000-0000-000000000000'::uuid, bad, 'migration:428');
         EXCEPTION
             WHEN check_violation THEN
                 refused := refused + 1;
@@ -195,12 +195,12 @@ BEGIN
         END;
     END LOOP;
     IF refused <> 8 THEN
-        RAISE EXCEPTION 'migration 427: the domain CHECK let % of 8 bad hosts through', 8 - refused;
+        RAISE EXCEPTION 'migration 428: the domain CHECK let % of 8 bad hosts through', 8 - refused;
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('427', now(), 'AA-1090 TripPlanner R8: shared.tenant_tripplanner_domain (custom hosts of a tenant site) and '
+VALUES ('428', now(), 'AA-1090 TripPlanner R8: shared.tenant_tripplanner_domain (custom hosts of a tenant site) and '
                       'the six custom-domain settings')
 ON CONFLICT (version) DO NOTHING;
 

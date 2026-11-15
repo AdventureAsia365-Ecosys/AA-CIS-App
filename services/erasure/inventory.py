@@ -130,7 +130,7 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.tenant_addon_request", "the tenant's add-on requests and the staff decisions"),
     # AA-1038 R5 slice 2 (379): the TripPlanner site settings (theme tokens, locale); FK cascade as the backstop.
     _d("shared.tenant_tripplanner_site", "the tenant's TripPlanner site settings (theme, locale, lead route)"),
-    # AA-1090 R8 (427): the tenant's custom TripPlanner hosts; FK cascade as the backstop. The ACM certificate and the
+    # AA-1090 R8 (428): the tenant's custom TripPlanner hosts; FK cascade as the backstop. The ACM certificate and the
     # CloudFront alias of a host live in AWS: remove the hosts on Tenant 360 (the tripplanner_custom_domain job deletes
     # both) before an erasure apply; an alias left without its row is detached by the job's next run.
     _d("shared.tenant_tripplanner_domain", "the tenant's custom TripPlanner hosts and their certificate state"),

@@ -1,15 +1,15 @@
-"""AA-1090 TripPlanner R8 (S281) — migrations 427 and 428: the custom hosts of a tenant's TripPlanner site.
+"""AA-1090 TripPlanner R8 (S281) — migrations 428 and 429: the custom hosts of a tenant's TripPlanner site.
 
-427 (shared.tenant_tripplanner_domain + the six custom-domain settings) is replayed by conftest like any file, so the
-table exists here before this module runs. 428 (custom_domains appended to catalog.v_tenant_tripplanner_v1, catalog
+428 (shared.tenant_tripplanner_domain + the six custom-domain settings) is replayed by conftest like any file, so the
+table exists here before this module runs. 429 (custom_domains appended to catalog.v_tenant_tripplanner_v1, catalog
 recipe) is skipped by the replay; this module builds on the 390 module's fixtures (Dev after 244 + 245, db_migrator),
-applies 379, 390 and 428 as db_migrator (errors NOT swallowed), 427 and 428 twice. Teardown drops what 428 added and
+applies 379, 390 and 429 as db_migrator (errors NOT swallowed), 428 and 429 twice. Teardown drops what 429 added and
 undoes 390 + 379, so later modules see the replay state.
 
-  * 427: registered once; RLS off (rule a allowlist, like the site table); grants (cis_app only); the domain,
+  * 428: registered once; RLS off (rule a allowlist, like the site table); grants (cis_app only); the domain,
     status, certificate and target CHECKs refuse bad values; one host is one site (unique); the six settings exist
     with enforced = false until the code reads them;
-  * 428: the view's exact columns and types, owner catalog_owner, security_barrier, tripplanner only; catalog_owner
+  * 429: the view's exact columns and types, owner catalog_owner, security_barrier, tripplanner only; catalog_owner
     reads exactly tenant_id, domain, status of the domain table; tripplanner holds
     nothing on the table;
   * the view (as tripplanner): custom_domains lists a tenant's ACTIVE hosts only, sorted; another tenant's host never
@@ -34,12 +34,12 @@ from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fi
 from test_aa860_migration_246 import db_migrator_login  # noqa: E402,F401  (module fixture: db_migrator, 246)
 
 HERE = os.path.dirname(__file__)
-M427 = os.path.join(HERE, "..", "..", "api", "migrations", "427_aa1090_tenant_tripplanner_domain.sql")
-M428 = os.path.join(HERE, "..", "..", "api", "migrations", "428_aa1090_tenant_tripplanner_custom_domains_view.sql")
+M428 = os.path.join(HERE, "..", "..", "api", "migrations", "428_aa1090_tenant_tripplanner_domain.sql")
+M429 = os.path.join(HERE, "..", "..", "api", "migrations", "429_aa1090_tenant_tripplanner_custom_domains_view.sql")
 VIEW = t379.VIEW
 DOMAIN = "shared.tenant_tripplanner_domain"
 DEMO = t379.DEMO
-# Copied verbatim into AA-TripPlanner-Web backend/tests/test_aa1090_tenant_host_pg.py (CIS_428_COLUMNS).
+# Copied verbatim into AA-TripPlanner-Web backend/tests/test_aa1090_tenant_host_pg.py (CIS_429_COLUMNS).
 COLUMNS = t390.COLUMNS + ", custom_domains text[]"
 DOMAIN_COLUMNS = ("tenant_id", "domain", "status")
 SETTINGS = ("cis.tripplanner.custom_domain_max_per_tenant", "cis.tripplanner.custom_domain_edge_max",
@@ -53,29 +53,29 @@ ACCOUNT = "0" * 12
 ARN = f"arn:aws:acm:us-east-1:{ACCOUNT}:certificate/0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f"
 
 
-def undo_428(a):
+def undo_429(a):
     a.execute(f"REVOKE SELECT ({', '.join(DOMAIN_COLUMNS)}) ON {DOMAIN} FROM catalog_owner")
-    a.execute("DELETE FROM shared.schema_versions WHERE version = '428'")
+    a.execute("DELETE FROM shared.schema_versions WHERE version = '429'")
     # The appended view column goes with 379's undo (DROP VIEW).
 
 
 @pytest.fixture(scope="module", autouse=True)
-def applied_428(db_migrator_login):  # noqa: F811
+def applied_429(db_migrator_login):  # noqa: F811
     admin = t245._connect()
     admin.autocommit = True
     a = admin.cursor()
     try:
-        undo_428(a)
+        undo_429(a)
         t390.undo_390(a)
         t379.undo_379(a)
         t323._apply(t379.M379)
         t323._apply(t390.M390)
-        t323._apply(M427)                                     # replayed already: the re-run is a no-op
-        t323._apply(M428)
-        t323._apply(M428)                                     # idempotent re-run
+        t323._apply(M428)                                     # replayed already: the re-run is a no-op
+        t323._apply(M429)
+        t323._apply(M429)                                     # idempotent re-run
         yield
     finally:
-        undo_428(a)
+        undo_429(a)
         t390.undo_390(a)
         t379.undo_379(a)
         admin.close()
@@ -100,15 +100,15 @@ def _tenant(cur, name, **kw):
 
 
 def _host(cur, tid, domain, status="active", **cols):
-    cols.setdefault("updated_by", "test:427")
+    cols.setdefault("updated_by", "test:428")
     names = ", ".join(["tenant_id", "domain", "status", *cols])
     marks = ", ".join(["%s"] * (3 + len(cols)))
     cur.execute(f"INSERT INTO {DOMAIN} ({names}) VALUES ({marks})", (tid, domain, status, *cols.values()))
 
 
-# ── 427 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 428 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("version", ["427", "428"])
+@pytest.mark.parametrize("version", ["428", "429"])
 def test_registered_once(cur, version):
     cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = %s", (version,))
     assert cur.fetchone()[0] == 1
@@ -173,7 +173,7 @@ def test_the_six_settings_are_defined_not_enforced(cur):
     assert all(r[1] is False and r[2] == "tripplanner" for r in rows)
 
 
-# ── 428 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 429 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_view_columns_owner_barrier_and_consumers(cur):
     cur.execute("""SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum)

@@ -84,13 +84,13 @@ def test_the_trash_window_is_badged_not_enforced():
     # deployed; CIS 427 (AA-1051 + AA-1096 follow-up, S281) marks enforced every one that code on main reads. Only the
     # trash window (no purge job reads it) and the learner retention window (the learn_retention job has not shipped)
     # stay not enforced. A new key seeded not enforced is added here with the migration that seeds it.
-    # AA-1090 (CIS 427): the TripPlanner custom-domain limits stay not enforced until the AA-1090 code is deployed.
+    # AA-1090 (CIS 428): the TripPlanner custom-domain limits stay not enforced until the AA-1090 code is deployed.
     assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted(NOT_ENFORCED)
     for key in (*LEARN_KEYS, *TWO_STEP_KEYS):
         assert by_key[key]["enforced"] is (key not in NOT_ENFORCED), key
 
 
-# AA-1090 (CIS 427): the TripPlanner custom-domain limits, until the editor and the tripplanner_custom_domain job are deployed.
+# AA-1090 (CIS 428): the TripPlanner custom-domain limits, until the editor and the tripplanner_custom_domain job are deployed.
 TP_DOMAIN_KEYS = ("cis.tripplanner.custom_domain_max_per_tenant", "cis.tripplanner.custom_domain_edge_max",
                   "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds",
                   "cis.tripplanner.custom_domain_edge_pending_hours", "cis.tripplanner.custom_domain_renewal_grace_days")
