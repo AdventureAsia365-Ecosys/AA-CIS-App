@@ -93,8 +93,8 @@ IDENTITY = ("eligible_sha256", "sample_digest", "instrument", "prompt_version", 
 VOTED = ("vote", "unusable", "identity_mismatch")     # a billed reply: replayed on resume, never called again
 # The time estimate is advice printed before a paid run; it gates nothing. The suggested exec timeout is the expected
 # seconds times TIMEOUT_MARGIN, at most ECSX_SCRIPT_TIMEOUT_MAX, which mirrors the hard cap of tools/ecs/ecsx.sh.
-TIMEOUT_MARGIN = 1.5
-ECSX_SCRIPT_TIMEOUT_MAX = 10800
+TIMEOUT_MARGIN = 1.5  # technical-constant: advisory print only, gates nothing
+ECSX_SCRIPT_TIMEOUT_MAX = 10800  # technical-constant: mirrors the hard cap of tools/ecs/ecsx.sh (advisory print only)
 
 
 class FireRefused(ev.EvalRefused):
