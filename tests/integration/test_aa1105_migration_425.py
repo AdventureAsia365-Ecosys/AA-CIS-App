@@ -1,7 +1,7 @@
 """AA-1105 (S281) — CIS 425: the academy web's per-visitor certificate check limit
 (cis.learn.verify_visitor_requests_per_minute) in shared.setting_definition (conftest replays every migration).
 Registered; the row equals the compiled default the reader serves (6 requests); bounds 1..300 and platform scope;
-no evidence, single approval, no env override; not enforced like the other cis.learn.* keys until a later migration;
+no evidence, single approval, no env override; enforced since CIS 429 like the other cis.learn.* keys the API reads;
 a label and a complete guide; a value over the bound is refused; a re-run changes nothing. Runs in a transaction that
 is rolled back; invented values only."""
 import json
@@ -49,7 +49,7 @@ async def test_429_registered_and_the_row_is_the_compiled_default(conn):
     assert (r["value_type"], int(r["lo"]), int(r["hi"]), r["unit"]) == ("int", 1, 300, "requests")
     assert (r["scope_kind"], r["impact"], r["approval"], r["area"]) == ("platform", "medium", "single", "learn")
     assert r["evidence_required"] is False and r["env_override"] is None and r["cache_s"] == 60
-    assert r["enforced"] is False and d.enforced is False
+    assert r["enforced"] is True and d.enforced is True   # CIS 429
     assert r["guided"] is True and r["label"] == d.label
 
 

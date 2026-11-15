@@ -1,7 +1,7 @@
 """AA-1093 lane L2 — CIS 411: the three settings of the tenant erasure saga in shared.setting_definition (conftest replays
 407 and 411). Registered; the rows equal the compiled defaults the reader serves (shared/settings/compiled_defaults.json,
-generated from the seed); enforced is false until the saga code ships; a re-run changes nothing; the definition guard
-still refuses a write by cis_app. Runs in a transaction that is rolled back."""
+generated from the seed); enforced since CIS 429 (the saga code is on main); a re-run changes nothing; the
+definition guard still refuses a write by cis_app. Runs in a transaction that is rolled back."""
 import os
 import sys
 
@@ -42,7 +42,7 @@ async def test_411_registered_and_the_rows_are_the_compiled_defaults(conn):
     for key, default in KEYS.items():
         import json
         assert json.loads(rows[key]["default_value"]) == default == settings.definition(key).default_value
-        assert rows[key]["enforced"] is False and settings.definition(key).enforced is False
+        assert rows[key]["enforced"] is True and settings.definition(key).enforced is True   # CIS 429
         assert rows[key]["approval"] == "maker_checker" and rows[key]["impact"] == "high"
 
 

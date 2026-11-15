@@ -1,7 +1,7 @@
 """AA-1048 (S281 lane l13) — CIS 426: the R1 firing sample size of unlabelled claims in shared.setting_definition
-(conftest replays every migration). Registered; the row equals the compiled default the reader serves; enforced is false
-until the firing code ships; maker-checker; it carries its label and a complete guide; a re-run changes nothing. Runs
-in a transaction that is rolled back."""
+(conftest replays every migration). Registered; the row equals the compiled default the reader serves; enforced
+since CIS 429 (the firing code is on main); maker-checker; it carries its label and a complete guide; a re-run changes
+nothing. Runs in a transaction that is rolled back."""
 import json
 import os
 import sys
@@ -41,7 +41,7 @@ async def test_429_registered_and_the_row_is_the_compiled_default(conn):
         "shared.setting_guide_complete(guide) AS guided FROM shared.setting_definition WHERE key = $1", KEY)
     assert row is not None
     assert json.loads(row["default_value"]) == 600 == settings.definition(KEY).default_value
-    assert row["enforced"] is False and settings.definition(KEY).enforced is False
+    assert row["enforced"] is True and settings.definition(KEY).enforced is True   # CIS 429
     assert row["approval"] == "maker_checker" and row["evidence_required"] is False
     assert row["value_type"] == "int" and float(row["min_value"]) == 1 and float(row["max_value"]) == 3000
     assert row["guided"] is True and row["label"] == settings.definition(KEY).label

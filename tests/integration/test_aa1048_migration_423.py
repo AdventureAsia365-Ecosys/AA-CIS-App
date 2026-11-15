@@ -1,7 +1,7 @@
 """AA-1048 (S281 lane l8) — CIS 423: the three step bars of the two-step claim-instrument evaluation and the fresh-pool
 sheet size in shared.setting_definition (conftest replays every migration). Registered; the rows equal the compiled
-defaults the reader serves; the defaults equal the pre-registration file; enforced is false until the two-step code
-ships; the bars need evidence on a change; each key carries its label and a complete guide; a re-run changes nothing.
+defaults the reader serves; the defaults equal the pre-registration file; enforced since CIS 429 (the two-step code is
+on main); the bars need evidence on a change; each key carries its label and a complete guide; a re-run changes nothing.
 Runs in a transaction that is rolled back."""
 import json
 import os
@@ -45,7 +45,7 @@ async def test_423_registered_and_the_rows_are_the_compiled_defaults(conn):
     assert set(rows) == set(KEYS)
     for key, default in KEYS.items():
         assert json.loads(rows[key]["default_value"]) == default == settings.definition(key).default_value
-        assert rows[key]["enforced"] is False and settings.definition(key).enforced is False
+        assert rows[key]["enforced"] is True and settings.definition(key).enforced is True   # CIS 429
         assert rows[key]["approval"] == "maker_checker"
         assert rows[key]["evidence_required"] is (key in BARS)
         assert rows[key]["guided"] is True and rows[key]["label"] == settings.definition(key).label

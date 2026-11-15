@@ -3,8 +3,9 @@ replays 420 with the other files). Registered; the nine tables of the design ERD
 on every table with a tenant_id (ENABLE, tenant_isolation TO aa_app_user, <table>_cis_app_all TO cis_app); cis_app DML
 only, nothing for aa_app_user or PUBLIC; the default privileges FOR ROLE cis_owner the isolation probe expects; the
 statement append-only guard (UPDATE / DELETE / TRUNCATE refused, a DELETE only under the retention purge flag, also
-through the learner cascade); the twelve settings equal the compiled defaults, not enforced, with a complete guide;
-a re-run changes nothing. Runs in a transaction that is rolled back."""
+through the learner cascade); the twelve settings equal the compiled defaults, enforced since CIS 429 except the
+learner retention window (no code reads it until the learn_retention job ships), with a complete guide; a re-run
+changes nothing. Runs in a transaction that is rolled back."""
 import json
 import os
 import sys
@@ -218,7 +219,8 @@ async def test_settings_are_the_compiled_defaults(conn):
     assert set(rows) == set(SETTINGS) | LATER_LEARN_KEYS
     for key, default in SETTINGS.items():
         assert json.loads(rows[key]["default_value"]) == default == settings.definition(key).default_value, key
-        assert rows[key]["enforced"] is False and settings.definition(key).enforced is False, key
+        enforced = key != "cis.learn.learner_retention_days"   # CIS 429
+        assert rows[key]["enforced"] is enforced and settings.definition(key).enforced is enforced, key
         assert rows[key]["area"] == "learn" and rows[key]["guided"] is True, key
         assert rows[key]["label"] == settings.definition(key).label, key
 
