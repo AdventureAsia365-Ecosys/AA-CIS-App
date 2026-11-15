@@ -4,6 +4,7 @@ the two-step prompts is refused in every mode; the cap and the settings refuse a
 caller) logs every reply through r1._log with a call id and writes a text-free report that fresh_pool sample reads as
 --votes (a trial report is refused there and prices the full run). $0; every text, place and hash is invented."""
 import hashlib
+import math
 import json
 import types
 
@@ -90,7 +91,9 @@ def _live(monkeypatch, caller, rows=None):
 
     sink = rows if rows is not None else []
     monkeypatch.setattr(call_log, "record_call_sync", lambda **kw: sink.append(kw))
-    monkeypatch.setattr(rf, "_ledger_rows", lambda run_id: len(sink))
+    monkeypatch.setattr(rf, "_ledger_rows", lambda run_id: sum(r["quality_signal"]["run_id"] == run_id for r in sink))
+    monkeypatch.setattr(rf, "_ledger_calls", lambda run_id: [r["quality_signal"]["call_id"] for r in sink
+                                                             if r["quality_signal"]["run_id"] == run_id])
     return sink
 
 
@@ -295,7 +298,7 @@ def test_live_full_report_feeds_fresh_pool_sample_and_a_trial_prices_it(tmp_path
     rep = json.loads(full.read_text(encoding="utf-8"))
     assert rep["ok"] and rep["fire_kind"] == "full" and set(rep["votes"]) == {fp.FIRE_INSTRUMENT}
     assert set(rep["fired"]) == {_h(k) for k in range(12)} and rep["fired_count"] == {"true": 4, "false": 8}
-    assert all(set(e) == {"call_id", "vote", "object", "claims", "request_id", "charged_usd", "outcome"}
+    assert all(set(e) == {"call_id", "vote", "object", "claims", "request_id", "charged_usd", "outcome", "latency_s"}
                for e in rep["ledger"])
     assert "Sarrow" not in full.read_text(encoding="utf-8") and "Pellow" not in full.read_text(encoding="utf-8")
     capsys.readouterr()
@@ -318,3 +321,255 @@ def test_fresh_pool_refuses_a_fire_report_of_another_file_and_measured_refuses_a
         rf.measured_expectation({"kind": "r1_fire", "mode": "dry_run"}, rf.instrument())
     with pytest.raises(rf.FireRefused, match="another instrument"):
         rf.measured_expectation({"kind": "r1_fire", "mode": "live", "calls": 3, "instrument": "x"}, rf.instrument())
+
+
+# ── checkpoint, resume, time estimate (S281: a fire cut by the exec timeout lost its report) ──────────────────────
+
+
+class Killed(BaseException):
+    """The exec timeout killing the process: nothing in the run catches it, only the checkpoint survives."""
+
+
+def _killing(caller, after):
+    n = []
+
+    def kill(*a):
+        if len(n) >= after:
+            raise Killed()
+        n.append(1)
+        return caller(*a)
+    return kill
+
+
+def _ckpt_lines(path):
+    return [json.loads(ln) for ln in open(path, encoding="utf-8") if ln.strip()]
+
+
+def _same_run(a, b):
+    """The parts of two reports one run must have identically (ledger without run id, request id and latency)."""
+    def ledger(rep):
+        return [{**{k: v for k, v in e.items() if k not in ("request_id", "latency_s")},
+                 "call_id": e["call_id"].rsplit(":", 1)[1]} for e in rep["ledger"]]
+    keys = ("votes", "fired", "fired_count", "calls", "charged_usd", "stopped", "ok", "identity_mismatches")
+    return {k: a[k] for k in keys} == {k: b[k] for k in keys} and ledger(a) == ledger(b)
+
+
+def test_a_live_run_writes_one_text_free_checkpoint_line_per_billed_call(tmp_path, monkeypatch, capsys):
+    elig, man = _files(tmp_path)
+    rows = _live(monkeypatch, _sunrise_caller([]))
+    out = tmp_path / "fire.json"
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--out", str(out)]) == 0
+    rep = json.loads(capsys.readouterr().out)
+    lines = _ckpt_lines(str(out) + rf.CHECKPOINT_SUFFIX)
+    head, calls = lines[0], lines[1:]
+    assert head["type"] == "run" and head["kind"] == rf.CHECKPOINT_KIND and head["run_id"] == rep["run_id"]
+    assert {k: head[k] for k in rf.IDENTITY} == {
+        "eligible_sha256": rep["eligible_sha256"], "sample_digest": rep["sample"]["digest"],
+        "instrument": fp.FIRE_INSTRUMENT, "prompt_version": rep["prompt_version"], "size": rep["sample"]["size"],
+        "fire_kind": "full", "trial": None, "votes": r1.VOTES}
+    assert len(calls) == rep["calls"] == len(rows) and [c["call_id"] for c in calls] == [
+        e["call_id"] for e in rep["ledger"]]
+    assert all(set(c["flags"]) <= {_h(k) for k in range(12)} and all(isinstance(v, bool) for v in c["flags"].values())
+               for c in calls)
+    text = (tmp_path / "fire.json.ckpt.jsonl").read_text(encoding="utf-8")
+    for word in ("Sarrow", "Pellow", "sunrise", "amber", "Intro line"):
+        assert word not in text
+    assert rep["checkpoint"] == "fire.json.ckpt.jsonl" and rep["mean_latency_s"] is not None
+
+
+def test_a_live_run_needs_a_checkpoint_path_and_never_reuses_one(tmp_path, monkeypatch, capsys):
+    elig, man = _files(tmp_path)
+    _live(monkeypatch, lambda *a: pytest.fail("a refused run makes no call"))
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend"]) == 2
+    assert "--out or --checkpoint" in json.loads(capsys.readouterr().out)["refused"]
+    used = tmp_path / "used.ckpt.jsonl"
+    used.write_text('{"type": "run"}\n', encoding="utf-8")
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend",
+                    "--checkpoint", str(used)]) == 2
+    assert "already exists" in json.loads(capsys.readouterr().out)["refused"]
+
+
+def test_resume_after_a_kill_equals_one_uninterrupted_run_and_feeds_fresh_pool(tmp_path, monkeypatch, capsys):
+    elig, man = _files(tmp_path)
+    rows = _live(monkeypatch, _sunrise_caller([]))
+    one = tmp_path / "one.json"
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--out", str(one)]) == 0
+    capsys.readouterr()
+    whole = json.loads(one.read_text(encoding="utf-8"))
+    cut = tmp_path / "cut.json"
+    monkeypatch.setattr(rf, "_caller", _killing(_sunrise_caller([]), after=5))
+    with pytest.raises(Killed):
+        rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--out", str(cut)])
+    capsys.readouterr()
+    ckpt = str(cut) + rf.CHECKPOINT_SUFFIX
+    head, calls = _ckpt_lines(ckpt)[0], _ckpt_lines(ckpt)[1:]
+    assert not cut.exists() and len(calls) == 5
+    seen = []
+    monkeypatch.setattr(rf, "_probe", lambda since: seen.append(since) or (lambda: 0.0))
+    monkeypatch.setattr(rf, "_caller", _sunrise_caller([]))
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--resume", ckpt,
+                    "--out", str(cut)]) == 0
+    capsys.readouterr()
+    rep = json.loads(cut.read_text(encoding="utf-8"))
+    assert rep["run_id"] == head["run_id"] and seen[0].isoformat() == head["started_at"]
+    assert _same_run(rep, whole) and rep["resumed"] == {"prior_calls": 5, "new_calls": whole["calls"] - 5}
+    assert rep["ledger_rows"] == whole["calls"] and len(_ckpt_lines(ckpt)) == whole["calls"] + 1
+    assert sum(r["quality_signal"]["run_id"] == head["run_id"] for r in rows) == whole["calls"]   # none re-billed
+    a, b = tmp_path / "sa", tmp_path / "sb"
+    assert fp.main(["sample", "--eligible", elig, "--manifest", man, "--votes", str(one), "--out-dir", str(a)]) == 0
+    sa = json.loads(capsys.readouterr().out)
+    assert fp.main(["sample", "--eligible", elig, "--manifest", man, "--votes", str(cut), "--out-dir", str(b)]) == 0
+    sb = json.loads(capsys.readouterr().out)
+    assert sa["candidates_sha256"] == sb["candidates_sha256"]
+    assert sb["votes_resumed"] is True and sa["votes_resumed"] is False
+
+
+def test_a_caller_error_is_called_again_on_resume_and_a_partial_report_is_refused_by_fresh_pool(tmp_path, monkeypatch,
+                                                                                                capsys):
+    elig, man = _files(tmp_path)
+    _live(monkeypatch, _sunrise_caller([]))
+    whole = rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend",
+                     "--out", str(tmp_path / "one.json")])
+    capsys.readouterr()
+    assert whole == 0
+    whole = json.loads((tmp_path / "one.json").read_text(encoding="utf-8"))
+    good, n = _sunrise_caller([]), []
+
+    def flaky(*a):
+        n.append(1)
+        if len(n) == 4:
+            raise RuntimeError("route exhausted")
+        return good(*a)
+    monkeypatch.setattr(rf, "_caller", flaky)
+    part = tmp_path / "part.json"
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--out", str(part)]) == 3
+    capsys.readouterr()
+    assert fp.main(["sample", "--eligible", elig, "--manifest", man, "--votes", str(part),
+                    "--out-dir", str(tmp_path / "s")]) == 2
+    assert "--resume" in json.loads(capsys.readouterr().out)["refused"]
+    monkeypatch.setattr(rf, "_caller", _sunrise_caller([]))
+    ckpt = str(part) + rf.CHECKPOINT_SUFFIX
+    assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--resume", ckpt,
+                    "--out", str(part)]) == 0
+    rep = json.loads(part.read_text(encoding="utf-8"))
+    assert rep["votes"] == whole["votes"] and rep["fired"] == whole["fired"] and rep["stopped"] is None
+    assert rep["calls"] == whole["calls"] + 1 and [e["outcome"] for e in rep["ledger"]].count("caller_error") == 1
+    assert rep["worst_case_charges"] == {"caller_error_worst_case": 1}
+    assert rep["ledger_rows"] == whole["calls"]
+
+
+@pytest.mark.parametrize("args,needle", [
+    (["--size", "11"], "sample_digest, size"),
+    (["--trial", "2"], "fire_kind, trial"),
+])
+def test_resume_refuses_another_run_identity_before_any_call(tmp_path, monkeypatch, capsys, args, needle):
+    elig, man = _files(tmp_path)
+    _live(monkeypatch, _killing(_sunrise_caller([]), after=2))
+    with pytest.raises(Killed):
+        rf.main(["--eligible", elig, "--manifest", man, "--size", "12", "--live", "--confirm-spend",
+                 "--out", str(tmp_path / "f.json")])
+    capsys.readouterr()
+    monkeypatch.setattr(rf, "_caller", lambda *a: pytest.fail("a refused resume makes no call"))
+    ckpt = str(tmp_path / "f.json") + rf.CHECKPOINT_SUFFIX
+    for live in ([], ["--live", "--confirm-spend"]):
+        assert rf.main(["--eligible", elig, "--manifest", man, *args, "--resume", ckpt, *live]) == 2
+        assert needle in json.loads(capsys.readouterr().out)["refused"]
+    assert rf.main(["--eligible", elig, "--manifest", man, "--resume", str(tmp_path / "f.json") + "x"]) == 2
+    assert "cannot read the checkpoint" in json.loads(capsys.readouterr().out)["refused"]
+    assert rf.main(["--eligible", elig, "--manifest", man, "--size", "12", "--resume", ckpt, "--live",
+                    "--confirm-spend", "--checkpoint", str(tmp_path / "other.jsonl")]) == 2
+    assert "same path" in json.loads(capsys.readouterr().out)["refused"]
+
+
+def test_resume_refuses_when_the_ledger_disagrees_or_cannot_be_read(tmp_path, monkeypatch, capsys):
+    elig, man = _files(tmp_path)
+    _live(monkeypatch, _killing(_sunrise_caller([]), after=3))
+    with pytest.raises(Killed):
+        rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--out", str(tmp_path / "f.json")])
+    capsys.readouterr()
+    ckpt = str(tmp_path / "f.json") + rf.CHECKPOINT_SUFFIX
+    head = _ckpt_lines(ckpt)[0]
+    monkeypatch.setattr(rf, "_caller", lambda *a: pytest.fail("a refused resume makes no call"))
+    for ledger, needle in (([f"{head['run_id']}:1", f"{head['run_id']}:2"], "disagree"),
+                           ([f"{head['run_id']}:{n}" for n in (1, 2, 3, 4)], "not in the checkpoint"),
+                           (None, "cannot read")):
+        monkeypatch.setattr(rf, "_ledger_calls", lambda run_id, v=ledger: v)
+        assert rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--resume", ckpt]) == 2
+        assert needle in json.loads(capsys.readouterr().out)["refused"]
+
+
+def test_reconcile_counts_billed_replies_only_and_a_cut_last_line_is_dropped(tmp_path):
+    calls = [{"call_id": "r:1", "outcome": "vote"}, {"call_id": "r:2", "outcome": "caller_error"},
+             {"call_id": "r:3", "outcome": "unusable"}, {"call_id": "r:4", "outcome": "identity_mismatch"}]
+    assert rf.reconcile(calls, ["r:1", "r:3", "r:4"]) is None
+    assert "disagree" in rf.reconcile(calls, ["r:1", "r:3", "r:4", "r:4"])
+    p = tmp_path / "c.jsonl"
+    head = {"type": "run", "kind": rf.CHECKPOINT_KIND, "run_id": "r"}
+    p.write_text(json.dumps(head) + "\n" + json.dumps({"type": "call", "call_id": "r:1"}) + '\n{"type": "ca',
+                 encoding="utf-8")
+    assert rf.read_checkpoint(str(p)) == (head, [{"type": "call", "call_id": "r:1"}])
+    p.write_text(json.dumps(head) + '\n{"type": "ca\n' + json.dumps({"type": "call", "call_id": "r:1"}) + "\n",
+                 encoding="utf-8")
+    with pytest.raises(rf.FireRefused, match="line 2 is not JSON"):
+        rf.read_checkpoint(str(p))
+    p.write_text(json.dumps(head) + "\n" + json.dumps({"type": "call", "call_id": "other:1"}) + "\n",
+                 encoding="utf-8")
+    with pytest.raises(rf.FireRefused, match="one run's"):
+        rf.read_checkpoint(str(p))
+
+
+def test_the_checkpoint_spend_counts_against_the_cap_on_resume():
+    items = [rf.item_of(e) for e in _lines()]
+    inst = rf.instrument()
+    lines = []
+    whole = rf.fire(items, inst, cap=1.0, run_id="r", caller=_sunrise_caller([]), log=lambda *a: None,
+                    checkpoint=lines.append)
+    with pytest.raises(Killed):
+        rf.fire(items, inst, cap=1.0, run_id="r", caller=_killing(_sunrise_caller([]), 4), log=lambda *a: None,
+                checkpoint=(cut := []).append)
+    res = rf.fire(items, inst, cap=1.0, run_id="r", caller=_sunrise_caller([]), log=lambda *a: None, prior=cut)
+    assert res["votes"] == whole["votes"] and res["charged_usd"] == whole["charged_usd"]
+    assert res["calls"] == whole["calls"] and len(lines) == whole["calls"]
+    # a prior spend that leaves less than the next call's worst case: no call, the spend is the checkpoint's
+    user, _group = r1.calls(items, inst)[1]
+    worst = r1.worst_call_cost(inst, user, 1)
+    heavy = [{**c, "charged_usd": round(0.5 - worst / 2, 6) / len(cut)} for c in cut]
+    res = rf.fire(items, inst, cap=0.5, run_id="r", log=lambda *a: None, prior=heavy,
+                  caller=lambda *a: pytest.fail("the carried spend leaves no room for a call"))
+    assert res["calls"] == 4 and res["spent_usd"] == pytest.approx(0.5 - worst / 2, abs=1e-5)
+    assert res["stopped"].startswith("cap 0.5 USD")
+
+
+def test_the_time_estimate_sizes_the_exec_timeout():
+    est = rf.estimate(100, {"mean_latency_s": 24.0})
+    assert est["seconds"] == 2400 and est["suggested_ecsx_script_timeout"] == 3600 and est["over_exec_cap"] is False
+    big = rf.estimate(354, {"mean_latency_s": 24.0})
+    assert big["seconds"] == 8496 and big["suggested_ecsx_script_timeout"] == rf.ECSX_SCRIPT_TIMEOUT_MAX == 10800
+    assert big["over_exec_cap"] is True and "--resume" in big["note"]
+    assert rf.estimate(10, None)["seconds"] is None and rf.estimate(10, {"mean_latency_s": None})["seconds"] is None
+    assert rf.estimate(1, {"mean_latency_s": 0.2})["suggested_ecsx_script_timeout"] == 1
+
+
+def test_dry_run_prints_the_estimate_from_the_measured_latency_and_the_remaining_calls(tmp_path, monkeypatch, capsys):
+    elig, man = _files(tmp_path)
+    measured = tmp_path / "m.json"
+    measured.write_text(json.dumps({"kind": "r1_fire", "mode": "live", "stopped": None, "calls": 6, "run_id": "m" * 36,
+                                    "charged_usd": 0.0024, "mean_prompt_chars": 4000.0, "mean_latency_s": 24.0,
+                                    "instrument": rf.instrument().id,
+                                    "prompt_version": rf.instrument().prompt_version.tag}), encoding="utf-8")
+    monkeypatch.setattr("services.golden_set.llm_guard.install", lambda *a: None)
+    assert rf.main(["--eligible", elig, "--manifest", man, "--measured", str(measured)]) == 0
+    rep = json.loads(capsys.readouterr().out)
+    calls = rep["plan"]["instruments"][0]["calls"]
+    assert rep["measured"]["mean_latency_s"] == 24.0 and rep["estimate"]["calls"] == calls
+    assert rep["estimate"]["seconds"] == calls * 24 and rep["estimate"]["suggested_ecsx_script_timeout"] == min(
+        math.ceil(calls * 24 * 1.5), 10800)
+    _live(monkeypatch, _killing(_sunrise_caller([]), after=3))
+    with pytest.raises(Killed):
+        rf.main(["--eligible", elig, "--manifest", man, "--live", "--confirm-spend", "--out", str(tmp_path / "f.json")])
+    capsys.readouterr()
+    assert rf.main(["--eligible", elig, "--manifest", man, "--measured", str(measured),
+                    "--resume", str(tmp_path / "f.json") + rf.CHECKPOINT_SUFFIX]) == 0
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["estimate"]["calls"] == rep["resume"]["remaining_calls"] == calls - 3
+    assert rep["resume"]["checkpoint_calls"] == 3 and rep["mode"] == "dry_run"
