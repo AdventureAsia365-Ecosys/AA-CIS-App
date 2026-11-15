@@ -80,22 +80,16 @@ def test_seeded_from_todays_effective_values(key, value):
 def test_the_trash_window_is_badged_not_enforced():
     by_key = {r["key"]: r for r in _rows()}
     assert by_key["cis.content.trash_retention_days"]["enforced"] is False
-    # AA-1093 L2 (CIS 411): the erasure saga's three keys stay not enforced until the saga code is deployed; a later
-    # migration marks them enforced and removes them from this list. AA-1048 (CIS 417): the claim-instrument
-    # evaluation's five limits likewise, until the evaluation code is deployed. AA-1051 (CIS 419): the nine W5 writer
-    # proof caps and minimum samples likewise, until the proof code that reads them is deployed. AA-1105 (CIS 420): the
-    # twelve AA Academy settings likewise, until the learning API that reads them is deployed (CIS 425's thirteenth too). AA-1048 (CIS 423): the
-    # two-step evaluation's three step bars and the fresh-pool sheet size likewise, until the two-step code is deployed.
-    # AA-1048 (CIS 426): the R1 firing sample size of unlabelled claims likewise, until the firing code is deployed.
-    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted([
-        "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
-        "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",
-        "cis.quality.instrument_eval_tp_keep_min_pct", "cis.spend.instrument_eval_cap_usd",
-        "cis.spend.instrument_eval_max_claims", "cis.spend.instrument_eval_trial_claims",
-        "cis.spend.writer_proof_null_run_cap_usd", "cis.spend.writer_proof_t9_cap_usd", "cis.spend.writer_proof_s1_cap_usd",
-        "cis.spend.writer_proof_t2_cap_usd", "cis.spend.writer_proof_total_cap_usd", "cis.quality.writer_proof_null_run_min_items",
-        "cis.quality.writer_proof_t9_min_items", "cis.quality.writer_proof_s1_min_items", "cis.quality.writer_proof_t2_min_items",
-        *LEARN_KEYS, *TWO_STEP_KEYS, "cis.quality.claim_fire_sample_max"])
+    # CIS 411 / 417 / 419 / 420 / 423 / 425 / 426 seeded their keys not enforced until the code that reads them was
+    # deployed; CIS 427 (AA-1051 + AA-1096 follow-up, S281) marks enforced every one that code on main reads. Only the
+    # trash window (no purge job reads it) and the learner retention window (the learn_retention job has not shipped)
+    # stay not enforced. A new key seeded not enforced is added here with the migration that seeds it.
+    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted(NOT_ENFORCED)
+    for key in (*LEARN_KEYS, *TWO_STEP_KEYS):
+        assert by_key[key]["enforced"] is (key not in NOT_ENFORCED), key
+
+
+NOT_ENFORCED = ("cis.content.trash_retention_days", "cis.learn.learner_retention_days")
 
 
 TWO_STEP_KEYS = ("cis.quality.claim_two_step_route_tp_min_pct", "cis.quality.claim_two_step_judge_tp_keep_min_pct",

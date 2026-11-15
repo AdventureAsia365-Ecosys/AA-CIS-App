@@ -1,7 +1,7 @@
 """AA-1105 (S281) — CIS 425: the academy web's per-visitor certificate check limit
 (cis.learn.verify_visitor_requests_per_minute) in shared.setting_definition (conftest replays every migration).
 Registered; the row equals the compiled default the reader serves (6 requests); bounds 1..300 and platform scope;
-no evidence, single approval, no env override; not enforced like the other cis.learn.* keys until a later migration;
+no evidence, single approval, no env override; enforced since CIS 427 like the other cis.learn.* keys the API reads;
 a label and a complete guide; a value over the bound is refused; a re-run changes nothing. Runs in a transaction that
 is rolled back; invented values only."""
 import json
@@ -18,7 +18,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M429 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+M427 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                     "425_aa1105_learn_verify_visitor_setting.sql")
 KEY = "cis.learn.verify_visitor_requests_per_minute"
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason) "
@@ -41,7 +41,7 @@ async def conn():
 
 
 @pytest.mark.asyncio
-async def test_429_registered_and_the_row_is_the_compiled_default(conn):
+async def test_427_registered_and_the_row_is_the_compiled_default(conn):
     assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '425'") == "425"
     r = await conn.fetchrow(ROW, KEY)
     d = settings.definition(KEY)
@@ -49,7 +49,7 @@ async def test_429_registered_and_the_row_is_the_compiled_default(conn):
     assert (r["value_type"], int(r["lo"]), int(r["hi"]), r["unit"]) == ("int", 1, 300, "requests")
     assert (r["scope_kind"], r["impact"], r["approval"], r["area"]) == ("platform", "medium", "single", "learn")
     assert r["evidence_required"] is False and r["env_override"] is None and r["cache_s"] == 60
-    assert r["enforced"] is False and d.enforced is False
+    assert r["enforced"] is True and d.enforced is True   # CIS 427
     assert r["guided"] is True and r["label"] == d.label
 
 
@@ -72,7 +72,7 @@ async def test_a_value_outside_the_bounds_is_refused(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M429, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = open(M427, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before
