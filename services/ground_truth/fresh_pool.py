@@ -181,9 +181,10 @@ def read_fire_votes(text: str, instrument: str = FIRE_INSTRUMENT) -> dict[str, l
 
 
 def fire_report_check(text: str, manifest: dict) -> dict:
-    """{} for a votes file that is not an r1_fire report; for one, its run and whether it stopped early. Refused unless
-    it is a full live fire on the eligible file of `manifest` (a trial fires a few claims only; a dry run has no votes;
-    another file's votes would sample claims of another file)."""
+    """{} for a votes file that is not an r1_fire report; for one, its run and whether it was resumed. Refused unless
+    it is a full live fire on the eligible file of `manifest` that ran to its end (a trial fires a few claims only; a
+    dry run has no votes; a stopped run is partial: finish it with r1_fire --resume <checkpoint>; another file's votes
+    would sample claims of another file). A resumed run's report is one run's report and is accepted."""
     try:
         obj = json.loads(text)
     except ValueError:
@@ -195,7 +196,11 @@ def fire_report_check(text: str, manifest: dict) -> dict:
                           "without --trial)")
     if obj.get("eligible_sha256") != manifest.get("eligible_sha256"):
         raise PoolRefused("the fire report fired another eligible file (eligible_sha256 differs)")
-    return {"votes_run": str(obj.get("run_id", ""))[:8], "votes_partial": bool(obj.get("stopped"))}
+    if obj.get("stopped"):
+        raise PoolRefused("the fire report stopped early (partial): finish the run with r1_fire --resume <its "
+                          "checkpoint>, then sample from the resumed report")
+    return {"votes_run": str(obj.get("run_id", ""))[:8], "votes_partial": False,
+            "votes_resumed": bool(obj.get("resumed"))}
 
 
 def salt_of(manifest: dict) -> str:

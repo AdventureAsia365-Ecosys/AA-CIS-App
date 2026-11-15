@@ -88,3 +88,78 @@ makes no paid call.
   keys, once this code is on Dev.
 - The live order is: DRY RUN, then a trial of 3 claims (live), then a DRY RUN with `--measured`, then the full live
   run, then `fresh_pool sample`. The wrapper builder that embeds the eligible file is a scratch tool outside the repo.
+
+## Checkpoint, resume and time estimate (lane l15, S281)
+
+A live fire of 177 sequential calls (about 24 s each) was cut by the exec script timeout at call 108. The report is
+written only at the end, so it was lost, together with about 0.17 USD of calls. This section makes a fire survive
+that.
+
+### Decisions
+
+- **One checkpoint line per billed call.** A live run appends one JSON line per billed call to `--checkpoint`, which
+  defaults to `<out>.ckpt.jsonl`. Each line is flushed and fsynced before the next call. The first line is a header
+  holding the run id, `started_at` and the run identity: eligible sha256, sample digest, instrument, prompt version,
+  size, fire kind, trial and votes. Each call line holds its call id, `n`, vote round, object key, the vote per full
+  claim hash (`flags`), the outcome, the charge, the provider request id, the latency, the prompt length (a count),
+  the worst-case note kinds and the error class name. It holds no claim, field or source text. A live run with neither
+  `--out` nor `--checkpoint` is refused, and so is a fresh run whose checkpoint file already has lines. `--out` is now
+  checked before the first paid call, not after the run.
+- **`--resume <checkpoint>`.** The resume works as follows:
+  - It is refused unless every identity field is the same. This adds fire kind, trial and votes to the five fields
+    the brief names, so a trial checkpoint can never be resumed as a full run.
+  - A live resume is refused unless the run's `shared.llm_call_log` rows match the checkpoint's billed replies (vote,
+    unusable, identity mismatch), one row each, read by call id with `LEDGER_CALLS_SQL`. The match is checked as a
+    multiset. An unreadable ledger also refuses: the ledger is the truth. A caller error has no row, because it got
+    no reply.
+  - It keeps the run id and appends to the same file, so a second cut can be resumed too.
+  - It replays every (vote round, object) that has a billed reply. A caller error is called again, because it gave no
+    reply. An unusable or mismatched reply is not called again, because one run would have kept it as no vote.
+  - It carries the checkpoint's charges and call count into `r1.Budget`. The ledger probe reads from the first run's
+    `started_at`, so the cap counts both parts.
+  - The final report is one run's report: votes, fired, fired_count, ledger, calls and charges, plus `resumed`
+    (`prior_calls`, `new_calls`) and `checkpoint`.
+- **`fresh_pool sample` now refuses a stopped (partial) fire report.** The old rule accepted a partial run as
+  `votes_partial`, because its votes were paid for. A resume keeps those votes now, so the refusal points to
+  `--resume`. A resumed report is accepted, and the manifest records `votes_resumed`. `votes_partial` stays in the
+  manifest and is always false.
+- **Latency and the time estimate.** Every call records `latency_s`, timed with `time.monotonic` around the caller.
+  The report gives `mean_latency_s`, computed over the checkpoint's calls too. `--measured` now reads that mean. The
+  plan output has `estimate`, built from these values:
+  - the calls still to make (all calls, or the remaining calls on a resume);
+  - the measured mean latency;
+  - the expected seconds;
+  - `suggested_ecsx_script_timeout`: the seconds times 1.5, rounded up and capped at 10,800;
+  - `over_exec_cap`. When it is true, the advice is to run in parts, each part resuming from the checkpoint.
+
+  A trial report made before this change has no latency. The estimate then says so instead of guessing.
+
+### Changed
+
+- `services/ground_truth/r1_fire.py`: the checkpoint functions, `--checkpoint`, `--resume`, `ledger_calls` and
+  `LEDGER_CALLS_SQL`, `estimate`, and latency in the ledger entries and the result. `_Fire` takes `prior` and
+  `checkpoint`.
+- `services/ground_truth/fresh_pool.py`: `fire_report_check` refuses a stopped report and adds `votes_resumed`.
+- Tests: new cases in `tests/unit/test_aa1048_r1_fire.py`, and the new
+  `tests/integration/test_aa1048_r1_fire_ledger_sql.py`.
+
+### Tradeoffs
+
+- **Match by call id, not by charge.** The checkpoint charge is `r1.billed_cost`, which can be a worst case. The
+  ledger `cost_usd` is the gateway's own figure. The budget already takes the larger of the two (charges against the
+  probe), so comparing amounts would only add false refusals.
+- **A line lost in a kill refuses the resume.** If the process dies after the ledger row is written but before the
+  checkpoint line is, the resume refuses and names the call id. The window is one fsync wide. Guessing the lost
+  vote would break the rule that the ledger is the truth.
+- **The ledger probe on a resume reads from the first start.** It also counts any other run on the stage in between.
+  That can only make the spend larger, which is the safe side.
+
+### Should know
+
+- `TIMEOUT_MARGIN = 1.5` and `ECSX_SCRIPT_TIMEOUT_MAX = 10800` are constants. They feed only the printed advice and
+  gate nothing. The 10,800 mirrors the hard cap of the exec tool (`tools/ecs/` in the root repo), not a CIS policy. If
+  the tech lead wants the margin to be editable, that is a follow-up settings key (a CIS migration). No new settings
+  key, env var or migration is in this change.
+- Run order for a long fire: a trial, then a DRY RUN with `--measured <trial>`, which prints `estimate`. Give the exec
+  the `suggested_ecsx_script_timeout`. If a run is cut anyway, run it again with `--resume <out>.ckpt.jsonl`, the same
+  inputs and `--out`, then run `fresh_pool sample` on the resumed report.
