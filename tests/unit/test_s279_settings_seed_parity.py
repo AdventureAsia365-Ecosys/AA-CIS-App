@@ -81,7 +81,7 @@ def test_the_trash_window_is_badged_not_enforced():
     by_key = {r["key"]: r for r in _rows()}
     assert by_key["cis.content.trash_retention_days"]["enforced"] is False
     # CIS 411 / 417 / 419 / 420 / 423 / 425 / 426 seeded their keys not enforced until the code that reads them was
-    # deployed; CIS 429 (AA-1051 + AA-1096 follow-up, S281) marks enforced every one that code on main reads. Only the
+    # deployed; CIS 427 (AA-1051 + AA-1096 follow-up, S281) marks enforced every one that code on main reads. Only the
     # trash window (no purge job reads it) and the learner retention window (the learn_retention job has not shipped)
     # stay not enforced. A new key seeded not enforced is added here with the migration that seeds it.
     assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted(NOT_ENFORCED)

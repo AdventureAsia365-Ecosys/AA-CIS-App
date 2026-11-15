@@ -1,4 +1,4 @@
--- Migration 429: AA-1051 + AA-1096 follow-up (S281 lane l14) -- the platform settings registry keys whose code is on
+-- Migration 427: AA-1051 + AA-1096 follow-up (S281 lane l14) -- the platform settings registry keys whose code is on
 -- main are marked enforced.
 --
 -- Why. CIS 411 (erasure saga), 417 / 423 / 426 (claim-instrument evaluation, two-step evaluation, fresh pool, R1
@@ -28,7 +28,7 @@
 --   2. A post-check: every row of the block exists with its new fields (a misspelt key would otherwise leave the badge
 --      in place without an error). It does not refuse other not-enforced keys: a key seeded later with enforced = false
 --      (its code still to ship, e.g. the tenant TripPlanner custom domain keys) is legitimate.
---   3. Register 429.
+--   3. Register 427.
 --
 -- Behaviour on apply. None for running code: the reader and the admin API serve the compiled defaults (regenerated
 -- from this block in the same PR), and the enforced flag only drives the page badge and settings-lint. No value,
@@ -41,10 +41,10 @@
 -- is red), and the flag changes no behaviour, so a deploy before the apply changes only the page badge. On Dev, Infra
 -- Migration Apply once every job table is idle (root ADR 0017a). DM-6.1: no personal data. DM-7.1: no new table.
 --
--- Number. 426 is the newest CIS migration on main (15/11/2026) and 427-428 are held by the open tenant TripPlanner
--- custom domain batch. If the owner main max + 1 differs at merge, renumber (git grep '429_' and '429' here, in
--- tests/integration/test_aa1051_migration_429.py, compiled_defaults.json's _generated line and the implementation
--- notes docs/implementation-notes/AA-1051.md).
+-- Number. 426 is the newest CIS migration on main (15/11/2026), so this is 427 (main max + 1). The open tenant
+-- TripPlanner custom domain batch (waiting on a cost approval) moves to 428-429 when it rebases. If the owner main
+-- max + 1 differs at merge, renumber (git grep '427' here, in tests/integration/test_aa1051_migration_427.py,
+-- compiled_defaults.json's _generated line and the implementation notes docs/implementation-notes/AA-1051.md).
 --
 -- Locks. UPDATEs of 35 rows of a small table read by no hot path (the reader reads shared.setting_value); the
 -- definition guard trigger (CIS 407) allows the file's role, cis_owner. lock_timeout 5s. Re-runnable (the Integration
@@ -57,8 +57,8 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- settings-edit:begin (scripts/settings/gen_compiled_defaults.py reads the JSON array of the dollar-quoted block)
-CREATE TEMP TABLE IF NOT EXISTS m429_edit (key text PRIMARY KEY, doc jsonb NOT NULL) ON COMMIT DROP;
-INSERT INTO m429_edit (key, doc)
+CREATE TEMP TABLE IF NOT EXISTS m427_edit (key text PRIMARY KEY, doc jsonb NOT NULL) ON COMMIT DROP;
+INSERT INTO m427_edit (key, doc)
 SELECT e.doc ->> 'key', e.doc
   FROM jsonb_array_elements($edit$[
 {"key": "cis.erasure.crm_window_days", "enforced": true, "description": "Days after a tenant's offboarding before the erasure saga erases its partner CRM data (stage 2), without the owner's click (decision D2). CIS, Booking and TripPlanner use the offboarded tenant retention instead (stage 1). Read by the tenant erasure saga."},
@@ -103,7 +103,7 @@ ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc;
 UPDATE shared.setting_definition AS d
    SET enforced    = CASE WHEN e.doc ? 'enforced' THEN (e.doc ->> 'enforced')::boolean ELSE d.enforced END,
        description = COALESCE(e.doc ->> 'description', d.description)
-  FROM m429_edit AS e
+  FROM m427_edit AS e
  WHERE d.key = e.key
    AND (d.enforced IS DISTINCT FROM CASE WHEN e.doc ? 'enforced' THEN (e.doc ->> 'enforced')::boolean
                                          ELSE d.enforced END
@@ -115,20 +115,20 @@ DECLARE
     missing text;
 BEGIN
     SELECT string_agg(e.key, ', ' ORDER BY e.key) INTO missing
-      FROM m429_edit AS e
+      FROM m427_edit AS e
      WHERE NOT EXISTS (
            SELECT 1 FROM shared.setting_definition AS d
             WHERE d.key = e.key
               AND (NOT e.doc ? 'enforced' OR d.enforced = (e.doc ->> 'enforced')::boolean)
               AND (NOT e.doc ? 'description' OR d.description = e.doc ->> 'description'));
     IF missing IS NOT NULL THEN
-        RAISE EXCEPTION 'CIS 429: no definition or not edited: %', missing;
+        RAISE EXCEPTION 'CIS 427: no definition or not edited: %', missing;
     END IF;
 END
 $check$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('429', now(), 'AA-1051 + AA-1096: mark the settings registry keys read by code on main enforced')
+VALUES ('427', now(), 'AA-1051 + AA-1096: mark the settings registry keys read by code on main enforced')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

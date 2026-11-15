@@ -1,6 +1,6 @@
 """AA-1048 (S279 lane l22) — CIS 417: the five limits of the claim-instrument evaluation in shared.setting_definition
 (conftest replays 407, 416 and 417). Registered; the rows equal the compiled defaults the reader serves
-(shared/settings/compiled_defaults.json, generated from the seed); enforced since CIS 429 (the evaluation code is
+(shared/settings/compiled_defaults.json, generated from the seed); enforced since CIS 427 (the evaluation code is
 on main); the go / no-go bars need evidence on a change; each key carries its label and a complete guide; a re-run
 changes nothing. Runs in a transaction that is rolled back."""
 import json
@@ -46,7 +46,7 @@ async def test_417_registered_and_the_rows_are_the_compiled_defaults(conn):
     assert set(rows) == set(KEYS)
     for key, default in KEYS.items():
         assert json.loads(rows[key]["default_value"]) == default == settings.definition(key).default_value
-        assert rows[key]["enforced"] is True and settings.definition(key).enforced is True   # CIS 429
+        assert rows[key]["enforced"] is True and settings.definition(key).enforced is True   # CIS 427
         assert rows[key]["approval"] == "maker_checker"
         assert rows[key]["evidence_required"] is (key in BARS)
         # every key ships its plain label and complete EN + VI guide (CIS 416 column and check function)

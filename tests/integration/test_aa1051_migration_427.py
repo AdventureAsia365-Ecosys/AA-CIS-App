@@ -1,10 +1,11 @@
-"""AA-1051 + AA-1096 follow-up (S281 lane l14) — CIS 429: the settings registry keys whose code is on main are marked
+"""AA-1051 + AA-1096 follow-up (S281 lane l14) — CIS 427: the settings registry keys whose code is on main are marked
 enforced (conftest replays every migration). Registered; each key of the block is enforced in the table and in the
 compiled defaults the reader serves, with the same description; the two keys no code reads (the trash window, the
 learner retention window) stay not enforced; every CIS key the table marks enforced is named by code (the settings-lint
 rule, on the rows the database holds); a re-run changes nothing. Runs in a transaction that is rolled back."""
 import json
 import os
+import pathlib
 import re
 import sys
 
@@ -14,17 +15,18 @@ import pytest_asyncio
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
-from shared import settings  # noqa: E402
+from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER
+
+from shared import settings
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M429 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "429_aa1051_settings_enforced_keys.sql")
+M427 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "427_aa1051_settings_enforced_keys.sql")
 NOT_READ = ("cis.content.trash_retention_days", "cis.learn.learner_retention_days")
-EDIT_RE = re.compile(r"\$edit\$(.*?)\$edit\$", re.S)
+EDIT_RE = re.compile(r"\$edit\$(.*?)\$edit\$", re.DOTALL)
 
 
 def _block() -> list[dict]:
-    return json.loads(EDIT_RE.search(open(M429, encoding="utf-8").read()).group(1))
+    return json.loads(EDIT_RE.search(pathlib.Path(M427).read_text(encoding="utf-8")).group(1))
 
 
 @pytest_asyncio.fixture
@@ -40,8 +42,8 @@ async def conn():
 
 
 @pytest.mark.asyncio
-async def test_429_registered_and_the_block_keys_are_enforced(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '429'") == "429"
+async def test_427_registered_and_the_block_keys_are_enforced(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '427'") == "427"
     block = _block()
     enforced = sorted(r["key"] for r in block if r.get("enforced") is True)
     assert len(enforced) == 34 and not set(enforced) & set(NOT_READ)
@@ -66,7 +68,7 @@ async def test_every_enforced_cis_key_in_the_table_is_named_by_code(conn):
         for root, _dirs, files in os.walk(os.path.join(repo, top)):
             if os.path.join("shared", "settings") in root or "__pycache__" in root or "migrations" in root:
                 continue
-            parts += [open(os.path.join(root, f), encoding="utf-8").read() for f in files if f.endswith(".py")]
+            parts += [pathlib.Path(root, f).read_text(encoding="utf-8") for f in files if f.endswith(".py")]
     code = "\n".join(parts)
     keys = [r["key"] for r in await conn.fetch(
         "SELECT key FROM shared.setting_definition WHERE app = 'cis' AND enforced ORDER BY key")]
@@ -76,7 +78,7 @@ async def test_every_enforced_cis_key_in_the_table_is_named_by_code(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M429, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = pathlib.Path(M427).read_text(encoding="utf-8").replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     sql = "SELECT key, enforced, description FROM shared.setting_definition ORDER BY key"
     before = await conn.fetch(sql)
     await conn.execute(body)
