@@ -3170,7 +3170,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   spellings) or an internal name (one label, `localhost`, `*.local`, `*.internal` ...). No DNS lookup in CIS:
   TripPlanner checks the resolved addresses again before storing a lead and before each POST. Still no editor for the
   theme (set by a reviewed `run-script` on Dev until it ships).
-  **R8 own domains (AA-1090, CIS 427 + 428, contract tenant.entitlements.v1 1.8; `docs/implementation-notes/AA-1090.md`):**
+  **R8 own domains (AA-1090, CIS 428 + 429, contract tenant.entitlements.v1 1.8; `docs/implementation-notes/AA-1090.md`):**
   `shared.tenant_tripplanner_domain` (one row per custom host of a tenant site; status pending / validating / attaching
   / active / removing / failed; no RLS, rule a allowlist) is edited on Tenant 360 › Subscription › TripPlanner own
   domains (`GET` / `POST /admin/tenants/{id}/tripplanner-site/domains`, `DELETE …/{domain_id}`, `POST …/{domain_id}/retry`;

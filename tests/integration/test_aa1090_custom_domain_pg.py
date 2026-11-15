@@ -1,14 +1,14 @@
 """AA-1090 TripPlanner R8 on real Postgres — the Tenant 360 custom-domain editor
 (services/tenant_account/tripplanner_domain.py) and the tripplanner_custom_domain job
 (services/jobs/tripplanner_custom_domain_job.py)
-over shared.tenant_tripplanner_domain (CIS 427, replayed by conftest), with fake ACM / CloudFront clients (the unit
+over shared.tenant_tripplanner_domain (CIS 428, replayed by conftest), with fake ACM / CloudFront clients (the unit
 module's fakes: no AWS).
 
 Each test runs on one asyncpg connection inside an outer transaction that is rolled back. Names are invented.
 
   * add: the row is pending, its job is queued once (idempotency key) and the change is audited; the per-tenant limit
     (the setting's default) and a host another tenant holds are refused; a bad host never reaches the table;
-  * the job walks the real row from pending to active (every UPDATE satisfies the 427 CHECKs: the ARN, the CNAME
+  * the job walks the real row from pending to active (every UPDATE satisfies the 428 CHECKs: the ARN, the CNAME
     target, the validation record), and a removal deletes the row once the alias is detached;
   * a validation past the timeout fails the host and clears its certificate; retry puts it back to pending with a
     full validation window (the next looks keep waiting);

@@ -170,7 +170,7 @@ class AdminTenantAuditAction:
     # targets (the agency's business URL / address, never a traveller's).
     TRIPPLANNER_LEAD_ROUTE_CHANGED = "tenant.tripplanner_lead_route_changed"
     # AA-1090 R8 — Tenant 360 › Subscription: a custom host of the tenant's TripPlanner site added / removed / retried
-    # (CIS 427; services/tenant_account/tripplanner_domain.py). details: domain id, the host, the job id, the status
+    # (CIS 428; services/tenant_account/tripplanner_domain.py). details: domain id, the host, the job id, the status
     # before a removal or the failure code before a retry (an agency's business host, never personal data).
     TRIPPLANNER_DOMAIN_ADDED = "tenant.tripplanner_domain_added"
     TRIPPLANNER_DOMAIN_REMOVED = "tenant.tripplanner_domain_removed"

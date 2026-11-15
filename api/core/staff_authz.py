@@ -409,7 +409,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/subscription"): _TENANT_BILLING_READ,
     ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
     ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
-    # Tenant 360 › Subscription: the TripPlanner lead route (AA-1038 S272, CIS 390), own domains (AA-1090 R8, CIS 427)
+    # Tenant 360 › Subscription: the TripPlanner lead route (AA-1038 S272, CIS 390), own domains (AA-1090 R8, CIS 428)
     **{(m, "/admin/tenants/{tenant_id}/tripplanner-site/" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE
        for m, p in (("GET", "lead-route"), ("PUT", "lead-route"), ("GET", "domains"), ("POST", "domains"),
                     ("DELETE", "domains/{domain_id}"), ("POST", "domains/{domain_id}/retry"))},

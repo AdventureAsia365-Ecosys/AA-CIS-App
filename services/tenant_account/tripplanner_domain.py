@@ -7,9 +7,9 @@ An agency's planner lives on our path /{slug} (ADR 0019 d10). R8 lets it serve t
 an ACM certificate in us-east-1 with DNS validation, then the host as an alternate domain name of the TripPlanner
 agency CloudFront distribution (a distribution of its own: the public TripPlanner host never shares a certificate with
 an agency). TripPlanner serves an ``active`` host as the tenant through
-``catalog.v_tenant_tripplanner_v1.custom_domains`` (CIS 428).
+``catalog.v_tenant_tripplanner_v1.custom_domains`` (CIS 429).
 
-State (``shared.tenant_tripplanner_domain.status``, CIS 427) and the only moves :func:`transition` allows::
+State (``shared.tenant_tripplanner_domain.status``, CIS 428) and the only moves :func:`transition` allows::
 
     pending ──requested──▶ validating ──issued──▶ attaching ──attached──▶ active
        │                      │                      │                      │
@@ -21,7 +21,7 @@ State (``shared.tenant_tripplanner_domain.status``, CIS 427) and the only moves 
 An active host fails only when its validation record is gone (``validation_record_gone``: the job's pending edge
 certificate check or its daily renewal check detaches it so the other agencies keep a valid certificate).
 
-Limits are settings (CIS 427, Platform › Settings): ``cis.tripplanner.custom_domain_max_per_tenant`` (per tenant,
+Limits are settings (CIS 428, Platform › Settings): ``cis.tripplanner.custom_domain_max_per_tenant`` (per tenant,
 hosts not being removed), ``cis.tripplanner.custom_domain_edge_max`` (all tenants, hosts that hold or will hold a
 name on the edge certificate). The job reads the validation timeout, the poll interval, the edge pending window and
 the renewal grace days.
@@ -61,7 +61,7 @@ MAX_PER_TENANT_KEY = "cis.tripplanner.custom_domain_max_per_tenant"
 EDGE_MAX_KEY = "cis.tripplanner.custom_domain_edge_max"
 
 DOMAIN_MAX = 253  # technical-constant: the DNS limit of a host name (RFC 1035), not a policy
-# CIS 427 tenant_tripplanner_domain_domain_chk, matched in full.
+# CIS 428 tenant_tripplanner_domain_domain_chk, matched in full.
 _DOMAIN_SHAPE = re.compile(r"([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
 # Names that belong to the platform or to AWS: a tenant can never claim them (our own zone serves /{slug} already).
 RESERVED_SUFFIXES = ("lumiguides.it.com", "adventure.asia", "cloudfront.net", "amazonaws.com", "amazon.com", "aws")

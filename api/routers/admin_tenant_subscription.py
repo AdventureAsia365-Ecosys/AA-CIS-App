@@ -13,7 +13,7 @@
                                                                           422 with the field (AA-1038 follow-up)
 - ``GET    /admin/tenants/{tenant_id}/tripplanner-site/domains``            the custom hosts of the tenant's
                                                                           TripPlanner site with their DNS records and
-                                                                          status (AA-1090 R8, CIS 427)
+                                                                          status (AA-1090 R8, CIS 428)
 - ``POST   /admin/tenants/{tenant_id}/tripplanner-site/domains``            add one ({"domain"}; audited; queues the
                                                                           tripplanner_custom_domain job; limits are
                                                                           settings)

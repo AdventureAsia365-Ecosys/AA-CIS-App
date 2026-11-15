@@ -2,7 +2,7 @@
 // app/admin/tenants/_components/Tenant360CustomDomain.tsx — AA-1090 TripPlanner R8: Tenant 360 › Subscription ›
 // TripPlanner own domains. Staff only; a tenant never sees it.
 //
-// GET /api/admin/tenants/{id}/tripplanner-site/domains: the agency's custom hosts (CIS 427) with their status and the
+// GET /api/admin/tenants/{id}/tripplanner-site/domains: the agency's custom hosts (CIS 428) with their status and the
 // two DNS records the agency creates (the CNAME of the host to the distribution, the ACM validation CNAME). "Add domain"
 // (admin: tenant.write) opens a kit Drawer that POSTs the host; the API refuses a malformed, bare, platform or AWS host
 // (422 with the field) and the limits, which are settings (409). "Remove" (ConfirmModal), "Retry" (a failed host) and
