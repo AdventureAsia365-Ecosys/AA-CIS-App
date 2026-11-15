@@ -157,6 +157,8 @@ class FakeAcm:
     def request_certificate(self, **kw):
         self.requests.append(kw)
         assert kw["ValidationMethod"] == "DNS"
+        # botocore's ParamValidation: SubjectAlternativeNames, when sent, needs at least one name (S281 live failure)
+        assert "SubjectAlternativeNames" not in kw or len(kw["SubjectAlternativeNames"]) >= 1
         assert {"Key": tp_edge.TAG_KEY, "Value": tp_edge.TAG_VALUE} in kw["Tags"]
         assert {t["Key"] for t in kw["Tags"]} <= {"aa-managed-by", "aa-domain-id", "aa-edge"}   # the policy's keys
         arn = f"{ACM}/00000000-0000-4000-8000-{len(self.requests):012d}"
@@ -263,7 +265,7 @@ def test_attach_requests_one_edge_certificate_and_swaps_aliases_and_certificate(
     state = tp_edge.sync_edge(acm, cf, [Q])
     assert state.status == "updated" and state.cname_target == TARGET and state.retired is None
     req = acm.requests[0]
-    assert [req["DomainName"], *req["SubjectAlternativeNames"]] == [Q]
+    assert req["DomainName"] == Q and "SubjectAlternativeNames" not in req   # one host: no (empty) SAN list
     cfg = cf.updates[0]
     assert cfg["Aliases"] == {"Quantity": 1, "Items": [Q]} and cfg["Comment"] == "kept"
     assert cfg["ViewerCertificate"] == {"CloudFrontDefaultCertificate": False, "ACMCertificateArn": cf.cert,

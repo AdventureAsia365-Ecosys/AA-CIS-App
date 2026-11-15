@@ -238,11 +238,11 @@ def _edge_certificate(acm, names: list[str], current_cert: Optional[str],
         cert = _matching(acm, arn, names)
         if cert is not None and cert.get("Status") in (ISSUED, PENDING):
             return str(arn), cert
+    extra = {"SubjectAlternativeNames": names[1:]} if names[1:] else {}   # ACM refuses an empty SAN list (min 1)
     arn = acm.request_certificate(
-        DomainName=names[0], SubjectAlternativeNames=names[1:], ValidationMethod="DNS",
-        IdempotencyToken=idempotency_token(names),
+        DomainName=names[0], ValidationMethod="DNS", IdempotencyToken=idempotency_token(names),
         Options={"CertificateTransparencyLoggingPreference": "ENABLED"},
-        Tags=tags(**{"aa-edge": "tripplanner"}))["CertificateArn"]
+        Tags=tags(**{"aa-edge": "tripplanner"}), **extra)["CertificateArn"]
     return str(arn), describe(acm, arn)
 
 
