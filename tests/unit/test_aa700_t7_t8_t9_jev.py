@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from services.acp_angle_gate import ranking
 from services.acp_shared import debate
 from shared.llm_client.decide import Decision, Verdict
@@ -95,3 +97,11 @@ def test_t7_enforced_reject_cuts_without_luna(monkeypatch):
 def test_t7_shadow_keeps_luna_deciding():
     out, luna_calls, _ = _debate("reject", mode="shadow", luna_score=8.0)
     assert luna_calls == 2 and len(out) == 2
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

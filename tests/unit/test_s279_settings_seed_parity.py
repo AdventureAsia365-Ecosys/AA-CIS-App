@@ -80,21 +80,22 @@ def test_seeded_from_todays_effective_values(key, value):
 def test_the_trash_window_is_badged_not_enforced():
     by_key = {r["key"]: r for r in _rows()}
     assert by_key["cis.content.trash_retention_days"]["enforced"] is False
-    # AA-1093 L2 (CIS 411): the erasure saga's three keys stay not enforced until the saga code is deployed; a later
-    # migration marks them enforced and removes them from this list. AA-1048 (CIS 417): the claim-instrument
-    # evaluation's five limits likewise, until the evaluation code is deployed. AA-1051 (CIS 419): the nine W5 writer
-    # proof caps and minimum samples likewise, until the proof code that reads them is deployed. AA-1105 (CIS 420): the
-    # twelve AA Academy settings likewise, until the learning API that reads them is deployed. AA-1048 (CIS 423): the
-    # two-step evaluation's three step bars and the fresh-pool sheet size likewise, until the two-step code is deployed.
-    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted([
-        "cis.content.trash_retention_days", "cis.erasure.crm_window_days", "cis.erasure.saga_apply_enabled",
-        "cis.erasure.saga_approval_valid_hours", "cis.quality.instrument_eval_fp_drop_min_pct",
-        "cis.quality.instrument_eval_tp_keep_min_pct", "cis.spend.instrument_eval_cap_usd",
-        "cis.spend.instrument_eval_max_claims", "cis.spend.instrument_eval_trial_claims",
-        "cis.spend.writer_proof_null_run_cap_usd", "cis.spend.writer_proof_t9_cap_usd", "cis.spend.writer_proof_s1_cap_usd",
-        "cis.spend.writer_proof_t2_cap_usd", "cis.spend.writer_proof_total_cap_usd", "cis.quality.writer_proof_null_run_min_items",
-        "cis.quality.writer_proof_t9_min_items", "cis.quality.writer_proof_s1_min_items", "cis.quality.writer_proof_t2_min_items",
-        *LEARN_KEYS, *TWO_STEP_KEYS])
+    # CIS 411 / 417 / 419 / 420 / 423 / 425 / 426 seeded their keys not enforced until the code that reads them was
+    # deployed; CIS 427 (AA-1051 + AA-1096 follow-up, S281) marks enforced every one that code on main reads. Only the
+    # trash window (no purge job reads it) and the learner retention window (the learn_retention job has not shipped)
+    # stay not enforced. A new key seeded not enforced is added here with the migration that seeds it.
+    # AA-1090 (CIS 428): the TripPlanner custom-domain limits stay not enforced until the AA-1090 code is deployed.
+    assert sorted(k for k, r in by_key.items() if not r["enforced"]) == sorted(NOT_ENFORCED)
+    for key in (*LEARN_KEYS, *TWO_STEP_KEYS):
+        assert by_key[key]["enforced"] is (key not in NOT_ENFORCED), key
+
+
+# AA-1090 (CIS 428): the TripPlanner custom-domain limits, until the editor and the tripplanner_custom_domain job are deployed.
+TP_DOMAIN_KEYS = ("cis.tripplanner.custom_domain_max_per_tenant", "cis.tripplanner.custom_domain_edge_max",
+                  "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds",
+                  "cis.tripplanner.custom_domain_edge_pending_hours", "cis.tripplanner.custom_domain_renewal_grace_days")
+
+NOT_ENFORCED = ("cis.content.trash_retention_days", "cis.learn.learner_retention_days", *TP_DOMAIN_KEYS)
 
 
 TWO_STEP_KEYS = ("cis.quality.claim_two_step_route_tp_min_pct", "cis.quality.claim_two_step_judge_tp_keep_min_pct",
@@ -105,7 +106,9 @@ LEARN_KEYS = ("cis.learn.quiz_pass_mark_pct", "cis.learn.final_quiz_pass_mark_pc
               "cis.learn.quiz_items_per_attempt", "cis.learn.final_quiz_items_per_module", "cis.learn.recert_months",
               "cis.learn.recert_paths", "cis.learn.video_url_ttl_seconds", "cis.learn.learner_retention_days",
               "cis.learn.review_target_retention", "cis.learn.review_max_cards_per_day",
-              "cis.learn.verify_requests_per_minute")
+              "cis.learn.verify_requests_per_minute",
+              # CIS 425 (AA-1105, S281): the academy web's per-visitor verify limit, like the twelve CIS 420 keys.
+              "cis.learn.verify_visitor_requests_per_minute")
 
 
 def test_the_measured_ratio_needs_evidence():

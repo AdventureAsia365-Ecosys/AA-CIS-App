@@ -1,8 +1,8 @@
 """AA-1051 (S280) — CIS 419: the D12 caps and minimum samples of the W5 writer proofs in shared.setting_definition
 (conftest replays 407, 416 and 419). Registered; the rows equal the compiled defaults the reader serves
 (shared/settings/compiled_defaults.json, generated from the seed) and today's literals in services/writer_proof;
-enforced is false until the proof code ships; the minimum samples need evidence on a change; each key carries its label
-and a complete guide; a re-run changes nothing. Runs in a transaction that is rolled back."""
+enforced since CIS 427 (the proof code is on main); the minimum samples need evidence on a change; each key carries
+its label and a complete guide; a re-run changes nothing. Runs in a transaction that is rolled back."""
 import json
 import os
 import sys
@@ -47,7 +47,7 @@ async def test_419_registered_and_the_rows_are_the_compiled_defaults(conn):
     assert set(rows) == set(KEYS)
     for key, default in KEYS.items():
         assert json.loads(rows[key]["default_value"]) == default == settings.definition(key).default_value
-        assert rows[key]["enforced"] is False and settings.definition(key).enforced is False
+        assert rows[key]["enforced"] is True and settings.definition(key).enforced is True   # CIS 427
         assert rows[key]["approval"] == "maker_checker"
         assert rows[key]["evidence_required"] is (key in MINS)
         assert rows[key]["impact"] == ("high" if key in CAPS else "medium")

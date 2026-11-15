@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -117,7 +117,7 @@
    "app": "cis",
    "area": "retention",
    "label": "Offboarded tenant: days before its CRM data is erased",
-   "description": "Days after a tenant's offboarding before the erasure saga erases its partner CRM data (stage 2), without the owner's click (decision D2). CIS, Booking and TripPlanner use the offboarded tenant retention instead (stage 1). Read by the tenant erasure saga from the release that ships it; marked enforced by a later migration.",
+   "description": "Days after a tenant's offboarding before the erasure saga erases its partner CRM data (stage 2), without the owner's click (decision D2). CIS, Booking and TripPlanner use the offboarded tenant retention instead (stage 1). Read by the tenant erasure saga.",
    "value_type": "int",
    "unit": "days",
    "min_value": 30,
@@ -130,7 +130,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "Days after a tenant is offboarded before its partner CRM data (clients, bookings it kept in the CRM) is erased by the erasure process, without the agency owner's click.",
@@ -153,7 +153,7 @@
    "app": "cis",
    "area": "retention",
    "label": "Erasure: allow real deletion",
-   "description": "On: a Cognito administrator may approve a tenant erasure round and the apps then erase the tenant's data (CIS also needs its own data_erasure switch). Off (default): DRY RUNs only. Read by the tenant erasure saga from the release that ships it; marked enforced by a later migration.",
+   "description": "On: a Cognito administrator may approve a tenant erasure round and the apps then erase the tenant's data (CIS also needs its own data_erasure switch). Off (default): DRY RUNs only. Read by the tenant erasure saga.",
    "value_type": "bool",
    "unit": null,
    "min_value": null,
@@ -166,7 +166,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The master switch of tenant data erasure. Off: erasure only runs dry runs that show what would be deleted. On: an administrator may approve an erasure round and the apps then really delete the tenant's data (CIS also needs its own erasure switch).",
@@ -189,7 +189,7 @@
    "app": "cis",
    "area": "retention",
    "label": "Erasure approval: hours it stays valid",
-   "description": "Hours a combined erasure fingerprint may still be approved after it was computed, and hours an approval stays valid for the apps to apply (decision D7). Past it the tech lead starts a new DRY RUN round. Read by the tenant erasure saga from the release that ships it; marked enforced by a later migration.",
+   "description": "Hours a combined erasure fingerprint may still be approved after it was computed, and hours an approval stays valid for the apps to apply (decision D7). Past it the tech lead starts a new DRY RUN round. Read by the tenant erasure saga.",
    "value_type": "int",
    "unit": "hours",
    "min_value": 1,
@@ -202,7 +202,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "An erasure round is approved on a fingerprint of exactly what will be deleted. This is how long that fingerprint may still be approved, and how long an approval stays valid for the apps to delete. After it, a new dry run is needed.",
@@ -225,7 +225,7 @@
    "app": "cis",
    "area": "retention",
    "label": "Offboarded tenant: days before its data is erased",
-   "description": "Days after a tenant's offboarding before the data erasure may remove its CIS data (the apply switch itself stays in Terraform). The Dev erasure drill sets the env override to 0.",
+   "description": "Days after a tenant's offboarding before the data erasure may remove its CIS data (the apply switch itself stays in Terraform). The Dev erasure drill sets 0 here for its run and puts the value back after it.",
    "value_type": "int",
    "unit": "days",
    "min_value": 0,
@@ -236,7 +236,7 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": false,
-   "env_override": "ERASURE_TENANT_RETENTION_DAYS",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
@@ -261,7 +261,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: final quiz questions per module",
-   "description": "Research section 4.3: how many questions the final mixed quiz of a path draws from each required module (fewer when a module has fewer items that are not suspended). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Research section 4.3: how many questions the final mixed quiz of a path draws from each required module (fewer when a module has fewer items that are not suspended). Read by the AA Academy learning API (/learn/v1).",
    "value_type": "int",
    "unit": "items",
    "min_value": 1,
@@ -274,7 +274,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many questions the final quiz of a path takes from each required module.",
@@ -297,7 +297,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: final path quiz pass mark",
-   "description": "Decision D7 / research section 4.3: the lowest score, in percent, that passes the final mixed quiz of a learning path (drawn from every required module). Passing it, with every required module complete, issues the path certificate. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D7 / research section 4.3: the lowest score, in percent, that passes the final mixed quiz of a learning path (drawn from every required module). Passing it, with every required module complete, issues the path certificate. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "pct",
    "unit": "%",
    "min_value": 50,
@@ -310,7 +310,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The score a learner needs on the final quiz of a learning path. Passing it, after every required module, earns the path certificate.",
@@ -333,7 +333,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: keep learning records after an account ends",
-   "description": "Decision D11 (data standards DM-7.1 learn rows): learning records are kept while the account is active, and deleted this many days after the staff account was deactivated or removed, by the learn_retention job (its first run is a DRY RUN). A change of this window is a DM-7.5 amendment. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D11 (data standards DM-7.1 learn rows): learning records are kept while the account is active, and deleted this many days after the staff account was deactivated or removed, by the learn_retention job (its first run is a DRY RUN). A change of this window is a DM-7.5 amendment. Not enforced yet: no code reads it until the learn_retention job ships; a later migration marks it enforced then.",
    "value_type": "int",
    "unit": "days",
    "min_value": 30,
@@ -369,7 +369,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: questions per module quiz",
-   "description": "Research section 4.2: the most questions the server draws for one module quiz attempt, from the module's items that are not suspended. A module with fewer items uses all of them. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Research section 4.2: the most questions the server draws for one module quiz attempt, from the module's items that are not suspended. A module with fewer items uses all of them. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "int",
    "unit": "items",
    "min_value": 3,
@@ -382,7 +382,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many questions one module quiz shows at most. The server picks them from the module's questions that are not on hold for review.",
@@ -405,7 +405,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: module quiz pass mark",
-   "description": "Decision D7 of the AA Academy research: the lowest score, in percent of the drawn items, that passes a module quiz. A module is complete when its required lessons are done and its quiz is passed at or above this mark. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D7 of the AA Academy research: the lowest score, in percent of the drawn items, that passes a module quiz. A module is complete when its required lessons are done and its quiz is passed at or above this mark. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "pct",
    "unit": "%",
    "min_value": 50,
@@ -418,7 +418,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The score a learner needs on a module quiz to pass it. A passed quiz (with the module's lessons read) completes the module.",
@@ -441,7 +441,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: wait before a quiz retake",
-   "description": "Decision D7: how many hours a learner waits after a failed quiz (module or final) before the next attempt opens. The wait makes a retake a second recall, not a guess at the answers just shown. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D7: how many hours a learner waits after a failed quiz (module or final) before the next attempt opens. The wait makes a retake a second recall, not a guess at the answers just shown. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "int",
    "unit": "hours",
    "min_value": 0,
@@ -454,7 +454,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How long a learner waits after failing a quiz before trying again. The explanations are shown after each try, so the wait keeps the next try a real test of memory.",
@@ -477,7 +477,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: certificate validity",
-   "description": "Decision D7: how many months a certificate of a path listed in cis.learn.recert_paths stays valid before it expires and the holder certifies again. Certificates of other paths do not expire (they still need renewal when a required module gets a major version). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D7: how many months a certificate of a path listed in cis.learn.recert_paths stays valid before it expires and the holder certifies again. Certificates of other paths do not expire (they still need renewal when a required module gets a major version). Read by the AA Academy learning API (/learn/v1).",
    "value_type": "int",
    "unit": "months",
    "min_value": 1,
@@ -490,7 +490,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How long a certificate stays valid for the paths that must be renewed (the on-duty and tech-lead paths by default).",
@@ -513,7 +513,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: paths whose certificates expire",
-   "description": "Decision D7: the learning path ids whose certificates expire after cis.learn.recert_months. Every other path certificate stays valid until a required module gets a major version or a new required module is added. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D7: the learning path ids whose certificates expire after cis.learn.recert_months. Every other path certificate stays valid until a required module gets a major version or a new required module is added. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "list",
    "unit": null,
    "min_value": null,
@@ -529,7 +529,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The learning paths whose certificates expire after the validity period and must be earned again.",
@@ -552,7 +552,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: review cards per day",
-   "description": "Research section 4.3: the most spaced-review cards the due list returns to one learner per day; the rest wait for the next day. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Research section 4.3: the most spaced-review cards the due list returns to one learner per day; the rest wait for the next day. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "int",
    "unit": "cards",
    "min_value": 5,
@@ -565,7 +565,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many review questions one learner gets at most in a day.",
@@ -588,7 +588,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: review recall target",
-   "description": "Research section 5.4 (spaced review with FSRS, ts-fsrs in the browser): the share of review cards a learner should still recall when a card comes due. The browser schedules with it; the API returns it with the due cards. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Research section 5.4 (spaced review with FSRS, ts-fsrs in the browser): the share of review cards a learner should still recall when a card comes due. The browser schedules with it; the API returns it with the due cards. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "numeric",
    "unit": "ratio",
    "min_value": 0.7,
@@ -601,7 +601,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How sure the review schedule wants to be that a learner still remembers a missed question when it comes back.",
@@ -624,7 +624,7 @@
    "app": "cis",
    "area": "learn",
    "label": "Academy: certificate checks per minute",
-   "description": "ADR 0022 decision 6 (accepted, S280): how many public certificate verify requests one client address may make per minute on /learn/public/v1/certificates/{code}; more answer 429. Slows down guessing codes (128-bit, stored as SHA-256). Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "ADR 0022 decision 6 (accepted, S280): how many public certificate verify requests one client address may make per minute on /learn/public/v1/certificates/{code}; more answer 429. Slows down guessing codes (128-bit, stored as SHA-256). Read by the AA Academy learning API (/learn/v1).",
    "value_type": "int",
    "unit": "requests",
    "min_value": 5,
@@ -637,7 +637,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many times per minute one visitor may check certificates on the public verify page.",
@@ -656,11 +656,47 @@
    }
   },
   {
+   "key": "cis.learn.verify_visitor_requests_per_minute",
+   "app": "cis",
+   "area": "learn",
+   "label": "Academy: certificate checks per minute for one visitor of the academy web",
+   "description": "ADR 0022 decision 11: the academy web calls the public verify route /learn/public/v1/certificates/{code} from its server, so all its visitors reach CIS from one address and cis.learn.verify_requests_per_minute caps the whole web. This is how many verify requests one visitor of the academy web may make per minute: CIS sends it on every verify answer (response header X-Learn-Visitor-Limit, contract learn.http.v1) and the academy web refuses a visitor over it before it calls CIS. CIS sends at most the per-address limit minus one, so one visitor can never use up the web's whole budget. Read by the AA Academy learning API.",
+   "value_type": "int",
+   "unit": "requests",
+   "min_value": 1,
+   "max_value": 300,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many certificate checks one visitor of the academy web may make per minute on the public verify page. All visitors of the academy web share the per-address limit (certificate checks per minute), so this smaller number keeps one visitor from using all of it.",
+     "raise": "A visitor who checks many certificates in a row is told to wait less often, but fewer such visitors fit in the shared per-address limit before everyone is told to wait. It never goes above the per-address limit minus one, whatever this says.",
+     "lower": "One visitor reloading the page in a loop uses less of the shared limit, so other visitors keep their checks, but a visitor checking a batch of certificates by hand is told to wait sooner.",
+     "when": "Raise it if a partner checking a batch of certificates on the academy web is told to wait; lower it if the logs show one visitor reloading the verify page in a loop while others are refused.",
+     "example": "With the default of 6 and the per-address limit at its default of 30: the 7th check within one minute from the same visitor waits until the minute ends, and five such visitors together still leave room for others."
+    },
+    "vi": {
+     "what": "Số lần mỗi phút một người truy cập trang academy được kiểm chứng chỉ trên trang xác minh công khai. Mọi người truy cập trang academy dùng chung giới hạn theo địa chỉ (số lần kiểm chứng chỉ mỗi phút), nên con số nhỏ hơn này giữ cho một người không dùng hết giới hạn chung đó.",
+     "raise": "Người kiểm nhiều chứng chỉ liên tiếp ít bị báo chờ hơn, nhưng giới hạn chung theo địa chỉ chứa được ít người như vậy hơn trước khi mọi người bị báo chờ. Giá trị gửi đi không bao giờ vượt quá giới hạn theo địa chỉ trừ một, dù ở đây đặt bao nhiêu.",
+     "lower": "Một người tải lại trang liên tục chỉ dùng ít phần của giới hạn chung, nên người khác vẫn kiểm được, nhưng người kiểm cả loạt chứng chỉ bằng tay sẽ bị báo chờ sớm hơn.",
+     "when": "Tăng nếu một đối tác kiểm cả loạt chứng chỉ trên trang academy bị báo chờ; giảm nếu nhật ký cho thấy một người tải lại trang xác minh liên tục trong khi người khác bị từ chối.",
+     "example": "Với mặc định 6 và giới hạn theo địa chỉ ở mặc định 30: lần kiểm thứ 7 trong một phút của cùng một người phải chờ hết phút đó, và năm người như vậy cùng lúc vẫn chừa chỗ cho người khác."
+    }
+   }
+  },
+  {
    "key": "cis.learn.video_url_ttl_seconds",
    "app": "cis",
    "area": "learn",
    "label": "Academy: lesson video link lifetime",
-   "description": "Decision D8: how long the presigned S3 link to a lesson video (and its captions) works after the learning API issues it. The browser starts the video within that time; a seek keeps working on the open stream, a page reload asks for a new link. Read by the AA Academy learning API (/learn/v1) from the release that ships it; marked enforced by a later migration.",
+   "description": "Decision D8: how long the presigned S3 link to a lesson video (and its captions) works after the learning API issues it. The browser starts the video within that time; a seek keeps working on the open stream, a page reload asks for a new link. Read by the AA Academy learning API (/learn/v1).",
    "value_type": "duration_s",
    "unit": "seconds",
    "min_value": 60,
@@ -673,7 +709,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 60,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How long a link to a lesson video keeps working once the academy page asked for it.",
@@ -908,11 +944,47 @@
    }
   },
   {
+   "key": "cis.quality.claim_fire_sample_max",
+   "app": "cis",
+   "area": "quality",
+   "label": "Claim checker test: statements checked to find flagged ones",
+   "description": "The most unlabelled claims one R1 firing run may check (a deterministic, salted sample spread over the writers in proportion, drawn from claims on pieces no earlier claim-instrument evaluation touched). The fresh-pool sheet then draws its claims from the ones R1 fired on. It sets the paid calls of the firing run; the run's spending cap is cis.spend.instrument_eval_cap_usd. Read by the firing run.",
+   "value_type": "int",
+   "unit": "claims",
+   "min_value": 1,
+   "max_value": 3000,
+   "allowed_values": null,
+   "default_value": 600,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Before a test run of the claim checker (the AI check that flags statements in written content that the source material does not back up), the current checker looks at a sample of statements nobody has labelled yet, from content no earlier test used. A review panel then labels only the statements it flagged. This is how many statements go into that sample.",
+     "raise": "More flagged statements come out, so the label sheet holds enough real problems and false alarms, but the run makes more paid AI calls.",
+     "lower": "The run costs less, but it may flag too few statements, so the label sheet holds too few real problems for the test run.",
+     "when": "Raise it when the label sheet ends up with fewer real problems than the test run needs; lower it when the sheet regularly holds far more flagged statements than it uses.",
+     "example": "With the default of 600, the checker looks at up to 600 statements; at a flag rate of about one in five that gives about 120 flagged statements for the panel."
+    },
+    "vi": {
+     "what": "Trước khi chạy thử bộ kiểm tra câu khẳng định (bước AI đánh dấu những câu trong bài viết mà tài liệu nguồn không chứng minh được), bộ kiểm tra hiện tại xem một mẫu các câu chưa ai gán nhãn, lấy từ nội dung chưa lần thử nào dùng tới. Sau đó hội đồng duyệt chỉ gán nhãn những câu nó đã đánh dấu. Đây là số câu được đưa vào mẫu đó.",
+     "raise": "Có nhiều câu bị đánh dấu hơn, nên bảng gán nhãn đủ lỗi thật và báo động nhầm, nhưng lần chạy gọi AI trả phí nhiều hơn.",
+     "lower": "Lần chạy tốn ít tiền hơn, nhưng có thể đánh dấu quá ít câu, nên bảng gán nhãn có quá ít lỗi thật cho lần chạy thử.",
+     "when": "Tăng khi bảng gán nhãn có ít lỗi thật hơn mức lần chạy thử cần; giảm khi bảng thường xuyên có nhiều câu bị đánh dấu hơn hẳn số câu được dùng.",
+     "example": "Với mặc định 600, bộ kiểm tra xem tối đa 600 câu; với tỷ lệ đánh dấu khoảng một trên năm, hội đồng có khoảng 120 câu để gán nhãn."
+    }
+   }
+  },
+  {
    "key": "cis.quality.claim_fresh_pool_sample_max",
    "app": "cis",
    "area": "quality",
    "label": "Claim checker test: statements drawn for a fresh label sheet",
-   "description": "The most claims one fresh-pool sample may draw for the labelling sheet of a claim-instrument evaluation (R1-fired claims on pieces no earlier evaluation touched; the agent panel labels every drawn claim, then about half are false positives and half violations). Read by the fresh-pool builder from the release that ships it; marked enforced by a later migration.",
+   "description": "The most claims one fresh-pool sample may draw for the labelling sheet of a claim-instrument evaluation (R1-fired claims on pieces no earlier evaluation touched; the agent panel labels every drawn claim, then about half are false positives and half violations). Read by the fresh-pool builder.",
    "value_type": "int",
    "unit": "claims",
    "min_value": 1,
@@ -925,7 +997,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many statements are drawn for a fresh label sheet before a test run of the claim checker (the AI check that flags statements in written content that the source material does not back up). They are statements the current checker flagged in content that no earlier test used; a review panel labels each one as a real problem or a false alarm, and the test then draws its statements from them.",
@@ -948,7 +1020,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Two-step claim checker test: false alarms the second step must clear",
-   "description": "Per-step go / no-go bar of the two-step claim-instrument evaluation: of the false positives (claims judged ok that the R1 instrument fired on) step 1 sent on, step 2 must clear at least this percentage. When step 1 cleared every false positive the bar holds. Fixed in the pre-registration before any data; read by the two-step evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Per-step go / no-go bar of the two-step claim-instrument evaluation: of the false positives (claims judged ok that the R1 instrument fired on) step 1 sent on, step 2 must clear at least this percentage. When step 1 cleared every false positive the bar holds. Fixed in the pre-registration before any data; read by the two-step evaluation.",
    "value_type": "pct",
    "unit": "%",
    "min_value": 0,
@@ -961,7 +1033,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "Some false alarms (statements the review panel judged fine that the claim checker (the AI check that flags statements in written content that the source material does not back up) flagged) still reach the second step of its two-step version, because the first step thought they add something new. This is the share of those false alarms the second step must clear to pass its test run. The overall bar for false alarms cleared applies on top.",
@@ -984,7 +1056,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Two-step claim checker test: real problems the second step must flag",
-   "description": "Per-step go / no-go bar of the two-step claim-instrument evaluation: of the stored violations step 1 sent on, step 2 (is each new specific supported by the source) must flag at least this percentage. Fixed in the pre-registration before any data; read by the two-step evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Per-step go / no-go bar of the two-step claim-instrument evaluation: of the stored violations step 1 sent on, step 2 (is each new specific supported by the source) must flag at least this percentage. Fixed in the pre-registration before any data; read by the two-step evaluation.",
    "value_type": "pct",
    "unit": "%",
    "min_value": 0,
@@ -997,7 +1069,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The second step of the two-step version of the claim checker (the AI check that flags statements in written content that the source material does not back up) checks only the statements the first step found to add something new, and decides whether the source backs up what they add. This is the share of the real problems reaching it (confirmed violations) that the second step must still flag to pass its test run.",
@@ -1020,7 +1092,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Two-step claim checker test: real problems passed to the second step",
-   "description": "Per-step go / no-go bar of the two-step claim-instrument evaluation: step 1 (restatement of the source or new claim) must send at least this percentage of the subset's stored violations on to step 2. A violation that step 1 calls a restatement is lost for good. Fixed in the pre-registration before any data; read by the two-step evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Per-step go / no-go bar of the two-step claim-instrument evaluation: step 1 (restatement of the source or new claim) must send at least this percentage of the subset's stored violations on to step 2. A violation that step 1 calls a restatement is lost for good. Fixed in the pre-registration before any data; read by the two-step evaluation.",
    "value_type": "pct",
    "unit": "%",
    "min_value": 0,
@@ -1033,7 +1105,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The two-step version of the claim checker (the AI check that flags statements in written content that the source material does not back up) first sorts each flagged statement: does it only repeat the source in other words, or does it add something new? Only statements that add something go on to the second step, which checks them against the source. This is the share of real problems (confirmed violations) the first step must pass on to pass its test run.",
@@ -1056,7 +1128,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Claim checker test run: false alarms it must clear",
-   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must clear at least this percentage of the subset's false positives (claims the panel judged ok that R1 fired on). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must clear at least this percentage of the subset's false positives (claims the panel judged ok that R1 fired on). Read by the evaluation.",
    "value_type": "pct",
    "unit": "%",
    "min_value": 0,
@@ -1069,7 +1141,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The share of false alarms (statements the review panel judged fine but the claim checker (the AI check that flags statements in written content that the source material does not back up) flagged) that a new prompt must stop flagging to pass its test run. Together with the bar for real problems kept, it decides whether the new prompt may replace the current one.",
@@ -1092,7 +1164,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Claim checker test run: real problems it must keep",
-   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must still flag at least this percentage of the subset's stored violations (out of sample; the approved relabels are in-sample for a prompt drawn from them, so they are reported apart and never count toward this bar). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Go / no-go bar of a claim-instrument evaluation: the new prompt version must still flag at least this percentage of the subset's stored violations (out of sample; the approved relabels are in-sample for a prompt drawn from them, so they are reported apart and never count toward this bar). Read by the evaluation.",
    "value_type": "pct",
    "unit": "%",
    "min_value": 0,
@@ -1105,7 +1177,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The share of real problems (statements stored as confirmed violations) that a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up) must still flag to pass its test run. It stops a prompt that looks better only because it flags less.",
@@ -1416,7 +1488,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Writer proofs: null run minimum samples",
-   "description": "The fewest golden samples (GATE side) a registered null run pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "The fewest golden samples (GATE side) a registered null run pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "int",
    "unit": "items",
    "min_value": 5,
@@ -1429,7 +1501,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The fewest samples the null run (the first writer proof: the blog writer re-run with no change, to show the scoring itself is stable) may be registered with. The samples are fixed before any money is spent and taken from the sealed part of the test set, so the result cannot be tuned after the fact. A separate check also works out whether the samples are enough to see the expected difference.",
@@ -1452,7 +1524,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Writer proofs: tour rewrite minimum samples",
-   "description": "The fewest golden samples (GATE side) a registered S1 tour rewrite proof pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "The fewest golden samples (GATE side) a registered S1 tour rewrite proof pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "int",
    "unit": "items",
    "min_value": 5,
@@ -1465,7 +1537,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The fewest samples the tour rewrite proof (the test of a change to the AI that rewrites tour descriptions) may be registered with. The samples are fixed before any money is spent and taken from the sealed part of the test set, so the result cannot be tuned after the fact. A separate check also works out whether the samples are enough to see the expected difference.",
@@ -1488,7 +1560,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Writer proofs: agency tour writer minimum samples",
-   "description": "The fewest golden samples (GATE side) a registered T2 tenant tour writer proof pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "The fewest golden samples (GATE side) a registered T2 tenant tour writer proof pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "int",
    "unit": "items",
    "min_value": 5,
@@ -1501,7 +1573,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The fewest samples the agency tour writer proof (the test of a change to the AI that writes tour pages for partner agencies) may be registered with. The samples are fixed before any money is spent and taken from the sealed part of the test set, so the result cannot be tuned after the fact. A separate check also works out whether the samples are enough to see the expected difference.",
@@ -1524,7 +1596,7 @@
    "app": "cis",
    "area": "quality",
    "label": "Writer proofs: blog writer minimum samples",
-   "description": "The fewest golden samples (GATE side) a registered T9 blog writer proof pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "The fewest golden samples (GATE side) a registered T9 blog writer proof pre-registration may fix. The power check still decides whether the sample is big enough for the pre-registered effect; this is the floor below which no file can be registered. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "int",
    "unit": "items",
    "min_value": 5,
@@ -1537,7 +1609,7 @@
    "evidence_required": true,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The fewest samples the blog writer proof (the test of a change to the AI that writes blog posts) may be registered with. The samples are fixed before any money is spent and taken from the sealed part of the test set, so the result cannot be tuned after the fact. A separate check also works out whether the samples are enough to see the expected difference.",
@@ -5231,7 +5303,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Second-opinion judge: mode of every kind",
-   "description": "off: no call. shadow: the judge's verdicts are recorded only. repair: a violation gets one sentence repair, never a hold (paid judge calls once on). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "off: no call. shadow: the judge's verdicts are recorded only. repair: a violation gets one sentence repair, never a hold (paid judge calls once on). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5246,19 +5318,19 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_ADJ_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "A paid AI judge that takes a second look at four kinds of findings of the free checks (a leaked naming note, a repeat in other words, a FAQ answer that does not answer, a superlative with no scope) and decides whether they are real. This sets the mode of every kind whose own setting is inherit. off: no call. shadow: its verdicts are recorded only. repair: a confirmed finding gets one sentence repair, never a hold. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "A paid AI judge that takes a second look at four kinds of findings of the free checks (a leaked naming note, a repeat in other words, a FAQ answer that does not answer, a superlative with no scope) and decides whether they are real. This sets the mode of every kind whose own setting is inherit. off: no call. shadow: its verdicts are recorded only. repair: a confirmed finding gets one sentence repair, never a hold.",
      "raise": "repair (the stricter choice): confirmed findings are repaired; paid judge calls start.",
      "lower": "off or shadow (the looser choices): no repair; off makes no paid call, shadow pays for calls to measure the judge.",
      "when": "Use shadow to measure the judge before trusting it, then repair when its verdicts prove right. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default off: no second-opinion call is made."
     },
     "vi": {
-     "what": "Một giám khảo AI có phí xem lại bốn kiểu phát hiện của các bước kiểm miễn phí (lộ ghi chú cách gọi tên, lặp ý bằng lời khác, câu trả lời FAQ lạc đề, khen tột bậc không phạm vi) và quyết định có đúng là lỗi không. Thiết lập này đặt chế độ cho mọi kiểu có thiết lập riêng là inherit. off: không gọi. shadow: chỉ ghi lại kết luận. repair: phát hiện được xác nhận sẽ được sửa một câu, không giữ bài. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Một giám khảo AI có phí xem lại bốn kiểu phát hiện của các bước kiểm miễn phí (lộ ghi chú cách gọi tên, lặp ý bằng lời khác, câu trả lời FAQ lạc đề, khen tột bậc không phạm vi) và quyết định có đúng là lỗi không. Thiết lập này đặt chế độ cho mọi kiểu có thiết lập riêng là inherit. off: không gọi. shadow: chỉ ghi lại kết luận. repair: phát hiện được xác nhận sẽ được sửa một câu, không giữ bài.",
      "raise": "repair (lựa chọn chặt hơn): phát hiện được xác nhận sẽ được sửa; bắt đầu có lượt gọi giám khảo có phí.",
      "lower": "off hoặc shadow (lựa chọn nới hơn): không sửa; off không gọi có phí, shadow trả phí để đo giám khảo.",
      "when": "Dùng shadow để đo giám khảo trước khi tin, rồi chuyển sang repair khi kết luận được chứng minh đúng. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5271,7 +5343,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Second-opinion judge: FAQ answer that does not answer",
-   "description": "Mode of the tier-2 adjudicator class faq_non_answer; inherit = the mode of every class above. The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the tier-2 adjudicator class faq_non_answer; inherit = the mode of every class above. Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5287,19 +5359,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_ADJ_MODE_FAQ_NON_ANSWER",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a FAQ answer that does not answer its question. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a FAQ answer that does not answer its question. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, câu trả lời FAQ không trả lời đúng câu hỏi. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, câu trả lời FAQ không trả lời đúng câu hỏi. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5312,7 +5384,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Second-opinion judge: naming note leak",
-   "description": "Mode of the tier-2 adjudicator class naming_note_leak; inherit = the mode of every class above. The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the tier-2 adjudicator class naming_note_leak; inherit = the mode of every class above. Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5328,19 +5400,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_ADJ_MODE_NAMING_NOTE_LEAK",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a naming note (how to spell or call a place) that leaked into the text. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a naming note (how to spell or call a place) that leaked into the text. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, ghi chú về cách viết hay cách gọi tên địa danh lọt vào bài. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, ghi chú về cách viết hay cách gọi tên địa danh lọt vào bài. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5353,7 +5425,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Second-opinion judge: repeat in other words",
-   "description": "Mode of the tier-2 adjudicator class paraphrased_repeat; inherit = the mode of every class above. The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the tier-2 adjudicator class paraphrased_repeat; inherit = the mode of every class above. Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5369,19 +5441,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_ADJ_MODE_PARAPHRASED_REPEAT",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, the same point said twice in different words. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, the same point said twice in different words. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, cùng một ý được nói hai lần bằng lời khác nhau. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, cùng một ý được nói hai lần bằng lời khác nhau. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5394,7 +5466,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Second-opinion judge: superlative with no scope",
-   "description": "Mode of the tier-2 adjudicator class scopeless_superlative; inherit = the mode of every class above. The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the tier-2 adjudicator class scopeless_superlative; inherit = the mode of every class above. Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5410,19 +5482,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_ADJ_MODE_SCOPELESS_SUPERLATIVE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a superlative with no scope (the best, the most beautiful) that the source does not support. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a superlative with no scope (the best, the most beautiful) that the source does not support. inherit = follow the second-opinion judge setting for every kind; or pick off, shadow or repair for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, lời khen tột bậc không nêu phạm vi (đẹp nhất, tuyệt nhất) mà nguồn không chứng minh. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, lời khen tột bậc không nêu phạm vi (đẹp nhất, tuyệt nhất) mà nguồn không chứng minh. inherit = theo thiết lập chung của nhóm (giám khảo xem lại); hoặc chọn off, shadow or repair cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5435,7 +5507,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Content checks: place outside the piece's scope",
-   "description": "warn: a place outside the piece's scope is reported only. block: a body finding blocks for one sentence repair and holds the piece when it is left (AA-788). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "warn: a place outside the piece's scope is reported only. block: a body finding blocks for one sentence repair and holds the piece when it is left (AA-788). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5449,19 +5521,19 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_F12_SCOPE_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "What the free scope check does when a blog or social post names a place outside the piece's scope (a place no day of the trip visits). warn: reported only. block: a finding in the body gets one sentence repair, and the piece is held if it is still there. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "What the free scope check does when a blog or social post names a place outside the piece's scope (a place no day of the trip visits). warn: reported only. block: a finding in the body gets one sentence repair, and the piece is held if it is still there.",
      "raise": "block (the stricter choice): pieces stop naming places the trip does not visit; more repairs (paid) and holds.",
      "lower": "warn (the looser choice): the piece goes on with a flag.",
      "when": "Choose block when tenants receive pieces that send readers to places the tour never visits. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default warn: out-of-scope places are flagged, nothing is held."
     },
     "vi": {
-     "what": "Bước kiểm phạm vi (miễn phí) xử lý ra sao khi bài blog hay mạng xã hội nêu một địa điểm ngoài phạm vi của bài (nơi không ngày nào của chuyến ghé). warn: chỉ báo. block: lỗi trong thân bài được sửa một câu, nếu vẫn còn thì bài bị giữ. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Bước kiểm phạm vi (miễn phí) xử lý ra sao khi bài blog hay mạng xã hội nêu một địa điểm ngoài phạm vi của bài (nơi không ngày nào của chuyến ghé). warn: chỉ báo. block: lỗi trong thân bài được sửa một câu, nếu vẫn còn thì bài bị giữ.",
      "raise": "block (lựa chọn chặt hơn): bài không còn nhắc nơi chuyến đi không ghé; nhiều lần sửa (có phí) và giữ bài hơn.",
      "lower": "warn (lựa chọn nới hơn): bài đi tiếp kèm cờ.",
      "when": "Chọn block khi đại lý nhận bài dẫn người đọc tới nơi tour không hề ghé. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5474,7 +5546,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Content checks: social post under its minimum length",
-   "description": "repair: a social piece under its length floor gets the attempt-1 rewrite (AA-780). warn: the kill switch, reported only. The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "repair: a social piece under its length floor gets the attempt-1 rewrite (AA-780). warn: the kill switch, reported only. Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5488,19 +5560,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_F14_FLOOR_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "What happens when a social post comes out shorter than its channel's minimum. repair: the post is rewritten once (a paid call). warn: reported only, the switch to stop those rewrites. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "What happens when a social post comes out shorter than its channel's minimum. repair: the post is rewritten once (a paid call). warn: reported only, the switch to stop those rewrites.",
      "raise": "repair (the stricter choice): short posts are lengthened once before delivery; one more paid call each.",
      "lower": "warn (the looser choice): short posts go out as written, with a flag.",
      "when": "Choose warn if the rewrites misbehave (for example they add facts) or cost too much; repair otherwise. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default repair: a too-short post is rewritten once."
     },
     "vi": {
-     "what": "Xử lý ra sao khi bài mạng xã hội ngắn hơn mức tối thiểu của kênh. repair: viết lại bài một lần (lượt gọi có phí). warn: chỉ báo, là công tắc để dừng các lần viết lại đó. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Xử lý ra sao khi bài mạng xã hội ngắn hơn mức tối thiểu của kênh. repair: viết lại bài một lần (lượt gọi có phí). warn: chỉ báo, là công tắc để dừng các lần viết lại đó.",
      "raise": "repair (lựa chọn chặt hơn): bài quá ngắn được kéo dài một lần trước khi giao; thêm một lượt gọi có phí mỗi bài.",
      "lower": "warn (lựa chọn nới hơn): bài ngắn được giao nguyên trạng, kèm cờ.",
      "when": "Chọn warn nếu lần viết lại hoạt động sai (ví dụ thêm dữ kiện) hoặc quá tốn; còn lại để repair. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5513,7 +5585,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Content checks: off-brand wording",
-   "description": "warn: off-brand wording is reported only. repair: on attempt 1 a flagged body sentence gets one sentence repair (never a hold) (AA-788). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "warn: off-brand wording is reported only. repair: on attempt 1 a flagged body sentence gets one sentence repair (never a hold) (AA-788). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5527,19 +5599,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_F9_BRAND_STYLE_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "What happens when the AI judge finds off-brand or AI-sounding wording in a blog or social post. warn: reported only. repair: on the first attempt, a flagged sentence gets one sentence repair (never a hold). An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "What happens when the AI judge finds off-brand or AI-sounding wording in a blog or social post. warn: reported only. repair: on the first attempt, a flagged sentence gets one sentence repair (never a hold).",
      "raise": "repair (the stricter choice): flagged sentences are rewritten once; one more paid call per flagged piece.",
      "lower": "warn (the looser choice): the wording stays, staff see a flag.",
      "when": "Choose repair when tenants keep editing out wording the judge already flagged. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default warn: flagged wording is listed, not changed."
     },
     "vi": {
-     "what": "Xử lý ra sao khi giám khảo AI thấy câu chữ lệch thương hiệu hoặc nghe như máy viết trong bài blog hay mạng xã hội. warn: chỉ báo. repair: ở lần viết đầu, câu bị gắn cờ được sửa một lần (không bao giờ giữ bài). Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Xử lý ra sao khi giám khảo AI thấy câu chữ lệch thương hiệu hoặc nghe như máy viết trong bài blog hay mạng xã hội. warn: chỉ báo. repair: ở lần viết đầu, câu bị gắn cờ được sửa một lần (không bao giờ giữ bài).",
      "raise": "repair (lựa chọn chặt hơn): câu bị gắn cờ được viết lại một lần; thêm một lượt gọi có phí mỗi bài bị gắn cờ.",
      "lower": "warn (lựa chọn nới hơn): câu chữ giữ nguyên, nhân viên thấy cờ.",
      "when": "Chọn repair khi đại lý liên tục tự sửa những câu giám khảo đã gắn cờ. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5552,7 +5624,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Claim judge policy",
-   "description": "interim: only a trip promise holds, every other F9 class warns (the claim verdicts below). legacy: the pre-W0 verdict (rollback). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "interim: only a trip promise holds, every other F9 class warns (the claim verdicts below). legacy: the pre-W0 verdict (rollback). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5566,19 +5638,19 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_F9_POLICY_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "Which policy the AI claim judge of blog and social posts follows. interim: only a trip promise the source lacks holds a piece; every other kind of finding follows its own claim setting on this page (warn by default). legacy: the older rule in which most findings held the piece, kept as a rollback. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "Which policy the AI claim judge of blog and social posts follows. interim: only a trip promise the source lacks holds a piece; every other kind of finding follows its own claim setting on this page (warn by default). legacy: the older rule in which most findings held the piece, kept as a rollback.",
      "raise": "legacy (the stricter choice): far more pieces are held, including for claims the writing policy allows.",
      "lower": "interim (the looser choice): only trip promises hold; the rest are flags.",
      "when": "Switch to legacy only to roll back if the interim policy lets harmful claims through, or briefly to compare. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default interim: a blog that promises a sunrise view the source lacks is held; place background only gets a flag."
     },
     "vi": {
-     "what": "Giám khảo khẳng định (AI) của bài blog và mạng xã hội theo chính sách nào. interim: chỉ lời hứa chuyến đi không có trong nguồn mới giữ bài; các loại phát hiện khác theo thiết lập khẳng định riêng trên trang này (mặc định warn). legacy: quy tắc cũ, hầu hết phát hiện đều giữ bài, giữ lại để quay về khi cần. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Giám khảo khẳng định (AI) của bài blog và mạng xã hội theo chính sách nào. interim: chỉ lời hứa chuyến đi không có trong nguồn mới giữ bài; các loại phát hiện khác theo thiết lập khẳng định riêng trên trang này (mặc định warn). legacy: quy tắc cũ, hầu hết phát hiện đều giữ bài, giữ lại để quay về khi cần.",
      "raise": "legacy (lựa chọn chặt hơn): nhiều bài bị giữ hơn hẳn, kể cả vì khẳng định chính sách viết cho phép.",
      "lower": "interim (lựa chọn nới hơn): chỉ lời hứa chuyến đi giữ bài; còn lại là cờ.",
      "when": "Chỉ chuyển sang legacy để quay về nếu chính sách interim để lọt khẳng định có hại, hoặc tạm thời để so sánh. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5591,7 +5663,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: mode of every kind",
-   "description": "off: the checks do not run. shadow: recorded only. repair: a finding gets one sentence repair, never a hold. hold: like repair, and a promoted fact class may hold (until a class is promoted, hold reads as repair) (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "off: the checks do not run. shadow: recorded only. repair: a finding gets one sentence repair, never a hold. hold: like repair, and a promoted fact class may hold (until a class is promoted, hold reads as repair) (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5607,19 +5679,19 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "Free checks that compare a blog or social post with its source material and flag ten kinds of drift (an optional activity written as planned, 'near' written as 'at', a leaked brief line ...). This sets the mode of every kind whose own setting is inherit. off: they do not run. shadow: findings are recorded only. repair: a finding gets one sentence repair, never a hold. hold: like repair, and a kind promoted to a fact error may hold the piece. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "Free checks that compare a blog or social post with its source material and flag ten kinds of drift (an optional activity written as planned, 'near' written as 'at', a leaked brief line ...). This sets the mode of every kind whose own setting is inherit. off: they do not run. shadow: findings are recorded only. repair: a finding gets one sentence repair, never a hold. hold: like repair, and a kind promoted to a fact error may hold the piece.",
      "raise": "repair or hold (the stricter choices): drift from the source is repaired (a paid call per finding) and, on hold, may stop a piece.",
      "lower": "off or shadow (the looser choices): no repair; shadow still records what would have been found.",
      "when": "Move to shadow to measure the checks on real pieces, then to repair when their findings prove right. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default off: the checks do not run."
     },
     "vi": {
-     "what": "Các bước kiểm miễn phí so bài blog hay mạng xã hội với tư liệu nguồn và gắn cờ mười kiểu lệch (hoạt động tuỳ chọn viết như đã lên lịch, 'gần' viết thành 'tại', lộ câu của brief ...). Thiết lập này đặt chế độ cho mọi kiểu có thiết lập riêng là inherit. off: không chạy. shadow: chỉ ghi lại. repair: mỗi phát hiện được sửa một câu, không giữ bài. hold: như repair, và kiểu đã được nâng thành lỗi dữ kiện có thể giữ bài. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Các bước kiểm miễn phí so bài blog hay mạng xã hội với tư liệu nguồn và gắn cờ mười kiểu lệch (hoạt động tuỳ chọn viết như đã lên lịch, 'gần' viết thành 'tại', lộ câu của brief ...). Thiết lập này đặt chế độ cho mọi kiểu có thiết lập riêng là inherit. off: không chạy. shadow: chỉ ghi lại. repair: mỗi phát hiện được sửa một câu, không giữ bài. hold: như repair, và kiểu đã được nâng thành lỗi dữ kiện có thể giữ bài.",
      "raise": "repair hoặc hold (lựa chọn chặt hơn): phần lệch khỏi nguồn được sửa (mỗi phát hiện một lượt gọi có phí) và, ở hold, có thể chặn bài.",
      "lower": "off hoặc shadow (lựa chọn nới hơn): không sửa; shadow vẫn ghi lại những gì lẽ ra đã phát hiện.",
      "when": "Chuyển sang shadow để đo các bước kiểm trên bài thật, rồi sang repair khi kết quả được chứng minh đúng. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5632,7 +5704,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: writing brief leak",
-   "description": "Mode of the seed-align class brief_recipe_leak; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class brief_recipe_leak; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5649,19 +5721,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_BRIEF_RECIPE_LEAK",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, wording of the writing brief that leaked into the text. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, wording of the writing brief that leaked into the text. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, câu chữ của brief viết lọt vào bài. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, câu chữ của brief viết lọt vào bài. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5674,7 +5746,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: difficulty promise",
-   "description": "Mode of the seed-align class difficulty_promise; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class difficulty_promise; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5691,19 +5763,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_DIFFICULTY_PROMISE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a promise about how easy or hard the trip is that the source does not make. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a promise about how easy or hard the trip is that the source does not make. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, lời hứa về độ dễ hay khó của chuyến đi mà nguồn không nêu. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, lời hứa về độ dễ hay khó của chuyến đi mà nguồn không nêu. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5716,7 +5788,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: naming note leak",
-   "description": "Mode of the seed-align class naming_note_leak; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class naming_note_leak; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5733,19 +5805,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_NAMING_NOTE_LEAK",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a naming note (how to spell or call a place) that leaked into the text. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a naming note (how to spell or call a place) that leaked into the text. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, ghi chú về cách viết hay cách gọi tên địa danh lọt vào bài. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, ghi chú về cách viết hay cách gọi tên địa danh lọt vào bài. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5758,7 +5830,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: 'near' written as 'at'",
-   "description": "Mode of the seed-align class near_as_at; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class near_as_at; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5775,19 +5847,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_NEAR_AS_AT",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a stay or visit near a place written as being at the place. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a stay or visit near a place written as being at the place. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, nơi ở hay điểm ghé gần một địa danh bị viết thành nằm tại địa danh đó. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, nơi ở hay điểm ghé gần một địa danh bị viết thành nằm tại địa danh đó. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5800,7 +5872,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: optional activity written as planned",
-   "description": "Mode of the seed-align class optional_as_planned; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class optional_as_planned; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5817,19 +5889,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_OPTIONAL_AS_PLANNED",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, an optional activity written as if it is part of the plan. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, an optional activity written as if it is part of the plan. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, hoạt động tuỳ chọn được viết như thể nằm trong kế hoạch. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, hoạt động tuỳ chọn được viết như thể nằm trong kế hoạch. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5842,7 +5914,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: opener with nothing before it",
-   "description": "Mode of the seed-align class orphan_opener; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class orphan_opener; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5859,19 +5931,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_ORPHAN_OPENER",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, an opening line that refers to something never introduced. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, an opening line that refers to something never introduced. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, câu mở đầu nhắc tới điều chưa từng được giới thiệu. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, câu mở đầu nhắc tới điều chưa từng được giới thiệu. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5884,7 +5956,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: repeat in other words",
-   "description": "Mode of the seed-align class paraphrased_repeat; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class paraphrased_repeat; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5901,19 +5973,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_PARAPHRASED_REPEAT",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, the same point said twice in different words. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, the same point said twice in different words. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, cùng một ý được nói hai lần bằng lời khác nhau. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, cùng một ý được nói hai lần bằng lời khác nhau. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5926,7 +5998,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: planned activity written as optional",
-   "description": "Mode of the seed-align class planned_as_optional; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class planned_as_optional; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5943,19 +6015,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_PLANNED_AS_OPTIONAL",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a planned activity written as if it were optional. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a planned activity written as if it were optional. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, hoạt động có trong kế hoạch lại được viết như thể tuỳ chọn. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, hoạt động có trong kế hoạch lại được viết như thể tuỳ chọn. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -5968,7 +6040,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: superlative with no scope",
-   "description": "Mode of the seed-align class scopeless_superlative; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class scopeless_superlative; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -5985,19 +6057,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_SCOPELESS_SUPERLATIVE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a superlative with no scope (the best, the most beautiful) that the source does not support. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a superlative with no scope (the best, the most beautiful) that the source does not support. inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, lời khen tột bậc không nêu phạm vi (đẹp nhất, tuyệt nhất) mà nguồn không chứng minh. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, lời khen tột bậc không nêu phạm vi (đẹp nhất, tuyệt nhất) mà nguồn không chứng minh. inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -6010,7 +6082,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Source match checks: unsupported world claim",
-   "description": "Mode of the seed-align class world_share_unsupported; inherit = the mode of every class above (AA-789). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "Mode of the seed-align class world_share_unsupported; inherit = the mode of every class above (AA-789). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -6027,19 +6099,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T10_SA_MODE_WORLD_SHARE_UNSUPPORTED",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The mode for one kind of finding, a world-ranking or share-of-the-world claim the source does not support (home to half the world's ...). inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "The mode for one kind of finding, a world-ranking or share-of-the-world claim the source does not support (home to half the world's ...). inherit = follow the source match checks setting for every kind; or pick off, shadow, repair or hold for this kind alone.",
      "raise": "A stricter mode than the family setting for this kind alone (for example repair while the rest stay on shadow): this drift gets repaired, at a paid call per finding.",
      "lower": "A looser mode for this kind alone (off or shadow): this kind stops being repaired while the others are.",
      "when": "Set it when one kind proves reliable (or noisy) before the others. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default inherit: this kind does what the family setting says."
     },
     "vi": {
-     "what": "Chế độ cho riêng một kiểu phát hiện, khẳng định xếp hạng thế giới hay tỷ lệ của thế giới mà nguồn không chứng minh (nơi có một nửa số ... của thế giới). inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Chế độ cho riêng một kiểu phát hiện, khẳng định xếp hạng thế giới hay tỷ lệ của thế giới mà nguồn không chứng minh (nơi có một nửa số ... của thế giới). inherit = theo thiết lập chung của nhóm (kiểm khớp nguồn); hoặc chọn off, shadow, repair or hold cho riêng kiểu này.",
      "raise": "Chế độ chặt hơn thiết lập chung cho riêng kiểu này (ví dụ repair khi các kiểu khác vẫn shadow): kiểu lệch này được sửa, mỗi phát hiện một lượt gọi có phí.",
      "lower": "Chế độ nới hơn cho riêng kiểu này (off hoặc shadow): kiểu này thôi được sửa trong khi các kiểu khác vẫn sửa.",
      "when": "Đặt khi một kiểu tỏ ra đáng tin (hoặc hay báo nhầm) sớm hơn các kiểu khác. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -6128,7 +6200,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Topic planning: what to do with contested topics",
-   "description": "rank: flagged Slate candidates are ordered after unflagged ones, none dropped (AA-1079). cut: flagged candidates are cut, worst first, up to the cut fraction below (AA-631). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "rank: flagged Slate candidates are ordered after unflagged ones, none dropped (AA-1079). cut: flagged candidates are cut, worst first, up to the cut fraction below (AA-631). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -6142,19 +6214,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T7_DEBATE_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "When topics are proposed for a channel, a topic whose keyword is too contested (see the contested threshold) is flagged. rank: flagged topics are listed after the others, none dropped. cut: flagged topics are dropped, worst first, up to the cut share. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "When topics are proposed for a channel, a topic whose keyword is too contested (see the contested threshold) is flagged. rank: flagged topics are listed after the others, none dropped. cut: flagged topics are dropped, worst first, up to the cut share.",
      "raise": "cut (the stricter choice): fewer contested topics are proposed; a channel's list gets shorter.",
      "lower": "rank (the looser choice): every topic stays on the list; contested ones come last.",
      "when": "Choose cut when tenants keep getting topics they cannot rank for. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default rank: contested topics stay, at the end of the list."
     },
     "vi": {
-     "what": "Khi đề xuất chủ đề cho một kênh, chủ đề có từ khoá quá cạnh tranh (xem ngưỡng cạnh tranh) bị gắn cờ. rank: chủ đề bị gắn cờ xếp sau các chủ đề khác, không bỏ cái nào. cut: chủ đề bị gắn cờ bị loại, tệ nhất trước, tới tỷ lệ loại tối đa. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Khi đề xuất chủ đề cho một kênh, chủ đề có từ khoá quá cạnh tranh (xem ngưỡng cạnh tranh) bị gắn cờ. rank: chủ đề bị gắn cờ xếp sau các chủ đề khác, không bỏ cái nào. cut: chủ đề bị gắn cờ bị loại, tệ nhất trước, tới tỷ lệ loại tối đa.",
      "raise": "cut (lựa chọn chặt hơn): ít chủ đề cạnh tranh được đề xuất hơn; danh sách của kênh ngắn lại.",
      "lower": "rank (lựa chọn nới hơn): mọi chủ đề vẫn trong danh sách; chủ đề cạnh tranh nằm cuối.",
      "when": "Chọn cut khi đại lý liên tục nhận chủ đề khó lên thứ hạng tìm kiếm. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -6167,7 +6239,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Content writer: drop brief lines the source does not support",
-   "description": "off: the angle brief goes to the writer as written. r9: clauses of the brief the seed does not support are dropped before the writer sees it (AA-1049 R9). The env var stays an emergency override for one release (a badge on this page). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "off: the angle brief goes to the writer as written. r9: clauses of the brief the seed does not support are dropped before the writer sees it (AA-1049 R9). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -6181,19 +6253,19 @@
    "impact": "medium",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T9_BRIEF_GROUNDING_MODE",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
     "en": {
-     "what": "Before the blog and social writer sees its angle brief, the brief can be checked against the source. off: the brief goes to the writer as written. r9: lines of the brief the source does not support are dropped first, so the writer is not asked to write them. An emergency switch on the server can still override it for one release (a badge on this page shows it).",
+     "what": "Before the blog and social writer sees its angle brief, the brief can be checked against the source. off: the brief goes to the writer as written. r9: lines of the brief the source does not support are dropped first, so the writer is not asked to write them.",
      "raise": "r9 (the stricter choice): fewer invented details reach the writer; a brief may lose a line it needed.",
      "lower": "off (the looser choice): the writer gets the whole brief, unsupported lines included.",
      "when": "Choose r9 when held pieces trace back to a brief that asked for something the source lacks. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
      "example": "With the default off: the brief goes to the writer unchanged."
     },
     "vi": {
-     "what": "Trước khi bộ viết blog và mạng xã hội nhận brief góc nhìn, brief có thể được đối chiếu với nguồn. off: brief được giao nguyên văn. r9: các dòng của brief mà nguồn không chứng minh bị bỏ trước, để bộ viết không bị yêu cầu viết chúng. Một công tắc khẩn trên máy chủ vẫn có thể ghi đè trong một bản phát hành (huy hiệu trên trang sẽ hiện).",
+     "what": "Trước khi bộ viết blog và mạng xã hội nhận brief góc nhìn, brief có thể được đối chiếu với nguồn. off: brief được giao nguyên văn. r9: các dòng của brief mà nguồn không chứng minh bị bỏ trước, để bộ viết không bị yêu cầu viết chúng.",
      "raise": "r9 (lựa chọn chặt hơn): ít chi tiết bịa đến tay bộ viết hơn; brief có thể mất một dòng cần thiết.",
      "lower": "off (lựa chọn nới hơn): bộ viết nhận toàn bộ brief, kể cả dòng không có căn cứ.",
      "when": "Chọn r9 khi các bài bị giữ đều bắt nguồn từ brief yêu cầu điều nguồn không có. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
@@ -6826,7 +6898,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Claim checker test run: spending cap",
-   "description": "Hard cap in USD of one claim-instrument evaluation run (a new prompt version measured on claims the R1 instrument fired on). Every call is gated on the spend so far plus its worst case; the run stops before it would pass the cap. Never above the R1 harness hard cap of 2 USD. Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "Hard cap in USD of one claim-instrument evaluation run (a new prompt version measured on claims the R1 instrument fired on). Every call is gated on the spend so far plus its worst case; the run stops before it would pass the cap. Never above the R1 harness hard cap of 2 USD. Read by the evaluation.",
    "value_type": "usd",
    "unit": "USD",
    "min_value": 0.01,
@@ -6839,7 +6911,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The most money, in US dollars, that one test run of a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up) may spend on AI calls. Before each call the run adds up what it has spent and stops before it would go over this cap. It can never be set above 2 USD.",
@@ -6862,7 +6934,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Claim checker test run: statements checked",
-   "description": "The most claims one claim-instrument evaluation run may take (half false positives, half true positives of the claims the R1 instrument fired on). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "The most claims one claim-instrument evaluation run may take (half false positives, half true positives of the claims the R1 instrument fired on). Read by the evaluation.",
    "value_type": "int",
    "unit": "claims",
    "min_value": 1,
@@ -6875,7 +6947,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many statements one test run of a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up) checks. They are picked from the statements the current checker flagged: half that the review panel judged fine (false alarms), half real problems.",
@@ -6898,7 +6970,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Claim checker test run: trial size",
-   "description": "The most claims the paid trial of a claim-instrument evaluation may take before the full subset run (check the cost per call in the ledger first). Read by the evaluation from the release that ships it; marked enforced by a later migration.",
+   "description": "The most claims the paid trial of a claim-instrument evaluation may take before the full subset run (check the cost per call in the ledger first). Read by the evaluation.",
    "value_type": "int",
    "unit": "claims",
    "min_value": 1,
@@ -6911,7 +6983,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "How many statements the small paid trial checks before the full test run of a new prompt for the claim checker (the AI check that flags statements in written content that the source material does not back up). The trial shows the real cost per statement in the AI cost log, so the full run can be sized before money is spent on it.",
@@ -7078,7 +7150,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Writer proofs: null run spending cap",
-   "description": "Root ADR 0020 D12: the most USD the eval null run (the T9 blog writer, no change) may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "Root ADR 0020 D12: the most USD the eval null run (the T9 blog writer, no change) may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "usd",
    "unit": "USD",
    "min_value": 0.01,
@@ -7091,7 +7163,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The most money, in US dollars, that the null run (the first writer proof: the blog writer re-run with no change, to show the scoring itself is stable) may spend on AI calls in total. A writer proof is a paid test that checks, on a fixed set of samples, whether a change to an AI writer keeps or improves the quality of what it writes. Money already spent and the limits of tests still waiting in the queue both count.",
@@ -7114,7 +7186,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Writer proofs: tour rewrite spending cap",
-   "description": "Root ADR 0020 D12: the most USD the S1 tour rewrite proof may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "Root ADR 0020 D12: the most USD the S1 tour rewrite proof may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "usd",
    "unit": "USD",
    "min_value": 0.01,
@@ -7127,7 +7199,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The most money, in US dollars, that the tour rewrite proof (the test of a change to the AI that rewrites tour descriptions) may spend on AI calls in total. A writer proof is a paid test that checks, on a fixed set of samples, whether a change to an AI writer keeps or improves the quality of what it writes. Money already spent and the limits of tests still waiting in the queue both count.",
@@ -7150,7 +7222,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Writer proofs: agency tour writer spending cap",
-   "description": "Root ADR 0020 D12: the most USD the T2 tenant tour writer proof may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "Root ADR 0020 D12: the most USD the T2 tenant tour writer proof may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "usd",
    "unit": "USD",
    "min_value": 0.01,
@@ -7163,7 +7235,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The most money, in US dollars, that the agency tour writer proof (the test of a change to the AI that writes tour pages for partner agencies) may spend on AI calls in total. A writer proof is a paid test that checks, on a fixed set of samples, whether a change to an AI writer keeps or improves the quality of what it writes. Money already spent and the limits of tests still waiting in the queue both count.",
@@ -7186,7 +7258,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Writer proofs: blog writer spending cap",
-   "description": "Root ADR 0020 D12: the most USD the T9 blog writer proof may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "Root ADR 0020 D12: the most USD the T9 blog writer proof may spend on AI calls, ledger spend plus the caps of its queued or running jobs (shared.llm_call_log, stage adhoc_aa1051). A pre-registration's own cap_usd must be at or below it; each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "usd",
    "unit": "USD",
    "min_value": 0.01,
@@ -7199,7 +7271,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The most money, in US dollars, that the blog writer proof (the test of a change to the AI that writes blog posts) may spend on AI calls in total. A writer proof is a paid test that checks, on a fixed set of samples, whether a change to an AI writer keeps or improves the quality of what it writes. Money already spent and the limits of tests still waiting in the queue both count.",
@@ -7222,7 +7294,7 @@
    "app": "cis",
    "area": "spend",
    "label": "Writer proofs: total spending cap",
-   "description": "Root ADR 0020 D12: the most USD all W5 writer proofs together may spend on AI calls (every adhoc_aa1051 ledger row plus the caps of every queued or running W5 job). Each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof) from the release that ships it; marked enforced by a later migration.",
+   "description": "Root ADR 0020 D12: the most USD all W5 writer proofs together may spend on AI calls (every adhoc_aa1051 ledger row plus the caps of every queued or running W5 job). Each run also needs the tech lead's own yes. Read by the W5 proof runner (services/writer_proof).",
    "value_type": "usd",
    "unit": "USD",
    "min_value": 0.01,
@@ -7235,7 +7307,7 @@
    "evidence_required": false,
    "env_override": null,
    "cache_s": 30,
-   "enforced": false,
+   "enforced": true,
    "guide": {
     "en": {
      "what": "The most money, in US dollars, that all writer proofs together may spend on AI calls. Writer proofs are paid tests that check, on a fixed set of samples, whether a change to an AI writer keeps or improves the quality of what it writes. Money already spent and the limits of tests still waiting in the queue both count.",
@@ -7413,7 +7485,7 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T7_BLOG_CHARS_PER_SEED_WORD",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
@@ -8018,7 +8090,7 @@
    "app": "cis",
    "area": "content",
    "label": "Blog length: lengthen a short blog before holding it",
-   "description": "off: a blog still under the length minimum after its repair round is held for length (the full rewrite path, unchanged). on: a blog under the minimum after its repair round gets one lengthening repair first: one new paragraph in each of up to three of its thinnest sections, written only from facts of its own source that the blog does not use yet; each paragraph is checked in code (no new number, time, heading, list, question or call to action, no mention of where a fact comes from) and then every quality check runs again on the whole text. A tenant value turns it on for one agency only (a trial on an audit tenant); the platform value for everyone. The env var stays an emergency override for one release (a badge on this page). Evidence required: a $0 replay of stored pieces, or a trial run whose cost is read from the call ledger.",
+   "description": "off: a blog still under the length minimum after its repair round is held for length (the full rewrite path, unchanged). on: a blog under the minimum after its repair round gets one lengthening repair first: one new paragraph in each of up to three of its thinnest sections, written only from facts of its own source that the blog does not use yet; each paragraph is checked in code (no new number, time, heading, list, question or call to action, no mention of where a fact comes from) and then every quality check runs again on the whole text. A tenant value turns it on for one agency only (a trial on an audit tenant); the platform value for everyone. Evidence required: a $0 replay of stored pieces, or a trial run whose cost is read from the call ledger.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -8032,7 +8104,7 @@
    "impact": "high",
    "approval": "maker_checker",
    "evidence_required": true,
-   "env_override": "T9_LENGTH_EXTEND",
+   "env_override": null,
    "cache_s": 30,
    "enforced": true,
    "guide": {
@@ -8125,6 +8197,222 @@
    }
   },
   {
+   "key": "cis.tripplanner.custom_domain_edge_max",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: own domains on the agency edge",
+   "description": "The most custom hosts of all agencies together on the TripPlanner agency CloudFront distribution (a distribution of its own, apart from the public TripPlanner host). Every attached host is one name on the one certificate that distribution serves, and ACM allows 10 names per certificate unless AWS raises the account quota (up to 100). Tenant 360 refuses a new host beyond this number. Read by the Tenant 360 custom-domain editor and the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "domains",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many agency web addresses, all agencies together, the trip planner can serve. All of them share one security certificate, and Amazon allows a limited number of names on one certificate (10 unless Amazon raises it for our account). Our own planner address is not on it.",
+     "raise": "More agencies can use their own address, but only after Amazon has raised the names-per-certificate limit for our account; above that limit a new address fails when it is attached.",
+     "lower": "No new agency address is accepted once the number in use reaches it; addresses already served keep working.",
+     "when": "Raise it only after Amazon confirmed a higher names-per-certificate limit, at most to that limit; lower it to stop new addresses while the edge is reworked.",
+     "example": "With the default of 10, the eleventh agency address is refused until one of the ten is removed."
+    },
+    "vi": {
+     "what": "Số địa chỉ web của đại lý, tính chung mọi đại lý, mà trang lập lịch trình phục vụ được. Tất cả dùng chung một chứng chỉ bảo mật, và Amazon chỉ cho một số tên có hạn trên một chứng chỉ (10, trừ khi Amazon nâng cho tài khoản của chúng ta). Địa chỉ planner của chính chúng ta không nằm trên chứng chỉ này.",
+     "raise": "Nhiều đại lý dùng được địa chỉ riêng hơn, nhưng chỉ sau khi Amazon đã nâng giới hạn số tên trên một chứng chỉ cho tài khoản của chúng ta; vượt giới hạn đó thì địa chỉ mới bị lỗi lúc gắn.",
+     "lower": "Không nhận thêm địa chỉ đại lý nào khi số đang dùng chạm mức này; các địa chỉ đang chạy vẫn hoạt động.",
+     "when": "Chỉ tăng sau khi Amazon xác nhận giới hạn số tên cao hơn, tối đa bằng giới hạn đó; giảm để dừng nhận địa chỉ mới trong lúc sửa lại phần biên.",
+     "example": "Với mặc định 10, địa chỉ đại lý thứ mười một bị từ chối cho tới khi gỡ một trong mười địa chỉ."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_edge_pending_hours",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: hours an agency-edge certificate may wait",
+   "description": "When an agency host is added or removed, the tripplanner_custom_domain job requests a new certificate for the agency CloudFront distribution naming every attached host; ACM issues it within minutes while each host's validation record is still in that agency's DNS. If it is still pending validation after this many hours, the job fails and detaches the hosts whose record ACM cannot find (failure code validation_record_gone, a staff alert) and requests the certificate again without them, so one agency's missing record never blocks the others. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 24,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How long the system waits for a new shared certificate of the agency addresses before it decides that an agency removed its DNS record, takes that agency's address off line and goes on without it.",
+     "raise": "An agency whose DNS is briefly broken gets more time before its address is taken off line, but other agencies' new or removed addresses wait as long.",
+     "lower": "Other agencies' changes go through sooner, but an agency with a short DNS problem loses its address sooner and staff must retry it.",
+     "when": "Keep the default; lower it if a change for one agency is held up by another agency's DNS.",
+     "example": "With the default of 6, an address added at 09:00 that waits for another agency's missing record goes live by about 15:00 without that agency's address."
+    },
+    "vi": {
+     "what": "Thời gian hệ thống chờ chứng chỉ dùng chung mới của các địa chỉ đại lý, trước khi kết luận một đại lý đã xoá bản ghi DNS, đưa địa chỉ của đại lý đó ra khỏi trạng thái chạy và làm tiếp mà không có nó.",
+     "raise": "Đại lý bị lỗi DNS ngắn có thêm thời gian trước khi địa chỉ bị gỡ, nhưng việc thêm hoặc gỡ địa chỉ của đại lý khác cũng phải chờ lâu như vậy.",
+     "lower": "Thay đổi của đại lý khác đi qua nhanh hơn, nhưng đại lý bị lỗi DNS ngắn mất địa chỉ sớm hơn và nhân viên phải thử lại.",
+     "when": "Giữ mặc định; giảm nếu thay đổi của một đại lý bị kẹt vì DNS của đại lý khác.",
+     "example": "Với mặc định 6, địa chỉ thêm lúc 09:00 mà phải chờ bản ghi bị thiếu của đại lý khác sẽ chạy khoảng 15:00, không còn địa chỉ của đại lý kia."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_max_per_tenant",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: own domains per agency",
+   "description": "The most custom hosts (for example trip.<agency domain>) one agency may have on its TripPlanner site at a time, counting every host that is not being removed. Tenant 360 refuses to add one more. A per-agency value overrides the platform value (the higher tier of ADR 0019 b4). Read by the Tenant 360 custom-domain editor from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "domains",
+   "min_value": 0,
+   "max_value": 10,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform+tenant",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How many of its own web addresses (for example trip.agency-name.com) one agency can use for its trip planner at the same time, instead of the address on our site. An agency can be given its own number.",
+     "raise": "An agency can run its planner on several addresses (for example one per brand or language), but each address uses one of the limited places on the shared certificate.",
+     "lower": "Fewer addresses per agency keep places free for other agencies; an agency at the limit must remove an address before adding another.",
+     "when": "Raise it for one agency when its contract includes more addresses; lower the platform value when the shared limit below is nearly used up.",
+     "example": "With the default of 1, an agency that already serves trip.agency-name.com cannot add a second address until the first is removed."
+    },
+    "vi": {
+     "what": "Số địa chỉ web riêng (ví dụ trip.ten-dai-ly.com) một đại lý được dùng cùng lúc cho trang lập lịch trình của mình, thay cho địa chỉ trên trang của chúng ta. Có thể đặt con số riêng cho từng đại lý.",
+     "raise": "Một đại lý chạy trang lập lịch trình trên nhiều địa chỉ (ví dụ mỗi thương hiệu hay mỗi ngôn ngữ một địa chỉ), nhưng mỗi địa chỉ chiếm một chỗ trong số chỗ có hạn trên chứng chỉ dùng chung.",
+     "lower": "Mỗi đại lý ít địa chỉ hơn thì còn chỗ cho đại lý khác; đại lý đã chạm giới hạn phải gỡ một địa chỉ rồi mới thêm được địa chỉ khác.",
+     "when": "Tăng cho một đại lý khi hợp đồng của họ có thêm địa chỉ; giảm giá trị chung khi giới hạn dùng chung bên dưới sắp hết.",
+     "example": "Với mặc định 1, đại lý đang dùng trip.ten-dai-ly.com chưa thêm được địa chỉ thứ hai cho tới khi gỡ địa chỉ đầu."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_poll_seconds",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: seconds between custom-domain checks",
+   "description": "How long the tripplanner_custom_domain job waits before it looks again at a certificate that is still pending validation or a distribution change that is still deploying (the job reschedules itself; the job runner caps one wait at 600 seconds). Each look is one free ACM or CloudFront read. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "duration_s",
+   "unit": "seconds",
+   "min_value": 30,
+   "max_value": 600,
+   "allowed_values": null,
+   "default_value": 120,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How often the system checks whether an agency's DNS record has been seen and whether the address has been put live, while a new address is being set up.",
+     "raise": "Fewer checks run, but an address goes live a little later after the agency added its record.",
+     "lower": "An address goes live sooner after the record appears, with more (free) checks against Amazon.",
+     "when": "Lower it during a guided setup with an agency on the phone; raise it if the job list shows many waiting checks.",
+     "example": "With the default of 120, an address whose record appears at 10:00 is noticed by 10:02 at the latest."
+    },
+    "vi": {
+     "what": "Khoảng thời gian giữa hai lần hệ thống kiểm tra xem bản ghi DNS của đại lý đã có chưa và địa chỉ đã được đưa vào chạy chưa, trong lúc cài đặt một địa chỉ mới.",
+     "raise": "Ít lần kiểm tra hơn, nhưng địa chỉ chạy muộn hơn một chút sau khi đại lý đã thêm bản ghi.",
+     "lower": "Địa chỉ chạy sớm hơn sau khi bản ghi xuất hiện, đổi lại nhiều lần kiểm tra (miễn phí) với Amazon hơn.",
+     "when": "Giảm trong lúc hướng dẫn đại lý cài đặt qua điện thoại; tăng nếu danh sách job có nhiều lượt kiểm tra đang chờ.",
+     "example": "Với mặc định 120, địa chỉ có bản ghi xuất hiện lúc 10:00 sẽ được nhận ra chậm nhất lúc 10:02."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_renewal_grace_days",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: days before expiry to drop an agency domain that blocks renewal",
+   "description": "ACM renews the agency-edge certificate by itself only while every agency keeps its validation record. The daily edge check of the tripplanner_custom_domain job reads the renewal status: when a host blocks renewal it raises a staff alert at once, and once the certificate expires within this many days it fails and detaches that host (failure code validation_record_gone) and replaces the certificate without it, so the other agencies never serve an expired certificate. ACM starts renewal 60 days before expiry. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 7,
+   "max_value": 59,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How close to the expiry of the shared certificate of the agency addresses the system waits for an agency to put back a missing DNS record, before it takes that agency's address off line so the certificate can be renewed for everyone else.",
+     "raise": "The address of an agency with a missing record is taken off line sooner, with more time left to renew the certificate for the others.",
+     "lower": "An agency gets longer to fix its record after the alert, with less time left before the certificate expires.",
+     "when": "Keep the default; raise it if renewals have come close to the expiry date.",
+     "example": "With the default of 30, an agency whose record went missing gets an alert at once and its address is taken off line 30 days before the certificate expires if the record is still missing."
+    },
+    "vi": {
+     "what": "Hệ thống chờ đại lý đặt lại bản ghi DNS bị thiếu tới khi chứng chỉ dùng chung của các địa chỉ đại lý còn bao nhiêu ngày thì hết hạn, trước khi gỡ địa chỉ của đại lý đó để gia hạn chứng chỉ cho mọi đại lý khác.",
+     "raise": "Địa chỉ của đại lý thiếu bản ghi bị gỡ sớm hơn, còn nhiều thời gian hơn để gia hạn chứng chỉ cho các đại lý khác.",
+     "lower": "Đại lý có thêm thời gian sửa bản ghi sau cảnh báo, đổi lại còn ít thời gian hơn trước khi chứng chỉ hết hạn.",
+     "when": "Giữ mặc định; tăng nếu các lần gia hạn từng sát ngày hết hạn.",
+     "example": "Với mặc định 30, đại lý bị thiếu bản ghi nhận cảnh báo ngay và địa chỉ bị gỡ 30 ngày trước khi chứng chỉ hết hạn nếu vẫn thiếu bản ghi."
+    }
+   }
+  },
+  {
+   "key": "cis.tripplanner.custom_domain_validation_timeout_hours",
+   "app": "cis",
+   "area": "tripplanner",
+   "label": "Trip planner: hours to wait for the agency's DNS record",
+   "description": "How long the tripplanner_custom_domain job waits for an agency's ACM validation record after it requested the certificate. Past it the host is failed with validation_timeout and its certificate deleted; staff retry it once the agency created the record. ACM itself stops at 72 hours. Read by the tripplanner_custom_domain job from the release that ships it; marked enforced by a later migration.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 72,
+   "allowed_values": null,
+   "default_value": 72,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How long the system waits for an agency to add the DNS record that proves it owns the address it asked for. After that the address is marked failed and staff can try again.",
+     "raise": "Agencies that need a few days to change their DNS do not have to start over, but a forgotten request stays open longer.",
+     "lower": "Forgotten requests are closed sooner, but an agency that is slow to add the record has to be retried.",
+     "when": "Lower it when many requests are left unfinished; keep it at the maximum while agencies set up their DNS through a third party.",
+     "example": "With the default of 72, an address requested on Monday 09:00 fails on Thursday 09:00 if the record is still missing."
+    },
+    "vi": {
+     "what": "Thời gian hệ thống chờ đại lý thêm bản ghi DNS chứng minh họ sở hữu địa chỉ đã xin. Quá thời gian đó địa chỉ bị đánh dấu thất bại và nhân viên có thể thử lại.",
+     "raise": "Đại lý cần vài ngày để sửa DNS không phải làm lại từ đầu, nhưng một yêu cầu bị quên sẽ treo lâu hơn.",
+     "lower": "Yêu cầu bị quên được đóng sớm hơn, nhưng đại lý thêm bản ghi chậm sẽ phải được thử lại.",
+     "when": "Giảm khi nhiều yêu cầu bị bỏ dở; giữ ở mức tối đa khi đại lý sửa DNS qua một bên thứ ba.",
+     "example": "Với mặc định 72, địa chỉ xin lúc 09:00 thứ Hai sẽ thất bại lúc 09:00 thứ Năm nếu vẫn chưa có bản ghi."
+    }
+   }
+  },
+  {
    "key": "cis.writing_memory.month_cap_usd",
    "app": "cis",
    "area": "spend",
@@ -8165,7 +8453,7 @@
    "app": "tripplanner",
    "area": "ai",
    "label": "AI trip story: hours a story is reused",
-   "description": "Hours a narration in tripplanner.narration_cache is reused for the same itinerary before a new one is written (a longer window means fewer paid narrations). Fallback while TripPlanner cannot read the view: NARRATION_CACHE_TTL_HOURS, then this default.",
+   "description": "Hours a narration in tripplanner.narration_cache is reused for the same itinerary before a new one is written (a longer window means fewer paid narrations). Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "hours",
    "min_value": 1,
@@ -8181,14 +8469,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How long a written trip story is reused for the same itinerary before a new one is written. A reused story costs nothing. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How long a written trip story is reused for the same itinerary before a new one is written. A reused story costs nothing. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Fewer paid stories; a traveller may see an older story after the itinerary text was improved.",
      "lower": "Stories are rewritten more often: fresher wording, more paid calls.",
      "when": "Lower it right after the trip text or the story prompt changes, so travellers see the new version sooner; raise it to cut cost.",
      "example": "With the default of 168 hours (7 days): the same itinerary gets the same story for a week."
     },
     "vi": {
-     "what": "Một câu chuyện chuyến đi đã viết được dùng lại cho cùng lịch trình trong bao lâu trước khi viết câu chuyện mới. Dùng lại thì không tốn phí. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Một câu chuyện chuyến đi đã viết được dùng lại cho cùng lịch trình trong bao lâu trước khi viết câu chuyện mới. Dùng lại thì không tốn phí. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Ít câu chuyện có phí hơn; khách có thể thấy câu chuyện cũ sau khi nội dung lịch trình đã được cải thiện.",
      "lower": "Câu chuyện được viết lại thường hơn: lời văn mới hơn, nhiều lượt gọi có phí hơn.",
      "when": "Giảm ngay sau khi nội dung chuyến đi hay prompt kể chuyện thay đổi, để khách sớm thấy bản mới; tăng để giảm chi phí.",
@@ -8309,7 +8597,7 @@
    "app": "tripplanner",
    "area": "handoff",
    "label": "Send to advisor on the AA planner is a demo",
-   "description": "On (the B2B-only model, root ADR 0019): on the bare planner and the AA demo tenant, send to advisor answers 410 b2b_only before any write (no registration, no inquiry, no Booking case). An agency tenant's planner sends leads to that tenant either way. Off turns the frozen AA hand-off back on. Fallback while TripPlanner cannot read the view: ADVISOR_HANDOFF_DEMO, then this default.",
+   "description": "On (the B2B-only model, root ADR 0019): on the bare planner and the AA demo tenant, send to advisor answers 410 b2b_only before any write (no registration, no inquiry, no Booking case). An agency tenant's planner sends leads to that tenant either way. Off turns the frozen AA hand-off back on. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "bool",
    "unit": null,
    "min_value": null,
@@ -8325,14 +8613,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "On (business-to-business only): on the bare planner and the AA demo, 'send to advisor' answers that the service is for agencies and stores nothing (no registration, no enquiry, no Booking case). An agency's planner sends leads to that agency either way. Off turns the old AA hand-off back on. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "On (business-to-business only): on the bare planner and the AA demo, 'send to advisor' answers that the service is for agencies and stores nothing (no registration, no enquiry, no Booking case). An agency's planner sends leads to that agency either way. Off turns the old AA hand-off back on. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "On: the AA planner never collects traveller contacts; agencies are unaffected.",
      "lower": "Off: the AA planner collects traveller contacts and creates enquiries and Booking cases again.",
      "when": "Keep it on while AA sells only to agencies; turn it off only if AA decides to take travellers directly again.",
      "example": "With the default on: a traveller on the AA demo who presses 'send to advisor' sees the agencies-only message."
     },
     "vi": {
-     "what": "Bật (chỉ phục vụ doanh nghiệp): trên planner trần và bản demo của AA, 'gửi cho tư vấn viên' trả lời rằng dịch vụ dành cho đại lý và không lưu gì (không đăng ký, không yêu cầu, không tạo hồ sơ Booking). Planner của đại lý vẫn gửi lead cho đại lý đó trong cả hai trường hợp. Tắt sẽ bật lại luồng chuyển khách cũ của AA. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Bật (chỉ phục vụ doanh nghiệp): trên planner trần và bản demo của AA, 'gửi cho tư vấn viên' trả lời rằng dịch vụ dành cho đại lý và không lưu gì (không đăng ký, không yêu cầu, không tạo hồ sơ Booking). Planner của đại lý vẫn gửi lead cho đại lý đó trong cả hai trường hợp. Tắt sẽ bật lại luồng chuyển khách cũ của AA. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Bật: planner của AA không bao giờ thu thông tin liên hệ của khách; đại lý không bị ảnh hưởng.",
      "lower": "Tắt: planner của AA lại thu thông tin liên hệ của khách, tạo yêu cầu và hồ sơ Booking.",
      "when": "Giữ bật khi AA chỉ bán cho đại lý; chỉ tắt nếu AA quyết định nhận khách trực tiếp trở lại.",
@@ -8345,7 +8633,7 @@
    "app": "tripplanner",
    "area": "handoff",
    "label": "Old AA hand-off: registration first",
-   "description": "On: the frozen AA hand-off (advisor demo off) needs the traveller's name and a phone or e-mail before it sends. Fallback while TripPlanner cannot read the view: REQUIRE_REGISTRATION_BEFORE_HANDOFF (Terraform sets true), then this default.",
+   "description": "On: the frozen AA hand-off (advisor demo off) needs the traveller's name and a phone or e-mail before it sends. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "bool",
    "unit": null,
    "min_value": null,
@@ -8361,14 +8649,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "On: the old AA hand-off (used only when 'Send to advisor on the AA planner is a demo' is off) asks for the traveller's name and a phone or e-mail before sending. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "On: the old AA hand-off (used only when 'Send to advisor on the AA planner is a demo' is off) asks for the traveller's name and a phone or e-mail before sending. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "On: every hand-off carries contact details the team can follow up.",
      "lower": "Off: travellers can send without details; more hand-offs, many without a way to reply.",
      "when": "Matters only with the demo switch off; turn it off only to test the flow.",
      "example": "With the default on: a traveller must enter a name and a phone or e-mail first."
     },
     "vi": {
-     "what": "Bật: luồng chuyển khách cũ của AA (chỉ dùng khi tắt thiết lập 'gửi cho tư vấn viên trên planner AA là bản demo') yêu cầu tên và số điện thoại hoặc e-mail của khách trước khi gửi. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Bật: luồng chuyển khách cũ của AA (chỉ dùng khi tắt thiết lập 'gửi cho tư vấn viên trên planner AA là bản demo') yêu cầu tên và số điện thoại hoặc e-mail của khách trước khi gửi. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Bật: mọi lần chuyển khách đều có thông tin liên hệ để đội ngũ liên lạc lại.",
      "lower": "Tắt: khách gửi được mà không cần thông tin; nhiều lượt chuyển hơn, nhiều lượt không có cách liên lạc.",
      "when": "Chỉ có tác dụng khi tắt công tắc demo; chỉ tắt để thử luồng.",
@@ -8381,7 +8669,7 @@
    "app": "tripplanner",
    "area": "leads",
    "label": "Undelivered lead: days kept before redaction",
-   "description": "Days TripPlanner keeps an undelivered lead before it is redacted anyway (data standards DM-7.1 row tripplanner.outbox: at most 7 days). The floor 3 keeps two daily expiry ticks of headroom inside the hold. Fallback while TripPlanner cannot read the view: TP_LEAD_HOLD_DAYS (clamped 3..7), then this default.",
+   "description": "Days TripPlanner keeps an undelivered lead before it is redacted anyway (data standards DM-7.1 row tripplanner.outbox: at most 7 days). The floor 3 keeps two daily expiry ticks of headroom inside the hold. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "days",
    "min_value": 3,
@@ -8397,14 +8685,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many days TripPlanner keeps a lead it could not deliver to the agency before it removes the traveller's details anyway. Data rules allow at most 7 days; the minimum of 3 keeps two daily clean-up runs of margin. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many days TripPlanner keeps a lead it could not deliver to the agency before it removes the traveller's details anyway. Data rules allow at most 7 days; the minimum of 3 keeps two daily clean-up runs of margin. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Delivery has longer to recover from an outage before the lead is lost; personal data is kept longer (never over 7 days).",
      "lower": "Personal data is removed sooner; a longer outage loses more leads.",
      "when": "Lower it if the privacy review asks for shorter keeping; keep it high while lead delivery is unstable.",
      "example": "With the default of 7 days: an undelivered lead loses its contact details on day 7."
     },
     "vi": {
-     "what": "TripPlanner giữ lead chưa giao được cho đại lý bao nhiêu ngày trước khi vẫn xoá thông tin cá nhân của khách. Quy định dữ liệu cho phép tối đa 7 ngày; mức tối thiểu 3 chừa khoảng cho hai lần dọn dẹp hằng ngày. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "TripPlanner giữ lead chưa giao được cho đại lý bao nhiêu ngày trước khi vẫn xoá thông tin cá nhân của khách. Quy định dữ liệu cho phép tối đa 7 ngày; mức tối thiểu 3 chừa khoảng cho hai lần dọn dẹp hằng ngày. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Việc giao lead có thêm thời gian phục hồi sau sự cố trước khi mất lead; dữ liệu cá nhân được giữ lâu hơn (không quá 7 ngày).",
      "lower": "Dữ liệu cá nhân được xoá sớm hơn; sự cố kéo dài làm mất nhiều lead hơn.",
      "when": "Giảm nếu đánh giá quyền riêng tư yêu cầu giữ ngắn hơn; để cao khi việc giao lead chưa ổn định.",
@@ -8417,7 +8705,7 @@
    "app": "tripplanner",
    "area": "leads",
    "label": "Leads per agency per 24 hours",
-   "description": "Leads one agency tenant may receive in 24 hours. Past it a send is refused before anything is stored (429 lead_cap_reached), so a script on a public planner cannot flood the agency's inbox or CRM. A tenant value overrides the platform value for that tenant. Fallback while TripPlanner cannot read the view: TP_LEAD_TENANT_DAILY_CAP, then this default.",
+   "description": "Leads one agency tenant may receive in 24 hours. Past it a send is refused before anything is stored (429 lead_cap_reached), so a script on a public planner cannot flood the agency's inbox or CRM. A tenant value overrides the platform value for that tenant. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "leads/24 h",
    "min_value": 1,
@@ -8433,14 +8721,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many leads one agency may receive in 24 hours. Past it a 'send to advisor' is refused before anything is stored, so a script on a public planner cannot flood the agency's inbox or CRM. A value set for one agency overrides this platform value. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many leads one agency may receive in 24 hours. Past it a 'send to advisor' is refused before anything is stored, so a script on a public planner cannot flood the agency's inbox or CRM. A value set for one agency overrides this platform value. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "A busy agency is not cut off; a flood of fake leads can grow larger before it stops.",
      "lower": "Floods stop sooner; a very busy agency may lose real leads at the end of a day.",
      "when": "Raise it for an agency that really gets this many enquiries (per agency); lower it after a lead flood.",
      "example": "With the default of 200: the 201st lead of an agency within 24 hours is refused."
     },
     "vi": {
-     "what": "Một đại lý được nhận tối đa bao nhiêu lead trong 24 giờ. Vượt mức thì yêu cầu 'gửi cho tư vấn viên' bị từ chối trước khi lưu gì, để một script trên planner công khai không làm ngập hộp thư hay CRM của đại lý. Giá trị đặt riêng cho một đại lý sẽ thay giá trị chung này. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Một đại lý được nhận tối đa bao nhiêu lead trong 24 giờ. Vượt mức thì yêu cầu 'gửi cho tư vấn viên' bị từ chối trước khi lưu gì, để một script trên planner công khai không làm ngập hộp thư hay CRM của đại lý. Giá trị đặt riêng cho một đại lý sẽ thay giá trị chung này. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Đại lý đông khách không bị cắt; đợt lead giả có thể lớn hơn trước khi bị chặn.",
      "lower": "Đợt lead giả bị chặn sớm hơn; đại lý rất đông khách có thể mất lead thật cuối ngày.",
      "when": "Tăng cho đại lý thật sự nhận nhiều yêu cầu như vậy (đặt riêng); giảm sau một đợt lead giả.",
@@ -8453,7 +8741,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "Planning chat messages per visitor IP per hour",
-   "description": "Planning chat messages one traveller IP may send in one hour, counted only when the message would reach a model. Fallback while TripPlanner cannot read the view: TP_RATE_CHAT_IP_PER_HOUR, then this default.",
+   "description": "Planning chat messages one traveller IP may send in one hour, counted only when the message would reach a model. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "per hour",
    "min_value": 1,
@@ -8469,14 +8757,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many planning chat messages one traveller IP address may send in an hour, counting only messages that reach a model. It catches one machine opening many sessions. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many planning chat messages one traveller IP address may send in an hour, counting only messages that reach a model. It catches one machine opening many sessions. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Heavy users are stopped less often; a script can run up more paid calls before it is stopped.",
      "lower": "Paid calls are better protected from abuse; a busy real traveller may hit the limit.",
      "when": "Raise it when real travellers report 'too many requests'; lower it when the AI call log shows one visitor running up cost.",
      "example": "With the default of 40: the 41st message in an hour is refused."
     },
     "vi": {
-     "what": "Số tin nhắn trò chuyện lập kế hoạch một địa chỉ IP của khách được gửi mỗi giờ, chỉ tính tin có tới model. Nó chặn trường hợp một máy mở nhiều phiên. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số tin nhắn trò chuyện lập kế hoạch một địa chỉ IP của khách được gửi mỗi giờ, chỉ tính tin có tới model. Nó chặn trường hợp một máy mở nhiều phiên. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Người dùng nhiều ít bị chặn hơn; một script có thể gây thêm nhiều lượt gọi có phí trước khi bị chặn.",
      "lower": "Lượt gọi có phí được bảo vệ tốt hơn khỏi lạm dụng; khách thật dùng nhiều có thể chạm giới hạn.",
      "when": "Tăng khi khách thật báo 'quá nhiều yêu cầu'; giảm khi nhật ký gọi AI cho thấy một khách gây tốn kém.",
@@ -8489,7 +8777,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "Planning chat messages per visitor session per hour",
-   "description": "Planning chat messages one guest session may send in one hour, counted only when the message would reach a model. Fallback while TripPlanner cannot read the view: TP_RATE_CHAT_PER_HOUR, then this default.",
+   "description": "Planning chat messages one guest session may send in one hour, counted only when the message would reach a model. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "per hour",
    "min_value": 1,
@@ -8505,14 +8793,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many planning chat messages one guest session may send in an hour, counting only messages that reach a model. A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many planning chat messages one guest session may send in an hour, counting only messages that reach a model. A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Heavy users are stopped less often; a script can run up more paid calls before it is stopped.",
      "lower": "Paid calls are better protected from abuse; a busy real traveller may hit the limit.",
      "when": "Raise it when real travellers report 'too many requests'; lower it when the AI call log shows one visitor running up cost.",
      "example": "With the default of 20: the 21st message in an hour is refused."
     },
     "vi": {
-     "what": "Số tin nhắn trò chuyện lập kế hoạch một phiên khách được gửi mỗi giờ, chỉ tính tin có tới model. Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số tin nhắn trò chuyện lập kế hoạch một phiên khách được gửi mỗi giờ, chỉ tính tin có tới model. Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Người dùng nhiều ít bị chặn hơn; một script có thể gây thêm nhiều lượt gọi có phí trước khi bị chặn.",
      "lower": "Lượt gọi có phí được bảo vệ tốt hơn khỏi lạm dụng; khách thật dùng nhiều có thể chạm giới hạn.",
      "when": "Tăng khi khách thật báo 'quá nhiều yêu cầu'; giảm khi nhật ký gọi AI cho thấy một khách gây tốn kém.",
@@ -8525,7 +8813,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "AI trip stories per visitor session per hour",
-   "description": "Narrations one guest session may ask for in one hour when the request would call a model (a cached or all-AA-text narration is not counted). A signed-in traveller gets the signed-in factor times this. Past it the planner answers 429 and shows the basic narration. Fallback while TripPlanner cannot read the view: its env var TP_RATE_NARRATE_PER_HOUR, then this default.",
+   "description": "Narrations one guest session may ask for in one hour when the request would call a model (a cached or all-AA-text narration is not counted). A signed-in traveller gets the signed-in factor times this. Past it the planner answers 429 and shows the basic narration. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "per hour",
    "min_value": 1,
@@ -8541,14 +8829,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many AI trip stories (the narration of a planned trip) one guest session may ask for in an hour, counting only requests that call a model (a cached story is free and not counted). A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many AI trip stories (the narration of a planned trip) one guest session may ask for in an hour, counting only requests that call a model (a cached story is free and not counted). A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Heavy users are stopped less often; a script can run up more paid calls before it is stopped.",
      "lower": "Paid calls are better protected from abuse; a busy real traveller may hit the limit.",
      "when": "Raise it when real travellers report 'too many requests'; lower it when the AI call log shows one visitor running up cost.",
      "example": "With the default of 10: the 11th story in an hour is refused."
     },
     "vi": {
-     "what": "Số câu chuyện chuyến đi bằng AI (lời kể cho lịch trình đã lập) một phiên khách được yêu cầu mỗi giờ, chỉ tính các yêu cầu có gọi model (câu chuyện đã lưu sẵn thì miễn phí, không tính). Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số câu chuyện chuyến đi bằng AI (lời kể cho lịch trình đã lập) một phiên khách được yêu cầu mỗi giờ, chỉ tính các yêu cầu có gọi model (câu chuyện đã lưu sẵn thì miễn phí, không tính). Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Người dùng nhiều ít bị chặn hơn; một script có thể gây thêm nhiều lượt gọi có phí trước khi bị chặn.",
      "lower": "Lượt gọi có phí được bảo vệ tốt hơn khỏi lạm dụng; khách thật dùng nhiều có thể chạm giới hạn.",
      "when": "Tăng khi khách thật báo 'quá nhiều yêu cầu'; giảm khi nhật ký gọi AI cho thấy một khách gây tốn kém.",
@@ -8561,7 +8849,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "AI searches per visitor IP per minute",
-   "description": "Free-text searches one traveller IP may run in one minute when the query would call the embedding model (an empty query is not counted). A signed-in traveller gets the signed-in factor times this. Past it search answers 429. Fallback while TripPlanner cannot read the view: TP_RATE_SEARCH_PER_MINUTE, then this default.",
+   "description": "Free-text searches one traveller IP may run in one minute when the query would call the embedding model (an empty query is not counted). A signed-in traveller gets the signed-in factor times this. Past it search answers 429. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "per minute",
    "min_value": 1,
@@ -8577,14 +8865,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many free-text searches one traveller IP address may run in a minute, counting only searches that call the AI search model (an empty search is not counted). A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many free-text searches one traveller IP address may run in a minute, counting only searches that call the AI search model (an empty search is not counted). A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Heavy users are stopped less often; a script can run up more paid calls before it is stopped.",
      "lower": "Paid calls are better protected from abuse; a busy real traveller may hit the limit.",
      "when": "Raise it when real travellers report 'too many requests'; lower it when the AI call log shows one visitor running up cost.",
      "example": "With the default of 30: the 31st search in a minute is refused."
     },
     "vi": {
-     "what": "Số lượt tìm kiếm tự do một địa chỉ IP của khách được chạy mỗi phút, chỉ tính các lượt có gọi model tìm kiếm AI (ô tìm kiếm trống không tính). Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số lượt tìm kiếm tự do một địa chỉ IP của khách được chạy mỗi phút, chỉ tính các lượt có gọi model tìm kiếm AI (ô tìm kiếm trống không tính). Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Người dùng nhiều ít bị chặn hơn; một script có thể gây thêm nhiều lượt gọi có phí trước khi bị chặn.",
      "lower": "Lượt gọi có phí được bảo vệ tốt hơn khỏi lạm dụng; khách thật dùng nhiều có thể chạm giới hạn.",
      "when": "Tăng khi khách thật báo 'quá nhiều yêu cầu'; giảm khi nhật ký gọi AI cho thấy một khách gây tốn kém.",
@@ -8597,7 +8885,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "Leads per visitor IP per hour",
-   "description": "Send to advisor requests one traveller IP may make in one hour on an agency tenant's planner, counted only when the request would store a lead. Fallback while TripPlanner cannot read the view: TP_RATE_SEND_IP_PER_HOUR, then this default.",
+   "description": "Send to advisor requests one traveller IP may make in one hour on an agency tenant's planner, counted only when the request would store a lead. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "per hour",
    "min_value": 1,
@@ -8613,14 +8901,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many 'send to advisor' requests one traveller IP address may make in an hour on an agency's planner, counting only requests that store a lead. It catches one machine opening many sessions. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many 'send to advisor' requests one traveller IP address may make in an hour on an agency's planner, counting only requests that store a lead. It catches one machine opening many sessions. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Several travellers on one network (a hotel, an office) can send more leads; a script on one machine can push more fake leads with contact details into the agency's inbox and CRM before it is stopped.",
      "lower": "Fake-lead floods from one machine stop sooner; travellers who share a network may be refused.",
      "when": "Lower it when agencies report spam leads; raise it when real travellers report 'too many requests' when they send to an advisor.",
      "example": "With the default of 20: the 21st lead in an hour is refused."
     },
     "vi": {
-     "what": "Số yêu cầu 'gửi cho tư vấn viên' một địa chỉ IP của khách được gửi mỗi giờ trên planner của đại lý, chỉ tính các yêu cầu có lưu lead. Nó chặn trường hợp một máy mở nhiều phiên. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số yêu cầu 'gửi cho tư vấn viên' một địa chỉ IP của khách được gửi mỗi giờ trên planner của đại lý, chỉ tính các yêu cầu có lưu lead. Nó chặn trường hợp một máy mở nhiều phiên. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Nhiều khách dùng chung một mạng (khách sạn, văn phòng) gửi được nhiều lead hơn; một script trên một máy có thể đẩy thêm nhiều lead giả kèm thông tin liên hệ vào hộp thư và CRM của đại lý trước khi bị chặn.",
      "lower": "Đợt lead giả từ một máy bị chặn sớm hơn; khách dùng chung một mạng có thể bị từ chối.",
      "when": "Giảm khi đại lý báo nhận lead rác; tăng khi khách thật báo 'quá nhiều yêu cầu' lúc gửi cho tư vấn viên.",
@@ -8633,7 +8921,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "Leads per visitor session per hour",
-   "description": "Send to advisor requests one guest session may make in one hour on an agency tenant's planner, counted only when the request would store a lead (it carries the traveller's contact). Fallback while TripPlanner cannot read the view: TP_RATE_SEND_PER_HOUR, then this default.",
+   "description": "Send to advisor requests one guest session may make in one hour on an agency tenant's planner, counted only when the request would store a lead (it carries the traveller's contact). Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "per hour",
    "min_value": 1,
@@ -8649,14 +8937,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many 'send to advisor' requests (a lead with the traveller's contact) one guest session may make in an hour on an agency's planner, counting only requests that store a lead. A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "How many 'send to advisor' requests (a lead with the traveller's contact) one guest session may make in an hour on an agency's planner, counting only requests that store a lead. A signed-in traveller gets the signed-in factor times this. Past it the planner answers 'too many requests' and asks them to wait. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "A real traveller can resend more often; a script can push more fake leads with contact details into the agency's inbox and CRM before it is stopped.",
      "lower": "Fake-lead floods stop sooner; a traveller who retries several times may be refused.",
      "when": "Lower it when agencies report spam leads; raise it when real travellers report 'too many requests' when they send to an advisor.",
      "example": "With the default of 5: the 6th lead in an hour is refused."
     },
     "vi": {
-     "what": "Số yêu cầu 'gửi cho tư vấn viên' (một lead kèm thông tin liên hệ của khách) một phiên khách được gửi mỗi giờ trên planner của đại lý, chỉ tính các yêu cầu có lưu lead. Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số yêu cầu 'gửi cho tư vấn viên' (một lead kèm thông tin liên hệ của khách) một phiên khách được gửi mỗi giờ trên planner của đại lý, chỉ tính các yêu cầu có lưu lead. Khách đã đăng nhập được nhân thêm theo hệ số đăng nhập. Vượt mức thì planner báo 'quá nhiều yêu cầu' và đề nghị chờ. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Khách thật được gửi lại nhiều lần hơn; một script có thể đẩy thêm nhiều lead giả kèm thông tin liên hệ vào hộp thư và CRM của đại lý trước khi bị chặn.",
      "lower": "Đợt lead giả bị chặn sớm hơn; khách gửi lại vài lần có thể bị từ chối.",
      "when": "Giảm khi đại lý báo nhận lead rác; tăng khi khách thật báo 'quá nhiều yêu cầu' lúc gửi cho tư vấn viên.",
@@ -8669,7 +8957,7 @@
    "app": "tripplanner",
    "area": "rate",
    "label": "Signed-in traveller allowance factor",
-   "description": "A signed-in traveller gets this many times every per-session and per-IP allowance (narration, search, send to advisor, planning chat). 1 = no extra allowance. Fallback while TripPlanner cannot read the view: TP_RATE_SIGNED_IN_FACTOR, then this default.",
+   "description": "A signed-in traveller gets this many times every per-session and per-IP allowance (narration, search, send to advisor, planning chat). 1 = no extra allowance. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "int",
    "unit": "x",
    "min_value": 1,
@@ -8685,14 +8973,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "A signed-in traveller gets this many times every per-session and per-IP allowance (trip stories, search, send to advisor, planning chat). 1 = no extra allowance. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "A signed-in traveller gets this many times every per-session and per-IP allowance (trip stories, search, send to advisor, planning chat). 1 = no extra allowance. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Signed-in travellers can use the planner more before they hit a limit; an abused account can cost more.",
      "lower": "Signed-in travellers are limited like guests.",
      "when": "Raise it when signed-in travellers report 'too many requests'; lower it if accounts are created to get around the limits.",
      "example": "With the default of 2: a signed-in traveller may ask for 20 AI trip stories an hour where a guest gets 10."
     },
     "vi": {
-     "what": "Khách đã đăng nhập được gấp bao nhiêu lần mọi hạn mức theo phiên và theo IP (câu chuyện chuyến đi, tìm kiếm, gửi cho tư vấn viên, trò chuyện lập kế hoạch). 1 = không thêm. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Khách đã đăng nhập được gấp bao nhiêu lần mọi hạn mức theo phiên và theo IP (câu chuyện chuyến đi, tìm kiếm, gửi cho tư vấn viên, trò chuyện lập kế hoạch). 1 = không thêm. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Khách đăng nhập dùng planner được nhiều hơn trước khi chạm giới hạn; tài khoản bị lạm dụng có thể gây tốn hơn.",
      "lower": "Khách đăng nhập bị giới hạn như khách vãng lai.",
      "when": "Tăng khi khách đăng nhập báo 'quá nhiều yêu cầu'; giảm nếu có người tạo tài khoản để lách giới hạn.",
@@ -8705,7 +8993,7 @@
    "app": "tripplanner",
    "area": "spend",
    "label": "Planning chat: monthly spend cap (whole app)",
-   "description": "The planning chat's model spend of the whole app per UTC month (tripplanner.ai_spend_month). At the cap the chat pauses with a plain message; the rest of the planner is untouched. The daily app cap (AI gateway > App profiles) and an agency tenant's AI budget apply too. Fallback while TripPlanner cannot read the view: TP_PLAN_CHAT_MONTHLY_CAP_USD, then this default.",
+   "description": "The planning chat's model spend of the whole app per UTC month (tripplanner.ai_spend_month). At the cap the chat pauses with a plain message; the rest of the planner is untouched. The daily app cap (AI gateway > App profiles) and an agency tenant's AI budget apply too. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "usd",
    "unit": "USD/month",
    "min_value": 0,
@@ -8721,14 +9009,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The most the planning chat of the whole TripPlanner app may spend on AI calls in one calendar month (UTC). At the cap the chat pauses with a plain message; the rest of the planner keeps working. The app's daily cap (AI gateway > App profiles) and each agency's AI budget apply too. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "The most the planning chat of the whole TripPlanner app may spend on AI calls in one calendar month (UTC). At the cap the chat pauses with a plain message; the rest of the planner keeps working. The app's daily cap (AI gateway > App profiles) and each agency's AI budget apply too. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "The chat stays open longer in a busy month; the month can cost more.",
      "lower": "The chat pauses sooner in a busy month.",
      "when": "Raise it when the chat pauses before month end and its use is real; lower it when spend grows without bookings or leads to show for it.",
      "example": "With the default of 2 USD a month: the chat pauses for the rest of the month once 2 USD is spent."
     },
     "vi": {
-     "what": "Số tiền tối đa phần trò chuyện lập kế hoạch của cả ứng dụng TripPlanner được chi cho lượt gọi AI trong một tháng (theo UTC). Chạm mức thì trò chuyện tạm dừng với một thông báo đơn giản; phần còn lại của planner vẫn chạy. Mức trần theo ngày của ứng dụng (AI gateway > App profiles) và ngân sách AI của từng đại lý cũng áp dụng. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số tiền tối đa phần trò chuyện lập kế hoạch của cả ứng dụng TripPlanner được chi cho lượt gọi AI trong một tháng (theo UTC). Chạm mức thì trò chuyện tạm dừng với một thông báo đơn giản; phần còn lại của planner vẫn chạy. Mức trần theo ngày của ứng dụng (AI gateway > App profiles) và ngân sách AI của từng đại lý cũng áp dụng. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Trò chuyện mở lâu hơn trong tháng đông khách; tháng đó có thể tốn hơn.",
      "lower": "Trò chuyện tạm dừng sớm hơn trong tháng đông khách.",
      "when": "Tăng khi trò chuyện dừng trước cuối tháng mà nhu cầu là thật; giảm khi chi phí tăng mà không có booking hay lead tương ứng.",
@@ -8741,7 +9029,7 @@
    "app": "tripplanner",
    "area": "spend",
    "label": "Planning chat: monthly spend cap per agency",
-   "description": "The planning chat's model spend of one tenant per UTC month (the AA demo tenant included). The platform value applies to every tenant; a tenant value overrides it for that tenant. Fallback while TripPlanner cannot read the view: TP_PLAN_CHAT_TENANT_MONTHLY_CAP_USD, then this default.",
+   "description": "The planning chat's model spend of one tenant per UTC month (the AA demo tenant included). The platform value applies to every tenant; a tenant value overrides it for that tenant. Fallback while TripPlanner cannot read the view: this default.",
    "value_type": "usd",
    "unit": "USD/month",
    "min_value": 0,
@@ -8757,14 +9045,14 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "The most the planning chat may spend on AI calls for one agency in one calendar month (UTC), the AA demo included. A value set for one agency overrides this platform value for that agency. If TripPlanner cannot read the settings, it falls back to its own server value, then this default.",
+     "what": "The most the planning chat may spend on AI calls for one agency in one calendar month (UTC), the AA demo included. A value set for one agency overrides this platform value for that agency. If TripPlanner cannot read the settings, it uses this default.",
      "raise": "Each agency's travellers can chat more in a month; one busy agency can cost more.",
      "lower": "Each agency's chat pauses sooner; the cost of one agency is better bounded.",
      "when": "Raise it for agencies whose travellers really use the chat (per agency, on the tenant row); lower it if one agency's chat costs more than it brings.",
      "example": "With the default of 2 USD a month: an agency's chat pauses for the month after 2 USD of its own spend."
     },
     "vi": {
-     "what": "Số tiền tối đa phần trò chuyện lập kế hoạch được chi cho lượt gọi AI của một đại lý trong một tháng (theo UTC), kể cả bản demo của AA. Giá trị đặt riêng cho một đại lý sẽ thay giá trị chung này cho đại lý đó. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị cấu hình riêng trên máy chủ, rồi tới giá trị mặc định này.",
+     "what": "Số tiền tối đa phần trò chuyện lập kế hoạch được chi cho lượt gọi AI của một đại lý trong một tháng (theo UTC), kể cả bản demo của AA. Giá trị đặt riêng cho một đại lý sẽ thay giá trị chung này cho đại lý đó. Nếu TripPlanner không đọc được thiết lập, nó dùng giá trị mặc định này.",
      "raise": "Khách của mỗi đại lý trò chuyện được nhiều hơn mỗi tháng; một đại lý đông khách có thể tốn hơn.",
      "lower": "Trò chuyện của mỗi đại lý dừng sớm hơn; chi phí của một đại lý được giới hạn chặt hơn.",
      "when": "Tăng cho đại lý có khách thật sự dùng trò chuyện (đặt riêng trên dòng của đại lý); giảm nếu trò chuyện của một đại lý tốn hơn giá trị mang lại.",

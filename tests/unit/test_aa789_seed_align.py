@@ -68,8 +68,8 @@ def _classes(text: str, seed: str = ROUTE_SEED, briefs=()) -> set[str]:
 @pytest.fixture
 def no_sa_env(monkeypatch):
     for c in sa.ALL_CLASSES:
-        monkeypatch.delenv(f"{modes.MODE_ENV}_{c.upper()}", raising=False)
-    monkeypatch.delenv(modes.MODE_ENV, raising=False)
+        monkeypatch.delenv(f"{"T10_SA_MODE"}_{c.upper()}", raising=False)
+    monkeypatch.delenv("T10_SA_MODE", raising=False)
     return monkeypatch
 
 
@@ -81,9 +81,9 @@ def test_every_class_is_off_by_default(no_sa_env):
 
 
 def test_global_env_and_per_class_override(no_sa_env):
-    no_sa_env.setenv(modes.MODE_ENV, "shadow")
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
-    no_sa_env.setenv(f"{modes.MODE_ENV}_ORPHAN_OPENER", "off")
+    no_sa_env.setenv("T10_SA_MODE", "shadow")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "repair")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_ORPHAN_OPENER", "off")
     m = modes.active_modes()
     assert m[sa.NEAR_AS_AT] == modes.REPAIR and m[sa.WORLD_SHARE] == modes.SHADOW
     assert sa.ORPHAN_OPENER not in m
@@ -93,13 +93,13 @@ def test_global_env_and_per_class_override(no_sa_env):
 
 @pytest.mark.parametrize("value", ["", "on", "true", "1", "warn", "HOLDING"])
 def test_unknown_values_read_as_off(no_sa_env, value):
-    no_sa_env.setenv(modes.MODE_ENV, value)
+    no_sa_env.setenv("T10_SA_MODE", value)
     assert modes.active_modes() == {}
 
 
 @pytest.mark.parametrize("cls", sa.BUILT_CLASSES)
 def test_hold_reads_as_repair_until_a_promotion_pr(no_sa_env, cls):
-    no_sa_env.setenv(modes.MODE_ENV, " hold ")   # S279 L2: the env override of the setting matches exactly
+    no_sa_env.setenv("T10_SA_MODE", " hold ")   # S279 L2: the env override of the setting matches exactly
     assert modes.HOLD_PROMOTED == frozenset()  # nothing may hold before the S246 freeze ends (~18/11) and G3 is met
     assert modes.class_mode(cls) == modes.REPAIR
 
@@ -148,7 +148,7 @@ def test_off_leaves_the_outcome_unchanged_and_never_loads_spacy(no_sa_env, monke
 @spacy_ready
 def test_shadow_records_but_never_changes_the_ledger(no_sa_env):
     off = _gates(PIECE)
-    no_sa_env.setenv(modes.MODE_ENV, "shadow")
+    no_sa_env.setenv("T10_SA_MODE", "shadow")
     shadow = _gates(PIECE)
     assert shadow["gate_ledger"] == off["gate_ledger"] and shadow["flags"] == off["flags"]
     assert shadow["passed"] == off["passed"]
@@ -161,7 +161,7 @@ def test_shadow_records_but_never_changes_the_ledger(no_sa_env):
 
 def test_a_missing_model_fails_open(no_sa_env, monkeypatch):
     off = _gates(PIECE)
-    no_sa_env.setenv(modes.MODE_ENV, "repair")
+    no_sa_env.setenv("T10_SA_MODE", "repair")
     monkeypatch.setattr(nlp, "parse_many", lambda texts: None)
     out = _gates(PIECE)
     assert out["gate_ledger"] == off["gate_ledger"]
@@ -170,7 +170,7 @@ def test_a_missing_model_fails_open(no_sa_env, monkeypatch):
 
 def test_an_error_fails_open(no_sa_env, monkeypatch):
     off = _gates(PIECE)
-    no_sa_env.setenv(modes.MODE_ENV, "repair")
+    no_sa_env.setenv("T10_SA_MODE", "repair")
 
     def boom(*a, **k):
         raise RuntimeError("parser exploded")
@@ -184,7 +184,7 @@ def test_an_error_fails_open(no_sa_env, monkeypatch):
 
 @spacy_ready
 def test_repair_mode_blocks_under_the_existing_gate_and_never_holds(no_sa_env):
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "hold")  # reads as repair: not promoted
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "hold")  # reads as repair: not promoted
     out = _gates(PIECE)
     f17 = next(g for g in qg.expand_ledger(out["gate_ledger"]) if g["gate"] == qr.F17_TRIP_FACT)
     sa_vs = [v for v in f17["violations"] if v.startswith("sa:near_as_at: ")]
@@ -205,7 +205,7 @@ def test_an_sa_finding_never_turns_a_warn_only_result_into_a_hold(no_sa_env):
     """Review blocker (S258): gate_trip_facts writes F17 / F18 with blocking=False when only 'title …' / 'meta …'
     findings are left (service._fit_seo_meta already refused that meta). Appending an sa: finding makes the result
     blocking, so it gets the sentence repair, but neither the meta warning nor the sa: finding may hold the piece."""
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "repair")
     warn = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": False, "repairable": True,
             "violations": ["meta gives a time the source does not: 'Sunrise at 5 am.'"]}
     assert qg.hold_failure(qg.merge_ledger([warn])) is None
@@ -224,7 +224,7 @@ def test_an_sa_finding_never_turns_a_warn_only_result_into_a_hold(no_sa_env):
 
 
 def test_an_sa_finding_keeps_a_blocking_result_holding_on_its_own_finding(no_sa_env):
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "repair")
     body = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable": True,
             "violations": ["gives a time the source does not: 'We leave at 5 am.'"]}
     run = modes.SeedAlignRun(live={qr.F17_TRIP_FACT: ["sa:near_as_at: r: 'Lunch is at Mörön.'"]})
@@ -234,7 +234,7 @@ def test_an_sa_finding_keeps_a_blocking_result_holding_on_its_own_finding(no_sa_
 
 
 def test_an_sa_finding_on_a_passed_gate_never_holds(no_sa_env):
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "repair")
     clean = {"gate": qr.F17_TRIP_FACT, "passed": True, "blocking": True, "repairable": True, "violations": []}
     run = modes.SeedAlignRun(live={qr.F17_TRIP_FACT: ["sa:near_as_at: r: 'Lunch is at Mörön.'"]})
     (out,) = modes.apply([clean], run)
@@ -246,7 +246,7 @@ def test_an_sa_finding_new_on_the_repaired_attempt_is_an_aa528_regression(no_sa_
     """A repair must not introduce a new sa: finding unnoticed: one that appears only on the next attempt, on a gate
     that passed before, is a new blocking failure for the AA-528 guard (it reverts when the attempt is not net
     better). Only reachable once a class is in repair."""
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "repair")
     passed = {"gate": qr.F17_TRIP_FACT, "passed": True, "blocking": True, "repairable": True, "violations": []}
     other = {"gate": qr.F13_LEAK, "passed": False, "blocking": True, "repairable": True,
              "violations": ["writer instruction: 'A sentence on the ruins.'"]}
@@ -261,7 +261,7 @@ def test_a_promoted_class_in_hold_mode_may_hold(no_sa_env, monkeypatch):
     g = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable": True, "violations": [v]}
     assert qg.never_holds(g)
     monkeypatch.setattr(modes, "HOLD_PROMOTED", frozenset({sa.NEAR_AS_AT}))
-    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "hold")
+    no_sa_env.setenv(f"{"T10_SA_MODE"}_NEAR_AS_AT", "hold")
     assert not qg.never_holds(g) and qg.hold_failure([g]) is g
 
 
@@ -462,3 +462,11 @@ def test_seed_graph_reads_the_t9_seed_blocks():
                                         ("zero point four", 0.4), ("half", 50.0), ("many", None)])
 def test_number_values(text, value):
     assert seed_graph.number_value(text) == value
+
+
+# AA-1096 l5 (CIS 424): the env override of these settings is retired in the app; the tests below still drive each
+# setting through its old env name (tests/unit/settings_serve.serve_retired_env), as an approved value would.
+@pytest.fixture(autouse=True)
+def _retired_env_drives_the_setting(monkeypatch):
+    from tests.unit.settings_serve import serve_retired_env
+    serve_retired_env(monkeypatch)

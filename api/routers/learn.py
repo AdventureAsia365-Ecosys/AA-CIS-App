@@ -32,7 +32,10 @@ VPC link NLB (TCP, adds nothing) -> ALB (appends the NLB's private address) -> E
 the address API Gateway saw; anything a caller writes lands to its left. The academy web calls this route from its
 server, so behind it every visitor shares the web's NAT address: the web limits its own visitors, and this limit caps
 the whole host. The limit is the setting ``cis.learn.verify_requests_per_minute`` (one fixed window per minute in
-Redis; an in-process window when Redis is unavailable).
+Redis; an in-process window when Redis is unavailable). Every verify answer (200, 404, 429, 503) carries
+``X-Learn-Visitor-Limit`` (contract 1.1): the per-visitor limit such a caller must apply, the setting
+``cis.learn.verify_visitor_requests_per_minute`` clamped to the per-address limit minus one, so one visitor of the web
+can never use up the address limit the web's visitors share.
 
 Errors: the contract's Problem body ``{error, message, retry_at}``; FastAPI's own 422 shape is never used (bodies and
 path values are checked here). The course is read from the learn bundle (503 ``unavailable`` when none is published).
@@ -78,6 +81,7 @@ _DB_DOWN = (asyncpg.UndefinedTableError, asyncpg.InvalidSchemaNameError, asyncpg
             asyncpg.InterfaceError, asyncpg.TooManyConnectionsError, OSError, TimeoutError)
 LOCAL_WINDOW_MAX = 10_000  # technical-constant: keys kept by the in-process verify window before it is reset
 _window: dict[str, int] = {}   # in-process verify window when Redis is unavailable
+VISITOR_LIMIT_HEADER = "X-Learn-Visitor-Limit"  # contract learn.http.v1 1.1 components/headers/VisitorLimit
 
 Handler = Callable[[ac.Ctx], Awaitable[tuple[int, Any]]]
 
@@ -339,17 +343,25 @@ async def verify_count(request: Request) -> int:
     return _local_count(key)
 
 
+async def visitor_limit(per_address: int) -> int:
+    """The per-visitor, per-minute limit a caller fronting many visitors from one address must apply: the setting,
+    never more than the per-address limit minus one (and at least 1)."""
+    visitor = int(await settings.aget("cis.learn.verify_visitor_requests_per_minute"))
+    return max(1, min(visitor, per_address - 1))
+
+
 @public_router.get("/public/v1/certificates/{code}", responses=_ok(m.CertificateVerify),
             summary="Public verify view of a certificate (rate limited, no sign-in)")
 async def verify_certificate(request: Request, code: str) -> JSONResponse:
     limit = int(await settings.aget("cis.learn.verify_requests_per_minute"))
+    visitor = {VISITOR_LIMIT_HEADER: str(await visitor_limit(limit))}
     if await verify_count(request) > limit:
         retry = 60 - int(time.time()) % 60
         logger.info("learn_verify_throttled", ip=login_throttle.client_ip(request))
         return problem(429, "rate_limited", "Too many certificate checks. Try again in a minute.",
-                       headers={"Retry-After": str(retry)})
+                       headers={"Retry-After": str(retry), **visitor})
     if not CODE.match(code or ""):
-        return problem(404, "not_found", "The certificate was not found.")
+        return problem(404, "not_found", "The certificate was not found.", headers=visitor)
     try:
         loaded = await lb.load()
     except lb.LearnUnavailable:
@@ -358,8 +370,9 @@ async def verify_certificate(request: Request, code: str) -> JSONResponse:
         async with open_store(request) as store:
             body = await qa.verify(store, code, loaded)
     except ac.Problem as exc:
-        return problem(exc.status, exc.error, exc.message)
+        return problem(exc.status, exc.error, exc.message, headers=visitor)
     except _DB_DOWN as exc:
         logger.error("learn_db_unavailable", error=type(exc).__name__)
-        return problem(503, "unavailable", "The academy is unavailable; retry later.", headers={"Retry-After": "5"})
-    return JSONResponse(content=body, headers={"Cache-Control": "no-store"})
+        return problem(503, "unavailable", "The academy is unavailable; retry later.",
+                       headers={"Retry-After": "5", **visitor})
+    return JSONResponse(content=body, headers={"Cache-Control": "no-store", **visitor})
