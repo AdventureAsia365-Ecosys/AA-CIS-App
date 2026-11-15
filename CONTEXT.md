@@ -3545,6 +3545,9 @@ digest and the excluded runs and pieces) or `--exclude` of the shaping runs. The
 pool (`services/ground_truth/r1_fire.py`) fires the R1 extraction instrument on a salted, writer-proportional sample of
 the eligible claims whatever their label (size: CIS 426 `cis.quality.claim_fire_sample_max`; cap: CIS 417), refuses an
 eligible file that is in-sample for the steps, and writes a text-free fire report that `fresh_pool sample` reads.
+A live fire appends a text-free checkpoint line per billed call; `--resume` continues a cut run (same identity, its
+ledger rows reconciled by call id, the spend carried over) into one run's report, and `fresh_pool sample` refuses a
+stopped one.
 _Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:
