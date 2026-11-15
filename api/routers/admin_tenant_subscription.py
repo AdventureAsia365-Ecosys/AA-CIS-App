@@ -11,6 +11,15 @@
                                                                           audited). A webhook URL that is not https
                                                                           or names a private / internal host is a
                                                                           422 with the field (AA-1038 follow-up)
+- ``GET    /admin/tenants/{tenant_id}/tripplanner-site/domains``            the custom hosts of the tenant's
+                                                                          TripPlanner site with their DNS records and
+                                                                          status (AA-1090 R8, CIS 428)
+- ``POST   /admin/tenants/{tenant_id}/tripplanner-site/domains``            add one ({"domain"}; audited; queues the
+                                                                          tripplanner_custom_domain job; limits are
+                                                                          settings)
+- ``DELETE /admin/tenants/{tenant_id}/tripplanner-site/domains/{domain_id}`` remove it (the job detaches the alias and
+                                                                          deletes the certificate)
+- ``POST   /admin/tenants/{tenant_id}/tripplanner-site/domains/{domain_id}/retry``  retry a failed one
 - ``POST   /admin/tenants/{tenant_id}/pilot/end``                         leave pilot mode (reason required, audited;
                                                                           AA-1086 G2, the "End pilot" button)
 
@@ -33,6 +42,7 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
 from services.tenant_account import pilot as tenant_pilot
 from services.tenant_account import subscription as sub
+from services.tenant_account import tripplanner_domain as tp_domain
 from services.tenant_account import tripplanner_site as tp_site
 from services.tenant_account.plans import PlanError
 
@@ -153,6 +163,115 @@ async def put_lead_route(tenant_id: uuid.UUID, body: LeadRouteIn, request: Reque
                                                 actor=_admin_actor(x_admin_user_id))
     except tp_site.LeadRouteError as e:
         raise _refuse_route(e) from None
+
+
+# ── TripPlanner custom hosts (AA-1090 R8) ─────────────────────────────────────────
+
+class DomainIn(BaseModel):
+    domain: str = Field(..., min_length=1, max_length=300, description="The agency's host, e.g. trip.agency-name.com")
+
+
+class DnsRecordOut(BaseModel):
+    purpose: Literal["route", "certificate"]
+    type: Literal["CNAME"]
+    name: str
+    value: str
+
+
+class DomainOut(BaseModel):
+    domain_id: str
+    domain: str
+    status: Literal["pending", "validating", "attaching", "active", "removing", "failed"]
+    dns_records: list[DnsRecordOut]
+    failure_code: Optional[str] = None
+    failure_message: Optional[str] = None
+    requested_at: Optional[str] = None
+    validated_at: Optional[str] = None
+    active_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    job_id: Optional[str] = Field(None, description="The tripplanner_custom_domain job queued by this change")
+
+
+class DomainListOut(BaseModel):
+    tenant_id: str
+    has_tripplanner: bool
+    available: bool = Field(..., description="False: own domains are not switched on in this environment")
+    max_domains: int = Field(..., description="The agency's limit "
+                                              "(setting cis.tripplanner.custom_domain_max_per_tenant)")
+    domains: list[DomainOut]
+
+
+DOMAIN_ID = Path(..., description="shared.tenant_tripplanner_domain.domain_id")
+
+
+def _refuse_domain(e: tp_domain.DomainError) -> HTTPException:
+    detail = {"detail": e.code, "message": e.message}
+    if e.field:
+        detail["field"] = e.field
+    return HTTPException(status_code=e.status, detail=detail, headers={"X-Error-Code": e.code})
+
+
+@router.get("/tenants/{tenant_id}/tripplanner-site/domains", response_model=DomainListOut,
+            summary="The custom hosts of a tenant's TripPlanner site, with the DNS records the agency creates",
+            dependencies=TENANT_SCOPED)
+async def get_domains(tenant_id: uuid.UUID, request: Request, x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    async with request.app.state.pool.acquire() as conn:
+        out = await tp_domain.list_domains(conn, str(tenant_id))
+    if out is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return out
+
+
+@router.post("/tenants/{tenant_id}/tripplanner-site/domains", response_model=DomainOut, status_code=201,
+             summary="Add a custom host to a tenant's TripPlanner site (audited; queues the certificate job)",
+             dependencies=TENANT_SCOPED)
+async def post_domain(tenant_id: uuid.UUID, body: DomainIn, request: Request, x_admin_secret: str = Header(None),
+                      x_admin_user_id: Optional[str] = Header(None),
+                      x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await tp_domain.add_domain(conn, str(tenant_id), domain=body.domain,
+                                              actor=_admin_actor(x_admin_user_id))
+    except tp_domain.DomainError as e:
+        raise _refuse_domain(e) from None
+    except asyncpg.UniqueViolationError:
+        raise _refuse_domain(tp_domain.DomainError(tp_domain.DOMAIN_TAKEN, "domain", status=409)) from None
+
+
+@router.delete("/tenants/{tenant_id}/tripplanner-site/domains/{domain_id}", response_model=DomainOut,
+               summary="Remove a custom host (the job detaches it from the distribution and deletes its certificate)",
+               dependencies=TENANT_SCOPED)
+async def delete_domain(tenant_id: uuid.UUID, request: Request, domain_id: uuid.UUID = DOMAIN_ID,
+                        x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                        x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await tp_domain.remove_domain(conn, str(tenant_id), str(domain_id),
+                                                 actor=_admin_actor(x_admin_user_id))
+    except tp_domain.DomainError as e:
+        raise _refuse_domain(e) from None
+
+
+@router.post("/tenants/{tenant_id}/tripplanner-site/domains/{domain_id}/retry", response_model=DomainOut,
+             summary="Retry a failed custom host (back to pending; a new certificate job)",
+             dependencies=TENANT_SCOPED)
+async def retry_domain(tenant_id: uuid.UUID, request: Request, domain_id: uuid.UUID = DOMAIN_ID,
+                       x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                       x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await tp_domain.retry_domain(conn, str(tenant_id), str(domain_id),
+                                                actor=_admin_actor(x_admin_user_id))
+    except tp_domain.DomainError as e:
+        raise _refuse_domain(e) from None
 
 
 # ── POST /admin/tenants/{id}/pilot/end — leave pilot mode (AA-1086 G2) ─────────

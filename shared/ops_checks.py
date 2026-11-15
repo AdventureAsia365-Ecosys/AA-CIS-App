@@ -136,6 +136,13 @@ CHECKS: dict[str, Check] = {
                                     "connection; the route answered 503. Check the aa_app_user pool setup."),
     "tenant_route_admin_pool": Check("Tenant route on the admin pool", "A tenant route ran on the admin pool "
                                      "(BYPASSRLS): a route flag is rolled back. Find who set it to false."),
+    # AA-1090 R8: services/jobs/tripplanner_custom_domain_job.py (the daily agency-edge check and the pending edge
+    # certificate check): an agency's certificate validation record is gone from its DNS.
+    "tripplanner_custom_domain_dns": Check("Agency domain validation record missing", "An agency's TripPlanner own "
+                                           "domain blocks the shared certificate of the agency domains (its ACM "
+                                           "validation record is gone). The domain is taken off line before the "
+                                           "certificate expires. Ask the agency to restore the record, then retry it "
+                                           "on Tenant 360.", "/admin/tenants"),
 }
 
 # AA-1025 H1b: the apps whose daily AI spend this process checks against their app profile budget (see the docstring).
