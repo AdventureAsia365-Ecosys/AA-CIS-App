@@ -193,5 +193,5 @@ async def load_research_month_cap(pool, now: Optional[datetime] = None) -> Share
 
 
 __all__ = ["RESEARCH_JOB_KINDS", "active_paying_research_job", "other_paying_research_job", "lane_busy_detail",
-           "wait_for_lane",            "SharedCap", "CappedRunBudget", "with_caps", "month_start", "research_month_spend",
+           "wait_for_lane", "SharedCap", "CappedRunBudget", "with_caps", "month_start", "research_month_spend",
            "job_spend", "research_month_cap_usd", "load_research_month_cap"]
