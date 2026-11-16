@@ -108,6 +108,8 @@ async def test_ex07_reads_the_onboarding_steps(conn):
     # provisioning made an empty brand rules placeholder: that is no brand brief
     assert await conn.fetchval("SELECT count(*) FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid", tid) >= 1
     assert mine["brief_at"] is None
+    # as the brand identity save does: retire the active row, then add the brief as the new active version
+    await conn.execute("UPDATE shared.tenant_brand_rules SET is_active = false WHERE tenant_id = $1::uuid", tid)
     await conn.execute("""
         INSERT INTO shared.tenant_brand_rules (tenant_id, brand_name, version, is_active, updated_at, style_guide)
         VALUES ($1::uuid, 'zz-brief', 1, true, now(), 'Invented style notes for a synthetic brand')""", tid)
