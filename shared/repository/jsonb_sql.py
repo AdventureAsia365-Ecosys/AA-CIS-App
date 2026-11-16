@@ -20,3 +20,7 @@ def json_array(column: str) -> str:
     if not _COLUMN.match(column):
         raise ValueError(f"not a column name: {column!r}")
     return f"(CASE WHEN jsonb_typeof({column}) = 'array' THEN {column} ELSE '[]'::jsonb END)"
+
+
+# content_piece.gate_ledger as the routers alias it ("cp"): the admin A4 and content-quality reads unnest it.
+GATE_LEDGER = json_array("cp.gate_ledger")

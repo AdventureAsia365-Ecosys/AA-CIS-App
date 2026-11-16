@@ -76,12 +76,9 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
-
 from api.routers.admin import verify_admin_secret
 from shared import tour_liveness as _tl
-from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
-
-_LEDGER = json_array("cp.gate_ledger")
+from shared.repository.jsonb_sql import GATE_LEDGER as _LEDGER  # S282: unnest gate_ledger only as an array
 
 logger = structlog.get_logger()
 # AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.

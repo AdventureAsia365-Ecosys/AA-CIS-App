@@ -7,7 +7,7 @@ One backend PR, no migration, no paid call.
 |---|---|---|
 | AA-CIS-API-M | Admin usage row lost: the raw path of a route with two UUIDs (113-119 chars) did not fit `shared.tenant_api_usage.endpoint` varchar(100); logged at ERROR | The rate limiter records the matched route template (`_endpoint(request)`); `track_api_call` cuts endpoint / method to the column widths and logs a failed write as a warning with traceback |
 | AA-CIS-API-1F | Weekly writing-memory KPI job failed: a Dev fixture wrote `gate_ledger = '{}'` (an object) and `jsonb_array_elements` raised on it | Fixture writes `'[]'`; every unguarded `gate_ledger` unnest goes through `shared/repository/jsonb_sql.json_array()` |
-| AA-CIS-API-1A | N+1 on the claim label set browser (2 + 2N queries; really 2 + 4N with the savepoints) | `store.read_rows_many` + `review.read_relabels_many_soft`: 4 queries whatever the number of sets |
+| AA-CIS-API-1A | N+1 on the claim label set browser (2 + 2N queries; really 2 + 4N with the savepoints) | `store.read_rows_many` + `set_list.read_relabels_many_soft`: 4 queries whatever the number of sets |
 | AA-CIS-API-18 | Blog envelope refused although the body was there: json-repair turns "envelope + a second JSON value" into a list | `_salvage_list`: take the first dict with a non-empty body (warning `t9_reply_json_salvaged`); same for the 4 sibling T9 parsers with their own key; clearer error reason |
 | AA-CIS-API-19 | Recompute job waited 1,800 s on the platform lock while an earlier attempt's thread still held it, then failed | A busy lock is a `Reschedule` (reason `recompute_lock_busy`, attempt not counted) after the release delay |
 | AA-CIS-API-1B | Tenant flag read timed out at 0.5 s on the first request of a fresh task (cold TLS connect), logged at ERROR | Warm the api Redis client with one PING at start-up; outer bound above the client's worst case; timeout at WARNING |
@@ -44,6 +44,13 @@ One backend PR, no migration, no paid call.
   timeout; only the level (Sentry) changes. Redis error / no client stay at ERROR.
 - **`job_failed` event name kept (1C/1D).** Handled ends (`OutputFailed`, `Refused` = `registry.HANDLED_FAILURES`)
   log `job_failed` at warning without a traceback; metric filters on the name still match.
+
+- **Code-health ratchets kept (AA-1097).** `list_sets` and the new many-versions corrections read moved to
+  `services/ground_truth/set_list.py` (review.py is a baseline file and may not grow); review.py re-exports
+  `list_sets` (the router and tests call `rv.list_sets`) and set_list imports review inside its functions (no import
+  cycle). The ledger fragment is one constant `jsonb_sql.GATE_LEDGER` imported by both routers, and the two baseline
+  functions that gained a branch hand it to a helper: `worker.log_job_failed` (warning vs exception) and
+  `recompute_job.settle_recompute_error` (busy lock vs any other recompute error).
 
 ## Changed
 

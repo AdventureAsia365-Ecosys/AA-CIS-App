@@ -60,9 +60,7 @@ from services.quality import registry as qr
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.writing_memory import signals as wm  # AA-916
 from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
-from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
-
-_LEDGER = json_array("cp.gate_ledger")
+from shared.repository.jsonb_sql import GATE_LEDGER as _LEDGER  # S282: unnest gate_ledger only as an array
 
 logger = structlog.get_logger()
 
@@ -1594,8 +1592,7 @@ async def _load_version_detail(conn, version_id: str) -> dict:
     out["sections"] = sections
     out["admin_edits"] = await wm.with_signal_texts(
         conn, [{**_row(r), "details": _j(r["details"]) or {}} for r in edits], row["tenant_id"])  # AA-916
-    block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"],
-                          row["edit_source"])
+    block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"], row["edit_source"])
     out["editable"], out["edit_block_reason"] = block is None, block
     out["tenant_copy"] = tenant_copy_state(None, row["exported_at"], [r["created_at"] for r in edits])
     return out

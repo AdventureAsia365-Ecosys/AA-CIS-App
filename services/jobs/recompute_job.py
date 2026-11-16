@@ -206,6 +206,12 @@ def lock_busy_outcome(ctx: JobContext, *, now: Optional[datetime] = None) -> Exc
                                 "lock_busy": {"attempt": ctx.job.attempt, "since": since.isoformat()}})
 
 
+def settle_recompute_error(ctx: JobContext, exc: RecomputeError) -> Exception:
+    """The exception `run` ends with for a RecomputeError out of the thread: lock_busy_outcome for a busy lock, else
+    the error itself (S282)."""
+    return lock_busy_outcome(ctx) if isinstance(exc, RecomputeLockBusy) else exc
+
+
 # A platform-wide recompute takes about 16-52 min on Dev (S281: 6 markets + route detection + embedding pre-pass).
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=EXPECTED_SECONDS,
           release_delay_seconds=RELEASE_DELAY_SECONDS)
@@ -283,11 +289,10 @@ async def run(ctx: JobContext) -> dict:
         stop.set()
         logger.warning("recompute_thread_stop_requested", job_id=ctx.job_id, scope=scope, stage=stage["name"])
         raise
-    except RecomputeLockBusy as e:
-        # S282: converted here, outside the thread (a Reschedule raised inside it would be wrapped as a stage failure).
-        raise lock_busy_outcome(ctx) from e
-    except RecomputeError:
-        raise
+    except RecomputeError as e:
+        # S282: a busy lock becomes its Reschedule / timeout here, outside the thread (a Reschedule raised inside it
+        # would be wrapped as a stage failure); every other recompute error goes up unchanged.
+        raise settle_recompute_error(ctx, e)
     except Exception as e:
         logger.warning("recompute_stage_failed", job_id=ctx.job_id, scope=scope, stage=stage["name"],
                        error=f"{type(e).__name__}: {str(e)[:300]}")
