@@ -668,7 +668,8 @@ def test_nothing_but_the_admin_script_reaches_the_paid_deep_serp():
     question_topup, and no call to fetch_people_also_ask_deep nor a people_also_ask_click_depth
     argument (or string) outside question_topup.py and the DFS client itself."""
     root = pathlib.Path(__file__).resolve().parents[2]
-    allowed = {"question_topup.py", "dataforseo_client.py"}
+    # research_cache.py only NAMES the paid methods in its call-site guard registry (AA-1120); it calls none of them.
+    allowed = {"question_topup.py", "dataforseo_client.py", "research_cache.py"}
     offenders = []
     for folder in ("api", "worker", "services", "shared", "portal", "frontend"):
         for path in (root / folder).rglob("*.py"):
