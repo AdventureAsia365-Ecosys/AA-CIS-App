@@ -368,8 +368,10 @@ TAG_RE = re.compile(r"^aa1048-r1-(?P<id>[^@]+)@(?P<sha>[0-9a-f]{12})$")
 
 
 def prefixes_from(text: str) -> set[str]:
-    """Claim hash prefixes from a run report (the keys of its "votes") or from a JSON list of prefixes. A prefix
-    shorter than MIN_PREFIX hex characters is refused (it could match claims nobody meant)."""
+    """Claim hash prefixes from a run report (the keys of its "votes") or from a JSON list of prefixes. A two-step run
+    report (services/ground_truth/two_step.py) nests its votes per step ({"classify": {...}, "judge": {...}}): its
+    prefixes are the union of the step claim keys. A prefix shorter than MIN_PREFIX hex characters is refused (it could
+    match claims nobody meant)."""
     try:
         obj = json.loads(text)
     except ValueError as e:
@@ -377,6 +379,10 @@ def prefixes_from(text: str) -> set[str]:
     keys = obj.get("votes") if isinstance(obj, dict) else obj
     if not isinstance(keys, (dict, list)) or not keys:
         raise EvalRefused("an exclude file needs a non-empty 'votes' object or a list of hash prefixes")
+    if isinstance(keys, dict) and all(isinstance(v, dict) for v in keys.values()):
+        keys = [k for step in keys.values() for k in step]          # two-step report: votes per step
+        if not keys:
+            raise EvalRefused("an exclude file's per-step 'votes' hold no claim")
     out = {str(k).lower() for k in keys}
     short = sorted(k for k in out if len(k) < MIN_PREFIX or not re.fullmatch(r"[0-9a-f]+", k))
     if short:

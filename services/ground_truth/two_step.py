@@ -22,7 +22,15 @@ up; v6j first asks whether a listed specific is a trip specific at all. Each ste
 and that file's sha256 (STEP_SETS); a live run refuses a file whose sha differs. v6 was shaped on the 25 false
 positives of 9b0d46f8 on the S281 fresh pool, so its registration holds them out claim by claim (`held_out`): on that
 pool they are dropped before the subset is drawn, and the run counts as kept out; on another pool the manifest must
-exclude the run as usual. `--steps v5|v6` picks the set (default v6).
+exclude the run as usual.
+
+v7 (S282, docs/calibration/aa1048-two-step-v7-preregistration.md). v6's one gated run (c5983e03) was no_go but close
+(false positives dropped 56 %, step 2 cleared none it judged), so v6 is closed too and v7 is the default: both steps
+compared words, not facts. v7c writes a row per trip specific (the closest source wording, same fact or not) with a
+close-paraphrase list before it decides; v7j writes a row per listed specific with a finding and clears the sentence
+when the source gives every specific. v7 was shaped on c5983e03 on the S281 fresh pool, so that pool is a shaping pool:
+the v7 run needs a new fresh pool whose manifest excludes it and every shaping run (no claim-level hold-out).
+`--steps v5|v6|v7` picks the set (default v7).
 
   python -m services.ground_truth.two_step run --pool <pool.jsonl> (--fresh <manifest.json> | --exclude <report> ...)
       [--steps v6] [--candidate <model>@<connection>] [--trial N | --limit N] [--live --confirm-spend] [--cap USD]
@@ -98,8 +106,9 @@ CLASSIFY_SCHEMA = {"name": "claim_restatement", "schema": {
                    "why": {"type": "string"}}}}
 SCHEMA = {"classify": CLASSIFY_SCHEMA, "judge": r1.ENTAILMENT_SCHEMA}
 # The reply schema of each step prompt (v6c asks for what it set aside before its decision; pinned in its tag).
+# v7c / v7j write one row per specific (the closest source wording) before their decision; both pinned in their tags.
 PROMPT_SCHEMA = {"v5c": CLASSIFY_SCHEMA, "v5j": r1.ENTAILMENT_SCHEMA, "v6c": pr.V6C_SCHEMA,
-                 "v6j": r1.ENTAILMENT_SCHEMA}
+                 "v6j": r1.ENTAILMENT_SCHEMA, "v7c": pr.V7C_SCHEMA, "v7j": pr.V7J_SCHEMA}
 
 
 def schema_of(inst: r1.Instrument) -> dict:
@@ -307,7 +316,8 @@ def fresh_check(manifest: dict, pool_text: str, pool: list[ev.PoolItem], shaped:
     """A fresh pool is out of sample by construction (fresh_pool.py): its manifest is the one of this pool file, it
     names every run the steps were shaped on as excluded, no claim of the pool sits on an excluded piece, and the
     pools the steps were shaped on are kept out: each is in the manifest's excluded_pools, or the pool is a train-split
-    pool (manifest split train and every claim train: the split is frozen per tour, the shaping pools are held-out).
+    pool (manifest split train and every claim train: the split is frozen per tour, the S279 shaping pool is held-out;
+    a shaping pool of the train split itself, prompts.TRAIN_SPLIT_POOLS, must be in excluded_pools by name).
     `covered`: shaping runs that a claim-level hold-out of the pre-registration keeps out of this pool (held_out)."""
     excluded_runs = sorted({str(r)[:8].lower() for r in manifest.get("excluded_runs") or []})
     held = set(covered)
@@ -316,7 +326,8 @@ def fresh_check(manifest: dict, pool_text: str, pool: list[ev.PoolItem], shaped:
     excluded_pools = {str(p)[:16].lower() for p in manifest.get("excluded_pools") or []}
     pools_missing = [p for p in sorted(shaped_pools) if p.lower() not in excluded_pools]
     splits = Counter(p.item.split for p in pool)
-    train_only = manifest.get("split") == "train" and bool(pool) and set(splits) == {"train"}
+    train_only = (manifest.get("split") == "train" and bool(pool) and set(splits) == {"train"}
+                  and not any(p.lower() in pr.TRAIN_SPLIT_POOLS for p in pools_missing))
     return {"kind": "fresh", "pool_sha_matches": manifest.get("pool_sha256") == pool_sha256(pool_text),
             "shaped_on": shaped, "excluded_runs": excluded_runs,
             "missing": [r for r in shaped if r not in excluded_runs and r not in held],

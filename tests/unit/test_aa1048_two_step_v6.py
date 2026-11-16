@@ -1,7 +1,9 @@
 """AA-1048 (S282 lane l4-v6) — the two-step instrument v6: the pinned v6c / v6j prompt tags (v6c's reply schema in
 its tag), the pinned pre-registration files (sha256 per step set, same bars as v5), the claim-level hold-out of the
 false positives v6 was shaped on, the closed v5 step set and the one-gated-run rule for v6. Every model call is a fake;
-every text, place and hash here is invented (the registered hold-out prefixes are read from the committed file)."""
+every text, place and hash here is invented (the registered hold-out prefixes are read from the committed file).
+S282 lane l9-v7: v6 is closed too (its gated run c5983e03 was no_go) and v7 is the default; the live paths of v6 below
+run on a reopened copy of the v6 step set (`_setup`), so the hold-out logic stays covered."""
 import dataclasses
 import hashlib
 import json
@@ -59,7 +61,7 @@ def test_the_v6c_reply_schema_is_part_of_its_tag():
     assert changed.tag != v6c.tag
     props = list(pr.V6C_SCHEMA["schema"]["properties"])
     assert props.index("set_aside") < props.index("kind")                       # what it sets aside comes first
-    insts = ts.instruments(CAND)
+    insts = ts.instruments(CAND, "v6")
     assert ts.schema_of(insts["classify"]) is pr.V6C_SCHEMA
     assert ts.schema_of(insts["judge"]) is r1.ENTAILMENT_SCHEMA
     assert ts.schema_of(ts.instruments(CAND, "v5")["classify"]) is ts.CLASSIFY_SCHEMA
@@ -102,7 +104,7 @@ def test_v6_registers_the_same_bars_as_v5_and_a_new_id():
     assert v6["bars"] == v5["bars"] and v6["bars_settings"] == v5["bars_settings"]
     assert v6["id"] == "aa1048-two-step-v6" != v5["id"] and v6["votes"] == v5["votes"] == 3
     assert v6["candidate"] == v5["candidate"] and v6["stage"] == r1.STAGE
-    assert ts.DEFAULT_STEP_SET == "v6" and ts.PREREGISTRATION == ts.STEP_SETS["v6"].preregistration
+    assert ts.STEP_SETS["v6"].closed and "c5983e03" in ts.STEP_SETS["v6"].closed       # S282: closed after its run
 
 
 def test_v6_holds_out_the_false_positives_of_the_v5_gated_run():
@@ -169,8 +171,9 @@ def _setup(tmp_path, monkeypatch, prior, *, hold=True):
                               "claims": [_h(100)[:16], _h(101)[:16]], "by_group": {"fp_paraphrase": 2}}
     reg = tmp_path / "v6.json"
     reg.write_text(json.dumps(prereg), encoding="utf-8")
+    # v6 is closed since its gated run (S282); a reopened copy keeps its live paths (hold-out, stop rule) tested
     monkeypatch.setitem(ts.STEP_SETS, "v6", dataclasses.replace(ts.STEP_SETS["v6"], preregistration=reg,
-                                                                prereg_sha256=ts.file_sha256(reg)))
+                                                                prereg_sha256=ts.file_sha256(reg), closed=""))
     monkeypatch.setattr(ev, "refresh_settings", lambda: False)
     monkeypatch.setattr(ts, "_probe", lambda since: (lambda: 0.0))
     monkeypatch.setattr(ts, "_prior_runs", lambda: prior)
@@ -212,7 +215,8 @@ def test_v5_is_closed_for_every_live_run_but_its_dry_run_still_reports(tmp_path,
 def test_the_first_gated_v6_run_runs_after_the_v5_gated_run_and_drops_the_held_out_claims(tmp_path, monkeypatch,
                                                                                             capsys):
     pool, manifest, calls, rows = _setup(tmp_path, monkeypatch, [V5_GATED])
-    rc = ts.main(["run", "--pool", pool, "--fresh", manifest, "--limit", "6", "--live", "--confirm-spend"])
+    rc = ts.main(["run", "--pool", pool, "--fresh", manifest, "--steps", "v6", "--limit", "6", "--live",
+                  "--confirm-spend"])
     rep = json.loads(capsys.readouterr().out)
     assert rc == 0 and rep["steps"] == "v6" and rep["run_kind"] == "full" and rep["stop_rule"]["refused"] is None
     hold = rep["out_of_sample"]["held_out"]
@@ -226,21 +230,25 @@ def test_the_first_gated_v6_run_runs_after_the_v5_gated_run_and_drops_the_held_o
 def test_a_second_gated_v6_run_is_refused(tmp_path, monkeypatch, capsys):
     v6_gated = _prior("a", "full", "aa1048-two-step-v6", V6C_TAG, pool="e" * 16)
     pool, manifest, calls, _ = _setup(tmp_path, monkeypatch, [V5_GATED, v6_gated])
-    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--limit", "6", "--live", "--confirm-spend"]) == 2
+    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--steps", "v6", "--limit", "6", "--live",
+                  "--confirm-spend"]) == 2
     assert "one gated run" in json.loads(capsys.readouterr().out)["refused"] and calls == []
     # a trial of v6 may still repeat
-    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--trial", "1", "--live", "--confirm-spend"]) == 0
+    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--steps", "v6", "--trial", "1", "--live",
+                  "--confirm-spend"]) == 0
     assert json.loads(capsys.readouterr().out)["run_kind"] == "trial"
 
 
 def test_a_live_v6_run_refuses_a_changed_registration_file(tmp_path, monkeypatch, capsys):
     pool, manifest, calls, _ = _setup(tmp_path, monkeypatch, [])
     monkeypatch.setitem(ts.STEP_SETS, "v6", dataclasses.replace(ts.STEP_SETS["v6"], prereg_sha256="0" * 64))
-    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--trial", "1", "--live", "--confirm-spend"]) == 2
+    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--steps", "v6", "--trial", "1", "--live",
+                  "--confirm-spend"]) == 2
     assert "changed after it was pinned" in json.loads(capsys.readouterr().out)["refused"] and calls == []
 
 
 def test_a_live_v6_run_on_a_pool_without_its_hold_out_needs_the_run_excluded(tmp_path, monkeypatch, capsys):
     pool, manifest, calls, _ = _setup(tmp_path, monkeypatch, [], hold=False)      # held_out names another pool
-    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--trial", "1", "--live", "--confirm-spend"]) == 2
+    assert ts.main(["run", "--pool", pool, "--fresh", manifest, "--steps", "v6", "--trial", "1", "--live",
+                  "--confirm-spend"]) == 2
     assert "9b0d46f8" in json.loads(capsys.readouterr().out)["refused"] and calls == []
