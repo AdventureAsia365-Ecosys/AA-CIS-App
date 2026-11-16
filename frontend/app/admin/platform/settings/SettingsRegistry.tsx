@@ -32,7 +32,7 @@
 // can_write, the CRM's own answer); a 503 says "not set up yet" only for the registry's own codes, else "did not
 // answer" with a retry. Values, bounds, areas and the form's problems are worded in the page's language.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ExternalLink, History, Pencil, SlidersHorizontal } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
@@ -203,8 +203,23 @@ function RegistryNotes({ data, crmReadOnly }: { data: RegistryResp; crmReadOnly:
   );
 }
 
-function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; initialArea: string; initialQuery: string }) {
+/** The registry's load state above the table: error, loading, notes, empty. S282: while the registry loads the table
+ *  renders nothing, so a slow first load looked like a blank page; the loading screen fills that gap. */
+function RegistryState({ q, crmReadOnly, empty }: {
+  q: UseQueryResult<RegistryResp>; crmReadOnly: boolean; empty: boolean;
+}) {
   const t = useSettingsT();
+  if (q.isError) return <LoadError error={q.error} onRetry={() => void q.refetch()} />;
+  if (!q.data) return <LoadingScreen />;
+  return (
+    <>
+      <RegistryNotes data={q.data} crmReadOnly={crmReadOnly} />
+      {empty && <Section><div style={small}>{t("noneYet")}</div></Section>}
+    </>
+  );
+}
+
+function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; initialArea: string; initialQuery: string }) {
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
   const { words } = useSettingWords();
@@ -229,11 +244,7 @@ function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; init
   if (app === "booking") return <BookingLink />;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
-      {q.isError && <LoadError error={q.error} onRetry={() => void q.refetch()} />}
-      {/* S282: while the registry loads the table renders nothing, so a slow first load looked like a blank page */}
-      {q.isPending && !q.isError && <LoadingScreen />}
-      {q.data && <RegistryNotes data={q.data} crmReadOnly={isAdmin && crmReadOnly} />}
-      {q.data && items.length === 0 && <Section><div style={small}>{t("noneYet")}</div></Section>}
+      <RegistryState q={q} crmReadOnly={isAdmin && crmReadOnly} empty={items.length === 0} />
       <SettingsTable app={app} settings={items} initialArea={initialArea} initialQuery={initialQuery} columns={columns} />
       {editing && (
         <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={canWrite} valueOf={valueOf}

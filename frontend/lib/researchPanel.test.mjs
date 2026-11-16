@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { marketRows, monthWarn, runScope, usd } from "./researchPanel.ts";
+import { marketRows, monthState, monthWarn, runScope, usd } from "./researchPanel.ts";
 
 test("usd: three decimals under a dollar, two above, a dash when unknown", () => {
   assert.equal(usd(0.0456), "$0.046");
@@ -28,4 +28,13 @@ test("runScope: codes upper-cased, blanks dropped, a cap only when positive", ()
   assert.deepEqual(runScope(" us, uk ,", "1.5"), { markets: ["US", "UK"], max_usd: 1.5 });
   assert.deepEqual(runScope("US", "0"), { markets: ["US"] });
   assert.deepEqual(runScope("US", "abc"), { markets: ["US"] });
+});
+
+test("monthState: over at the hard cap, warn at the warning share, nothing without a cap (S282)", () => {
+  assert.equal(monthState({ cap_usd: 5, spent_usd: 12.53, warn_pct: 80 }), "over");
+  assert.equal(monthState({ cap_usd: 5, spent_usd: 5, warn_pct: 80 }), "over");
+  assert.equal(monthState({ cap_usd: 5, spent_usd: 4.2, warn_pct: 80 }), "warn");
+  assert.equal(monthState({ cap_usd: 5, spent_usd: 1, warn_pct: 80 }), null);
+  assert.equal(monthState({ cap_usd: 0, spent_usd: 9, warn_pct: 80 }), null);
+  assert.equal(monthState(null), null);
 });

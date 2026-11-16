@@ -15,6 +15,8 @@ export const RESEARCH = defineMessages(
     nextRun: "Next decision",
     monthSpend: "Research spend this month",
     monthOf: (spent: string, cap: string) => `${spent} of ${cap}`,
+    overCap: (spent: string, cap: string) =>
+      `Over the monthly research cap: ${spent} spent of ${cap}. Every paid research run (manual and automatic) is refused until the 1st of next month (UTC). Raise the cap in the research settings to buy more this month.`,
     monthNote: "DataForSEO, the keyword LLM and Jev of every research run, manual and automatic. Hard stop at the cap.",
     runCap: "Automatic run cap",
     newPlaces: "Never-researched places",
@@ -77,6 +79,8 @@ export const RESEARCH = defineMessages(
     nextRun: "Quyết định kế tiếp",
     monthSpend: "Chi research tháng này",
     monthOf: (spent: string, cap: string) => `${spent} trên ${cap}`,
+    overCap: (spent: string, cap: string) =>
+      `Đã vượt trần research của tháng: đã dùng ${spent} trên ${cap}. Mọi lần research trả phí (chạy tay và tự động) bị từ chối tới ngày 1 tháng sau (UTC). Muốn mua thêm trong tháng này thì nâng trần trong cài đặt research.`,
     monthNote: "DataForSEO, LLM từ khoá và Jev của mọi lần research, chạy tay và tự động. Dừng cứng ở trần.",
     runCap: "Trần mỗi lần chạy tự động",
     newPlaces: "Địa điểm chưa từng nghiên cứu",

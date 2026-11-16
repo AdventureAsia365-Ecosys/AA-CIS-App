@@ -11,6 +11,14 @@ export function usd(n: number | null | undefined): string {
 }
 
 /** The month spend reached the warning share of the cap (a 0 or missing cap never warns: nothing can be spent). */
+/** S282: "over" when the month spend reached the hard cap (every paid run is refused until the next UTC month),
+ *  "warn" at the warning share, null otherwise (a 0 or missing cap never warns: nothing can be spent). */
+export function monthState(m: MonthCap | null | undefined): "over" | "warn" | null {
+  if (!m || !m.cap_usd) return null;
+  if (m.spent_usd >= m.cap_usd) return "over";
+  return monthWarn(m) ? "warn" : null;
+}
+
 export function monthWarn(m: MonthCap | null | undefined): boolean {
   if (!m || !m.cap_usd) return false;
   return m.spent_usd >= (m.cap_usd * m.warn_pct) / 100;
