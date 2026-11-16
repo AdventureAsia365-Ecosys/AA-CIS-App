@@ -1,11 +1,11 @@
-"""AA-1120 (CIS 434) / AA-1122 (CIS 452) — the settings registry keys of DataForSEO research.
+"""AA-1120 (CIS 434) / AA-1122 (CIS 442) — the settings registry keys of DataForSEO research.
 
 The freshness windows of acp_contract.search_demand, the recovery window of paid queued tasks, and (AA-1122) the
 automatic research tick, its caps, its alerts and the tour People Also Ask backfill are platform settings on
 Platform › Settings (tech lead S279: a threshold, limit, cap, schedule or window is a setting, never a code literal):
 readers name a key through these constants and read the value in force with ``shared.settings``, never a copied
-number. The keys equal the CIS 434 / 452 seeds (tests/integration/test_aa1120_migration_434.py,
-tests/integration/test_aa1122_migrations_450_452.py and the settings-lint reader check,
+number. The keys equal the CIS 434 / 442 seeds (tests/integration/test_aa1120_migration_434.py,
+tests/integration/test_aa1122_migrations_440_442.py and the settings-lint reader check,
 tests/unit/test_s279_settings_lint.py).
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ QUEUE_RECOVER_DAYS = "cis.seo.dfs_queue_recover_days"
 
 ALL = (VOLUME_FRESH_DAYS, SERP_FRESH_DAYS, QUEUE_RECOVER_DAYS)
 
-# ── AA-1122 (CIS 452): automatic research (services/acp_contract/research_auto.py) ───────────────────────────────────
+# ── AA-1122 (CIS 442): automatic research (services/acp_contract/research_auto.py) ───────────────────────────────────
 AUTO_ENABLED = "cis.seo.research_auto_enabled"
 AUTO_WINDOW_START_UTC = "cis.seo.research_auto_window_start_utc"
 AUTO_WINDOW_END_UTC = "cis.seo.research_auto_window_end_utc"
@@ -40,7 +40,7 @@ MAX_USD_PER_MONTH = "cis.spend.research_max_usd_per_month"
 AUTO_MIN_RUN_USD = "cis.spend.research_auto_min_run_usd"
 JEV_ASK_ESTIMATE_USD = "cis.spend.research_jev_ask_estimate_usd"
 
-# ── AA-1122 (CIS 452): the tour People Also Ask backfill (services/seo_intelligence/tour_paa.py) ─────────────────────
+# ── AA-1122 (CIS 442): the tour People Also Ask backfill (services/seo_intelligence/tour_paa.py) ─────────────────────
 TOUR_PAA_MAX = "cis.seo.tour_paa_max"
 TOUR_PAA_PER_KEYWORD = "cis.seo.tour_paa_per_keyword"
 TOUR_PAA_MAX_USD_PER_RUN = "cis.spend.tour_paa_backfill_max_usd_per_run"

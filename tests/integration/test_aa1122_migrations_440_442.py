@@ -1,10 +1,10 @@
-"""AA-1122 (S282) — CIS 450-452 (conftest replays every migration).
+"""AA-1122 (S282) — CIS 440-452 (conftest replays every migration).
 
-450: acp_contract.search_volume_monthly — a month is stored once (the primary key), the month is the first of a month,
+440: acp_contract.search_volume_monthly — a month is stored once (the primary key), the month is the first of a month,
      the runtime role reads and inserts but never updates nor deletes, a re-run changes nothing.
-451: silver_aa_internal.seo_context.paa_source / paa_filled_at — NULL by default, only store / serp / none, a re-run
+441: silver_aa_internal.seo_context.paa_source / paa_filled_at — NULL by default, only store / serp / none, a re-run
      changes nothing.
-452: the research settings — registered; each row equals the compiled default the reader serves; every key of
+442: the research settings — registered; each row equals the compiled default the reader serves; every key of
      research_settings.AUTO / TOUR_PAA is seeded with a complete guide and enforced; spend keys are maker-checker; the two
      freshness windows are maker-checker at 180 days; bounds hold; a re-run changes nothing.
 Runs in a transaction that is rolled back; invented keywords only."""
@@ -25,9 +25,9 @@ from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 MIG = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
-M450 = os.path.join(MIG, "450_aa1122_search_volume_monthly.sql")
-M451 = os.path.join(MIG, "451_aa1122_seo_context_paa_source.sql")
-M452 = os.path.join(MIG, "452_aa1122_research_auto_settings.sql")
+M450 = os.path.join(MIG, "440_aa1122_search_volume_monthly.sql")
+M451 = os.path.join(MIG, "441_aa1122_seo_context_paa_source.sql")
+M452 = os.path.join(MIG, "442_aa1122_research_auto_settings.sql")
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) RETURNING id")
 ROW = ("INSERT INTO acp_contract.search_volume_monthly (keyword, market, month, search_volume, source) "
@@ -52,8 +52,8 @@ def _body(path: str) -> str:
 
 @pytest.mark.asyncio
 async def test_450_452_registered(conn):
-    got = await conn.fetch("SELECT version AS v FROM shared.schema_versions WHERE version IN ('450', '451', '452')")
-    assert sorted(r["v"] for r in got) == ["450", "451", "452"]
+    got = await conn.fetch("SELECT version AS v FROM shared.schema_versions WHERE version IN ('440', '441', '442')")
+    assert sorted(r["v"] for r in got) == ["440", "441", "442"]
 
 
 @pytest.mark.asyncio

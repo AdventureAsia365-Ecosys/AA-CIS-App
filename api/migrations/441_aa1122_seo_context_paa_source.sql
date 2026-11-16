@@ -1,4 +1,4 @@
--- Migration 451: AA-1122 item 5 (S282) — where a tour's People Also Ask questions came from, and when they were filled.
+-- Migration 441: AA-1122 item 5 (S282) — where a tour's People Also Ask questions came from, and when they were filled.
 --
 -- Why. silver_aa_internal.seo_context.people_also_ask holds the PAA questions S1 and T2 hand the writers, one row per
 -- tour. About 258 of 892 published tours have an empty list: their one SERP (bought by the S1 prefetch) had no PAA box.
@@ -17,7 +17,7 @@
 --                       waits for the SERP freshness window before it looks again (no repeat purchase).
 --        paa_filled_at  when the backfill last set people_also_ask / paa_source (NULL for rows it never touched).
 --      CHECK paa_source IN ('store', 'serp', 'none') or NULL.
---   2. Register 451.
+--   2. Register 441.
 --
 -- PII (DM-6.1). None: a provenance code and a time.
 --
@@ -28,11 +28,11 @@
 -- policies cover the new columns (cis_app ALL, the tenant isolation policy by tenant_id).
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): it ALTERs an existing table and adds a CHECK
--- constraint to it. MIG-4: a migration-only PR (with 450 and 452), applied on Dev by Infra Migration Apply when every
+-- constraint to it. MIG-4: a migration-only PR (with 440 and 442), applied on Dev by Infra Migration Apply when every
 -- job table is idle (ADR 0017a), then the code PR.
 --
--- Number. Follows 450 (this lane: 450-452). If the owner main max + 1 differs at merge, renumber (git grep '451_' and
--- '451' here, in tests/integration/test_aa1122_migrations_450_452.py and docs/implementation-notes/AA-1122.md).
+-- Number. Follows 440 (this lane: 440-452). If the owner main max + 1 differs at merge, renumber (git grep '441_' and
+-- '441' here, in tests/integration/test_aa1122_migrations_440_442.py and docs/implementation-notes/AA-1122.md).
 --
 -- Locks. ALTER TABLE takes an ACCESS EXCLUSIVE lock for a catalog-only change (~918 rows); lock_timeout 5s, so a busy
 -- table fails the apply instead of queueing readers behind it. Re-runnable (IF NOT EXISTS, the constraint is added only
@@ -61,14 +61,14 @@ END
 $add$;
 
 COMMENT ON COLUMN silver_aa_internal.seo_context.paa_source IS
-    'AA-1122 (CIS 451): who filled people_also_ask last: NULL = S1 prefetch / T2 as before; store = the PAA backfill '
+    'AA-1122 (CIS 441): who filled people_also_ask last: NULL = S1 prefetch / T2 as before; store = the PAA backfill '
     'from acp_contract.search_demand; serp = the backfill from a SERP it bought; none = the backfill found no question '
     '(it looks again after the SERP freshness window).';
 COMMENT ON COLUMN silver_aa_internal.seo_context.paa_filled_at IS
-    'AA-1122 (CIS 451): when the PAA backfill last set people_also_ask / paa_source. fetched_at is never changed by it.';
+    'AA-1122 (CIS 441): when the PAA backfill last set people_also_ask / paa_source. fetched_at is never changed by it.';
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('451', now(), 'AA-1122: seo_context.paa_source / paa_filled_at (provenance of a tour''s PAA backfill)')
+VALUES ('441', now(), 'AA-1122: seo_context.paa_source / paa_filled_at (provenance of a tour''s PAA backfill)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 450: AA-1122 item 1 (S282, tech lead decision 16/11/2026) — the monthly search volume history of the
+-- Migration 440: AA-1122 item 1 (S282, tech lead decision 16/11/2026) — the monthly search volume history of the
 -- research store: one row per (keyword, market, month), written once and never overwritten.
 --
 -- Why. Every Google Ads volume answer DataForSEO sends (search_volume live and Standard queue, keywords_for_keywords)
@@ -22,7 +22,7 @@
 --      Index (market, month) for the per-market season reads.
 --   2. GRANT cis_app SELECT, INSERT (the research writers and the admin reads; no UPDATE, no DELETE: the history is
 --      append-only for the runtime role).
---   3. Register 450.
+--   3. Register 440.
 --
 -- PII (DM-6.1). None: search phrases, market codes, months and numbers. No tenant column (platform research store).
 --
@@ -34,11 +34,11 @@
 -- reads it on the admin Research tab (the seasonality reader).
 --
 -- Class: expand (root ADR 0017 d3): a new table with its constraints and an index, a grant to the owner's runtime role
--- and comments; no existing object changes, no seed row, no DO block. Ships in the migration-only PR with 451 and 452.
+-- and comments; no existing object changes, no seed row, no DO block. Ships in the migration-only PR with 441 and 442.
 --
 -- Number. 434 is the newest CIS migration on main (16/11/2026); 435-439 belong to the pricing lane of this wave and the
--- lane was given 450 onwards. If the owner main max + 1 differs at merge, renumber (git grep '450_' and '450' here, in
--- tests/integration/test_aa1122_migrations_450_452.py and docs/implementation-notes/AA-1122.md).
+-- lane was given 440 onwards. If the owner main max + 1 differs at merge, renumber (git grep '440_' and '440' here, in
+-- tests/integration/test_aa1122_migrations_440_442.py and docs/implementation-notes/AA-1122.md).
 --
 -- Rollback (a new forward migration, after the code PR is reverted): DROP TABLE acp_contract.search_volume_monthly (a
 -- destructive file, DRY RUN).
@@ -69,20 +69,20 @@ CREATE INDEX IF NOT EXISTS search_volume_monthly_market_month_idx
     ON acp_contract.search_volume_monthly (market, month);
 
 COMMENT ON TABLE acp_contract.search_volume_monthly IS
-    'AA-1122 (CIS 450): the monthly search volume Google Ads reports for a research keyword in a market (DataForSEO '
+    'AA-1122 (CIS 440): the monthly search volume Google Ads reports for a research keyword in a market (DataForSEO '
     'monthly_searches), one row per (keyword, market, month), written once and never overwritten. The season behind '
     'acp_contract.search_demand.search_volume (a 12-month average). Read by the seasonality reader (peak month, '
     'year-over-year per place and market).';
 COMMENT ON COLUMN acp_contract.search_volume_monthly.month IS
-    'AA-1122 (450): the first day of the month the volume is about.';
+    'AA-1122 (440): the first day of the month the volume is about.';
 COMMENT ON COLUMN acp_contract.search_volume_monthly.source IS
-    'AA-1122 (450): the DataForSEO endpoint label that answered (search_volume_bulk, search_volume_bulk_queue, '
+    'AA-1122 (440): the DataForSEO endpoint label that answered (search_volume_bulk, search_volume_bulk_queue, '
     'keywords_for_keywords).';
 
 GRANT SELECT, INSERT ON acp_contract.search_volume_monthly TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('450', now(), 'AA-1122: acp_contract.search_volume_monthly (monthly search volume history, never overwritten)')
+VALUES ('440', now(), 'AA-1122: acp_contract.search_volume_monthly (monthly search volume history, never overwritten)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

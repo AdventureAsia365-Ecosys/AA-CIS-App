@@ -1,4 +1,4 @@
--- Migration 452: AA-1122 (S282, tech lead decision 16/11/2026, items 3-5) — the settings of automatic search demand
+-- Migration 442: AA-1122 (S282, tech lead decision 16/11/2026, items 3-5) — the settings of automatic search demand
 -- research, its hard monthly cap and the tour People Also Ask backfill, and the research freshness windows moved to
 -- maker-checker at 180 days.
 --
@@ -29,7 +29,7 @@
 --      cis.seo.research_serp_fresh_days (CIS 434) get approval maker_checker (they decide what research buys again) and
 --      the default 180 days (tech lead: refresh window 90-180 days); bounds unchanged (30-730); their guides say so.
 --   3. A post-check: every seed and edit row is in force.
---   4. Register 452.
+--   4. Register 442.
 --
 -- Behaviour on apply. None for running code until the code PR: no value row is seeded and nothing on main reads the new
 -- keys. The two edited windows: main reads them already, so their new default (180 days, was 365) applies from the deploy
@@ -38,12 +38,12 @@
 -- none is). A value an administrator already set keeps winning.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): config rows INSERTed into and UPDATEd in an
--- existing table, and a DO block. MIG-4: a migration-only PR (with 450 and 451), applied on Dev by Infra Migration
+-- existing table, and a DO block. MIG-4: a migration-only PR (with 440 and 441), applied on Dev by Infra Migration
 -- Apply when every job table is idle (ADR 0017a), then the code PR (no readiness raise: a reader falls back to the
 -- compiled defaults). DM-6.1: no personal data. DM-7.1: no new table.
 --
--- Number. Follows 451 (this lane: 450-452). If the owner main max + 1 differs at merge, renumber (git grep '452_' and
--- '452' here, in tests/integration/test_aa1122_migrations_450_452.py, compiled_defaults.json's _generated line and
+-- Number. Follows 441 (this lane: 440-452). If the owner main max + 1 differs at merge, renumber (git grep '442_' and
+-- '442' here, in tests/integration/test_aa1122_migrations_440_442.py, compiled_defaults.json's _generated line and
 -- docs/implementation-notes/AA-1122.md).
 --
 -- Locks. INSERT of 22 rows and UPDATE of 2 rows of a small table read by no hot path (the reader reads
@@ -126,7 +126,7 @@ BEGIN
      WHERE key IN ('cis.seo.research_auto_enabled', 'cis.spend.research_max_usd_per_month',
                    'cis.spend.research_auto_max_usd_per_run', 'cis.spend.tour_paa_backfill_max_usd_per_run');
     IF seeded <> 4 THEN
-        RAISE EXCEPTION 'CIS 452: the research settings were not seeded (% of 4 sample keys)', seeded;
+        RAISE EXCEPTION 'CIS 442: the research settings were not seeded (% of 4 sample keys)', seeded;
     END IF;
     SELECT string_agg(e.key, ', ' ORDER BY e.key) INTO missing
       FROM m452_edit AS e
@@ -137,13 +137,13 @@ BEGIN
               AND (NOT e.doc ? 'approval' OR d.approval = e.doc ->> 'approval')
               AND (NOT e.doc ? 'guide' OR d.guide = e.doc -> 'guide'));
     IF missing IS NOT NULL THEN
-        RAISE EXCEPTION 'CIS 452: no definition or not edited: %', missing;
+        RAISE EXCEPTION 'CIS 442: no definition or not edited: %', missing;
     END IF;
 END
 $check$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('452', now(), 'AA-1122: automatic research, monthly research cap and tour PAA backfill settings')
+VALUES ('442', now(), 'AA-1122: automatic research, monthly research cap and tour PAA backfill settings')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
