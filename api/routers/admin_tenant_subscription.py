@@ -383,7 +383,8 @@ async def get_addons(tenant_id: uuid.UUID, request: Request, x_admin_secret: str
         return {"tenant_id": str(tenant_id), "add_ons": await tenant_addons.list_addons(conn, str(tenant_id))}
 
 
-@router.post("/tenants/{tenant_id}/addons", summary="Grant an add-on or change its quantity / end (audited)")
+@router.post("/tenants/{tenant_id}/addons", summary="Grant an add-on or change its quantity / end (audited)",
+             dependencies=TENANT_SCOPED)
 async def post_addon(tenant_id: uuid.UUID, body: AddonIn, request: Request, x_admin_secret: str = Header(None),
                      x_admin_user_id: Optional[str] = Header(None), x_admin_role: Optional[str] = Header(None)) -> dict:
     verify_admin_secret(x_admin_secret)
@@ -397,7 +398,8 @@ async def post_addon(tenant_id: uuid.UUID, body: AddonIn, request: Request, x_ad
         raise _refuse_addon(e) from None
 
 
-@router.post("/tenants/{tenant_id}/addons/{addon_id}/cancel", summary="Cancel an add-on (audited)")
+@router.post("/tenants/{tenant_id}/addons/{addon_id}/cancel", summary="Cancel an add-on (audited)",
+             dependencies=TENANT_SCOPED)
 async def cancel_addon(tenant_id: uuid.UUID, body: ReasonIn, request: Request, addon_id: uuid.UUID = ADDON_ID,
                        x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
                        x_admin_role: Optional[str] = Header(None)) -> dict:
@@ -422,7 +424,8 @@ async def get_billing_details(tenant_id: uuid.UUID, request: Request, x_admin_se
     return out
 
 
-@router.put("/tenants/{tenant_id}/billing-details", summary="Set billing details (audited)")
+@router.put("/tenants/{tenant_id}/billing-details", summary="Set billing details (audited)",
+            dependencies=TENANT_SCOPED)
 async def put_billing_details(tenant_id: uuid.UUID, body: BillingDetailsIn, request: Request,
                               x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
                               x_admin_role: Optional[str] = Header(None)) -> dict:
@@ -436,7 +439,8 @@ async def put_billing_details(tenant_id: uuid.UUID, body: BillingDetailsIn, requ
         raise _refuse_terms(e) from None
 
 
-@router.put("/tenants/{tenant_id}/subscriptions/{product}/terms", summary="Set a subscription's terms (audited)")
+@router.put("/tenants/{tenant_id}/subscriptions/{product}/terms", summary="Set a subscription's terms (audited)",
+            dependencies=TENANT_SCOPED)
 async def put_subscription_terms(tenant_id: uuid.UUID, product: Literal["content", "crm", "tripplanner"],
                                  body: SubscriptionTermsIn, request: Request, x_admin_secret: str = Header(None),
                                  x_admin_user_id: Optional[str] = Header(None),
