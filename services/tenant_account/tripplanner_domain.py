@@ -241,6 +241,12 @@ async def _enqueue(conn, domain_id: str, step: str, actor: str) -> str:
     return job_id
 
 
+CUSTOM_DOMAIN_ENTITLED_SQL = """
+    SELECT EXISTS (SELECT 1 FROM shared.tenant_entitlement
+                    WHERE tenant_id = $1::uuid AND feature_key = 'tp.custom_domain')
+"""
+
+
 async def add_domain(conn, tenant_id: str, *, domain: Any, actor: str) -> dict:
     """Validate and add a host (status pending), audited, and queue its job. Limits are settings."""
     host = normalise(domain)
@@ -253,6 +259,9 @@ async def add_domain(conn, tenant_id: str, *, domain: Any, actor: str) -> dict:
         await _locked_tenant(conn, tenant_id)
         if not await conn.fetchval(HAS_TRIPPLANNER_SQL, tenant_id):
             raise DomainError("no_tripplanner", status=409)
+        # AA-1116: a custom host needs the tp.custom_domain entitlement (TripPlanner Pro, or the custom-domain add-on)
+        if not await conn.fetchval(CUSTOM_DOMAIN_ENTITLED_SQL, tenant_id):
+            raise DomainError("custom_domain_not_included", status=409)
         if await conn.fetchval(TAKEN_SQL, host):
             raise DomainError(DOMAIN_TAKEN, "domain", status=409)
         max_per_tenant = int(await settings.aget(MAX_PER_TENANT_KEY, tenant_id))

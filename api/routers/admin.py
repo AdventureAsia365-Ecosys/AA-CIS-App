@@ -603,12 +603,16 @@ async def get_tenant_usage(
             SELECT COUNT(*) AS versions, COUNT(DISTINCT published_tour_id) AS tours
             FROM gold_aa_internal.tenant_tour_versions WHERE tenant_id = $1
         """, tenant_id)
-        # AA-797: quota by plan_id (what billing uses); plan_tier only for a row without one.
+        # AA-1116 (S5): the quota the rewrite path enforces (the resolved content.rewrite, else the tier's live content
+        # plan; NULL = no quota), no longer shared.membership_plans
         tours_quota = await conn.fetchval("""
-            SELECT tours_quota_monthly FROM shared.membership_plans
-            WHERE id = $1 OR ($1::uuid IS NULL AND plan_name = $2)
-            LIMIT 1
-        """, tenant["plan_id"], tenant["plan_tier"])
+            SELECT coalesce(
+                (SELECT LEAST(e.limit_value, 2147483647)::int FROM shared.tenant_entitlement e
+                  WHERE e.tenant_id = $1 AND e.feature_key = 'content.rewrite'),
+                (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan p
+                   JOIN shared.plan_feature pf ON pf.plan_key = p.plan_key AND pf.feature_key = 'content.rewrite'
+                  WHERE p.product = 'content' AND p.tier = $2::plan_tier_enum AND p.retired_at IS NULL))
+        """, tenant_id, tenant["plan_tier"])
         # AA-819 — the publish/day limit in force and today's count (UTC), as v1_publish counts it
         publish_override = await daily_limit.tenant_override(conn, tenant_id)
         publishes_today = await daily_limit.count_today(conn, tenant_id)
@@ -622,7 +626,7 @@ async def get_tenant_usage(
         "status":      tenant_status(tenant["is_active"], tenant["cancelled_at"]),
         "limits": {
             "rate_limit_rpm":    tenant["rate_limit_rpm"],
-            "tours_per_month":   tours_quota,  # AA-640: shared.membership_plans
+            "tours_per_month":   tours_quota,  # AA-1116: resolved content.rewrite (None = no quota)
             "daily_publish_limit": publish_override,  # AA-819: null = the code default
             "daily_publish_limit_default": (dflt := daily_limit.platform_default_limit()),   # S280: the setting
             "daily_publish_limit_effective": dflt if publish_override is None else publish_override,

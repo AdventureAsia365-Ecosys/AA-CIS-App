@@ -387,9 +387,11 @@ class _Tx:
 
 
 class EditorConn:
-    def __init__(self, *, status="active", has_tp=True, taken=False, tenant_count=0, edge_count=0, row=None):
+    def __init__(self, *, status="active", has_tp=True, taken=False, tenant_count=0, edge_count=0, row=None,
+                 entitled=True):
         self.v = {tpd.TENANT_LOCK_SQL: status, tpd.HAS_TRIPPLANNER_SQL: has_tp, tpd.TAKEN_SQL: taken,
-                  tpd.TENANT_COUNT_SQL: tenant_count, tpd.EDGE_COUNT_SQL: edge_count}
+                  tpd.TENANT_COUNT_SQL: tenant_count, tpd.EDGE_COUNT_SQL: edge_count,
+                  tpd.CUSTOM_DOMAIN_ENTITLED_SQL: entitled}
         self.row = row
         self.inserted = []
         self.writes: list[str] = []

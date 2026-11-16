@@ -73,3 +73,8 @@ async def aint_value(key: str) -> int:
 def snapshot(keys: tuple[str, ...] = ALL) -> dict[str, Any]:
     """``{key: value in force}`` for ``keys`` (one read each; the quote service passes it around as a plain dict)."""
     return {k: settings.get(k) for k in keys}
+
+
+def label(key: str) -> str:
+    """The setting's plain label (Platform › Settings)."""
+    return settings.definition(key).label

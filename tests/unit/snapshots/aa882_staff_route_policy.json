@@ -567,6 +567,10 @@
     "capability": "tenant.read|tenant.book.account.read|billing.read",
     "module": "api.routers.admin_plans"
   },
+  "GET /admin/plans/commercial-terms": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_plans"
+  },
   "GET /admin/plans/features": {
     "capability": "tenant.read|tenant.book.account.read|billing.read",
     "module": "api.routers.admin_plans"
@@ -787,6 +791,10 @@
     "capability": "tenant.read|tenant.book.account.read|billing.read",
     "module": "api.routers.admin_tenant_addon_requests"
   },
+  "GET /admin/tenants/{tenant_id}/addons": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_subscription"
+  },
   "GET /admin/tenants/{tenant_id}/assignments": {
     "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_tenant360"
@@ -794,6 +802,10 @@
   "GET /admin/tenants/{tenant_id}/audit": {
     "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/billing-details": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_subscription"
   },
   "GET /admin/tenants/{tenant_id}/booking-billing": {
     "capability": "tenant.read|tenant.book.account.read|billing.read",
@@ -826,6 +838,10 @@
   "GET /admin/tenants/{tenant_id}/quality": {
     "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_tenant360"
+  },
+  "GET /admin/tenants/{tenant_id}/quote": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_subscription"
   },
   "GET /admin/tenants/{tenant_id}/rewrite-activity": {
     "capability": "tenant.read|tenant.book.read",
@@ -1687,6 +1703,14 @@
     "capability": "tenant.write|tenant.book.write",
     "module": "api.routers.admin_tenant_addon_requests"
   },
+  "POST /admin/tenants/{tenant_id}/addons": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
+  "POST /admin/tenants/{tenant_id}/addons/{addon_id}/cancel": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
   "POST /admin/tenants/{tenant_id}/members/invitations": {
     "capability": "tenant.write|tenant.member.write",
     "module": "api.routers.admin_tenant360"
@@ -1959,6 +1983,10 @@
     "capability": "tenant.assign",
     "module": "api.routers.admin_tenant360"
   },
+  "PUT /admin/tenants/{tenant_id}/billing-details": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
   "PUT /admin/tenants/{tenant_id}/brand-identity": {
     "capability": "tenant.write|tenant.book.write",
     "module": "api.routers.admin"
@@ -1968,6 +1996,10 @@
     "module": "api.routers.admin"
   },
   "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
+  "PUT /admin/tenants/{tenant_id}/subscriptions/{product}/terms": {
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_subscription"
   },

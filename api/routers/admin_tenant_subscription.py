@@ -23,7 +23,16 @@
 - ``POST   /admin/tenants/{tenant_id}/pilot/end``                         leave pilot mode (reason required, audited;
                                                                           AA-1086 G2, the "End pilot" button)
 
-Add-ons are attached / changed / cancelled through the ``tenant_provision`` saga (``admin_tenant_provision.py``).
+- ``GET    /admin/tenants/{tenant_id}/addons``                            AA-1116: the tenant's add-ons (custom domain,
+                                                                          AI pack; shared.tenant_addon, CIS 435)
+- ``POST   /admin/tenants/{tenant_id}/addons``                            grant one or change its quantity / end
+                                                                          ({plan_key, quantity, ends_at, reason})
+- ``POST   /admin/tenants/{tenant_id}/addons/{addon_id}/cancel``          cancel it ({reason})
+- ``GET|PUT /admin/tenants/{tenant_id}/billing-details``                  bill-to, billing currency, founding offer
+- ``PUT    /admin/tenants/{tenant_id}/subscriptions/{product}/terms``     billing interval, agreed price / lock
+- ``GET    /admin/tenants/{tenant_id}/quote``                             the monthly / annual quote (option B rules)
+Product add-ons (crm, tripplanner) are attached / changed / cancelled through the ``tenant_provision`` saga
+(``admin_tenant_provision.py``).
 Reads: ``tenant.read``; writes: admin role (``tenant.write``, re-checked here). Rules:
 ``services/tenant_account/subscription.py``. Included before ``admin.router``.
 """
@@ -40,6 +49,8 @@ from pydantic import BaseModel, Field
 from api.core.staff_authz import staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
+from services.tenant_account import addons as tenant_addons
+from services.tenant_account import billing_terms
 from services.tenant_account import pilot as tenant_pilot
 from services.tenant_account import subscription as sub
 from services.tenant_account import tripplanner_domain as tp_domain
@@ -319,3 +330,134 @@ async def end_tenant_pilot(
             status = 404 if e.code == "tenant_not_found" else 422
             raise HTTPException(status_code=status, detail={"detail": e.code, "message": e.message}) from None
     return EndPilotResponse(**out)
+
+
+# ── AA-1116 option B: add-ons, billing details, subscription terms, quote ─────────────────────────────────────────
+ADDON_ID = Path(..., description="The add-on row id")
+
+
+class AddonIn(BaseModel):
+    plan_key: str = Field(..., pattern=r"^addon\.[a-z][a-z0-9_]*$", max_length=64)
+    quantity: int = Field(1, ge=1)
+    ends_at: Optional[datetime] = Field(None, description="Optional end (an AI pack for one month); null = no end")
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class ReasonIn(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class BillingDetailsIn(BaseModel):
+    """Only the fields sent change. founding_offer_from null clears the offer; until left out = from + the setting."""
+    legal_entity_name: Optional[str] = Field(None, max_length=300)
+    tax_id: Optional[str] = Field(None, max_length=64)
+    billing_email: Optional[str] = Field(None, max_length=254)
+    billing_address: Optional[str] = Field(None, max_length=1000)
+    billing_country: Optional[str] = Field(None, max_length=2)
+    billing_currency: Optional[Literal["USD", "VND"]] = None
+    founding_offer_from: Optional[str] = None
+    founding_offer_until: Optional[str] = None
+
+
+class SubscriptionTermsIn(BaseModel):
+    billing_interval: Optional[Literal["month", "year"]] = None
+    agreed_price_monthly: Optional[str | float | int] = None
+    agreed_currency: Optional[Literal["USD", "VND"]] = None
+    agreed_until: Optional[str] = None
+    lock: bool = Field(False, description="Lock the list price now for cis.billing.price_lock_months")
+
+
+def _refuse_terms(e: billing_terms.TermsError) -> HTTPException:
+    return HTTPException(status_code=e.status, detail={"detail": e.code, "message": e.message, "field": e.field})
+
+
+def _refuse_addon(e: tenant_addons.AddonError) -> HTTPException:
+    return HTTPException(status_code=e.status, detail={"detail": e.code, "message": e.message})
+
+
+@router.get("/tenants/{tenant_id}/addons", summary="The tenant's add-ons (custom domain, AI pack)",
+            dependencies=TENANT_SCOPED)
+async def get_addons(tenant_id: uuid.UUID, request: Request, x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    async with request.app.state.pool.acquire() as conn:
+        return {"tenant_id": str(tenant_id), "add_ons": await tenant_addons.list_addons(conn, str(tenant_id))}
+
+
+@router.post("/tenants/{tenant_id}/addons", summary="Grant an add-on or change its quantity / end (audited)")
+async def post_addon(tenant_id: uuid.UUID, body: AddonIn, request: Request, x_admin_secret: str = Header(None),
+                     x_admin_user_id: Optional[str] = Header(None), x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await tenant_addons.set_addon(conn, str(tenant_id), plan_key=body.plan_key, quantity=body.quantity,
+                                                 ends_at=body.ends_at, reason=body.reason,
+                                                 actor=_admin_actor(x_admin_user_id))
+    except tenant_addons.AddonError as e:
+        raise _refuse_addon(e) from None
+
+
+@router.post("/tenants/{tenant_id}/addons/{addon_id}/cancel", summary="Cancel an add-on (audited)")
+async def cancel_addon(tenant_id: uuid.UUID, body: ReasonIn, request: Request, addon_id: uuid.UUID = ADDON_ID,
+                       x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                       x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await tenant_addons.cancel_addon(conn, str(tenant_id), str(addon_id), reason=body.reason,
+                                                    actor=_admin_actor(x_admin_user_id))
+    except tenant_addons.AddonError as e:
+        raise _refuse_addon(e) from None
+
+
+@router.get("/tenants/{tenant_id}/billing-details", summary="Bill-to, billing currency and founding offer",
+            dependencies=TENANT_SCOPED)
+async def get_billing_details(tenant_id: uuid.UUID, request: Request, x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    async with request.app.state.pool.acquire() as conn:
+        out = await billing_terms.details(conn, str(tenant_id))
+    if out is None:
+        raise HTTPException(status_code=404, detail="No tenant with this id")
+    return out
+
+
+@router.put("/tenants/{tenant_id}/billing-details", summary="Set billing details (audited)")
+async def put_billing_details(tenant_id: uuid.UUID, body: BillingDetailsIn, request: Request,
+                              x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                              x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    payload = {k: getattr(body, k) for k in body.model_fields_set}
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await billing_terms.set_details(conn, str(tenant_id), payload, actor=_admin_actor(x_admin_user_id))
+    except billing_terms.TermsError as e:
+        raise _refuse_terms(e) from None
+
+
+@router.put("/tenants/{tenant_id}/subscriptions/{product}/terms", summary="Set a subscription's terms (audited)")
+async def put_subscription_terms(tenant_id: uuid.UUID, product: Literal["content", "crm", "tripplanner"],
+                                 body: SubscriptionTermsIn, request: Request, x_admin_secret: str = Header(None),
+                                 x_admin_user_id: Optional[str] = Header(None),
+                                 x_admin_role: Optional[str] = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    payload = {k: getattr(body, k) for k in body.model_fields_set}
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await billing_terms.set_terms(conn, str(tenant_id), product, payload,
+                                                 actor=_admin_actor(x_admin_user_id))
+    except billing_terms.TermsError as e:
+        raise _refuse_terms(e) from None
+
+
+@router.get("/tenants/{tenant_id}/quote", summary="The tenant's monthly and annual quote (option B rules)",
+            dependencies=TENANT_SCOPED)
+async def get_quote(tenant_id: uuid.UUID, request: Request, x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    async with request.app.state.pool.acquire() as conn:
+        out = await billing_terms.tenant_quote(conn, str(tenant_id))
+    if out is None:
+        raise HTTPException(status_code=404, detail="No tenant with this id")
+    return out

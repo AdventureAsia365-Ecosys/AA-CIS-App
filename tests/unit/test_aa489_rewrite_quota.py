@@ -24,7 +24,8 @@ def _make_conn(plan_tier="starter", used_count=None):
     conn = AsyncMock()
 
     async def _fetchrow(query, *args):
-        assert "membership_plans" in query and "shared.tenants" in query
+        # AA-1116 (S5): the fallback is the tier's live content plan (shared.plan), not shared.membership_plans
+        assert "shared.plan" in query and "membership_plans" not in query and "shared.tenants" in query
         return {"plan": plan_tier, "quota": QUOTAS.get(plan_tier, QUOTAS["starter"])}
 
     async def _fetchval(query, *args):

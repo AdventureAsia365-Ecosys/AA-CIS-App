@@ -125,7 +125,7 @@ class TestNoInventedPlan:
     async def test_tenant_billing_null_plan_has_no_cost_and_no_invented_plan(self):
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(return_value={k: v for k, v in _no_plan_row().items() if k != "llm_cost_usd"})
-        conn.fetch = AsyncMock(side_effect=[[], [], []])
+        conn.fetch = AsyncMock(side_effect=[[], [], [], [], []])      # + the AA-1116 quote's subscriptions, add-ons
         conn.fetchval = AsyncMock(return_value=300)
         out = await v1_tours.get_my_billing(_request(conn), tenant={"sub": TENANT_ID})
         assert out["plan_attached"] is False

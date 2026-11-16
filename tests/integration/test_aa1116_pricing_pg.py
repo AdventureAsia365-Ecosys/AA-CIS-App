@@ -1,0 +1,211 @@
+"""AA-1116 (option B pricing) — the services on real Postgres (CIS 435-437, 439 replayed by conftest).
+
+Every test runs inside one outer transaction that is rolled back (the services' own transactions are savepoints):
+  * plans: create an add-on plan (unit price, VND, features of two products), PATCH crm.core seats_min / VND price
+    with a version bump, price_set_at set on a price change, the audit row; ai.budget_addon_usd_monthly accepted on a
+    TripPlanner plan and refused on a content plan;
+  * provision: an attach below seats_min is raised to it (and starts the add-on's trial);
+  * add-ons (Tenant 360): a grant starts a trial and raises the AI budget by quantity x increment; a second grant
+    changes the quantity; a cancel and a new grant comes back active (one trial per plan); the tick ends an add-on
+    trial; refusals (unknown plan, a tenant not in service);
+  * billing details: currency, bill-to, founding offer dates (until from the setting), the founding cap and an
+    ineligible plan refused; subscription terms: interval, an agreed price under the Enterprise floor refused, a lock;
+  * the quote of a tenant with three products (combo) and the custom-domain entitlement check of add_domain.
+Invented names only.
+"""
+import os
+import sys
+import unittest.mock as um
+import uuid
+from contextlib import asynccontextmanager
+from datetime import date
+
+import asyncpg
+import pytest
+import pytest_asyncio
+
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from services.tenant_account import addons as ad  # noqa: E402
+from services.tenant_account import billing_terms as bt  # noqa: E402
+from services.tenant_account import lifecycle  # noqa: E402
+from services.tenant_account import plans as pl  # noqa: E402
+from services.tenant_account import pricing_settings as ps  # noqa: E402
+from services.tenant_account import provision as pv  # noqa: E402
+
+DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+ACTOR = "admin:zz-1116"
+
+
+class _Pool:
+    def __init__(self, conn):
+        self._conn = conn
+
+    @asynccontextmanager
+    async def acquire(self):
+        yield self._conn
+
+
+@pytest_asyncio.fixture
+async def conn():
+    c = await asyncpg.connect(DSN)
+    tr = c.transaction()
+    await tr.start()
+    await c.execute("ALTER TABLE shared.tenants ADD COLUMN IF NOT EXISTS plan_id uuid")
+    try:
+        yield c
+    finally:
+        await tr.rollback()
+        await c.close()
+
+
+async def _tenant(conn, tier="starter") -> str:
+    tid = str(uuid.uuid4())
+    await conn.execute("INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week) "
+                       "VALUES ($1::uuid, 'Zz Saffron Routes', $2, $3::plan_tier_enum, 3)",
+                       tid, f"zz-saffron-{tid[:8]}", tier)
+    return tid
+
+
+async def _ai(conn, tid):
+    v = await conn.fetchval("SELECT limit_value FROM shared.tenant_entitlement WHERE tenant_id = $1::uuid "
+                            "AND feature_key = 'ai.budget_usd_monthly'", tid)
+    return None if v is None else float(v)
+
+
+async def _addon_plans(conn):
+    await pl.create_plan(conn, {"plan_key": "addon.zz_pack", "product": "addon", "name": "Zz pack",
+                                "price_usd_monthly": 19, "price_vnd_monthly": 490000, "is_public": True,
+                                "features": [{"feature_key": "ai.budget_addon_usd_monthly", "limit_value": 10}]},
+                         actor=ACTOR)
+    await pl.create_plan(conn, {"plan_key": "addon.zz_domain", "product": "addon", "name": "Zz domain",
+                                "price_usd_monthly": 15, "features": [{"feature_key": "tp.custom_domain"},
+                                                                      {"feature_key": "crm.custom_domain"}]},
+                         actor=ACTOR)
+
+
+@pytest.mark.asyncio
+async def test_plans_option_b_fields(conn):
+    await _addon_plans(conn)
+    made = await pl.get_plan(conn, "addon.zz_pack")
+    assert (made["product"], made["price_unit"], made["price_vnd_monthly"], made["price_set_at"]) == (
+        "addon", "unit", "490000", date.today().isoformat())
+    core = await pl.get_plan(conn, "crm.core")
+    out = await pl.update_plan(conn, "crm.core", {"version": core["version"], "seats_min": 3,
+                                                  "price_vnd_monthly": 490000}, actor=ACTOR)
+    assert (out["seats_min"], out["price_vnd_monthly"], out["version"]) == (3, "490000", core["version"] + 1)
+    assert out["price_set_at"] == date.today().isoformat()
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE action = 'plan.updated' "
+                               "AND resource_id = 'crm.core' AND actor = $1", ACTOR) == 1
+    hosted = await pl.get_plan(conn, "tripplanner.hosted")
+    feats = hosted["features"] + [{"feature_key": "ai.budget_addon_usd_monthly", "limit_value": "10"}]
+    await pl.update_plan(conn, "tripplanner.hosted", {"version": hosted["version"], "features": feats}, actor=ACTOR)
+    growth = await pl.get_plan(conn, "content.growth")
+    with pytest.raises(pl.PlanError) as e:
+        await pl.update_plan(conn, "content.growth", {"version": growth["version"], "features": growth["features"] + [
+            {"feature_key": "ai.budget_addon_usd_monthly", "limit_value": "5"}]}, actor=ACTOR)
+    assert e.value.code == "ai_addon_not_on_content"
+
+
+@pytest.mark.asyncio
+async def test_attach_below_the_seat_minimum_is_raised(conn):
+    await conn.execute("UPDATE shared.plan SET seats_min = 3 WHERE plan_key = 'crm.core'")
+    tid = await _tenant(conn)
+    req = pv.parse({"request_key": f"zz-att-{uuid.uuid4().hex[:10]}", "mode": "attach", "tenant_id": tid,
+                    "add_ons": [{"product": "crm", "plan_key": "crm.core", "seats": 1}]})
+    out = await pv.provision(_Pool(conn), req, job_id=str(uuid.uuid4()))
+    assert "crm_seats_raised_to_3" in out["steps"]
+    row = await conn.fetchrow("SELECT seats, status FROM shared.tenant_subscription WHERE tenant_id = $1::uuid "
+                              "AND product = 'crm'", tid)
+    assert (row["seats"], row["status"]) == (3, "trialing")
+
+
+@pytest.mark.asyncio
+async def test_addon_grant_trial_quantity_cancel_and_tick(conn):
+    await _addon_plans(conn)
+    tid = await _tenant(conn)                              # starter: 15 USD of AI
+    a = await ad.set_addon(conn, tid, plan_key="addon.zz_pack", quantity=2, reason="zz order one", actor=ACTOR)
+    assert a["status"] == "trialing" and a["quantity"] == 2
+    assert await _ai(conn, tid) == 25                       # 15 + 2 x 10 x 50 % while trialing
+    a = await ad.set_addon(conn, tid, plan_key="addon.zz_pack", quantity=3, reason="zz order two", actor=ACTOR)
+    assert a["quantity"] == 3 and a["status"] == "trialing"
+    await conn.execute("UPDATE shared.tenant_addon SET trial_ends_at = now() - interval '1 minute' "
+                       "WHERE tenant_id = $1::uuid", tid)
+    assert await lifecycle.end_addon_trials(_Pool(conn), actor=ACTOR) >= 1
+    assert await _ai(conn, tid) == 45                       # 15 + 3 x 10
+    await ad.cancel_addon(conn, tid, a["addon_id"], reason="zz no longer", actor=ACTOR)
+    assert await _ai(conn, tid) == 15
+    again = await ad.set_addon(conn, tid, plan_key="addon.zz_pack", quantity=1, reason="zz back", actor=ACTOR)
+    assert again["status"] == "active"                      # one trial per tenant and plan
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
+                               "AND action IN ('tenant.addon_set', 'tenant.addon_canceled')", tid) == 4
+
+
+@pytest.mark.asyncio
+async def test_addon_refusals(conn):
+    await _addon_plans(conn)
+    tid = await _tenant(conn)
+    with pytest.raises(ad.AddonError) as e:
+        await ad.set_addon(conn, tid, plan_key="addon.zz_none", reason="zz order", actor=ACTOR)
+    assert e.value.code == "unknown_addon_plan"
+    await conn.execute("UPDATE shared.tenants SET account_status = 'suspended', suspend_reason = 'billing' "
+                       "WHERE tenant_id = $1::uuid", tid)
+    with pytest.raises(ad.AddonError) as e:
+        await ad.set_addon(conn, tid, plan_key="addon.zz_pack", reason="zz order", actor=ACTOR)
+    assert e.value.code == "tenant_not_in_service"
+
+
+@pytest.mark.asyncio
+async def test_billing_details_and_founding_offer(conn):
+    tid = await _tenant(conn, "growth")
+    out = await bt.set_details(conn, tid, {"billing_currency": "VND", "billing_country": "vn",
+                                           "legal_entity_name": "Zz Saffron Routes Co",
+                                           "founding_offer_from": "2027-03-01"}, actor=ACTOR)
+    assert (out["billing_currency"], out["billing_country"], out["founding_offer_until"]) == (
+        "VND", "VN", "2028-02-29")
+    starter = await _tenant(conn, "starter")
+    with pytest.raises(bt.TermsError) as e:
+        await bt.set_details(conn, starter, {"founding_offer_from": "2027-03-01"}, actor=ACTOR)
+    assert e.value.code == "founding_not_eligible"
+    # the cap: with one founding place (the setting), a second agency is refused
+    other = await _tenant(conn, "growth")
+    real = ps.int_value
+    with um.patch.object(ps, "int_value", lambda k: 1 if k == ps.FOUNDING_MAX_AGENCIES else real(k)):
+        with pytest.raises(bt.TermsError) as e:
+            await bt.set_details(conn, other, {"founding_offer_from": "2027-03-01"}, actor=ACTOR)
+    assert e.value.code == "founding_offer_full"
+
+
+@pytest.mark.asyncio
+async def test_subscription_terms_floor_and_lock(conn):
+    tid = await _tenant(conn, "growth")
+    await conn.execute("UPDATE shared.plan SET price_floor_usd_monthly = 699 WHERE plan_key = 'content.growth'")
+    with pytest.raises(bt.TermsError) as e:
+        await bt.set_terms(conn, tid, "content", {"agreed_price_monthly": 500, "agreed_currency": "USD"},
+                           actor=ACTOR)
+    assert e.value.code == "below_price_floor"
+    await conn.execute("UPDATE shared.plan SET price_floor_usd_monthly = NULL WHERE plan_key = 'content.growth'")
+    out = await bt.set_terms(conn, tid, "content", {"lock": True, "billing_interval": "year"}, actor=ACTOR,
+                             today=date(2027, 3, 1))
+    price = await conn.fetchval("SELECT price_usd_monthly FROM shared.plan WHERE plan_key = 'content.growth'")
+    assert (out["billing_interval"], out["agreed_price_monthly"], out["agreed_currency"], out["agreed_until"]) == (
+        "year", str(price.quantize(price)), "USD", "2028-02-29")
+
+
+@pytest.mark.asyncio
+async def test_quote_combo_and_custom_domain_entitlement(conn):
+    for key, price in (("content.growth", 349), ("crm.core", 19), ("tripplanner.hosted", 49)):
+        await conn.execute("UPDATE shared.plan SET price_usd_monthly = $2 WHERE plan_key = $1", key, price)
+    await conn.execute("UPDATE shared.plan SET seats_min = 3 WHERE plan_key = 'crm.core'")
+    tid = await _tenant(conn, "growth")
+    await conn.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, seats, "
+                       "updated_by) VALUES ($1::uuid, 'crm', 'crm.core', 'active', 1, 'test'), "
+                       "($1::uuid, 'tripplanner', 'tripplanner.hosted', 'active', NULL, 'test')", tid)
+    q = await bt.tenant_quote(conn, tid, today=date(2027, 6, 1))
+    assert (q["subtotal"], q["discount_kind"], q["monthly_total"]) == ("455.00", "combo", "409.50")
+    from services.tenant_account import tripplanner_domain as tpd
+    assert await conn.fetchval(tpd.CUSTOM_DOMAIN_ENTITLED_SQL, tid) is False      # Hosted has no custom domain
+    await _addon_plans(conn)
+    await ad.set_addon(conn, tid, plan_key="addon.zz_domain", reason="zz domain order", actor=ACTOR)
+    assert await conn.fetchval(tpd.CUSTOM_DOMAIN_ENTITLED_SQL, tid) is True
