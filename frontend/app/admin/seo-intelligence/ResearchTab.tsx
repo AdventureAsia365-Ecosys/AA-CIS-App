@@ -25,7 +25,7 @@ import {
   useT,
   type Translator,
 } from "../../_kit";
-import { marketRows, monthWarn, runScope, usd } from "@/lib/researchPanel";
+import { marketRows, monthState, runScope, usd } from "@/lib/researchPanel";
 import { RESEARCH } from "./research.messages";
 
 const SETTINGS_HREF = "/admin/platform/settings?app=cis&key=research";   // S282: the page reads app / area / key only
@@ -98,6 +98,8 @@ function historyText(t: RT, h: Status["history"]): string | undefined {
   return h?.first_month ? t("historyHint", h.keywords, h.first_month, h.last_month ?? "") : undefined;
 }
 
+const MONTH_TONE = { over: "danger", warn: "warning", ok: undefined } as const;
+
 function KpiRow({ data }: { data: Status }) {
   const t = useT(RESEARCH);
   const m = data.month;
@@ -109,7 +111,7 @@ function KpiRow({ data }: { data: Status }) {
         hint={t("autoHint", data.auto.window_start, data.auto.window_end, data.auto.dfs_queue)} />
       <KpiTile label={t("monthSpend")} size="sm" testId="research-month"
         value={m ? t("monthOf", usd(m.spent_usd), usd(m.cap_usd)) : null}
-        valueTone={monthWarn(m) ? "warning" : undefined} hint={t("monthNote")} />
+        valueTone={MONTH_TONE[monthState(m) ?? "ok"]} hint={t("monthNote")} />
       <KpiTile label={t("runCap")} size="sm" value={usd(data.auto.auto_max_usd_per_run)}
         hint={nextText(t, data.next)} />
       <KpiTile label={t("newPlaces")} size="sm" testId="research-new"
@@ -275,6 +277,12 @@ function Notes({ data }: { data: Status }) {
   return (
     <>
       {Object.keys(data.errors ?? {}).length > 0 && <div style={{ fontSize: 12, color: K.amber }}>{t("partial")}</div>}
+      {monthState(data.month) === "over" && data.month && (
+        <div role="alert" data-testid="research-over-cap" style={{ fontSize: 13, color: K.danger, background: K.dangerSoft,
+          border: `1px solid ${K.danger}`, borderRadius: 8, padding: "8px 12px" }}>
+          {t("overCap", usd(data.month.spent_usd), usd(data.month.cap_usd))}
+        </div>
+      )}
       <div style={{ fontSize: 12 }}>
         <Link href={SETTINGS_HREF} style={{ color: K.accentDeep }}>{t("settingsLink")}</Link>
         <span style={{ color: K.muted, marginLeft: 10 }}>{data.next?.reason ?? ""}</span>
