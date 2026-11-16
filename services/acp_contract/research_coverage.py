@@ -8,7 +8,8 @@ the data coverage page and a preview never disagree on what "stale" means:
 - **in scope**: the places of the Segments research covers (`segment_research.scoped_rows`: an atom of an active
   platform Master, minus transit / unnamed places by the recompute's rule and the stored Jev picks, never a new one);
 - **stale for market M**: `segment_research.stale_tiers` for that market alone: its volume tier has no log row within
-  FRESH_FOR (365 days), or, for the SERP market (US) only, its one SERP has none within SERP_FRESH_FOR. The SERP is
+  the volume window (setting cis.seo.research_volume_fresh_days, 365 days), or, for the SERP market (US) only, its one
+  SERP has none within the SERP window (cis.seo.research_serp_fresh_days). The SERP is
   bought once per place in the US, so it is counted against the US share only. A place the keyword rules would rebuild
   (`needs_requalify`) is not stale by this definition (it was researched): the research preview still selects it;
 - **markets**: every market of `seed_builder.DFS_LOCATION_MAP` that at least one active tenant targets, resolved the
@@ -144,16 +145,17 @@ async def measure(pool: Any) -> dict:
     summarize. `pool` is a ReadOnlyPool (or anything with acquire() / fetch()). Raises on a database error; the
     caller bounds the whole call."""
     from services.acp_contract import segment_research as sr
-    from services.acp_contract.segment_research_batch import SERP_FRESH_FOR
+    from services.seo_intelligence.research_cache import fresh_windows
 
+    windows = await fresh_windows()
     markets = await target_markets(pool)
     rows = await sr.scoped_rows(pool, cached_only=True)
     names = sorted({r["canonical_place"] for r in rows})
-    fresh = await sr._fresh_tiers(pool, names) if markets else {}
+    fresh = await sr._fresh_tiers(pool, names, windows) if markets else {}
     newest = await sr.newest_research(pool, names) if markets else {}
     out = summarize(names, fresh, markets, sr.reatomized_places(rows, newest))
-    out["fresh_for_days"] = sr.FRESH_FOR.days
-    out["serp_fresh_for_days"] = SERP_FRESH_FOR.days
+    out["fresh_for_days"] = windows.volume.days
+    out["serp_fresh_for_days"] = windows.serp.days
     return out
 
 

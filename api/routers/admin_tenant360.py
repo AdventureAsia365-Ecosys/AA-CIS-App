@@ -99,9 +99,14 @@ router = APIRouter(prefix="/admin/tenants", tags=["admin-tenant360"], dependenci
 
 AA_INTERNAL_TENANT = "00000000-0000-0000-0000-000000000001"
 
-# The research cache's own freshness horizon (services/acp_contract/segment_research.py FRESH_FOR,
-# same constant admin_seo.py mirrors).
-FRESH_DAYS = 365  # AA-1055 (was 182)
+
+
+def fresh_days() -> int:
+    """The research cache's own freshness horizon in force (AA-1120: setting cis.seo.research_volume_fresh_days,
+    services/seo_intelligence/research_cache.py, the same value admin_seo.py reads; was the literal 365)."""
+    from services.seo_intelligence.research_cache import volume_fresh_for
+    return volume_fresh_for().days
+
 
 # Channel -> piece kind for the "$/piece blog vs social" split. Channels follow
 # services/acp_planning/models.py's Channel literal (admin.py _VALID_CHANNELS).
@@ -447,7 +452,7 @@ async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: 
         planning = await conn.fetchval(_PLANNING_MARKETS_SQL, tenant_id)
         codes, unsupported, defaulted = seo_market_codes(target_market)
         coverage_rows = await conn.fetch(
-            _MARKET_COVERAGE_SQL, tenant_id, str(tenant_id) == AA_INTERNAL_TENANT, codes, FRESH_DAYS)
+            _MARKET_COVERAGE_SQL, tenant_id, str(tenant_id) == AA_INTERNAL_TENANT, codes, fresh_days())
         unmapped_rows = await conn.fetch(_UNMAPPED_SQL, tenant_id)
 
     by_market = {r["market"]: r for r in coverage_rows}
@@ -465,7 +470,7 @@ async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: 
     tm = _parse_json(target_market, {}) or {}
     return {
         "tenant_id": str(tenant_id),
-        "fresh_days": FRESH_DAYS,
+        "fresh_days": fresh_days(),
         "seo": {"declared": tm.get("declared") or [], "countries": tm.get("countries") or [],
                 "markets": codes, "unsupported": unsupported, "defaulted_to_us": defaulted,
                 "configured": target_market is not None},

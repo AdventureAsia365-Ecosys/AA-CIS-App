@@ -273,7 +273,7 @@ class TestMarketsRoute:
         assert out["planning_markets"] == ["US"]
         assert out["unmapped_requests"][0]["country_code"] == "AE"
         cov_call = conn.fetch.call_args_list[0]
-        assert cov_call.args[1:] == (TENANT_ID, False, ["UK"], t360.FRESH_DAYS)
+        assert cov_call.args[1:] == (TENANT_ID, False, ["UK"], t360.fresh_days())
         # an admin page view never records an unmapped request (only reads the table)
         assert not any("INSERT" in c.args[0] for c in conn.execute.call_args_list)
 

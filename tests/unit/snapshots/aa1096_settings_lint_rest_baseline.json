@@ -39,8 +39,6 @@
   "api/routers/admin_search.py:MIN_Q_LEN",
   "api/routers/admin_search.py:TENANTS_CAP",
   "api/routers/admin_search.py:TOURS_CAP",
-  "api/routers/admin_seo.py:_FRESH_DAYS",
-  "api/routers/admin_tenant360.py:FRESH_DAYS",
   "api/routers/catalog_http.py:MAX_SOURCE_ID",
   "api/routers/tenant_erasure.py:DEFAULT_LIMIT",
   "api/routers/tenant_erasure.py:MAX_LIMIT",

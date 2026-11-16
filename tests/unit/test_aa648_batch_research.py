@@ -6,6 +6,7 @@ import pytest
 
 from services.acp_contract import segment_research as sr
 from services.acp_contract import segment_research_batch as rb
+from services.seo_intelligence import research_cache as rc
 from services.seo_intelligence.dataforseo_client import DFSCallError
 from shared.llm_client.decide import Decision, Verdict
 from shared.llm_client.models import LLMResponse
@@ -166,7 +167,7 @@ async def test_batch_maps_buys_one_volume_task_one_serp_per_place_and_logs_each_
 
     with patch.object(rb, "LLMClient", return_value=_llm(PROPOSALS)), \
          patch.object(rb, "record_call_with_pool", new=AsyncMock()) as m_llm_log, \
-         patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()) as m_cache_log:
+         patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()) as m_cache_log:
         result = await rb.research_batch(places, US, pool, client, sr._RunGuard())
 
     # every LLM call logs its billed fields (AA-1002 S6)
@@ -199,7 +200,7 @@ async def test_a_stored_map_is_reused_without_any_llm_call():
     pool, conn = _pool()
     client = _client()
     places = [rb._Place("Zarvok Lake", [], ["US"], keywords=["zarvok lake"], has_map=True)]
-    with patch.object(rb, "LLMClient") as m_llm, patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rb, "LLMClient") as m_llm, patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         result = await rb.research_batch(places, US, pool, client, sr._RunGuard())
     m_llm.return_value.generate.assert_not_called()
     assert result["llm_calls"] == 0 and result["maps_reused"] == 1
@@ -246,7 +247,8 @@ async def test_volume_fresh_place_with_a_new_keyword_never_logs_its_serp_as_noth
                                    "serp_fresh": False, "volume_fresh": True}])
     places = [rb._Place("Quorra Valley", [], [], keywords=["quorra valley", "quorra valley lookout"], serp=True)]
     stats = await rb._buy_serps(places, _client(), pool, sr._RunGuard())
-    assert stats == {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 1}
+    assert stats == {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 1,
+                     "serp_shared_keyword": 0}
     assert _logs(conn) == [] and (rb.SERP_MARKET, "serp") not in places[0].logged
 
 
@@ -297,7 +299,7 @@ async def test_fatal_volume_failure_aborts_and_marks_nothing_researched():
 
     with patch.object(rb, "LLMClient", return_value=_llm(PROPOSALS)), \
          patch.object(rb, "record_call_with_pool", new=AsyncMock()), \
-         patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+         patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         result = await rb.research_batch(places, US, pool, client, guard)
 
     assert guard.aborted
@@ -322,7 +324,7 @@ async def test_a_failed_task_is_split_in_two_before_its_keywords_fail():
     client = _client()
     client.fetch_volumes_bulk = AsyncMock(side_effect=vols)
     places = [rb._Place(f"p{i}", [], ["US"], keywords=[f"kw{i:03d}"]) for i in range(300)]
-    with patch.object(rb, "SPLIT_MIN", 100), patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rb, "SPLIT_MIN", 100), patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         stats = await rb._buy_volumes(places, US, client, pool, sr._RunGuard())
     assert calls == [300, 150, 150]
     assert stats["volume_splits"] == 1 and stats["volume_tasks"] == 2
@@ -335,7 +337,7 @@ async def test_small_failed_task_is_not_split_and_its_places_stay_stale():
     client = _client()
     client.fetch_volumes_bulk = AsyncMock(side_effect=DFSCallError("DataForSEO status 50000: Internal Error"))
     places = [rb._Place("Zarvok Lake", [], ["US"], keywords=["zarvok lake"])]
-    with patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         await rb._buy_volumes(places, US, client, pool, sr._RunGuard())
     client.fetch_volumes_bulk.assert_awaited_once()
     assert places[0].failed and _logs(conn) == []
@@ -353,7 +355,7 @@ async def test_each_place_is_logged_as_soon_as_its_task_landed():
     client = _client()
     client.fetch_volumes_bulk = AsyncMock(side_effect=vols)
     places = [rb._Place(f"p{i}", [], ["US"], keywords=[f"kw{i}"]) for i in range(4)]
-    with patch.object(rb, "VOLUME_TASK_MAX", 2), patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rb, "VOLUME_TASK_MAX", 2), patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         await rb._buy_volumes(places, US, client, pool, sr._RunGuard())
     # the second task starts after the first task's 2 places were logged: a stopped job resumes from there
     assert seen_logs_at_call == [0, 2] and len(_logs(conn)) == 4
@@ -364,7 +366,7 @@ async def test_volume_tasks_split_at_task_limit_per_market():
     pool, _ = _pool()
     client = _client()
     places = [rb._Place(f"p{i}", [], ["US", "UK"], keywords=[f"kw{i}"]) for i in range(5)]
-    with patch.object(rb, "VOLUME_TASK_MAX", 2), patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rb, "VOLUME_TASK_MAX", 2), patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         stats = await rb._buy_volumes(places, US_UK, client, pool, sr._RunGuard())
     assert stats["volume_tasks"] == 6          # ceil(5/2)=3 per market x 2 markets
     assert all(p.volumes[p.keywords[0]] == {"US": 10, "UK": 10} for p in places)
@@ -390,7 +392,7 @@ async def test_queue_mode_buys_through_the_standard_queue():
     queue.volumes = AsyncMock(side_effect=lambda kws, *a: {kw: 30 for kw in kws})
     queue.serps = AsyncMock(side_effect=_queue_serps(lambda asks: {i: _serp_body() for i in range(len(asks))}))
     places = [rb._Place("Zarvok Lake", [], ["US"], keywords=["zarvok lake"], has_map=True, serp=True)]
-    with patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         result = await rb.research_batch(places, US, pool, client, sr._RunGuard(), queue=queue)
     queue.volumes.assert_awaited_once()
     assert queue.serps.await_args.args[0] == [("zarvok lake", 2840, "en")]
@@ -483,7 +485,7 @@ async def test_a_queued_task_that_failed_after_it_was_accepted_is_never_split_no
     queue.volumes = AsyncMock(side_effect=QueuedTaskFailed.of("DataForSEO task t-1 not finished after 3600 s", "t-1"))
     places = [rb._Place(f"p{i}", [], ["US"], keywords=[f"kw{i:03d}"]) for i in range(300)]
     guard = sr._RunGuard()
-    with patch.object(rb, "SPLIT_MIN", 100), patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()):
+    with patch.object(rb, "SPLIT_MIN", 100), patch.object(rc, "record_dfs_call_with_pool", new=AsyncMock()):
         stats = await rb._buy_volumes(places, US, _client(), pool, guard, queue)
     queue.volumes.assert_awaited_once()                       # one paid post, no halves posted again
     assert stats["volume_splits"] == 0 and stats["volume_tasks"] == 0
