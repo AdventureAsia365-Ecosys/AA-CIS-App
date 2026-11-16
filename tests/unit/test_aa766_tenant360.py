@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from api.routers import admin
 from api.routers import admin_tenant360 as t360
+from services.seo_intelligence import research_cache as research_cache_mod
 from services.acp_shared.audit_log import AdminTenantAuditAction
 
 # AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
@@ -22,6 +23,13 @@ _SECRET = "test-admin-secret"
 TENANT_ID = uuid.uuid4()
 PLAN_ID = uuid.uuid4()
 NOW = datetime(2026, 10, 14, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _research_window(monkeypatch):
+    """AA-1120: the coverage window is the setting cis.seo.research_volume_fresh_days; pinned to its seeded 365 days."""
+    from datetime import timedelta
+    monkeypatch.setattr(research_cache_mod, "volume_fresh_for", lambda: timedelta(days=365))
 
 
 @pytest.fixture(autouse=True)

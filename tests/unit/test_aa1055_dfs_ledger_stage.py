@@ -104,8 +104,13 @@ async def test_research_store_hit_row_carries_the_run_stage(monkeypatch):
 
     async def fake_log(pool, **kw):
         logged.append(kw)
-    # AA-1120: the store-hit row is written by the research cache, with the run's stage.
+    # AA-1120: the store-hit row is written by the research cache, with the run's stage (windows pinned, not read).
     monkeypatch.setattr(rc, "record_dfs_call_with_pool", fake_log)
+    from datetime import timedelta
+
+    async def fixed():
+        return rc.Windows(timedelta(days=365), timedelta(days=365), timedelta(days=7))
+    monkeypatch.setattr(rc, "fresh_windows", fixed)
 
     class _Conn:
         async def fetch(self, sql, *args):

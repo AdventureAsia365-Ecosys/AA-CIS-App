@@ -128,10 +128,18 @@ def test_posted_meta_records_each_task_id_with_its_keywords():
                                               {"id": "id-y", "keywords": ["c"], "location_code": 2826}]
 
 
-def test_windows_come_from_the_settings_registry():
+@pytest.mark.asyncio
+async def test_windows_come_from_the_settings_registry(monkeypatch):
     from shared import settings
-    assert rc.volume_fresh_for() == timedelta(days=int(settings.get("cis.seo.research_volume_fresh_days")))
-    assert rc.serp_fresh_for() == timedelta(days=int(settings.get("cis.seo.research_serp_fresh_days")))
+    values = {"cis.seo.research_volume_fresh_days": 200, "cis.seo.research_serp_fresh_days": 90,
+              "cis.seo.dfs_queue_recover_days": 0}
+
+    async def aget(key, tenant_id=None):
+        return values[key]
+    monkeypatch.setattr(settings, "get", lambda key, tenant_id=None: values[key])
+    monkeypatch.setattr(settings, "aget", aget)
+    assert rc.volume_fresh_for() == timedelta(days=200) and rc.serp_fresh_for() == timedelta(days=90)
+    assert await rc.fresh_windows() == rc.Windows(timedelta(days=200), timedelta(days=90), timedelta(0))
 
 
 # ── the Standard queue reads the cache before it posts ──────────────────────────────────────────────────────────────

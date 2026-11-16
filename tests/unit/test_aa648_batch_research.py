@@ -20,6 +20,19 @@ def _decision(key: str, zone: str = "grey", mode: str = "shadow") -> Decision:
 
 
 @pytest.fixture(autouse=True)
+def _windows(monkeypatch):
+    """AA-1120: the research windows are settings; these tests pin the seeded 365 days instead of reading them."""
+    from datetime import timedelta
+
+    w = rc.Windows(timedelta(days=365), timedelta(days=365), timedelta(days=7))
+
+    async def fixed():
+        return w
+    monkeypatch.setattr(rc, "fresh_windows", fixed)
+    monkeypatch.setattr(sr, "fresh_windows", fixed)
+
+
+@pytest.fixture(autouse=True)
 def _no_jev():
     """AA-693: research asks Jev; by default every verdict is a shadow grey (changes nothing)."""
     async def fake(stage, subject, state, keys, **kw):
