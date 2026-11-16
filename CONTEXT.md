@@ -3751,10 +3751,14 @@ landing sweep) enqueues at most one `auto_new` / `auto_refresh` run per kind per
 for the markets of active agencies only (plus the platform default; demo and internal tenants never count; a market
 mostly unresearched waits for an admin run). Every research job (`segment_research`, `tour_paa_backfill`) runs under
 one hard monthly cap over DataForSEO + LLM + Jev, measured from the ledger by job (`shared/research_budget.py`, fail
-closed), and an automatic run under its own run cap across retries; alerts `research_auto_failed`, `_capped`,
+closed), and an automatic run under its own run cap across retries. Paying research is one lane across both kinds (the
+runner's concurrency 1 is per kind): the run endpoints refuse with 409 while another paying research job is queued or
+running, and a paying attempt that starts beside one goes back to the queue before it reads the month (a store-only
+PAA backfill is $0 and runs beside a research run); alerts `research_auto_failed`, `_capped`,
 `research_new_waiting`, `research_month_spend`. A same-plain-keyword rename or merge in segment matching carries the
 place's log and map (`research_carry.py`). Tour PAA backfill (`tour_paa.py`, job `tour_paa_backfill`): store first, then
-one capped SERP per tour keyword; provenance in `seo_context.paa_source` / `paa_filled_at`. Admin: SEO Intelligence ›
+one capped SERP per tour keyword; provenance in `seo_context.paa_source` / `paa_filled_at`. The backfill owns a row
+only while no S1 write came after its fill (`fetched_at <= paa_filled_at`): a later S1 list is never overwritten. Admin: SEO Intelligence ›
 Research tab (GET `/admin/segment-research/status`). Every threshold, schedule and cap is a `cis.seo.*` / `cis.spend.*`
 setting.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
