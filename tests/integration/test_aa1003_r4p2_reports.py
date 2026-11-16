@@ -111,6 +111,10 @@ async def test_security_readers_and_renderers(env):
 
 async def test_delivery_readers_and_renderers(env, monkeypatch):
     reg = registry.load()
+
+    async def published_summary():  # AA-1108: no storage in CI; an empty published summary (format 1)
+        return {"format": 1, "generated_at": "2026-11-02T00:23:00Z", "environment": "dev", "apps": []}
+    monkeypatch.setattr(delivery, "delivery_summary", published_summary)
     dev03 = await delivery.collect_dev03(env, MON, SUN)
     assert _ok(dev03) == {}, dev03
     out = delivery.render_dev03(reg, reg.report("DEV-03"), MON, SUN, dev03, NOW)

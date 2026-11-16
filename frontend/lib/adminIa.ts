@@ -28,7 +28,7 @@ export type NavIcon =
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
-  | "staff" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap"
+  | "staff" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap" | "delivery"
   | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
 
 export interface IaItem {
@@ -143,6 +143,8 @@ export const ADMIN_IA: IaGroup[] = [
     // AA-1096: the limits that stay in Terraform (WAF, API Gateway throttles, Lambda concurrency, AWS budgets, alarm
     // thresholds), read-only, each with where it is changed.
     { href: "/admin/platform/infra", label: "Infra limits", icon: "infra" },
+    // AA-1108: CI/CD and DORA per app (deploys, lead time, failures, recovery, CI health), from the root collector.
+    { href: "/admin/platform/delivery", label: "Delivery", icon: "delivery" },
     { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
     { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
     { href: "/admin/docs", label: "Docs", icon: "docs" },

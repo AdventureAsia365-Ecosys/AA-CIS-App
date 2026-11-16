@@ -1,16 +1,21 @@
 """AA-1003 R4 part 2 — delivery and state reports: DEV-01 monthly delivery and DORA, DEV-03 weekly engineering flow,
 OPS-15 session-close state snapshot.
 
-  DEV-03  weekly (ISO week): CIS deploys to Dev (a worker start whose commit differs from the commit of the worker
-          started before it, shared.job_worker git_sha; a deploy back to a commit seen earlier is a rollback), the
-          migrations every owner registered (shared.schema_versions, DATA-03's reader). Linear (issues shipped, In
-          Progress age, quota), open PRs and the master plan slots are not read by the worker: "Source not
-          available" with where they live. The deploy list is kept in the output so DEV-01 can count a month after
-          shared.job_worker has pruned its rows (7 days after a worker's last heartbeat).
-  DEV-01  monthly: K-DORA-DF (CIS deploys per week) and the rollback part of K-DORA-CFR from the month's DEV-03 outputs
-          plus the worker rows still kept; migrations per owner of the month. Lead time, the rest of the change
-          failure rate, time to restore, CI failure rate on main, release versions: GitHub / postmortem sources the
-          worker does not read.
+  DEV-03  weekly (ISO week): the week's delivery per app from the GitHub delivery summary (AA-1108: deploys, lead
+          time, change failure rate, recovery, rework, main failure rate; the root workflow "Delivery metrics"
+          publishes it hourly, api/services/delivery_metrics.py reads it), CIS deploys to Dev seen by the worker (a
+          worker start whose commit differs from the commit of the worker started before it, shared.job_worker
+          git_sha; a deploy back to a commit seen earlier is a rollback), the migrations every owner registered
+          (shared.schema_versions, DATA-03's reader). Linear (issues shipped, In Progress age, quota), open PRs and the
+          master plan slots are not read by the worker: "Source not available" with where they live. The worker
+          deploy list is kept in the output so DEV-01 can count a month after shared.job_worker has pruned its rows.
+  DEV-01  monthly (AA-1108): the five DORA keys and the main failure rate per app from the month row of the GitHub
+          delivery summary, graded with the Platform › Delivery settings (cis.delivery.*, CIS 433; the same numbers
+          and colours as the admin page). The KPI lines pool the apps where a pool is meaningful (deploys, failure
+          and rework rates, main failure rate) and name the slowest app for the medians (lead time, recovery). When
+          the summary cannot be read, K-DORA-DF and the rollback part of K-DORA-CFR fall back to the CIS worker rows
+          (the month's DEV-03 outputs plus the rows still kept) and the GitHub keys say why they are missing.
+          Migrations per owner of the month; release versions stay "Source not available".
   OPS-15  event (semi): the state at generation, machine-readable (the output JSON is the state-snapshot.json the
           session close needs): ECS services of the cluster (task definition, image tag, desired / running, rollout
           state; ecs:DescribeServices + ecs:DescribeTaskDefinition, already granted, $0), app health over the public
@@ -18,7 +23,8 @@ OPS-15 session-close state snapshot.
           jobs queued / running, open rerun waves. Other owners' job tables, Lambda versions, Vercel commits, open PRs
           and repo heads are named "Source not available".
 
-Stored rows, the ECS describe calls of OPS-15 and the public health probes only; no LLM, no paid API.
+Stored rows, the published delivery summary (S3, read only), the ECS describe calls of OPS-15 and the public health
+probes only; no LLM, no paid API.
 """
 from __future__ import annotations
 
@@ -35,7 +41,6 @@ from services.reports.registry import Registry, Report
 from services.reports.reliability import (ICT_NOTE, _iso, _render, _unreadable, schema_changes, schema_versions)
 
 NOT_AVAILABLE = "Source not available"
-CFR_FLAG = 0.15                  # K-DORA-CFR: < 15 %
 DAYS_PER_WEEK = 7                # K-DORA-DF is deploys per week; not a quality pass line
 HISTORY_BEFORE = timedelta(days=8)   # worker rows read before the window, to know the commit live at its start
 
@@ -74,6 +79,126 @@ OPEN_WAVES_SQL = """
 
 def _short(sha: Any) -> str:
     return (str(sha) if sha else "unknown")[:12]
+
+
+# ── the GitHub delivery summary (AA-1108) ────────────────────────────────────────────────────────────────────────
+
+# api/services/delivery_metrics.band -> report KPI status
+BAND_STATUS = {"green": "ok", "amber": "amber", "red": "red", "few": "info", "none": "no_data"}
+
+
+async def delivery_summary() -> dict:
+    """The published delivery summary (cached like the admin page reads it)."""
+    from api.services import delivery_metrics
+
+    return await delivery_metrics.load()
+
+
+async def delivery_thresholds() -> dict:
+    from api.services import delivery_metrics
+
+    return await delivery_metrics.thresholds()
+
+
+def period_rows(summary: Any, kind: str, first: date) -> Optional[list[dict]]:
+    """[{app, name, row}] of the summary's trend row for the ISO week (kind "weeks", `first` its Monday) or the
+    calendar month (kind "months") that starts at `first`; None when the summary could not be read or does not reach
+    back to that period."""
+    if summary is None or failed(summary) or not isinstance(summary.get("apps"), list):
+        return None
+    out = []
+    for app in summary["apps"]:
+        rows = ((app.get("trend") or {}).get(kind) or []) if isinstance(app, dict) else []
+        if kind == "weeks":
+            row = next((r for r in rows if r.get("start") == first.isoformat()), None)
+        else:
+            row = next((r for r in rows if r.get("month") == first.strftime("%Y-%m")), None)
+        if row is not None:
+            out.append({"app": app.get("id"), "name": app.get("name") or app.get("id"), "row": row})
+    return out or None
+
+
+def _h(v: Any) -> str:
+    return "—" if v is None else f"{v:g} h"
+
+
+def _pct(v: Any) -> str:
+    return "—" if v is None else f"{v * 100:.0f} %"
+
+
+def delivery_md(rows: Optional[list[dict]], why: str) -> list[str]:
+    if rows is None:
+        return [f"- Not readable: {why}"]
+    return table(["App", "Green deploys (attempts)", "Lead time p50 (n)", "Change failure rate (failed)",
+                  "Recovery p50 (n)", "Rework rate", "Main failure rate (runs)", "History"],
+                 [[r["name"], f"{r['row'].get('deploys', 0)} ({r['row'].get('deploy_attempts', 0)})",
+                   f"{_h(r['row'].get('lead_time_p50_h'))} ({r['row'].get('lead_time_n', 0)})",
+                   f"{_pct(r['row'].get('cfr'))} ({r['row'].get('failed', 0)})",
+                   f"{_h(r['row'].get('recovery_p50_h'))} ({r['row'].get('recovery_n', 0)})",
+                   _pct(r['row'].get('rework_rate')),
+                   f"{_pct(r['row'].get('main_failure_rate'))} ({r['row'].get('main_n', 0)})",
+                   "complete" if r["row"].get("complete") else "partial"] for r in rows])
+
+
+def _band(value: Optional[float], n: Optional[int], th: Any, metric: str) -> str:
+    if value is None:
+        return "no_data"
+    if not isinstance(th, dict) or failed(th) or metric not in th:
+        return "info"
+    from api.services import delivery_metrics
+
+    return BAND_STATUS[delivery_metrics.band(value, n, th[metric], float(th["min_sample"]))]
+
+
+def _pool(rows: list[dict], part: str, whole: str) -> tuple[Optional[float], int, int]:
+    """Pooled ratio of two counts over the apps: (ratio, part, whole)."""
+    p = sum(int(r["row"].get(part) or 0) for r in rows)
+    w = sum(int(r["row"].get(whole) or 0) for r in rows)
+    return ratio(p, w), p, w
+
+
+def _slowest(rows: list[dict], key: str) -> Optional[dict]:
+    have = [r for r in rows if r["row"].get(key) is not None]
+    return max(have, key=lambda r: r["row"][key]) if have else None
+
+
+def github_kpis(rows: list[dict], th: Any, days: int) -> list[dict]:
+    """K-DORA-DF / LT / CFR / MTTR / RW and K-CI-MAINFAIL from the month rows of every app (DEV-01)."""
+    weeks = days / DAYS_PER_WEEK
+    deploys = sum(int(r["row"].get("deploys") or 0) for r in rows)
+    attempts = sum(int(r["row"].get("deploy_attempts") or 0) for r in rows)
+    per_app = ", ".join(f"{r['name']} {r['row'].get('deploys', 0)}" for r in rows)
+    lt = _slowest(rows, "lead_time_p50_h")
+    rec = _slowest(rows, "recovery_p50_h")
+    cfr, failed_n, reached = _pool(rows, "failed", "deploy_attempts")
+    rw, rework_n, _ = _pool(rows, "rework", "deploy_attempts")
+    main_fail = sum(round((r["row"].get("main_failure_rate") or 0) * (r["row"].get("main_n") or 0)) for r in rows)
+    main_n = sum(int(r["row"].get("main_n") or 0) for r in rows)
+    partial = [r["name"] for r in rows if not r["row"].get("complete")]
+    gap = f"; history partial for {', '.join(partial)}" if partial else ""
+    return [
+        _kpi_line("K-DORA-DF", round(deploys / weeks, 2) if weeks else None, "info",
+                  f"green deploys of every app per week, {deploys} in the month ({per_app}); per-app colours on "
+                  f"Platform › Delivery{gap}"),
+        _kpi_line("K-DORA-LT", lt["row"]["lead_time_p50_h"] if lt else None,
+                  _band(lt["row"]["lead_time_p50_h"], lt["row"].get("lead_time_n"), th, "lead_time") if lt
+                  else "no_data",
+                  f"slowest app {lt['name']} (n {lt['row'].get('lead_time_n')}); the table lists each app" if lt
+                  else "no change reached a green deploy in the month"),
+        _kpi_line("K-DORA-CFR", cfr, _band(None if cfr is None else cfr * 100, reached, th, "change_failure_rate"),
+                  f"{failed_n} of {reached} deploys failed (red verify, failed deploy job, rollback, revert or hotfix "
+                  "within 48 h), all apps pooled"),
+        _kpi_line("K-DORA-MTTR", rec["row"]["recovery_p50_h"] if rec else None,
+                  _band(rec["row"]["recovery_p50_h"], rec["row"].get("recovery_n"), th, "recovery_time") if rec
+                  else "no_data",
+                  f"failed deployment recovery time, slowest app {rec['name']} (n {rec['row'].get('recovery_n')})"
+                  if rec else "no failed deploy recovered in the month"),
+        _kpi_line("K-DORA-RW", rw, _band(None if rw is None else rw * 100, reached, th, "rework_rate"),
+                  f"{rework_n} of {reached} deploys were a rollback or shipped a revert or hotfix, all apps pooled"),
+        _kpi_line("K-CI-MAINFAIL", ratio(main_fail, main_n) if main_n else None, "info" if main_n else "no_data",
+                  f"{main_fail} of {main_n} CI and deploy runs on the default branches failed, all apps pooled "
+                  "(no threshold setting yet: shown as information)"),
+    ]
 
 
 # ── deploys (pure) ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -127,7 +252,7 @@ async def worker_starts(conn, start: datetime, end: datetime) -> list[dict]:
 async def collect_dev03(conn, first: date, last: date) -> dict:
     start, end = periods.range_bounds(first, last)
     return await src.run_parts({"starts": lambda: worker_starts(conn, start, end),
-                                "versions": lambda: schema_versions(conn)})
+                                "versions": lambda: schema_versions(conn), "delivery": delivery_summary})
 
 
 def _deploys_md(dl: Optional[list[dict]], why: str) -> list[str]:
@@ -155,11 +280,18 @@ def render_dev03(reg: Registry, report: Report, first: date, last: date, facts: 
     kpis = [_kpi_line(kid, None, NOT_WIRED, f"{NOT_AVAILABLE.lower()}: {where}")
             for _s, kid, where in DEV03_UNAVAILABLE if kid]
     applied = None if "error" in ch else len(ch["applied"])
+    gh = period_rows(facts.get("delivery"), "weeks", first)
+    green = sum(int(r["row"].get("deploys") or 0) for r in gh) if gh else None
     headline = (f"Engineering flow {first.isoformat()} to {last.isoformat()}: "
-                + (f"{len(dl)} CIS deploy(s)" if dl is not None else "CIS deploys not readable")
+                + (f"{green} green deploy(s) over {len(gh)} apps" if gh else "GitHub delivery summary not readable")
+                + (f", {len(dl)} CIS deploy(s) seen by the worker" if dl is not None else ", CIS deploys not readable")
                 + (f", {applied} migration(s) registered" if applied is not None else "")
-                + "; Linear and GitHub counts not available to the worker")
-    body = ["## CIS deploys to Dev", "",
+                + "; Linear counts not available to the worker")
+    body = ["## Delivery per app (GitHub, Dev numbers)", "",
+            "From the hourly GitHub delivery summary (root workflow Delivery metrics; the same numbers as Platform › "
+            "Delivery). Weeks are ISO weeks in UTC; n is the sample size of each number.", ""]
+    body += delivery_md(gh, failed(facts.get("delivery")) or "the summary does not reach back to this week")
+    body += ["", "## CIS deploys to Dev (worker)", "",
             "A deploy is a worker start on a commit other than the one live before it (shared.job_worker); a deploy "
             "back to a commit live earlier is a rollback. Booking, CRM and TripPlanner deploys are GitHub workflow "
             "runs: not counted here.", ""]
@@ -171,18 +303,21 @@ def render_dev03(reg: Registry, report: Report, first: date, last: date, facts: 
     body.append("")
     return _render(reg, report, first, last, generated_at, f"Engineering flow {first.isoformat()} to "
                    f"{last.isoformat()}", headline, kpis, body, ICT_NOTE, cis_deploys=dl, schema=ch,
+                   delivery=[{"app": r["app"], **r["row"]} for r in gh] if gh else None,
                    not_available=[s for s, _k, _w in DEV03_UNAVAILABLE], sources_unreadable=_unreadable(facts))
 
 
 # ═══ DEV-01 monthly delivery and DORA ══════════════════════════════════════════════════════════════════════════
 
 DEV01_UNAVAILABLE = (
-    ("Lead time for changes", "K-DORA-LT", "GitHub: PR first commit to the deploy run holding the merge commit"),
-    ("Time to restore", "K-DORA-MTTR", "OPS-04 postmortems (root docs/ops/postmortems/)"),
-    ("CI failure rate on main", "K-CI-MAINFAIL", "GitHub Actions ci.yml runs on main"),
     ("Release versions shipped (DEV-02)", None, "GitHub releases (release-please)"),
-    ("Post-deploy verify failures", None, "Deploy Dev workflow runs (GitHub Actions)"),
-    ("Deploys of Booking, CRM, TripPlanner and the Vercel apps", None, "their deploy workflow runs and Vercel"),
+)
+# Without the GitHub delivery summary these come from nowhere else (AA-1108).
+DEV01_GITHUB = (
+    ("Lead time for changes", "K-DORA-LT"),
+    ("Failed deployment recovery time", "K-DORA-MTTR"),
+    ("Rework rate", "K-DORA-RW"),
+    ("CI failure rate on main", "K-CI-MAINFAIL"),
 )
 
 
@@ -200,7 +335,8 @@ async def collect_dev01(conn, first: date, last: date) -> dict:
     start, end = periods.range_bounds(first, last)
     return await src.run_parts({"starts": lambda: worker_starts(conn, start, end),
                                 "weekly": lambda: dev03_outputs(conn, first, last),
-                                "versions": lambda: schema_versions(conn)})
+                                "versions": lambda: schema_versions(conn), "delivery": delivery_summary,
+                                "thresholds": delivery_thresholds})
 
 
 def month_deploys(facts: dict, first: date, last: date) -> dict:
@@ -240,46 +376,69 @@ def _in(at: Any, start: datetime, end: datetime) -> bool:
     return start <= t < end
 
 
-def dev01_kpis(md: dict) -> list[dict]:
+def dev01_kpis(md: dict, th: Any = None, why: str = "the GitHub delivery summary is not readable") -> list[dict]:
+    """The fallback when the GitHub delivery summary cannot be read: CIS worker deploys only."""
     dl, weeks = md["deploys"], md["days"] / DAYS_PER_WEEK
     known = md["covered_days"] > 0
     rollbacks = sum(1 for d in dl if d.get("rollback"))
     cfr = ratio(rollbacks, len(dl)) if dl else None
     gap = "" if md["covered_days"] == md["days"] else (f"; {md['days'] - md['covered_days']} of {md['days']} days not "
                                                        "covered (no DEV-03 run and worker rows already pruned)")
-    return [
-        _kpi_line("K-DORA-DF", round(len(dl) / weeks, 2) if known else None, "info" if known else "no_data",
-                  f"CIS only: {len(dl)} deploy(s) to Dev in the month{gap}"),
-        _kpi_line("K-DORA-LT", None, NOT_WIRED, f"{NOT_AVAILABLE.lower()}: GitHub PR and deploy run times"),
-        _kpi_line("K-DORA-CFR", cfr, "no_data" if cfr is None else "ok" if cfr < CFR_FLAG else "amber",
-                  f"rollbacks only ({rollbacks} of {len(dl)} CIS deploys); fix PRs, failed post-deploy verifies and "
-                  "incidents are not read by the worker"),
-        _kpi_line("K-DORA-MTTR", None, NOT_WIRED, f"{NOT_AVAILABLE.lower()}: OPS-04 postmortems"),
-        _kpi_line("K-CI-MAINFAIL", None, NOT_WIRED, f"{NOT_AVAILABLE.lower()}: GitHub Actions runs"),
-    ]
+    missing = f"{NOT_AVAILABLE.lower()}: {why}"
+    by_id = {
+        "K-DORA-DF": _kpi_line("K-DORA-DF", round(len(dl) / weeks, 2) if known else None,
+                               "info" if known else "no_data",
+                               f"CIS only: {len(dl)} deploy(s) to Dev in the month{gap}"),
+        "K-DORA-CFR": _kpi_line("K-DORA-CFR", cfr, _band(None if cfr is None else cfr * 100, len(dl), th,
+                                                         "change_failure_rate"),
+                                f"rollbacks only ({rollbacks} of {len(dl)} CIS deploys); {missing}"),
+    }
+    order = ("K-DORA-DF", "K-DORA-LT", "K-DORA-CFR", "K-DORA-MTTR", "K-DORA-RW", "K-CI-MAINFAIL")
+    return [by_id.get(k) or _kpi_line(k, None, NOT_WIRED, missing) for k in order]
 
 
 def render_dev01(reg: Registry, report: Report, first: date, last: date, facts: dict,
                  generated_at: datetime) -> Rendered:
     md = month_deploys(facts, first, last)
     ch = schema_changes(facts.get("versions"), first, last)
-    kpis = dev01_kpis(md)
-    headline = (f"Delivery {first.isoformat()} to {last.isoformat()}: {len(md['deploys'])} CIS deploy(s) "
-                f"({md['covered_days']} of {md['days']} days covered), "
+    gh = period_rows(facts.get("delivery"), "months", first)
+    why = failed(facts.get("delivery")) or "the GitHub delivery summary does not reach back to this month"
+    th = facts.get("thresholds")
+    days = (last - first).days + 1
+    kpis = github_kpis(gh, th, days) if gh else dev01_kpis(md, th, why)
+    green = sum(int(r["row"].get("deploys") or 0) for r in gh) if gh else None
+    headline = (f"Delivery {first.isoformat()} to {last.isoformat()}: "
+                + (f"{green} green deploy(s) over {len(gh)} apps (GitHub), " if gh else
+                   f"{len(md['deploys'])} CIS deploy(s) ({md['covered_days']} of {md['days']} days covered; GitHub "
+                   "summary not readable), ")
                 + (f"{len(ch['applied'])} migration(s) registered" if "error" not in ch else "migrations not read"))
-    body = ["## CIS deploys to Dev", "",
+    body = ["## DORA per app (GitHub, Dev numbers)", "",
+            "From the month row of the GitHub delivery summary (root workflow Delivery metrics; the numbers and "
+            "colours of Platform › Delivery). Dev numbers move a lot with few events: read n before a trend. "
+            "Definitions: root docs/guides/delivery-metrics.md.", ""]
+    body += delivery_md(gh, why)
+    if gh:
+        failed_rows = [(r["name"], d) for r in gh for d in r["row"].get("failed_deploys") or []]
+        body += ["", "## Failed deploys and recovery", ""]
+        body += table(["App", "Started (UTC)", "Commit", "Why", "Recovery"],
+                      [[n, str(d.get("started_at"))[:16], _short(d.get("sha")), ", ".join(d.get("failed") or []),
+                        _h(d.get("recovery_h")) if d.get("recovery_h") is not None else "open"]
+                       for n, d in failed_rows]) if failed_rows else ["- None."]
+    body += ["", "## CIS deploys to Dev (worker)", "",
             f"From {md['weekly_runs']} DEV-03 run(s) of the month and the worker rows still kept (7 days); "
             f"{md['covered_days']} of {md['days']} days covered.", ""]
     body += _deploys_md(md["deploys"], "not read")
     body += ["", "## Migrations registered per owner", ""] + _schema_md(ch)
+    unavailable = list(DEV01_UNAVAILABLE) + ([] if gh else [(s, kid, why) for s, kid in DEV01_GITHUB])
     body += ["", f"## {NOT_AVAILABLE}", ""]
     body += table(["Section", "KPI", "Where it lives today"],
-                  [[s, kid or "—", where] for s, kid, where in DEV01_UNAVAILABLE])
+                  [[s, kid or "—", where] for s, kid, where in unavailable])
     body += ["", "## Improvement actions", "", "- To write before approval (tech lead), with the GitHub numbers.", ""]
     return _render(reg, report, first, last, generated_at, f"Delivery and DORA {first.isoformat()} to "
                    f"{last.isoformat()}", headline, kpis, body, ICT_NOTE, cis_deploys=md["deploys"],
                    coverage={k: md[k] for k in ("days", "covered_days", "weekly_runs", "live_rows")}, schema=ch,
-                   not_available=[s for s, _k, _w in DEV01_UNAVAILABLE], sources_unreadable=_unreadable(facts))
+                   delivery=[{"app": r["app"], **r["row"]} for r in gh] if gh else None,
+                   not_available=[s for s, _k, _w in unavailable], sources_unreadable=_unreadable(facts))
 
 
 # ═══ OPS-15 session-close state snapshot ═══════════════════════════════════════════════════════════════════════

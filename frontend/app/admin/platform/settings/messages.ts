@@ -399,6 +399,7 @@ const AREA_NAMES: Record<string, { en: string; vi: string }> = {
   leads: { en: "Leads", vi: "Khách tiềm năng" },
   agency_defaults: { en: "Agency defaults", vi: "Mặc định của đại lý" },
   payments: { en: "Payments", vi: "Thanh toán đại lý" },
+  delivery: { en: "Delivery metrics", vi: "Chỉ số phát hành" },
 };
 
 export function areaName(area: string, lang: string): string {
@@ -416,7 +417,8 @@ const UNITS_VI: Record<string, string> = {
   "USD/month": "USD/tháng", "USD/run": "USD/lần chạy", "chars/word": "ký tự/từ", "leads/24 h": "khách/24 giờ",
   "score (0-10)": "điểm (0-10)", score: "điểm", reminders: "lần nhắc", "checks/min": "lần kiểm/phút",
   "requests/min": "yêu cầu/phút", "calls/min": "lượt gọi/phút", "writes/min": "lượt ghi/phút",
-  "submissions/hour": "lượt gửi/giờ", "base currency": "tiền tệ gốc",
+  "submissions/hour": "lượt gửi/giờ", "base currency": "tiền tệ gốc", "deploys/week": "lần deploy/tuần",
+  minutes: "phút", events: "sự kiện",
 };
 
 export function unitName(unit: string, lang: string): string {

@@ -36688,6 +36688,81 @@
         ]
       }
     },
+    "/admin/platform/delivery": {
+      "get": {
+        "operationId": "get_delivery_admin_platform_delivery_get",
+        "parameters": [
+          {
+            "description": "re-read the published summary (at most every 30 s)",
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "re-read the published summary (at most every 30 s)",
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "CI/CD and DORA per app: deploys, lead time, failures, recovery, CI health (Dev numbers)",
+        "tags": [
+          "admin-platform-delivery"
+        ]
+      }
+    },
     "/admin/platform/infra": {
       "get": {
         "operationId": "get_infra_admin_platform_infra_get",
