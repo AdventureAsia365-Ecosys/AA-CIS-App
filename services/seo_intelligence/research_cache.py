@@ -81,10 +81,8 @@ class PaidNotStored(DFSCallError):
     """DataForSEO answered (and charged) a purchase, but the store refused its answers (a statement timeout, a dropped
     connection, a full pool). Never fatal, never split: buying the keywords again, in halves, would pay twice for
     them. The caller marks them failed (no log row, the places stay stale); the next run collects the paid queued task
-    (:meth:`ResearchCache.pending_tasks`) or, on the live endpoint, buys them once."""
-
-    def __init__(self, message: str):
-        super().__init__(message, False, None)
+    (:meth:`ResearchCache.pending_tasks`) or, on the live endpoint, buys them once. Built with the message alone
+    (DFSCallError's defaults: not fatal, no status code)."""
 
 
 # ── settings ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -342,6 +340,6 @@ class ResearchCache:
         return pending_from_rows([dict(r) for r in rows], set(keywords), location_code, set(exclude))
 
 
-__all__ = ["ResearchCache", "PaidNotStored", "Windows", "CachedSerp", "PendingTask", "fresh_windows", "volume_fresh_for",
-           "serp_fresh_for", "dedupe", "parse_serp", "pending_from_rows", "DFS_CALL_SITES", "PAID_CLIENT_METHODS",
-           "PAID_QUEUE_METHODS", "CACHE_METHODS", "CACHE_READS", "CACHE_WRITES"]
+__all__ = ["ResearchCache", "PaidNotStored", "Windows", "CachedSerp", "PendingTask", "fresh_windows",
+           "volume_fresh_for", "serp_fresh_for", "dedupe", "parse_serp", "pending_from_rows", "DFS_CALL_SITES",
+           "PAID_CLIENT_METHODS", "PAID_QUEUE_METHODS", "CACHE_METHODS", "CACHE_READS", "CACHE_WRITES"]
