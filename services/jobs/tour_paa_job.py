@@ -5,8 +5,8 @@ through the research cache (services/seo_intelligence/tour_paa.py). Enqueued by 
 (POST /admin/segment-research/tour-paa/run, after the free preview) and, store-only (``paid`` false), by a research run
 that bought SERPs (segment_research_job.enqueue_paa_derive, once per UTC day).
 
-Caps of a paid run, one counter over its DataForSEO calls (shared.research_budget.SharedCap on the run budget, checked by the
-client before every post): the per-run cap ``cis.spend.tour_paa_backfill_max_usd_per_run`` minus what this job already
+Caps of a paid run, one counter over its DataForSEO calls (shared.research_budget.SharedCap on the run budget, checked by
+the client before every post): the per-run cap ``cis.spend.tour_paa_backfill_max_usd_per_run`` minus what this job already
 spent (retries never start a fresh budget) and the research month cap ``cis.spend.research_max_usd_per_month`` (this
 kind is a research kind: its spend counts there, RESEARCH_JOB_KINDS). A month already spent, an unreadable ledger or a
 per-run cap of 0 refuses the paid part before anything is bought; the store part still runs.

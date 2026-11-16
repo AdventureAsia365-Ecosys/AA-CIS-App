@@ -208,24 +208,34 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
   );
 }
 
-export default function SeoIntelligencePage() {
+export default function SeoIntelligenceRoute() {
   // AA-1122: useSearchParams() (the research alerts link to ?tab=research) needs a Suspense boundary.
   return (
     <Suspense fallback={null}>
-      <SeoIntelligenceInner />
+      <SeoIntelligencePage />
     </Suspense>
   );
 }
 
-function SeoIntelligenceInner() {
+/** AA-1039 R6 rest: DataForSEO spend lives on Spend (AI & spend roles); content_lead, who also reads this page, has no
+ *  spend.read (root audit S265 §4.1), so the link shows only to a role that may open Spend. */
+function DfsSpendLink() {
+  const t = useT(SEO);
+  if (!canSeePage(useAdminIdentity().role, "/admin/spend")) return null;
+  return (
+    <Link href={DFS_SPEND_HREF} data-testid="seo-dfs-spend-link"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
+      <Wallet size={14} /> {t("dfsSpendLink")}
+    </Link>
+  );
+}
+
+function SeoIntelligencePage() {
   const t = useT(SEO);
   const tr = useT(RESEARCH);
   const kwCols = useMemo(() => kwColumns(t), [t]);
   const wanted = useSearchParams().get("tab");
   const [tab, setTab] = useState(() => (wanted === RESEARCH_TAB ? RESEARCH_TAB : "overview"));
-  // AA-1039 R6 rest: DataForSEO spend lives on Spend (AI & spend roles); content_lead, who also reads this page, has no
-  // spend.read (root audit S265 §4.1), so the link shows only to a role that may open Spend.
-  const seesSpend = canSeePage(useAdminIdentity().role, "/admin/spend");
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["admin-seo-intelligence"],
     queryFn: () => apiGet<SeoData>("/api/admin/seo-intelligence", { admin: true }),
@@ -238,12 +248,7 @@ function SeoIntelligenceInner() {
           <PageHeader
             title={t("title")}
             description={t("description")}
-            actions={seesSpend ? (
-              <Link href={DFS_SPEND_HREF} data-testid="seo-dfs-spend-link"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
-                <Wallet size={14} /> {t("dfsSpendLink")}
-              </Link>
-            ) : undefined}
+            actions={<DfsSpendLink />}
           />
           <div style={{ marginBottom: 20 }}>
             <Tabs tabs={[...TABS.map((x) => ({ key: x.key, label: t(x.label) })),

@@ -16,8 +16,8 @@ narrowed to it (`narrow_to`), so the check before every paid post stops the run 
 balance-checked, whatever the estimate missed. A run that stored new demand enqueues one debounced platform recompute
 (segment_research.enqueue_recompute_for_places). `strategy: "loop"` is refused (retired, AA-1055).
 
-AA-1122 — every attempt runs under two shared caps over DFS + LLM + Jev together (shared.research_budget.SharedCap, attached
-to both run budgets): the hard monthly research cap (cis.spend.research_max_usd_per_month, the ledger month spend of
+AA-1122 — every attempt runs under two shared caps over DFS + LLM + Jev together (shared.research_budget.SharedCap,
+attached to both run budgets): the hard monthly research cap (cis.spend.research_max_usd_per_month, the ledger month spend of
 every research job read at the attempt's start, fail closed) and, for an automatic run (`scope` auto_new /
 auto_refresh, created_by system:auto), the automatic run cap (cis.spend.research_auto_max_usd_per_run) minus what the
 ledger holds for this job already, so a retry or a deploy release never starts a fresh per-run budget (critic C3). A
