@@ -131,12 +131,14 @@ REWRITES_SQL = """
      WHERE year_month = ANY($1::text[])
 """
 # The onboarding steps of every partner (agency, not a canary) up to $1 (exclusive): the first time each was reached.
+# A brand brief is the oldest brand rules row (one row per version; updated_at, NOT NULL: created_at is not on every
+# database).
 STEPS_SQL = """
     SELECT t.tenant_id::text AS tenant_id, t.account_status, t.created_at,
            (SELECT min(e.occurred_at) FROM shared.tenant_membership_event e
              WHERE e.tenant_id = t.tenant_id AND e.type = 'membership.activated' AND e.occurred_at < $1) AS member_at,
-           (SELECT min(coalesce(b.created_at, b.updated_at)) FROM shared.tenant_brand_rules b
-             WHERE b.tenant_id = t.tenant_id AND coalesce(b.created_at, b.updated_at) < $1) AS brief_at,
+           (SELECT min(b.updated_at) FROM shared.tenant_brand_rules b
+             WHERE b.tenant_id = t.tenant_id AND b.updated_at < $1) AS brief_at,
            (SELECT min(p.created_at) FROM acp_shared.content_piece p
              WHERE p.tenant_id = t.tenant_id AND p.status = 'approved' AND p.created_at < $1) AS approved_at,
            (SELECT min(l.published_at) FROM acp_shared.publish_log l
