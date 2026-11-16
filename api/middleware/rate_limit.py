@@ -29,6 +29,18 @@ PLAN_RPM = {
 _TENANT_META_TTL_S = 30
 
 
+def _endpoint(request: Request) -> str:
+    """The matched route template (``/admin/tenants/{tenant_id}/...``) for a request that went through the router,
+    else the raw path (no route matched, or the call never reached the router, e.g. the 429 branch).
+
+    S282 (Sentry AA-CIS-API-M): the raw path of an admin route with two UUIDs is longer than
+    ``shared.tenant_api_usage.endpoint`` (varchar(100)), so the usage row was lost. A template is short, has no ids
+    and groups the usage per route. ``isinstance`` keeps a test's MagicMock request on the raw path.
+    """
+    p = getattr(request.scope.get("route"), "path", None)
+    return p if isinstance(p, str) else request.url.path
+
+
 async def _get_tenant_meta(request: Request, tenant_id: str) -> dict | None:
     """Returns {"rate_limit_rpm": int, "is_active": bool}, or None if both the
     Redis cache and the DB lookup failed (caller falls back to PLAN_RPM/fail-open
@@ -155,7 +167,7 @@ async def rate_limit_middleware(request: Request, call_next):
     if not portal:
         await track_api_call(
             request.app.state.pool,
-            tenant_id, request.url.path,
+            tenant_id, _endpoint(request),
             request.method, response.status_code,
             response_ms
         )
@@ -204,7 +216,7 @@ async def _track_admin_call(request: Request, call_next):
     await track_api_call(
         request.app.state.pool,
         tenant_id=None,
-        endpoint=request.url.path,
+        endpoint=_endpoint(request),
         method=request.method,
         status_code=response.status_code,
         response_ms=response_ms,
