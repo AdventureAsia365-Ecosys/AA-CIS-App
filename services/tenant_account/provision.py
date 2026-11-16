@@ -53,6 +53,7 @@ from typing import Any, Optional
 
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.tenant_account import dev_guard
+from services.tenant_account import pricing_settings as ps
 
 KIND = "tenant_provision"
 IDEMPOTENCY_PREFIX = f"{KIND}:"
@@ -63,7 +64,8 @@ SEATS_MAX = 500
 REQUEST_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$")
 PLAN_KEY_RE = re.compile(r"^[a-z]+\.[a-z][a-z0-9_]*$")
-TRIAL_DAYS_MAX = 60
+# The longest trial and the default trial of an attach are settings: cis.billing.trial_days_max / _default (CIS 436,
+# Platform › Settings; AA-1116 replaced the TRIAL_DAYS_MAX constant): trial_days_max(), trial_days_default().
 MODES = ("create", "attach", "detach")
 ONBOARD = AdminTenantAuditAction.ONBOARD
 SUBSCRIPTION_CHANGED = AdminTenantAuditAction.SUBSCRIPTION_CHANGED
@@ -205,9 +207,10 @@ def parse(payload: dict[str, Any]) -> ProvisionRequest:
     if kind not in KINDS:
         raise ProvisionError("invalid_kind", f"kind must be one of {', '.join(KINDS)}")
     trial_days = payload.get("trial_days")
+    most = trial_days_max()
     if trial_days is not None and (isinstance(trial_days, bool) or not isinstance(trial_days, int)
-                                   or not 1 <= trial_days <= TRIAL_DAYS_MAX):
-        raise ProvisionError("invalid_trial_days", f"trial_days: 1-{TRIAL_DAYS_MAX}")
+                                   or not 1 <= trial_days <= most):
+        raise ProvisionError("invalid_trial_days", f"trial_days: 1-{most}")
     pilot_weeks = payload.get("pilot_weeks")
     refused = dev_guard.refusal(kind, pilot_weeks)
     if refused is not None:
@@ -245,7 +248,7 @@ INSERT_TENANT_SQL = """
     INSERT INTO shared.tenants (name, slug, plan_tier, plan_id, posts_per_week, rate_limit_rpm,
                                 is_active, kind, is_canary, account_status, is_pilot, pilot_ends_at)
     VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, true, $7, $8, $9, $10,
-            CASE WHEN $10 THEN now() + make_interval(weeks => $11::int) END)
+            CASE WHEN $10 AND $11::int > 0 THEN now() + make_interval(weeks => $11::int) END)
     RETURNING tenant_id
 """
 # AA-1087: the same row under the id another app already holds (Dev demo tenants only, see parse()).
@@ -266,9 +269,11 @@ BRAND_SQL = """
     SELECT $1, 'default' WHERE NOT EXISTS (SELECT 1 FROM shared.tenant_brand_rules WHERE tenant_id = $1)
 """
 TENANT_SQL = "SELECT tenant_id, account_status FROM shared.tenants WHERE tenant_id = $1::uuid FOR UPDATE"
-ADDON_PLAN_SQL = "SELECT 1 FROM shared.plan WHERE plan_key = $1 AND product = $2 AND retired_at IS NULL"
-# A live add-on stays as it is unless the plan or the seats change; a canceled or paused one is active again. A new
-# add-on of a trial create ($6 = the content trial's end) starts trialing with it.
+ADDON_PLAN_SQL = "SELECT seats_min FROM shared.plan WHERE plan_key = $1 AND product = $2 AND retired_at IS NULL"
+# A live add-on stays as it is unless the plan or the seats change; a canceled or paused one is active again (one trial
+# per tenant and product: no second trial after a cancel, AA-1116 decision 3). A new add-on of a trial create ($6 = the
+# content trial's end) starts trialing with it; a new add-on of an attach ($6 = now + cis.billing.trial_days_default)
+# starts its own trial.
 UPSERT_ADDON_SQL = """
     INSERT INTO shared.tenant_subscription AS s (tenant_id, product, plan_key, status, seats, updated_by, trial_ends_at)
     VALUES ($1, $2, $3, CASE WHEN $6::timestamptz IS NULL THEN 'active' ELSE 'trialing' END, $4, $5, $6::timestamptz)
@@ -282,10 +287,11 @@ UPSERT_ADDON_SQL = """
     RETURNING s.product
 """
 # only_new (an approved add-on request): insert, or turn on a row that is not live (canceled, paused, unpaid, a trial
-# that has ended: the agency's view and LIVE_SQL of addon_requests.py); a live row is never changed.
+# that has ended: the agency's view and LIVE_SQL of addon_requests.py); a live row is never changed. A new row starts
+# trialing until $6 (now + cis.billing.trial_days_default, AA-1116 decision 3); a row that comes back is active.
 NEW_ADDON_SQL = """
-    INSERT INTO shared.tenant_subscription AS s (tenant_id, product, plan_key, status, seats, updated_by)
-    VALUES ($1, $2, $3, 'active', $4, $5)
+    INSERT INTO shared.tenant_subscription AS s (tenant_id, product, plan_key, status, seats, updated_by, trial_ends_at)
+    VALUES ($1, $2, $3, CASE WHEN $6::timestamptz IS NULL THEN 'active' ELSE 'trialing' END, $4, $5, $6::timestamptz)
     ON CONFLICT (tenant_id, product) DO UPDATE
        SET plan_key = EXCLUDED.plan_key, seats = EXCLUDED.seats, updated_by = EXCLUDED.updated_by, status = 'active',
            trial_ends_at = NULL, canceled_at = NULL
@@ -321,6 +327,16 @@ EVENTS_SQL = "SELECT count(*) AS n FROM shared.tenant_account_event WHERE tenant
 
 def actor_for(job_id: str) -> str:
     return f"job:{KIND}:{job_id}"[:64]
+
+
+def trial_days_max() -> int:
+    """The longest trial staff may give (cis.billing.trial_days_max)."""
+    return ps.int_value(ps.TRIAL_DAYS_MAX)
+
+
+def trial_days_default() -> int:
+    """The trial an attached add-on or an approved add-on request starts (cis.billing.trial_days_default)."""
+    return ps.int_value(ps.TRIAL_DAYS_DEFAULT)
 
 
 async def _create(conn, req: ProvisionRequest, actor: str,
@@ -376,17 +392,38 @@ async def _attach_target(conn, req: ProvisionRequest) -> uuid.UUID:
     return row["tenant_id"]
 
 
+ATTACH_TRIAL_END_SQL = "SELECT now() + make_interval(days => $1::int)"
+
+
+def billed_seats(seats: Optional[int], seats_min: Optional[int]) -> Optional[int]:
+    """The seats a subscription gets: a request below the plan's seats_min is raised to it (AA-1116 decision 2: the
+    agency is billed the minimum, never refused); no request = the minimum (or None when the plan has none)."""
+    if seats_min is None:
+        return seats
+    return seats_min if seats is None or seats < seats_min else seats
+
+
 async def _add_ons_step(conn, tenant_id: uuid.UUID, req: ProvisionRequest, actor: str, steps: list[str],
                         trial_ends_at: Optional[Any] = None) -> None:
+    """The add-on subscriptions. ``trial_ends_at`` is the content trial's end on a trial create; on an attach (or an
+    approved request) a NEW add-on starts its own trial of cis.billing.trial_days_default days."""
+    attach_trial_end = None
+    if req.mode == "attach":
+        attach_trial_end = await conn.fetchval(ATTACH_TRIAL_END_SQL, trial_days_default())
     for a in req.add_ons:
-        if await conn.fetchval(ADDON_PLAN_SQL, a.plan_key, a.product) is None:
+        plan = await conn.fetchrow(ADDON_PLAN_SQL, a.plan_key, a.product)
+        if plan is None:
             raise ProvisionError("unknown_plan", f"no live plan {a.plan_key}")
+        seats = billed_seats(a.seats, plan["seats_min"])
+        if a.seats is not None and seats != a.seats:
+            steps.append(f"{a.product}_seats_raised_to_{seats}")
         if req.only_new:
-            changed = await conn.fetchval(NEW_ADDON_SQL, tenant_id, a.product, a.plan_key, a.seats, actor)
+            changed = await conn.fetchval(NEW_ADDON_SQL, tenant_id, a.product, a.plan_key, seats, actor,
+                                          attach_trial_end)
             steps.append(f"{a.product}_{'subscribed' if changed else 'already_on'}")
             continue
-        changed = await conn.fetchval(UPSERT_ADDON_SQL, tenant_id, a.product, a.plan_key, a.seats, actor,
-                                      trial_ends_at)
+        changed = await conn.fetchval(UPSERT_ADDON_SQL, tenant_id, a.product, a.plan_key, seats, actor,
+                                      trial_ends_at if req.mode == "create" else attach_trial_end)
         steps.append(f"{a.product}_{'subscribed' if changed else 'unchanged'}")
 
 

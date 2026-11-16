@@ -286,13 +286,18 @@ class TenantBudgetBody(BaseModel):
     The limits are migration 321's CHECKs."""
     model_config = ConfigDict(extra="forbid")
     monthly_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
-    alert_pct: int = Field(100, ge=1, le=1000)
-    approval_pct: int = Field(150, ge=1, le=1000)
+    # AA-1116: omitted = the platform defaults in force (cis.billing.ai_alert_pct_default / ai_approval_pct_default)
+    alert_pct: Optional[int] = Field(None, ge=1, le=1000)
+    approval_pct: Optional[int] = Field(None, ge=1, le=1000)
     hard_stop: bool = True          # AA-642 A8: a new budget holds T-stage jobs at approval_pct unless told otherwise
     notes: Optional[str] = Field(None, max_length=2000)
 
     @model_validator(mode="after")
     def _approval_after_alert(self):
+        if self.alert_pct is None or self.approval_pct is None:
+            d = tenant_ai_budget.defaults()
+            self.alert_pct = d["alert_pct"] if self.alert_pct is None else self.alert_pct
+            self.approval_pct = d["approval_pct"] if self.approval_pct is None else self.approval_pct
         if self.approval_pct < self.alert_pct:
             raise ValueError("approval_pct must be at least alert_pct")
         if self.monthly_usd is not None:

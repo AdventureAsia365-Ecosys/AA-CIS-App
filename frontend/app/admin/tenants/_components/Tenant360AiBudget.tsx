@@ -63,9 +63,11 @@ function tightenBase(data: TenantBudgetResp): Base {
  *  (its plan's), which it may only tighten. */
 function startDraft(data: TenantBudgetResp, tightenOnly: boolean): TenantBudgetDraft {
   const base = tightenOnly && !data.budget ? tightenBase(data) : null;
-  if (!base) return tenantBudgetDraftOf(data.budget);
-  return tenantBudgetDraftOf({ monthly_usd: base.monthly_usd ?? null, alert_pct: base.alert_pct ?? 100,
-    approval_pct: base.approval_pct ?? 150, hard_stop: base.hard_stop ?? true, notes: null });
+  // AA-1116: a new row starts at the platform defaults in force (Platform › Settings, served as data.defaults)
+  const d = data.defaults;
+  if (!base) return tenantBudgetDraftOf(data.budget ?? { ...d, monthly_usd: null, notes: null });
+  return tenantBudgetDraftOf({ monthly_usd: base.monthly_usd ?? null, alert_pct: base.alert_pct ?? d.alert_pct,
+    approval_pct: base.approval_pct ?? d.approval_pct, hard_stop: base.hard_stop ?? d.hard_stop, notes: null });
 }
 
 /** S280: what a tighten-only role may not do here (loosen these fields; soften the hold) and each field's hint. */

@@ -63,11 +63,13 @@ class ProvisionCreateIn(BaseModel):
     plan_tier: Literal["starter", "growth", "business"]
     posts_per_week: int = Field(..., ge=1, le=14)
     kind: Optional[Literal["agency", "demo"]] = Field(None, description="Default demo on Dev, agency elsewhere")
-    trial_days: Optional[int] = Field(None, ge=1, le=pv.TRIAL_DAYS_MAX,
+    trial_days: Optional[int] = Field(None, ge=1,
                                       description="The account starts in trial for this many days (the content "
-                                                  "subscription and the add-ons of this request trialing)")
-    pilot_weeks: Optional[int] = Field(None, ge=1, le=8, description="Dev only: the one pilot agency for this "
-                                                                     "many weeks (root ADR 0019 d16)")
+                                                  "subscription and the add-ons of this request trialing); at most "
+                                                  "cis.billing.trial_days_max (Platform › Settings), else 422")
+    pilot_weeks: Optional[int] = Field(None, ge=0, description="Dev only: the one pilot agency for this many weeks "
+                                                               "(0 = until go-live, ended by End pilot; at most "
+                                                               "cis.tenant.pilot_max_weeks; root ADR 0019 d16)")
     add_ons: list[AddOnIn] = Field(default_factory=list, max_length=2)
 
 

@@ -183,7 +183,7 @@ class Conn:
     async def fetchrow(self, sql, *args):
         if self.missing:
             raise type("UndefinedTableError", (Exception,), {})("no table")
-        assert "shared.tenant_ai_budget" in sql and args == (TENANT,)
+        assert "shared.tenant_ai_budget" in sql and args[0] == TENANT and args[1:] in ((), (80, 100, True))
         return self.row
 
     async def fetch(self, sql, *args):

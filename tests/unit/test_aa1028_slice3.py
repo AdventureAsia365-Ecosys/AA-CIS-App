@@ -333,8 +333,10 @@ def test_shadow_rows_do_not_count_towards_the_tenant_budget():
 
 
 def test_plan_budget_defaults():
-    assert (cost_guard.PLAN_ALERT_PCT, cost_guard.PLAN_APPROVAL_PCT) == (80, 100)
-    assert "coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL
+    # AA-1116: the defaults are settings (CIS 436 seed: 80 / 100 / hard stop on), bound as $2-$4
+    assert cost_guard.plan_budget_defaults() == (80, 100, True)
+    assert "coalesce(b.hard_stop, $4::boolean)" in cost_guard._TENANT_BUDGET_SQL
+    assert "coalesce(b.alert_pct, $2::int)" in cost_guard._TENANT_BUDGET_SQL
 
 
 def test_no_resolved_key_falls_back_to_the_content_plan_budget():

@@ -121,8 +121,6 @@
   "services/writing_memory/config.py:TENANT_MIN_SIGNALS",
   "services/writing_memory/config.py:TENANT_TOKEN_CAP",
   "shared/cost_guard.py:DEFAULT_CONNECTION_ALERT_PCT",
-  "shared/cost_guard.py:PLAN_ALERT_PCT",
-  "shared/cost_guard.py:PLAN_APPROVAL_PCT",
   "shared/jobs/queue.py:BACKOFF_MAX_SECONDS",
   "shared/jobs/queue.py:MAX_RELEASES",
   "shared/jobs/queue.py:RETRY_REASON_APPLY_LIMIT",

@@ -235,7 +235,7 @@ def test_spend_budget_row_names_its_actor():
 
 def test_body_defaults_and_rounding():
     b = router_mod.TenantBudgetBody(monthly_usd=12.345, notes="  ")
-    assert b.model_dump() == {"monthly_usd": 12.35, "alert_pct": 100, "approval_pct": 150, "hard_stop": True,
+    assert b.model_dump() == {"monthly_usd": 12.35, "alert_pct": 80, "approval_pct": 100, "hard_stop": True,
                               "notes": None}
 
 
@@ -256,7 +256,7 @@ def test_get_one_with_budget_and_spend():
     assert out["ready"] is True and out["tenant_name"] == "Lotus Trails" and out["month_spent_usd"] == 5.0
     assert out["budget"]["used_pct"] == 25.0 and out["budget"]["state"] == "ok"
     assert out["budget"]["updated_by_name"] == "Mai Tran" and out["budget"]["updated_by_kind"] == "staff"
-    assert out["defaults"] == tb.DEFAULTS and out["month_start"].endswith("-01T00:00:00+00:00")
+    assert out["defaults"] == tb.defaults() and out["month_start"].endswith("-01T00:00:00+00:00")
     assert conn.ran(tb.TENANT_EXISTS_SQL) == [(TENANT,)]        # lower-cased before any read
 
 

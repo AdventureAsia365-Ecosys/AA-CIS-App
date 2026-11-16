@@ -157,7 +157,8 @@ async def test_an_approval_attaches_the_plan_through_the_saga(conn):
     # The worker runs the saga: the add-on is live, the tenant sees it active and cannot ask again.
     await pv.provision(_Pool(conn), pv.parse(payload), job_id=job_id)
     crm = (await ar.tenant_view(conn, tid))["add_ons"][0]
-    assert crm["state"] == "active" and crm["subscription_status"] == "active"
+    # AA-1116 decision 3: an approved request starts the add-on's trial
+    assert crm["state"] == "active" and crm["subscription_status"] == "trialing"
     assert crm["last_decision"]["status"] == "approved" and crm["last_decision"]["decision_note"] == "Welcome aboard"
     with pytest.raises(PlanError) as e:
         await ar.create_request(conn, tid, "crm", None, actor=OWNER)
@@ -299,7 +300,7 @@ async def test_an_attach_closes_the_pending_request_and_the_account_manager_cann
         await ar.approve(conn, tid, row["request_id"], plan_key="crm.core", seats=500, note=None, actor=CS,
                          staff_id=None)
     assert e.value.status == 409 and e.value.code == "already_decided"
-    assert await _sub(conn, tid) == ("crm.pro", "active", 6)
+    assert await _sub(conn, tid) == ("crm.pro", "trialing", 6)       # AA-1116: an attach starts the trial
     assert await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = 'tenant_provision'") == jobs
     crm = (await ar.tenant_view(conn, tid))["add_ons"][0]
     assert crm["state"] == "active" and crm["request"] is None and crm["last_decision"]["status"] == "approved"
@@ -347,7 +348,7 @@ async def test_an_approval_whose_add_on_went_live_before_its_job_ran_changes_not
     assert admin["steps"] == ["crm_subscribed"]                 # the request was approved already: nothing to close
     out = await pv.provision(_Pool(conn), pv.parse(payload), job_id=job_id)
     assert out["steps"] == ["crm_already_on"]
-    assert await _sub(conn, tid) == ("crm.pro", "active", 6)
+    assert await _sub(conn, tid) == ("crm.pro", "trialing", 6)       # AA-1116: an attach starts the trial
     # only_new still turns on an add-on that is not live (canceled; a trial that has ended)
     for change in ("status = 'canceled', canceled_at = now(), trial_ends_at = NULL",
                    "status = 'trialing', trial_ends_at = now() - interval '1 day', canceled_at = NULL"):

@@ -160,14 +160,17 @@ async def test_attach_adds_revives_and_leaves_unchanged(conn):
                     "add_ons": [{"product": "crm", "plan_key": "crm.pro", "seats": 6}]})
     out = await _run(conn, add)
     assert out["steps"] == ["crm_subscribed"] and "api_key" not in out
-    assert (await _subs(conn, tid))["crm"] == ("crm.pro", "active", 6)
-    assert (await _ents(conn, tid))["crm.campaigns"] == (None, "plan")
+    # AA-1116 decision 3: a new add-on of an attach starts its trial (cis.billing.trial_days_default, 14 days)
+    assert (await _subs(conn, tid))["crm"] == ("crm.pro", "trialing", 6)
+    assert await conn.fetchval("SELECT trial_ends_at::date - current_date FROM shared.tenant_subscription "
+                               "WHERE tenant_id = $1::uuid AND product = 'crm'", tid) == 14
+    assert (await _ents(conn, tid))["crm.campaigns"] == (None, "trial")
     assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                "AND action = 'tenant.subscription_changed'", tid) == 1
     # the same add-on under a new key: nothing differs
     same = pv.parse({**add.to_payload(), "request_key": f"zz-att-{uuid.uuid4().hex[:10]}"})
     assert (await _run(conn, same))["steps"] == ["crm_unchanged"]
-    # a canceled add-on is active again
+    # a canceled add-on is active again (no second trial)
     await conn.execute("UPDATE shared.tenant_subscription SET status = 'canceled', canceled_at = now() "
                        "WHERE tenant_id = $1::uuid AND product = 'crm'", tid)
     assert "crm.core" not in await _ents(conn, tid)
