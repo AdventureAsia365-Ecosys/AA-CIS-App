@@ -1,5 +1,6 @@
 """AA-650 — job kinds. Importing this package registers every kind with shared.jobs.registry."""
 from . import segment_research_job  # noqa: F401
+from . import tour_paa_job  # noqa: F401  AA-1122 (tour People Also Ask backfill: store first, capped SERPs)
 from . import t2_rewrite_job  # noqa: F401
 from . import t9_write_job  # noqa: F401
 from . import a3_atomize_job  # noqa: F401

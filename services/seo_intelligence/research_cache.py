@@ -66,6 +66,7 @@ DFS_CALL_SITES: dict[str, str] = {
         "S1 prefetch ideas: seo_context reuse per tour (S1_SEO_REUSE_DAYS) and the research store read first (AA-653)",
     "services/seo_intelligence/s1_prefetch.py::_tour_serp":
         "S1 SERP: one per (seed, location): another tour's reusable seo_context row, then this run's answers (AA-1120)",
+    "services/seo_intelligence/tour_paa.py::run": "research_cache",
     "services/acp_shared/question_topup.py::run_topup":
         "admin top-up: its own search_demand market, a rerun skips stored places, $3 cap in all (AA-779)",
     "scripts/aa1055/dfs_queue_trial.py::main": "adhoc trial of one task per kind (AA-1055), no research data",

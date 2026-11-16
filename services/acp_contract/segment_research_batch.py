@@ -202,6 +202,7 @@ class _Place:
     plain: str | None = None           # the place's own keyword this run (qualified with its locality when namesake)
     dropped: dict = field(default_factory=dict)   # keyword -> keyword_qualify reason (stored as a rule row)
     requalify: bool = False            # fresh, planned only to rebuild a map the qualification rules would change
+    bucket: str = ""                   # AA-1122: new | stale | ahead | requalify (segment_research.plan_selection)
 
     def has_volume(self) -> bool:
         return any(v for per in self.volumes.values() for v in per.values())
@@ -283,15 +284,22 @@ def estimate_cost(n_places: int, n_markets: int, use_suggestions: bool = False, 
 
 
 def select_within_usd(places: list[_Place], max_usd: float | None, use_suggestions: bool = False,
-                      queue: str = "live") -> list[_Place]:
+                      queue: str = "live", *, with_llm: bool = False) -> list[_Place]:
     """AA-1055 — the longest prefix of `places` whose capped DFS estimate stays within `max_usd` (replaces the old
-    200-place cap). None = no cap. The estimate grows with the prefix, so a binary search finds it."""
+    200-place cap). None = no cap. The estimate grows with the prefix, so a binary search finds it. AA-1122: the
+    places come in priority order (segment_research.plan_selection), so the prefix is who waited longest;
+    `with_llm=True` (automatic runs: one cap over DFS + LLM) adds the keyword LLM estimate to the DFS one."""
     if max_usd is None:
         return list(places)
+
+    def _cost(prefix: list[_Place]) -> float:
+        est = estimate_plan(prefix, use_suggestions, queue)
+        return est["dfs_usd_cap"] + (est["llm_usd"] if with_llm else 0.0)
+
     lo, hi = 0, len(places)
     while lo < hi:
         mid = (lo + hi + 1) // 2
-        if estimate_plan(places[:mid], use_suggestions, queue)["dfs_usd_cap"] <= max_usd:
+        if _cost(places[:mid]) <= max_usd:
             lo = mid
         else:
             hi = mid - 1
@@ -401,7 +409,20 @@ async def load_locations(pool, names: list[str]) -> dict[str, kq.PlaceLocation]:
     return out
 
 
-async def _gate_keywords(places: list[_Place], pool) -> dict:
+def _usd(value) -> float:
+    """A cost figure as float (0.0 for anything that is not a number, e.g. a test double)."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def jev_ask_estimate_usd() -> float:
+    """AA-1122 — the reserved worst-case price of one Jev keyword question (setting cis.spend.research_jev_ask_estimate_usd)."""
+    from services.seo_intelligence.research_settings import JEV_ASK_ESTIMATE_USD
+    from shared import settings
+    return float(settings.get(JEV_ASK_ESTIMATE_USD))
+
+
+async def _gate_keywords(places: list[_Place], pool, llm_budget: RunBudget | None = None,
+                         guard: _RunGuard | None = None) -> dict:
     """AA-693 (A3-3): before any DFS purchase, ask Jev whether each proposed keyword is about this particular place
     rather than the kind of thing it is (Ms. Thư's ticket 03: "Nyuto Hot Spring" → "hot springs" 368k/mo). The plain
     place name is never asked — it is the place by definition. A keyword is dropped only on an enforced, confident
@@ -409,6 +430,19 @@ async def _gate_keywords(places: list[_Place], pool) -> dict:
     pairs = [(p, kw) for p in places if not p.failed for kw in p.keywords if kw != (p.plain or _tidy(p.name))]
     if not pairs:
         return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
+    caps = tuple(getattr(llm_budget, "shared_caps", ()) or ())
+    if caps:
+        # AA-1122: the questions are paid; their worst case is reserved against the month / run caps before asking
+        # (a stop fails the chunk: nothing of it is bought, it stays stale for the next run).
+        try:
+            for cap in caps:
+                cap.check(len(pairs) * jev_ask_estimate_usd())
+        except BudgetExceeded as exc:
+            if guard is not None:
+                guard.record(exc)
+            for p in places:
+                p.failed = True
+            return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
     sem = asyncio.Semaphore(JEV_CONCURRENCY)
 
     async def _one(p: _Place, kw: str):
@@ -417,7 +451,10 @@ async def _gate_keywords(places: list[_Place], pool) -> dict:
                                        [JEV_KEYWORD_Q], pool=pool)
 
     rejected = 0
-    for p, kw, dec in await asyncio.gather(*[_one(p, kw) for p, kw in pairs]):
+    answers = await asyncio.gather(*[_one(p, kw) for p, kw in pairs])
+    for cap in caps:
+        cap.charge(sum(_usd(getattr(dec, "cost_usd", 0.0)) for _p, _kw, dec in answers))
+    for p, kw, dec in answers:
         p.verdicts[kw] = dec.verdicts.get(JEV_KEYWORD_Q)
         if dec.rejected(JEV_KEYWORD_Q):
             p.keywords = [k for k in p.keywords if k != kw]
@@ -513,7 +550,7 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
                 rules["places_namesake"] += 1
             elif q.flag == "not_a_place":
                 rules["places_not_a_place"] += 1
-        stats = await _gate_keywords(chunk, pool)
+        stats = await _gate_keywords(chunk, pool, llm_budget, guard)
         for k in jev:
             jev[k] += stats[k]
         try:

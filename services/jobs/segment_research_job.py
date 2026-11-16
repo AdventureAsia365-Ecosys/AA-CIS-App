@@ -15,6 +15,15 @@ runs whenever the balance was low). `max_usd` is also the run's hard DFS spend l
 narrowed to it (`narrow_to`), so the check before every paid post stops the run at the figure that was approved and
 balance-checked, whatever the estimate missed. A run that stored new demand enqueues one debounced platform recompute
 (segment_research.enqueue_recompute_for_places). `strategy: "loop"` is refused (retired, AA-1055).
+
+AA-1122 — every attempt runs under two shared caps over DFS + LLM + Jev together (shared.cost_guard.SharedCap, attached
+to both run budgets): the hard monthly research cap (cis.spend.research_max_usd_per_month, the ledger month spend of
+every research job read at the attempt's start, fail closed) and, for an automatic run (`scope` auto_new /
+auto_refresh, created_by system:auto), the automatic run cap (cis.spend.research_auto_max_usd_per_run) minus what the
+ledger holds for this job already, so a retry or a deploy release never starts a fresh per-run budget (critic C3). A
+manual run's DFS cap is narrowed by that job spend too. A month already spent is refused before anything is read
+(stopped_budget). An automatic payload with no or an unknown `scope` is refused (critic C8). A run that bought SERPs
+enqueues the free tour PAA derive from the store (tour_paa_backfill, paid=false), once per UTC day.
 """
 from __future__ import annotations
 
@@ -23,7 +32,7 @@ from typing import Optional
 import structlog
 
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
-from shared.jobs.registry import JobContext, NonRetryable, job_kind
+from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
 
 from shared import settings
 
@@ -41,7 +50,57 @@ MAX_USD_PER_RUN = float(settings.definition(MAX_USD_SETTING).default_value)
 def max_usd_per_run() -> float:
     return float(settings.get(MAX_USD_SETTING))
 _SCOPE_KEYS = ("places", "tour_ids", "country", "max_places", "max_usd", "strategy", "use_suggestions", "tiers",
-               "dfs_queue", "recompute", "reatomized")
+               "dfs_queue", "recompute", "reatomized", "scope")
+AUTO_CREATOR = "system:auto"     # created_by of the nightly tick's runs (research_auto.py)
+
+
+def check_scope(payload: dict, created_by: Optional[str]) -> Optional[str]:
+    """AA-1122 (critic C8) — the run's scope, or NonRetryable: an unknown scope, or an automatic run without one (it would
+    otherwise select everything stale in every market, bounded only by money)."""
+    from services.acp_contract.segment_research import SCOPES
+
+    scope = payload.get("scope")
+    if scope is not None and scope not in SCOPES:
+        raise NonRetryable(f"unknown research scope {scope!r} (supported: {', '.join(SCOPES)} or none)")
+    if created_by == AUTO_CREATOR and scope is None:
+        raise NonRetryable("an automatic research run needs a scope (auto_new or auto_refresh)")
+    return scope
+
+
+async def shared_caps(pool, job_id: str, scope: Optional[str]):
+    """(month cap, run cap or None, what this job already spent) — read from the ledger at the attempt's start. Raises
+    NonRetryable when the ledger cannot be read (fail closed: a run never starts on an unknown month spend)."""
+    from services.seo_intelligence import research_settings as rs
+    from shared.cost_guard import SharedCap, job_spend, load_research_month_cap
+
+    try:
+        month = await load_research_month_cap(pool)
+        prior = await job_spend(pool, job_id)
+    except Exception as exc:  # noqa: BLE001 — unknown spend = refuse
+        raise NonRetryable(f"research spend ledger unreadable: {type(exc).__name__}: {str(exc)[:200]}") from exc
+    run = None
+    if scope is not None:
+        cap = min(float(settings.get(rs.AUTO_MAX_USD_PER_RUN)), max_usd_per_run())
+        run = SharedCap("run", cap, spent_at_start=prior, limit="per_run")
+    return month, run, prior
+
+
+async def enqueue_paa_derive(pool, result: dict) -> Optional[str]:
+    """AA-1122 item 5 — after a run that bought SERPs, the free tour PAA derive from the store (tour_paa_backfill with
+    paid false), once per UTC day. Never raises."""
+    if not result.get("serp_calls"):
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        from services.jobs.tour_paa_job import KIND as PAA_KIND
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        job_id, _ = await enqueue(pool, PAA_KIND, {"paid": False}, idempotency_key=f"{PAA_KIND}:store:{day}",
+                                  created_by="system:segment_research")
+        return job_id
+    except Exception as exc:  # noqa: BLE001 — the nightly tick's next research run asks again
+        logger.warning("segment_research_paa_derive_enqueue_failed", error=str(exc)[:200])
+        return None
 
 
 async def load_budgets(pool):
@@ -106,8 +165,19 @@ async def run(ctx: JobContext) -> dict:
     if (ctx.payload.get("strategy") or "batch") != "batch":
         raise NonRetryable(f"strategy {ctx.payload.get('strategy')!r} is not supported (only 'batch', AA-1055)")
 
+    scope = check_scope(ctx.payload, getattr(ctx.job, "created_by", None))
+    month, run_cap, prior = await shared_caps(ctx.pool, ctx.job_id, scope)
+    if month.remaining() <= 0:
+        raise BudgetExceeded(f"research month cap reached: spent ${month.spent:.2f} of ${month.cap_usd:.2f}",
+                             "research", "per_month")
+    if run_cap is not None and run_cap.remaining() <= 0:
+        raise BudgetExceeded(f"automatic run cap reached: this job spent ${prior:.2f} of ${run_cap.cap_usd:.2f}",
+                             "research", "per_run")
+
     # Budgets and balance are re-checked here, not only at enqueue: a retry can start much later.
     dfs_budget, llm_budget = await load_budgets(ctx.pool)
+    caps = tuple(c for c in (month, run_cap) if c is not None)
+    dfs_budget.shared_caps = llm_budget.shared_caps = caps
     for budget in (dfs_budget, llm_budget):
         remaining = budget.remaining_usd()
         if remaining is not None and remaining <= 0:
@@ -117,16 +187,24 @@ async def run(ctx: JobContext) -> dict:
     if balance is None:
         raise NonRetryable("DataForSEO balance could not be read")
     kwargs = scope_kwargs(ctx.payload)
-    kwargs["max_usd"] = max_usd_for(ctx.payload, dfs_budget)
+    # max_usd_for reads dfs_budget.remaining_usd(), which now includes the shared caps (month left, run left); a
+    # manual run's DFS cap is narrowed by what earlier attempts of this job already spent.
+    kwargs["max_usd"] = max(max_usd_for(ctx.payload, dfs_budget) - (prior if scope is None else 0.0), 0.0)
     narrow_to(dfs_budget, kwargs["max_usd"])
 
-    await ctx.progress(phase="researching", markets=markets, dfs_balance_usd=balance,
+    await ctx.progress(phase="researching", markets=markets, dfs_balance_usd=balance, scope=scope,
+                       attempt=getattr(ctx.job, "attempt", None), month=month.summary(),
                        max_spend_usd={"dfs": kwargs["max_usd"], "bedrock": llm_budget.remaining_usd()})
     result = await run_segment_research({"countries": markets}, ctx.pool, dfs_budget=dfs_budget,
                                         llm_budget=llm_budget, before_buy=balance_gate(balance), **kwargs)
     # LLM spend is already attributed through llm_call_log.job_id (read-side sum, queue.py);
     # only the non-LLM DataForSEO spend is reported here, so nothing is counted twice.
     ctx.add_cost(dfs_budget.run_spent)
+    result["month"] = month.summary()
+    result["run_cap"] = run_cap.summary() if run_cap is not None else None
+    result["attempt"] = getattr(ctx.job, "attempt", None)
+    result["prior_attempts_spent_usd"] = round(prior, 4)
+    result["paa_derive_job_id"] = await enqueue_paa_derive(ctx.pool, result)
     ctx.set_result(result)
     await ctx.progress(phase="done")
 

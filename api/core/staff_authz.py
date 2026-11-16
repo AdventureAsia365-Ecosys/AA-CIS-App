@@ -625,6 +625,9 @@ POLICY: dict[tuple[str, str], Any] = {
     # ── admin_segment_research — DFS demand research (paid run; preview is a free dry run)
     ("POST", "/admin/segment-research/preview"): OPS_READ,
     ("POST", "/admin/segment-research/run"): OPS_WRITE,
+    # AA-1122 — tour People Also Ask backfill (preview is free; a paid run is capped per run and by the month cap)
+    ("POST", "/admin/segment-research/tour-paa/preview"): OPS_READ,
+    ("POST", "/admin/segment-research/tour-paa/run"): OPS_WRITE,
     # ── admin_waves — rerun waves (check is the ops-probe Lambda, a MACHINE_ROUTE)
     # AA-1035: content_lead runs waves (wave.run); the scheduled check stays ops (the Lambda, a MACHINE_ROUTE)
     ("POST", "/admin/waves"): any_of(OPS_WRITE, WAVE_RUN),

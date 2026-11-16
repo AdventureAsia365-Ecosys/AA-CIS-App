@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -597,7 +598,9 @@ async def _research_place(
 _SCOPED_SEGMENTS_SQL = """
     SELECT s.segment_id, s.canonical_place, s.canonical_action,
            array_agg(ta.activity_type) AS activity_types,
-           max(coalesce(ta.updated_at, ta.created_at)) AS atoms_touched
+           max(coalesce(ta.updated_at, ta.created_at)) AS atoms_touched,
+           array_agg(DISTINCT ta.tour_id::text) AS tour_ids,
+           min(ta.created_at) AS first_seen
     FROM acp_contract.atom_segment s
     JOIN acp_contract.atom_segment_member m ON m.segment_id = s.segment_id
     JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id
@@ -621,6 +624,14 @@ _NEWEST_RESEARCH_SQL = """
     WHERE canonical_place = ANY($1::text[]) GROUP BY canonical_place
 """
 
+# AA-1122 — the oldest and newest research row of each place (any market, any tier): the selection order puts the
+# never researched first (no row), then the stale ones whose research is oldest.
+_LOG_AGE_SQL = """
+    SELECT canonical_place, min(researched_at) AS oldest, max(researched_at) AS newest
+      FROM acp_contract.segment_research_log
+     WHERE canonical_place = ANY($1::text[]) GROUP BY canonical_place
+"""
+
 _SEGMENTS_OF_PLACES_SQL = """
     SELECT segment_id FROM acp_contract.atom_segment WHERE canonical_place = ANY($1::text[])
 """
@@ -637,7 +648,7 @@ IMMEDIATE_RECOMPUTE_MAX_SEGMENTS = 300
 async def scoped_rows(pool, tour_ids: list[str] | None = None, country: str | None = None, *,
                       cached_only: bool = False) -> list[dict]:
     """AA-646 / AA-1055 — the Segments research covers, one row each (segment_id, canonical_place, canonical_action,
-    activity_types, atoms_touched): Segments with an atom of an ACTIVE platform Master
+    activity_types, atoms_touched; AA-1122: tour_ids, first_seen): Segments with an atom of an ACTIVE platform Master
     (acp_contract.v_active_tour_atoms, not every row of atom_segment: orphaned and retired places were bought too),
     minus the Segments ranking never applies to (transit, unnamed place: atom_ranking.resolve_exclusions, the same rule
     and Jev pick as the recompute).
@@ -687,19 +698,54 @@ async def newest_research(pool, names: list[str]) -> dict:
     return {r["canonical_place"]: r["newest"] for r in rows}
 
 
+@dataclass
+class PlaceInfo:
+    """AA-1122 — what the selection order reads about a place: its active platform tours and when its first atom was
+    written (how long a never-researched place has waited)."""
+    tours: int = 0
+    first_seen: object = None
+
+
+def place_info(rows: list[dict]) -> dict[str, PlaceInfo]:
+    """place -> PlaceInfo from scoped_rows (distinct tours across its Segments, the oldest atom). Pure."""
+    tours: dict[str, set] = {}
+    first: dict[str, object] = {}
+    for r in rows:
+        place = r["canonical_place"]
+        tours.setdefault(place, set()).update(t for t in (r.get("tour_ids") or []) if t)
+        seen = r.get("first_seen")
+        if seen is not None and (first.get(place) is None or seen < first[place]):
+            first[place] = seen
+    return {p: PlaceInfo(len(t), first.get(p)) for p, t in tours.items()}
+
+
+async def log_ages(pool, names: list[str]) -> dict[str, tuple]:
+    """place -> (oldest, newest) researched_at of its research rows; absent = never researched."""
+    if not names:
+        return {}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_LOG_AGE_SQL, list(names))
+    return {r["canonical_place"]: (r.get("oldest"), r.get("newest")) for r in rows}
+
+
 async def _places_in_scope(
-    pool, places: list[str] | None, tour_ids: list[str] | None, country: str | None, *, cached_only: bool = False,
-    reatomized: bool = False,
+    pool, places: list[str] | None, tour_ids: list[str] | None, country: str | None, *, cached_only: bool = True,
+    reatomized: bool = False, info: dict | None = None,
 ) -> dict[str, list[str]]:
     """AA-646 / AA-1055 — canonical place -> its canonical actions, limited to the requested scope (scoped_rows).
     `reatomized` (AA-1055 stale guard) keeps only the places atomized since their last research
-    (reatomized_places)."""
+    (reatomized_places). AA-1122: `info` (a dict) receives place -> PlaceInfo for the selection order. The scope reads
+    the stored Jev picks only (cached_only, the preview's rule): a real run never asks Jev about the whole scope before
+    its selection (critic of the S282 design: those asks were paid outside every cap, and made the preview and the run
+    see different scopes); the recompute keeps asking and storing those picks."""
     rows = await scoped_rows(pool, tour_ids, country, cached_only=cached_only)
     wanted = set(places) if places else None
     if reatomized:
         names = sorted({r["canonical_place"] for r in rows})
         fresh_atoms = reatomized_places(rows, await newest_research(pool, names))
         wanted = fresh_atoms if wanted is None else wanted & fresh_atoms
+    if info is not None:
+        info.update(place_info([r for r in rows if wanted is None or r["canonical_place"] in wanted]))
     return places_of(rows, wanted)
 
 
@@ -728,46 +774,128 @@ def stale_tiers(got: set[tuple[str, str]], market_codes: list[str], tiers: tuple
     return markets, serp
 
 
-async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...], windows=None):
-    """The stale places as batch `_Place`s (sorted by name), with their stale volume markets, SERP need and map.
+# AA-1122 — the run scopes. None = an administrator's run (POST /admin/segment-research/run); the two automatic scopes
+# are set by the nightly tick (research_auto.py) and nothing else.
+SCOPES = ("auto_new", "auto_refresh")
 
-    A stale place with no usable map (none stored, or an older one the qualification rules flag or that lacks the
-    place's current plain keyword: segment_research_batch.reusable_keywords) gets new keywords in phase A,
-    whose volumes were never bought: it is stale in every requested market even where its volume tier is fresh (the
-    ~1.3k places researched before CIS 393, accented names whose plain keyword changed with the accent folding).
-    The volume pass reads the fresh store first, so only the keywords really missing are bought.
 
-    AA-1055 (S274) — a FRESH place whose stored map predates the keyword qualification rules and that they would
-    change (a namesake or not-a-place name, a garbled stored keyword: segment_research_batch.needs_requalify) is
-    planned too, stale in every requested market and in the SERP tier: its map is proposed again and its qualified
-    keywords bought, so the next run rebuilds exactly the affected places. A stale place whose older-version map the
-    rules would NOT change reuses that map (reusable_keywords) and stays stale only in its own stale tiers: the prompt
-    edit alone never re-proposes a place nor widens it to every market."""
+@dataclass
+class Selection:
+    """AA-1122 — the planned places in priority order, with the counts the preview, the panel and the result show."""
+    places: list
+    counts: dict
+
+
+def _narrowed(windows: Windows, ahead_days: int) -> Windows:
+    """The windows of a refresh-ahead read: each freshness window shortened by `ahead_days`, never under one day."""
+    from datetime import timedelta
+    ahead = timedelta(days=max(int(ahead_days), 0))
+    one = timedelta(days=1)
+    return Windows(max(windows.volume - ahead, one), max(windows.serp - ahead, one), windows.recover)
+
+
+def order_key(bucket: str, name: str, info: dict, ages: dict):
+    """The sort key inside a bucket (pure): never researched = most active tours first, then the longest wait; stale /
+    refresh-ahead = the oldest research first, then the most active tours; requalify = the most active tours."""
+    i = info.get(name) or PlaceInfo()
+    far = "9999"
+    if bucket == "new":
+        return (-i.tours, str(i.first_seen or far), name)
+    if bucket in ("stale", "ahead"):
+        oldest = (ages.get(name) or (None, None))[0]
+        return (str(oldest or far), -i.tours, name)
+    return (-i.tours, name)
+
+
+async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...],
+                windows=None, **kw) -> list:
+    """The planned places in priority order (plan_selection(...).places)."""
+    return (await plan_selection(pool, by_place, market_codes, tiers, windows, **kw)).places
+
+
+async def plan_selection(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...],
+                         windows=None, *, info: dict | None = None, scope: str | None = None, ahead_windows: Windows | None = None,
+                ahead_share_pct: float = 0.0, requalify_max: int | None = None) -> Selection:
+    """The places to research as batch `_Place`s IN PRIORITY ORDER (AA-1122; select_within_usd keeps the longest
+    prefix that fits the caps, so the order decides who waits when money is short), with their stale volume markets,
+    SERP need and map:
+
+      1. **new** — never researched (no segment_research_log row): most active platform tours first, then the longest
+         wait since the first atom;
+      2. **stale** — a requested tier is stale (stale_tiers): the oldest research first, then the most active tours;
+      3. **ahead** (scope auto_refresh only) — fresh, but stale under `ahead_windows` (the windows shortened by
+         cis.seo.research_refresh_ahead_days): the oldest first, at most `ahead_share_pct` of the places in scope, so
+         a block bought in one week does not expire in one week. The run buys them through a cache with the same
+         narrowed windows (run_segment_research), so a refresh always buys before it stamps a new log row;
+      4. **requalify** — fresh places whose stored map the keyword rules would change (needs_requalify): last, and at
+         most `requalify_max` (cis.seo.research_requalify_max_places) per run; the rest wait (counts["requalify_waiting"])
+         because a rebuilt map buys its new keywords in every requested market (critic C6).
+
+    Scope auto_new keeps bucket 1 only. A stale or new place with no usable map (none stored, or an older one the rules
+    flag or that lacks the place's current plain keyword: segment_research_batch.reusable_keywords) gets new keywords
+    in phase A and is stale in every requested market; the volume pass reads the fresh store first, so only the
+    keywords really missing are bought. AA-1055 (S274) requalify rule unchanged otherwise (needs_requalify)."""
     from services.acp_contract.segment_research_batch import _Place, load_maps, needs_requalify, reusable_keywords
 
+    info = info or {}
     names = sorted(by_place)
     fresh = await _fresh_tiers(pool, names, windows)
-    stale: list = []
+    ages = await log_ages(pool, names)
+    buckets: dict[str, list] = {"new": [], "stale": [], "ahead": [], "requalify": []}
     fresh_names: list[str] = []
     for name in names:
         markets, serp = stale_tiers(fresh.get(name, set()), market_codes, tiers)
-        if markets or serp:
-            stale.append(_Place(name, by_place[name], markets, serp=serp))
+        if name not in ages:
+            buckets["new"].append(_Place(name, by_place[name], list(market_codes) if "volume" in tiers else [],
+                                         serp="serp" in tiers))
+        elif markets or serp:
+            buckets["stale"].append(_Place(name, by_place[name], markets, serp=serp))
         else:
             fresh_names.append(name)
-    maps = await load_maps(pool, [p.name for p in stale] + fresh_names)
+    if scope == "auto_refresh" and ahead_windows is not None and ahead_share_pct > 0 and fresh_names:
+        early = await _fresh_tiers(pool, fresh_names, ahead_windows)
+        for name in fresh_names:
+            markets, serp = stale_tiers(early.get(name, set()), market_codes, tiers)
+            if markets or serp:
+                buckets["ahead"].append(_Place(name, by_place[name], markets, serp=serp))
+    maps = await load_maps(pool, [p.name for b in ("new", "stale", "ahead") for p in buckets[b]] + fresh_names)
+    ahead_names = {p.name for p in buckets["ahead"]}
     requalify = [_Place(n, by_place[n], [], serp="serp" in tiers) for n in fresh_names
-                 if needs_requalify(n, maps.get(n, []))]
+                 if n not in ahead_names and needs_requalify(n, maps.get(n, []))]
     for p in requalify:
         p.requalify = True
-    stale = sorted(stale + requalify, key=lambda p: p.name)
-    for p in stale:
+    buckets["requalify"] = requalify
+    for b, items in buckets.items():
+        items.sort(key=lambda p, b=b: order_key(b, p.name, info, ages))
+        for p in items:
+            p.bucket = b
+    counts = {k: len(v) for k, v in buckets.items()}
+    ahead_cap = math.floor(len(names) * max(min(ahead_share_pct, 100.0), 0.0) / 100.0)
+    buckets["ahead"] = buckets["ahead"][:ahead_cap]
+    limit = len(requalify) if requalify_max is None else max(int(requalify_max), 0)
+    counts["requalify_waiting"] = max(len(requalify) - limit, 0)
+    buckets["requalify"] = requalify[:limit]
+    if scope == "auto_new":
+        order = buckets["new"]
+    elif scope == "auto_refresh":
+        order = buckets["new"] + buckets["stale"] + buckets["ahead"] + buckets["requalify"]
+    else:
+        order = buckets["new"] + buckets["stale"] + buckets["requalify"]
+    counts["ahead_selected"] = len(buckets["ahead"])
+    for p in order:
         kws = reusable_keywords(p.name, maps.get(p.name, []))
         if kws is not None:
             p.keywords, p.has_map = kws, True
         elif "volume" in tiers:
             p.markets = list(market_codes)
-    return stale
+    return Selection(order, counts)
+
+
+def _bucket_counts(places: list) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for p in places:
+        out[p.bucket or "other"] = out.get(p.bucket or "other", 0) + 1
+    return out
 
 
 async def enqueue_recompute_for_places(pool, places: list[str], *, reason: str = "segment_research",
@@ -823,6 +951,7 @@ async def run_segment_research(
     recompute: bool = True,
     before_buy=None,
     reatomized: bool = False,
+    scope: str | None = None,
 ) -> dict:
     """Research the stale places in the requested scope, for the requested markets.
 
@@ -854,8 +983,18 @@ async def run_segment_research(
     original per-place ReAct loop) is refused: its USD estimate only counted volume tasks while each place could
     still buy a SERP per market and a keyword suggestion, so a run spent well past `max_usd`. `_research_place` stays
     only until it is deleted with its tests.
+
+    AA-1122 — the selection is in priority order (plan_selection: never researched, stale oldest first, refresh-ahead on
+    refresh runs, requalify last within cis.seo.research_requalify_max_places), so a capped run buys the places that
+    waited longest instead of the alphabet's first. `scope` None = an administrator's run; "auto_new" (never
+    researched places only) and "auto_refresh" (stale, then up to cis.seo.research_refresh_max_share_pct of the scope
+    within cis.seo.research_refresh_ahead_days of going stale, bought through a cache with the same narrowed windows)
+    are the nightly tick's. Automatic scopes price the keyword LLM inside `max_usd` too (select_within_usd with_llm).
+    The scope reads the stored Jev picks only, in a real run as in the preview (_places_in_scope).
     """
     from services.acp_contract import segment_research_batch as rb
+    from services.seo_intelligence import research_settings as rs
+    from shared import settings
     from services.seo_intelligence.dfs_queue import StandardQueue, research_queue_mode
 
     if strategy == "loop":
@@ -866,15 +1005,28 @@ async def run_segment_research(
     unknown = [t for t in tiers_t if t not in TIERS]
     if unknown:
         raise ValueError(f"unknown tier(s) {unknown}; supported: {TIERS}")
+    if scope is not None and scope not in SCOPES:
+        raise ValueError(f"unknown research scope {scope!r}; supported: {SCOPES} or none")
     queue_mode = research_queue_mode(dfs_queue)
     markets = resolve_buyer_markets(target_market)
     market_codes = [LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in markets]
-    by_place = await _places_in_scope(pool, places, tour_ids, country, cached_only=dry_run, reatomized=reatomized)
-    cache = ResearchCache(pool, stage=rb.RESEARCH_STAGE, windows=await fresh_windows(),
-                          meta={"job": "segment_research", "queue": queue_mode})
-    stale = await _plan(pool, by_place, market_codes, tiers_t, cache.windows)
+    info: dict = {}
+    by_place = await _places_in_scope(pool, places, tour_ids, country, reatomized=reatomized, info=info)
+    windows = await fresh_windows()
+    ahead_days = int(settings.get(rs.REFRESH_AHEAD_DAYS)) if scope == "auto_refresh" else 0
+    ahead = _narrowed(windows, min(ahead_days, windows.volume.days - 1)) if ahead_days > 0 else None
+    selection = await plan_selection(
+        pool, by_place, market_codes, tiers_t, windows, info=info, scope=scope, ahead_windows=ahead,
+        ahead_share_pct=float(settings.get(rs.REFRESH_MAX_SHARE_PCT)) if ahead else 0.0,
+        requalify_max=int(settings.get(rs.REQUALIFY_MAX_PLACES)))
+    # A refresh run with places bought ahead reads the store through the narrowed windows, so those places are really
+    # bought again before their new log row is written (a fresh store answer would stamp them fresh for free).
+    run_windows = ahead if (ahead is not None and selection.counts.get("ahead_selected")) else windows
+    cache = ResearchCache(pool, stage=rb.RESEARCH_STAGE, windows=run_windows,
+                          meta={"job": "segment_research", "queue": queue_mode, **({"scope": scope} if scope else {})})
+    stale = selection.places
     stale_total = len(stale)
-    selected = rb.select_within_usd(stale, max_usd, use_suggestions, queue_mode)
+    selected = rb.select_within_usd(stale, max_usd, use_suggestions, queue_mode, with_llm=scope in SCOPES)
     if max_places is not None:
         selected = selected[:max(max_places, 0)]
 
@@ -883,6 +1035,8 @@ async def run_segment_research(
         "tiers": list(tiers_t),
         "dfs_queue": queue_mode,
         "reatomized": bool(reatomized),
+        "scope": scope,
+        "selection": {**selection.counts, "selected": _bucket_counts(selected)},
         "places_in_scope": len(by_place),
         "places_stale": stale_total,
         "places_stale_volume": sum(1 for p in stale if p.markets),
