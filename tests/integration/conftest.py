@@ -508,9 +508,7 @@ def _apply_schema(conn):
         and not f.startswith('401')
         # AA-1094 (S278): 404 creates catalog.v_tenant_tour_v1 (catalog recipe; needs 359, 379 and tenant_tour_versions):
         # test_aa1094_migration_404 applies 253 ... 359 + 379 + 404 the DB Migrate way in a rolled-back transaction.
-        # S279: 410/415 (v_tenant_erasure_v1, v_app_settings_v1); S281: 429 (needs 379, 390); S282: 432 (test_aa1107_*),
-        # 438 (AA-1116 billing terms on catalog.v_tenant_billing_v1 / _ai_budget_v1 / _tripplanner_v1; needs 377, 390,
-        # 429: test_aa1116_migration_438 applies them the DB Migrate way).
+        # S279: 410/415; S281: 429 (needs 379, 390); S282: 432 (test_aa1107_*), 438 (needs 377-429: test_aa1116_*_438).
         and not f.startswith(('404', '410', '415', '429', '432', '438'))
     ])
 
