@@ -604,7 +604,8 @@ async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: b
 # its live content subscription, 15 / 40 / 80 USD on Starter / Growth / Business; NULL = unlimited, e.g. AA itself).
 # The thresholds come from the tenant's ``shared.tenant_ai_budget`` row when it has one (alert_pct, approval_pct,
 # hard_stop, as AA-1016); a plan budget with no row uses the settings cis.billing.ai_alert_pct_default /
-# ai_approval_pct_default / ai_hard_stop_default (80 / 100 / on: the included spend is the ceiling, fail closed at 100 %). A tenant with no resolved key keeps its AA-1016 row, if any,
+# ai_approval_pct_default / ai_hard_stop_default (80 / 100 / on: the included spend is the ceiling, fail closed at
+# 100 %). A tenant with no resolved key keeps its AA-1016 row, if any,
 # else the ai.budget_usd_monthly of its content subscription's plan while that subscription is not canceled (S266
 # review: never "no budget" for a customer whose resolver rows are momentarily absent, e.g. a trial past its end
 # before CIS 361 or an unpaid / paused subscription). A budget of 0 USD always stops (hard stop on whatever the
