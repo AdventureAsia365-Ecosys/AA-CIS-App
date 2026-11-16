@@ -45,7 +45,8 @@ PAID_CLIENT_METHODS = frozenset({
     "fetch_keywords", "fetch_volumes_bulk", "_serp_advanced", "fetch_people_also_ask", "fetch_people_also_ask_deep",
     "fetch_related", "fetch_organic_domains", "fetch_keyword_ideas", "fetch_keyword_ideas_multi", "fetch_all",
 })
-PAID_QUEUE_METHODS = frozenset({"volumes", "serps"})
+# `_post` too: a caller that posts a queued task by hand (the AA-1055 trial) bypasses volumes / serps and their cache.
+PAID_QUEUE_METHODS = frozenset({"volumes", "serps", "_post"})
 # "<path>::<function>" -> the cache that covers the paid calls in it. "research_cache" = this module (the guard checks
 # the function uses it); any other value names the cache of a path that does not buy research data, with the reason.
 DFS_CALL_SITES: dict[str, str] = {
@@ -67,8 +68,11 @@ DFS_CALL_SITES: dict[str, str] = {
         "admin top-up: its own search_demand market, a rerun skips stored places, $3 cap in all (AA-779)",
     "scripts/aa1055/dfs_queue_trial.py::main": "adhoc trial of one task per kind (AA-1055), no research data",
 }
-# The methods of ResearchCache a "research_cache" call site must use (the guard looks for one of them).
-CACHE_METHODS = frozenset({"volumes", "serps", "put_volumes", "put_serp", "log_hits", "pending_tasks"})
+# What a "research_cache" call site must use: its top-level function reads the store (a read method or the windows)
+# and writes what it buys back (a write method), on a receiver named like "cache".
+CACHE_READS = frozenset({"volumes", "serps", "windows"})
+CACHE_WRITES = frozenset({"put_volumes", "put_serp", "put_serp_answer"})
+CACHE_METHODS = CACHE_READS | CACHE_WRITES | {"log_hits", "pending_tasks"}
 
 
 # ── settings ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -313,4 +317,4 @@ class ResearchCache:
 
 __all__ = ["ResearchCache", "Windows", "CachedSerp", "PendingTask", "fresh_windows", "volume_fresh_for",
            "serp_fresh_for", "dedupe", "parse_serp", "pending_from_rows", "DFS_CALL_SITES", "PAID_CLIENT_METHODS",
-           "PAID_QUEUE_METHODS", "CACHE_METHODS"]
+           "PAID_QUEUE_METHODS", "CACHE_METHODS", "CACHE_READS", "CACHE_WRITES"]
