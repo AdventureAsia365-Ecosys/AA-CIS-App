@@ -1604,7 +1604,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`shared/jobs/registry.WORKER_STOP_TIMEOUT_SECONDS`, also a3_atomize's), stops at the next stage boundary once
     its handler is cancelled (`run_stages(..., should_stop=, on_stage=)`), and fails with fixed codes
     (`services/recompute/errors.py`: `recompute_bad_payload`, `recompute_lock_timeout`, `recompute_stopped`,
-    `recompute_stage_failed` with the stage). `services/recompute/lifecycle.py` measures each tour on/off event
+    `recompute_stage_failed` with the stage). A job that finds the lock taken does not wait in process (S282): it
+    is rescheduled (`registry.Reschedule`, reason `recompute_lock_busy`, the attempt not counted) after the release
+    delay, and only an attempt that keeps finding it busy for the kind's expected time ends `recompute_lock_timeout`. `services/recompute/lifecycle.py` measures each tour on/off event
     (`retired` / `paused` / `restored`) to the first recompute that STARTED after it and finished: the api ops sampler
     reads it every tick (ops check `recompute_lifecycle_lag`: an event waiting over 30 min), sweeps every 2 h (one
     platform recompute through `enqueue_recompute` for the events nothing covered, `created_by`

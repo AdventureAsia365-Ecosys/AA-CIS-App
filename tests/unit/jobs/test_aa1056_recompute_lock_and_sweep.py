@@ -161,7 +161,12 @@ async def test_two_recompute_jobs_queued_together_run_one_after_the_other(locks)
             patch("services.export.handler.open_job_pool", AsyncMock(side_effect=lambda: _job_pool())):
         a = rc.run(_ctx({"scope": "platform", "reason": "master_status=trashed:t1"}, "job-a"))
         b = rc.run(_ctx({"scope": "platform", "reason": "lifecycle_sweep:1"}, "job-b"))
-        await asyncio.wait_for(asyncio.gather(a, b), 5)
+        out = await asyncio.wait_for(asyncio.gather(a, b, return_exceptions=True), 5)
+        # S282: the second one does not wait in process for the lock: it is rescheduled, then runs on its next claim
+        busy = [o for o in out if isinstance(o, registry.Reschedule)]
+        assert len(busy) == 1 and busy[0].reason == "recompute_lock_busy" and plat.await_count == 1
+        again = await asyncio.wait_for(rc.run(_ctx({"scope": "platform", "reason": "lifecycle_sweep:1"}, "job-b")), 5)
+        assert again["scope"] == "platform"
     assert plat.await_count == 2 and not overlap
     assert not locks.held and all(c.closed for c in locks.connections)
 
@@ -181,16 +186,28 @@ async def test_a_tour_and_a_platform_job_share_the_one_lock(locks):
 
 
 @pytest.mark.asyncio
-async def test_a_lock_held_too_long_is_a_lock_timeout(locks, monkeypatch):
+async def test_the_lock_context_still_times_out_a_long_wait(locks, monkeypatch):
     monkeypatch.setattr(rc, "LOCK_MAX_WAIT_SECONDS", 0.05)
+    async with rc.recompute_lock():
+        with pytest.raises(RecomputeLockTimeout, match=f"^{LOCK_TIMEOUT}: "):
+            async with rc.recompute_lock():
+                pass
+    assert not isinstance(RecomputeLockTimeout("x"), NonRetryable)    # retryable
+
+
+@pytest.mark.asyncio
+async def test_a_lock_busy_past_the_window_is_a_lock_timeout(locks):
+    """S282: an attempt that has found the lock busy for LOCK_MAX_WAIT_SECONDS across its reschedules gives up."""
     plat = AsyncMock()
+    since = (datetime.now(timezone.utc) - timedelta(seconds=rc.LOCK_MAX_WAIT_SECONDS + 5)).isoformat()
+    ctx = _ctx({"scope": "platform", "reason": "r"})
+    ctx.job.progress = {"lock_busy": {"attempt": 1, "since": since}}
     async with rc.recompute_lock():
         with patch("services.export.handler.recompute_rankings_and_routes", plat), \
                 patch("services.export.handler.open_job_pool", AsyncMock(side_effect=lambda: _job_pool())):
-            with pytest.raises(RecomputeLockTimeout, match=f"^{LOCK_TIMEOUT}: "):
-                await rc.run(_ctx({"scope": "platform", "reason": "r"}))
+            with pytest.raises(RecomputeLockTimeout, match=f"^{LOCK_TIMEOUT}: .*at least \\d+ s"):
+                await rc.run(ctx)
     plat.assert_not_awaited()
-    assert not isinstance(RecomputeLockTimeout("x"), NonRetryable)    # retryable
 
 
 @pytest.mark.asyncio
