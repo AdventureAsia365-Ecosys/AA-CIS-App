@@ -21,6 +21,24 @@ from services.acp_contract import segment_research as sr
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
 from shared import ops_checks
 
+
+@pytest.fixture(autouse=True)
+def _research_windows(monkeypatch):
+    """AA-1120: the research windows are settings (CIS 434); these tests pin the seeded days instead of reading them."""
+    from datetime import timedelta
+
+    from services.seo_intelligence import research_cache
+
+    w = research_cache.Windows(timedelta(days=365), timedelta(days=365), timedelta(days=7))
+
+    async def fixed():
+        return w
+    for mod in (research_cache, sr):
+        monkeypatch.setattr(mod, "fresh_windows", fixed)
+        monkeypatch.setattr(mod, "volume_fresh_for", lambda: w.volume)
+    monkeypatch.setattr(research_cache, "serp_fresh_for", lambda: w.serp)
+
+
 T0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
 
 

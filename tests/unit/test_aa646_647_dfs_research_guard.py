@@ -15,6 +15,23 @@ from services.seo_intelligence import dataforseo_client as dfs
 from shared.llm_client.models import LLMResponse
 
 
+@pytest.fixture(autouse=True)
+def _research_windows(monkeypatch):
+    """AA-1120: the research windows are settings (CIS 434); these tests pin the seeded days instead of reading them."""
+    from datetime import timedelta
+
+    from services.seo_intelligence import research_cache
+
+    w = research_cache.Windows(timedelta(days=365), timedelta(days=365), timedelta(days=7))
+
+    async def fixed():
+        return w
+    for mod in (research_cache, sr):
+        monkeypatch.setattr(mod, "fresh_windows", fixed)
+        monkeypatch.setattr(mod, "volume_fresh_for", lambda: w.volume)
+    monkeypatch.setattr(research_cache, "serp_fresh_for", lambda: w.serp)
+
+
 # ── DataForSEO client: failures are distinguishable from "no data" ─────────────────────────────
 
 def _fake_httpx(response=None, exc=None):

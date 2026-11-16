@@ -6,7 +6,7 @@ The four remaining tabs keep their shape. No DB: a fake connection answers each 
 """
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -47,7 +47,9 @@ def _request(conn):
 
 def test_seo_intelligence_sends_no_spend_and_reads_no_dfs_log():
     conn = _Conn()
-    with patch.object(admin_seo, "verify_admin_secret", lambda _s: None):
+    # AA-1120: the volume window is a setting (CIS 434); pinned to the seeded 365 days instead of read.
+    with patch.object(admin_seo, "verify_admin_secret", lambda _s: None), \
+            patch("services.seo_intelligence.research_cache.volume_fresh_for", lambda: timedelta(days=365)):
         out = asyncio.run(admin_seo.get_seo_intelligence(_request(conn), days=30, x_admin_secret="x"))
     assert set(out) == {"overview", "keywords", "questions", "gaps"}
     assert not any("dfs_call_log" in s for s in conn.sql), "the Spend page owns the DataForSEO spend read"
