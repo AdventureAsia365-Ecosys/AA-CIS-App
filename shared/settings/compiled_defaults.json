@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -109,6 +109,510 @@
      "lower": "Mục đã xoá bị xoá hẳn sớm hơn khi đã có job dọn rác.",
      "when": "Đổi khi điều khoản gói hứa thời hạn thùng rác khác.",
      "example": "Với mặc định 30 ngày."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.cfr_amber_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: change failure rate for amber (%)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the change failure rate amber at or below this percent and above the green value; above it red.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of failed deploys above which an app's change failure rate turns red; between the green value and this it is amber.",
+     "raise": "A high failure rate stays amber longer.",
+     "lower": "A high failure rate turns red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 30 %, 2 failed deploys out of 10 is amber and 4 out of 10 is red."
+    },
+    "vi": {
+     "what": "Tỉ lệ deploy hỏng mà trên mức đó tỉ lệ hỏng của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Tỉ lệ hỏng cao giữ màu vàng lâu hơn.",
+     "lower": "Tỉ lệ hỏng cao chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 30 %, 2 lần hỏng trên 10 là vàng và 4 trên 10 là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.cfr_green_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: change failure rate for green (%)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the change failure rate (failed deploys: post-deploy verify red, deploy job failed, rolled back, reverted or fixed by a fix pull request within 48 h, over the deploys that reached Dev) green at or below this percent. Starting value 15 % (tech lead S282). DEV-01 reads it too.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 15,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of deploys that fail (red verify, failed deploy job, rollback, revert or hotfix within 48 hours) at or under which an app shows green.",
+     "raise": "More failures are tolerated before the colour changes.",
+     "lower": "A few failed deploys are enough to show amber; useful when deploys are frequent.",
+     "when": "Lower it once the failure rate is steadily low; raise it during a large migration where failures are expected.",
+     "example": "With the default of 15 %, 1 failed deploy out of 10 (10 %) is green; 2 out of 10 (20 %) is not."
+    },
+    "vi": {
+     "what": "Tỉ lệ deploy hỏng (verify đỏ, job deploy lỗi, rollback, revert hay hotfix trong 48 giờ) mà bằng hoặc dưới mức đó app hiện xanh.",
+     "raise": "Chấp nhận nhiều lần hỏng hơn trước khi đổi màu.",
+     "lower": "Vài lần deploy hỏng là đủ hiện vàng; hữu ích khi deploy thường xuyên.",
+     "when": "Giảm khi tỉ lệ hỏng ổn định ở mức thấp; tăng trong đợt migration lớn đã biết trước có lỗi.",
+     "example": "Với mặc định 15 %, 1 lần hỏng trên 10 lần deploy (10 %) là xanh; 2 trên 10 (20 %) thì không."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.ci_time_amber_minutes",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: CI p95 for amber (minutes)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the CI p95 amber at or below this many minutes and above the green value; above it red.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 1,
+   "max_value": 480,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The p95 duration of the slowest workflow above which an app's CI time turns red; between the green value and this it is amber.",
+     "raise": "Slow pipelines stay amber longer.",
+     "lower": "Slow pipelines turn red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 30 minutes, a p95 of 22 minutes is amber and 40 minutes is red."
+    },
+    "vi": {
+     "what": "Thời lượng p95 của workflow chậm nhất mà trên mức đó thời gian CI của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Pipeline chậm giữ màu vàng lâu hơn.",
+     "lower": "Pipeline chậm chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 30 phút, p95 22 phút là vàng và 40 phút là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.ci_time_green_minutes",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: CI p95 for green (minutes)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the CI health of an app (p95 wall time of its slowest CI or deploy workflow over the last 4 weeks) green at or below this many minutes.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 1,
+   "max_value": 240,
+   "allowed_values": null,
+   "default_value": 15,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The p95 duration of an app's slowest CI or deploy workflow at or under which its CI time shows green.",
+     "raise": "Slower pipelines still show green.",
+     "lower": "Only fast pipelines show green; a slow test shard stands out.",
+     "when": "Lower it after the pipelines are split and cached; raise it for an app with a long end-to-end suite on purpose.",
+     "example": "With the default of 15 minutes, a deploy workflow whose p95 is 12 minutes is green."
+    },
+    "vi": {
+     "what": "Thời lượng p95 của workflow CI hay deploy chậm nhất của app mà bằng hoặc dưới mức đó thời gian CI hiện xanh.",
+     "raise": "Pipeline chậm hơn vẫn hiện xanh.",
+     "lower": "Chỉ pipeline nhanh mới hiện xanh; shard test chậm nổi bật.",
+     "when": "Giảm sau khi pipeline đã chia shard và có cache; tăng cho app cố ý chạy bộ end-to-end dài.",
+     "example": "Với mặc định 15 phút, workflow deploy có p95 12 phút là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.deploys_per_week_amber",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: deploys a week for amber",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the deployment frequency amber at or above this value and below the green value; below it the frequency is red. The starting value is about once a month (the DORA medium band).",
+   "value_type": "numeric",
+   "unit": "deploys/week",
+   "min_value": 0.01,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 0.25,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The deploys a week under which an app's deployment frequency turns red; between this and the green value it is amber.",
+     "raise": "Apps turn red sooner when they ship less.",
+     "lower": "An app may ship very rarely and still show amber.",
+     "when": "Change it together with the green value, keeping it lower than the green value.",
+     "example": "With the default of 0.25 (about one a month), an app with 2 green deploys in 4 weeks (0.5 a week) is amber."
+    },
+    "vi": {
+     "what": "Số lần deploy mỗi tuần mà dưới mức đó tần suất deploy của app chuyển đỏ; giữa mức này và mức xanh là vàng.",
+     "raise": "App chuyển đỏ sớm hơn khi ra bản ít đi.",
+     "lower": "App ra bản rất thưa vẫn có thể hiện vàng.",
+     "when": "Đổi cùng với mức xanh, luôn giữ thấp hơn mức xanh.",
+     "example": "Với mặc định 0,25 (khoảng một lần mỗi tháng), app có 2 lần deploy xanh trong 4 tuần (0,5 lần mỗi tuần) là vàng."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.deploys_per_week_green",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: deploys a week for green",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the deployment frequency of an app (green deploys a week over the last 4 weeks) green at or above this value. The starting value is the DORA high band (at least weekly). Read when the page or DEV-01 is served.",
+   "value_type": "numeric",
+   "unit": "deploys/week",
+   "min_value": 0.1,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many green deploys a week an app needs for its deployment frequency to show green on Platform › Delivery and in the monthly delivery report.",
+     "raise": "Fewer apps show green; a slow app is noticed sooner.",
+     "lower": "More apps show green, including ones that ship rarely.",
+     "when": "Raise it when every app ships daily and weekly is no longer the bar; lower it for an app in maintenance only.",
+     "example": "With the default of 1, an app with 6 green deploys in the last 4 weeks (1.5 a week) is green."
+    },
+    "vi": {
+     "what": "Một app cần bao nhiêu lần deploy xanh mỗi tuần để tần suất deploy hiện màu xanh trên Platform › Delivery và trong báo cáo delivery hằng tháng.",
+     "raise": "Ít app hiện xanh hơn; app chậm được phát hiện sớm hơn.",
+     "lower": "Nhiều app hiện xanh hơn, kể cả app ít khi ra bản.",
+     "when": "Tăng khi mọi app đều ra bản hằng ngày và mốc hằng tuần không còn ý nghĩa; giảm cho app chỉ còn bảo trì.",
+     "example": "Với mặc định 1, app có 6 lần deploy xanh trong 4 tuần gần nhất (1,5 lần mỗi tuần) là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.lead_time_amber_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: lead time p50 for amber (hours)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the lead time amber at or below this value and above the green value; above it the lead time is red. Starting value 168 h (one week, the DORA high band).",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 2160,
+   "allowed_values": null,
+   "default_value": 168,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The median lead time above which an app's lead time turns red; between the green value and this it is amber.",
+     "raise": "A slow app stays amber longer.",
+     "lower": "A slow app turns red sooner.",
+     "when": "Keep it above the green value; change it when the team agrees on a new bar.",
+     "example": "With the default of 168 hours (one week), a median of 3 days is amber and 9 days is red."
+    },
+    "vi": {
+     "what": "Trung vị lead time mà trên mức đó lead time của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "App chậm giữ màu vàng lâu hơn.",
+     "lower": "App chậm chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh; đổi khi nhóm thống nhất mốc mới.",
+     "example": "Với mặc định 168 giờ (một tuần), trung vị 3 ngày là vàng và 9 ngày là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.lead_time_green_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: lead time p50 for green (hours)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the lead time for changes (median hours from a pull request opened to the post-deploy verify of the first green deploy that contains it) green at or below this value. Starting value 24 h (tech lead S282).",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 720,
+   "allowed_values": null,
+   "default_value": 24,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The median lead time, from opening a pull request to its change running green on Dev, at or under which an app shows green.",
+     "raise": "Slower apps still show green; long waits in review or the queue are noticed later.",
+     "lower": "Only fast apps show green; the lead-time segments show where the time goes.",
+     "when": "Lower it when most changes ship within hours; raise it during a period of large changes.",
+     "example": "With the default of 24 hours, an app whose median change takes 9 hours from open to verified is green."
+    },
+    "vi": {
+     "what": "Trung vị lead time, từ lúc mở pull request tới lúc thay đổi chạy xanh trên Dev, mà bằng hoặc dưới mức đó app hiện xanh.",
+     "raise": "App chậm hơn vẫn hiện xanh; thời gian chờ review hay hàng merge dài được phát hiện muộn hơn.",
+     "lower": "Chỉ app nhanh mới hiện xanh; các khúc lead time cho thấy thời gian đi đâu.",
+     "when": "Giảm khi phần lớn thay đổi ra trong vài giờ; tăng trong giai đoạn có nhiều thay đổi lớn.",
+     "example": "Với mặc định 24 giờ, app có trung vị 9 giờ từ lúc mở tới lúc verify xanh là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.main_red_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: hours main may stay red before red",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the main branch state: red when the newest CI or deploy run on the default branch failed and has stayed failing for longer than this many hours; failing for less is amber. Starting value 2 h (tech lead S282).",
+   "value_type": "numeric",
+   "unit": "hours",
+   "min_value": 0.25,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 2,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long the default branch of an app may stay red (its newest CI or deploy run failed) before the page shows it red instead of amber.",
+     "raise": "A red main is tolerated longer before it stands out.",
+     "lower": "A red main stands out almost at once.",
+     "when": "Lower it when main must be fixed at once (prod); raise it for a repo that only runs nightly checks.",
+     "example": "With the default of 2 hours, main red since 09:00 shows amber at 10:30 and red at 11:30."
+    },
+    "vi": {
+     "what": "Nhánh mặc định của app được đỏ bao lâu (lượt CI hay deploy mới nhất lỗi) trước khi trang hiện đỏ thay vì vàng.",
+     "raise": "Main đỏ được chấp nhận lâu hơn trước khi nổi bật.",
+     "lower": "Main đỏ nổi bật gần như ngay lập tức.",
+     "when": "Giảm khi main phải được sửa ngay (prod); tăng cho repo chỉ chạy kiểm tra hằng đêm.",
+     "example": "Với mặc định 2 giờ, main đỏ từ 09:00 hiện vàng lúc 10:30 và đỏ lúc 11:30."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.min_sample",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: fewest events before a colour",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the smallest sample (n) a metric needs before it gets a green, amber or red colour; below it the page shows the number grey with 'too few events', and DEV-01 says so. Dev has few events, so a single deploy must not colour a metric.",
+   "value_type": "int",
+   "unit": "events",
+   "min_value": 1,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 5,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many events (deploys, changes or runs) a metric needs before Platform › Delivery colours it; with fewer, the number shows grey with a 'too few events' note.",
+     "raise": "More metrics stay grey until there is enough data; fewer false alarms.",
+     "lower": "Metrics get a colour from very few events and may jump between colours.",
+     "when": "Raise it when the numbers swing week to week; lower it once apps deploy many times a week.",
+     "example": "With the default of 5, an app with 3 deploys in 4 weeks shows its change failure rate grey."
+    },
+    "vi": {
+     "what": "Một chỉ số cần bao nhiêu sự kiện (deploy, thay đổi hay lượt chạy) trước khi Platform › Delivery tô màu; ít hơn thì số hiện màu xám kèm ghi chú 'quá ít sự kiện'.",
+     "raise": "Nhiều chỉ số giữ màu xám tới khi đủ dữ liệu; ít báo động nhầm hơn.",
+     "lower": "Chỉ số được tô màu từ rất ít sự kiện và có thể nhảy màu liên tục.",
+     "when": "Tăng khi số liệu dao động mạnh giữa các tuần; giảm khi các app đã deploy nhiều lần mỗi tuần.",
+     "example": "Với mặc định 5, app có 3 lần deploy trong 4 tuần hiện tỉ lệ hỏng màu xám."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.recovery_amber_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: recovery time p50 for amber (hours)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the recovery time amber at or below this value and above the green value; above it red. Starting value 168 h (one week).",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 2160,
+   "allowed_values": null,
+   "default_value": 168,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The median recovery time above which an app turns red; between the green value and this it is amber.",
+     "raise": "Slow repairs stay amber longer.",
+     "lower": "Slow repairs turn red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 168 hours, a 3-day repair is amber and a 10-day repair is red."
+    },
+    "vi": {
+     "what": "Trung vị thời gian khôi phục mà trên mức đó app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Sửa chậm giữ màu vàng lâu hơn.",
+     "lower": "Sửa chậm chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 168 giờ, sửa mất 3 ngày là vàng và 10 ngày là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.recovery_green_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: recovery time p50 for green (hours)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the failed deployment recovery time (median hours from a failed deploy to the green deploy that repairs it) green at or below this value. Starting value 24 h (the DORA high band: under a day).",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 720,
+   "allowed_values": null,
+   "default_value": 24,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The median time from a failed deploy to the green deploy that repairs it, at or under which an app shows green.",
+     "raise": "Slow repairs still show green.",
+     "lower": "Only quick repairs show green; a fast rollback path pays off.",
+     "when": "Lower it when rollbacks are routine and quick; raise it while an app has no rollback path yet.",
+     "example": "With the default of 24 hours, a red verify fixed by a deploy 2 hours later is green."
+    },
+    "vi": {
+     "what": "Trung vị thời gian từ lần deploy hỏng tới lần deploy xanh sửa nó, mà bằng hoặc dưới mức đó app hiện xanh.",
+     "raise": "Sửa chậm vẫn hiện xanh.",
+     "lower": "Chỉ sửa nhanh mới hiện xanh; có đường rollback nhanh thì có lợi.",
+     "when": "Giảm khi rollback đã thành thói quen và nhanh; tăng khi app chưa có đường rollback.",
+     "example": "Với mặc định 24 giờ, verify đỏ được sửa bằng một lần deploy 2 giờ sau là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.rework_amber_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: rework rate for amber (%)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the rework rate amber at or below this percent and above the green value; above it red.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 20,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of unplanned deploys above which an app's rework rate turns red; between the green value and this it is amber.",
+     "raise": "Much rework stays amber longer.",
+     "lower": "Much rework turns red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 20 %, 2 rework deploys out of 12 is amber and 4 out of 12 is red."
+    },
+    "vi": {
+     "what": "Tỉ lệ deploy ngoài kế hoạch mà trên mức đó tỉ lệ làm lại của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Làm lại nhiều giữ màu vàng lâu hơn.",
+     "lower": "Làm lại nhiều chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 20 %, 2 lần deploy làm lại trên 12 là vàng và 4 trên 12 là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.rework_green_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: rework rate for green (%)",
+   "description": "Platform › Delivery (api/services/delivery_metrics.py) colours the rework rate (deploys that are a rollback or ship a revert or hotfix pull request, over the deploys that reached Dev) green at or below this percent. Starting value 10 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of unplanned deploys (rollbacks, reverts and hotfixes) at or under which an app shows green.",
+     "raise": "More unplanned work is tolerated before the colour changes.",
+     "lower": "A few hotfixes are enough to show amber.",
+     "when": "Lower it once rework is rare; raise it during a stabilisation period.",
+     "example": "With the default of 10 %, 1 hotfix deploy out of 12 deploys (8 %) is green."
+    },
+    "vi": {
+     "what": "Tỉ lệ deploy ngoài kế hoạch (rollback, revert và hotfix) mà bằng hoặc dưới mức đó app hiện xanh.",
+     "raise": "Chấp nhận nhiều việc làm lại hơn trước khi đổi màu.",
+     "lower": "Vài lần hotfix là đủ hiện vàng.",
+     "when": "Giảm khi việc làm lại đã hiếm; tăng trong giai đoạn ổn định hoá.",
+     "example": "Với mặc định 10 %, 1 lần deploy hotfix trên 12 lần deploy (8 %) là xanh."
     }
    }
   },
