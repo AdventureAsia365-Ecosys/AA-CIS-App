@@ -17,10 +17,16 @@ seed had no PAA box. This module fills them, cheapest first:
      (critic C4 of the S282
      design: an answered-but-empty SERP is never bought again in a loop).
 
-Rules: a list S1 or T2 wrote (``paa_source`` NULL, not empty) is never overwritten; ``fetched_at`` is never touched (it
-drives the S1 reuse window); a row the backfill filled (``store`` / ``serp`` / ``none``) is refreshed when its
-``paa_filled_at`` is older than the SERP freshness window (``cis.seo.research_serp_fresh_days``), the same window as
-the research store. Writes provenance in ``paa_source`` / ``paa_filled_at`` (CIS 451).
+Rules: a list S1 or T2 wrote (not empty) is never overwritten; ``fetched_at`` is never touched (it drives the S1 reuse
+window); a row the backfill owns is refreshed when its ``paa_filled_at`` is older than the SERP freshness window
+(``cis.seo.research_serp_fresh_days``), the same window as the research store. Writes provenance in ``paa_source`` /
+``paa_filled_at`` (CIS 451).
+
+Who owns a row (:data:`OWNED_SQL`): the backfill, when it set ``paa_source`` AND no S1 / T2 write came after it
+(``fetched_at <= paa_filled_at``). The S1 upsert (shared/repository/seo_context_repository.py) sets ``fetched_at`` to
+now() and leaves ``paa_source`` / ``paa_filled_at`` as they were, so a later S1 list takes the row back even though
+its old provenance is still there: the backfill never overwrites it (S282 review: a stale ``paa_source`` alone would
+let a paid run write [] 'none' over a list S1 bought). The row is S1's again until S1 leaves it empty.
 """
 from __future__ import annotations
 
@@ -38,9 +44,16 @@ SERP_MARKET = "US"
 STORE_MARKETS = ("US", "US-PAA2")    # the SERP market and the AA-779 top-up rows (real_questions)
 STAGE = "a1_tour_paa"                # shared.dfs_call_log stage of the paid SERPs (and the cache hit rows)
 
+# The backfill owns a seo_context row when it filled it and no S1 / T2 write came after (the S1 upsert moves
+# fetched_at, never paa_source / paa_filled_at). Used with the alias sc in CANDIDATES_SQL; WRITE_SQL has no alias.
+OWNED_SQL = ("({p}paa_source IS NOT NULL AND {p}paa_filled_at IS NOT NULL "
+             "AND {p}fetched_at <= {p}paa_filled_at)")
+_EMPTY_SQL = "coalesce({p}people_also_ask, '[]'::jsonb) IN ('[]'::jsonb, 'null'::jsonb)"
+
 # Published, live tours whose PAA the backfill may (re)fill. $1 = the SERP window (interval), $2 = optional tour ids.
 CANDIDATES_SQL = """
     SELECT sc.tour_id::text AS tour_id, rt.src_name, rt.country, rt.activities, sc.paa_source,
+           """ + OWNED_SQL.format(p="sc.") + """ AS owned,
            coalesce(jsonb_array_length(CASE WHEN jsonb_typeof(sc.people_also_ask) = 'array'
                                             THEN sc.people_also_ask END), 0) AS paa_count
       FROM gold_aa_internal.published_tours pt
@@ -49,8 +62,8 @@ CANDIDATES_SQL = """
      WHERE pt.master_status = 'active' AND pt.deleted_at IS NULL
        AND ($2::uuid[] IS NULL OR pt.tour_id = ANY($2::uuid[]))
        AND (
-             (sc.paa_source IS NULL AND coalesce(sc.people_also_ask, '[]'::jsonb) IN ('[]'::jsonb, 'null'::jsonb))
-          OR (sc.paa_source IS NOT NULL AND (sc.paa_filled_at IS NULL OR sc.paa_filled_at < now() - $1::interval))
+             (NOT """ + OWNED_SQL.format(p="sc.") + """ AND """ + _EMPTY_SQL.format(p="sc.") + """)
+          OR (""" + OWNED_SQL.format(p="sc.") + """ AND sc.paa_filled_at < now() - $1::interval)
        )
      ORDER BY sc.tour_id
 """
@@ -68,12 +81,13 @@ STORE_SQL = """
       FROM acp_contract.search_demand
      WHERE market = ANY($1::text[]) AND keyword ILIKE ANY($2::text[])
 """
-# Never overwrites a list S1 / T2 wrote (paa_source NULL and not empty); never touches fetched_at.
+# Never overwrites a list S1 / T2 wrote (a row the backfill does not own, not empty), even one S1 wrote between the
+# plan and this write; never touches fetched_at.
 WRITE_SQL = """
     UPDATE silver_aa_internal.seo_context
        SET people_also_ask = $2::jsonb, paa_source = $3, paa_filled_at = now()
      WHERE tour_id = $1::uuid
-       AND (paa_source IS NOT NULL OR coalesce(people_also_ask, '[]'::jsonb) IN ('[]'::jsonb, 'null'::jsonb))
+       AND (""" + OWNED_SQL.format(p="") + """ OR """ + _EMPTY_SQL.format(p="") + """)
 """
 
 
@@ -124,6 +138,7 @@ async def _specs(conn, rows: list[dict]) -> list[dict]:
                           "activities": r["activities"]})
         spec["places"] = list(dict.fromkeys(spec["places"] + await atom_places(conn, r["tour_id"])))
         spec["paa_source"] = r["paa_source"]
+        spec["owned"] = bool(r["owned"])
         spec["paa_count"] = r["paa_count"]
         out.append(spec)
     return out
@@ -145,7 +160,7 @@ async def build_plan(pool, tour_ids: list[str] | None = None) -> list[TourPlan]:
     plans = []
     for spec in specs:
         paa, buy = plan_tour(spec, store, per_keyword, most)
-        plans.append(TourPlan(spec["tour_id"], spec["name"], paa, buy, refresh=spec["paa_source"] is not None))
+        plans.append(TourPlan(spec["tour_id"], spec["name"], paa, buy, refresh=spec["owned"]))
     return plans
 
 

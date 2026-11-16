@@ -167,8 +167,12 @@ def test_plan_tour_never_buys_a_keyword_whose_serp_is_fresh():
 
 
 def test_write_sql_never_overwrites_a_bought_list_nor_fetched_at():
-    assert "fetched_at" not in tour_paa.WRITE_SQL
-    assert "paa_source IS NOT NULL OR coalesce(people_also_ask" in tour_paa.WRITE_SQL
+    set_clause = tour_paa.WRITE_SQL.split("SET", 1)[1].split("WHERE", 1)[0]
+    assert "fetched_at" not in set_clause                 # the S1 reuse window is never moved
+    where = tour_paa.WRITE_SQL.split("WHERE", 1)[1]
+    # a row is the backfill's only while no S1 write came after its fill (S282 review: paa_source alone is stale)
+    assert "fetched_at <= paa_filled_at" in where and "paa_source IS NOT NULL" in where
+    assert "fetched_at <= sc.paa_filled_at" in tour_paa.CANDIDATES_SQL
 
 
 def _plans(*items):

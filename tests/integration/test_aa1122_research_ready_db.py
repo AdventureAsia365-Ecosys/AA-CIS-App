@@ -133,12 +133,15 @@ async def _published(conn, name: str) -> uuid.UUID:
     return tour_id
 
 
-async def _seo(conn, tour_id, paa: list, source=None, filled_at=None):
+S1_FETCHED_AT = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+
+
+async def _seo(conn, tour_id, paa: list, source=None, filled_at=None, fetched_at=S1_FETCHED_AT):
     await conn.execute("""INSERT INTO silver_aa_internal.seo_context (tour_id, tenant_id, keyword_search, keyword_ideas,
                           people_also_ask, related_keywords, cache_key, provider, fetched_at, paa_source, paa_filled_at)
                           VALUES ($1, $2, 'zz seed', '[]'::jsonb, $3::jsonb, '[]'::jsonb, 'seo:zz:2840:ideas_v3',
-                                  'dataforseo', '2026-10-05 12:00+00', $4, $5)""",
-                       tour_id, uuid.UUID(TENANT_ID), json.dumps(paa), source, filled_at)
+                                  'dataforseo', $6, $4, $5)""",
+                       tour_id, uuid.UUID(TENANT_ID), json.dumps(paa), source, filled_at, fetched_at)
 
 
 @pytest.mark.asyncio
@@ -149,7 +152,8 @@ async def test_tour_paa_candidates_write_rule_and_coverage(tx):
     old_store = await _published(tx, "Zz Quorra Ridge Hike")
     await _seo(tx, empty, [])
     await _seo(tx, bought, ["Is the coast walk hard?"])                                 # S1 bought it: never touched
-    await _seo(tx, old_store, ["Old?"], "store", datetime.now(timezone.utc) - timedelta(days=400))
+    long_ago = datetime.now(timezone.utc) - timedelta(days=400)
+    await _seo(tx, old_store, ["Old?"], "store", long_ago, fetched_at=long_ago - timedelta(days=1))
     window = timedelta(days=180)
     rows = await tx.fetch(tour_paa.CANDIDATES_SQL, window, [empty, bought, old_store])
     assert {r["tour_id"] for r in rows} == {str(empty), str(old_store)}
@@ -160,11 +164,43 @@ async def test_tour_paa_candidates_write_rule_and_coverage(tx):
         "FROM silver_aa_internal.seo_context WHERE tour_id = ANY($1::uuid[])", [empty, bought])}
     assert got[bought][:2] == (["Is the coast walk hard?"], None)
     assert got[empty][:2] == (["When to visit?"], "store")
-    assert got[empty][2] == datetime(2026, 10, 5, 12, tzinfo=timezone.utc)              # fetched_at untouched
+    assert got[empty][2] == S1_FETCHED_AT                                               # fetched_at untouched
     cov = await tour_paa.coverage(_Pool(tx))
     assert cov["published"] >= 3 and cov["with_paa"] >= 3
     store = await tx.fetch(tour_paa.STORE_SQL, list(tour_paa.STORE_MARKETS), ["%zz lantern%"], window)
     assert isinstance(store, list)
+
+
+@pytest.mark.asyncio
+async def test_tour_paa_never_touches_a_list_s1_wrote_after_the_backfill(tx):
+    """S282 review: the backfill filled the row long ago, then an S1 rerun upserted a fresh list (the upsert moves
+    fetched_at, never paa_source / paa_filled_at). Past the SERP window the row is S1's: not a candidate, and a paid
+    run's [] 'none' write cannot wipe it. When S1 later leaves it empty, it is a candidate again."""
+    from shared.repository.seo_context_repository import SeoContextRepository
+
+    await _needs_cis_450_451(tx)
+    tour = await _published(tx, "Zz Mirel Gorge Loop")
+    await _seo(tx, tour, [])
+    await tx.execute(tour_paa.WRITE_SQL, str(tour), json.dumps(["From the store?"]), "store")
+    await tx.execute("UPDATE silver_aa_internal.seo_context SET paa_filled_at = now() - interval '400 days', "
+                     "fetched_at = now() - interval '401 days' WHERE tour_id = $1", tour)   # the fill was long ago
+    window = timedelta(days=180)
+    assert [r["tour_id"] for r in await tx.fetch(tour_paa.CANDIDATES_SQL, window, [tour])] == [str(tour)]
+
+    async def _s1_upsert(paa: list) -> None:
+        await SeoContextRepository(tx).insert({
+            "tour_id": tour, "tenant_id": uuid.UUID(TENANT_ID), "keyword_search": "zz mirel gorge",
+            "people_also_ask": json.dumps(paa), "cache_key": "seo:zz-mirel:2840:ideas_v3"})
+
+    await _s1_upsert(["Is the gorge loop steep?"])                                      # S1 bought a fresh list
+    assert await tx.fetch(tour_paa.CANDIDATES_SQL, window, [tour]) == []
+    await tx.execute(tour_paa.WRITE_SQL, str(tour), "[]", "none")                       # a paid run with nothing found
+    row = await tx.fetchrow("SELECT people_also_ask::text AS paa, paa_source FROM silver_aa_internal.seo_context "
+                            "WHERE tour_id = $1", tour)
+    assert (json.loads(row["paa"]), row["paa_source"]) == (["Is the gorge loop steep?"], "store")
+    await _s1_upsert([])                                                                # S1 found no PAA box later
+    rows = await tx.fetch(tour_paa.CANDIDATES_SQL, window, [tour])
+    assert [(r["tour_id"], r["owned"]) for r in rows] == [(str(tour), False)]
 
 
 @pytest.mark.asyncio
