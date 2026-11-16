@@ -52,6 +52,10 @@ async def conn():
         for version in X287_PREDECESSORS:
             await c.execute("INSERT INTO shared.schema_versions (version, applied_at, description) "
                             "VALUES ($1, now(), $2) ON CONFLICT (version) DO NOTHING", version, X287_STANDIN_MARK)
+        # CIS 124 (pgvector) does not replay on the CI postgres:15 image: add the two plain columns of it the
+        # platform-stats read uses (inside the rolled-back transaction)
+        await c.execute("ALTER TABLE acp_shared.content_piece ADD COLUMN IF NOT EXISTS channel text, "
+                        "ADD COLUMN IF NOT EXISTS angle_gate_option_id uuid")
         yield c
     finally:
         await tr.rollback()
