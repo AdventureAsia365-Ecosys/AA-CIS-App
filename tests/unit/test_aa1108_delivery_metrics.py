@@ -169,6 +169,55 @@ def test_account_id_is_masked(client):
     assert "123456789012" not in json.dumps(body)
 
 
+# A SHA with a standalone 12-digit run between hex letters, as about 1.6 % of real SHAs have one.
+SHA_WITH_DIGIT_RUN = "ab" + "123456789012" + "cd" * 13
+
+
+def test_sha_and_github_links_pass_unmasked(client):
+    s = _summary()
+    s["source"]["sha"] = SHA_WITH_DIGIT_RUN
+    app = s["apps"][0]
+    app["deploys"] = [{"sha": SHA_WITH_DIGIT_RUN, "url": "https://github.com/o/r/actions/runs/123456789012"}]
+    app["failed_deploys"] = [{"sha": SHA_WITH_DIGIT_RUN, "failed": ["verify_red"]}]
+    app["ci"]["main"]["url"] = "https://github.com/o/r/actions/runs/123456789012/job/123456789012"
+    app["ci"]["last_red_url"] = "https://github.com/o/r/actions/runs/123456789012"
+    app["trend"]["months"][0]["failed_deploys"][0]["sha"] = SHA_WITH_DIGIT_RUN
+    with _use(FakeS3({KEY: s})), patch.object(dmx.logger, "error") as err:
+        body = client.get(PATH, headers=ADMIN).json()
+    out = body["apps"][0]
+    assert body["source"]["sha"] == SHA_WITH_DIGIT_RUN
+    assert out["deploys"][0] == app["deploys"][0]
+    assert out["failed_deploys"][0]["sha"] == SHA_WITH_DIGIT_RUN
+    assert out["ci"]["main"]["url"] == app["ci"]["main"]["url"]
+    assert out["ci"]["last_red_url"] == app["ci"]["last_red_url"]
+    assert out["trend"]["months"][0]["failed_deploys"][0]["sha"] == SHA_WITH_DIGIT_RUN
+    assert docs_reader.ACCOUNT_ID_MARKER not in json.dumps(body)
+    err.assert_not_called()
+
+
+def test_digit_run_inside_a_text_token_is_not_masked(client):
+    s = _summary()
+    s["apps"][0]["name"] = "Lantern build-x123456789012y"
+    with _use(FakeS3({KEY: s})):
+        body = client.get(PATH, headers=ADMIN).json()
+    assert body["apps"][0]["name"] == "Lantern build-x123456789012y"
+
+
+@pytest.mark.parametrize("key,value", [
+    ("sha", "not a sha 123456789012"),
+    ("url", "https://example.invalid/123456789012"),
+    ("last_url", "see 123456789012"),
+])
+def test_sha_and_url_keys_mask_values_that_are_not_identifiers(client, key, value):
+    s = _summary()
+    s["apps"][0]["ci"]["main"][key] = value
+    with _use(FakeS3({KEY: s})), patch.object(dmx.logger, "error") as err:
+        body = client.get(PATH, headers=ADMIN).json()
+    assert "123456789012" not in json.dumps(body)
+    assert docs_reader.ACCOUNT_ID_MARKER in body["apps"][0]["ci"]["main"][key]
+    err.assert_called_once()
+
+
 def test_missing_summary_is_404(client):
     with _use(FakeS3({})):
         res = client.get(PATH, headers=ADMIN)

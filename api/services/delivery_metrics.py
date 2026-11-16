@@ -18,8 +18,9 @@ services/reports/delivery_settings.py; tech lead S282: the DORA "high" band to s
 Settings), and "few" when its sample size n is under cis.delivery.min_sample. The definitions of every number are in
 the root guide docs/guides/delivery-metrics.md.
 
-Defence in depth: only the known top-level keys pass, apps need a string id, and any 12-digit run left in a string is
-masked again (the root repos are public; a bundle carrying one was written by something else).
+Defence in depth: only the known top-level keys pass, apps need a string id, and any 12-digit run standing alone in a
+text string is masked again (the root repos are public; a bundle carrying one was written by something else). Hex
+commit SHAs under `sha` keys and github.com links under `url` keys are identifiers, not text, and pass unchanged.
 
 DeliveryMissing -> 404 (nothing published yet), DeliveryUnavailable -> 503 (storage or format).
 """
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -64,15 +66,34 @@ def reset_cache() -> None:
     _cache["at"] = 0.0
 
 
-def _mask(value: Any, hits: list[int]) -> Any:
+# A 12-digit run standing alone in text. Unlike docs_reader._ACCOUNT_ID (digit boundary only) a letter next to the run
+# also stops it, so a run inside a commit SHA ("ab123456789012cd...", about 1.6 % of random SHAs) is not an account ID.
+_ACCOUNT_ID = re.compile(r"(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])")
+_SHA = re.compile(r"[0-9a-f]{7,40}")
+_GITHUB = "https://github.com/"
+
+
+def _passes(key: str, value: str) -> bool:
+    """Identifiers that are never free text: a hex commit SHA under a sha key, a github.com link under a url key
+    (run and job IDs reach 12 digits). Anything else under those keys is masked like text."""
+    if key == "sha" or key.endswith("_sha"):
+        return _SHA.fullmatch(value) is not None
+    if key == "url" or key.endswith("_url"):
+        return value.startswith(_GITHUB)
+    return False
+
+
+def _mask(value: Any, hits: list[int], key: str = "") -> Any:
     if isinstance(value, str):
-        masked, n = docs_reader._ACCOUNT_ID.subn(docs_reader.ACCOUNT_ID_MARKER, value)
+        if _passes(key, value):
+            return value
+        masked, n = _ACCOUNT_ID.subn(docs_reader.ACCOUNT_ID_MARKER, value)
         hits[0] += n
         return masked
     if isinstance(value, list):
-        return [_mask(v, hits) for v in value]
+        return [_mask(v, hits, key) for v in value]
     if isinstance(value, dict):
-        return {str(k): _mask(v, hits) for k, v in value.items()}
+        return {str(k): _mask(v, hits, str(k)) for k, v in value.items()}
     return value
 
 
