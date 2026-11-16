@@ -41,6 +41,18 @@ class _Pool:
         return await self.conn.fetch(*a)
 
 
+async def _needs_cis_450_451(conn) -> None:
+    """The history table (CIS 450) and the PAA provenance columns (CIS 451) ship in this wave's migration-only PR, which
+    merges before this code PR (MIG-4): on a branch without them the two tests that write them are skipped; on main (and
+    in the merge queue, after the migration PR) they run."""
+    ok = await conn.fetchval(
+        "SELECT to_regclass('acp_contract.search_volume_monthly') IS NOT NULL AND EXISTS (SELECT 1 FROM "
+        "information_schema.columns WHERE table_schema = 'silver_aa_internal' AND table_name = 'seo_context' "
+        "AND column_name = 'paa_source') AS ok")
+    if not ok:
+        pytest.skip("CIS 450-451 not in this tree yet (the wave's migration PR merges first)")
+
+
 @pytest_asyncio.fixture
 async def tx():
     c = await asyncpg.connect(DSN)
@@ -94,6 +106,7 @@ async def test_month_spend_sums_research_jobs_by_job_whatever_the_stage(tx):
 
 @pytest.mark.asyncio
 async def test_history_is_written_once_and_read_as_a_season(tx):
+    await _needs_cis_450_451(tx)
     may = {"zz lantern valley": ("search_volume_bulk", [(date(2026, m, 1), 100 * m) for m in range(1, 13)])}
     assert await sh.write(tx, "US", may) == 12
     again = {"zz lantern valley": ("search_volume_bulk_queue", [(date(2026, 12, 1), 1)])}
@@ -130,6 +143,7 @@ async def _seo(conn, tour_id, paa: list, source=None, filled_at=None):
 
 @pytest.mark.asyncio
 async def test_tour_paa_candidates_write_rule_and_coverage(tx):
+    await _needs_cis_450_451(tx)
     empty = await _published(tx, "Zz Lantern Valley Trek")
     bought = await _published(tx, "Zz Amber Coast Walk")
     old_store = await _published(tx, "Zz Quorra Ridge Hike")
