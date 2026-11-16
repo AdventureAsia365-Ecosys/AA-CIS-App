@@ -261,3 +261,37 @@ def test_capacity_line_registered_for_the_new_kind():
     assert "tour_paa_backfill" in kinds()
     src = open(capacity.__file__, encoding="utf-8").read()
     assert '"tour_paa_backfill": None' in src
+
+
+# ── S282 live: the preview passed the 29 s API Gateway limit (StoreIndex) ───────────────────────────────────────────
+def _scan(rows, terms):
+    return [r for r in rows if any(t in str(r["keyword"]).lower() for t in terms)]
+
+
+def test_store_index_matches_the_row_scan_exactly():
+    import random
+
+    rnd = random.Random(1122)
+    words = ["ha long", "hoi an", "an", "bay", "Hue", "sapa", "trek", "lan", "ng", "", "x"]
+    rows = [{"keyword": " ".join(rnd.choice(words) for _ in range(rnd.randint(1, 4))) or "k", "market": "US"}
+            for _ in range(400)]
+    index = tour_paa.StoreIndex(rows)
+    for _ in range(200):
+        terms = [rnd.choice(words + ["hoi an bay", "an\x00ha", "HUE", "g h"]) for _ in range(rnd.randint(1, 3))]
+        assert index.hits(terms) == _scan(rows, terms)
+
+
+def test_store_index_never_matches_across_two_keywords():
+    index = tour_paa.StoreIndex([{"keyword": "hoi"}, {"keyword": "an"}])
+    assert index.hits(["hoi an", "ian", "i\x00a"]) == []
+    assert index.hits(["hoi"]) == [{"keyword": "hoi"}]
+
+
+def test_plan_tour_gives_the_same_answer_from_a_store_index():
+    with patch("services.seo_intelligence.s1_prefetch.strong_terms", side_effect=lambda p: ["lantern valley"]):
+        assert tour_paa.plan_tour(SPEC, tour_paa.StoreIndex(ROWS), 5, 10) == tour_paa.plan_tour(SPEC, ROWS, 5, 10)
+
+
+def test_store_sql_reads_the_markets_without_one_pattern_per_place():
+    assert "ILIKE" not in tour_paa.STORE_SQL.upper()
+    assert "$3" not in tour_paa.STORE_SQL

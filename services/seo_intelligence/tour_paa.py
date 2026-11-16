@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import math
+from bisect import bisect_right
 from dataclasses import dataclass, field
 
 import structlog
@@ -77,10 +78,13 @@ COVERAGE_SQL = """
 """
 STORE_SQL = """
     SELECT keyword, market, search_volume, people_also_ask, (paa_retrieved_on IS NOT NULL
-           AND paa_retrieved_on > now() - $3::interval AND related_searches IS NOT NULL) AS serp_fresh
+           AND paa_retrieved_on > now() - $2::interval AND related_searches IS NOT NULL) AS serp_fresh
       FROM acp_contract.search_demand
-     WHERE market = ANY($1::text[]) AND keyword ILIKE ANY($2::text[])
+     WHERE market = ANY($1::text[])
 """
+# S282 live: the store rows of the SERP markets are read whole (~23k rows) and matched in Python through StoreIndex.
+# The earlier `keyword ILIKE ANY(<one pattern per strong place>)` took 30 s for 4,133 patterns, and the per-tour scan
+# of every row x term another 46 s, so the free preview passed the 29 s API Gateway limit (504 on the Research tab).
 # Never overwrites a list S1 / T2 wrote (a row the backfill does not own, not empty), even one S1 wrote between the
 # plan and this write; never touches fetched_at.
 WRITE_SQL = """
@@ -109,7 +113,48 @@ def _json_list(v) -> list:
     return list(v) if isinstance(v, list) else []
 
 
-def plan_tour(spec: dict, rows: list[dict], per_keyword: int, most: int) -> tuple[list[str], str | None]:
+class StoreIndex:
+    """The store rows with a substring index over their lower-cased keywords.
+
+    ``hits(terms)`` returns, in row order, the rows whose lower-cased keyword contains one of ``terms`` — the same rows
+    as ``[r for r in rows if any(t in r["keyword"].lower() for t in terms)]``, without scanning every row for every
+    tour: each distinct term is searched once in one joined text (str.find) and its row numbers are cached."""
+
+    _SEP = "\x00"
+
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+        self._starts: list[int] = []
+        parts: list[str] = []
+        pos = 0
+        for r in rows:
+            kw = str(r["keyword"]).lower()
+            self._starts.append(pos)
+            parts.append(kw)
+            pos += len(kw) + 1
+        self._text = self._SEP.join(parts)
+        self._found: dict[str, frozenset[int]] = {}
+
+    def _rows_with(self, term: str) -> frozenset[int]:
+        if term not in self._found:
+            out: set[int] = set(range(len(self.rows))) if term == "" else set()   # "" is in every keyword
+            if term and self._SEP not in term:
+                i = self._text.find(term)
+                while i != -1:
+                    out.add(bisect_right(self._starts, i) - 1)
+                    i = self._text.find(term, i + 1)
+            self._found[term] = frozenset(out)
+        return self._found[term]
+
+    def hits(self, terms: list[str]) -> list[dict]:
+        idx: set[int] = set()
+        for t in terms:
+            idx |= self._rows_with(t)
+        return [self.rows[i] for i in sorted(idx)]
+
+
+def plan_tour(spec: dict, rows: list[dict] | StoreIndex, per_keyword: int,
+              most: int) -> tuple[list[str], str | None]:
     """(store PAA, keyword to buy a SERP for) of one tour from the store rows naming its places. Pure.
 
     Store PAA: rows naming a strong place of the tour (s1_prefetch.strong_terms), best volume first (ties: keyword),
@@ -121,7 +166,8 @@ def plan_tour(spec: dict, rows: list[dict], per_keyword: int, most: int) -> tupl
     terms = strong_terms(spec.get("places") or [])
     if not terms:
         return [], None
-    hits = [r for r in rows if any(t in str(r["keyword"]).lower() for t in terms)]
+    index = rows if isinstance(rows, StoreIndex) else StoreIndex(rows)
+    hits = index.hits(terms)
     hits.sort(key=lambda r: (-(r.get("search_volume") or 0), str(r["keyword"])))
     paa = paa_from_rows([{"people_also_ask": _json_list(r.get("people_also_ask"))} for r in hits], per_keyword, most)
     buy = next((r["keyword"] for r in hits if r.get("market") == SERP_MARKET and (r.get("search_volume") or 0) > 0
@@ -154,9 +200,9 @@ async def build_plan(pool, tour_ids: list[str] | None = None) -> list[TourPlan]:
     async with pool.acquire() as conn:
         rows = [dict(r) for r in await conn.fetch(CANDIDATES_SQL, window, tour_ids or None)]
         specs = await _specs(conn, rows)
-        terms = sorted({t for s in specs for t in strong_terms(s["places"])})
-        store = [dict(r) for r in await conn.fetch(STORE_SQL, list(STORE_MARKETS), [f"%{t}%" for t in terms],
-                                                   window)] if terms else []
+        has_terms = any(strong_terms(s["places"]) for s in specs)
+        store = StoreIndex([dict(r) for r in await conn.fetch(STORE_SQL, list(STORE_MARKETS), window)]
+                           if has_terms else [])
     plans = []
     for spec in specs:
         paa, buy = plan_tour(spec, store, per_keyword, most)
