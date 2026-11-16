@@ -9,6 +9,10 @@
 // dated in the past (the API refuses it too), the base version of a change is the approved version in force
 // (approvedVersion: also under an env override or a refused stored value), scheduled changes and the open proposal of
 // each scope are read here, and Save and approve is offered for a single-approval key while two-person approval is on.
+// AA-963 / AA-970 (S282): a CRM key an agency may keep its own value of (scope_kind "platform+tenant") is changed for
+// the platform or for ONE agency (the CRM's crm.ops.v1 POST /settings/{key}/changes with tenant_id); an agency feature
+// switch that is off by default (agencyFeatureSwitch: crm.search.enabled, crm.release.preview) opens on One agency
+// and warns when Platform is picked (it would switch the feature on for every agency, the pilot included).
 
 export type SettingApp = "cis" | "tripplanner" | "booking" | "crm";
 export type ValueType = "int" | "numeric" | "bool" | "enum" | "duration_s" | "usd" | "pct" | "list" | "json";
@@ -322,21 +326,37 @@ export function proposalBody(d: SettingDefinition, item: Pick<SettingItem, "vers
 }
 
 /** AA-1096 (S280): where a change applies. A key whose definition allows a tenant value (scope_kind
- *  "platform+tenant") offers Platform or One tenant; any other key, and every CRM key (its agencies are the CRM's,
- *  not CIS tenants: they keep their values in the CRM), offers Platform only. */
+ *  "platform+tenant") offers Platform or One tenant (on the CRM tab: One agency, AA-963 / AA-970 S282: the CRM keeps
+ *  the agency's value, the CIS API relays the change with its tenant_id); any other key offers Platform only. */
 export type SettingScope = "platform" | "tenant";
 export function scopeOptions(d: Pick<SettingDefinition, "scope_kind" | "app">): SettingScope[] {
-  return d.scope_kind === "platform+tenant" && d.app !== "crm" ? ["platform", "tenant"] : ["platform"];
+  return d.scope_kind === "platform+tenant" ? ["platform", "tenant"] : ["platform"];
 }
 
+/** A key a CIS / TripPlanner tenant may keep its own value of (the admin's tenant picker). A CRM key is never one:
+ *  its agencies are the CRM's, not CIS tenants (agencyScoped). */
 export function tenantScoped(d: Pick<SettingDefinition, "scope_kind" | "app">): boolean {
-  return scopeOptions(d).includes("tenant");
+  return d.app !== "crm" && scopeOptions(d).includes("tenant");
 }
 
 /** A CRM key an agency may keep its own value of: the page lists the agencies' values and open changes (named by the
- *  CRM, decided with the agency's id), while a change from this page stays a platform change. */
+ *  CRM, decided with the agency's id), and a change is made for the platform or for one agency picked from the CRM's
+ *  agency list (AA-963 / AA-970, S282). */
 export function agencyScoped(d: Pick<SettingDefinition, "scope_kind" | "app">): boolean {
   return d.app === "crm" && d.scope_kind === "platform+tenant";
+}
+
+/** An agency feature switch that is off by default (crm.search.enabled, crm.release.preview: an on / off agency key
+ *  whose default is off): a feature is switched on one agency at a time, so the change form starts on One agency and
+ *  warns when Platform is picked. Read from the definition, never a list of keys. Pure. */
+export function agencyFeatureSwitch(d: Pick<SettingDefinition, "scope_kind" | "app" | "value_type" | "default_value">):
+  boolean {
+  return agencyScoped(d) && d.value_type === "bool" && d.default_value === false;
+}
+
+/** Does the change form offer a choice of scope (Platform or one tenant / agency)? Pure. */
+export function hasScopeChoice(d: Pick<SettingDefinition, "scope_kind" | "app">): boolean {
+  return scopeOptions(d).length > 1;
 }
 
 /** The agency names the CRM gave with its agencies' values and open changes (CRM tab), by agency id. Pure. */
@@ -351,6 +371,58 @@ export function agencyNames(item: Pick<SettingItem, "tenant_overrides" | "propos
 /** The scope picked in the change form: the platform, or one tenant ("" = none picked yet). */
 export interface ScopeChoice { kind: SettingScope; tenantId: string }
 export const PLATFORM_SCOPE: ScopeChoice = { kind: "platform", tenantId: "" };
+
+/** The scope the change form opens on: One agency (none picked yet) for an agency feature switch, else the platform.
+ *  Pure. */
+export function initialScope(d: Pick<SettingDefinition, "scope_kind" | "app" | "value_type" | "default_value">):
+  ScopeChoice {
+  return agencyFeatureSwitch(d) ? { kind: "tenant", tenantId: "" } : PLATFORM_SCOPE;
+}
+
+/** Whether the form warns that a platform change reaches every agency: an agency feature switch with Platform picked.
+ *  Pure. */
+export function platformSwitchWarning(
+  d: Pick<SettingDefinition, "scope_kind" | "app" | "value_type" | "default_value">, c: ScopeChoice): boolean {
+  return agencyFeatureSwitch(d) && c.kind === "platform";
+}
+
+/** One CRM agency as the change form offers it (crm.ops.v1 TenantSummary, the fields the picker reads). */
+export interface AgencyRef { tenant_id: string; agency_name: string; state: string }
+
+/** The CRM agency list the change form reads (the CIS relay of crm.ops.v1 GET /tenants, the page the Platform ›
+ *  Tenants › Agencies console reads), one keyset page; 200 is the relay's largest page. */
+export const AGENCIES_API = "/api/admin/platform/crm/agencies";
+export const AGENCY_PAGE_SIZE = 200;
+export function agenciesPath(cursor: string | null): string {
+  return `${AGENCIES_API}?limit=${AGENCY_PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+}
+
+/** Every agency, page after page until the CRM answers no next cursor (or repeats one: never loops). */
+export async function allAgencies(page: (path: string) => Promise<{ items: AgencyRef[]; next_cursor: string | null }>):
+  Promise<AgencyRef[]> {
+  const out: AgencyRef[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (;;) {
+    const p = await page(agenciesPath(cursor));
+    out.push(...p.items);
+    if (!p.next_cursor || seen.has(p.next_cursor)) return out;
+    seen.add(p.next_cursor);
+    cursor = p.next_cursor;
+  }
+}
+
+/** The agencies the change form offers, by name: every agency but an offboarded one (its values are gone with it),
+ *  an agency that is not active named with its state ("Name (locked)"). `stateText` words a state. Pure. */
+export function agencyOptions(agencies: AgencyRef[], stateText: (state: string) => string = (s) => s):
+  { value: string; label: string }[] {
+  return agencies.filter((a) => a.state !== "offboarded")
+    .sort((a, b) => (a.agency_name || a.tenant_id).localeCompare(b.agency_name || b.tenant_id))
+    .map((a) => {
+      const name = a.agency_name || a.tenant_id;
+      return { value: a.tenant_id, label: a.state === "active" ? name : `${name} (${stateText(a.state)})` };
+    });
+}
 
 /** The tenant a change names (null = the platform, or no tenant picked yet). */
 export function scopeTenant(c: ScopeChoice): string | null {

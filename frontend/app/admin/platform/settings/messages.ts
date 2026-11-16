@@ -168,6 +168,19 @@ export const SETTINGS = defineMessages(
     agencyValuesTitle: "Agency values in force",
     noAgencyValues: "No agency has its own value; every agency uses the platform value.",
     agencyProposalsTitle: "Open agency changes",
+    // AA-963 / AA-970 (S282): a CRM agency key is changed for the platform or for one agency.
+    scopePlatformAgency: "Platform (every agency without its own value)",
+    scopeAgency: "One agency",
+    scopeAgencyHint: "An agency's own value replaces the platform value for that agency only.",
+    agencyPick: "Agency",
+    pickAgency: "Pick the agency this value applies to",
+    agenciesLoading: "Loading the CRM agencies…",
+    agenciesError: (message: string) => `The CRM agencies could not be read: ${message}`,
+    agenciesNone: "The CRM has no agency yet.",
+    agencyStateLocked: "locked",
+    agencyStateOffboarding: "offboarding",
+    platformSwitchWarn:
+      "A platform value applies to every agency without its own value, the pilot included: switching it on here turns it on for all of them. To switch it on for one agency, pick One agency.",
     reviewTenant: "Review",
     refusedWhy: (why: string) => `The stored value is refused and the default is served: ${why}. Propose a value that fits.`,
     crmReadOnly:
@@ -351,6 +364,18 @@ export const SETTINGS = defineMessages(
     agencyValuesTitle: "Giá trị riêng của đại lý đang áp dụng",
     noAgencyValues: "Chưa đại lý nào có giá trị riêng; mọi đại lý dùng giá trị nền tảng.",
     agencyProposalsTitle: "Thay đổi đang mở của đại lý",
+    scopePlatformAgency: "Toàn nền tảng (mọi đại lý chưa có giá trị riêng)",
+    scopeAgency: "Một đại lý",
+    scopeAgencyHint: "Giá trị riêng của một đại lý thay giá trị nền tảng, chỉ cho đại lý đó.",
+    agencyPick: "Đại lý",
+    pickAgency: "Chọn đại lý được áp dụng giá trị này",
+    agenciesLoading: "Đang tải danh sách đại lý CRM…",
+    agenciesError: (message: string) => `Không đọc được danh sách đại lý CRM: ${message}`,
+    agenciesNone: "CRM chưa có đại lý nào.",
+    agencyStateLocked: "đã khoá",
+    agencyStateOffboarding: "đang rời nền tảng",
+    platformSwitchWarn:
+      "Giá trị nền tảng áp dụng cho mọi đại lý chưa có giá trị riêng, kể cả đại lý thí điểm: bật ở đây là bật cho tất cả. Muốn bật cho một đại lý, hãy chọn Một đại lý.",
     reviewTenant: "Xem xét",
     refusedWhy: (why: string) => `Giá trị đã lưu bị từ chối nên đang dùng mặc định: ${why}. Hãy đề xuất một giá trị hợp lệ.`,
     crmReadOnly:

@@ -1924,8 +1924,13 @@ schedules dated at or after it. A tenant value is refused while the key's env ov
 answer: only `crm-platform-admin` writes) and names the CRM staff actor (`platform:<sub>`) from `shared.admin_users`
 by Cognito sub. The relay maps the CRM's agency rows (crm.ops.v1 1.14 `agency_overrides` / `agency_pending`) to
 `tenant_overrides` / `proposals` with `agency_name`, so the CRM tab lists each agency's value and open change and decides
-it with the agency id (a change made there stays a platform change), and writes a CRM approval's
-`superseded_versions` / `cancelled_scheduled_versions` (1.15, the same rule as CIS) into the CIS audit row.
+it with the agency id, and writes a CRM approval's
+`superseded_versions` / `cancelled_scheduled_versions` (1.15, the same rule as CIS) into the CIS audit row. Since S282
+(AA-963 / AA-970) the change form of a CRM `platform+tenant` key also authors one agency's value: "Applies to" Platform
+or One agency, the agency picked from the CRM agency list (the `/admin/platform/crm/agencies` relay the Agencies console
+reads, never the CIS tenant picker), the value and "In force now" of that agency, `tenant_id` in the body (the CRM's
+`POST /settings/{key}/changes`). An agency feature switch off by default (an on/off agency key whose default is off:
+`crm.search.enabled`, `crm.release.preview`) opens on One agency and warns when Platform is picked.
 
 ## Deploy & CI
 
